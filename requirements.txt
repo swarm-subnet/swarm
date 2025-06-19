@@ -6,3 +6,4 @@ setuptools
 loguru
 xmldiff
 filelock
+gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git

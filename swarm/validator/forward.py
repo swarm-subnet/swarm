@@ -25,7 +25,7 @@ from .reward   import flight_reward
 # ────────── Validator constants ─────────────────────────────────
 SIM_DT              = 0.02      # 50 Hz physics step sent to miners
 HORIZON_SEC         = 15.0      # max simulated flight time
-SAMPLE_K            = 128       # miners sampled per forward
+SAMPLE_K            = 20       # miners sampled per forward
 QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
 FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
 EMA_ALPHA           = 0.20      # weights EMA coefficient

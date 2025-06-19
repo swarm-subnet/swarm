@@ -14,6 +14,7 @@ validator_env/*
 miner_env
 miner_env/
 miner_env/*
+swarm_env/*
 ~
 ~/*
 output.png

@@ -20,7 +20,7 @@ step() {
 # 1. Configurable parameters
 ########################################
 step "Loading configurable parameters"
-PROCESS_NAME="${PROCESS_NAME:-subnet-36-validator}"
+PROCESS_NAME="${PROCESS_NAME:-subnet-124-validator}"
 WALLET_NAME="${WALLET_NAME:-}"      # will prompt if empty
 WALLET_HOTKEY="${WALLET_HOTKEY:-}"  # will prompt if empty
 SUBTENSOR_PARAM="${SUBTENSOR_PARAM:---subtensor.network finney}"
@@ -34,8 +34,8 @@ if [ $# -ge 4 ]; then SUBTENSOR_PARAM="$4"; fi
 # Only prompt interactively for missing values
 if [ -t 0 ]; then
   if [ -z "$PROCESS_NAME" ]; then
-    read -rp "Enter process name (default: subnet-36-validator): " input_process
-    PROCESS_NAME="${input_process:-subnet-36-validator}"
+    read -rp "Enter process name (default: subnet-124-validator): " input_process
+    PROCESS_NAME="${input_process:-subnet-124-validator}"
   fi
   if [ -z "$WALLET_NAME" ]; then
     read -rp "Enter your coldkey name: " WALLET_NAME

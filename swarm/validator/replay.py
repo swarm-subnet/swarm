@@ -4,7 +4,7 @@ import numpy as np
 from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from swarm.protocol import MapTask, FlightPlan, RPMCmd
-from swarm.miner.env_builder import build_world      # shared
+from swarm.validator.env_builder import build_world
 
 KF               = 1.91e-6
 PROP_EFF         = 0.60
@@ -16,7 +16,6 @@ def _inject_cmd(env: HoverAviary, cmd: RPMCmd):
 def replay_once(task: MapTask, plan: FlightPlan):
     env = HoverAviary(gui=False, obs=ObservationType.KIN, act=ActionType.RPM)
     build_world(task.map_seed, env.getPyBulletClient())
-    env.reset(seed=0)
 
     next_i, energy, success = 0, 0.0, False
     goal = np.array(task.goal)
