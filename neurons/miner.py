@@ -9,7 +9,7 @@ from typing import List, Tuple
 import bittensor as bt
 from loguru import logger
 
-from swarm.base.miner import BaseSwarmMiner
+from swarm.base.miner import BaseMinerNeuron
 from swarm.protocol import (
     MapTask, FlightPlan, RPMCmd,
     TaskFeedbackSynapse, SetOperatorEndpointSynapse,
@@ -81,7 +81,7 @@ def flying_strategy(task: MapTask) -> List[RPMCmd]:
 
 
 # ────────────────────────────────────────────────────────────────────
-class Miner(BaseSwarmMiner):
+class Miner(BaseMinerNeuron):
     """
     Concrete Swarm miner:
       • implements `solve(task)`  → returns FlightPlan
