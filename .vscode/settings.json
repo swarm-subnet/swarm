@@ -1,0 +1,8 @@
+{
+    "python.analysis.extraPaths": [
+      "${workspaceFolder}/autoppia_iwa_module"
+    ],
+    "python.autoComplete.extraPaths": [
+      "${workspaceFolder}/autoppia_iwa_module"
+    ]
+  }

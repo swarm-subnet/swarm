@@ -1,0 +1,8 @@
+pydantic
+rich
+pytest
+numpy
+setuptools
+loguru
+xmldiff
+filelock
