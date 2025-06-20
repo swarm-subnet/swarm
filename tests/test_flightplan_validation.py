@@ -1,11 +1,12 @@
 """
-End‑to‑end round‑trip & replay test – **with optional live GUIs**.
+End-to-end round-trip & replay test – **with optional live GUIs**.
 """
 from __future__ import annotations
 
 import argparse
+import statistics
 from dataclasses import asdict
-from typing import Tuple
+from typing import List, Optional
 
 from swarm.validator.task_gen import random_task
 from swarm.validator.forward import SIM_DT, HORIZON_SEC
@@ -30,7 +31,7 @@ def make_task() -> MapTask:
 
 def make_plan(task: MapTask, gui: bool) -> FlightPlan:
     cmds = flying_strategy(task, gui=gui)
-    return FlightPlan(commands=cmds, sha256="")      # hash auto‑computed
+    return FlightPlan(commands=cmds, sha256="")      # hash auto-computed
 
 
 # ---------------------------------------------------------------------
@@ -50,30 +51,66 @@ def validate(task: MapTask,
 
 
 # ---------------------------------------------------------------------
-# Interactive demo entry point
+# Interactive / batch demo entry point
 # ---------------------------------------------------------------------
 def run_demo(*,
-             sim_gui: bool = False   # ←  default is now head‑less
-            ) -> ValidationResult:   # pragma: no cover
-    task = make_task()
-    plan = make_plan(task, gui=sim_gui)
-    print(f"Plan created: {plan.commands}")
-    # round‑trip serialisation check
-    plan2 = FlightPlan.unpack(plan.pack())
-    assert plan.sha256 == plan2.sha256, "SHA mismatch after msgpack round‑trip"
+             sim_gui: bool = False   # ← default is head-less batch
+            ) -> Optional[List[ValidationResult]]:   # pragma: no cover
 
-    res = validate(task, plan2, sim_gui=sim_gui)
+    if sim_gui:
+        # Single GUI run, exactly as before
+        task = make_task()
+        plan = make_plan(task, gui=True)
+        print(f"Plan created: {plan.commands}")
 
-    # Console summary
-    logger.info("\n═══════════ Validation result ═══════════")
-    logger.info(f"success      : {res.success}")
-    logger.info(f"time_sec     : {res.time_sec:7.2f} (horizon = {task.horizon})")
-    logger.info(f"energy       : {res.energy:7.2f}")
-    logger.info(f"reward score : {res.score:7.3f}")
-    logger.info(f"plan SHA‑256 : {plan2.sha256}")
-    logger.info("═════════════════════════════════════════\n")
+        # round-trip serialisation check
+        plan2 = FlightPlan.unpack(plan.pack())
+        assert plan.sha256 == plan2.sha256, "SHA mismatch after msgpack round-trip"
 
-    return res
+        res = validate(task, plan2, sim_gui=True)
+
+        # Console summary
+        logger.info("\n═══════════ Validation result ═══════════")
+        logger.info(f"success      : {res.success}")
+        logger.info(f"time_sec     : {res.time_sec:7.2f} (horizon = {task.horizon})")
+        logger.info(f"energy       : {res.energy:7.2f}")
+        logger.info(f"reward score : {res.score:7.3f}")
+        logger.info(f"plan SHA-256 : {plan2.sha256}")
+        logger.info("═════════════════════════════════════════\n")
+
+        return [res]
+
+    # ── batch mode ──
+    results: List[ValidationResult] = []
+    for i in range(1, 101):
+        task = make_task()
+        plan = make_plan(task, gui=False)
+        plan2 = FlightPlan.unpack(plan.pack())
+        assert plan.sha256 == plan2.sha256, "SHA mismatch after msgpack round-trip"
+
+        res = validate(task, plan2, sim_gui=False)
+        results.append(res)
+        logger.info(f"Run {i:3d}/100 : success={res.success}, "
+                    f"time={res.time_sec:6.2f}, energy={res.energy:6.2f}, "
+                    f"score={res.score:6.3f}")
+
+    # Now compute statistics
+    successes = sum(1 for r in results if r.success)
+    times   = [r.time_sec for r in results]
+    energies= [r.energy   for r in results]
+    scores  = [r.score    for r in results]
+
+    logger.info("\n═══════════ Batch statistics (100 runs) ═══════════")
+    logger.info(f"Success rate  : {successes}/100 = {successes/100:.1%}")
+    logger.info(f"Time   (s)    : mean={statistics.mean(times):6.2f}, "
+                f"min={min(times):6.2f}, max={max(times):6.2f}")
+    logger.info(f"Energy        : mean={statistics.mean(energies):6.2f}, "
+                f"min={min(energies):6.2f}, max={max(energies):6.2f}")
+    logger.info(f"Score         : mean={statistics.mean(scores):6.3f}, "
+                f"min={min(scores):6.3f}, max={max(scores):6.3f}")
+    logger.info("═══════════════════════════════════════════════════\n")
+
+    return results
 
 
 # ---------------------------------------------------------------------
@@ -96,13 +133,13 @@ def test_flightplan_roundtrip_and_replay():          # pragma: no cover
 
 
 # ---------------------------------------------------------------------
-# CLI wrapper – choose GUI or not
+# CLI wrapper – choose GUI or batch
 # ---------------------------------------------------------------------
 if __name__ == "__main__":                            # pragma: no cover
     ap = argparse.ArgumentParser(
-        description="Run a single Swarm FlightPlan validation demo")
+        description="Run Swarm FlightPlan validation – single GUI or batch")
     ap.add_argument("--gui",  action="store_true",
-                    help="open the PyBullet 3‑D viewer")
+                    help="open the PyBullet 3-D viewer (single run)")
     args = ap.parse_args()
 
     run_demo(sim_gui=args.gui)
