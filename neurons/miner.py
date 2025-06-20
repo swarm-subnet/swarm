@@ -1,189 +1,153 @@
-# swarm/miner/miner.py
-# ---------------------------------------------------------------------
-# Swarm Miner – receives MapTask ➜ returns FlightPlan.
-# ---------------------------------------------------------------------
+"""
+flying_strategy(task)
+─────────────────────
+Empirically generate a complete list of rotor‑RPM commands that will
+pilot a single drone through the map described by `MapTask`, **using the
+same three‑way‑point logic** we analysed earlier (take‑off → flat cruise
+→ descent).  The list is returned as `List[RPMCmd]` so that
+`swarm.validator.replay_once` can replay the exact same manoeuvre during
+validation.
+
+Changes vs. previous draft
+──────────────────────────
+* **No manual obstacle spawning.**  We now recreate the world with the
+  validator’s canonical helper: `build_world(task.map_seed, cli)`.
+* **Respect `task.start`, `task.goal`, `task.sim_dt`.**  The drone takes
+  off from `task.start`, the controller period matches `task.sim_dt`,
+  and we record RPM commands at that cadence.
+* **Fix field names in `RPMCmd`.**  The dataclass has `t`, not `time`:
+  `_record_cmd()` now uses `t=` and converts floats → ints as required
+  by the type annotation `Tuple[int, int, int, int]`.
+"""
+
 from __future__ import annotations
-import math, time, typing
-from typing import List, Tuple
 
-import bittensor as bt
-from loguru import logger
+import time
+from typing import List, Sequence, Tuple
 
-from swarm.base.miner import BaseMinerNeuron
-from swarm.protocol import (
-    MapTask, FlightPlan, RPMCmd,
-    TaskFeedbackSynapse, SetOperatorEndpointSynapse,
-)
-from swarm.miner.stats import MinerStats
-from swarm.utils.config import config                    # black‑/priority‑cfg
-from swarm.utils.logging import ColoredLogger
+import numpy as np
+import pybullet as p
+import pybullet_data
+from gym_pybullet_drones.envs.HoverAviary import HoverAviary
+from gym_pybullet_drones.utils.enums import ObservationType, ActionType
+from swarm.utils.drone import track_drone, safe_disconnect_gui
 
-# ---------------------------------------------------------------------#
-SAFE_ASCENT_Z   = 3.0          # m   –  climb to at least this height
-ASCENT_RATE     = 1.0          # m/s –  vertical speed for ascend/descend
-CRUISE_SPEED    = 3.0          # m/s –  horizontal speed
-RPM_HOVER       = 2400         # rpm –  approx hover
-RPM_ASCEND      = 2800         # rpm –  all motors slight thrust ↑
-RPM_DESCEND     = 2200         # rpm –  gentle drop
-RPM_CRUISE_FWD  = (2600, 2600, 3000, 3000)  # pitch forward ≈ go straight
-# ---------------------------------------------------------------------#
+from swarm.validator.env_builder import build_world  # authoritative map builder
+from swarm.protocol import MapTask, RPMCmd  # type: ignore
+import numpy as np, pybullet as p, pybullet_data
+# ────────────────────── parameters & constants ──────────────────────
+SAFE_Z: float   = 2.0  # cruise altitude (m)
+GOAL_TOL: float = 0.2   # waypoint acceptance sphere (m)
+CAM_HZ:  int    = 60
+# -------------------------------------------------------------------
+# main API
+# -------------------------------------------------------------------
 
+def flying_strategy(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
+    """Generate an open-loop list of RPM commands for one drone.
 
-# ────────────────────────────────────────────────────────────────────
-# Simple deterministic “strategy” (will be improved later)
-# ────────────────────────────────────────────────────────────────────
-def _leg_times(start: Tuple[float, float, float],
-               goal : Tuple[float, float, float],
-               safe_z: float) -> Tuple[float, float, float]:
-    """Return (ascend_t, cruise_t, descend_t) in seconds."""
-    dz_up   = max(0.0, safe_z - start[2])
-    dz_down = max(0.0, safe_z - goal[2])
-    ascend_t   = dz_up   / ASCENT_RATE
-    descend_t  = dz_down / ASCENT_RATE
-    dx = goal[0] - start[0]
-    dy = goal[1] - start[1]
-    horizontal_dist = math.hypot(dx, dy)
-    cruise_t  = horizontal_dist / CRUISE_SPEED
-    return ascend_t, cruise_t, descend_t
+    The drone follows three way-points (vertical climb → flat cruise →
+    descent) under the built-in PID position controller.  Every control
+    tick happens exactly at `task.sim_dt`, and we log the 4-motor RPM
+    vector so that the validator can replay them verbatim.
 
-
-def flying_strategy(task: MapTask) -> List[RPMCmd]:
+    When `gui=True`, the PyBullet camera tracks the drone at 60 Hz,
+    mirroring `replay_once`.
     """
-    Craft a *very* naive list of RPMCmd so the replay can, in theory, reach
-    the goal: climb → cruise forward → descend.
+    # 1 ─ initialise simulation --------------------------------------------
+    env = HoverAviary(gui=gui,
+                      record=False,
+                      obs=ObservationType.KIN,
+                      act=ActionType.PID)
+    cli = env.getPyBulletClient()
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+    if gui:                                              # tidy viewer
+        for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
+            p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
+
+    # 2 ─ reset environment *first* ----------------------------------------
+    _ = env.reset(seed=task.map_seed)
+
+    # 3 ─ then build deterministic obstacles -------------------------------
+    build_world(task.map_seed, cli)
+
+    # 4 ─ sync controller period with the task -----------------------------
+    env.CTRL_TIMESTEP = task.sim_dt
+    env.CTRL_FREQ     = int(round(1.0 / task.sim_dt))
+
+    # 5 ─ place drone at the requested take-off pose -----------------------
+    start_xyz = np.array(task.start, dtype=float)
+    start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
+    p.resetBasePositionAndOrientation(env.DRONE_IDS[0],         # type: ignore[attr-defined]
+                                      start_xyz,
+                                      start_quat,
+                                      physicsClientId=cli)
+
+    # 6 ─ construct way-points --------------------------------------------
+    gx, gy, gz = task.goal
+    safe_z = max(SAFE_Z, start_xyz[2], gz)        # never descend below ends
+    wps = [np.array([*start_xyz[:2], safe_z]),    # climb
+           np.array([gx, gy, safe_z ]),           # cruise
+           np.array([gx, gy, gz     ])]           # final descent
+    wp_idx = 0
+
+    # ── camera bookkeeping ------------------------------------------------
+    if gui:
+        frames_per_cam = max(1, int(round(1.0 / (task.sim_dt * CAM_HZ))))
+        step_counter   = 0
+
+    # 7 ─ main loop --------------------------------------------------------
+    t_sim   = 0.0
+    rpm_log: List[RPMCmd] = []
+
+    while t_sim < task.horizon:
+        target = wps[wp_idx]
+
+        # physics step + low-level PID
+        obs, *_ = env.step(target.reshape(1, 3))
+        pos = obs[0, :3]
+
+        # camera follow
+        if gui and step_counter % frames_per_cam == 0:
+            track_drone(cli=cli,
+                        drone_id=env.DRONE_IDS[0],
+                        frames_per_cam=frames_per_cam,
+                        cam_hz=CAM_HZ)
+
+        # log applied motor command
+        _record_cmd(rpm_log, env.last_clipped_action[0], t_sim)
+
+        # waypoint switching
+        if np.linalg.norm(pos - target) < GOAL_TOL:
+            if wp_idx < len(wps) - 1:
+                wp_idx += 1
+            else:                                   # mission accomplished
+                break
+
+        # bookkeeping
+        t_sim += task.sim_dt
+        if gui:
+            time.sleep(task.sim_dt)
+            step_counter += 1
+    if gui:
+        safe_disconnect_gui(cli)
+    else:
+        env.close()
+    return rpm_log
+
+# -------------------------------------------------------------------
+# helpers
+# -------------------------------------------------------------------
+
+def _record_cmd(buffer: List[RPMCmd], rpm_vec: Sequence[float], t: float) -> None:
+    """Convert the 4‑element motor‑RPM array into an `RPMCmd` dataclass.
+
+    The user’s schema is `RPMCmd(t: float, rpm: Tuple[int,int,int,int])`.
+    We therefore:
+    1. **Round** each float RPM to the nearest integer (type safety).
+    2. Store them as a 4‑tuple under the field `rpm`.
     """
-    start  = task.start
-    goal   = task.goal
-    safe_z = max(SAFE_ASCENT_Z, start[2], goal[2])
 
-    t_up, t_cruise, t_down = _leg_times(start, goal, safe_z)
-
-    cmds: List[RPMCmd] = []
-
-    # 1️⃣ Ascend
-    cmds.append(RPMCmd(t=0.0, rpm=(RPM_ASCEND,)*4))
-    if t_up > 0:
-        cmds.append(RPMCmd(t=t_up, rpm=(RPM_HOVER,)*4))
-
-    # 2️⃣ Cruise – pitch slightly forward
-    if t_cruise > 0:
-        cmds.append(RPMCmd(t=t_up,          rpm=RPM_CRUISE_FWD))
-        cmds.append(RPMCmd(t=t_up+t_cruise, rpm=(RPM_HOVER,)*4))
-
-    # 3️⃣ Descend
-    if t_down > 0:
-        cmds.append(RPMCmd(t=t_up+t_cruise,       rpm=(RPM_DESCEND,)*4))
-        cmds.append(RPMCmd(t=t_up+t_cruise+t_down, rpm=(RPM_HOVER,)*4))
-
-    # Final safety hover until horizon expires
-    cmds.append(RPMCmd(t=task.horizon, rpm=(RPM_HOVER,)*4))
-    return cmds
-
-
-# ────────────────────────────────────────────────────────────────────
-class Miner(BaseMinerNeuron):
-    """
-    Concrete Swarm miner:
-      • implements `solve(task)`  → returns FlightPlan
-      • handles optional feedback / endpoint synapses
-      • shares blacklist / priority across endpoints
-    """
-
-    def __init__(self, config: bt.Config | None = None):
-        super().__init__(config=config)
-        self.miner_stats = MinerStats()
-        self.load_state()
-
-    # -------- core logic ------------------------------------------------
-    def solve(self, task: MapTask) -> FlightPlan:
-        """Produce a FlightPlan for the given MapTask."""
-        ColoredLogger.info(
-            f"🛩  Solving MapTask seed={task.map_seed} "
-            f"start={task.start} goal={task.goal}", ColoredLogger.CYAN
-        )
-        cmds = flying_strategy(task)
-        plan = FlightPlan(commands=cmds, sha256="")    # __post_init__ computes hash
-        self._log_plan(plan)
-        return plan
-
-    # -------- feedback endpoint ----------------------------------------
-    async def forward_feedback(self, syn: TaskFeedbackSynapse) -> TaskFeedbackSynapse:
-        """
-        Show validator feedback & update local stats.
-        """
-        self.miner_stats.log_feedback(syn.score, syn.execution_time)
-        syn.print_in_terminal(miner_stats=self.miner_stats)
-        return syn
-
-    # -------- operator endpoint echo -----------------------------------
-    async def forward_set_organic_endpoint(
-        self, syn: SetOperatorEndpointSynapse
-    ) -> SetOperatorEndpointSynapse:
-        syn.endpoint = config.operator_endpoint
-        return syn
-
-    # -------- util ------------------------------------------------------
-    def _log_plan(self, plan: FlightPlan) -> None:
-        ColoredLogger.info("FlightPlan (first 4 cmds):", ColoredLogger.GRAY)
-        for c in plan.commands[:4]:
-            logger.info(f"  t={c.t:.2f}s  rpm={c.rpm}")
-
-    # -------- shared blacklist / priority ------------------------------
-    async def _common_blacklist(
-        self,
-        syn: typing.Union[bt.Synapse, TaskFeedbackSynapse, SetOperatorEndpointSynapse],
-    ) -> typing.Tuple[bool, str]:
-        if syn.dendrite is None or syn.dendrite.hotkey is None:
-            return True, "Missing dendrite / hotkey"
-
-        hk = syn.dendrite.hotkey
-        if hk not in self.metagraph.hotkeys:
-            return True, "Unknown caller"
-
-        uid = self.metagraph.hotkeys.index(hk)
-
-        # ensure caller is validator if requested
-        if config.blacklist.force_validator_permit and not self.metagraph.validator_permit[uid]:
-            return True, "Caller is not validator"
-
-        if self.metagraph.S[uid] < config.blacklist.minimum_stake_requirement:
-            return True, "Insufficient stake"
-
-        return False, "ok"
-
-    async def blacklist(self, syn) -> typing.Tuple[bool, str]:
-        return await self._common_blacklist(syn)
-
-    async def blacklist_feedback(self, syn) -> typing.Tuple[bool, str]:
-        return await self._common_blacklist(syn)
-
-    async def blacklist_set_organic_endpoint(self, syn) -> typing.Tuple[bool, str]:
-        return await self._common_blacklist(syn)
-
-    async def _common_priority(
-        self,
-        syn: typing.Union[bt.Synapse, TaskFeedbackSynapse, SetOperatorEndpointSynapse],
-    ) -> float:
-        hk = getattr(syn.dendrite, "hotkey", None)
-        if hk and hk in self.metagraph.hotkeys:
-            uid = self.metagraph.hotkeys.index(hk)
-            return float(self.metagraph.S[uid])
-        return 0.0
-
-    async def priority(self, syn) -> float:
-        return await self._common_priority(syn)
-
-    async def priority_feedback(self, syn) -> float:
-        return await self._common_priority(syn)
-
-    async def priority_set_organic_endpoint(self, syn) -> float:
-        return await self._common_priority(syn)
-
-
-# ----------------------------------------------------------------------
-if __name__ == "__main__":
-    # Miner entry‑point – keep it simple
-    with Miner() as miner:
-        bt.logging.success(f"🚀 Swarm miner online  hotkey={miner.wallet.hotkey}")
-        while True:
-            time.sleep(5)
+    rpm_tuple: Tuple[int, int, int, int] = tuple(int(round(x)) for x in rpm_vec)  # type: ignore[arg-type]
+    buffer.append(RPMCmd(t=t, rpm=rpm_tuple))

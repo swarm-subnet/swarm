@@ -1,146 +1,143 @@
+"""
+End‑to‑end round‑trip & replay test – **with optional live GUIs**.
+"""
 from __future__ import annotations
 
-# --------------------------------------------------------------------------- #
-# Swarm imports (✱ nothing is re‑implemented ✱)
-# --------------------------------------------------------------------------- #
+import argparse
+from dataclasses import asdict
+from typing import Tuple
 
 from swarm.validator.task_gen import random_task
-from swarm.validator.forward import SIM_DT, HORIZON_SEC            # same constants
-from neurons.miner import flying_strategy                      # reference planner
-from swarm.validator.replay import replay_once                     # physics engine
-from swarm.validator.reward import flight_reward                   # canonical scorer
-from swarm.protocol import MapTask, FlightPlan, ValidationResult   # data models
+from swarm.validator.forward import SIM_DT, HORIZON_SEC
+from neurons.miner import flying_strategy           # reference strategy
+from swarm.validator.replay import replay_once
+from swarm.validator.reward import flight_reward
+from swarm.protocol import MapTask, FlightPlan, ValidationResult
 
-# Optional but nice: pretty log colours if loguru is installed
 try:
     from loguru import logger
-except ImportError:                                                # pragma: no cover
+except ImportError:                                 # pragma: no cover
     import logging as logger
     logger.basicConfig(level=logger.INFO)
 
 
-# --------------------------------------------------------------------------- #
-# Helper: Build task ➜ plan ➜ validate
-# --------------------------------------------------------------------------- #
+# ---------------------------------------------------------------------
+# Helper factories
+# ---------------------------------------------------------------------
 def make_task() -> MapTask:
-    """Generate the same kind of task the live validator issues."""
     return random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
 
 
-def make_plan(task: MapTask) -> FlightPlan:
-    """Run the miners reference strategy and wrap in a FlightPlan."""
-    cmds = flying_strategy(task)
-    # sha256 is auto‑calculated in __post_init__ when sha256=""
-    return FlightPlan(commands=cmds, sha256="")
+def make_plan(task: MapTask, gui: bool) -> FlightPlan:
+    cmds = flying_strategy(task, gui=gui)
+    return FlightPlan(commands=cmds, sha256="")      # hash auto‑computed
 
 
-def validate(task: MapTask, plan: FlightPlan) -> ValidationResult:
-    """Replay a plan and produce the exact structure the validator stores."""
-    success, t_sim, energy = replay_once(task, plan)
-    score                  = flight_reward(success, t_sim, energy, task.horizon)
-    return ValidationResult(
-        uid      = -1,          # not relevant in an offline test
-        success  = success,
-        time_sec = t_sim,
-        energy   = energy,
-        score    = score,
-    )
+# ---------------------------------------------------------------------
+# Validation logic
+# ---------------------------------------------------------------------
+def validate(task: MapTask,
+             plan: FlightPlan,
+             *,
+             sim_gui: bool = False) -> ValidationResult:
+    success, t_sim, energy = replay_once(task, plan, gui=sim_gui)
+    score = flight_reward(success, t_sim, energy, task.horizon)
+    return ValidationResult(uid=-1,
+                            success=success,
+                            time_sec=t_sim,
+                            energy=energy,
+                            score=score)
 
 
-# --------------------------------------------------------------------------- #
-# GUI (minimal Tkinter – safe in headless CI; will just not show a window)
-# --------------------------------------------------------------------------- #
-def show_gui(res: ValidationResult, plan_hash: str) -> None:       # pragma: no cover
-    """
-    Render a very small read‑only dashboard.
-
-    In a CI environment with no display, the call is harmless because
-    `tk.Tk()` throws a `tk.TclError` only when *used*, not when created.
-    """
+# ---------------------------------------------------------------------
+# Tiny Tk dashboard (optional)
+# ---------------------------------------------------------------------
+def show_gui(res: ValidationResult, plan_hash: str) -> None:  # pragma: no cover
     try:
         import tkinter as tk
         from tkinter import ttk
-    except Exception as exc:                                        # nocv
+    except Exception as exc:
         logger.warning(f"GUI skipped (Tk not available): {exc}")
         return
 
     root = tk.Tk()
     root.title("Swarm FlightPlan Validation")
 
-    def add_row(label: str, value: str, row: int):
-        ttk.Label(root, text=label, font=("Arial", 10, "bold")).grid(sticky="w", padx=6, pady=2, row=row, column=0)
-        ttk.Label(root, text=value, font=("Arial", 10)).grid(sticky="w", padx=6, pady=2, row=row, column=1)
+    def add(label: str, value: str, row: int) -> None:
+        ttk.Label(root, text=label, font=("Arial", 10, "bold"))\
+            .grid(sticky="w", padx=6, pady=2, row=row, column=0)
+        ttk.Label(root, text=value, font=("Arial", 10))\
+            .grid(sticky="w", padx=6, pady=2, row=row, column=1)
 
-    add_row("FlightPlan SHA‑256", plan_hash,         0)
-    add_row("⇧  Success",          str(res.success), 1)
-    add_row("⇢  Simulated time",   f"{res.time_sec:.2f} s", 2)
-    add_row("⚡ Energy",            f"{res.energy:.2f}",     3)
-    add_row("★ Score",             f"{res.score:.3f}",      4)
+    add("FlightPlan SHA‑256", plan_hash, 0)
+    for i, (k, v) in enumerate(asdict(res).items(), start=1):
+        add(k.replace("_", " ").title(), f"{v}", i)
 
-    ttk.Button(root, text="Close", command=root.destroy).grid(pady=8, columnspan=2)
+    ttk.Button(root, text="Close", command=root.destroy)\
+        .grid(pady=8, columnspan=2)
     root.mainloop()
 
 
-# --------------------------------------------------------------------------- #
-# Main entry point ‑ makes the script executable AND import‑safe for pytest
-# --------------------------------------------------------------------------- #
-def run_demo(show_window: bool = True) -> ValidationResult:        # pragma: no cover
-    task: MapTask        = make_task()
-    plan: FlightPlan     = make_plan(task)
+# ---------------------------------------------------------------------
+# Interactive demo entry point
+# ---------------------------------------------------------------------
+def run_demo(*,
+             show_dashboard: bool = True,
+             sim_gui: bool = False   # ←  default is now head‑less
+            ) -> ValidationResult:   # pragma: no cover
+    task = make_task()
+    plan = make_plan(task, gui=sim_gui)
 
-    # Wire‑format round‑trip: pack ➜ unpack ➜ compare hash
-    blob          = plan.pack()
-    unpacked_plan = FlightPlan.unpack(blob)
-    assert plan.sha256 == unpacked_plan.sha256, "SHA‑256 changed after (de)serialisation"
-
-    res = validate(task, unpacked_plan)
-
-    # Console report
-    logger.info("")
-    logger.info("╭─ Validation result ────────────────────────────────────────╮")
-    logger.info(f"│  success      : {res.success}")
-    logger.info(f"│  time_sec     : {res.time_sec:7.2f}  (task.horizon = {task.horizon})")
-    logger.info(f"│  energy       : {res.energy:7.2f}")
-    logger.info(f"│  reward score : {res.score:7.3f}")
-    logger.info(f"│  plan SHA‑256 : {unpacked_plan.sha256}")
-    logger.info("╰───────────────────────────────────────────────────────────╯")
-
-    if show_window:
-        show_gui(res, unpacked_plan.sha256)
-
-    return res
-
-
-# --------------------------------------------------------------------------- #
-# PyTest‑compatible test function
-# --------------------------------------------------------------------------- #
-def test_flightplan_roundtrip_and_replay():
-    """
-    This is what pytest will run.
-
-    It only *asserts* the invariants – success and hash conservation –
-    to keep automated CI strict yet lightweight.
-    """
-    task  = make_task()
-    plan  = make_plan(task)
-
-    # Round‑trip integrity
+    # round‑trip serialisation check
     plan2 = FlightPlan.unpack(plan.pack())
     assert plan.sha256 == plan2.sha256, "SHA mismatch after msgpack round‑trip"
 
-    # Replay must not error and should finish within the horizon
-    success, t_sim, energy = replay_once(task, plan2)
-    assert success, "Replay reports failure to reach goal"
-    assert t_sim <= task.horizon + 1e-6, "Replay exceeded task horizon"
-    assert energy >= 0, "Negative energy makes no sense"
+    res = validate(task, plan2, sim_gui=sim_gui)
 
-    # Optional extra: reward non‑zero when success is True
+    # Console summary
+    logger.info("\n═══════════ Validation result ═══════════")
+    logger.info(f"success      : {res.success}")
+    logger.info(f"time_sec     : {res.time_sec:7.2f} (horizon = {task.horizon})")
+    logger.info(f"energy       : {res.energy:7.2f}")
+    logger.info(f"reward score : {res.score:7.3f}")
+    logger.info(f"plan SHA‑256 : {plan2.sha256}")
+    logger.info("═════════════════════════════════════════\n")
+
+    if show_dashboard:
+        show_gui(res, plan2.sha256)
+    return res
+
+
+# ---------------------------------------------------------------------
+# Pytest entry point (unchanged)
+# ---------------------------------------------------------------------
+def test_flightplan_roundtrip_and_replay():          # pragma: no cover
+    task = make_task()
+    plan = make_plan(task, gui=False)
+
+    plan2 = FlightPlan.unpack(plan.pack())
+    assert plan.sha256 == plan2.sha256
+
+    success, t_sim, energy = replay_once(task, plan2, gui=False)
+    assert success
+    assert t_sim <= task.horizon + 1e-6
+    assert energy >= 0
+
     score = flight_reward(success, t_sim, energy, task.horizon)
-    assert score > 0, "Expected positive reward for successful flight"
+    assert score > 0
 
 
-# --------------------------------------------------------------------------- #
-# If executed directly: run an interactive demo
-# --------------------------------------------------------------------------- #
-if __name__ == "__main__":                                         # nocv
-    run_demo(show_window=True)
+# ---------------------------------------------------------------------
+# CLI wrapper – choose GUI or not
+# ---------------------------------------------------------------------
+if __name__ == "__main__":                            # pragma: no cover
+    ap = argparse.ArgumentParser(
+        description="Run a single Swarm FlightPlan validation demo")
+    ap.add_argument("--gui",  action="store_true",
+                    help="open the PyBullet 3‑D viewer")
+    ap.add_argument("--nodash", action="store_true",
+                    help="suppress the Tkinter dashboard")
+    args = ap.parse_args()
+
+    run_demo(show_dashboard=not args.nodash,
+             sim_gui=args.gui)
