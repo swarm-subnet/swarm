@@ -50,35 +50,6 @@ def validate(task: MapTask,
 
 
 # ---------------------------------------------------------------------
-# Tiny Tk dashboard (optional)
-# ---------------------------------------------------------------------
-def show_gui(res: ValidationResult, plan_hash: str) -> None:  # pragma: no cover
-    try:
-        import tkinter as tk
-        from tkinter import ttk
-    except Exception as exc:
-        logger.warning(f"GUI skipped (Tk not available): {exc}")
-        return
-
-    root = tk.Tk()
-    root.title("Swarm FlightPlan Validation")
-
-    def add(label: str, value: str, row: int) -> None:
-        ttk.Label(root, text=label, font=("Arial", 10, "bold"))\
-            .grid(sticky="w", padx=6, pady=2, row=row, column=0)
-        ttk.Label(root, text=value, font=("Arial", 10))\
-            .grid(sticky="w", padx=6, pady=2, row=row, column=1)
-
-    add("FlightPlan SHA‑256", plan_hash, 0)
-    for i, (k, v) in enumerate(asdict(res).items(), start=1):
-        add(k.replace("_", " ").title(), f"{v}", i)
-
-    ttk.Button(root, text="Close", command=root.destroy)\
-        .grid(pady=8, columnspan=2)
-    root.mainloop()
-
-
-# ---------------------------------------------------------------------
 # Interactive demo entry point
 # ---------------------------------------------------------------------
 def run_demo(*,
@@ -103,8 +74,6 @@ def run_demo(*,
     logger.info(f"plan SHA‑256 : {plan2.sha256}")
     logger.info("═════════════════════════════════════════\n")
 
-    if show_dashboard:
-        show_gui(res, plan2.sha256)
     return res
 
 
