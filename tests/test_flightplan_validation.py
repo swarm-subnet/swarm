@@ -58,7 +58,7 @@ def run_demo(*,
             ) -> ValidationResult:   # pragma: no cover
     task = make_task()
     plan = make_plan(task, gui=sim_gui)
-
+    print(f"Plan created: {plan.commands}")
     # round‑trip serialisation check
     plan2 = FlightPlan.unpack(plan.pack())
     assert plan.sha256 == plan2.sha256, "SHA mismatch after msgpack round‑trip"
@@ -104,8 +104,6 @@ if __name__ == "__main__":                            # pragma: no cover
         description="Run a single Swarm FlightPlan validation demo")
     ap.add_argument("--gui",  action="store_true",
                     help="open the PyBullet 3‑D viewer")
-    ap.add_argument("--nodash", action="store_true",
-                    help="suppress the Tkinter dashboard")
     args = ap.parse_args()
 
     run_demo(show_dashboard=not args.nodash,
