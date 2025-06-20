@@ -53,7 +53,6 @@ def validate(task: MapTask,
 # Interactive demo entry point
 # ---------------------------------------------------------------------
 def run_demo(*,
-             show_dashboard: bool = True,
              sim_gui: bool = False   # ←  default is now head‑less
             ) -> ValidationResult:   # pragma: no cover
     task = make_task()
@@ -106,5 +105,4 @@ if __name__ == "__main__":                            # pragma: no cover
                     help="open the PyBullet 3‑D viewer")
     args = ap.parse_args()
 
-    run_demo(show_dashboard=not args.nodash,
-             sim_gui=args.gui)
+    run_demo(sim_gui=args.gui)

@@ -52,9 +52,18 @@ def _replay_once_impl(task: MapTask,
     env = HoverAviary(gui=gui,
                       obs=ObservationType.KIN,
                       act=ActionType.PID)
+    cli = env.getPyBulletClient()
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    # Tidy viewer
+    if gui:
+        for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
+            p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
+
     env.reset(seed=task.map_seed)
     build_world(task.map_seed, env.getPyBulletClient())
+    
 
+   
     # 2 ─ way‑points ----------------------------------------------------
     wps    = _waypoints(task)
     wp_idx = 0
