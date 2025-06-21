@@ -1,0 +1,134 @@
+"""
+neurons.miner – flying_strategy(task)
+─────────────────────────────────────
+Generate an open‑loop list of rotor‑RPM commands for one Crazyflie.
+
+* If `gui=False` run in‑process (fast, unit‑test friendly).
+* If `gui=True` execute the whole simulation in a crash‑proof subprocess
+  via `run_isolated`.  We **do not** attempt to disconnect PyBullet in
+  that child – the OS will reclaim all resources on exit.
+"""
+from __future__ import annotations
+
+import time
+from typing import List, Sequence, Tuple
+
+import numpy as np
+import pybullet as p
+import pybullet_data
+from gym_pybullet_drones.envs.HoverAviary import HoverAviary
+from gym_pybullet_drones.utils.enums import ObservationType, ActionType
+
+from swarm.utils.gui_isolation import run_isolated
+from swarm.validator.env_builder import build_world
+from swarm.protocol import MapTask, RPMCmd                     # type: ignore
+
+# ───────── parameters & constants ─────────
+SAFE_Z: float   = 2.0     # cruise altitude (m)
+GOAL_TOL: float = 0.2     # waypoint acceptance sphere (m)
+CAM_HZ:  int    = 60
+# ───────────────────────────────────────────
+
+
+# ---------- public API ---------------------------------------------------
+def flying_strategy(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
+    """Thin wrapper that delegates to the real body through run_isolated."""
+    return run_isolated(_flying_strategy_impl, task, gui=gui)
+
+
+# ---------- implementation ----------------------------------------------
+def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
+    # 1 ─ environment ----------------------------------------------------
+    env = HoverAviary(gui=gui,
+                      record=False,
+                      obs=ObservationType.KIN,
+                      act=ActionType.PID)
+    cli = env.getPyBulletClient()
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+    # Tidy viewer
+    if gui:
+        for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
+            p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
+
+    # 2 ─ reset then build world ----------------------------------------
+    _ = env.reset(seed=task.map_seed)
+    build_world(task.map_seed, cli)
+
+    # 3 ─ timing --------------------------------------------------------
+    env.CTRL_TIMESTEP = task.sim_dt
+    env.CTRL_FREQ     = int(round(1.0 / task.sim_dt))
+
+    # 4 ─ drone initial pose -------------------------------------------
+    start_xyz = np.array(task.start, dtype=float)
+    start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
+    p.resetBasePositionAndOrientation(env.DRONE_IDS[0],
+                                      start_xyz,
+                                      start_quat,
+                                      physicsClientId=cli)
+
+    # 5 ─ way‑points ----------------------------------------------------
+    gx, gy, gz = task.goal
+    safe_z = max(SAFE_Z, start_xyz[2], gz)
+    wps = [
+        np.array([*start_xyz[:2], safe_z]),
+        np.array([gx, gy, safe_z]),
+        np.array([gx, gy, gz]),
+    ]
+    wp_idx = 0
+
+    # camera bookkeeping
+    if gui:
+        frames_per_cam = max(1, int(round(1.0 / (task.sim_dt * CAM_HZ))))
+        step_counter   = 0
+
+    # 6 ─ control loop --------------------------------------------------
+    t_sim   = 0.0
+    rpm_log: List[RPMCmd] = []
+
+    while t_sim < task.horizon:
+        target = wps[wp_idx]
+
+        # physics + PID
+        obs, *_ = env.step(target.reshape(1, 3))
+        pos = obs[0, :3]
+
+        # camera follow
+        if gui and step_counter % frames_per_cam == 0:
+            from swarm.utils.drone import track_drone   # late import
+            track_drone(cli=cli,
+                        drone_id=env.DRONE_IDS[0],
+                        frames_per_cam=frames_per_cam,
+                        cam_hz=CAM_HZ)
+
+        # log motor command
+        _record_cmd(rpm_log, env.last_clipped_action[0], t_sim)
+
+        # waypoint switching
+        if np.linalg.norm(pos - target) < GOAL_TOL:
+            if wp_idx < len(wps) - 1:
+                wp_idx += 1
+            else:
+                break   # mission accomplished
+
+        # bookkeeping
+        t_sim += task.sim_dt
+        if gui:
+            time.sleep(task.sim_dt)
+            step_counter += 1
+
+    # 7 ─ clean‑up ------------------------------------------------------
+    if not gui:                 # head‑less – safe to close Bullet
+        env.close()
+
+    # In GUI mode we deliberately *avoid* p.disconnect(): the subprocess
+    # will terminate immediately after returning this result, so any GL
+    # resources are reclaimed by the OS and cannot crash the parent.
+    return rpm_log
+
+
+# ---------- helpers ------------------------------------------------------
+def _record_cmd(buffer: List[RPMCmd], rpm_vec: Sequence[float], t: float) -> None:
+    """Convert the 4‑element vector into an RPMCmd dataclass entry."""
+    rpm_tuple: Tuple[int, int, int, int] = tuple(int(round(x)) for x in rpm_vec)  # type: ignore[arg-type]
+    buffer.append(RPMCmd(t=t, rpm=rpm_tuple))

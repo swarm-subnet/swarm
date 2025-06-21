@@ -1,134 +1,154 @@
-"""
-neurons.miner – flying_strategy(task)
-─────────────────────────────────────
-Generate an open‑loop list of rotor‑RPM commands for one Crazyflie.
-
-* If `gui=False` run in‑process (fast, unit‑test friendly).
-* If `gui=True` execute the whole simulation in a crash‑proof subprocess
-  via `run_isolated`.  We **do not** attempt to disconnect PyBullet in
-  that child – the OS will reclaim all resources on exit.
-"""
+# neurons/miner.py
+# -------------------------------------------------------------------------
+#  Swarm 
+#
+#  Miner node: receives a flight‑navigation MapTask from the validator,
+#  runs a deterministic open‑loop planning policy (`flying_strategy`),
+#  and returns a FlightPlan to the caller.
+#
+#  The class keeps the generic blacklist / priority logic supplied by
+#  BaseMinerNeuron so that stake‑ and validator‑based filtering continues
+#  to work exactly as on every other subnet.
+# -------------------------------------------------------------------------
 from __future__ import annotations
 
 import time
-from typing import List, Sequence, Tuple
+import typing
+from typing import Tuple
 
-import numpy as np
-import pybullet as p
-import pybullet_data
-from gym_pybullet_drones.envs.HoverAviary import HoverAviary
-from gym_pybullet_drones.utils.enums import ObservationType, ActionType
+import bittensor as bt
 
-from swarm.utils.gui_isolation import run_isolated
-from swarm.validator.env_builder import build_world
-from swarm.protocol import MapTask, RPMCmd                     # type: ignore
+# ── Swarm‑specific --------------------------------------------------------
+from swarm.base.miner import BaseMinerNeuron                      
+from swarm.protocol import (                                      
+    MapTaskSynapse,
+    FlightPlanSynapse,
+    FlightPlan,
+)
+from neurons.flying_strategy import flying_strategy               
 
-# ───────── parameters & constants ─────────
-SAFE_Z: float   = 2.0     # cruise altitude (m)
-GOAL_TOL: float = 0.2     # waypoint acceptance sphere (m)
-CAM_HZ:  int    = 60
-# ───────────────────────────────────────────
+# Optional coloured logging – fall back gracefully if unavailable
+try:
+    from swarm.utils.logging import ColoredLogger
+except Exception:                                                 
+    class _Stub:
+        RED = GREEN = YELLOW = BLUE = GRAY = ""
+        @staticmethod
+        def info(msg, *a, **kw):  bt.logging.info(msg)
+        @staticmethod
+        def success(msg, *a, **kw): bt.logging.info(msg)
+        @staticmethod
+        def warning(msg, *a, **kw): bt.logging.warning(msg)
+        @staticmethod
+        def error(msg, *a, **kw): bt.logging.error(msg)
+    ColoredLogger = _Stub()                                       
 
+# =========================================================================
+#  Miner implementation
+# =========================================================================
+class Miner(BaseMinerNeuron):
+    # ------------------------------------------------------------------
+    # Life‑cycle
+    # ------------------------------------------------------------------
+    def __init__(self, config=None):
+        super().__init__(config=config)        
+        self.load_state()                      
 
-# ---------- public API ---------------------------------------------------
-def flying_strategy(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
-    """Thin wrapper that delegates to the real body through run_isolated."""
-    return run_isolated(_flying_strategy_impl, task, gui=gui)
+        ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
 
+    # ------------------------------------------------------------------
+    # Main RPC endpoint – the **only one** required for this subnet
+    # ------------------------------------------------------------------
+    async def forward(self, synapse: MapTaskSynapse) -> FlightPlanSynapse:
+        """
+        1.  Unpack MapTask sent by the validator.
+        2.  Run open‑loop planning policy (no GUI inside the miner).
+        3.  Pack the FlightPlan back into a synapse and return.
+        """
+        try:
+            validator = getattr(synapse.dendrite, "hotkey", "<?>")
+            ColoredLogger.info(f"[forward] Request from {validator}", ColoredLogger.YELLOW)
 
-# ---------- implementation ----------------------------------------------
-def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
-    # 1 ─ environment ----------------------------------------------------
-    env = HoverAviary(gui=gui,
-                      record=False,
-                      obs=ObservationType.KIN,
-                      act=ActionType.PID)
-    cli = env.getPyBulletClient()
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+            task      = synapse.task
+            bt.logging.info("Generating FlightPlan …")
 
-    # Tidy viewer
-    if gui:
-        for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
-            p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
+            # ---- deterministic planning policy ---------------------
+            cmds = flying_strategy(task, gui=False)
+            plan = FlightPlan(commands=cmds, sha256="")       # hash auto‑computed
 
-    # 2 ─ reset then build world ----------------------------------------
-    _ = env.reset(seed=task.map_seed)
-    build_world(task.map_seed, cli)
+            ColoredLogger.success("FlightPlan ready.", ColoredLogger.GREEN)
+            return FlightPlanSynapse.from_plan(plan)
 
-    # 3 ─ timing --------------------------------------------------------
-    env.CTRL_TIMESTEP = task.sim_dt
-    env.CTRL_FREQ     = int(round(1.0 / task.sim_dt))
+        except Exception as err:
+            # A failure must *never* crash the miner – reply with a stub plan.
+            bt.logging.error(f"Miner forward error: {err}")
 
-    # 4 ─ drone initial pose -------------------------------------------
-    start_xyz = np.array(task.start, dtype=float)
-    start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-    p.resetBasePositionAndOrientation(env.DRONE_IDS[0],
-                                      start_xyz,
-                                      start_quat,
-                                      physicsClientId=cli)
+            empty_plan = FlightPlan(commands=[], sha256="")
+            return FlightPlanSynapse.from_plan(empty_plan)
 
-    # 5 ─ way‑points ----------------------------------------------------
-    gx, gy, gz = task.goal
-    safe_z = max(SAFE_Z, start_xyz[2], gz)
-    wps = [
-        np.array([*start_xyz[:2], safe_z]),
-        np.array([gx, gy, safe_z]),
-        np.array([gx, gy, gz]),
-    ]
-    wp_idx = 0
+    # ------------------------------------------------------------------
+    #  Black‑list logic (unchanged except for type names)
+    # ------------------------------------------------------------------
+    async def blacklist(self, synapse: MapTaskSynapse) -> Tuple[bool, str]:
+        return await self._common_blacklist(synapse)
 
-    # camera bookkeeping
-    if gui:
-        frames_per_cam = max(1, int(round(1.0 / (task.sim_dt * CAM_HZ))))
-        step_counter   = 0
+    async def _common_blacklist(
+        self, synapse: typing.Union[MapTaskSynapse, FlightPlanSynapse]
+    ) -> Tuple[bool, str]:
+        """
+        Reject calls from unknown / under‑staked callers or, optionally,
+        from non‑validator hotkeys.
+        """
+        if synapse.dendrite is None or synapse.dendrite.hotkey is None:
+            bt.logging.warning("Request without dendrite/hotkey.")
+            return True, "Missing dendrite or hotkey"
 
-    # 6 ─ control loop --------------------------------------------------
-    t_sim   = 0.0
-    rpm_log: List[RPMCmd] = []
+        hotkey = synapse.dendrite.hotkey
 
-    while t_sim < task.horizon:
-        target = wps[wp_idx]
+        # 1) unknown hotkey?
+        if (
+            not self.config.blacklist.allow_non_registered
+            and hotkey not in self.metagraph.hotkeys
+        ):
+            return True, f"Unrecognised hotkey: {hotkey}"
 
-        # physics + PID
-        obs, *_ = env.step(target.reshape(1, 3))
-        pos = obs[0, :3]
+        uid = self.metagraph.hotkeys.index(hotkey)
 
-        # camera follow
-        if gui and step_counter % frames_per_cam == 0:
-            from swarm.utils.drone import track_drone   # late import
-            track_drone(cli=cli,
-                        drone_id=env.DRONE_IDS[0],
-                        frames_per_cam=frames_per_cam,
-                        cam_hz=CAM_HZ)
+        # 2) validator permit enforcement
+        if self.config.blacklist.force_validator_permit and not self.metagraph.validator_permit[uid]:
+            return True, f"Hotkey {hotkey} lacks validator permit"
 
-        # log motor command
-        _record_cmd(rpm_log, env.last_clipped_action[0], t_sim)
+        # 3) minimum stake check
+        stake      = self.metagraph.S[uid]
+        min_stake  = self.config.blacklist.minimum_stake_requirement
+        if stake < min_stake:
+            return True, f"Stake {stake:.2f} < required {min_stake:.2f}"
 
-        # waypoint switching
-        if np.linalg.norm(pos - target) < GOAL_TOL:
-            if wp_idx < len(wps) - 1:
-                wp_idx += 1
-            else:
-                break   # mission accomplished
+        return False, "OK"
 
-        # bookkeeping
-        t_sim += task.sim_dt
-        if gui:
-            time.sleep(task.sim_dt)
-            step_counter += 1
+    # ------------------------------------------------------------------
+    #  Priority logic 
+    # ------------------------------------------------------------------
+    async def priority(self, synapse: MapTaskSynapse) -> float:
+        return await self._common_priority(synapse)
 
-    # 7 ─ clean‑up ------------------------------------------------------
-    if not gui:                 # head‑less – safe to close Bullet
-        env.close()
+    async def _common_priority(
+        self, synapse: typing.Union[MapTaskSynapse, FlightPlanSynapse]
+    ) -> float:
+        if synapse.dendrite is None or synapse.dendrite.hotkey is None:
+            return 0.0
 
-    # In GUI mode we deliberately *avoid* p.disconnect(): the subprocess
-    # will terminate immediately after returning this result, so any GL
-    # resources are reclaimed by the OS and cannot crash the parent.
-    return rpm_log
+        hotkey = synapse.dendrite.hotkey
+        if hotkey not in self.metagraph.hotkeys:
+            return 0.0
 
+        uid = self.metagraph.hotkeys.index(hotkey)
+        return float(self.metagraph.S[uid])          # stake‑proportional
 
-# ---------- helpers ------------------------------------------------------
-def _record_cmd(buffer: List[RPMCmd], rpm_vec: Sequence[float], t: float) -> None:
-    """Convert the 4‑element vector into an RPMCmd dataclass entry."""
-    rpm_tuple: Tuple[int, int, int, int] = tuple(int(round(x)) for x in rpm_vec)  # type: ignore[arg-type]
-    buffer.append(RPMCmd(t=t, rpm=rpm_tuple))
+if __name__ == "__main__":
+    """
+    Miner_entrypoint
+    """
+    with Miner() as miner:
+        while True:
+            time.sleep(5)
