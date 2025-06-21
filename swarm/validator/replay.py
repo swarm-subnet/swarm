@@ -32,10 +32,10 @@ from swarm.validator.env_builder import build_world
 from swarm.protocol import MapTask, FlightPlan, RPMCmd
 
 # ───────── constants ─────────
-WAYPOINT_TOL = 1      # success sphere
-HOVER_SEC    = 3
-CAM_HZ       = 60
-PROP_EFF     = 0.60
+from swarm.constants import (CAM_HZ,          # camera follow rate
+    PROP_EFF,       # propeller efficiency
+    WAYPOINT_TOL,   # way-point success tolerance
+    HOVER_SEC)      # time to hover at the goal (s)
 # ─────────────────────────────
 
 

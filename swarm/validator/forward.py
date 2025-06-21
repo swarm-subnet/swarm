@@ -21,14 +21,12 @@ from .task_gen import random_task
 from .replay   import replay_once
 from .reward   import flight_reward
 
-
-# ────────── Validator constants ─────────────────────────────────
-SIM_DT              = 0.02      # 50 Hz physics step sent to miners
-HORIZON_SEC         = 15.0      # max simulated flight time
-SAMPLE_K            = 20       # miners sampled per forward
-QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
-FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
-EMA_ALPHA           = 0.20      # weights EMA coefficient
+from swarm.constants import (SIM_DT,      # 50 Hz physics step sent to miners
+    HORIZON_SEC,      # max simulated flight time
+    SAMPLE_K,       # miners sampled per forward
+    QUERY_TIMEOUT,      # dendrite timeout (s)
+    FORWARD_SLEEP_SEC,       # pause between forwards
+    EMA_ALPHA)      # weights EMA coefficient
 
 
 # ────────── Internal helpers (use self from outer scope) ────────

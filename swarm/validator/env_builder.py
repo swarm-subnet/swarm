@@ -12,10 +12,9 @@ from __future__ import annotations
 import math
 import random
 from typing import Optional, Tuple
-
+from swarm.constants import WORLD_RANGE
 import pybullet as p
 
-WORLD_RANGE = 40.0        # random scenery is placed in ±WORLD_RANGE (m)
 
 
 # --------------------------------------------------------------------------

@@ -22,13 +22,13 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
 from swarm.utils.gui_isolation import run_isolated
 from swarm.validator.env_builder import build_world
-from swarm.protocol import MapTask, RPMCmd                     # type: ignore
+from swarm.protocol import MapTask, RPMCmd                     
 
 # ───────── parameters & constants ─────────
-SAFE_Z: float   = 2.0     # cruise altitude (m)
-GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
-HOVER_SEC: float = 3.0    # NEW – time to hover at goal (s)
-CAM_HZ:  int    = 60
+from swarm.constants import (SAFE_Z,       
+    GOAL_TOL,      
+    HOVER_SEC,     
+    CAM_HZ)
 # ───────────────────────────────────────────
 
 
