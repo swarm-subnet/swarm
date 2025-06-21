@@ -63,9 +63,9 @@ class Validator(BaseValidatorNeuron):
 if __name__ == "__main__":
     # This is Validator Entrypoint
     
-    logger.remove()  # Remove default handler
-    logger.add("logfile.log", level="INFO")  # Log to a file
-    logger.add(lambda msg: print(msg, end=""), level="WARNING")  # Log to console
+    logger.remove()  
+    logger.add("logfile.log", level="INFO")  
+    logger.add(lambda msg: print(msg, end=""), level="WARNING") 
 
     with Validator() as validator:
         while True:

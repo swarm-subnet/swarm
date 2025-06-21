@@ -39,6 +39,7 @@ def flying_strategy(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
 
 
 # ---------- implementation ----------------------------------------------
+#Default, hardcoded miner -> Goes from point A to point B, then hovers for 5 seconds. Miners should implement their own logic here.
 def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
     # 1 ─ environment ----------------------------------------------------
     ctrl_freq = int(round(1.0 / task.sim_dt))
@@ -46,7 +47,7 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
     env = HoverAviary(gui=gui,
                   record=False,
                   obs=ObservationType.KIN,
-                  act=ActionType.PID,        # keep PID here
+                  act=ActionType.PID,       
                   ctrl_freq=ctrl_freq,
                   pyb_freq=pyb_freq)
     cli = env.getPyBulletClient()
