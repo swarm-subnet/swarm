@@ -22,7 +22,8 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
 from swarm.utils.gui_isolation import run_isolated
 from swarm.validator.env_builder import build_world
-from swarm.protocol import MapTask, RPMCmd                     
+from swarm.protocol import MapTask, RPMCmd             
+from swarm.utils.drone import track_drone  # late import        
 
 # ───────── parameters & constants ─────────
 from swarm.constants import (SAFE_Z,       
@@ -101,7 +102,7 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
 
         # camera follow
         if gui and step_counter % frames_per_cam == 0:
-            from swarm.utils.drone import track_drone  # late import
+            
             track_drone(
                 cli=cli,
                 drone_id=env.DRONE_IDS[0],
