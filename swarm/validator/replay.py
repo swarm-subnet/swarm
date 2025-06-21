@@ -109,7 +109,6 @@ def _replay_once_impl(task: MapTask,
 
         # success logic
         if np.linalg.norm(pos - goal) < WAYPOINT_TOL:
-            print(f"In the position!!!! {hover_elapsed}")
             hover_elapsed += task.sim_dt
             if hover_elapsed >= HOVER_SEC:
                 success = True

@@ -1,6 +1,6 @@
 # swarm/validator/reward.py
 def flight_reward(success: bool, t: float, e: float, horizon: float,
-                  w_t=0.3, w_e=0.7) -> float:
+                  w_t=0.9, w_e=0.1) -> float:
     if not success:
         return 0.0
     t_norm = min(1.0, t / horizon)
