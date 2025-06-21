@@ -71,9 +71,8 @@ class MapTask:
 
 @dataclass(slots=True)
 class RPMCmd:
-    """Low-level motor command at absolute time *t*."""
-    t: float                               # seconds since episode start
-    rpm: Tuple[int, int, int, int]         # CW, CCW, CW, CCW
+    t: float
+    rpm: Tuple[float, float, float, float]   
 
 
 @dataclass(slots=True)

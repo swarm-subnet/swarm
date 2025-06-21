@@ -32,7 +32,7 @@ def _add_box(cli: int, pos, size, yaw) -> None:
 
 
 # 100 % height (kept from original – change here if you want flatter scenery)
-HEIGHT_SCALE = 1.0
+HEIGHT_SCALE = 0.2
 
 
 # --------------------------------------------------------------------------

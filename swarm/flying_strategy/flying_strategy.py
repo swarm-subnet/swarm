@@ -26,8 +26,8 @@ from swarm.protocol import MapTask, RPMCmd                     # type: ignore
 
 # ───────── parameters & constants ─────────
 SAFE_Z: float   = 2.0     # cruise altitude (m)
-GOAL_TOL: float = 0.20    # waypoint acceptance sphere (m)
-HOVER_SEC: float = 5.0    # NEW – time to hover at goal (s)
+GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
+HOVER_SEC: float = 3.0    # NEW – time to hover at goal (s)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
 
@@ -41,12 +41,14 @@ def flying_strategy(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
 # ---------- implementation ----------------------------------------------
 def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
     # 1 ─ environment ----------------------------------------------------
-    env = HoverAviary(
-        gui=gui,
-        record=False,
-        obs=ObservationType.KIN,
-        act=ActionType.PID,
-    )
+    ctrl_freq = int(round(1.0 / task.sim_dt))
+    pyb_freq  = ctrl_freq
+    env = HoverAviary(gui=gui,
+                  record=False,
+                  obs=ObservationType.KIN,
+                  act=ActionType.PID,        # keep PID here
+                  ctrl_freq=ctrl_freq,
+                  pyb_freq=pyb_freq)
     cli = env.getPyBulletClient()
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
@@ -56,13 +58,8 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
             p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
 
     # 2 ─ reset then build world ----------------------------------------
-    _ = env.reset(seed=task.map_seed)
+    env.reset(seed=task.map_seed)
     build_world(task.map_seed, cli, task.goal)           # ← pass goal
-
-    # 3 ─ timing --------------------------------------------------------
-    env.CTRL_TIMESTEP = task.sim_dt
-    env.CTRL_FREQ = int(round(1.0 / task.sim_dt))
-
     # 4 ─ drone initial pose -------------------------------------------
     start_xyz = np.array(task.start, dtype=float)
     start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
@@ -91,6 +88,7 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
     # 6 ─ control loop --------------------------------------------------
     t_sim = 0.0
     hover_elapsed = 0.0      # NEW
+    extra_counter = 0
     rpm_log: List[RPMCmd] = []
 
     while t_sim < task.horizon:
@@ -111,6 +109,7 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
             )
 
         # log motor command
+        # print(f"Last clipped action: {env.last_clipped_action[0]})  # debug")
         _record_cmd(rpm_log, env.last_clipped_action[0], t_sim)
 
         # waypoint / hover logic
@@ -123,8 +122,10 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
             # Final waypoint – enforce 5 s hover
             if dist < GOAL_TOL:
                 hover_elapsed += task.sim_dt
-                if hover_elapsed >= HOVER_SEC:
-                    break      # mission accomplished
+                if hover_elapsed >= HOVER_SEC+2:
+                    extra_counter += 1
+                    if extra_counter >= int(1.0 / task.sim_dt):   # 1 extra second
+                        break
             else:
                 hover_elapsed = 0.0    # drifted out – reset timer
 
@@ -146,5 +147,5 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
 # ---------- helpers ------------------------------------------------------
 def _record_cmd(buffer: List[RPMCmd], rpm_vec: Sequence[float], t: float) -> None:
     """Convert the 4‑element vector into an RPMCmd dataclass entry."""
-    rpm_tuple: Tuple[int, int, int, int] = tuple(int(round(x)) for x in rpm_vec)  # type: ignore[arg-type]
+    rpm_tuple: Tuple[float, float, float, float] = tuple(float(x) for x in rpm_vec)  # type: ignore[arg-type]
     buffer.append(RPMCmd(t=t, rpm=rpm_tuple))

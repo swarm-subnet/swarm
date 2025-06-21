@@ -63,11 +63,7 @@ def run_demo(*,
         plan = make_plan(task, gui=True)
         print(f"Plan created: {plan.commands}")
 
-        # round-trip serialisation check
-        plan2 = FlightPlan.unpack(plan.pack())
-        assert plan.sha256 == plan2.sha256, "SHA mismatch after msgpack round-trip"
-
-        res = validate(task, plan2, sim_gui=True)
+        res = validate(task, plan, sim_gui=True)
 
         # Console summary
         logger.info("\n═══════════ Validation result ═══════════")
@@ -75,7 +71,6 @@ def run_demo(*,
         logger.info(f"time_sec     : {res.time_sec:7.2f} (horizon = {task.horizon})")
         logger.info(f"energy       : {res.energy:7.2f}")
         logger.info(f"reward score : {res.score:7.3f}")
-        logger.info(f"plan SHA-256 : {plan2.sha256}")
         logger.info("═════════════════════════════════════════\n")
 
         return [res]

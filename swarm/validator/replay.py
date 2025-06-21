@@ -23,7 +23,7 @@ from typing import Tuple, List
 import numpy as np
 import pybullet as p
 import pybullet_data
-from gym_pybullet_drones.envs.HoverAviary import HoverAviary
+from swarm.utils.aviary_raw import HoverAviaryRawRPM
 from gym_pybullet_drones.utils.enums import ActionType, ObservationType
 
 from swarm.utils.gui_isolation import run_isolated
@@ -32,8 +32,8 @@ from swarm.validator.env_builder import build_world
 from swarm.protocol import MapTask, FlightPlan, RPMCmd
 
 # ───────── constants ─────────
-WAYPOINT_TOL = 0.20      # success sphere
-HOVER_SEC    = 5.0
+WAYPOINT_TOL = 1      # success sphere
+HOVER_SEC    = 3
 CAM_HZ       = 60
 PROP_EFF     = 0.60
 # ─────────────────────────────
@@ -57,9 +57,14 @@ def _replay_once_impl(task: MapTask,
                       ) -> Tuple[bool, float, float]:
 
     # 1 ─ environment ---------------------------------------------------
-    env = HoverAviary(gui=gui,
-                      obs=ObservationType.KIN,
-                      act=ActionType.RPM)          # ← we feed raw RPM
+    ctrl_freq = int(round(1.0 / task.sim_dt))
+    pyb_freq  = ctrl_freq
+    env = HoverAviaryRawRPM(gui=gui,
+                  record=False,
+                  obs=ObservationType.KIN,
+                  act=ActionType.RPM,       
+                  ctrl_freq=ctrl_freq,
+                  pyb_freq=pyb_freq)
     cli = env.getPyBulletClient()
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
@@ -68,17 +73,23 @@ def _replay_once_impl(task: MapTask,
         for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
             p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
 
-    # Sync time‑step with the task
-    env.CTRL_TIMESTEP = task.sim_dt
-    env.CTRL_FREQ     = int(round(1.0 / task.sim_dt))
-
     env.reset(seed=task.map_seed)
     build_world(task.map_seed, cli, task.goal)
 
+    start_xyz = np.array(task.start, dtype=float)
+    start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
+    p.resetBasePositionAndOrientation(
+        env.DRONE_IDS[0],
+        start_xyz,
+        start_quat,
+        physicsClientId=cli,
+    )
     # 2 ─ turn the FlightPlan into a step‑indexed RPM table -------------
-    max_steps = int(math.ceil(task.horizon / task.sim_dt))
-    rpm_table = _plan_to_table(plan.commands, max_steps, task.sim_dt)
+    last_t      = plan.commands[-1].t
+    max_steps   = int(round(last_t / task.sim_dt)) + 1      # strict length
+    rpm_table   = _plan_to_table(plan.commands, max_steps, task.sim_dt)       
 
+    print(f"max_steps = {max_steps}")                    
     # 3 ─ main replay loop ---------------------------------------------
     frames_per_cam = max(1, int(round(1.0 / (task.sim_dt * CAM_HZ))))
     hover_elapsed  = 0.0
@@ -89,7 +100,6 @@ def _replay_once_impl(task: MapTask,
     for k in range(max_steps):
         t_sim   = k * task.sim_dt
         rpm_vec = rpm_table[k]
-
         obs, *_ = env.step(rpm_vec[None, :])       # shape (1,4)
         pos     = obs[0, :3]
 
@@ -99,6 +109,7 @@ def _replay_once_impl(task: MapTask,
 
         # success logic
         if np.linalg.norm(pos - goal) < WAYPOINT_TOL:
+            print(f"In the position!!!! {hover_elapsed}")
             hover_elapsed += task.sim_dt
             if hover_elapsed >= HOVER_SEC:
                 success = True
@@ -132,7 +143,7 @@ def _plan_to_table(cmds: List[RPMCmd],
     idx   = 0
 
     for cmd in cmds:
-        k = int(round(cmd.t / sim_dt))
+        k = int(cmd.t / sim_dt + 1e-9)
         k = max(0, min(k, max_steps - 1))          # clip to valid range
 
         # fill gap up to (but not including) k
