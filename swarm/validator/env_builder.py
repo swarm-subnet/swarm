@@ -11,7 +11,7 @@ def _add_box(cli, pos, size, yaw):
     p.createMultiBody(0, col, basePosition=pos, baseOrientation=quat,
                       physicsClientId=cli)
 
-HEIGHT_SCALE = 0.20          # keep just 20 % of the original height
+HEIGHT_SCALE = 1          # keep just 20 % of the original height
 
 def build_world(seed: int, cli: int) -> None:
     rng = random.Random(seed)
