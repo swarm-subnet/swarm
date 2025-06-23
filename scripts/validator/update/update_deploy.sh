@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # update_deploy.sh - Force update and redeploy regardless of version check.
 # Updates validator and always invokes the top-level demo deploy wrapper.
-
+# TODO - REVIEW
 set -euo pipefail
 IFS=$'\n\t'
 

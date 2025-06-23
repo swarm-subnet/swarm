@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup.sh — create venv, install Python deps & Playwright
-
+# TODO - REVIEW
 set -e
 
 # Print error and exit
@@ -48,22 +48,6 @@ install_python_reqs() {
 
   pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
-
-  echo -e "\e[34m[INFO]\e[0m Installing Playwright package..."
-  pip install playwright \
-    || handle_error "Failed to install Playwright package"
-
-  # Verify that the playwright CLI is available
-  if ! command -v playwright >/dev/null 2>&1; then
-    handle_error "playwright CLI not found after installation. Make sure 'playwright' is in PATH."
-  fi
-
-  echo -e "\e[34m[INFO]\e[0m Downloading Playwright browsers..."
-  python -m playwright install \
-    || handle_error "Failed to download Playwright browsers"
-
-  # Install any additional OS dependencies for Playwright (silently ignore errors)
-  python -m playwright install-deps 2>/dev/null || true
 
   success_msg "Playwright and browsers installed."
 }

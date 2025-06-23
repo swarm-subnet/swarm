@@ -1,5 +1,6 @@
 #!/bin/bash
 # install_dependencies.sh - Install ONLY system dependencies for miner
+# TODO - REVIEW
 set -e
 
 handle_error() {

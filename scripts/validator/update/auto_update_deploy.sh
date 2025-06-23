@@ -9,6 +9,7 @@
 #
 #     bash auto_update_deploy.sh
 # ---------------------------------------------------------------
+# TODO - REVIEW
 set -euo pipefail
 IFS=$'\n\t'
 

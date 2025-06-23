@@ -1,5 +1,6 @@
 #!/bin/bash
 # setup.sh - Setup miner Python environment and dependencies
+# TODO - REVIEW
 set -e
 
 handle_error() {
