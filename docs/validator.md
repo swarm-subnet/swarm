@@ -1,5 +1,5 @@
 # 🚀 Swarm Validator Guide
-*(Drone‑Navigation subnet – netuid 124)*
+*(Swarm subnet – netuid 124)*
 
 This document shows how to install and operate the Swarm validator that drives the MapTask → FlightPlan competition. The code‑base has zero external sub‑modules and runs on any recent CPU‑only server.
 
