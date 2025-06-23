@@ -17,7 +17,7 @@ CAM_HZ       = 60     # camera update rate (Hz)
 PROP_EFF     = 0.60   # propeller efficiency 
 
 # ───────── parameters & constants ─────────
-SAFE_Z: float   = 10     # cruise altitude (m)
+SAFE_Z: float   = 2     # cruise altitude (m)
 GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
