@@ -34,7 +34,6 @@ pip install --upgrade pip
 pip install -r requirements.txt          # bittensor + pybullet + numpy …
 ```
 
-_No git submodule commands are needed – repository is self‑contained._
 
 ## 🔑 2 · Create wallet keys (once)
 
@@ -42,8 +41,7 @@ _No git submodule commands are needed – repository is self‑contained._
 btcli wallet new_coldkey --wallet.name my_cold
 btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_validator
 ```
-
-Fund the coldkey with enough TAO to register (≈ 0.002 TAO at time of writing) on the Finney test‑network.
+And register in the subnet
 
 ## ⚙️ 3 · Run the validator
 
@@ -54,24 +52,12 @@ source validator_env/bin/activate   # if not already
 
 pm2 start neurons/validator.py \
      --name "swarm_validator" \
-     --interpreter python3.11 \
-     -- \
      --netuid 124 \
      --subtensor.network finney \
      --wallet.name my_cold \
      --wallet.hotkey my_validator \
      --logging.debug
 ```
-
-### Flags explained
-
-| Flag                   | Value            | Description                        |
-|------------------------|------------------|------------------------------------|
-| `--netuid`             | 124              | Swarm subnet id                    |
-| `--subtensor.network`  | finney           | Test‑net; use local for devnet     |
-| `--wallet.name`        | coldkey          | Your cold key name                 |
-| `--wallet.hotkey`      | hotkey           | Hotkey that will validate          |
-| `--logging.debug`      | –                | Verbose logs                       |
 
 ### Logs:
 
