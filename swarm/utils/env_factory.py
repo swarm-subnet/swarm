@@ -78,7 +78,7 @@ def make_env(
 
     # 4 ─ spawn drone at requested start pose --------------------------
     start_xyz = np.asarray(task.start, dtype=float)
-    start_xyz[2] = max(start_xyz[2], SAFE_Z)   # never below safety floor
+    # start_xyz[2] = max(start_xyz[2], SAFE_Z)   # never below safety floor
     start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
 
     p.resetBasePositionAndOrientation(

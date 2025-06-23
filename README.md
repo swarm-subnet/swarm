@@ -1,121 +1,88 @@
-# Conceptual Summary – “Drone-Nav” Bittensor Subnet
-*(what we learned, why we chose it, and how every piece fits together)*
+# 🐝 **Swarm** – Bittensor Drone‑Navigation Subnet  
+*Deterministic flight plans • Physics‑based evaluation • Real‑time incentives*  
 
-## 1 · Problem framing
-We want a Bittensor subnet whose miners receive a “fly from A → B” task, return a deterministic instruction list (thrust/RPM profile or way-point stream), and are judged automatically by a validator that re-simulates the flight.
+License: MIT  
 
-### Key constraints
+---
 
-| Need                                   | Implications                                                               |
-|----------------------------------------|-----------------------------------------------------------------------------|
-| Deterministic physics & sensor read-back | Validator must bit-reproduce miner trajectory on different hardware.       |
-| Zero-setup for miners                  | ❌ large game engines; ✅ pure-Python / pip-install.                       |
-| Procedural map generation              | Task JSON must carry a single random seed that recreates the world inside both miner and validator. |
-| Fast, headless, CPU-only option        | Enables hundreds of parallel miner instances.                               |
+## 🔍 Overview
+Swarm is a **Bittensor subnet purpose‑built for autonomous quad‑rotor flight**.  
+Validators create synthetic “map tasks” and replay miner‑supplied **open‑loop rotor‑RPM schedules** inside a PyBullet physics simulator.  
+Miners that produce fast, energy‑efficient and *successful* flight plans earn the highest rewards
 
-## 2 · Simulator choice → gym-pybullet-drones (PyBullet)
+**Why a new benchmark?**
 
-### Criterion & Why PyBullet wins
+- Existing robotics leaderboards are small, static and quickly over‑fitted.  
+- Swarm uses **procedurally generated 3‑D missions** and deterministic re‑execution to eliminate replay hacks.  
 
-| Criterion                           | Why PyBullet wins                                                                                         |
-|-------------------------------------|-----------------------------------------------------------------------------------------------------------|
-| Deterministic (same CPU/FPU order)  | `resetSimulation` → `loadURDF(...)` in identical order + fixed-step loop ⇒ bit-level repeatability.       |
-| Lightweight                         | Python package ≈ 40 MB; no Unreal/Unity, no GPU compile.                                                  |
-| Procedural meshes on the fly        | Add boxes, gates, etc. through `p.createCollisionShape` at runtime.                                       |
-| Headless or GUI                     | Miners → `gui=False`; validator can switch GUI on for debugging.                                          |
-| Standard Gym API                    | Integrates with RL libs, but we need it mainly for deterministic physics + sensor suite (RGB, depth, IMU, GPS stub). |
+Our ambition is to establish Swarm miners as the **go‑to control brains for micro‑drone navigation** in research and industry.
 
-## 3 · Subnet architecture sketch
+---
 
-```text
-          ┌──────────────┐        publishes TASK JSON        ┌──────────────┐
-          │  Validator   │───────────────────────────────────▶│    Miner     │
-          └──────────────┘                                   └──────────────┘
-                 ▲                                                   │
-                 │ 4. re-plays instructions & scores                 │ 3. plan path
-                 │                                                   ▼
-          1. seed, A, B, config                         Gym-PyBullet-Drones sim
-                 │                                                   │
-                 └───────────────────────────────────────────────────┘
-                            both sides call build_world(seed)
-Deterministic round-trip
-```
+## 🛞 Swarm Flight Benchmark
+
+| Component             | Purpose                           | Key points (code refs)                                                      |
+|-----------------------|-----------------------------------|------------------------------------------------------------------------------|
+| **MapTask**           | Validator → Miner mission         | Random start→goal pair, simulation time‑step `sim_dt`, hard time limit `horizon` (`swarm.protocol.MapTask`) |
+| **Miner “FlightPlan”**| Open‑loop list of (t, rpm₁…₄)     | Set of instructions that will be replayed by the validator |
+| **Replay Engine**     | Deterministic PyBullet re‑execution | Converts ragged command list into step‑indexed RPM table, tracks energy (`swarm.validator.replay`) |
+| **Reward**            | Maps outcome → [0,1] score        | 0.70 × success + 0.15 × time + 0.15 × energy (`swarm.validator.reward.flight_reward`) |
+
+### Task generation
+
+*Radial* goals 10–30 m away are sampled at random altitude; every mission is uniquely seeded and fully reproducible.
 
 ```python
-# in both roles
-np.random.seed(task["map_seed"])
-build_world()                 # same order ⇒ same bodyIds
+# swarm/validator/task_gen.py
+goal = rng.uniform(R_MIN, R_MAX)   # 10 m ≤ r ≤ 30 m
 ```
 
-### Instruction format (example)
+**Validation loop**  
+The validator:
 
-```json
-{
-  "commands":[
-     {"t":0.00,"rpm":[2100,2100,2100,2100]},
-     {"t":0.01,"rpm":[2112,2095, ... ]},
-     ...
-  ],
-  "sha256":"0xDEADBEEF…"  # integrity check
-}
-```
+1. Replays the provided FlightPlan at fixed `sim_dt`.
+2. Tracks distance‑to‑goal, hover duration and integrated energy.
+3. Scores the run and writes the weight to chain.
 
-### Validator rule of thumb
+All physics, rendering and PID controllers live in an isolated subprocess to guarantee determinism and sandboxing.
 
-```python
-success = (dist(goal, pos[-1]) < ε) and no_collision and T < horizon
-score   = w_time*dt + w_energy*Σrpm² + ...
-```
+---
 
-## 4 · Practical playbook
+## ⚙️ Subnet Mechanics
 
-| Action                         | One-liner                                                                                       |
-|--------------------------------|-------------------------------------------------------------------------------------------------|
-| Install                        | `pip install -e gym-pybullet-drones` (inside conda env, Python 3.10).                            |
-| Hover demo                     | `python -m hover_demo` opens GUI, random RPMs for 4 s.                                           |
-| Training demo (hover PPO)      | `python examples/learn.py --timesteps 20000 --gui False`                                        |
-| Tune episode length            | In `HoverAviary._computeTruncated`: change positional box (±1.5 m), tilt limit (0.4 rad ≈ 23°), or `EPISODE_LEN_SEC`. |
-| Generate your own env          | Subclass `BaseRLAviary`, override `_addObstacles()` and reward.                                 |
+### 🧑‍🏫 Validator
 
-## 5 · Code base orientation
+- Generates 1 K+ unique MapTasks per epoch.  
+- Replays plans head‑less, or with an optional GUI for debugging (`--gui`).  
+- Assigns Bittensor weights proportional to the final reward score.
 
-```text
-envs/
- ├─ BaseAviary.py      # low-level: PyBullet hook, physics variants, sensors
- ├─ BaseRLAviary.py    # adds Gym spaces, PID helper, action buffer
- ├─ HoverAviary.py     # simple hover task (reward & termination)
- ├─ MultiHoverAviary.py … CtrlAviary.py … BetaAviary.py … CFAviary.py
-examples/
- ├─ pid.py             # PID hover test
- ├─ learn.py           # PPO template
-```
+### ⛏️ Miner
 
-### Termination logic we saw:
+- Receives the MapTask and must output a FlightPlan before timeout.  
+- Any strategy is allowed – classical control, RL, planning, imitation …  
+- Must respect the `sim_dt` sampling time; extra points for finish < `horizon` and low energy.
 
-```python
-def _computeTruncated(self):
-    too_far = abs(x) > 1.5 or abs(y) > 1.5 or z > 2.0
-    too_tilt= abs(roll) > .4 or abs(pitch) > .4
-    timeout = sim_time > 8.0
-    return too_far or too_tilt or timeout
-```
+Reference Strategy: A trivial three‑way‑point PID controller is bundled in `swarm.core.flying_strategy`.  
+It reaches the goal some percentage of the time. Be aware, the challenges will get harder!
 
-They keep training bites short (≈240 control steps), prevent physics blow-ups, and keep the drone visible in default camera.
+---
 
-## 6 · Determinism checklist (miner & validator)
+## 🎯 Incentive model
 
-- Pin package versions (`bullet3==3.27`, `gym-pybullet-drones` commit hash).
-- `p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)`
-- Fixed-step loop: `for _ in range(PYB_STEPS_PER_CTRL): stepSimulation()`
-- No wall-clock sleeps in replay.
-- Include seed + drone model + physics flags in task JSON.
+| Term        | Weight | Rationale                               |
+|-------------|--------|-----------------------------------------|
+| Success     | 0.70   | Reached + 5 s hover; safety first       |
+| Time        | 0.15   | 1 − t / horizon; encourages speed       |
+| Energy      | 0.15   | 1 − e / e_budget; rewards efficiency    |
 
-## 7 · What’s left to build
+---
 
-- Task seeder smart enough to vary map complexity yet keep it solvable.
-- Reference scorer (time, energy, smoothness) to mint TAO rewards.
-- Miner SDK that wraps `Env` → returns JSON instructions, hides PyBullet details.
-- Rich telemetry (optional): attach RGB/depth for perception-driven sub-tasks later.
+## 🤝 Contributing
+PRs, issues and benchmark ideas are welcome!  
 
-**tl;dr**
-Use gym-pybullet-drones as the simulation kernel; drive it with a seed-based map builder; let miners output deterministic control traces; validators replay & score. Lightweight, reproducible, and perfectly fits Bittensor’s miner/validator pattern.
+---
+
+## 📜 License
+Licensed under the MIT License – see LICENSE.
+
+Built with ❤️ by the Swarm team.
