@@ -10,10 +10,9 @@ Swarm is a **Bittensor subnet purpose‑built for autonomous quad‑rotor flight
 Validators create synthetic “map tasks” and replay miner‑supplied **open‑loop rotor‑RPM schedules** inside a PyBullet physics simulator.  
 Miners that produce fast, energy‑efficient and *successful* flight plans earn the highest rewards
 
-**Why a new benchmark?**
+**Why OS drone flying?**
 
-- Existing robotics leaderboards are small, static and quickly over‑fitted.  
-- Swarm uses **procedurally generated 3‑D missions** and deterministic re‑execution to eliminate replay hacks.  
+- Open-sourcing flight algorithms isn’t just idealism – it is a practical route to safer, cheaper and more accountable drones, and it prevents the future of aerial autonomy from being locked behind half a dozen NDAs
 
 Our ambition is to establish Swarm miners as the **go‑to control brains for micro‑drone navigation** in research and industry.
 

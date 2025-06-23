@@ -12,12 +12,12 @@ FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
 EMA_ALPHA           = 0.20      # weights EMA coefficient
 
 WAYPOINT_TOL = 1      # success sphere
-HOVER_SEC    = 3
-CAM_HZ       = 60
-PROP_EFF     = 0.60
+HOVER_SEC    = 3      # time to hover at the goal (s)
+CAM_HZ       = 60     # camera update rate (Hz)
+PROP_EFF     = 0.60   # propeller efficiency 
 
 # ───────── parameters & constants ─────────
-SAFE_Z: float   = 2     # cruise altitude (m)
+SAFE_Z: float   = 10     # cruise altitude (m)
 GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
