@@ -34,6 +34,8 @@ pip install --upgrade pip
 pip install -r requirements.txt          # bittensor + pybullet + numpy …
 sudo apt install -y npm
 sudo npm install -g pm2
+sudo apt update && sudo apt install -y \
+     build-essential git pkg-config libgl1-mesa-glx mesa-utils
 ```
 
 

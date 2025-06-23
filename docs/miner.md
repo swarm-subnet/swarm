@@ -30,6 +30,8 @@ source miner_env/bin/activate
 # 3) install Python dependencies
 pip install --upgrade pip
 pip install -r requirements.txt        # core Swarm libs
+sudo apt install -y npm
+sudo npm install -g pm2
 
 ```bash
 sudo apt update && sudo apt install -y \
