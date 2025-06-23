@@ -1,19 +1,20 @@
 # ⛏️ Swarm Miner Guide
-*(Drone‑Navigation / MapTask → FlightPlan subnet)*
+*(Swarm subnet)*
 
-The Swarm subnet tasks your miner with planning safe, energy‑efficient flight paths for a simulated drone across a procedurally generated world. This guide shows how to install, configure and run a Swarm miner that answers MapTask requests with a FlightPlan.
+The Swarm subnet tasks your miner with planning safe, energy‑efficient flight paths for a simulated drone across a procedurally generated world. 
+This guide shows how to install, configure and run a Swarm miner that answers MapTask requests with a FlightPlan.
 
-## 💻 System requirements
+## 💻 System requirements to run the default miner code
 
 | Component | Minimal | Recommended | Notes                                         |
 |-----------|---------|-------------|-----------------------------------------------|
 | CPU       | 2 cores  | 4 cores      | Path‑planning is light‑weight                 |
 | RAM       | 2 GB     | 4 GB         |                                               |
-| Disk      | 1 GB     | 5 GB         | Repository + virtual‑env                      |
+| Disk      | 1 GB     | 50 GB         | Repository + virtual‑env                      |
 | GPU       | none     | Optional     | Only if you integrate ML planners             |
 | OS        | Linux / macOS / WSL2 | —           | Scripts are written for Ubuntu 22.04          |
 
-ℹ️ All validation runs happen on the validator side. Your miner only computes a path; no physics simulation is performed locally.
+ℹ️ The existing miner code just plans an straight line between the spawn point and the objective. Objects might be places randomly in that trajectory and the drone will crash! Improve the flying_strategy.py file to give better flight plans
 
 ## 🚀 Installation
 
@@ -29,16 +30,10 @@ source miner_env/bin/activate
 # 3) install Python dependencies
 pip install --upgrade pip
 pip install -r requirements.txt        # core Swarm libs
-pip install gym_pybullet_drones        # task helper (pure‑python wheels)
-
-# ⚠️ if you plan to use a ML planner that needs PyTorch / JAX, install it here
-``` 
-
-### Optional system packages
 
 ```bash
 sudo apt update && sudo apt install -y \
-     build-essential git pkg-config libgl1-mesa-glx
+     build-essential git pkg-config libgl1-mesa-glx mesa-utils
 ```
 
 ## 🔧 Configuration
@@ -67,8 +62,6 @@ source miner_env/bin/activate      # if not already active
 
 pm2 start neurons/miner.py \
      --name "swarm_miner" \
-     --interpreter python3.11 \
-     -- \
      --netuid 124 \
      --subtensor.network finney \
      --wallet.name my_cold \
@@ -91,11 +84,10 @@ pm2 stop     swarm_miner
 
 ## ✈️ How does the miner work?
 
-1. Validator sends a MapTask (JSON with obstacle list, world limits, time‑step, horizon, etc.)
-2. Your miner calls `flying_strategy(task)` – a function you implement inside `neurons/miner.py`. It must return a FlightPlan, i.e. an ordered list of way‑points and thrust set‑points that theoretically bring the drone from spawn to the goal.
+1. Validator sends a MapTask (JSON with seed, world limits, time‑step, horizon, etc.)
+2. Your miner calls `flying_strategy(task)` – a function you implement inside `neurons/miner.py`. It must return a FlightPlan, i.e. a time_stamped list of rotor RPMs. So, what power per propeller per t the drone needs to have to reach the objective.
 3. Validator re‑simulates the plan inside PyBullet to verify:
-   - Reaches goal inside horizon seconds
-   - No collision with obstacles
+   - Reaches goal inside horizon
    - Energy consumption below battery budget
 4. A reward ∈ [0, 1] is computed from success, time and energy, then broadcast back to the miner.
 
@@ -116,23 +108,6 @@ It is enough to start earning small rewards, but you are encouraged to replace `
 | Energy factor   | 15 %   | 1 − E_used / E_budget, clamped to [0,1]          |
 
 Full logic: `swarm/validator/reward.py`.
-
-## 🔄 Auto‑update & auto‑deploy (optional)
-
-The repo includes `scripts/auto_update_deploy.sh` which:
-
-- Checks `origin/main` every _n_ minutes.
-- If `swarm/__init__.py::__version__` increases, it pulls, then calls `scripts/update_deploy.sh` to rebuild and restart your PM2 process.
-
-```bash
-# make both scripts executable
-chmod +x scripts/auto_update_deploy.sh scripts/update_deploy.sh
-
-# run watcher (tmux / systemd / pm2)
-bash scripts/auto_update_deploy.sh
-```
-
-Adjust process name, wallet keys and subtensor flags at the top of the script.
 
 ## 🆘 Need help?
 
