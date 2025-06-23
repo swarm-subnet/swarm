@@ -74,7 +74,7 @@ def _replay_once_impl(
 
         # camera follow
         if gui and k % frames_per_cam == 0:
-            track_drone(cli, env.DRONE_IDS[0], frames_per_cam, CAM_HZ)
+            track_drone(cli, env.DRONE_IDS[0])
 
         # success logic
         if np.linalg.norm(pos - goal) < WAYPOINT_TOL:

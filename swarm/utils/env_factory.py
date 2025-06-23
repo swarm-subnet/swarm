@@ -20,7 +20,7 @@ import pybullet_data
 from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
-from swarm.core.aviary_raw import HoverAviaryRawRPM
+from swarm.core.HoverAviaryRawRPM import HoverAviaryRawRPM
 from swarm.core.env_builder import build_world
 from swarm.protocol import MapTask
 from swarm.constants import SAFE_Z

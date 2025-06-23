@@ -79,9 +79,7 @@ def _flying_strategy_impl(task: MapTask, *, gui: bool = False) -> List[RPMCmd]:
         if gui and step_counter % frames_per_cam == 0:
             track_drone(
                 cli=cli,
-                drone_id=env.DRONE_IDS[0],
-                frames_per_cam=frames_per_cam,
-                cam_hz=CAM_HZ,
+                drone_id=env.DRONE_IDS[0]
             )
 
         # log motor command
