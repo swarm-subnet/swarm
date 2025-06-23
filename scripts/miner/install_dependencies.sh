@@ -30,7 +30,7 @@ install_system_dependencies() {
     || handle_error "Failed to add Python PPA"
   sudo apt update -y || handle_error "Failed to refresh apt lists"
   
-  # Same packages as validator (miners need browser automation too)
+  # Same packages as validator
   COMMON_PACKAGES=(
     python3.11 python3.11-venv python3.11-dev
     build-essential cmake wget unzip sqlite3

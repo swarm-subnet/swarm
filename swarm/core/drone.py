@@ -13,25 +13,3 @@ def track_drone(cli, drone_id) -> None:
                                  cameraPitch=-25,       # slight downward tilt
                                  cameraTargetPosition=tgt,
                                  physicsClientId=cli)
-    
-def safe_disconnect_gui(client_id: int) -> None:
-    """
-    Close a GUI connection that uses the ExampleBrowser without crashing
-    Mesa/Intel drivers.
-
-    1.  Disable visualiser ⇒ the render thread stops touching GL.
-    2.  Sleep ~50 ms     ⇒ lets the ExampleBrowser message-loop finish
-                           one full tick.
-    3.  Finally call p.disconnect().
-    """
-    import pybullet as p, time
-
-    try:
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0,
-                                   physicsClientId=client_id)
-        p.configureDebugVisualizer(p.COV_ENABLE_GUI,        0,
-                                   physicsClientId=client_id)
-        p.removeAllUserDebugItems(physicsClientId=client_id)
-        time.sleep(0.5)                 # one browser tick (~16 ms) x3
-    finally:
-        p.disconnect(physicsClientId=client_id)

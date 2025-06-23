@@ -50,24 +50,8 @@ install_python_reqs() {
   
   pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
-
-  info_msg "Installing Playwright package..."
-  pip install playwright \
-    || handle_error "Failed to install Playwright package"
   
-  # Verify that the playwright CLI is available
-  if ! command -v playwright >/dev/null 2>&1; then
-    handle_error "playwright CLI not found after installation. Make sure 'playwright' is in PATH."
-  fi
-  
-  info_msg "Downloading Playwright browsers..."
-  python -m playwright install \
-    || handle_error "Failed to download Playwright browsers"
-  
-  # Install any additional OS dependencies for Playwright (silently ignore errors)
-  python -m playwright install-deps 2>/dev/null || true
-  
-  success_msg "Playwright and browsers installed."
+  success_msg "Packages installed"
 }
 
 install_modules() {
