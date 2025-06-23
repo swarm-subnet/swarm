@@ -8,7 +8,7 @@ def track_drone(cli, drone_id) -> None:
     pos, _ = p.getBasePositionAndOrientation(drone_id,
                                              physicsClientId=cli)
     tgt = np.add(pos, [0.0, 0.0, 0.4])                 # look ≈0.4 m above CG
-    p.resetDebugVisualizerCamera(cameraDistance=2,   # zoom-out
+    p.resetDebugVisualizerCamera(cameraDistance=1,   # zoom-out
                                  cameraYaw=0,
                                  cameraPitch=-25,       # slight downward tilt
                                  cameraTargetPosition=tgt,
