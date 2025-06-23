@@ -1,7 +1,7 @@
 # Constants for the Swarm project
 
 WORLD_RANGE = 40.0        # random scenery is placed in ±WORLD_RANGE (m)
-HEIGHT_SCALE = 1
+HEIGHT_SCALE = 0.2
 
 # ────────── Validator constants ─────────────────────────────────
 SIM_DT              = 0.02      # 50 Hz physics step sent to miners
