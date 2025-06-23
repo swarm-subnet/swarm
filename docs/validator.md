@@ -32,6 +32,8 @@ source validator_env/bin/activate
 # install requirements
 pip install --upgrade pip
 pip install -r requirements.txt          # bittensor + pybullet + numpy …
+sudo apt install -y npm
+sudo npm install -g pm2
 ```
 
 

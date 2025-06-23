@@ -76,10 +76,6 @@ verify_installation() {
   python -c "import bittensor; print(f'✓ Bittensor: {bittensor.__version__}')" || \
     info_msg "⚠ Warning: Bittensor import failed"
   
-  # Check Playwright
-  python -c "import playwright; print('✓ Playwright: imported successfully')" || \
-    info_msg "⚠ Warning: Playwright import failed"
-  
   success_msg "Installation verification completed."
 }
 

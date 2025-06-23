@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh — create venv, install Python deps & Playwright
+# setup.sh — create venv, install Python deps 
 # TODO - REVIEW
 set -e
 
@@ -49,7 +49,7 @@ install_python_reqs() {
   pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
 
-  success_msg "Playwright and browsers installed."
+  success_msg "Dependencies installed."
 }
 
 install_modules() {

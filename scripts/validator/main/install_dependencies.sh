@@ -1,6 +1,5 @@
 #!/bin/bash
 # install_dependencies.sh - Install ONLY system dependencies for validator
-# TODO - REVIEW
 set -e
 
 handle_error() {
@@ -58,32 +57,6 @@ install_system_dependencies() {
     || handle_error "Failed to install system dependencies"
 }
 
-install_nodejs_and_npm() {
-  info_msg "Checking Node.js installation..."
-  
-  # Remove old Node.js if present
-  if command -v node &>/dev/null; then
-    NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-    if [ "$NODE_VERSION" -lt 16 ]; then
-      info_msg "Removing old Node.js version..."
-      sudo apt remove -y nodejs npm 2>/dev/null || true
-      sudo apt autoremove -y || true
-    else
-      info_msg "Node.js version is compatible: $(node --version)"
-      return
-    fi
-  fi
-  
-  info_msg "Installing Node.js 18 LTS..."
-  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - \
-    || handle_error "Failed to add NodeSource repository"
-  
-  sudo apt install -y nodejs || handle_error "Failed to install Node.js"
-  
-  info_msg "Node.js installed: $(node --version)"
-  info_msg "npm installed: $(npm --version)"
-}
-
 install_pm2() {
   if command -v pm2 &>/dev/null; then
     info_msg "PM2 is already installed. Checking if it works..."
@@ -109,9 +82,6 @@ verify_installation() {
   # Check Python
   python3.11 --version || handle_error "Python 3.11 verification failed"
   
-  # Check Node.js
-  node --version || handle_error "Node.js verification failed"
-  
   # Check PM2
   pm2 --version || handle_error "PM2 verification failed"
   
@@ -121,7 +91,6 @@ verify_installation() {
 main() {
   info_msg "Installing validator system dependencies..."
   install_system_dependencies
-  install_nodejs_and_npm
   install_pm2
   verify_installation
   
