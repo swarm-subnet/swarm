@@ -25,7 +25,7 @@ from swarm.protocol import (
     FlightPlanSynapse,
     FlightPlan,
 )
-from swarm.flying_strategy.flying_strategy import flying_strategy               
+from swarm.core.flying_strategy import flying_strategy               
 
 # Optional coloured logging – fall back gracefully if unavailable
 try:

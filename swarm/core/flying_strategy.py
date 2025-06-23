@@ -18,10 +18,10 @@ import pybullet as p
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
 from swarm.utils.gui_isolation import run_isolated
-from swarm.validator.env_builder import build_world
+from swarm.core.env_builder import build_world
 from swarm.utils.env_factory import make_env       # ← NEW
 from swarm.protocol import MapTask, RPMCmd
-from swarm.utils.drone import track_drone
+from swarm.core.drone import track_drone
 
 # ───────── parameters & constants ─────────
 from swarm.constants import (

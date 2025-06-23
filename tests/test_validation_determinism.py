@@ -35,7 +35,7 @@ from typing import List, Dict, Tuple
 # ── Swarm‑sim imports (identical to your original script) ────────────────────
 from swarm.validator.task_gen import random_task
 from swarm.validator.forward import SIM_DT, HORIZON_SEC
-from swarm.flying_strategy.flying_strategy import flying_strategy
+from swarm.core.flying_strategy import flying_strategy
 from swarm.validator.replay import replay_once
 from swarm.validator.reward import flight_reward
 from swarm.protocol import MapTask, FlightPlan, ValidationResult
