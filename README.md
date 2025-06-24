@@ -66,9 +66,9 @@ The validator:
 3. Scores the run and writes the weight to chain
 
 All GUI lives in an isolated subprocess to guarantee determinism and sandboxing, here is an example!
-
+<div align="center">
 <img src="swarm/assets/drone_image.png" alt="Drone"  width="300">
-
+</div>
 ---
 
 ## 🎯 Incentive model
