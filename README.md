@@ -1,22 +1,20 @@
-<p align="center">
-  # 🐝 **Swarm** – Bittensor Drone autopilot Subnet  
-</p>
+<div align="center">
+  <h1>🐝 <strong>Swarm</strong> – Bittensor Drone autopilot Subnet</h1>
+  <img src="swarm/assets/swarm.png" alt="Swarm">
+  <p>
+    <a href="docs/miner.md">🚀 Miner guide</a> &bull;
+    <a href="docs/validator.md">🔐 Validator guide</a> &bull;
+    <a href="docs/roadmap.md">🔐 Roadmap</a>
+  </p>
+  <p>
+    <a href="https://discord.com/channels/799672011265015819/1385341501130801172">💬 Join us on Discord</a>
+  </p>
+</div>
+<hr>
 
 - [🚀 Miner guide](docs/miner.md)
 - [🔐 Validator guide](docs/validator.md)
 - [🔐 Roadmap](docs/roadmap.md)
-<p align="center">
-  <img src="swarm/assets/swarm.png" alt="Swarm">
-</p>
-
-<p align="center">
-  [🚀 Miner guide](docs/miner.md) • [🔐 Validator guide](docs/validator.md) • [🔐 Roadmap](docs/roadmap.md)  
-</p>
-
-<p align="center">
-  [💬 Join us on Discord](https://discord.com/channels/799672011265015819/1385341501130801172)  
-</p>
-
 ---
 
 ## 🔍 Overview
