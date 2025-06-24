@@ -69,6 +69,7 @@ All GUI lives in an isolated subprocess to guarantee determinism and sandboxing,
 <div align="center">
 <img src="swarm/assets/drone_image.png" alt="Drone"  width="300">
 </div>
+
 ---
 
 ## 🎯 Incentive model
