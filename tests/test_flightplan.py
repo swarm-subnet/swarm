@@ -1,4 +1,5 @@
 """
+Miners! You can use this script to validate your FlightPlan!!
 End-to-end round-trip & replay test – **with optional live GUIs**.
 """
 from __future__ import annotations
