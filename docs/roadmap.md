@@ -9,7 +9,7 @@
 - The default code generates dynamic maps based on random seeds. Miners have to improve routes (based on successful completions, time flying and battery left) to compete.
 
 ## Stage 1 – Static Map Difficulty Ramp-Up
-**Goal** Stress-test miner dones on harder, but still static environments.
+**Goal** Stress-test miner drones on harder, but still static environments.
 
 **Key upgrades**  
 - **Larger search space** Pole further away, elevation changes, occluding obstacles. 
@@ -22,11 +22,11 @@
 - Moving goal-pole (linear / circular path).  
 - Collision penalties + no-fly zones.
 
-## Stage 3 – High-Fidelity Simulation (“Simulation Jump Jump”)
+## Stage 3 – High-Fidelity Simulation (“Simulation Jump")
 **Goal** Narrow the Sim-to-Real gap.
 
 **🚀 Migration Path:** PyBullet ➜ New Simulator (TBD)  
-**🔍 Details:** Explore Gazebo, Airsim, Flighmare, Pegasus… and zero in on the ultimate real-world simulation platform!  
+**🔍 Details:** Explore Gazebo, Airsim, Flightmare , Pegasus… and zero in on the ultimate real-world simulation platform!  
 
 ## Stage 4 – Long-Range Navigation (“Travel Missions”)
 **Goal** Test endurance, GPS-denied odometry and multi-map stitching.
@@ -49,7 +49,7 @@
 **Goal** Validate that Swarm-trained policies survive reality.
 
 **Track 6-R (Research)**  
-- Indoor motion-capture lab, 75 g micro-quads running Linux-based autopilot.  
+- Indoor motion-capture lab, Linux-based autopilot.  
 - Automated log upload → on-chain notarisation of real-world flights.
 
 ## Stage 7 – Commercial Partnerships & Services
