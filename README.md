@@ -11,7 +11,9 @@
 
 ## 🔍 Overview
 Swarm is a **Bittensor subnet purpose‑built for autonomous quad‑rotor flight**.  
-Validators create synthetic “map tasks” and replay miner‑supplied **open‑loop rotor‑RPM schedules** inside a PyBullet physics simulator.  
+
+Validators create synthetic “map tasks” and replay miner‑supplied **open‑loop rotor‑RPM flight plans** inside a PyBullet physics simulator.  
+
 Miners that produce fast, energy‑efficient and *successful* flight plans earn the highest rewards
 
 **Why OS drone flying?**
@@ -63,9 +65,10 @@ The validator:
 
 1. Replays the provided FlightPlan
 2. Tracks distance‑to‑goal, hover duration and energy
-3. Scores the run and writes the weight to chain
+3. Scores the run and writes the weight to the chain
 
-All GUI lives in an isolated subprocess to guarantee determinism and sandboxing, here is an example!
+Here is an example image of our GUI!
+
 <div align="center">
 <img src="swarm/assets/drone_image.png" alt="Drone"  width="300">
 </div>
