@@ -40,7 +40,7 @@ It reaches the goal some percentage of the time. Be aware, the challenges will g
 
 ---
 
-## Swarm Flight
+## Swarm Core components
 
 | Component             | Purpose                           | Key points (code refs)                                                      |
 |-----------------------|-----------------------------------|------------------------------------------------------------------------------|
@@ -58,7 +58,7 @@ It reaches the goal some percentage of the time. Be aware, the challenges will g
 goal = rng.uniform(R_MIN, R_MAX)   # 10 m ≤ r ≤ 30 m
 ```
 
-**Validation loop**  
+### Validation loop  
 The validator:
 
 1. Replays the provided FlightPlan
