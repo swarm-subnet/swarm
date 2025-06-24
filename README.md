@@ -1,7 +1,8 @@
 # 🐝 **Swarm** – Bittensor Drone‑Navigation Subnet  
 *Deterministic flight plans • Physics‑based evaluation • Real‑time incentives*  
 
-License: MIT  
+- [🚀 Miner guide](docs/miner.md)
+- [🔐 Validator guide](docs/validator.md)
 
 ---
 

@@ -143,8 +143,7 @@ class Miner(BaseMinerNeuron):
             return 0.0
 
         uid = self.metagraph.hotkeys.index(hotkey)
-        return float(self.metagraph.S[uid])          # stake‑proportional
-
+        return float(self.metagraph.S[uid]) 
 if __name__ == "__main__":
     """
     Miner_entrypoint

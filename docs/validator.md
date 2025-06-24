@@ -108,7 +108,7 @@ pm2 start --name auto_update_validator \
 1. Generate a map
    - Random obstacles, world limits, physics time‑step & horizon are packed into a MapTask (see `swarm/validator/task_gen.py`).
 2. Broadcast to miners
-   - Sends the task to N randomly sampled miners (SAMPLE_K, default = 128).
+   - Sends the task to N randomly sampled miners
 3. Re‑simulate each returned FlightPlan in PyBullet (`replay_once`) measuring:
    - Goal reached?
    - Time to goal
