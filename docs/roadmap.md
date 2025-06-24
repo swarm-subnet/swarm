@@ -55,12 +55,12 @@
 ## Stage 7 – Commercial Partnerships & Services
 **Goal** Translate open research gains into sustainable value streams. We'll pitch (likely this will start around phase 5) to:
 
-# 🚚 Last-Mile Logistics & Retail  
-# 🏗 Industrial Inspection & Mapping  
-# 🚒 Public Safety & Emergency Response  
-# 🛡 Defense & Counter-UAS  
-# 🛩 UAV Manufacturers & Autopilot Stacks  
-# 🎓 Academia & Certification Bodies  
+- 🚚 Last-Mile Logistics & Retail  
+- 🏗 Industrial Inspection & Mapping  
+- 🚒 Public Safety & Emergency Response  
+- 🛡 Defense & Counter-UAS  
+- 🛩 UAV Manufacturers & Autopilot Stacks  
+- 🎓 Academia & Certification Bodies  
 
 
 ## Indicative Timeline
