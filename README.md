@@ -8,11 +8,6 @@
     <a href="https://discord.com/channels/799672011265015819/1385341501130801172">💬 Join us on Discord</a>
   </p>
 </div>
-<hr>
-
-- [🚀 Miner guide](docs/miner.md)
-- [🔐 Validator guide](docs/validator.md)
-- [🔐 Roadmap](docs/roadmap.md)
 ---
 
 ## 🔍 Overview
@@ -28,7 +23,7 @@ Our ambition is to establish Swarm miners as the **go‑to control brains for mi
 
 ---
 
-## 🛞 Swarm Flight Benchmark
+## Swarm Flight
 
 | Component             | Purpose                           | Key points (code refs)                                                      |
 |-----------------------|-----------------------------------|------------------------------------------------------------------------------|
@@ -61,9 +56,9 @@ All physics, rendering and PID controllers live in an isolated subprocess to gua
 
 ### 🧑‍🏫 Validator
 
-- Generates 1 K+ unique MapTasks per epoch.  
+- Generates unique MapTasks per  
 - Replays plans head‑less, or with an optional GUI for debugging (`--gui`).  
-- Assigns Bittensor weights proportional to the final reward score.
+- Assigns weights proportional to the final reward score.
 
 ### ⛏️ Miner
 
