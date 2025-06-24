@@ -18,6 +18,7 @@ swarm_env/*
 ~
 ~/*
 output.png
+.vscode/
 
 # C extensions
 *.so
