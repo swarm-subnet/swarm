@@ -1,7 +1,7 @@
 pydantic
 rich
 pytest
-numpy
+numpy>=1.24,<2.0
 setuptools
 loguru
 xmldiff
