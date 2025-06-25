@@ -22,16 +22,15 @@ This guide shows how to install, configure and run a Swarm miner that answers Ma
 # 1) clone the repo (no sub‑modules required)
 git clone https://github.com/miguelik2/swarm
 cd swarm
+# 2) install dependencies
+chmod +x scripts/miner/install_dependencies.sh
+./scripts/miner/install_dependencies.sh
+# 3) Miner setup
+chmod +x scripts/miner/install_dependencies.sh
+./scripts/miner/install_dependencies.sh
 
-# 2) create & activate a Python 3.11 virtual‑env
-python3.11 -m venv miner_env
+# 4) Activate virtual env
 source miner_env/bin/activate
-
-# 3) install Python dependencies
-pip install --upgrade pip
-pip install -r requirements.txt        # core Swarm libs
-sudo apt install -y npm
-sudo npm install -g pm2
 
 ```bash
 sudo apt update && sudo apt install -y \
