@@ -4,7 +4,7 @@ WORLD_RANGE = 40.0        # random scenery is placed in ±WORLD_RANGE (m)
 HEIGHT_SCALE = 1.0  # scale factor for the height of obstacles, lower tends to create easier maps
 
 # ────────── Validator constants ─────────────────────────────────
-SIM_DT              = 0.02      # 50 Hz physics step sent to miners
+SIM_DT              = 1/50      # 50 Hz physics step sent to miners
 HORIZON_SEC         = 30      # max simulated flight time
 SAMPLE_K            = 20       # miners sampled per forward
 QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
@@ -22,4 +22,4 @@ GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
 R_MIN, R_MAX = 10.0, 30.0          # radial goal distance (m)
-H_MIN, H_MAX = 2, 10          # radial goal distance (m)
+H_MIN, H_MAX = 2, 5          # radial goal distance (m)
