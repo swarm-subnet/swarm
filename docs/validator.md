@@ -25,21 +25,19 @@ Other distros should work – install equivalent packages manually.
 git clone https://github.com/miguelik2/swarm.git
 cd swarm
 
-# create Python 3.11 virtual‑env
-python3.11 -m venv validator_env
-source validator_env/bin/activate
+# Install general system dependencies
+chmod +x scripts/validator/main/install_dependencies.sh
+./scripts/validator/main/install_dependencies.sh
 
-# install requirements
-pip install --upgrade pip
-pip install -r requirements.txt          # bittensor + pybullet + numpy …
-sudo apt install -y npm
-sudo npm install -g pm2
-sudo apt update && sudo apt install -y \
-     build-essential git pkg-config libgl1-mesa-glx mesa-utils
+# Setup Python environment and packages
+chmod +x scripts/validator/main/setup.sh
+./scripts/validator/main/setup.sh
+
+sudo apt update && sudo apt install -y build-essential git pkg-config libgl1-mesa-glx mesa-utils
 ```
 
 
-## 🔑 2 · Create wallet keys (once)
+## 🔑 2 · Create wallet keys
 
 ```bash
 btcli wallet new_coldkey --wallet.name my_cold
@@ -52,14 +50,14 @@ And register in the subnet
 ### PM2 launch example
 
 ```bash
-source validator_env/bin/activate   # if not already
+source validator_env/bin/activate   
 
 pm2 start neurons/validator.py \
      --name "swarm_validator" \
      --netuid 124 \
      --subtensor.network finney \
      --wallet.name my_cold \
-     --wallet.hotkey my_validator \
+     --wallet.hotkey my_hotk \
      --logging.debug
 ```
 

@@ -22,4 +22,4 @@ GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
 R_MIN, R_MAX = 10.0, 30.0          # radial goal distance (m)
-H_MIN, H_MAX = 2, 5          # radial goal distance (m)
+H_MIN, H_MAX = 2, 10          # radial goal distance (m)

@@ -59,3 +59,36 @@ echo
 
 echo
 step "Update and deploy completed successfully"
+
+########################################
+# 3. Update repositories
+########################################
+step "Updating repositories"
+pushd "$REPO_ROOT" > /dev/null
+  echo "Pulling latest from main repository..."
+  git pull origin main
+popd > /dev/null
+echo
+
+########################################
+# 4. Install and restart validator
+########################################
+step "Installing and restarting validator"
+echo "Activating virtualenv and installing code..."
+source "$REPO_ROOT/validator_env/bin/activate"
+pip install -e .
+
+echo "Restarting PM2 process '$PROCESS_NAME'..."
+if ! pm2 restart "$PROCESS_NAME"; then
+  echo "PM2 restart failed; starting fresh instance"
+  pm2 start neurons/validator.py \
+    --name "$PROCESS_NAME" \
+    --interpreter python \
+    -- --netuid 124 $SUBTENSOR_PARAM \
+       --wallet.name "$WALLET_NAME" \
+       --wallet.hotkey "$WALLET_HOTKEY"
+fi
+
+echo
+step "Update and deploy completed successfully"
+

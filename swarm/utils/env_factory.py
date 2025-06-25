@@ -72,6 +72,9 @@ def make_env(
         for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
             p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
 
+    import time
+    time.sleep(20)
+
     # 3 ─ deterministic reset & world build ----------------------------
     env.reset(seed=task.map_seed)
     build_world(task.map_seed, cli, task.goal)
