@@ -72,7 +72,7 @@ def make_env(
         # Hide default shadows & widgets for a cleaner viewer.
         for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
             p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
-            time.sleep(20)
+            time.sleep(0.1)
 
     # 3 ─ deterministic reset & world build ----------------------------
     env.reset(seed=task.map_seed)

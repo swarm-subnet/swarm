@@ -1,12 +1,12 @@
 pydantic
 rich
 pytest
-numpy>=1.24,<2.0
+numpy==2.0.2
 setuptools
 loguru
 xmldiff
 filelock
-gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git
+# gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git
 bittensor
 msgpack
 
