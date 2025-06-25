@@ -52,13 +52,12 @@ And register in the subnet
 ```bash
 source validator_env/bin/activate   
 
-pm2 start neurons/validator.py \
-     --name "swarm_validator" \
-     --netuid 124 \
-     --subtensor.network finney \
-     --wallet.name my_cold \
-     --wallet.hotkey my_hotk \
-     --logging.debug
+pm2 start neurons/validator.py --name swarm_validator -- \
+  --netuid 124 \
+  --subtensor.network finney \
+  --wallet.name coldkey \
+  --wallet.hotkey hotkey \
+  --logging.debug
 ```
 
 ### Logs:
