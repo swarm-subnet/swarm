@@ -17,6 +17,7 @@ from typing import Union
 import numpy as np
 import pybullet as p
 import pybullet_data
+import time
 from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
@@ -71,9 +72,7 @@ def make_env(
         # Hide default shadows & widgets for a cleaner viewer.
         for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
             p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
-
-    import time
-    time.sleep(20)
+            time.sleep(20)
 
     # 3 ─ deterministic reset & world build ----------------------------
     env.reset(seed=task.map_seed)
