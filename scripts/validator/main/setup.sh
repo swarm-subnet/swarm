@@ -57,6 +57,7 @@ install_modules() {
   pip install -e . \
     || handle_error "Failed to install current package"
   success_msg "Main package installed."
+}
 
 install_bittensor() {
   echo -e "\e[34m[INFO]\e[0m Installing Bittensor v9.6.0 and CLI v9.4.2..."
