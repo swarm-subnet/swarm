@@ -61,13 +61,13 @@ btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
 ```bash
 source miner_env/bin/activate      # if not already active
 
-pm2 start neurons/miner.py \
-     --name "swarm_miner" \
+pm2 start neurons/miner.py --name swarm_miner -- \
      --netuid 124 \
      --subtensor.network finney \
      --wallet.name my_cold \
      --wallet.hotkey my_hot \
      --axon.port 8091
+
 ```
 
 Check logs:
