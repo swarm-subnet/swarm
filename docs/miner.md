@@ -20,7 +20,7 @@ This guide shows how to install, configure and run a Swarm miner that answers Ma
 
 ```bash
 # 1) clone the repo (no sub‑modules required)
-git clone https://github.com/miguelik2/swarm
+git clone https://github.com/swarm-subnet/swarm
 cd swarm
 # 2) install dependencies
 chmod +x scripts/miner/install_dependencies.sh

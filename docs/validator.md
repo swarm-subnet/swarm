@@ -22,7 +22,7 @@ Other distros should work – install equivalent packages manually.
 ## 📦 1 · Clone & install
 
 ```bash
-git clone https://github.com/miguelik2/swarm.git
+git clone https://github.com/swarm-subnet/swarm
 cd swarm
 
 # Install general system dependencies
