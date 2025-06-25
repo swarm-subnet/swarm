@@ -60,8 +60,8 @@ install_modules() {
 }
 
 install_bittensor() {
-  echo -e "\e[34m[INFO]\e[0m Installing Bittensor v9.6.0 and CLI v9.4.2..."
-  pip install bittensor==9.6.0 bittensor-cli==9.4.2 \
+  echo -e "\e[34m[INFO]\e[0m Installing Bittensor and CLI"
+  pip install bittensor bittensor-cli \
     || handle_error "Failed to install Bittensor"
   success_msg "Bittensor installed."
 }
