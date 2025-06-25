@@ -28,7 +28,14 @@
 **🚀 Migration Path:** PyBullet ➜ New Simulator (TBD)  
 **🔍 Details:** Explore Gazebo, Airsim, Flightmare , Pegasus… and zero in on the ultimate real-world simulation platform!  
 
-## Stage 4 – Long-Range Navigation (“Travel Missions”)
+## Stage 4 – Generic drone flight (“Random Drone”)
+**Goal** Enable miners to competently operate a variety of commercially available drones—each with its own weight, power output, battery capacity, and flight dynamics.
+
+**Additions**  
+- A training fleet that includes multiple real-world drone models, covering a broad spectrum of sizes and performance characteristics
+- At this point we will start to talk to real business to adapt the SN output to their needs  
+
+## Stage 5 – Long-Range Navigation (“Travel Missions”)
 **Goal** Test endurance, GPS-denied odometry and multi-map stitching.
 
 **Additions**  
@@ -36,7 +43,7 @@
 - Mid-point recharging pads (energy budgeting becomes critical).  
 - Magnetometer & barometer sensor noise models.
 
-## Stage 5 – Interceptor
+## Stage 6 – Interceptor
 **Goal** Intercept another drone 
 
 - **Objective:** Your miner drone must lock onto and intercept a scripted target path **within the time budget**.  
@@ -45,14 +52,14 @@
   - 🛡️ **Safety:** Zero collisions—keep it clean and precise.  
 
 
-## Stage 6 – Controlled Real-World Pilots
+## Stage 7 – Controlled Real-World Pilots
 **Goal** Validate that Swarm-trained policies survive reality.
 
 **Track 6-R (Research)**  
 - Indoor motion-capture lab, Linux-based autopilot.  
 - Automated log upload → on-chain notarisation of real-world flights.
 
-## Stage 7 – Commercial Partnerships & Services
+## Stage 8 – Commercial Partnerships & Services
 **Goal** Translate open research gains into sustainable value streams. We'll pitch (likely this will start around phase 5) to:
 
 - 🚚 Last-Mile Logistics & Retail  
@@ -72,6 +79,6 @@
 | 2026 H1  | 4                |
 | 2026 H2  | 5                |
 | 2027 H1  | 6                |
-| 2027 H2+ | 7                |
+| 2027 H2+ | 7, 8                |
 
 
