@@ -26,8 +26,8 @@ cd swarm
 chmod +x scripts/miner/install_dependencies.sh
 ./scripts/miner/install_dependencies.sh
 # 3) Miner setup
-chmod +x scripts/miner/install_dependencies.sh
-./scripts/miner/install_dependencies.sh
+chmod +x scripts/miner/setup.sh
+./scripts/miner/setup.sh
 
 # 4) Activate virtual env
 source miner_env/bin/activate
