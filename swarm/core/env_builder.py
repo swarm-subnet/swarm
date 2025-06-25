@@ -14,7 +14,7 @@ import random
 from pathlib import Path
 from typing import Optional, Tuple
 
-from swarm.constants import WORLD_RANGE, HEIGHT_SCALE
+from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES
 import pybullet as p
 
 
@@ -75,7 +75,7 @@ def build_world(
     # ------------------------------------------------------------------
     # Random obstacles (unchanged)
     # ------------------------------------------------------------------
-    for _ in range(120):
+    for _ in range(N_OBSTACLES):
         kind = rng.choice(["wall", "pillar", "box"])
         x, y = rng.uniform(-WORLD_RANGE, WORLD_RANGE), rng.uniform(
             -WORLD_RANGE, WORLD_RANGE
@@ -101,7 +101,7 @@ def build_world(
             )
 
         else:  # pillar
-            r = rng.uniform(0.3, 0.6)
+            r = rng.uniform(0.3, 1)
             h = rng.uniform(2, 7) * HEIGHT_SCALE
             col = p.createCollisionShape(
                 p.GEOM_CYLINDER, radius=r, height=h, physicsClientId=cli

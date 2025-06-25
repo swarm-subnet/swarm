@@ -1,7 +1,8 @@
 # Constants for the Swarm project
 
-WORLD_RANGE = 40.0        # random scenery is placed in ±WORLD_RANGE (m)
-HEIGHT_SCALE = 1.0  # scale factor for the height of obstacles, lower tends to create easier maps
+WORLD_RANGE = 30.0        # random scenery is placed in ±WORLD_RANGE (m)
+HEIGHT_SCALE = 1.8  # scale factor for the height of obstacles, lower tends to create easier maps
+N_OBSTACLES = 100  # number of random obstacles in the world
 
 # ────────── Validator constants ─────────────────────────────────
 SIM_DT              = 1/50      # 50 Hz physics step sent to miners
