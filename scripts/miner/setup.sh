@@ -50,6 +50,9 @@ install_python_reqs() {
   
   pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
+
+  pip install --no-deps -r requirements-nodeps.txt \
+    || handle_error "Failed to install Python dependencies"
   
   success_msg "Packages installed"
 }
