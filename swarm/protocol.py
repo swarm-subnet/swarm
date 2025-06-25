@@ -1,6 +1,6 @@
 # swarm/protocol.py
 # -----------------------------------------------------------------------------
-#  Swarm – Bittensor subnet “Drone‑Nav”  (JSON‑only transport version)
+#  Swarm – Bittensor subnet “Swarm” 
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import bittensor as bt
 from bittensor import Synapse
 
 # --------------------------------------------------------------------------- #
-# 1.  Pure‑Python dataclasses (unchanged)                                      #
+# 1.  Pure‑Python dataclasses                                  #
 # --------------------------------------------------------------------------- #
 
 @dataclass(slots=True)
@@ -78,7 +78,7 @@ class ValidationResult:
 
 
 # --------------------------------------------------------------------------- #
-# 2.  Synapse wrappers – **JSON‑serialisable only**                            #
+# 2.  Synapse wrappers                          #
 # --------------------------------------------------------------------------- #
 
 def _tuple_to_list3(t: Tuple[float, float, float]) -> List[float]:
@@ -153,10 +153,6 @@ class FlightPlanSynapse(Synapse):
             version="1",
         )
 
-
-# --------------------------------------------------------------------------- #
-# 3.  Convenience re‑exports                                                  #
-# --------------------------------------------------------------------------- #
 __all__ = [
     "MapTask",
     "RPMCmd",
