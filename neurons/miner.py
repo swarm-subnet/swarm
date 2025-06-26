@@ -74,6 +74,8 @@ class Miner(BaseMinerNeuron):
             # ---- deterministic planning policy ---------------------
             cmds = flying_strategy(task, gui=False)
             plan = FlightPlan(commands=cmds, sha256="")       # hash auto‑computed
+            print("Flightplan cmds:", cmds)
+            print("Flightplan:", plan)
 
             ColoredLogger.success("FlightPlan ready.", ColoredLogger.GREEN)
             return FlightPlanSynapse.from_plan(plan)
