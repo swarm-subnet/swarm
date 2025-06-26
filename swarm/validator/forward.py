@@ -8,7 +8,7 @@ import asyncio
 import time
 from typing import Dict, List
 import traceback
-
+import numpy as np
 import bittensor as bt
 
 from swarm.protocol import (
@@ -91,17 +91,24 @@ def _score_plan(task: MapTask, uid: int, plan: FlightPlan | None) -> ValidationR
 
 def _apply_weight_update(self, results: List[ValidationResult]) -> None:
     """
-    Exponential‑moving‑average (EMA) weight update then push on‑chain.
+    Push miners’ scores on-chain using bittensor’s modern helper methods.
+
+    Assumes your validator class implements:
+      • self.update_scores(rewards: np.ndarray, uids: np.ndarray)
+      • self.set_weights()              # no arguments
     """
     if not results:
+        bt.logging.warning("No validation results – skipping weight update.")
         return
 
-    if not hasattr(self, "prev_weights"):
-        self.prev_weights = {}
+    # Align UIDs and scores
+    uids_np    = np.array([r.uid   for r in results], dtype=np.int64)
+    scores_np  = np.array([r.score for r in results], dtype=np.float32)
 
-    new_scores = {r.uid: r.score for r in results}
-    self.prev_weights = update_ema_weights(self.prev_weights, new_scores, alpha=EMA_ALPHA)
-    self.set_weights(self.prev_weights)
+    # Update the scores cache and push weights on-chain
+    self.update_scores(scores_np, uids_np)
+    self.set_weights()      # cached weights are sent on-chain
+    bt.logging.info(f"Updated weights for {len(uids_np)} miners.")
 
 
 # ────────── Public API: called from neurons/validator.py ────────

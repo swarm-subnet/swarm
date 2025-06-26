@@ -11,6 +11,7 @@ SAMPLE_K            = 20       # miners sampled per forward
 QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
 FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
 EMA_ALPHA           = 0.20      # weights EMA coefficient
+FORWARD_SLEEP_SEC = 60
 
 WAYPOINT_TOL = 1      # success sphere
 HOVER_SEC    = 3      # time to hover at the goal (s)
