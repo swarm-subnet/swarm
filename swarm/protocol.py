@@ -10,7 +10,6 @@ from dataclasses import asdict, dataclass
 from typing import List, Tuple
 
 import bittensor as bt
-from bittensor import Synapse
 
 # --------------------------------------------------------------------------- #
 # 1.  Pure‑Python dataclasses                                  #
@@ -86,7 +85,7 @@ def _tuple_to_list3(t: Tuple[float, float, float]) -> List[float]:
     return [float(x) for x in t]
 
 
-class MapTaskSynapse(Synapse):
+class MapTaskSynapse(bt.Synapse):
     """
     Validator ➜ Miner  (pure JSON payload)
     """
@@ -128,7 +127,7 @@ class MapTaskSynapse(Synapse):
         )
 
 
-class FlightPlanSynapse(Synapse):
+class FlightPlanSynapse(bt.Synapse):
     """
     Miner ➜ Validator  (pure JSON payload)
     """
