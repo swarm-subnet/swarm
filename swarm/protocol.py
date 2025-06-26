@@ -8,6 +8,7 @@ import hashlib
 import msgpack         # still used locally for hashing
 from dataclasses import asdict, dataclass
 from typing import List, Tuple
+from pydantic import Field
 
 import bittensor as bt
 
@@ -86,15 +87,11 @@ def _tuple_to_list3(t: Tuple[float, float, float]) -> List[float]:
 
 
 class MapTaskSynapse(bt.Synapse):
-    """
-    Validator ➜ Miner  (pure JSON payload)
-    """
-    # --- payload fields (all JSON native types) --------------------------- #
-    map_seed: int
-    start: List[float]      # len == 3
-    goal:  List[float]
-    sim_dt: float
-    horizon: float
+    map_seed: int = Field(...)
+    start: List[float] = Field(...)
+    goal: List[float] = Field(...)
+    sim_dt: float = Field(...)
+    horizon: float = Field(...)
     version: str = "1"
 
     # --- bittensor hook --------------------------------------------------- #
