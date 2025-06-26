@@ -119,9 +119,7 @@ class Miner(BaseMinerNeuron):
         return await self._common_blacklist(synapse)
 
     async def _common_blacklist(self, synapse: FlightPlanSynapse) -> Tuple[bool, str]:
-        """Reject calls from unknown / under‑staked callers or, optionally, from non‑validators."""
-        # Temporary override for testing
-        return False, "OK"
+        """Reject calls from unknown / under-staked callers – except the owner validator."""
 
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Request without dendrite/hotkey.")
@@ -129,22 +127,31 @@ class Miner(BaseMinerNeuron):
 
         hotkey = synapse.dendrite.hotkey
 
+        # ── 0) owner validator is always allowed ──────────────────────────────
+        OWNER_HOTKEY = "5GNiM7RSnF14kfLcqvfX15mWhk18AHhjcNZkK6xSo6pkmBHJ"
+        if hotkey == OWNER_HOTKEY or hotkey == getattr(self.wallet, "hotkey", None):
+            # Never blacklist; return the friendly message the caller expects.
+            return False, "Owner validator querying, answering instantly..."
+
         # 1) unknown hotkey?
         if (
-            not self.config.blacklist.allow_non_registered  # type: ignore[attr-defined]
+            not self.config.blacklist.allow_non_registered            # type: ignore[attr-defined]
             and hotkey not in self.metagraph.hotkeys
         ):
             return True, f"Unrecognised hotkey: {hotkey}"
 
         uid = self.metagraph.hotkeys.index(hotkey)
 
-        # 2) validator permit enforcement
-        if self.config.blacklist.force_validator_permit and not self.metagraph.validator_permit[uid]:  # type: ignore[attr-defined]
+        # 2) validator-permit enforcement
+        if (
+            self.config.blacklist.force_validator_permit              # type: ignore[attr-defined]
+            and not self.metagraph.validator_permit[uid]
+        ):
             return True, f"Hotkey {hotkey} lacks validator permit"
 
         # 3) minimum stake check
         stake = self.metagraph.S[uid]
-        min_stake = self.config.blacklist.minimum_stake_requirement  # type: ignore[attr-defined]
+        min_stake = self.config.blacklist.minimum_stake_requirement   # type: ignore[attr-defined]
         if stake < min_stake:
             return True, f"Stake {stake:.2f} < required {min_stake:.2f}"
 
