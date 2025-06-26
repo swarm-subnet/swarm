@@ -11,8 +11,6 @@
 #  Generic blacklist / priority logic from ``BaseMinerNeuron`` is preserved.
 # -------------------------------------------------------------------------
 
-from __future__ import annotations
-
 import time
 import typing
 from typing import Tuple
