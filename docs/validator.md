@@ -8,9 +8,9 @@ This document shows how to install and operate the Swarm validator that drives t
 | Resource | Minimal | Notes                                |
 |----------|---------|--------------------------------------|
 | CPU      | 3 cores  | Map generation & scoring are light‑weight |
-| RAM      | 8 GB     | Python + PyBullet                    |
-| Disk     | 20 GB     | Repo + virtual‑env                   |
-| GPU      | none     | Validation replay uses head‑less PyBullet |
+| RAM      | 8 GB     |                     |
+| Disk     | 20 GB     | Environment                   |
+| GPU      | none     |  |
 
 **Supported & tested Linux distros:**
 
