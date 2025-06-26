@@ -106,7 +106,7 @@ async def forward(self) -> None:
 
         # -------- 1) build task ------------------------------
         task: MapTask = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
-
+        print(f"Querying miners")
         # -------- 2) query miners ----------------------------
         plans: Dict[int, FlightPlan] = await _query_miners(self, task)
 
