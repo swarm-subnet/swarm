@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Dict, List
+import traceback
 
 import bittensor as bt
 
@@ -48,13 +49,15 @@ async def _query_miners(self, task: MapTask) -> Dict[int, FlightPlan]:
         deserialize=True,
         timeout=QUERY_TIMEOUT,
     )
+    print(f"Replies: {replies}")
 
     plans: Dict[int, FlightPlan] = {}
     for uid, rep in zip(uids, replies):
         try:
             plans[uid] = rep.plan
-        except Exception:
-            # malformed / no response → ignore
+        except Exception  as e:
+            print(f"[ERROR] Failed to parse plan from miner {uid}: {type(e).__name__} – {e}")
+            traceback.print_exc()
             pass
     return plans
 
