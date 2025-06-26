@@ -61,8 +61,6 @@ async def _query_miners(self, task: MapTask) -> dict[int, FlightPlan]:
     for uid, rep in zip(uids, replies):
         try:
             plan = rep.plan
-            if plan is None:
-                raise ValueError("empty plan in reply")
             plans[uid] = plan
         except Exception as e:
             print(f"[ERROR] Failed to parse plan from miner {uid}: {type(e).__name__} — {e}")
