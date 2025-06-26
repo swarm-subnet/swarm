@@ -111,6 +111,8 @@ async def forward(self) -> None:
         plans: Dict[int, FlightPlan] = await _query_miners(self, task)
 
         # -------- 3) replay & score --------------------------
+        print(f"Received {len(plans)} FlightPlans from miners.")
+        print(f"plans:", plans)
         results: List[ValidationResult] = [
             _score_plan(task, uid, plan) for uid, plan in plans.items()
         ]
