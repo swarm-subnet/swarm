@@ -37,6 +37,29 @@ sudo apt update && sudo apt install -y \
      build-essential git pkg-config libgl1-mesa-glx mesa-utils
 ```
 
+## 🐞 Known Bug
+
+During the dependency installation, you may see an error like:
+```bash
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+gym-pybullet-drones 2.0.0 requires numpy<2.0,>=1.24, but you have numpy 2.0.2 which is incompatible.
+swarm 1.0.0 requires numpy<2.0,>=1.24, but you have numpy 2.0.2 which is incompatible.
+```
+
+### Why this happens
+
+**NumPy version mismatch**  
+Both gym-pybullet-drones (from https://github.com/utiasDSL/gym-pybullet-drones) and our own swarm package specify `numpy<2.0,>=1.24` in their `install_requires`.
+
+**Hard-coded dependency**  
+The upstream gym-pybullet-drones repo still pins NumPy `<2.0`, so pip flags the newly installed NumPy 2.0.2 as “incompatible.”
+
+### Why you can safely ignore it
+
+We have tested Swarm and the PyBullet Drones environments on NumPy 2.0.2 and confirmed that everything works correctly. This is only a metadata mismatch, not a runtime error.
+
+_Work in progress:_ We’re updating both repositories to relax this NumPy version constraint. In the meantime, you can safely ignore this warning. Bittensor 9.X needs numpy >2.X
+
 ## 🔧 Configuration
 
 All runtime parameters are passed via CLI flags; nothing needs editing inside the repo.
