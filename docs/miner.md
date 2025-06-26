@@ -8,9 +8,9 @@ This guide shows how to install, configure and run a Swarm miner that answers Ma
 
 | Component | Minimal | Recommended | Notes                                         |
 |-----------|---------|-------------|-----------------------------------------------|
-| CPU       | 2 cores  | 4 cores      | Path‑planning is light‑weight                 |
-| RAM       | 2 GB     | 4 GB         |                                               |
-| Disk      | 1 GB     | 50 GB         | Repository + virtual‑env                      |
+| CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
+| RAM       | 8 GB     | 8 GB         |                                               |
+| Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
 | GPU       | none     | Optional     | Only if you integrate ML planners             |
 | OS        | Linux / macOS / WSL2 | —           | Scripts are written for Ubuntu 22.04          |
 
