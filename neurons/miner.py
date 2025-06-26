@@ -99,7 +99,7 @@ class Miner(BaseMinerNeuron):
         from non‑validator hotkeys.
         """
         #Temporary override for testing
-        return True
+        return True, "OK"
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Request without dendrite/hotkey.")
             return True, "Missing dendrite or hotkey"
@@ -126,6 +126,7 @@ class Miner(BaseMinerNeuron):
             return True, f"Stake {stake:.2f} < required {min_stake:.2f}"
 
         return False, "OK"
+    
 
     # ------------------------------------------------------------------
     #  Priority logic 
