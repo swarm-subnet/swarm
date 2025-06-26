@@ -61,16 +61,16 @@ class BaseMinerNeuron(BaseNeuron):
             blacklist_fn=self.blacklist,
             priority_fn=self.priority,
         )
-        self.axon.attach(
-            forward_fn=self.forward_feedback,
-            blacklist_fn=self.blacklist_feedback,
-            priority_fn=self.priority_feedback,
-        )
-        self.axon.attach(
-            forward_fn=self.forward_set_organic_endpoint,
-            blacklist_fn=self.blacklist_set_organic_endpoint,
-            priority_fn=self.priority_set_organic_endpoint,
-        )
+        # self.axon.attach(
+        #     forward_fn=self.forward_feedback,
+        #     blacklist_fn=self.blacklist_feedback,
+        #     priority_fn=self.priority_feedback,
+        # )
+        # self.axon.attach(
+        #     forward_fn=self.forward_set_organic_endpoint,
+        #     blacklist_fn=self.blacklist_set_organic_endpoint,
+        #     priority_fn=self.priority_set_organic_endpoint,
+        # )
         bt.logging.info(f"Axon created: {self.axon}")
 
         # Instantiate runners
