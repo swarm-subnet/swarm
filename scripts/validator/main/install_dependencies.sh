@@ -24,9 +24,6 @@ install_system_dependencies() {
   sudo apt install -y sudo software-properties-common lsb-release curl \
     || handle_error "Failed to install core tools"
   
-  info_msg "Adding Python 3.11 PPA..."
-  sudo add-apt-repository ppa:deadsnakes/ppa -y \
-    || handle_error "Failed to add Python PPA"
   sudo apt update -y || handle_error "Failed to refresh apt lists"
   
   # Common packages for all Ubuntu versions
