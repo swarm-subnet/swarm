@@ -36,7 +36,10 @@ async def _query_miners(self, task: MapTask) -> Dict[int, FlightPlan]:
     """
     uids: List[int] = get_random_uids(self, k=SAMPLE_K)
     axons           = [self.metagraph.axons[uid] for uid in uids]
+    print(f"Querying {len(axons)} miners: {uids}")
     syn = MapTaskSynapse.from_task(task)
+    print(f"Synapse: {syn}")
+
     syn.version = self.version
 
     replies: List[FlightPlanSynapse] = await self.dendrite(
