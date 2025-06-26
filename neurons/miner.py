@@ -98,6 +98,8 @@ class Miner(BaseMinerNeuron):
         Reject calls from unknown / under‑staked callers or, optionally,
         from non‑validator hotkeys.
         """
+        #Temporary override for testing
+        return True
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Request without dendrite/hotkey.")
             return True, "Missing dendrite or hotkey"
