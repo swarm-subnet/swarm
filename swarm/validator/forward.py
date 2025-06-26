@@ -70,19 +70,25 @@ async def _query_miners(self, task: MapTask) -> dict[int, FlightPlan]:
     return plans
 
 
-def _score_plan(task: MapTask, uid: int, plan: FlightPlan) -> ValidationResult:
+def _score_plan(task: MapTask, uid: int, plan: FlightPlan | None) -> ValidationResult:
     """
-    Re‑simulate miner’s trajectory and compute reward components.
+    Re-simulate miner’s trajectory and compute reward components.
+    If a miner returned an empty / invalid plan we assign score == 0.
     """
+    # ── Treat “no plan” or empty-command list as an automatic failure ──
+    if plan is None or not plan.commands:
+        return ValidationResult(
+            uid      = uid,
+            success  = False,
+            time_sec = task.horizon,   # full-horizon time-penalty
+            energy   = 0.0,
+            score    = 0.0,
+        )
+
+    # ── Normal scoring path ─────────────────────────────────────────────
     success, t_sim, energy = replay_once(task, plan)
-    score                  = flight_reward(success, t_sim, energy, task.horizon)
-    return ValidationResult(
-        uid       = uid,
-        success   = success,
-        time_sec  = t_sim,
-        energy    = energy,
-        score     = score,
-    )
+    score = flight_reward(success, t_sim, energy, task.horizon)
+    return ValidationResult(uid, success, t_sim, energy, score)
 
 
 def _apply_weight_update(self, results: List[ValidationResult]) -> None:
