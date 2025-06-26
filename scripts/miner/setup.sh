@@ -51,7 +51,7 @@ install_python_reqs() {
   pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
 
-  pip install git+https://github.com/utiasDSL/gym-pybullet-drones.git
+  pip install "gym-pybullet-drones@git+https://github.com/utiasDSL/gym-pybullet-drones.git"
   
   success_msg "Packages installed"
 }

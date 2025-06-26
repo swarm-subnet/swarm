@@ -51,7 +51,7 @@ class Miner(BaseMinerNeuron):
     # Life‑cycle
     # ------------------------------------------------------------------
     def __init__(self, config=None):
-        super().__init__(config=config)        
+        super(Miner, self).__init__(config=config)        
         self.load_state()                      
 
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
