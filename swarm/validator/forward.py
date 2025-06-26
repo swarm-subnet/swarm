@@ -126,7 +126,6 @@ async def forward(self) -> None:
 
         # -------- 3) replay & score --------------------------
         print(f"Received {len(plans)} FlightPlans from miners.")
-        print(f"plans:", plans)
         results: List[ValidationResult] = [
             _score_plan(task, uid, plan) for uid, plan in plans.items()
         ]
@@ -142,7 +141,7 @@ async def forward(self) -> None:
             bt.logging.warning("No valid FlightPlans returned by miners.")
 
         # -------- 4) weight update ---------------------------
-        _apply_weight_update(results)
+        _apply_weight_update(results=results)
 
     except Exception as err:
         bt.logging.error(f"Validator forward error: {err}")
