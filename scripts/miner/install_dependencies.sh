@@ -33,15 +33,7 @@ install_system_dependencies() {
   COMMON_PACKAGES=(
     python3.11 python3.11-venv python3.11-dev
     build-essential cmake wget unzip sqlite3
-    libnss3 libnss3-dev
-    libatk1.0-0 libatk-bridge2.0-0 libcups2
-    libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxrandr2
-    libgbm1 libpango-1.0-0 libgtk-3-0
-    libvpx-dev libevent-dev libopus0
-    libgstreamer1.0-0
-    libgstreamer-plugins-base1.0-0 libgstreamer-plugins-good1.0-0 libgstreamer-plugins-bad1.0-0
-    libwebp-dev libharfbuzz-dev libsecret-1-dev libhyphen0 libflite1 libgles2-mesa-dev
-    libx264-dev gnupg curl
+    libnss3 libnss3-dev gnupg curl nodejs 
   )
   
   # Add version-specific audio package
