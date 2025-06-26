@@ -142,7 +142,7 @@ async def forward(self) -> None:
             bt.logging.warning("No valid FlightPlans returned by miners.")
 
         # -------- 4) weight update ---------------------------
-        _apply_weight_update(self, results)
+        _apply_weight_update(results)
 
     except Exception as err:
         bt.logging.error(f"Validator forward error: {err}")
