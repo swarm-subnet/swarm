@@ -52,7 +52,6 @@ install_python_reqs() {
     || handle_error "Failed to install Python dependencies"
 
   pip install git+https://github.com/utiasDSL/gym-pybullet-drones.git
-  pip install transforms3d==0.4.1
   
   success_msg "Packages installed"
 }

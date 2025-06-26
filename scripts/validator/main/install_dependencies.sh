@@ -30,7 +30,7 @@ install_system_dependencies() {
   COMMON_PACKAGES=(
     python3.11 python3.11-venv python3.11-dev
     build-essential cmake wget unzip sqlite3
-    libnss3 libnss3-dev gnupg curl nodejs 
+    libnss3 libnss3-dev gnupg curl nodejs npm
   )
   
   # Add version-specific audio package
