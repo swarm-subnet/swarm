@@ -58,7 +58,7 @@ setup(
     description="Swarm Subnet 124 for Bittensor",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/miguelik2/swarm", 
+    url="https://github.com/swarm-subnet/swarm", 
     author="Miguelik", 
     author_email="", 
     license="MIT",
