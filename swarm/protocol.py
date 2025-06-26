@@ -1,26 +1,38 @@
 # swarm/protocol.py
 # -----------------------------------------------------------------------------
-#  Swarm – Bittensor subnet “Swarm” 
+#  Swarm – Bittensor subnet “Swarm”
 # -----------------------------------------------------------------------------
+"""Unified protocol definitions for the Swarm subnet.
+
+This revision *merges the former ``MapTaskSynapse`` into ``FlightPlanSynapse``* so
+only **one** synapse class remains.  The new ``FlightPlanSynapse`` is bidirectional:
+
+* **Validator ➜ Miner** – carries *only* the planning task fields.
+* **Miner ➜ Validator** – carries the flight‑plan fields and can optionally echo
+  the originating task back for stateless validation.
+
+All attributes are therefore declared **optional**; the producer of the message
+simply omits the fields that are not relevant in that direction.
+"""
 from __future__ import annotations
 
 import hashlib
-import msgpack         # still used locally for hashing
 from dataclasses import asdict, dataclass
-from typing import List, Tuple
-from pydantic import Field
+from typing import List, Tuple, Optional
 
+import msgpack  # still used locally for hashing / persistence
 import bittensor as bt
 
 # --------------------------------------------------------------------------- #
-# 1.  Pure‑Python dataclasses                                  #
+# 1.  Pure‑Python dataclasses                                                  #
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(slots=True)
 class MapTask:
     map_seed: int
-    start:  Tuple[float, float, float]
-    goal:   Tuple[float, float, float]
+    start: Tuple[float, float, float]
+    goal: Tuple[float, float, float]
     sim_dt: float
     horizon: float
     version: str = "1"
@@ -78,43 +90,87 @@ class ValidationResult:
 
 
 # --------------------------------------------------------------------------- #
-# 2.  Synapse wrappers                          #
+# 2.  Synapse helpers                                                          #
 # --------------------------------------------------------------------------- #
+
 
 def _tuple_to_list3(t: Tuple[float, float, float]) -> List[float]:
     """Helper so tuples don’t get rejected by the JSON encoder."""
     return [float(x) for x in t]
 
 
-class MapTaskSynapse(bt.Synapse):
-    map_seed: int = Field(...)
-    start: List[float] = Field(...)
-    goal: List[float] = Field(...)
-    sim_dt: float = Field(...)
-    horizon: float = Field(...)
+# --------------------------------------------------------------------------- #
+# 3.  Unified Synapse                                                          #
+# --------------------------------------------------------------------------- #
+
+
+Synapse = bt.Synapse  # type alias for brevity; comes from bittensor
+
+
+class FlightPlanSynapse(Synapse):
+    """Bidirectional synapse used *both* for planning tasks and plan results.
+
+    **Direction 1 – Validator ➜ Miner**
+        ``map_seed`` … ``horizon`` fields *must* be present.
+
+    **Direction 2 – Miner ➜ Validator**
+        ``commands`` & ``sha256`` fields *must* be present and the task fields
+        *may* be echoed back as a convenience.
+    """
+
+    # --- MapTask fields --------------------------------------------------- #
+    map_seed: Optional[int] = None
+    start: Optional[List[float]] = None     # len == 3
+    goal: Optional[List[float]] = None      # len == 3
+    sim_dt: Optional[float] = None
+    horizon: Optional[float] = None
+
+    # --- FlightPlan fields ------------------------------------------------ #
+    commands: Optional[List[dict]] = None   # {"t": float, "rpm": [f,f,f,f]}
+    sha256: Optional[str] = None
+
+    # --- protocol meta ---------------------------------------------------- #
     version: str = "1"
 
     # --- bittensor hook --------------------------------------------------- #
-    def deserialize(self) -> "MapTaskSynapse":      # noqa: D401
-        # Nothing to do – attributes are already native types
+    def deserialize(self) -> "FlightPlanSynapse":  # noqa: D401
+        # Attributes are already JSON‑native; simply return self.
         return self
 
     # --- convenience accessors ------------------------------------------- #
     @property
-    def task(self) -> MapTask:
+    def task(self) -> Optional[MapTask]:
+        """Convert to :class:`MapTask` if task fields are present."""
+        if None in (
+            self.map_seed,
+            self.start,
+            self.goal,
+            self.sim_dt,
+            self.horizon,
+        ):
+            return None
         return MapTask(
-            map_seed=self.map_seed,
-            start=tuple(self.start),
-            goal=tuple(self.goal),
+            map_seed=self.map_seed,  # type: ignore[arg-type]
+            start=tuple(self.start),  # type: ignore[arg-type]
+            goal=tuple(self.goal),    # type: ignore[arg-type]
             sim_dt=self.sim_dt,
             horizon=self.horizon,
             version=self.version,
         )
 
+    @property
+    def plan(self) -> Optional[FlightPlan]:
+        """Convert to :class:`FlightPlan` if plan fields are present."""
+        if self.commands is None or self.sha256 is None:
+            return None
+        cmds = [RPMCmd(c["t"], tuple(c["rpm"])) for c in self.commands]
+        return FlightPlan(commands=cmds, sha256=self.sha256)
+
     # --- builders --------------------------------------------------------- #
     @staticmethod
-    def from_task(task: MapTask) -> "MapTaskSynapse":
-        return MapTaskSynapse(
+    def from_task(task: MapTask) -> "FlightPlanSynapse":
+        """Factory for the *Validator ➜ Miner* direction."""
+        return FlightPlanSynapse(
             map_seed=task.map_seed,
             start=_tuple_to_list3(task.start),
             goal=_tuple_to_list3(task.goal),
@@ -123,37 +179,43 @@ class MapTaskSynapse(bt.Synapse):
             version=task.version,
         )
 
-
-class FlightPlanSynapse(bt.Synapse):
-    """
-    Miner ➜ Validator  (pure JSON payload)
-    """
-    # commands is a **list of dicts**: {"t": float, "rpm": [f,f,f,f]}
-    commands: List[dict]
-    sha256: str
-    version: str = "1"
-
-    def deserialize(self) -> "FlightPlanSynapse":    # noqa: D401
-        return self
-
-    @property
-    def plan(self) -> FlightPlan:
-        cmds = [RPMCmd(c["t"], tuple(c["rpm"])) for c in self.commands]
-        return FlightPlan(commands=cmds, sha256=self.sha256)
-
     @staticmethod
-    def from_plan(plan: FlightPlan) -> "FlightPlanSynapse":
-        return FlightPlanSynapse(
-            commands=[{"t": c.t, "rpm": list(c.rpm)} for c in plan.commands],
-            sha256=plan.sha256,
-            version="1",
-        )
+    def from_plan(
+        plan: FlightPlan,
+        *,
+        task: Optional[MapTask] = None,
+    ) -> "FlightPlanSynapse":
+        """Factory for the *Miner ➜ Validator* direction.
+
+        The originating :class:`MapTask` can be attached so the validator can
+        match the plan to its task without additional state.
+        """
+        payload: dict = {
+            "commands": [{"t": c.t, "rpm": list(c.rpm)} for c in plan.commands],
+            "sha256": plan.sha256,
+            "version": "1",
+        }
+        if task is not None:
+            payload.update(
+                {
+                    "map_seed": task.map_seed,
+                    "start": _tuple_to_list3(task.start),
+                    "goal": _tuple_to_list3(task.goal),
+                    "sim_dt": float(task.sim_dt),
+                    "horizon": float(task.horizon),
+                }
+            )
+        return FlightPlanSynapse(**payload)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
+# 4.  Export list                                                             #
+# --------------------------------------------------------------------------- #
 
 __all__ = [
     "MapTask",
     "RPMCmd",
     "FlightPlan",
     "ValidationResult",
-    "MapTaskSynapse",
     "FlightPlanSynapse",
 ]

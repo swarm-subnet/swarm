@@ -12,8 +12,7 @@ import traceback
 import bittensor as bt
 
 from swarm.protocol import (
-    MapTask, FlightPlan, ValidationResult,
-    MapTaskSynapse, FlightPlanSynapse,
+    MapTask, FlightPlan, ValidationResult, FlightPlanSynapse,
 )
 from swarm.utils.uids import get_random_uids
 from swarm.utils.weight_utils import update_ema_weights
@@ -31,19 +30,25 @@ from swarm.constants import (SIM_DT,      # 50 Hz physics step sent to miners
 
 
 # ────────── Internal helpers (use self from outer scope) ────────
-async def _query_miners(self, task: MapTask) -> Dict[int, FlightPlan]:
+async def _query_miners(self, task: MapTask) -> dict[int, FlightPlan]:
     """
     Broadcast the MapTask to a sample of miners and collect FlightPlans.
+    Uses the unified FlightPlanSynapse for both directions:
+        • Validator → Miner:  task fields set, plan fields empty
+        • Miner     → Validator:  plan fields set (task fields optional)
     """
-    uids: List[int] = get_random_uids(self, k=SAMPLE_K)
+    # 1. Choose a random sample of miners (uids → axons)
+    uids: list[int] = get_random_uids(self, k=SAMPLE_K)
     axons           = [self.metagraph.axons[uid] for uid in uids]
     print(f"Querying {len(axons)} miners: {uids}")
-    syn = MapTaskSynapse.from_task(task)
+
+    # 2. Build the outbound synapse *from the task*
+    syn = FlightPlanSynapse.from_task(task)
+    syn.version = self.version                # propagate protocol version
     print(f"Synapse: {syn}")
 
-    syn.version = self.version
-
-    replies: List[FlightPlanSynapse] = await self.dendrite(
+    # 3. Send the query and gather replies
+    replies: list[FlightPlanSynapse] = await self.dendrite(
         axons=axons,
         synapse=syn,
         deserialize=True,
@@ -51,14 +56,17 @@ async def _query_miners(self, task: MapTask) -> Dict[int, FlightPlan]:
     )
     print(f"Replies: {replies}")
 
-    plans: Dict[int, FlightPlan] = {}
+    # 4. Extract FlightPlans (skip miners that returned nothing/invalid)
+    plans: dict[int, FlightPlan] = {}
     for uid, rep in zip(uids, replies):
         try:
-            plans[uid] = rep.plan
-        except Exception  as e:
-            print(f"[ERROR] Failed to parse plan from miner {uid}: {type(e).__name__} – {e}")
+            plan = rep.plan
+            if plan is None:
+                raise ValueError("empty plan in reply")
+            plans[uid] = plan
+        except Exception as e:
+            print(f"[ERROR] Failed to parse plan from miner {uid}: {type(e).__name__} — {e}")
             traceback.print_exc()
-            pass
     return plans
 
 
