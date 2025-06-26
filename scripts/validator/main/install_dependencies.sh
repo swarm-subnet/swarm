@@ -36,7 +36,7 @@ install_system_dependencies() {
     libgbm1 libpango-1.0-0 libgtk-3-0
     libvpx-dev libevent-dev libopus0
     libgstreamer1.0-0
-    libgstreamer-plugins-base1.0-0 libgstreamer-plugins-good1.0-0 libgstreamer-plugins-bad1.0-0
+    libgstreamer-plugins-base1.0-0
     libwebp-dev libharfbuzz-dev libsecret-1-dev libhyphen0 libflite1 libgles2-mesa-dev
     libx264-dev gnupg curl
   )
