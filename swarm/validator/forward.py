@@ -15,7 +15,6 @@ from swarm.protocol import (
     MapTask, FlightPlan, ValidationResult, FlightPlanSynapse,
 )
 from swarm.utils.uids import get_random_uids
-from swarm.utils.weight_utils import update_ema_weights
 
 from .task_gen import random_task
 from .replay   import replay_once
@@ -45,7 +44,6 @@ async def _query_miners(self, task: MapTask) -> dict[int, FlightPlan]:
     # 2. Build the outbound synapse *from the task*
     syn = FlightPlanSynapse.from_task(task)
     syn.version = self.version                # propagate protocol version
-    print(f"Synapse: {syn}")
 
     # 3. Send the query and gather replies
     replies: list[FlightPlanSynapse] = await self.dendrite(
@@ -54,7 +52,6 @@ async def _query_miners(self, task: MapTask) -> dict[int, FlightPlan]:
         deserialize=True,
         timeout=QUERY_TIMEOUT,
     )
-    print(f"Replies: {replies}")
 
     # 4. Extract FlightPlans (skip miners that returned nothing/invalid)
     plans: dict[int, FlightPlan] = {}
