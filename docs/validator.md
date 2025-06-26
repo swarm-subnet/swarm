@@ -73,7 +73,7 @@ pm2 restart swarm_validator
 pm2 stop     swarm_validator
 ```
 
-## 🔄 4 · Automatic update & deploy (optional)
+## 🔄 4 · Automatic update & deploy (Work in progress, code provided as-is)
 
 **scripts/auto_update_deploy.sh**
 
