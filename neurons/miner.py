@@ -10,7 +10,6 @@
 #  BaseMinerNeuron so that stake‑ and validator‑based filtering continues
 #  to work exactly as on every other subnet.
 # -------------------------------------------------------------------------
-from __future__ import annotations
 
 import time
 import typing
