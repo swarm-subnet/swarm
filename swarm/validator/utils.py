@@ -1,6 +1,6 @@
 """
 Shared helper utilities for the validator.
-(Additions: save_flightplans)
+(Additions: save_flightplans + NumPy‑safe JSON handling)
 """
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from typing import Dict, List
 
 import bittensor as bt
 import dataclasses
-
-from swarm.constants import SAVE_FLIGHTPLANS          # bool flag
+import numpy as np                      # ← NEW
+from swarm.constants import SAVE_FLIGHTPLANS
 from swarm.protocol import MapTask, FlightPlan, ValidationResult
-from swarm.utils.logging import ColoredLogger          
+from swarm.utils.logging import ColoredLogger  # keep existing import
 
 import copy
 import random
@@ -23,39 +23,72 @@ from typing import List as _List                     # avoid shadowing below
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# New helper: save_flightplans
+# Helpers for JSON serialisation
 # ──────────────────────────────────────────────────────────────────────────────
+class _NumpyEncoder(json.JSONEncoder):
+    """Automatically cast NumPy scalars / arrays to built‑ins."""
+
+    def default(self, obj):  # noqa: D401
+        # NumPy scalar ➜ Python scalar
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        # Small arrays ➜ list
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        # pathlib.Path ➜ str
+        if isinstance(obj, Path):
+            return str(obj)
+        # datetime ➜ ISO 8601
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+
+        return super().default(obj)
+
+
 def _to_dict(obj):
     """
     Best‑effort conversion of dataclass / pydantic / generic object -> dict
-    (Recursive conversion for dataclass fields.)
+    (Recursive conversion, incl. NumPy scalars.)
     """
+    # numpy scalar / array
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
     # dataclass
     if dataclasses.is_dataclass(obj):
         return {k: _to_dict(v) for k, v in dataclasses.asdict(obj).items()}
 
-    # pydantic (v1 or v2) – accounts for both .dict() & .model_dump()
+    # pydantic (v1 or v2)
     for attr in ("dict", "model_dump"):
         fn = getattr(obj, attr, None)
         if callable(fn):
-            return fn(exclude_none=True)
+            return {k: _to_dict(v) for k, v in fn(exclude_none=True).items()}
 
-    # hasattr __dict__
-    if hasattr(obj, "__dict__"):
-        return {k: _to_dict(v) for k, v in obj.__dict__.items()}
-
-    # builtin (str, int, float, list, tuple, dict, None, bool)
-    if isinstance(obj, (str, int, float, bool, type(None))):
-        return obj
-    if isinstance(obj, (list, tuple)):
-        return [_to_dict(v) for v in obj]
+    # mapping
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
 
-    # Fallback – stringify
+    # iterable
+    if isinstance(obj, (list, tuple)):
+        return [_to_dict(v) for v in obj]
+
+    # primitives
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+
+    # fallback
     return str(obj)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# New helper: save_flightplans (patched to be NumPy‑safe)
+# ──────────────────────────────────────────────────────────────────────────────
 def save_flightplans(
     task: MapTask,
     results: List[ValidationResult],
@@ -66,7 +99,7 @@ def save_flightplans(
     Persist full FlightPlans + scores to JSON if SAVE_FLIGHTPLANS == True.
 
     • Creates “flightplans/” folder at repo root (if missing)
-    • File name:  flightplans_<YYYYmmdd_HHMMSS>.json
+    • File name:  flightplans_<UTC‑YYYYmmdd_HHMMSS>.json
     • Keeps only the *latest* `max_files` files – older ones auto‑deleted.
     """
     if not SAVE_FLIGHTPLANS:
@@ -88,11 +121,11 @@ def save_flightplans(
             "task": _to_dict(task),
             "flightplans": [
                 {
-                    "uid"      : r.uid,
-                    "score"    : r.score,
-                    "success"  : r.success,
-                    "time_sec" : r.time_sec,
-                    "energy"   : r.energy,
+                    "uid"      : int(r.uid),
+                    "score"    : float(r.score),
+                    "success"  : bool(r.success),
+                    "time_sec" : float(r.time_sec),
+                    "energy"   : float(r.energy),
                     "plan"     : _to_dict(plans.get(r.uid)),  # full plan
                 }
                 for r in sorted_res
@@ -102,7 +135,13 @@ def save_flightplans(
         # ── Dump to file ──────────────────────────────────────────────────────
         filename = fp_dir / f"flightplans_{timestamp}.json"
         with open(filename, "w", encoding="utf‑8") as fh:
-            json.dump(payload, fh, indent=2, ensure_ascii=False)
+            json.dump(
+                payload,
+                fh,
+                indent=2,
+                ensure_ascii=False,
+                cls=_NumpyEncoder,           # ← fixes NumPy scalars
+            )
         bt.logging.info(f"[save_flightplans] Stored: {filename.relative_to(root_path)}")
 
         # ── Enforce retention window (keep newest `max_files`) ────────────────
