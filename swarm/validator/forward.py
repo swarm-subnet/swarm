@@ -1,4 +1,3 @@
-# swarm/validator/forward.py
 # ---------------------------------------------------------------
 # Forward loop for the Swarm validator neuron.
 # ---------------------------------------------------------------
@@ -26,6 +25,10 @@ from swarm.constants import (SIM_DT,      # 50 Hz physics step sent to miners
     QUERY_TIMEOUT,      # dendrite timeout (s)
     FORWARD_SLEEP_SEC,  # Wait between format     
     SAVE_FLIGHTPLANS)      # save flight plans to disk
+
+# NEW IMPORT  ───────────────────────────────────────────────────
+from .utils import save_flightplans
+# ───────────────────────────────────────────────────────────────
 
 
 # ────────── Internal helpers (use self from outer scope) ────────
@@ -114,8 +117,9 @@ async def forward(self) -> None:
       1. build deterministic MapTask
       2. broadcast ➜ collect FlightPlans
       3. replay & score
-      4. update on‑chain weights (EMA)
-      5. brief sleep
+      4. optionally persist FlightPlans
+      5. update on‑chain weights (EMA)
+      6. brief sleep
     """
     try:
         # -------- bookkeeping -------------------------------
@@ -147,11 +151,14 @@ async def forward(self) -> None:
         else:
             bt.logging.warning("No valid FlightPlans returned by miners.")
 
-        # -------- 4) weight update ---------------------------
+        # -------- 4) (optional) persist FlightPlans ----------
+        save_flightplans(task, results, plans)
+
+        # -------- 5) weight update ---------------------------
         _apply_weight_update(self, results)
 
     except Exception as err:
         bt.logging.error(f"Validator forward error: {err}")
 
-    # -------- 5) sleep --------------------------------------
+    # -------- 6) sleep --------------------------------------
     await asyncio.sleep(FORWARD_SLEEP_SEC)
