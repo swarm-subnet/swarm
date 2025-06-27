@@ -25,6 +25,7 @@ from swarm.core.HoverAviaryRawRPM import HoverAviaryRawRPM
 from swarm.core.env_builder import build_world
 from swarm.protocol import MapTask
 from swarm.constants import SAFE_Z
+import io, os, contextlib
 
 # ---------------------------------------------------------------------
 def make_env(
@@ -60,12 +61,17 @@ def make_env(
     )
 
     if raw_rpm:
-        env = HoverAviaryRawRPM(act=ActionType.RPM, **kwargs)
+        with contextlib.redirect_stdout(io.StringIO()): # suppress noisy messages
+            env = HoverAviaryRawRPM(act=ActionType.RPM, **kwargs)
     else:
-        env = HoverAviary(act=ActionType.PID, **kwargs)
+        with contextlib.redirect_stdout(io.StringIO()): # suppress noisy messages
+            env = HoverAviary(act=ActionType.PID, **kwargs)
 
     # 2 ─ generic PyBullet plumbing ------------------------------------
-    cli = env.getPyBulletClient()
+    
+    with contextlib.redirect_stdout(io.StringIO()):
+        print("test")
+        cli = env.getPyBulletClient() # suppress noisy messages
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
     if gui:
@@ -75,7 +81,8 @@ def make_env(
             time.sleep(0.1)
 
     # 3 ─ deterministic reset & world build ----------------------------
-    env.reset(seed=task.map_seed)
+    with contextlib.redirect_stdout(io.StringIO()):
+        env.reset(seed=task.map_seed)
     build_world(task.map_seed, cli, task.goal)
 
     # 4 ─ spawn drone at requested start pose --------------------------

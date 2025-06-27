@@ -25,3 +25,5 @@ CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
 R_MIN, R_MAX = 10.0, 30.0          # radial goal distance (m)
 H_MIN, H_MAX = 2, 10          # radial goal distance (m)
+# ───────────────────────────────────────────
+SAVE_FLIGHTPLANS = False  # save flight plans to disk

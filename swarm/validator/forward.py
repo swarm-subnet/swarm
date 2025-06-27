@@ -24,8 +24,8 @@ from swarm.constants import (SIM_DT,      # 50 Hz physics step sent to miners
     HORIZON_SEC,      # max simulated flight time
     SAMPLE_K,       # miners sampled per forward
     QUERY_TIMEOUT,      # dendrite timeout (s)
-    FORWARD_SLEEP_SEC,       # pause between forwards
-    EMA_ALPHA)      # weights EMA coefficient
+    FORWARD_SLEEP_SEC,  # Wait between format     
+    SAVE_FLIGHTPLANS)      # save flight plans to disk
 
 
 # ────────── Internal helpers (use self from outer scope) ────────
