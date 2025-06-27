@@ -104,8 +104,7 @@ def _apply_weight_update(self, results: List[ValidationResult]) -> None:
 
     # Update the scores cache and push weights on-chain
     self.update_scores(scores_np, uids_np)
-    self.set_weights()      # cached weights are sent on-chain
-    bt.logging.info(f"Updated weights for {len(uids_np)} miners.")
+    bt.logging.info(f"Updated scores for {len(uids_np)} miners.")
 
 
 # ────────── Public API: called from neurons/validator.py ────────
