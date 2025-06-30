@@ -19,6 +19,7 @@ swarm_env/*
 ~/*
 output.png
 .vscode/*
+flightplans/*
 
 # C extensions
 *.so
