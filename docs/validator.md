@@ -73,7 +73,7 @@ pm2 restart swarm_validator
 pm2 stop     swarm_validator
 ```
 
-## 🔄 4 · Automatic update & deploy (Work in progress, code provided as-is)
+## 🔄 4 · Automatic update & deploy
 
 **scripts/auto_update_deploy.sh**
 
@@ -85,10 +85,11 @@ pm2 stop     swarm_validator
 **How to use**
 
 ```bash
-chmod +x scripts/auto_update_deploy.sh scripts/update_deploy.sh
+chmod +x ./scripts/validator/update/auto_update_deploy.sh 
+chmod +x ./scripts/validator/update/update_deploy.sh
 
 # edit the variables at the top of auto_update_deploy.sh
-nano scripts/auto_update_deploy.sh
+nano ./scripts/validator/update/auto_update_deploy.sh
 #   PROCESS_NAME="swarm_validator"
 #   WALLET_NAME="my_cold"
 #   WALLET_HOTKEY="my_validator"
@@ -97,7 +98,7 @@ nano scripts/auto_update_deploy.sh
 # then run it under pm2 / tmux / systemd
 pm2 start --name auto_update_validator \
           --interpreter /bin/bash \
-          scripts/auto_update_deploy.sh
+          scripts/validator/update/auto_update_deploy.sh
 ```
 
 ## 🧩 5 · What the validator actually does
