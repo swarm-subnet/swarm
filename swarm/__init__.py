@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __least_acceptable_version__ = "1.0.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/TODO/TODO"
