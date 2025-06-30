@@ -86,7 +86,6 @@ def _replay_once_impl(
         if not collided:
             contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
             if contacts:                     # any contact → collision
-                print("Terminating early due to collision!")
                 collided = True
                 break                        # stop the episode early
 
