@@ -1,24 +1,25 @@
+# swarm/validator/replay.py
 """
 swarm.validator.replay
 ──────────────────────
-*Deterministic* re‑execution of a miner‑supplied FlightPlan.
+Deterministic re‑execution of a miner‑supplied FlightPlan.
 
-The environment boilerplate is now provided by `make_env`.
+• Any physical contact between the drone and another object is considered a
+  collision ⇒ the episode is flagged as a failure ⇒ flight_reward() returns 0.
 """
 from __future__ import annotations
 
-import math
 import time
 from typing import Tuple, List
 
 import numpy as np
 import pybullet as p
+
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
-from swarm.utils.env_factory import make_env      # ← NEW
+from swarm.utils.env_factory import make_env
 from swarm.utils.gui_isolation import run_isolated
 from swarm.core.drone import track_drone
-from swarm.core.env_builder import build_world
 from swarm.protocol import MapTask, FlightPlan, RPMCmd
 
 # ───────── constants ─────────
@@ -51,12 +52,12 @@ def _replay_once_impl(
 ) -> Tuple[bool, float, float]:
 
     # 1 ─ environment ---------------------------------------------------
-    env = make_env(task, gui=gui, raw_rpm=True)   # ← factory (RPM mode)
-    cli = env.getPyBulletClient()
+    env = make_env(task, gui=gui, raw_rpm=True)   # RPM‑controlled
+    cli = env.getPyBulletClient()                 # physicsClientId (int)
 
     # 2 ─ turn the FlightPlan into a step‑indexed RPM table -------------
     last_t = plan.commands[-1].t
-    max_steps = int(round(last_t / task.sim_dt)) + 1  # strict length
+    max_steps = int(round(last_t / task.sim_dt)) + 1
     rpm_table = _plan_to_table(plan.commands, max_steps, task.sim_dt)
 
     # 3 ─ main replay loop ---------------------------------------------
@@ -64,17 +65,30 @@ def _replay_once_impl(
     hover_elapsed = 0.0
     energy = 0.0
     success = False
+    collided = False
     goal = np.asarray(task.goal, dtype=float)
+    drone_id = env.DRONE_IDS[0]
 
     for k in range(max_steps):
         t_sim = k * task.sim_dt
         rpm_vec = rpm_table[k]
-        obs, *_ = env.step(rpm_vec[None, :])  # shape (1,4)
+        obs, *_ = env.step(rpm_vec[None, :])          # shape (1,4)
         pos = obs[0, :3]
 
         # camera follow
         if gui and k % frames_per_cam == 0:
-            track_drone(cli, env.DRONE_IDS[0])
+            track_drone(cli, drone_id)
+
+        # energy bookkeeping
+        energy += (np.square(rpm_vec).sum() * env.KF / PROP_EFF) * task.sim_dt
+
+        # collision check  (fixed)
+        if not collided:
+            contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
+            if contacts:                     # any contact → collision
+                print("Terminating early due to collision!")
+                collided = True
+                break                        # stop the episode early
 
         # success logic
         if np.linalg.norm(pos - goal) < WAYPOINT_TOL:
@@ -85,14 +99,15 @@ def _replay_once_impl(
         else:
             hover_elapsed = 0.0
 
-        # energy bookkeeping
-        energy += (np.square(rpm_vec).sum() * env.KF / PROP_EFF) * task.sim_dt
-
         if gui:
             time.sleep(task.sim_dt)
 
     if not gui:
         env.close()
+
+    # Any collision ⇒ failure (success = False)
+    if collided:
+        success = False
 
     return success, t_sim, energy
 
@@ -113,7 +128,7 @@ def _plan_to_table(
 
     for cmd in cmds:
         k = int(cmd.t / sim_dt + 1e-9)
-        k = max(0, min(k, max_steps - 1))  # clip to valid range
+        k = max(0, min(k, max_steps - 1))  # clip
 
         # fill gap up to (but not including) k
         if k > idx:
