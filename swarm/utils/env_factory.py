@@ -70,7 +70,6 @@ def make_env(
     # 2 ─ generic PyBullet plumbing ------------------------------------
     
     with contextlib.redirect_stdout(io.StringIO()):
-        print("test")
         cli = env.getPyBulletClient() # suppress noisy messages
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
