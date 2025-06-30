@@ -1,89 +1,89 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------
-# auto_update_deploy.sh
-# ---------------------------------------------------------------
-# Periodically check origin/main for a higher __version__
-# (defined in swarm/__init__.py).  If found, pull and call the
-# local update_deploy.sh to rebuild / restart the running Swarm
-# validator or miner.
+# auto_update_deploy.sh – Watch the repo; upgrade & redeploy when
+#                         a higher swarm.__version__ is on origin/main.
 #
-#     bash auto_update_deploy.sh
+# Run under PM2/tmux/systemd, e.g.
+#   pm2 start --name auto_update_validator \
+#      --interpreter /bin/bash scripts/auto_update_deploy.sh
 # ---------------------------------------------------------------
 set -euo pipefail
 IFS=$'\n\t'
 
-# ───────────────────────── Configuration ─────────────────────────
-PROCESS_NAME="swarm-validator"          # pm2 process name
-WALLET_NAME="my_wallet"                 # coldkey
-WALLET_HOTKEY="my_hotkey"               # hotkey
-SUBTENSOR_PARAM="--subtensor.network finney"  # extra flags
+###############################################################################
+# 1. User‑tunable settings – **edit these** ──────────────────────
+###############################################################################
+PROCESS_NAME="swarm_validator"          # pm2 name used in your launch cmd
+WALLET_NAME="my_cold"                   # coldkey
+WALLET_HOTKEY="my_validator"            # hotkey
+SUBTENSOR_PARAM="--subtensor.network finney"
+SLEEP_INTERVAL=600                      # seconds between version checks
+###############################################################################
 
-SLEEP_INTERVAL=600      # seconds between checks (10 min)
-
-# ───────────────────────── Paths ─────────────────────────────────
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -z "$REPO_ROOT" ]]; then
-  echo "[ERR] Not inside a Git repository" >&2; exit 1
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Path discovery
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 UPDATE_SCRIPT="$SCRIPT_DIR/update_deploy.sh"
 
 [[ -x "$UPDATE_SCRIPT" ]] || {
-  echo "[ERR] update_deploy.sh not found or not executable at $UPDATE_SCRIPT" >&2
-  exit 1
+  echo "[ERR] update_deploy.sh not executable at $UPDATE_SCRIPT" >&2; exit 1; }
+
+###############################################################################
+# Helper – read __version__ strings
+###############################################################################
+extract_version() {
+  grep -Eo '^__version__[[:space:]]*=[[:space:]]*["'\'']([^"'\'']+)["'\'']' "$1" |
+  head -n1 | sed -E 's/^__version__[[:space:]]*=[[:space:]]*["'\'']([^"'\'']+)["'\'']/\1/'
 }
 
-# ────────────────── Helpers: version handling ────────────────────
-get_version_from_file() {
-  # $1 = file path
-  # prints <major>.<minor>[...]
-  grep -Eo "^__version__[[:space:]]*=[[:space:]]*['\"][0-9a-zA-Z\.\-]+" "$1" \
-    | head -n1 | cut -d"'" -f2 | cut -d"\"" -f2
+local_version() {
+  extract_version "$REPO_ROOT/swarm/__init__.py" 2>/dev/null || echo "0"
 }
-
-local_version()   { get_version_from_file "$REPO_ROOT/swarm/__init__.py"; }
 
 remote_version() {
-  git -C "$REPO_ROOT" fetch origin main --quiet
-  git -C "$REPO_ROOT" show origin/main:swarm/__init__.py 2>/dev/null | \
-    get_version_from_file /dev/stdin
+  git -C "$REPO_ROOT" fetch --quiet origin main
+  temp=$(mktemp)
+  git -C "$REPO_ROOT" show origin/main:swarm/__init__.py > "$temp" 2>/dev/null || { rm -f "$temp"; echo "0"; return; }
+  extract_version "$temp" || echo "0"
+  rm -f "$temp"
 }
 
 is_remote_newer() {
-  # returns 0 (true) if $2 (remote) is strictly higher than $1 (local)
-  # both parameters must be non-empty.
-  [[ -z "$1" || -z "$2" ]] && return 1
-  [[ "$1" == "$2" ]] &&   return 1
-  ver_sorted=$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)
-  [[ "$ver_sorted" == "$1" ]]
+  # sort -V guarantees correct semantic order for dot‑separated numbers
+  [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" == "$1" ]]
 }
 
-# ────────────────────────── Banner ───────────────────────────────
-echo "[INFO] Auto-update watcher started"
-echo "[INFO]   repo            : $REPO_ROOT"
-echo "[INFO]   process name     : $PROCESS_NAME"
-echo "[INFO]   wallet / hotkey  : $WALLET_NAME / $WALLET_HOTKEY"
-echo "[INFO]   subtensor params : $SUBTENSOR_PARAM"
-echo "[INFO]   check interval   : $((SLEEP_INTERVAL/60)) min"
+###############################################################################
+# Banner
+###############################################################################
+echo "[INFO] ──────────────────────────────────────────────────────────────"
+echo "[INFO] Auto‑update watcher started"
+echo "[INFO] Repo root        : $REPO_ROOT"
+echo "[INFO] PM2 process name : $PROCESS_NAME"
+echo "[INFO] Wallet / Hotkey  : $WALLET_NAME / $WALLET_HOTKEY"
+echo "[INFO] Check interval   : $((SLEEP_INTERVAL/60)) min"
+echo "[INFO] ──────────────────────────────────────────────────────────────"
 
-# ────────────────────────── Main loop ────────────────────────────
+###############################################################################
+# Main loop
+###############################################################################
 while true; do
-  LOCAL=$(local_version   || echo "0")
-  REMOTE=$(remote_version || echo "0")
-  echo "[INFO] Local v${LOCAL}  —  Remote v${REMOTE}"
+  LVER="$(local_version)"
+  RVER="$(remote_version)"
 
-  if is_remote_newer "$LOCAL" "$REMOTE"; then
-    echo "[INFO] Newer version detected, pulling..."
-    git -C "$REPO_ROOT" pull --ff-only origin main
-    echo "[INFO] Running update_deploy.sh ..."
-    bash -x "$UPDATE_SCRIPT" \
-         "$PROCESS_NAME" "$WALLET_NAME" "$WALLET_HOTKEY" "$SUBTENSOR_PARAM"
-    echo "[INFO] Update script finished."
+  echo "[INFO] Local v$LVER  –  Remote v$RVER"
+
+  if is_remote_newer "$LVER" "$RVER"; then
+    echo "[INFO] Newer version detected → running update_deploy.sh"
+    bash "$UPDATE_SCRIPT" \
+         "$PROCESS_NAME" \
+         "$WALLET_NAME" \
+         "$WALLET_HOTKEY" \
+         "$SUBTENSOR_PARAM"
+    echo "[INFO] Update finished – next check in $SLEEP_INTERVAL s."
   else
-    echo "[INFO] No update needed."
+    echo "[INFO] Already up‑to‑date – next check in $SLEEP_INTERVAL s."
   fi
 
-  echo "[INFO] Sleeping ${SLEEP_INTERVAL}s ..."
   sleep "$SLEEP_INTERVAL"
 done

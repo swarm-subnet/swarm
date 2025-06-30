@@ -1,94 +1,101 @@
 #!/usr/bin/env bash
-# update_deploy.sh - Force update and redeploy regardless of version check.
-# Updates validator and always invokes the top-level demo deploy wrapper.
-# TODO - REVIEW
+# ---------------------------------------------------------------
+# update_deploy.sh – Pull latest code, reinstall, restart PM2.
+#
+# Called directly or by auto_update_deploy.sh.
+# If everything is already up‑to‑date it still rebuilds / restarts,
+# so that environment changes (e.g. new requirements) are picked up.
+# ---------------------------------------------------------------
 set -euo pipefail
 IFS=$'\n\t'
 
-########################################
-# Total steps: 5
-########################################
-TOTAL_STEPS=5
-CURRENT_STEP=0
-
-step() {
-  CURRENT_STEP=$((CURRENT_STEP+1))
-  echo "[STEP $CURRENT_STEP/$TOTAL_STEPS] $1"
+###############################################################################
+# 0. Helper – tiny progress banner
+###############################################################################
+STEP=0
+banner() {
+  STEP=$((STEP+1))
+  echo -e "\n[STEP ${STEP}] $*\n"
 }
 
-########################################
-# 1. Configurable parameters
-########################################
-step "Loading configurable parameters"
-PROCESS_NAME="${PROCESS_NAME:-subnet-124-validator}"
-WALLET_NAME="${WALLET_NAME:-}"      # will prompt if empty
-WALLET_HOTKEY="${WALLET_HOTKEY:-}"  # will prompt if empty
-SUBTENSOR_PARAM="${SUBTENSOR_PARAM:---subtensor.network finney}"
+###############################################################################
+# 1. Configuration (env‑vars → CLI‑args → defaults)
+###############################################################################
+banner "Loading configuration"
 
-# Override via args
-if [ $# -ge 1 ]; then PROCESS_NAME="$1"; fi
-if [ $# -ge 2 ]; then WALLET_NAME="$2"; fi
-if [ $# -ge 3 ]; then WALLET_HOTKEY="$3"; fi
-if [ $# -ge 4 ]; then SUBTENSOR_PARAM="$4"; fi
+# ► Defaults – match the public instructions exactly
+PROCESS_NAME="swarm_validator"          # pm2 process name
+WALLET_NAME=""                          # coldkey  (empty ⇒ prompt if interactive)
+WALLET_HOTKEY=""                        # hotkey   (empty ⇒ prompt if interactive)
+SUBTENSOR_PARAM="--subtensor.network finney"
 
-# Only prompt interactively for missing values
-if [ -t 0 ]; then
-  if [ -z "$PROCESS_NAME" ]; then
-    read -rp "Enter process name (default: subnet-124-validator): " input_process
-    PROCESS_NAME="${input_process:-subnet-124-validator}"
-  fi
-  if [ -z "$WALLET_NAME" ]; then
-    read -rp "Enter your coldkey name: " WALLET_NAME
-  fi
-  if [ -z "$WALLET_HOTKEY" ]; then
-    read -rp "Enter your hotkey: " WALLET_HOTKEY
-  fi
+# ◄ Allow overrides from environment
+PROCESS_NAME="${PROCESS_NAME_OVERRIDE:-$PROCESS_NAME}"
+WALLET_NAME="${WALLET_NAME_OVERRIDE:-$WALLET_NAME}"
+WALLET_HOTKEY="${WALLET_HOTKEY_OVERRIDE:-$WALLET_HOTKEY}"
+SUBTENSOR_PARAM="${SUBTENSOR_PARAM_OVERRIDE:-$SUBTENSOR_PARAM}"
+
+# ◄ Allow overrides from positional CLI args
+[[ $# -ge 1 ]] && PROCESS_NAME="$1"
+[[ $# -ge 2 ]] && WALLET_NAME="$2"
+[[ $# -ge 3 ]] && WALLET_HOTKEY="$3"
+[[ $# -ge 4 ]] && SUBTENSOR_PARAM="$4"
+
+# ◄ Interactive prompts (only if running on TTY and still empty)
+if [[ -t 0 ]]; then
+  [[ -z "$WALLET_NAME"     ]] && read -rp "Coldkey name            : " WALLET_NAME
+  [[ -z "$WALLET_HOTKEY"   ]] && read -rp "Hotkey                  : " WALLET_HOTKEY
 fi
 
-echo
+[[ -z "$WALLET_NAME"   || -z "$WALLET_HOTKEY" ]] && {
+  echo "[ERR] WALLET_NAME or WALLET_HOTKEY not set." >&2
+  exit 1
+}
 
-########################################
-# 2. Script and repo roots
-########################################
-step "Detecting script and repository roots"
-SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-echo "Repo root detected at: $REPO_ROOT"
-echo
+###############################################################################
+# 2. Locate repo root and virtualenv
+###############################################################################
+banner "Locating repository root & virtualenv"
 
-echo
-step "Update and deploy completed successfully"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+echo "Repository root : $REPO_ROOT"
 
-########################################
-# 3. Update repositories
-########################################
-step "Updating repositories"
-pushd "$REPO_ROOT" > /dev/null
-  echo "Pulling latest from main repository..."
-  git pull origin main
-popd > /dev/null
-echo
+VENV_DIR="$REPO_ROOT/validator_env"
+PYTHON_BIN="$VENV_DIR/bin/python"
 
-########################################
-# 4. Install and restart validator
-########################################
-step "Installing and restarting validator"
-echo "Activating virtualenv and installing code..."
-source "$REPO_ROOT/validator_env/bin/activate"
-pip install -e .
-
-echo "Restarting PM2 process '$PROCESS_NAME'..."
-if ! pm2 restart "$PROCESS_NAME"; then
-  echo "PM2 restart failed; starting fresh instance"
-  pm2 start neurons/validator.py \
-    --name "$PROCESS_NAME" \
-    --interpreter python \
-    -- --netuid 124 $SUBTENSOR_PARAM \
-       --wallet.name "$WALLET_NAME" \
-       --wallet.hotkey "$WALLET_HOTKEY"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[INFO] Virtualenv not found – running setup script first."
+  bash "$REPO_ROOT/scripts/validator/main/setup.sh"
 fi
 
-echo
-step "Update and deploy completed successfully"
+###############################################################################
+# 3. Update repository
+###############################################################################
+banner "Pulling latest code from origin/main"
+git -C "$REPO_ROOT" fetch --quiet origin main
+git -C "$REPO_ROOT" reset --hard origin/main
 
+###############################################################################
+# 4. Re‑install package inside venv & restart validator
+###############################################################################
+banner "Installing updated Python package"
+source "$VENV_DIR/bin/activate"
+pip install --quiet --upgrade pip
+pip install --quiet -e "$REPO_ROOT"
+
+banner "Restarting PM2 process: $PROCESS_NAME"
+if ! pm2 restart "$PROCESS_NAME" &>/dev/null; then
+  echo "[WARN] PM2 process not found – starting a fresh one."
+  interp="$(command -v python)"        # fallback if venv not on PATH for pm2
+  pm2 start "$REPO_ROOT/neurons/validator.py" \
+        --name "$PROCESS_NAME" \
+        --interpreter "$interp" \
+        -- \
+          --netuid 124 $SUBTENSOR_PARAM \
+          --wallet.name "$WALLET_NAME" \
+          --wallet.hotkey "$WALLET_HOTKEY"
+fi
+
+banner "Update & redeploy completed – validator running"
+exit 0
