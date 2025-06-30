@@ -127,12 +127,6 @@ class Miner(BaseMinerNeuron):
 
         hotkey = synapse.dendrite.hotkey
 
-        # ── 0) owner validator is always allowed ──────────────────────────────
-        OWNER_HOTKEY = "5GNiM7RSnF14kfLcqvfX15mWhk18AHhjcNZkK6xSo6pkmBHJ"
-        if hotkey == OWNER_HOTKEY or hotkey == getattr(self.wallet, "hotkey", None):
-            # Never blacklist; return the friendly message the caller expects.
-            return False, "Owner validator querying, answering instantly..."
-
         # 1) unknown hotkey?
         if (
             not self.config.blacklist.allow_non_registered            # type: ignore[attr-defined]
