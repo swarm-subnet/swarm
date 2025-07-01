@@ -6,8 +6,9 @@ setuptools
 loguru
 xmldiff
 filelock
-# gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git
 pybullet
 bittensor
 msgpack
+importlib-metadata==7.0.0
+onnxruntime==1.18.0
 

@@ -1,164 +1,131 @@
 # ---------------------------------------------------------------
-# Forward loop for the Swarm validator neuron.
+# Forward loop for the Swarm validator neuron – Policy API (v2)
 # ---------------------------------------------------------------
 from __future__ import annotations
 
 import asyncio
-import time
-from typing import Dict, List
+import importlib
 import traceback
-import numpy as np
+from dataclasses import asdict
+from typing import Dict, List
+
 import bittensor as bt
+import numpy as np
 
 from swarm.protocol import (
-    MapTask, FlightPlan, ValidationResult, FlightPlanSynapse,
+    MapTask,
+    PolicySynapse,
+    PolicyRef,
+    ValidationResult,
 )
 from swarm.utils.uids import get_random_uids
+from swarm.utils.hash import sha256sum
+from swarm.utils.chunking import iter_chunks
+from swarm.validator.loader import temp_venv
+from swarm.utils.env_factory import make_env
 
 from .task_gen import random_task
-from .replay   import replay_once
-from .reward   import flight_reward
+from .reward    import flight_reward
 
-from swarm.constants import (SIM_DT,      # 50 Hz physics step sent to miners
-    HORIZON_SEC,      # max simulated flight time
-    SAMPLE_K,       # miners sampled per forward
-    QUERY_TIMEOUT,      # dendrite timeout (s)
-    FORWARD_SLEEP_SEC,  # Wait between format     
-    SAVE_FLIGHTPLANS)      # save flight plans to disk
+from swarm.constants import (
+    SIM_DT,
+    HORIZON_SEC,
+    SAMPLE_K,
+    QUERY_TIMEOUT,
+    FORWARD_SLEEP_SEC,
+)
 
-# NEW IMPORT  ───────────────────────────────────────────────────
-from .utils import save_flightplans
-# ───────────────────────────────────────────────────────────────
-
-
-# ────────── Internal helpers (use self from outer scope) ────────
-async def _query_miners(self, task: MapTask) -> dict[int, FlightPlan]:
+# ----------------------------------------------------------------
+# Miner handshake helpers
+# ----------------------------------------------------------------
+async def _get_pilots(self, task: MapTask) -> Dict[int, object]:
     """
-    Broadcast the MapTask to a sample of miners and collect FlightPlans.
-    Uses the unified FlightPlanSynapse for both directions:
-        • Validator → Miner:  task fields set, plan fields empty
-        • Miner     → Validator:  plan fields set (task fields optional)
+    Wrapper around self._get_pilots for code‑reuse inside older neuron
+    scaffolding (if you keep using this standalone module).
     """
-    # 1. Choose a random sample of miners (uids → axons)
-    uids: list[int] = get_random_uids(self, k=SAMPLE_K)
-    axons           = [self.metagraph.axons[uid] for uid in uids]
-    print(f"Querying {len(axons)} miners: {uids}")
-
-    # 2. Build the outbound synapse *from the task*
-    syn = FlightPlanSynapse.from_task(task)
-    syn.version = self.version                # propagate protocol version
-
-    # 3. Send the query and gather replies
-    replies: list[FlightPlanSynapse] = await self.dendrite(
-        axons=axons,
-        synapse=syn,
-        deserialize=True,
-        timeout=QUERY_TIMEOUT,
-    )
-
-    # 4. Extract FlightPlans (skip miners that returned nothing/invalid)
-    plans: dict[int, FlightPlan] = {}
-    for uid, rep in zip(uids, replies):
-        try:
-            plan = rep.plan
-            plans[uid] = plan
-        except Exception as e:
-            print(f"[ERROR] Failed to parse plan from miner {uid}: {type(e).__name__} — {e}")
-            traceback.print_exc()
-    return plans
+    uids = get_random_uids(self, k=SAMPLE_K)
+    return await self._get_pilots(uids, task)        # calls method in __init__
 
 
-def _score_plan(task: MapTask, uid: int, plan: FlightPlan | None) -> ValidationResult:
-    """
-    Re-simulate miner’s trajectory and compute reward components.
-    If a miner returned an empty / invalid plan we assign score == 0.
-    """
-    # ── Treat “no plan” or empty-command list as an automatic failure ──
-    if plan is None or not plan.commands:
-        return ValidationResult(
-            uid      = uid,
-            success  = False,
-            time_sec = task.horizon,   # full-horizon time-penalty
-            energy   = 0.0,
-            score    = 0.0,
-        )
+# ----------------------------------------------------------------
+# Episode simulation
+# ----------------------------------------------------------------
+def _run_episode(task: MapTask, uid: int, pilot: object) -> ValidationResult:
+    env = make_env(task, gui=False, raw_rpm=True, randomise=True)
+    obs = env.reset()
+    pilot.reset(task)
 
-    # ── Normal scoring path ─────────────────────────────────────────────
-    success, t_sim, energy = replay_once(task, plan)
+    t_sim   = 0.0
+    energy  = 0.0
+    success = False
+
+    while t_sim < task.horizon:
+        rpm = pilot.act(obs, t_sim)
+        obs, _, done, info = env.step(rpm[None, :])
+        t_sim += SIM_DT
+        energy += np.abs(rpm).sum() * SIM_DT
+        if done:
+            success = info.get("success", False)
+            break
+
     score = flight_reward(success, t_sim, energy, task.horizon)
     return ValidationResult(uid, success, t_sim, energy, score)
 
 
+# ----------------------------------------------------------------
+# Weight update – identical to previous implementation
+# ----------------------------------------------------------------
 def _apply_weight_update(self, results: List[ValidationResult]) -> None:
-    """
-    Push miners’ scores on-chain using bittensor’s modern helper methods.
-
-    Assumes your validator class implements:
-      • self.update_scores(rewards: np.ndarray, uids: np.ndarray)
-      • self.set_weights()              # no arguments
-    """
     if not results:
         bt.logging.warning("No validation results – skipping weight update.")
         return
 
-    # Align UIDs and scores
-    uids_np    = np.array([r.uid   for r in results], dtype=np.int64)
-    scores_np  = np.array([r.score for r in results], dtype=np.float32)
+    uids_np   = np.fromiter((r.uid   for r in results), dtype=np.int64)
+    scores_np = np.fromiter((r.score for r in results), dtype=np.float32)
 
-    # Update the scores cache and push weights on-chain
     self.update_scores(scores_np, uids_np)
-    bt.logging.info(f"Updated scores for {len(uids_np)} miners.")
+    bt.logging.info(f"Updated scores for {len(results)} miners.")
 
 
-# ────────── Public API: called from neurons/validator.py ────────
+# ----------------------------------------------------------------
+# Public entry point called from neurons/validator.py
+# ----------------------------------------------------------------
 async def forward(self) -> None:
     """
-    One full validator iteration:
-      1. build deterministic MapTask
-      2. broadcast ➜ collect FlightPlans
-      3. replay & score
-      4. optionally persist FlightPlans
-      5. update on‑chain weights (EMA)
-      6. brief sleep
+    New closed‑loop validator iteration based on PolicyRef/Pilot.
     """
     try:
-        # -------- bookkeeping -------------------------------
-        if not hasattr(self, "forward_count"):
-            self.forward_count = 0
-        self.forward_count += 1
-
+        self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
-        # -------- 1) build task ------------------------------
+        # -------- 1) Build task --------------------------------
         task: MapTask = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
-        print(f"Querying miners")
-        # -------- 2) query miners ----------------------------
-        plans: Dict[int, FlightPlan] = await _query_miners(self, task)
 
-        # -------- 3) replay & score --------------------------
-        print(f"Received {len(plans)} FlightPlans from miners.")
-        results: List[ValidationResult] = [
-            _score_plan(task, uid, plan) for uid, plan in plans.items()
-        ]
+        # -------- 2) Collect pilots ----------------------------
+        pilots = await _get_pilots(self, task)
+        bt.logging.info(f"Loaded {len(pilots)} pilots.")
 
-        # quick telemetry
+        # -------- 3) Score pilots ------------------------------
+        results: List[ValidationResult] = []
+        for uid, pilot in pilots.items():
+            try:
+                results.append(_run_episode(task, uid, pilot))
+            except Exception as e:
+                bt.logging.warning(f"Episode failed for miner {uid}: {e}")
+                traceback.print_exc()
+
+        # Telemetry
         if results:
             best = max(r.score for r in results)
-            avg  = sum(r.score for r in results) / len(results)
-            bt.logging.info(
-                f"Scored {len(results)} miners | best={best:.3f} avg={avg:.3f}"
-            )
+            avg  = np.mean([r.score for r in results])
+            bt.logging.info(f"Scores: best={best:.3f} avg={avg:.3f}")
         else:
-            bt.logging.warning("No valid FlightPlans returned by miners.")
+            bt.logging.warning("No successful episodes this round.")
 
-        # -------- 4) (optional) persist FlightPlans ----------
-        save_flightplans(task, results, plans)
-
-        # -------- 5) weight update ---------------------------
+        # -------- 4) Weight update -----------------------------
         _apply_weight_update(self, results)
 
     except Exception as err:
         bt.logging.error(f"Validator forward error: {err}")
 
-    # -------- 6) sleep --------------------------------------
     await asyncio.sleep(FORWARD_SLEEP_SEC)

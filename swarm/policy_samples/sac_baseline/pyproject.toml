@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sac-baseline-pilot"
+version = "0.1.0"
+description = "Reference SAC Pilot for Swarm miners"
+authors = [{name = "Swarm Core Team", email = "core@swarm.ai"}]
+readme = "README.md"
+requires-python = ">=3.10"
+
+# ‑‑ Runtime deps kept minimal (torch is only imported when miners actually run)
+dependencies = [
+    "torch>=1.13,<1.14",
+]
+
+[tool.setuptools]
+packages = ["pilot"]
