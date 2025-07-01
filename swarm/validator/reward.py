@@ -43,7 +43,7 @@ def flight_reward(
     Parameters
     ----------
     success
-        ``True`` if the mission reached its goal.
+        ``True`` if the mission successfully landed on the platform.
     t
         Time (in seconds) taken to reach the goal.
     e
