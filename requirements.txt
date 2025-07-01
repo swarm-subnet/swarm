@@ -11,4 +11,5 @@ bittensor
 msgpack
 importlib-metadata==7.0.0
 onnxruntime==1.18.0
+pip install "stable-baselines3[extra]" 
 
