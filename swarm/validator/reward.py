@@ -1,22 +1,34 @@
 # ──────────────────────────────────────────────────────────────────────────
-#  swarm/validator/reward.py          episodic score (validator / stats)
+#  swarm/validator/reward.py                episodic score (validator / stats)
 # ──────────────────────────────────────────────────────────────────────────
 """
-Final mission score.
+Final mission score (∈ [0 … 1]).
 
-Idea
-~~~~
-* When the goal **is reached** we care about finishing **fast** and **cheaply**.
-* When the goal **is NOT reached** we give at most *half* of the total weight
-  for “good behaviour” (hovering economically), but there is **no time bonus** –
-  faster failures are not better than slower ones.
+Principles
+~~~~~~~~~~
+* **Reaching the goal** is paramount – it carries the majority of the weight.
+* If the goal is *not* reached we still give credit for:
+  – surviving as long as possible,
+  – ending closer to the goal than we started.
+* The components are combined linearly then clamped to [0, 1].
 
-The score still lives in **[0 … 1]**.
+Arguments
+~~~~~~~~~
+success       – True if the “success” flag from the env is set.
+t_alive       – Simulated time until termination [s].
+d_start       – Distance start→goal at t = 0 [m].
+d_final       – Distance current→goal when episode ends [m].
+horizon       – Maximum episode length [s].
+
+Weights (tweak to taste)
+~~~~~~~~~~~~~~~~~~~~~~~~
+w_success  : 0.80   # dominant term – must succeed!
+w_alive    : 0.10   # stay in the air
+w_progress : 0.10   # finish closer than you started
 """
 from __future__ import annotations
 
 __all__ = ["flight_reward"]
-
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
@@ -24,40 +36,32 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 def flight_reward(
     success: bool,
-    t: float,
-    e: float,
+    t_alive: float,
+    d_start: float,
+    d_final: float,
     horizon: float,
-    e_budget: float = 00.1,
     *,
-    w_success: float = 0.99,
-    w_t: float = 0.30,
-    w_e: float = 0.20,
+    w_success: float = 0.80,
+    w_alive: float = 0.10,
+    w_progress: float = 0.10,
 ) -> float:
-    """Return a score in `[0.0 … 1.0]`.
-
-    *If `success` is False the time term is *ignored* and the energy term is
-    down-weighted by ½ so that any failure caps the total score at 0.5.*
-    """
     if horizon <= 0:
         raise ValueError("'horizon' must be positive")
-    if e_budget <= 0:
-        raise ValueError("'e_budget' must be positive")
+    if d_start <= 0:
+        raise ValueError("'d_start' must be positive")
 
-    time_term   = _clamp(1.0 - t / horizon)
-    energy_term = _clamp(1.0 - e / e_budget)
+    # ① success term
+    success_term = 1.0 if success else 0.0
 
-    if success:
-        score = (
-            w_success * 1.0 +
-            w_t       * time_term +
-            w_e       * energy_term
-        )
-    else:
-        # Half-weight the energy term, drop the time term completely
-        score = (
-            w_success * 0.0 +
-            0.0               +
-            (w_e * 0.5) * energy_term
-        )
+    # ② time‑alive term   (0 → 1 over the episode)
+    alive_term = _clamp(t_alive / horizon)
 
+    # ③ progress term     (0 if we end further away, up to 1 if we finish on the goal)
+    progress_term = _clamp((d_start - d_final) / d_start)
+
+    score = (
+        w_success  * success_term +
+        w_alive    * alive_term +
+        w_progress * progress_term
+    )
     return _clamp(score)
