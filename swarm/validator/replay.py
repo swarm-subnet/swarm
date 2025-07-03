@@ -26,8 +26,9 @@ from swarm.protocol import MapTask, FlightPlan, RPMCmd
 from swarm.constants import (
     CAM_HZ,          # camera follow rate
     PROP_EFF,        # propeller efficiency
-    WAYPOINT_TOL,    # way‑point success tolerance
-    HOVER_SEC,       # time to hover at the goal (s)
+    WAYPOINT_TOL,    # way-point success tolerance
+    LANDING_PLATFORM_RADIUS as _PR,  # platform radius constant
+    STABLE_LANDING_SEC,  # required stable landing duration
 )
 # ─────────────────────────────
 
@@ -62,10 +63,10 @@ def _replay_once_impl(
 
     # 3 ─ main replay loop ---------------------------------------------
     frames_per_cam = max(1, int(round(1.0 / (task.sim_dt * CAM_HZ))))
-    hover_elapsed = 0.0
     energy = 0.0
     success = False
     collided = False
+    stable_landing_time = 0.0  # accumulated stable landing time
     goal = np.asarray(task.goal, dtype=float)
     drone_id = env.DRONE_IDS[0]
 
@@ -82,21 +83,51 @@ def _replay_once_impl(
         # energy bookkeeping
         energy += (np.square(rpm_vec).sum() * env.KF / PROP_EFF) * task.sim_dt
 
-        # collision check  (fixed)
+        # collision check – ignore platform contacts near goal
         if not collided:
             contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
-            if contacts:                     # any contact → collision
-                collided = True
-                break                        # stop the episode early
+            if contacts:
+                allowed = True
+                for cp in contacts:
+                    # contact position on A (drone) in world coordinates is cp[5]
+                    cpos = cp[5]
+                    # Safeguard: ensure tuple length
+                    if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
+                        cx, cy, cz = cpos[:3]
+                        horiz = np.linalg.norm([cx - goal[0], cy - goal[1]])
+                        vert  = abs(cz - goal[2])
+                        # If contact is within platform radius and close to surface → allowed
+                        if horiz < _PR + 0.05 and vert < 0.3:
+                            continue  # allowed contact
+                    allowed = False
+                    break
+                if not allowed:
+                    collided = True
+                    break  # stop episode early
 
-        # success logic
-        if np.linalg.norm(pos - goal) < WAYPOINT_TOL:
-            hover_elapsed += task.sim_dt
-            if hover_elapsed >= HOVER_SEC:
+        # ─ landing success logic: stable landing on green circle/TAO logo ─
+        horizontal_distance = np.linalg.norm(pos[:2] - goal[:2])  # X,Y distance only
+        vertical_distance = abs(pos[2] - goal[2])                  # Z distance only
+        
+        # TAO logo now covers 106% of green circle area (from env_builder.py)
+        tao_logo_radius = _PR * 0.8 * 1.06  # Green circle radius * TAO coverage
+        
+        # Check if drone is positioned correctly on large TAO logo surface
+        on_tao_logo = (horizontal_distance < tao_logo_radius and   # Within TAO logo
+                      vertical_distance < 0.3 and                 # Within 30cm of surface
+                      pos[2] >= goal[2] - 0.1)                    # Above platform (not below)
+        
+        if on_tao_logo:
+            # ─ accumulate stable landing time ─
+            stable_landing_time += task.sim_dt
+            
+            # ─ success condition: stable for required duration ─
+            if stable_landing_time >= STABLE_LANDING_SEC:
                 success = True
                 break
         else:
-            hover_elapsed = 0.0
+            # ─ reset landing timer if drone moves away ─
+            stable_landing_time = 0.0
 
         if gui:
             time.sleep(task.sim_dt)
