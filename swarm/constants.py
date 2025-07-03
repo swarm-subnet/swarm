@@ -7,11 +7,11 @@ N_OBSTACLES = 100  # number of random obstacles in the world
 # ────────── Validator constants ─────────────────────────────────
 SIM_DT              = 1/50      # 50 Hz physics step sent to miners
 HORIZON_SEC         = 30      # max simulated flight time
-SAMPLE_K            = 60       # miners sampled per forward
+SAMPLE_K            = 256       # miners sampled per forward
 QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
 FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
 EMA_ALPHA           = 0.20      # weights EMA coefficient
-FORWARD_SLEEP_SEC = 60  # pause between forwards (s)
+FORWARD_SLEEP_SEC = 300  # pause between forwards (s)
 
 WAYPOINT_TOL = 1      # success sphere
 HOVER_SEC    = 3      # time to hover at the goal (s)
