@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.0.1"
+__version__ = "2.0.0"
 __least_acceptable_version__ = "1.0.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/TODO/TODO"
@@ -33,10 +33,4 @@ src_path = Path(__file__).resolve().parent / "src"
 
 if src_path.is_dir() and str(src_path) not in sys.path:
     sys.path.append(str(src_path))
-
-# Import all submodules.
-from . import protocol
-from . import base
-from . import validator
-
 

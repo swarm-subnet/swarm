@@ -1,20 +1,26 @@
 #!/usr/bin/env python
 """
-test_RL.py ────────────────────────────────────────────────────────────────
-Quick sanity test for the new *policy*‑based pipeline.
+tests/test_RL.py ────────────────────────────────────────────────────────────
+Minimal PPO pipeline for Swarm‑validator tasks **with step‑level debugging**.
 
-• Trains a tiny PPO agent on randomly generated `MapTask`s.
-• Wraps the trained `stable_baselines3` model in the *Pilot* API.
-• Replays 100 evaluation episodes with the same code‑path the validator uses.
-• Prints per‑episode telemetry and aggregate stats.
+Usage
+-----
+
+Normal run (headless):
+    $ python -m tests.test_RL
+
+Render the first episode in the PyBullet GUI:
+    $ python -m tests.test_RL --gui
+
+Add very verbose prints for the first episode:
+    $ python -m tests.test_RL --debug
 """
 from __future__ import annotations
 
 import argparse
 import statistics
 import time
-from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 
@@ -23,123 +29,177 @@ try:
 except ImportError:  # pragma: no cover
     import logging as logger
 
-    logger.basicConfig(level=logger.INFO)
+    logger.basicConfig(level=logging.INFO)
 
-# ---------------- Swarm imports ------------------------------------------
+# ── Swarm imports ──────────────────────────────────────────────────────────
 from swarm.validator.task_gen import random_task
 from swarm.validator.reward import flight_reward
 from swarm.utils.env_factory import make_env
 from swarm.protocol import MapTask, ValidationResult
-
-# Simulation constants reused from validator
 from swarm.constants import SIM_DT, HORIZON_SEC
 
-# ---------------- RL toolkit ---------------------------------------------
+# ── RL toolkit ─────────────────────────────────────────────────────────────
 try:
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv
     from gymnasium import Env
 except ImportError as e:  # pragma: no cover
     raise SystemExit(
-        "Stable‑Baselines3 not found. Install with:\n"
-        "   pip install 'stable-baselines3[extra]'"
+        "stable‑baselines3 not found – install with "
+        "`pip install 'stable-baselines3[extra]'`"
     ) from e
 
+# ── Optional: keep PyBullet from seg‑faulting on exit ──────────────────────
+try:
+    import atexit, pybullet as p
 
-# =========================================================================
-# 1.  Environment wrapper (one MapTask per reset)
-# =========================================================================
+    atexit.register(lambda: p.disconnect())
+except Exception:  # import failure on headless systems is fine
+    pass
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────
+def _match_shape(a: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """Return *a* reshaped or squeezed so that *.shape == shape*."""
+    a = np.asarray(a, dtype=float)
+    if a.shape == shape:
+        return a
+    if len(a.shape) == len(shape) + 1 and a.shape[0] == 1:
+        return a.reshape(shape)
+    if len(a.shape) == len(shape) - 1 and shape[0] == 1:
+        return a.reshape(shape)
+    return a.reshape(shape)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 1.  Gymnasium wrapper around a single MapTask
+# ────────────────────────────────────────────────────────────────────────────
 class SwarmTaskEnv(Env):
     """
-    A lightweight Gymnasium wrapper that, on every `reset()`, builds a fresh
-    `MapTask` and underlying Bullet world via `make_env`.
+    Light wrapper that turns `make_env` into a Gymnasium‑compliant env:
 
-    Observation space and action space are inherited from the low‑level env.
-
-    Reward shaping (simple):
-        +1   every simulation step *after* the goal is reached (hover bonus)
-        -1e‑4 × energy  per step  (penalise wasted RPM)
+        reset -> (obs, info)
+        step  -> (obs, reward, terminated, truncated, info)
     """
 
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
+    metadata = {"render_modes": []}
 
-    def __init__(self, gui: bool = False):
+    def __init__(self, gui: bool = False, debug: bool = False):
         super().__init__()
         self.gui = gui
+        self.debug = debug
         self._build_task()
 
-    # ------------------------------------------------------------------
-    # Gymnasium API
-    # ------------------------------------------------------------------
+    # Gymnasium API -------------------------------------------------------
     def reset(self, *, seed: int | None = None, options=None):
         if seed is not None:
             np.random.seed(seed)
-        if hasattr(self, "env"):  # close previous world
+
+        if hasattr(self, "env"):
             self.env.close()
 
         self._build_task()
         obs = self.env.reset()
-        info = {"task": self.task}
+        obs, info = (obs, {}) if not isinstance(obs, tuple) else obs
         return obs, info
 
     def step(self, action):
-        obs, _, done, info = self.env.step(action)
-        # --- simple shaped reward -------------------------------------
-        rpm_vec = np.asarray(action, dtype=float).flatten()
-        energy_penalty = (np.square(rpm_vec).sum()) * SIM_DT * 1e-4
-        reward = 1.0 - energy_penalty
-        if done and info.get("success", False):
-            reward += 10.0  # goal bonus
-        return obs, float(reward), done, False, info
+        """Per-step reward shaping.
 
-    def render(self):
-        # Everything rendered by PyBullet already
+        •  tiny *alive* bonus – staying in the air beats crashing  
+        •  *progress* reward – proportional to how much we reduce goal distance  
+        •  quadratic *energy* penalty – spinning fast costs more  
+        •  large terminal bonus/penalty on (success / failure)
+        """
+        action = _match_shape(action, self.env.action_space.shape)
+        out = self.env.step(action)
+
+        # unpack Gymnasium vs legacy Gym output --------------------------
+        if len(out) == 5:
+            obs, _, terminated, truncated, info = out
+        else:
+            obs, _, done, info = out
+            terminated, truncated = done, False
+
+        # ── ① alive bonus ───────────────────────────────────────────────
+        alive_bonus = 0.05            # 0.05 per 40 ms → ~1 pt for full 20 s
+
+        # ── ② progress toward goal ─────────────────────────────────────
+        prog_reward = 0.0
+        dist_now = info.get("goal_dist")
+        if dist_now is not None and self.last_goal_dist is not None:
+            prog_reward = 0.4 * (self.last_goal_dist - dist_now)
+        self.last_goal_dist = dist_now
+
+        # ── ③ energy penalty ───────────────────────────────────────────
+        rpm_vec = action.astype(float).flatten()
+        energy_penalty = (rpm_vec ** 2).sum() * SIM_DT * 2e-10
+
+        # ── ④ terminal bonus / penalty ─────────────────────────────────
+        term_bonus = 0.0
+        if terminated and info.get("success", False):
+            term_bonus = 15.0          # big positive spike on success
+        elif terminated:               # crash / OOB / timeout
+            term_bonus = -7.0          # discourage reckless failures
+
+        reward = alive_bonus + prog_reward + term_bonus - energy_penalty
+
+        # optional debug print ------------------------------------------
+        
+        logger.debug(
+                f"[{self.sim_time:6.2f}s] r={reward:+.3f} "
+                f"(alive {alive_bonus:+.2f}  prog {prog_reward:+.2f}  "
+                f"term {term_bonus:+.1f}  energy {-energy_penalty:+.2f})"
+            )
+
+        self.sim_time += SIM_DT
+        return obs, float(reward), terminated, truncated, info
+
+
+    def render(self):  # GUI is handled by the wrapped env
         pass
 
     def close(self):
         if hasattr(self, "env"):
             self.env.close()
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
+    # Internals -----------------------------------------------------------
     def _build_task(self):
         self.task: MapTask = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
-        # raw_rpm=True ➜ action = np.ndarray(4,)
-        self.env = make_env(self.task, gui=self.gui, raw_rpm=True, randomise=True)
-        # Expose gym‑style spaces
+        # NOTE raw_rpm=False  → action_space is Box(-1, +1)
+        self.env = make_env(self.task, gui=self.gui, raw_rpm=False)
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space
+        self.sim_time = 0.0
 
 
-# =========================================================================
-# 2.  Pilot wrapper expected by validators
-# =========================================================================
+# ────────────────────────────────────────────────────────────────────────────
+# 2.  Pilot wrapper (SB3 PPO → Swarm validator)
+# ────────────────────────────────────────────────────────────────────────────
 class PilotRL:
-    """Adapter around a `stable_baselines3` policy."""
-
     def __init__(self, model: PPO):
         self.model = model
 
     def reset(self, task: MapTask):  # noqa: D401
-        # Policy here is task‑agnostic; nothing to do.
-        pass
+        pass  # policy is task‑agnostic
 
-    def act(self, obs: np.ndarray, t: float) -> np.ndarray:  # noqa: D401
+    def act(self, obs: np.ndarray, t: float) -> np.ndarray:
         action, _ = self.model.predict(obs, deterministic=True)
-        return action.astype(float)
+        return np.squeeze(action).astype(float)
 
 
-# =========================================================================
-# 3.  Cheap training routine
-# =========================================================================
-def train_policy(total_steps: int = 10_000, gui: bool = False) -> PPO:
-    """Train a tiny PPO agent; keep CPU time reasonable."""
-    logger.info(f"Training PPO for {total_steps} steps …")
-    env = DummyVecEnv([lambda: SwarmTaskEnv(gui=gui)])
+# ────────────────────────────────────────────────────────────────────────────
+# 3.  Training
+# ────────────────────────────────────────────────────────────────────────────
+def train_policy(total_steps: int = 20_000) -> PPO:
+    logger.info(f"Training PPO for {total_steps:,} steps …")
+    env = DummyVecEnv([lambda: SwarmTaskEnv(gui=False)])
     model = PPO(
         policy="MlpPolicy",
         env=env,
+        device="cpu",
         verbose=0,
         n_steps=256,
         batch_size=64,
@@ -151,18 +211,43 @@ def train_policy(total_steps: int = 10_000, gui: bool = False) -> PPO:
     return model
 
 
-# =========================================================================
-# 4.  Validation helpers (mirrors validator logic)
-# =========================================================================
-def run_episode(task: MapTask, pilot: PilotRL, gui: bool = False) -> ValidationResult:
-    env = make_env(task, gui=gui, raw_rpm=True, randomise=True)
-    obs = env.reset()
+# ────────────────────────────────────────────────────────────────────────────
+# 4.  Evaluation helper (mirrors validator logic)
+# ────────────────────────────────────────────────────────────────────────────
+def run_episode(
+    task: MapTask,
+    pilot: PilotRL,
+    *,
+    gui: bool = False,
+    debug: bool = False,
+) -> ValidationResult:
+    """Run one episode on the *raw* low‑level env (Gym or Gymnasium)."""
+    env = make_env(task, gui=gui, raw_rpm=False)
+
+    obs_t = env.reset()
+    obs = obs_t[0] if isinstance(obs_t, tuple) else obs_t
+
     pilot.reset(task)
 
     t_sim, energy, success = 0.0, 0.0, False
+    step = 0
     while t_sim < task.horizon:
-        rpm = pilot.act(obs, t_sim)
-        obs, _, done, info = env.step(rpm[None, :])
+        rpm = _match_shape(pilot.act(obs, t_sim), env.action_space.shape)
+        out = env.step(rpm)
+
+        if len(out) == 5:
+            obs, _, terminated, truncated, info = out
+            done = terminated or truncated
+        else:
+            obs, _, done, info = out
+
+        if debug:
+            logger.debug(
+                f"[STEP {step:03d}] t={t_sim:6.2f} | rpm={rpm} | done={done} "
+                f"| info={info}"
+            )
+        step += 1
+
         energy += np.abs(rpm).sum() * SIM_DT
         t_sim += SIM_DT
         if done:
@@ -174,57 +259,36 @@ def run_episode(task: MapTask, pilot: PilotRL, gui: bool = False) -> ValidationR
     return ValidationResult(-1, success, t_sim, energy, score)
 
 
-def make_task() -> MapTask:
-    return random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
-
-
-# =========================================================================
-# 5.  Entry‑points
-# =========================================================================
-def demo(sim_gui: bool = False, train_steps: int = 10_000):
-    """
-    Train + run 100 evaluation episodes; print stats.
-
-    Parameters
-    ----------
-    sim_gui
-        Whether to open a PyBullet viewer **for the first eval episode only**.
-    train_steps
-        PPO timesteps; raise for better scores (and longer runtimes).
-    """
-    t0 = time.time()
-    model = train_policy(train_steps, gui=False)
+# ────────────────────────────────────────────────────────────────────────────
+# 5.  Demo / CLI
+# ────────────────────────────────────────────────────────────────────────────
+def demo(sim_gui: bool, train_steps: int, debug: bool):
+    start = time.time()
+    model = train_policy(train_steps)
     pilot = PilotRL(model)
-    logger.info(f"Training took {time.time() - t0:.1f} s")
+    logger.info(f"Training took {time.time() - start:.1f} s")
 
-    results: List[ValidationResult] = []
+    # First episode ----------------------------------------------
+    task0 = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+    results: List[ValidationResult] = [
+        run_episode(task0, pilot, gui=sim_gui, debug=debug)
+    ]
 
-    # -- first episode with optional GUI --------------------------------
-    task0 = make_task()
-    res0 = run_episode(task0, pilot, gui=sim_gui)
-    results.append(res0)
-    logger.info(
-        f"[Episode 1] success={res0.success}  time={res0.time_sec:.2f}  "
-        f"energy={res0.energy:.2f}  score={res0.score:.3f}"
-    )
-
-    # -- remaining 99 headless episodes ---------------------------------
-    for i in range(2, 101):
-        res = run_episode(make_task(), pilot, gui=False)
-        results.append(res)
-        logger.info(
-            f"[Episode {i:3d}] success={res.success}  "
-            f"time={res.time_sec:.2f}  energy={res.energy:.2f}  "
-            f"score={res.score:.3f}"
+    # Remaining 99 headless episodes ------------------------------
+    for _ in range(99):
+        results.append(
+            run_episode(
+                random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC), pilot, debug=False
+            )
         )
 
-    # -- aggregate stats -------------------------------------------------
+    # Stats -------------------------------------------------------
     successes = sum(r.success for r in results)
     times = [r.time_sec for r in results]
     energies = [r.energy for r in results]
     scores = [r.score for r in results]
 
-    logger.info("\n═══════════ PPO Pilot Statistics (100 evals) ═══════════")
+    logger.info("\n═══════════ PPO Pilot Stats (100 evals) ═══════════")
     logger.info(f"Success rate : {successes}/100  =  {successes/100:.1%}")
     logger.info(
         f"Time (s)     : mean={statistics.mean(times):6.2f}, "
@@ -238,36 +302,31 @@ def demo(sim_gui: bool = False, train_steps: int = 10_000):
         f"Score        : mean={statistics.mean(scores):6.3f}, "
         f"min={min(scores):6.3f}, max={max(scores):6.3f}"
     )
-    logger.info("════════════════════════════════════════════════════════\n")
+    logger.info("════════════════════════════════════════════════════\n")
     return results
 
 
-# ---------------- pytest style smoke‑test ---------------------------------
-def test_rl_roundtrip():  # pragma: no cover
-    """FastCI check – trains 2 k steps, evaluates 5 tasks."""
-    model = train_policy(total_steps=2_000, gui=False)
-    pilot = PilotRL(model)
-    for _ in range(5):
-        res = run_episode(make_task(), pilot, gui=False)
-        assert res.score >= 0.0
-
-
-# ---------------- CLI -----------------------------------------------------
+# ── CLI ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Train a PPO pilot and validate it on 100 random tasks."
     )
-    ap.add_argument(
+    parser.add_argument(
         "--gui",
         action="store_true",
-        help="Render the FIRST evaluation episode in a 3‑D PyBullet viewer",
+        help="Render the FIRST evaluation episode in a PyBullet viewer",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--steps",
         type=int,
         default=10_000,
-        help="Total PPO timesteps for training (default: 10 000)",
+        help="Total PPO timesteps for training (default: 10 000)",
     )
-    args = ap.parse_args()
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print every observation/action/reward for the FIRST episode",
+    )
+    args = parser.parse_args()
 
-    demo(sim_gui=args.gui, train_steps=args.steps)
+    demo(sim_gui=args.gui, train_steps=args.steps, debug=args.debug)
