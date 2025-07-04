@@ -14,16 +14,16 @@ EMA_ALPHA           = 0.20      # weights EMA coefficient
 FORWARD_SLEEP_SEC = 300  # pause between forwards (s)
 
 WAYPOINT_TOL = 1      # success sphere
-HOVER_SEC    = 0.5      # time to hover at the goal (s)
+HOVER_SEC    = 3      # time to hover at the goal (s)
 CAM_HZ       = 60     # camera update rate (Hz)
 PROP_EFF     = 0.60   # propeller efficiency 
 
 # ───────── parameters & constants ─────────
-SAFE_Z: float   = 2     # cruise altitude (m)
+SAFE_Z: float   = 3     # cruise altitude (m)
 GOAL_TOL: float = 3    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
-R_MIN, R_MAX = 1, 5          # radial goal distance (m)
-H_MIN, H_MAX = 1, 5          # radial goal distance (m)
+R_MIN, R_MAX = 2, 3          # radial goal distance (m)
+H_MIN, H_MAX = 2, 3          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk
