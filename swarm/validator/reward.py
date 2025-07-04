@@ -41,9 +41,9 @@ def flight_reward(
     d_final: float,
     horizon: float,
     *,
-    w_success: float = 0.80,
+    w_success: float = 0.60,
     w_alive: float = 0.10,
-    w_progress: float = 0.10,
+    w_progress: float = 0.30,
 ) -> float:
     if horizon <= 0:
         raise ValueError("'horizon' must be positive")
