@@ -98,7 +98,7 @@ def build_world(
     # ------------------------------------------------------------------
     placed = 0
     placed_obstacles = []  # Track all placed obstacles: [(x, y, radius), ...]
-    MIN_OBSTACLE_DISTANCE = 1  # Minimum distance between obstacles
+    MIN_OBSTACLE_DISTANCE = 1.2  # Increased minimum distance between obstacles for better separation
     
     while placed < N_OBSTACLES:
         for _ in range(MAX_ATTEMPTS_PER_OBS):
@@ -127,22 +127,29 @@ def build_world(
                 sz_len = h
                 obj_r = r
 
-            # — safe‑zone checks --------------------------------------
+            # — safe‑zone checks (improved) ---------------------------
             def _violates(cx, cy):
                 if cx is None:
                     return False
-                return math.hypot(x - cx, y - cy) < (obj_r + SAFE_ZONE_RADIUS)
+                # More conservative safe zone calculation
+                required_clearance = obj_r + SAFE_ZONE_RADIUS + 0.5  # Extra 0.5m margin
+                return math.hypot(x - cx, y - cy) < required_clearance
 
             if _violates(sx, sy) or _violates(gx, gy):
                 continue  # too close to start/goal – try another location
 
-            # — obstacle overlap prevention ---------------------------
+            # — obstacle overlap prevention (improved) ----------------
             # Check distance to all previously placed obstacles
             obstacle_collision = False
             for prev_x, prev_y, prev_r in placed_obstacles:
                 distance = math.hypot(x - prev_x, y - prev_y)
-                required_distance = obj_r + prev_r + MIN_OBSTACLE_DISTANCE
-                if distance < required_distance:
+                # Dynamic required distance based on obstacle sizes
+                base_distance = obj_r + prev_r + MIN_OBSTACLE_DISTANCE
+                # Add extra margin for large obstacles to prevent visual overlap
+                if obj_r > 2.0 or prev_r > 2.0:  # Large obstacles
+                    base_distance += 0.5  # Extra spacing for large obstacles
+                
+                if distance < base_distance:
                     obstacle_collision = True
                     break
             
@@ -200,11 +207,28 @@ def build_world(
                     physicsClientId=cli,
                 )
 
+            # ✅ CRITICAL FIX: Add the obstacle to placed_obstacles list to prevent overlapping
+            placed_obstacles.append((x, y, obj_r))
             placed += 1
             break  # obstacle placed – move to next one
         else:
-            # Unable to place this obstacle after many attempts; skip it
+            # Unable to place this obstacle after many attempts
+            # Try with reduced requirements for the remaining obstacles
+            if placed < N_OBSTACLES * 0.7:  # If we've placed less than 70% of obstacles
+                # Reduce minimum distance temporarily for dense worlds
+                MIN_OBSTACLE_DISTANCE = max(0.8, MIN_OBSTACLE_DISTANCE - 0.1)
+                print(f"⚠️ Reducing obstacle spacing to {MIN_OBSTACLE_DISTANCE:.1f}m to fit more obstacles")
             break
+
+    # ------------------------------------------------------------------
+    # World building report
+    # ------------------------------------------------------------------
+    if placed < N_OBSTACLES:
+        print(f"🌍 World Building: Successfully placed {placed}/{N_OBSTACLES} obstacles")
+        if placed < N_OBSTACLES * 0.8:
+            print(f"⚠️ World may be sparse due to space constraints or overlap prevention")
+    else:
+        print(f"✅ World Building: Successfully placed all {N_OBSTACLES} obstacles with proper spacing")
 
     # ------------------------------------------------------------------
     # Physical landing platform with visual goal marker
