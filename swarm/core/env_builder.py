@@ -217,18 +217,16 @@ def build_world(
             if placed < N_OBSTACLES * 0.7:  # If we've placed less than 70% of obstacles
                 # Reduce minimum distance temporarily for dense worlds
                 MIN_OBSTACLE_DISTANCE = max(0.8, MIN_OBSTACLE_DISTANCE - 0.1)
-                print(f"⚠️ Reducing obstacle spacing to {MIN_OBSTACLE_DISTANCE:.1f}m to fit more obstacles")
             break
 
     # ------------------------------------------------------------------
     # World building report
     # ------------------------------------------------------------------
     if placed < N_OBSTACLES:
-        print(f"🌍 World Building: Successfully placed {placed}/{N_OBSTACLES} obstacles")
         if placed < N_OBSTACLES * 0.8:
-            print(f"⚠️ World may be sparse due to space constraints or overlap prevention")
+            pass  
     else:
-        print(f"✅ World Building: Successfully placed all {N_OBSTACLES} obstacles with proper spacing")
+        return True
 
     # ------------------------------------------------------------------
     # Physical landing platform with visual goal marker

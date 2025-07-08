@@ -31,7 +31,12 @@ def make_task() -> MapTask:
 
 
 def make_plan(task: MapTask, gui: bool) -> FlightPlan:
-    cmds = flying_strategy(task, gui=gui)
+    result = flying_strategy(task, gui=gui)
+    # Extract commands from tuple result (commands, strategy_name, score)
+    if isinstance(result, tuple):
+        cmds = result[0]  # Get the List[RPMCmd] from the tuple
+    else:
+        cmds = result  # Handle case where it returns just the list
     return FlightPlan(commands=cmds, sha256="")      # hash auto-computed
 
 
@@ -55,7 +60,8 @@ def validate(task: MapTask,
 # Interactive / batch demo entry point
 # ---------------------------------------------------------------------
 def run_demo(*,
-             sim_gui: bool = False   # ← default is head-less batch
+             sim_gui: bool = False,   # ← default is head-less batch
+             num_runs: Optional[int] = None
             ) -> Optional[List[ValidationResult]]:   # pragma: no cover
 
     if sim_gui:
@@ -78,7 +84,9 @@ def run_demo(*,
 
     # ── batch mode ──
     results: List[ValidationResult] = []
-    for i in range(1, 101):
+    if num_runs is None:
+        num_runs = int(input("Enter the number of test runs: "))
+    for i in range(1, num_runs + 1):
         task = make_task()
         plan = make_plan(task, gui=False)
         plan2 = FlightPlan.unpack(plan.pack())
@@ -86,7 +94,7 @@ def run_demo(*,
 
         res = validate(task, plan2, sim_gui=False)
         results.append(res)
-        logger.info(f"Run {i:3d}/100 : success={res.success}, "
+        logger.info(f"Run {i:3d}/{num_runs} : success={res.success}, "
                     f"time={res.time_sec:6.2f}, energy={res.energy:6.2f}, "
                     f"score={res.score:6.3f}")
 
@@ -96,8 +104,8 @@ def run_demo(*,
     energies= [r.energy   for r in results]
     scores  = [r.score    for r in results]
 
-    logger.info("\n═══════════ Batch statistics (100 runs) ═══════════")
-    logger.info(f"Success rate  : {successes}/100 = {successes/100:.1%}")
+    logger.info(f"\n═══════════ Batch statistics ({num_runs} runs) ═══════════")
+    logger.info(f"Success rate  : {successes}/{num_runs} = {successes/num_runs:.1%}")
     logger.info(f"Time   (s)    : mean={statistics.mean(times):6.2f}, "
                 f"min={min(times):6.2f}, max={max(times):6.2f}")
     logger.info(f"Energy        : mean={statistics.mean(energies):6.2f}, "
@@ -136,6 +144,7 @@ if __name__ == "__main__":                            # pragma: no cover
         description="Run Swarm FlightPlan validation – single GUI or batch")
     ap.add_argument("--gui",  action="store_true",
                     help="open the PyBullet 3-D viewer (single run)")
+    ap.add_argument("--runs", type=int, help="Number of test runs for batch mode")
     args = ap.parse_args()
 
-    run_demo(sim_gui=args.gui)
+    run_demo(sim_gui=args.gui, num_runs=args.runs)
