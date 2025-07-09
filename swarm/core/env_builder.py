@@ -98,7 +98,7 @@ def build_world(
     # ------------------------------------------------------------------
     placed = 0
     placed_obstacles = []  # Track all placed obstacles: [(x, y, radius), ...]
-    MIN_OBSTACLE_DISTANCE = 1.2  # Increased minimum distance between obstacles for better separation
+    MIN_OBSTACLE_DISTANCE = 0.6  # Reduced minimum distance between obstacles
     
     while placed < N_OBSTACLES:
         for _ in range(MAX_ATTEMPTS_PER_OBS):
