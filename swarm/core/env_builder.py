@@ -225,8 +225,6 @@ def build_world(
     if placed < N_OBSTACLES:
         if placed < N_OBSTACLES * 0.8:
             pass  
-    else:
-        return True
 
     # ------------------------------------------------------------------
     # Physical landing platform with visual goal marker
