@@ -15,11 +15,13 @@ miner_env
 miner_env/
 miner_env/*
 swarm_env/*
+runs/
 ~
 ~/*
 output.png
 .vscode/*
 flightplans/*
+
 
 # C extensions
 *.so
