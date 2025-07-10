@@ -21,7 +21,6 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
 # ─── project‑level imports ────────────────────────────────────────────────────
 from swarm.core.moving_drone       import MovingDroneAviary
-from swarm.core.HoverAviaryRawRPM  import HoverAviaryRawRPM
 from swarm.core.env_builder        import build_world
 from swarm.protocol                import MapTask
 from swarm.constants               import SAFE_Z     # noqa: F401  (may be useful elsewhere)
@@ -31,7 +30,7 @@ def make_env(
     task: MapTask,
     *,
     gui: bool = False,
-) -> Union[MovingDroneAviary, HoverAviaryRawRPM]:
+) -> Union[MovingDroneAviary]:
     """
     Create and fully‑initialise a single‑drone PyBullet Crazyflie environment.
 
@@ -41,7 +40,7 @@ def make_env(
     gui      : bool      • enable/disable PyBullet viewer (default False)
     Returns
     -------
-    env : MovingDroneAviary | HoverAviaryRawRPM
+    env : MovingDroneAviary
         A ready‑to‑use environment that has already been reset and whose world
         (obstacles, safe zone, goal beacon, …) has been spawned.
     """
