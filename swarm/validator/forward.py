@@ -139,7 +139,7 @@ def _apply_weight_update(self, results: List[ValidationResult]) -> None:
     self.update_scores(scores_np, uids_np)
     bt.logging.info(f"Updated scores for {len(uids_np)} miners.")
 
-    
+
     # ─────── Silent wandb weight logging ───────
     if hasattr(self, 'wandb_helper') and self.wandb_helper:
         try:
