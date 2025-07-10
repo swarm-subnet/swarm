@@ -26,7 +26,7 @@ from swarm.protocol import MapTask, FlightPlan, RPMCmd
 from swarm.constants import (
     CAM_HZ,          # camera follow rate
     PROP_EFF,        # propeller efficiency
-    WAYPOINT_TOL,    # way‑point success tolerance
+    GOAL_TOL,    # way‑point success tolerance
     HOVER_SEC,       # time to hover at the goal (s)
 )
 # ─────────────────────────────
@@ -90,7 +90,7 @@ def _replay_once_impl(
                 break                        # stop the episode early
 
         # success logic
-        if np.linalg.norm(pos - goal) < WAYPOINT_TOL:
+        if np.linalg.norm(pos - goal) < GOAL_TOL:
             hover_elapsed += task.sim_dt
             if hover_elapsed >= HOVER_SEC:
                 success = True

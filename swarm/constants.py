@@ -20,10 +20,10 @@ PROP_EFF     = 0.60   # propeller efficiency
 
 # ───────── parameters & constants ─────────
 SAFE_Z: float   = 3     # cruise altitude (m)
-GOAL_TOL: float = 3    # waypoint acceptance sphere (m)
+GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
-R_MIN, R_MAX = 2, 3          # radial goal distance (m)
-H_MIN, H_MAX = 2, 3          # radial goal distance (m)
+R_MIN, R_MAX = 0, 1          # radial goal distance (m)
+H_MIN, H_MAX = 4, 5          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk

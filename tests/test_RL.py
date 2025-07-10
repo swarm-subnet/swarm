@@ -1,304 +1,225 @@
 #!/usr/bin/env python3
 """
-test_RL.py  –  PPO demo (single‑drone) that *directly* uses the reward
-               computed by `MovingDroneAviary`.
-
-The only difference to the previous debug build is that the extra
-`RLTaskEnv` wrapper has been removed, eliminating the duplicate reward
-computation/shaping step.
+ppo_drone_train_eval.py
+───────────────────────
+* Parallel PPO training (head‑less, 8 envs)
+* Deterministic evaluation afterwards
+  • head‑less by default
+  • GUI if --gui is passed
 """
 
 from __future__ import annotations
-import argparse, logging, csv, time
+import argparse
+import csv
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Optional
 
 import gymnasium as gym
 import numpy as np
-import torch
+import torch as th
 from rich.logging import RichHandler
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.env_util import make_vec_env as sb3_make_vec_env
+from stable_baselines3.common.vec_env import VecNormalize
 from tensorboardX import SummaryWriter
 
 # ── project imports ──────────────────────────────────────────────────────────
-from swarm.utils.env_factory import make_env
+from swarm.utils.env_factory  import make_env
 from swarm.validator.task_gen import random_task
-from swarm.validator.forward import SIM_DT, HORIZON_SEC
-from swarm.constants import GOAL_TOL, HOVER_SEC
-from swarm.validator.reward import flight_reward           # only for logging
+from swarm.validator.forward  import SIM_DT, HORIZON_SEC
+from swarm.validator.reward   import flight_reward  # noqa: F401  (log helper)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 0.  Global logger setup
+# Logging
 # ═════════════════════════════════════════════════════════════════════════════
-LOG_LEVEL = logging.DEBUG
-LOG_FMT   = "%(message)s"
 logging.basicConfig(
-    level   = LOG_LEVEL,
-    format  = LOG_FMT,
+    level   = logging.INFO,
+    format  = "%(message)s",
     datefmt = "[%X]",
-    handlers=[RichHandler(rich_tracebacks=True)]
+    handlers=[RichHandler(rich_tracebacks=True)],
 )
-log = logging.getLogger("ppo_debug")
+log = logging.getLogger("ppo_demo")
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 1.  Per‑step debug wrapper
+# Per‑step logger (optional CSV)
 # ═════════════════════════════════════════════════════════════════════════════
 class StepLoggerWrapper(gym.Wrapper):
-    """
-    Logs obs, action, reward & info every step (to console and optionally CSV).
-    Disable at runtime by toggling `self.enabled`.
-    """
     def __init__(
         self,
         env: gym.Env,
-        csv_path : Path | None = None,
-        print_every: int = 1,
-    ):
+        *,
+        csv_path: Optional[Path] = None,
+    ) -> None:
         super().__init__(env)
-        self.enabled      = True
-        self.print_every  = print_every
-        self._step_count  = 0
-
-        # optional CSV for post‑mortem analysis
-        self._csv_file   = None
-        self._csv_writer = None
+        self._ep, self._step = 0, 0
+        self._csv_file = None
         if csv_path is not None:
             csv_path.parent.mkdir(parents=True, exist_ok=True)
-            self._csv_file   = csv_path.open("w", newline="")
-            self._csv_writer = csv.writer(self._csv_file)
-            self._csv_writer.writerow(
-                ["episode", "step", "terminated",
-                 *[f"obs_{i}" for i in range(np.prod(env.observation_space.shape))],
-                 *[f"act_{i}" for i in range(np.prod(env.action_space.shape))],
-                 "reward", "score", "success"]
+            self._csv_file = csv_path.open("w", newline="")
+            self._writer   = csv.writer(self._csv_file)
+            self._writer.writerow(
+                ["ep", "t", "term", *[f"obs{i}" for i in range(np.prod(env.observation_space.shape))],
+                 *[f"act{i}" for i in range(np.prod(env.action_space.shape))],
+                 "rew", "score", "succ"]
             )
 
-        self._episode = 0
-
-    # --------------------------------------------------------------------- #
     def reset(self, **kwargs):
-        if self._step_count:                  # just finished an episode
-            self._episode += 1
-            self._step_count = 0
+        if self._step:
+            self._ep += 1
+            self._step = 0
         obs, info = self.env.reset(**kwargs)
-        if self.enabled:
-            log.debug(f"[E{self._episode:04d}] reset ⇒ obs={obs}")
         return obs, info
 
-    # --------------------------------------------------------------------- #
     def step(self, action):
-        self._step_count += 1
-        obs, reward, term, trunc, info = self.env.step(action)
-
-        if self.enabled and self._step_count % self.print_every == 0:
-            log.debug(
-                f"[E{self._episode:04d} | t={self._step_count:04d}] "
-                f"act={np.asarray(action).round(3)}  "
-                f"r={reward:+.3f}  "
-                f"score={info.get('score', np.nan):.3f}  "
-                f"succ={info.get('success', False)}"
+        self._step += 1
+        obs, r, ter, tru, info = self.env.step(action)
+        if self._csv_file is not None:
+            self._writer.writerow(
+                [self._ep, self._step, int(ter or tru),
+                 *np.asarray(obs).flatten().tolist(),
+                 *np.asarray(action).flatten().tolist(),
+                 float(r), info.get("score", np.nan), int(info.get("success", False))]
             )
-        # motor RPM read‑out (if available)
-        rpm_src = self.env.unwrapped        # the aviary after unwrap
-        if hasattr(rpm_src, "last_rpm"):
-            log.debug(f"rpm={np.asarray(rpm_src.last_rpm[0]).round(0)}")
+        return obs, r, ter, tru, info
 
-        # write CSV
-        if self._csv_writer is not None:
-            row = [
-                self._episode, self._step_count, int(term or trunc),
-                *np.asarray(obs).flatten().tolist(),
-                *np.asarray(action).flatten().tolist(),
-                float(reward), info.get("score", np.nan),
-                int(info.get("success", False))
-            ]
-            self._csv_writer.writerow(row)
-
-        return obs, reward, term, trunc, info
-
-    # --------------------------------------------------------------------- #
     def close(self):
         super().close()
         if self._csv_file is not None:
             self._csv_file.close()
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 2.  TensorBoard network‑side debug callback
+# TensorBoard callback (quick)
 # ═════════════════════════════════════════════════════════════════════════════
-class TensorDebugCallback(BaseCallback):
-    """
-    Dumps raw observations, actions, rewards and gradient norms to TensorBoard.
-    """
-    def __init__(self, log_dir: str, verbose: int = 0):
-        super().__init__(verbose)
+class TBCallback(BaseCallback):
+    def __init__(self, log_dir: str):
+        super().__init__()
         self.tb = SummaryWriter(log_dir)
-        self._grad_step = 0
 
-    # called at every environment step *before* the action is applied
     def _on_step(self) -> bool:
-        obs    = self.locals["new_obs"][0]      # first env
-        reward = self.locals["rewards"][0]
-        action = self.locals["actions"][0]
-        step   = self.num_timesteps
-
-        self.tb.add_histogram("obs/raw",     obs,    step)
-        self.tb.add_histogram("action/raw",  action, step)
-        self.tb.add_scalar("reward/step",    reward, step)
+        self.tb.add_scalar("reward/step", self.locals["rewards"][0], self.num_timesteps)
         return True
 
-    # called after every optimisation epoch (when gradients are available)
-    def _on_rollout_end(self) -> None:
-        model: PPO = self.model               # type: ignore
-        step = self.num_timesteps
-
-        # policy loss, value loss, entropy (already tracked by SB3’s logger)
-        for key in ("policy_loss", "value_loss", "entropy"):
-            if key in model.logger.name_to_value:
-                self.tb.add_scalar(f"loss/{key}",
-                                   model.logger.name_to_value[key][-1], step)
-
-        # gradient global norm
-        total_norm = 0.0
-        for p in model.policy.parameters():
-            if p.grad is not None:
-                total_norm += p.grad.data.norm(2).item() ** 2
-        total_norm **= 0.5
-        self.tb.add_scalar("grad/global_norm", total_norm, step)
-        self._grad_step += 1
-
 # ═════════════════════════════════════════════════════════════════════════════
-# 3.  Vec‑env factory
+# Vec‑Env builder
 # ═════════════════════════════════════════════════════════════════════════════
-def make_vec_env(
-    task,
-    *,
-    gui: bool = False,
-    csv_log: bool = False,
-    disable_after: int | None = None,
-):
-    """
-    Helper that returns a single‑env `VecNormalize`‑wrapped DummyVecEnv.
-
-    If `csv_log` is True, every step is dumped to *runs/debug_steps.csv*.
-    If `disable_after` is set, console step‑logging is auto‑disabled after
-    that many steps to keep the log readable.
-    """
-    csv_path = Path("runs/debug_steps.csv") if csv_log else None
-
-    def _factory():
-        # direct aviary → monitor → (optional) step logger
-        env = make_env(task, gui=gui, raw_rpm=False)
-        env = Monitor(env, info_keywords=("score", "success"))
-
-        step_logger = StepLoggerWrapper(env,
-                                        csv_path=csv_path,
-                                        print_every=1)
-        if disable_after is not None:
-            # monkey‑patch to silence verbose log automatically
-            def _auto_disable_step(action, _orig=step_logger.step):
-                if step_logger._step_count >= disable_after:
-                    step_logger.enabled = False
-                return _orig(action)
-            step_logger.step = _auto_disable_step       # type: ignore
-        return step_logger
-
-    venv = DummyVecEnv([_factory])
-    venv = VecNormalize(
-        venv,
-        norm_obs   = True,
-        norm_reward= False,          # reward is already nicely scaled
-        gamma      = 0.99,
-        training   = True,
+def build_vec_env(task, *, gui: bool, n_envs: int, csv: bool):
+    csv_path = Path("runs/debug_steps.csv") if csv else None
+    env_fn   = lambda **_: make_env(task, gui=gui)              # noqa: E731
+    venv     = sb3_make_vec_env(
+        env_fn,
+        n_envs         = n_envs,
+        seed           = 0,
+        monitor_kwargs = {"info_keywords": ("score", "success")},
+        wrapper_class  = StepLoggerWrapper,
+        wrapper_kwargs = {"csv_path": csv_path},
     )
-    return venv
+    return VecNormalize(venv, norm_obs=True, norm_reward=False, gamma=0.99)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 4.  PPO training
+# PPO helpers
 # ═════════════════════════════════════════════════════════════════════════════
-def train_ppo(vec_env, timesteps: int):
-    model = PPO(
-        policy         = "MlpPolicy",
-        env            = vec_env,
-        learning_rate  = 1e-4,
-        n_steps        = 2048,
-        gamma          = 0.95,
-        gae_lambda     = 0.95,
-        batch_size     = 128,
-        n_epochs       = 10,
-        verbose        = 1,
-        device         = "auto",
-        tensorboard_log= "runs/ppo_fly2goal",
+def make_model(vec_env):
+    policy_kwargs = dict(
+        activation_fn = th.nn.ReLU,
+        net_arch      = dict(pi=[256, 256], vf=[256, 256]),
     )
-    tb_cb = TensorDebugCallback(log_dir="runs/tensor_debug")
-    model.learn(total_timesteps=timesteps,
-                progress_bar=True,
-                callback=tb_cb)
-    return model
+    return PPO(
+        "MlpPolicy",
+        vec_env,
+        n_steps         = 2048,
+        batch_size      = 2048,
+        learning_rate   = 3e-4,
+        ent_coef        = 0.01,
+        target_kl       = 0.03,
+        use_sde         = True,
+        sde_sample_freq = 4,
+        clip_range      = 0.1,
+        device          = "auto",
+        verbose         = 1,
+        tensorboard_log = "runs/ppo_fly2goal",
+        policy_kwargs   = policy_kwargs,
+    )
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 5.  Simple deterministic evaluation
-# ═════════════════════════════════════════════════════════════════════════════
 def evaluate(model, vec_env, sim_dt: float, horizon: float):
     vec_env.training = False
-    obs = vec_env.reset()
-    done = False
-    steps = 0
-    final_score = 0.0
-    success = False
+    obs     = vec_env.reset()
+    done    = False
+    step    = 0
+    ret     = 0.0
+    score   = 0.0
+    succ    = False
     while not done:
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, done_vec, infos = vec_env.step(action)     # SB3 VecEnv API
-        done = bool(done_vec[0])
-        steps += 1
-        if "score" in infos[0]:
-            final_score = infos[0]["score"]
-            success     = infos[0]["success"]
-        # safety: break if something goes wrong with termination
-        if steps * sim_dt > horizon * 1.5:
+        act, _ = model.predict(obs, deterministic=True)
+        obs, r, done_v, info = vec_env.step(act)
+        ret  += r[0]
+        done  = bool(done_v[0])
+        step += 1
+        if "score" in info[0]:
+            score, succ = info[0]["score"], info[0]["success"]
+        if step * sim_dt > 1.5 * horizon:      # safety break
             break
-    return success, steps, final_score
+    return ret, succ, step, score
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 6.  CLI
+# CLI
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
-    ap = argparse.ArgumentParser("PPO demo – no duplicate reward shaping")
-    ap.add_argument("--timesteps", type=float, default=50_000)
-    ap.add_argument("--gui", action="store_true")
-    ap.add_argument("--csv", action="store_true",
-                    help="write runs/debug_steps.csv")
-    ap.add_argument("--disable-step-log-after", type=int, default=10_000,
-                    help="auto‑silence per‑step logging after N steps")
-    args = ap.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--timesteps", type=int, default=500_000,
+                   help="train steps (0 → skip training and load saved model)")
+    p.add_argument("--gui", action="store_true",
+                   help="show PyBullet window during evaluation")
+    p.add_argument("--csv", action="store_true",
+                   help="write runs/debug_steps.csv while training")
+    args = p.parse_args()
 
+    # same task for training & evaluation
     task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=1)
-    log.info(f"Task  start={np.round(task.start,2)} "
-             f"goal={np.round(task.goal,2)} "
-             f"horizon={task.horizon}s")
+    log.info(f"Task start={np.round(task.start,2)} goal={np.round(task.goal,2)} horizon={task.horizon}s")
 
-    venv = make_vec_env(
+    # ── Train (if requested) ─────────────────────────────────────────────────
+    model_path = Path("runs/ppo_policy.zip")
+    stats_path = Path("runs/venv_stats.pkl")
+
+    if args.timesteps > 0:
+        train_env = build_vec_env(task, gui=False, n_envs=8, csv=args.csv)
+        model     = make_model(train_env)
+        log.info(f"Training for {args.timesteps:,} steps …")
+        model.learn(args.timesteps, progress_bar=True, callback=TBCallback("runs/tensor_debug"))
+        train_env.save(stats_path)
+        train_env.close()
+        model.save(model_path)
+        log.info("✔ training finished")
+    else:
+        if not model_path.exists():
+            raise FileNotFoundError("No trained policy found; run with --timesteps > 0 first.")
+        model = PPO.load(model_path)
+
+    # ── Evaluation (always) ─────────────────────────────────────────────────
+    eval_env = build_vec_env(
         task,
-        gui          = args.gui,
-        csv_log      = args.csv,
-        disable_after= args.disable_step_log_after,
+        gui   = args.gui,
+        n_envs= 1,
+        csv   = False,
     )
+    # load normalisation (if present)
+    if stats_path.exists():
+        eval_env = VecNormalize.load(stats_path, eval_env)
+        eval_env.training = False
 
-    log.info(f"Training for {args.timesteps:,} timesteps …")
-    model = train_ppo(venv, int(args.timesteps))
-
-    success, steps, score = evaluate(model, venv, SIM_DT, task.horizon)
-    venv.close()
+    ret, succ, steps, score = evaluate(model, eval_env, SIM_DT, task.horizon)
     sim_time = steps * SIM_DT
+    eval_env.close()
 
     log.info("\n══════  Evaluation  ══════")
-    log.info(f"success        : {success}")
+    log.info(f"success        : {succ}")
     log.info(f"final score    : {score:.3f}")
-    log.info(f"simulated time : {sim_time:.2f}s "
-             f"({sim_time / task.horizon:.1%} of horizon)")
+    log.info(f"episode return : {ret:.3f}")
+    log.info(f"sim time       : {sim_time:.2f}s  ({sim_time/task.horizon:.1%} of horizon)")
     log.info("═══════════════════════════")
 
+# ═════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     main()

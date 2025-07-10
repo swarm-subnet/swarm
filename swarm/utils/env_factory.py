@@ -31,7 +31,6 @@ def make_env(
     task: MapTask,
     *,
     gui: bool = False,
-    raw_rpm: bool = False,
 ) -> Union[MovingDroneAviary, HoverAviaryRawRPM]:
     """
     Create and fully‑initialise a single‑drone PyBullet Crazyflie environment.
@@ -40,8 +39,6 @@ def make_env(
     ----------
     task     : MapTask   • scenario description (start, goal, map seed, dt, …)
     gui      : bool      • enable/disable PyBullet viewer (default False)
-    raw_rpm  : bool      • True  ⇒ action space = raw motor RPM
-                          • False ⇒ action space = PID target position
     Returns
     -------
     env : MovingDroneAviary | HoverAviaryRawRPM
@@ -60,15 +57,9 @@ def make_env(
 
     # Silence the copious PyBullet stdout spam when instantiating the env
     with contextlib.redirect_stdout(io.StringIO()):
-        if raw_rpm:
-            env = HoverAviaryRawRPM(
-                act=ActionType.RPM,
-                **common_kwargs,
-            )
-        else:
             env = MovingDroneAviary(
                 task,
-                act=ActionType.PID,
+                act=ActionType.VEL,
                 **common_kwargs,
             )
 

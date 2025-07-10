@@ -19,7 +19,7 @@ class MovingDroneAviary(BaseRLAviary):
     Reward is the increment of `flight_reward()` so you can pass it
     straight to PPO without an extra shaping wrapper if you like.
     """
-    MAX_TILT_RAD: float = 0.4
+    MAX_TILT_RAD: float = 0.7
     # --------------------------------------------------------------------- #
     # 1. constructor
     # --------------------------------------------------------------------- #
@@ -133,7 +133,7 @@ class MovingDroneAviary(BaseRLAviary):
 
         r_t            = score - self._prev_score
         self._prev_score = score
-        return float(r_t)
+        return float(100*r_t)
 
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
