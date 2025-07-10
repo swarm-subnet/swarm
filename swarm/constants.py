@@ -13,11 +13,13 @@ FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
 EMA_ALPHA           = 0.20      # weights EMA coefficient
 FORWARD_SLEEP_SEC = 300  # pause between forwards (s)
 
-WAYPOINT_TOL = 1      # success sphere
-HOVER_SEC    = 3      # time to hover at the goal (s)
+WAYPOINT_TOL = 1      # landing success radius  
+HOVER_SEC    = 3      # legacy constant (no longer used for landing)
 CAM_HZ       = 60     # camera update rate (Hz)
 PROP_EFF     = 0.60   # propeller efficiency 
 
+LANDING_PLATFORM_RADIUS = 0.6  # Landing platform radius (m)
+STABLE_LANDING_SEC = 1.0       # Required stable landing duration for success (s)
 # ───────── parameters & constants ─────────
 SAFE_Z: float   = 2     # cruise altitude (m)
 GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
