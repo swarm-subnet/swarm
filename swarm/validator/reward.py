@@ -61,4 +61,5 @@ def flight_reward(
         w_alive    * alive_term +
         w_progress * progress_term
     )
+    
     return _clamp(score)
