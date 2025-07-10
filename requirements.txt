@@ -10,4 +10,7 @@ filelock
 pybullet
 bittensor
 msgpack
+wandb>=0.16.0
+python-dotenv>=1.0.0
+typing-extensions>=4.0.0
 
