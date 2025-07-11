@@ -202,55 +202,50 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
         gc.collect()
     return res
 
-def _boost_scores(raw: np.ndarray, *, k: float = 10.0) -> np.ndarray:
+def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
     """
-    Non‑linear “winner‑takes‑most” mapping.
+    Exponential boost driven by *absolute* gap to the best score, *scaled
+    by the batch standard deviation*.
 
-    • Shift scores so the worst in this batch is 0.  
-    • Exponentiate → gaps near the top widen dramatically.  
-    • Preserve endpoints: min → 0, max → 1.
+        w_i = exp( beta · (s_i − s_max) / σ )
 
-           f(s) = (e^{k·ŝ} − 1) / (e^{k} − 1) ,  ŝ = (s − s_min)/(s_max − s_min)
-
-    With k ≈ 10 the median performer (~0.5) receives only 1.2 % of the weight
-    awarded to the best miner; tail scores are pushed close to 0.
+    • `β` controls sharpness (β ≈ 5 works well).  
+    • The best miner always gets weight 1.  
+    • When scores are tightly clustered (σ small) even a 0.002 gap is
+      magnified; when they are spread out the curve relaxes automatically.
     """
     if raw.size == 0:
         return raw
-    s_min, s_max = float(raw.min()), float(raw.max())
-    if abs(s_max - s_min) < 1e-9:           # all equal → avoid divide‑by‑0
-        return np.zeros_like(raw, dtype=np.float32)
-    s_norm = (raw - s_min) / (s_max - s_min)
-    boosted = (np.exp(k * s_norm) - 1.0) / (np.exp(k) - 1.0)
-    return boosted.astype(np.float32)
+
+    s_max = float(raw.max())
+    sigma = float(raw.std())
+    if sigma < 1e-9:                          # all miners identical
+        weights = (raw == s_max).astype(np.float32)  # leader gets 1, rest 0
+    else:
+        weights = np.exp(beta * (raw - s_max) / sigma)
+        weights /= weights.max()              # normalise so best → 1
+
+    return weights.astype(np.float32)
 
 
 async def forward(self) -> None:
-    """
-    One validator “tick” with score boosting:
-
-        1. sample miners
-        2. download / cache their models (size‑capped & validated)
-        3. evaluate models in sandboxed subprocesses
-        4. transform raw scores → boosted scores
-        5. push boosted scores on‑chain
-    """
+    """Full validator tick with boosted weighting."""
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
-        # ---------- build secret task ---------------------------------
+        # ----- secret task -----------------------------------------------------------------
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
 
-        # ---------- sample miners -------------------------------------
+        # ----- sample a subset of miners ---------------------------------------------------
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
 
-        # ---------- handshake + secure download -----------------------
+        # ----- handshake & secure download -------------------------------------------------
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
 
-        # ---------- sandboxed evaluation ------------------------------
+        # ----- sandboxed evaluation --------------------------------------------------------
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
         if not results:
             bt.logging.warning("No valid results this round.")
@@ -260,15 +255,15 @@ async def forward(self) -> None:
         raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
         uids_np    = np.asarray([r.uid   for r in results], dtype=np.int64)
 
-        # ---------- non‑linear boost ----------------------------------
-        boosted = _boost_scores(raw_scores)
-        best, avg = boosted.max(), boosted.mean()
+        # ----- apply adaptive boost --------------------------------------------------------
+        boosted = _boost_scores(raw_scores, beta=5.0)
         bt.logging.info(
-            f"Boosted scores → best: {best:.3f}   avg: {avg:.3f}   "
-            f"(raw best {raw_scores.max():.3f})"
+            f"Boost: raw max {raw_scores.max():.3f}, "
+            f"raw median {np.median(raw_scores):.3f} → "
+            f"median weight {np.median(boosted):.3e}"
         )
 
-        # ---------- push weights --------------------------------------
+        # ----- push weights on‑chain -------------------------------------------------------
         self.update_scores(boosted, uids_np)
 
     except Exception as e:
