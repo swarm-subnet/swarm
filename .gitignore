@@ -21,6 +21,7 @@ runs/
 output.png
 .vscode/*
 flightplans/*
+model/*
 
 
 # C extensions

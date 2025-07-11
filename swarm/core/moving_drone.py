@@ -8,7 +8,7 @@ from gym_pybullet_drones.utils.enums import (
 )
 
 # ---- task‑level utilities ----------------------------------------------------
-from swarm.validator.reward   import flight_reward          # scoring fn you designed
+from swarm.validator.reward   import flight_reward          # new 5‑term scorer
 from swarm.constants          import GOAL_TOL, HOVER_SEC
 
 class MovingDroneAviary(BaseRLAviary):
@@ -16,10 +16,11 @@ class MovingDroneAviary(BaseRLAviary):
     Single‑drone environment whose *goal position and horizon* are
     provided by an external MapTask (start, goal, horizon).
 
-    Reward is the increment of `flight_reward()` so you can pass it
-    straight to PPO without an extra shaping wrapper if you like.
+    The episode reward is the *increment* of `flight_reward`, so you can
+    feed it straight into PPO/TD3/… without additional shaping.
     """
     MAX_TILT_RAD: float = 0.7
+
     # --------------------------------------------------------------------- #
     # 1. constructor
     # --------------------------------------------------------------------- #
@@ -49,9 +50,10 @@ class MovingDroneAviary(BaseRLAviary):
         # bookkeeping for reward shaping *inside* the aviary
         self._time_alive      = 0.0
         self._hover_sec       = 0.0
-        self._d_start         = 1.0          # initial distance, filled at reset
+        self._d_start         = 1.0          # filled at reset()
         self._prev_score      = 0.0
         self._success         = False
+        self._t_to_goal       = None         # ← touchdown moment (reward needs it)
 
         super().__init__(
             drone_model   = drone_model,
@@ -84,19 +86,21 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive = 0.0
         self._hover_sec  = 0.0
         self._success    = False
+        self._t_to_goal  = None
 
         pos0             = obs[0, :3]
         self._d_start    = float(np.linalg.norm(pos0 - self.GOAL_POS))
         if self._d_start <= 0.0:
             self._d_start = 1e-9
 
-        # initial score at t=0
+        # baseline score at t = 0
         self._prev_score = flight_reward(
             success   = False,
             t_alive   = 0.0,
             d_start   = self._d_start,
             d_final   = self._d_start,
             horizon   = self.EP_LEN_SEC,
+            goal_tol  = GOAL_TOL,
         )
 
         return obs, info
@@ -104,36 +108,44 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """
-        Incremental shaped reward based on `flight_reward`.
-
-        *If you still use RLTaskEnv, its wrapper will ignore this value.*
+        Incremental shaped reward based on the new five‑term `flight_reward`.
         """
         state   = self._getDroneStateVector(0)
         dist    = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
 
-        # success bookkeeping (hover inside tolerance)
+        # ---------- success bookkeeping (hover inside tolerance) ----------
         reached = dist < GOAL_TOL
         if reached:
             self._hover_sec += self._sim_dt
-            if self._hover_sec >= HOVER_SEC:
-                self._success = True
+            if self._hover_sec >= HOVER_SEC and not self._success:
+                # First time we are *certain* the goal is reached
+                self._success   = True
+                self._t_to_goal = self._time_alive
         else:
             self._hover_sec = 0.0
 
-        # update wall‑clock
+        # ---------- clock update ----------
         self._time_alive += self._sim_dt
 
-        score = flight_reward(
+        # ---------- reward computation ----------
+        rw_args = dict(
             success = self._success,
             t_alive = self._time_alive,
             d_start = self._d_start,
             d_final = dist,
             horizon = self.EP_LEN_SEC,
+            goal_tol = GOAL_TOL,
         )
+        if self._success:
+            # `flight_reward` requires these when success == True
+            rw_args["t_to_goal"] = self._t_to_goal
+            rw_args["e_used"]    = 0.0   # TODO: integrate a real energy model
 
-        r_t            = score - self._prev_score
+        score = flight_reward(**rw_args)
+
+        r_t              = score - self._prev_score
         self._prev_score = score
-        return float(100*r_t)
+        return float(r_t)
 
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
@@ -152,7 +164,7 @@ class MovingDroneAviary(BaseRLAviary):
         """
         # ---------- safety: roll / pitch limits ----------
         state = self._getDroneStateVector(0)
-        roll, pitch = state[7], state[8]          # cf. HoverAviary example
+        roll, pitch = state[7], state[8]
         if abs(roll) > self.MAX_TILT_RAD or abs(pitch) > self.MAX_TILT_RAD:
             return True                           # stop immediately
 
@@ -167,4 +179,5 @@ class MovingDroneAviary(BaseRLAviary):
             "distance_to_goal": dist,
             "score"           : self._prev_score,
             "success"         : self._success,
+            "t_to_goal"       : self._t_to_goal,
         }
