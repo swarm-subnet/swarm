@@ -151,12 +151,6 @@ def flight_reward(
     # -------------------------------------------------------------------------
     # final weighted sum
     # -------------------------------------------------------------------------
-    print(f"score components: "
-          f"success={success_term:.3f}, "
-          f"alive={alive_term:.3f}, "
-          f"progress={progress_term:.3f}, "
-          f"time={time_term:.3f}, "
-          f"energy={energy_term:.3f}"  )
     score = (
         w_success * success_term
         + w_alive * alive_term

@@ -19,7 +19,7 @@ def main():
 
     model = PPO("MlpPolicy", env, verbose=1)
     model.learn(args.timesteps)
-    model.save("model/ppo_policy")
+    model.save("model/ppo_policy_2")
 
     env.close()
 

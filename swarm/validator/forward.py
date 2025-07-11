@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------
-# Swarm validator – Policy API v2
+# Swarm validator – Policy API v2  (memory‑efficient version)
 # ---------------------------------------------------------------
 from __future__ import annotations
 
 import asyncio
-import importlib
+import gc
 import traceback
 from dataclasses import asdict
 from pathlib import Path
@@ -12,20 +12,15 @@ from typing import Dict, List
 
 import bittensor as bt
 import numpy as np
+from stable_baselines3 import PPO                        # SB‑3 loader
 
-from swarm.protocol import (
-    MapTask,
-    PolicySynapse,
-    PolicyRef,
-    ValidationResult,
-)
+from swarm.protocol import MapTask, PolicySynapse, PolicyRef, ValidationResult
 from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
-from swarm.validator.loader import temp_venv
 from swarm.utils.env_factory import make_env
 
 from .task_gen import random_task
-from .reward import flight_reward
+from .reward   import flight_reward
 
 from swarm.constants import (
     SIM_DT,
@@ -33,118 +28,135 @@ from swarm.constants import (
     SAMPLE_K,
     QUERY_TIMEOUT,
     FORWARD_SLEEP_SEC,
+    GOAL_TOL,
 )
 
-
 # ----------------------------------------------------------------
-# 0.  Helpers – run one episode with a Pilot
+# 0.  Helpers – run one episode with a Policy (.zip)
 # ----------------------------------------------------------------
-def _run_episode(task: MapTask, uid: int, pilot: object) -> ValidationResult:
-    env = make_env(task, gui=False, raw_rpm=True, randomise=True)
-    obs = env.reset()
-    pilot.reset(task)
+def _run_episode(task: MapTask, uid: int, model: PPO) -> ValidationResult:
+    """
+    Executes one closed‑loop flight using *model* as the policy.
 
-    t_sim, energy, success = 0.0, 0.0, False
+    Fixes:
+    • correctly unpack `env.reset()` which returns (obs, info)
+    • handles both 1‑D (single‑drone) and 2‑D (N×state) observation shapes
+    """
+    # --- light wrapper so the rest of the code can stay the same --------
+    class _Pilot:
+        def __init__(self, m): self.m = m
+        def reset(self, task):  pass
+        def act(self, obs, t):
+            act, _ = self.m.predict(obs, deterministic=True)
+            return act.squeeze()
+
+    pilot = _Pilot(model)
+    env   = make_env(task, gui=False) 
+    obs, _info = env.reset()                 # ← unpack the info dict
+
+    # Make sure we can index the position regardless of shape
+    if isinstance(obs, tuple):               # safety for unexpected returns
+        obs = obs[0]
+    pos0 = obs[:3] if obs.ndim == 1 else obs[0, :3]
+
+    d_start  = float(np.linalg.norm(pos0 - task.goal))
+    t_sim    = 0.0
+    energy   = 0.0
+    last_pos = pos0
+    success  = False
+
     while t_sim < task.horizon:
-        rpm = pilot.act(obs, t_sim)
-        obs, _, done, info = env.step(rpm[None, :])
-        t_sim += SIM_DT
-        energy += np.abs(rpm).sum() * SIM_DT
-        if done:
+        rpm  = pilot.act(obs, t_sim)
+        obs, _reward, terminated, truncated, info = env.step(rpm[None, :])
+        t_sim   += SIM_DT
+        energy  += np.abs(rpm).sum() * SIM_DT
+        last_pos = obs[:3] if obs.ndim == 1 else obs[0, :3]
+
+        if terminated or truncated:
             success = info.get("success", False)
             break
 
     env.close()
-    score = flight_reward(success, t_sim, energy, task.horizon)
+    d_final = float(np.linalg.norm(last_pos - task.goal))
+
+    score = flight_reward(
+        success   = success,
+        t_alive   = t_sim,
+        d_start   = d_start,
+        d_final   = d_final,
+        horizon   = task.horizon,
+        goal_tol  = GOAL_TOL,
+        t_to_goal = t_sim if success else None,
+        e_used    = energy if success else None,
+    )
     return ValidationResult(uid, success, t_sim, energy, score)
 
 
 # ----------------------------------------------------------------
-# 1.  Handshake & caching logic
+# 1.  Model handshake & caching
 # ----------------------------------------------------------------
-async def _fetch_pilots(self, uids: List[int]) -> Dict[int, object]:
-    """
-    End‑to‑end handshake for a **set of miners**:
+MODEL_DIR = Path("miner_models")          # all zips stored here
+CHUNK_SIZE = 2 << 20                      # 2 MiB – matches iter_chunks default
 
-        • ask for PolicyRef
-        • download wheel if missing
-        • import Pilot class in temp venv
-        • return {uid: pilot‑instance}
+async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
-    # one‑time init of blob cache dir
-    if not hasattr(self, "blob_cache"):
-        self.blob_cache = Path(
-            getattr(self.config, "blob_cache", ".swarm_cache")
-        )
-        self.blob_cache.mkdir(exist_ok=True)
-
-    pilots: Dict[int, object] = {}
+    Make sure we have the latest .zip for every *uid*.
+    Returns {uid: Path-to-zip}.  Does **not** load them into RAM.
+    """
+    MODEL_DIR.mkdir(exist_ok=True)
+    paths: Dict[int, Path] = {}
 
     for uid in uids:
         axon = self.metagraph.axons[uid]
 
-        # -------- 1. ask for PolicyRef -------------------------
+        # 1 – ask for PolicyRef ---------------------------------------
         try:
-            reply: PolicySynapse = await self.dendrite(
+            syn: PolicySynapse = await self.dendrite(
                 axons=[axon],
                 synapse=PolicySynapse.query_update(),
                 deserialize=True,
                 timeout=QUERY_TIMEOUT,
             )
-            ref_dict = reply.ref
-            if not ref_dict and reply.no_update:
-                # We already cached that miner’s latest wheel – find it
-                # via metagraph.stored_sha[uid] or fallback to “sha256”
-                sha = getattr(self.metagraph, "stored_sha", {}).get(uid)
-                wheel_fp = self.blob_cache / sha if sha else None
-                if not wheel_fp or not wheel_fp.exists():
-                    bt.logging.warning(
-                        f"No cached wheel for miner {uid} although they "
-                        "sent no_update=True – skipping."
-                    )
+            if syn.no_update:
+                # unchanged – keep current file name
+                model_fp = MODEL_DIR / f"UID_{uid}.zip"
+                if not model_fp.exists():
+                    bt.logging.warning(f"Miner {uid} claims no_update but file missing.")
                     continue
-                ref = PolicyRef(
-                    sha256=sha,
-                    entrypoint="",  # unused when we already have wheel
-                    framework="",
-                    size_bytes=wheel_fp.stat().st_size,
-                )
-            elif ref_dict:
-                ref = PolicyRef(**ref_dict)
-            else:
-                bt.logging.warning(f"Miner {uid} gave neither ref nor no_update flag.")
+                paths[uid] = model_fp
                 continue
 
+            if not syn.ref:
+                bt.logging.warning(f"Miner {uid} returned neither ref nor no_update.")
+                continue
+
+            ref = PolicyRef(**syn.ref)
+
         except Exception as e:
-            bt.logging.warning(f"Could not obtain PolicyRef from miner {uid}: {e}")
+            bt.logging.warning(f"Handshake failed with miner {uid}: {e}")
             continue
 
-        wheel_fp: Path = self.blob_cache / ref.sha256
+        # 2 – download if sha changed -------------------------------
+        model_fp = MODEL_DIR / f"UID_{uid}.zip"
+        if model_fp.exists() and sha256sum(model_fp) == ref.sha256:
+            paths[uid] = model_fp
+            continue   # already up‑to‑date
 
-        # -------- 2. download if needed ------------------------
-        if not wheel_fp.exists():
-            await _download_wheel(self, axon, ref, wheel_fp)
+        # need fresh blob -------------------------------------------
+        await _download_model(self, axon, ref, model_fp)
+        if model_fp.exists() and sha256sum(model_fp) == ref.sha256:
+            paths[uid] = model_fp
+        else:
+            bt.logging.warning(f"Model download for miner {uid} failed sha check.")
 
-        if not wheel_fp.exists():
-            continue  # download failed
+    return paths
 
-        # -------- 3. import Pilot class ------------------------
-        try:
-            with temp_venv(wheel_fp):
-                mod_name, cls_name = ref.entrypoint.split(":")
-                cls = getattr(importlib.import_module(mod_name), cls_name)
-                pilots[uid] = cls()
-        except Exception as e:
-            bt.logging.warning(f"Import error for miner {uid}: {type(e).__name__} – {e}")
-
-    return pilots
-
-
-async def _download_wheel(self, axon, ref: PolicyRef, wheel_fp: Path):
-    """Request blob streaming and write it to *wheel_fp* atomically."""
-    tmp_fp = wheel_fp.with_suffix(".part")
+async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
+    """Stream a .zip from *axon* into *dest* atomically."""
+    tmp = dest.with_suffix(".part")
+    tmp.unlink(missing_ok=True)
     try:
-        # tell miner we need it
+        # tell miner we need the blob
         await self.dendrite(
             axons=[axon],
             synapse=PolicySynapse.request_blob(),
@@ -152,83 +164,94 @@ async def _download_wheel(self, axon, ref: PolicyRef, wheel_fp: Path):
         )
 
         async for msg in self.dendrite.stream(axon):
-            if msg and msg.chunk:
-                with tmp_fp.open("ab") as out:
-                    out.write(msg.chunk["data"])
-            else:
+            if not msg or not msg.chunk:
                 break
+            with tmp.open("ab") as fh:
+                fh.write(msg.chunk["data"])
 
-        if sha256sum(tmp_fp) != ref.sha256:
-            tmp_fp.unlink(missing_ok=True)
-            bt.logging.error("SHA‑256 mismatch – discarded corrupt wheel.")
+        if sha256sum(tmp) != ref.sha256:
+            bt.logging.error(f"SHA mismatch for miner blob {axon.hotkey}.")
+            tmp.unlink(missing_ok=True)
             return
 
-        tmp_fp.rename(wheel_fp)
-        bt.logging.info(
-            f"Cached wheel {wheel_fp.name} ({wheel_fp.stat().st_size/1e6:.1f} MB)."
-        )
-    except Exception as e:
-        tmp_fp.unlink(missing_ok=True)
-        bt.logging.warning(f"Streaming wheel from miner failed: {e}")
+        tmp.replace(dest)
+        bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
 
+    except Exception as e:
+        bt.logging.warning(f"Streaming error ({axon.hotkey}): {e}")
+        tmp.unlink(missing_ok=True)
 
 # ----------------------------------------------------------------
 # 2.  Weight update helper
 # ----------------------------------------------------------------
 def _apply_weight_update(self, results: List[ValidationResult]):
     if not results:
-        bt.logging.warning("No validation results – skipping weight update.")
+        bt.logging.warning("No results → no weight update.")
         return
-
-    uids_np = np.asarray([r.uid for r in results], dtype=np.int64)
-    scores_np = np.asarray([r.score for r in results], dtype=np.float32)
-    self.update_scores(scores_np, uids_np)
+    uids   = np.asarray([r.uid   for r in results], dtype=np.int64)
+    scores = np.asarray([r.score for r in results], dtype=np.float32)
+    self.update_scores(scores, uids)
     bt.logging.info(f"Pushed scores for {len(results)} miners.")
 
+# ----------------------------------------------------------------
+# 3.  Evaluate one miner (load → run → free)
+# ----------------------------------------------------------------
+def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
+    try:
+        model = PPO.load(model_fp, device="cpu")
+        res   = _run_episode(task, uid, model)
+    except Exception as e:
+        bt.logging.warning(f"Miner {uid} evaluation error: {e}")
+        res = ValidationResult(uid, False, 0.0, 0.0, 0.0)
+    finally:
+        # free RAM
+        try:
+            del model
+        except UnboundLocalError:
+            pass
+        gc.collect()
+    return res
 
 # ----------------------------------------------------------------
-# 3.  Public coroutine (called from neurons/validator.py)
+# 4.  Public coroutine – called by neurons/validator.py
 # ----------------------------------------------------------------
 async def forward(self) -> None:
     """
     One full validator iteration:
         1. sample miners
-        2. fetch/instantiate their pilots
-        3. run closed‑loop simulations
-        4. update scores on‑chain
+        2. ensure we have their policy zips on disk
+        3. evaluate miners one‑by‑one (low RAM)
+        4. push scores on‑chain
     """
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
-        # ---------- build task ------------------------------
+        # -------- task --------------------------------------------
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
 
-        # ---------- choose miners ---------------------------
+        # -------- pick miners -------------------------------------
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
 
-        # ---------- get pilots ------------------------------
-        pilots = await _fetch_pilots(self, uids)
-        bt.logging.info(f"Loaded {len(pilots)} pilots.")
+        # -------- make sure models are cached ---------------------
+        model_paths = await _ensure_models(self, uids)
+        bt.logging.info(f"Have models for {len(model_paths)} miners.")
 
-        # ---------- simulate / score ------------------------
+        # -------- evaluate sequentially ---------------------------
         results: List[ValidationResult] = []
-        for uid, pilot in pilots.items():
-            try:
-                results.append(_run_episode(task, uid, pilot))
-            except Exception as e:  # pilot crashed mid‑flight
-                bt.logging.warning(f"Episode failed for miner {uid}: {e}")
-                traceback.print_exc()
+        for uid, fp in model_paths.items():
+            res = _evaluate_uid(task, uid, fp)
+            results.append(res)
 
         if results:
             best = max(r.score for r in results)
-            avg = np.mean([r.score for r in results])
+            avg  = np.mean([r.score for r in results])
             bt.logging.info(f"Scores: best={best:.3f}  avg={avg:.3f}")
         else:
-            bt.logging.warning("No successful episodes this round.")
+            bt.logging.warning("No miners yielded a valid result.")
 
-        # ---------- push weights ----------------------------
+        # -------- push weights ------------------------------------
         _apply_weight_update(self, results)
 
     except Exception as err:

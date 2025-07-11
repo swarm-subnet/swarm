@@ -4,8 +4,8 @@
 # -------------------------------------------------------------------------
 #  Implements the handshake described in Phase 2:
 #
-#  1) Every inbound request → send a PolicyRef (points at our wheel).
-#  2) If the validator replies with `need_blob=True` → stream the wheel
+#  1) Every inbound request → send a PolicyRef (points at our model).
+#  2) If the validator replies with `need_blob=True` → stream the model
 #     back in fixed‑size chunks (PolicyChunk messages).
 # -------------------------------------------------------------------------
 
@@ -56,11 +56,11 @@ except Exception:  # pragma: no cover – colour module optional
 # =========================================================================
 class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
-    #  **Adjust these constants for your own wheel**
+    #  **Adjust these constants for your own model**
     # ------------------------------------------------------------------
-    WHEEL_PATH = Path("dist/miner_submission-0.1-py3-none-any.whl")
-    ENTRYPOINT = "pilot:Pilot"
-    FRAMEWORK = "torch1.13"  # pick one of the allowed tags
+    POLICY_PATH = Path("model/ppo_policy.zip")     # <-- your file
+    ENTRYPOINT = ""                                # not needed for SB3
+    FRAMEWORK  = "sb3-ppo"                         # tag recognised by validator
 
     # ------------------------------------------------------------------
     # Life‑cycle
@@ -70,13 +70,13 @@ class Miner(BaseMinerNeuron):
         self.load_state()
 
         # Pre‑compute metadata once at boot
-        if not self.WHEEL_PATH.exists():
+        if not self.POLICY_PATH.exists():
             raise FileNotFoundError(
-                f"Wheel not found at {self.WHEEL_PATH}. "
-                "Build it first with `python -m build --wheel`."
+                f"model not found at {self.POLICY_PATH}. "
+                "Build it first with `python -m build --model`."
             )
-        self._sha256 = sha256sum(self.WHEEL_PATH)
-        self._size = self.WHEEL_PATH.stat().st_size
+        self._sha256 = sha256sum(self.POLICY_PATH)
+        self._size = self.POLICY_PATH.stat().st_size
 
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
 
@@ -92,21 +92,21 @@ class Miner(BaseMinerNeuron):
             # ------------------------------------------------------------
             # 2‑step handshake: validator → miner
             #   • first call:  need_blob absent / False  → send ref
-            #   • second call: need_blob True           → stream wheel
+            #   • second call: need_blob True           → stream model
             # ------------------------------------------------------------
             if synapse.need_blob:
                 # --------------------------------------------------------
-                # Step 2 – stream wheel chunks until EOF
+                # Step 2 – stream model chunks until EOF
                 # --------------------------------------------------------
                 ColoredLogger.info("Validator requested blob; streaming …", ColoredLogger.BLUE)
 
-                for data in iter_chunks(self.WHEEL_PATH):
+                for data in iter_chunks(self.POLICY_PATH):
                     chunk_msg = PolicySynapse(
                         chunk=asdict(PolicyChunk(sha256=self._sha256, data=data))
                     )
                     await synapse.dendrite.send(chunk_msg)  # type: ignore[attr-defined]
 
-                ColoredLogger.success("Finished streaming wheel.", ColoredLogger.GREEN)
+                ColoredLogger.success("Finished streaming model.", ColoredLogger.GREEN)
                 # Nothing more to return for this call
                 return PolicySynapse()
 
