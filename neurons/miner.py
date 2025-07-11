@@ -58,74 +58,62 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     #  **Adjust these constants for your own model**
     # ------------------------------------------------------------------
-    POLICY_PATH = Path("model/ppo_policy.zip")     # <-- your file
-    ENTRYPOINT = ""                                # not needed for SB3
-    FRAMEWORK  = "sb3-ppo"                         # tag recognised by validator
+    POLICY_PATH = Path("model/ppo_policy.zip")
+    ENTRYPOINT  = ""             # not used by SB3 but kept for future proofing
+    FRAMEWORK   = "sb3-ppo"
 
     # ------------------------------------------------------------------
-    # Life‑cycle
+    #  Life cycle
     # ------------------------------------------------------------------
     def __init__(self, config=None):
         super().__init__(config=config)
         self.load_state()
 
-        # Pre‑compute metadata once at boot
         if not self.POLICY_PATH.exists():
-            raise FileNotFoundError(
-                f"model not found at {self.POLICY_PATH}. "
-                "Build it first with `python -m build --model`."
-            )
+            raise FileNotFoundError(f"Model not found: {self.POLICY_PATH}")
+
         self._sha256 = sha256sum(self.POLICY_PATH)
-        self._size = self.POLICY_PATH.stat().st_size
+        self._size   = self.POLICY_PATH.stat().st_size
 
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
 
     # ------------------------------------------------------------------
-    # Main RPC endpoint (single required method)
+    #  Main RPC endpoint
     # ------------------------------------------------------------------
-    async def forward(self, synapse: PolicySynapse) -> PolicySynapse:  # noqa: D401
-        """Handshake endpoint called by validators."""
+    async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
+        """
+        *First call*  (need_blob absent/False)  -> send PolicyRef only.  
+        *Second call* (need_blob True)          -> stream raw bytes.
+        """
         try:
-            validator = getattr(synapse.dendrite, "hotkey", "<?>")  # type: ignore[attr-defined]
-            ColoredLogger.info(f"[forward] Request from {validator}", ColoredLogger.YELLOW)
+            vk = getattr(synapse.dendrite, "hotkey", "<??>")   # type: ignore[attr-defined]
+            ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
 
-            # ------------------------------------------------------------
-            # 2‑step handshake: validator → miner
-            #   • first call:  need_blob absent / False  → send ref
-            #   • second call: need_blob True           → stream model
-            # ------------------------------------------------------------
+            # ---------- stream binary if requested --------------------
             if synapse.need_blob:
-                # --------------------------------------------------------
-                # Step 2 – stream model chunks until EOF
-                # --------------------------------------------------------
-                ColoredLogger.info("Validator requested blob; streaming …", ColoredLogger.BLUE)
-
+                ColoredLogger.info("Streaming model …", ColoredLogger.BLUE)
                 for data in iter_chunks(self.POLICY_PATH):
-                    chunk_msg = PolicySynapse(
-                        chunk=asdict(PolicyChunk(sha256=self._sha256, data=data))
+                    await synapse.dendrite.send(               # type: ignore[attr-defined]
+                        PolicySynapse.from_chunk(
+                            PolicyChunk(sha256=self._sha256, data=data)
+                        )
                     )
-                    await synapse.dendrite.send(chunk_msg)  # type: ignore[attr-defined]
+                ColoredLogger.success("Stream finished.", ColoredLogger.GREEN)
+                return PolicySynapse()        # nothing more for this call
 
-                ColoredLogger.success("Finished streaming model.", ColoredLogger.GREEN)
-                # Nothing more to return for this call
-                return PolicySynapse()
-
-            # ------------------------------------------------------------
-            # Step 1 – send PolicyRef
-            # ------------------------------------------------------------
+            # ---------- otherwise send manifest -----------------------
             ref = PolicyRef(
-                sha256=self._sha256,
-                entrypoint=self.ENTRYPOINT,
-                framework=self.FRAMEWORK,
-                size_bytes=self._size,
+                sha256     = self._sha256,
+                entrypoint = self.ENTRYPOINT,
+                framework  = self.FRAMEWORK,
+                size_bytes = self._size,
             )
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
-            return PolicySynapse(ref=asdict(ref))
+            return PolicySynapse.from_ref(ref)
 
-        except Exception as err:  # pragma: no cover – defensive path
-            bt.logging.error(f"Miner forward error: {err}")
-            #  Return an *empty* synapse so the validator can handle failure gracefully
-            return PolicySynapse()
+        except Exception as e:                                    # defensive
+            bt.logging.error(f"Miner forward error: {e}")
+            return PolicySynapse()                                # empty reply
 
     # ------------------------------------------------------------------
     #  Black‑list logic (unchanged except for type names)

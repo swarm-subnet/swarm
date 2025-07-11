@@ -100,8 +100,8 @@ CHUNK_SIZE = 2 << 20                      # 2 MiB – matches iter_chunks defau
 
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
-    Make sure we have the latest .zip for every *uid*.
-    Returns {uid: Path-to-zip}.  Does **not** load them into RAM.
+    For every UID return the local Path to its latest .zip.
+    Downloads if the cached SHA differs from the miner's PolicyRef.
     """
     MODEL_DIR.mkdir(exist_ok=True)
     paths: Dict[int, Path] = {}
@@ -109,47 +109,38 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     for uid in uids:
         axon = self.metagraph.axons[uid]
 
-        # 1 – ask for PolicyRef ---------------------------------------
+        # 1 – ask for current PolicyRef ------------------------------
         try:
             syn: PolicySynapse = await self.dendrite(
                 axons=[axon],
-                synapse=PolicySynapse.query_update(),
+                synapse=PolicySynapse.request_ref(),
                 deserialize=True,
                 timeout=QUERY_TIMEOUT,
             )
-            if syn.no_update:
-                # unchanged – keep current file name
-                model_fp = MODEL_DIR / f"UID_{uid}.zip"
-                if not model_fp.exists():
-                    bt.logging.warning(f"Miner {uid} claims no_update but file missing.")
-                    continue
-                paths[uid] = model_fp
-                continue
-
             if not syn.ref:
-                bt.logging.warning(f"Miner {uid} returned neither ref nor no_update.")
+                bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
                 continue
-
             ref = PolicyRef(**syn.ref)
-
         except Exception as e:
-            bt.logging.warning(f"Handshake failed with miner {uid}: {e}")
+            bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
             continue
 
-        # 2 – download if sha changed -------------------------------
+        # 2 – compare with cache ------------------------------------
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
-        if model_fp.exists() and sha256sum(model_fp) == ref.sha256:
+        up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
+        if up_to_date:
             paths[uid] = model_fp
-            continue   # already up‑to‑date
+            continue
 
-        # need fresh blob -------------------------------------------
+        # 3 – request payload ---------------------------------------
         await _download_model(self, axon, ref, model_fp)
         if model_fp.exists() and sha256sum(model_fp) == ref.sha256:
             paths[uid] = model_fp
         else:
-            bt.logging.warning(f"Model download for miner {uid} failed sha check.")
+            bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
 
     return paths
+
 
 async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
     """Stream a .zip from *axon* into *dest* atomically."""
