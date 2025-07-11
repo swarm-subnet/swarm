@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from swarm.validator.task_gen import random_task
 from swarm.validator.forward import SIM_DT, HORIZON_SEC
-from swarm.core.flying_strategy import flying_strategy           # reference strategy
+from swarm.core.legacy.flying_strategy import flying_strategy           # reference strategy
 from swarm.validator.replay import replay_once
 from swarm.validator.reward import flight_reward
 from swarm.protocol import MapTask, FlightPlan, ValidationResult
