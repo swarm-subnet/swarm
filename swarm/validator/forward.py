@@ -202,32 +202,74 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
         gc.collect()
     return res
 
-# ----------------------------------------------------------------------
-# 5 · Public coroutine
-# ----------------------------------------------------------------------
+def _boost_scores(raw: np.ndarray, *, k: float = 10.0) -> np.ndarray:
+    """
+    Non‑linear “winner‑takes‑most” mapping.
+
+    • Shift scores so the worst in this batch is 0.  
+    • Exponentiate → gaps near the top widen dramatically.  
+    • Preserve endpoints: min → 0, max → 1.
+
+           f(s) = (e^{k·ŝ} − 1) / (e^{k} − 1) ,  ŝ = (s − s_min)/(s_max − s_min)
+
+    With k ≈ 10 the median performer (~0.5) receives only 1.2 % of the weight
+    awarded to the best miner; tail scores are pushed close to 0.
+    """
+    if raw.size == 0:
+        return raw
+    s_min, s_max = float(raw.min()), float(raw.max())
+    if abs(s_max - s_min) < 1e-9:           # all equal → avoid divide‑by‑0
+        return np.zeros_like(raw, dtype=np.float32)
+    s_norm = (raw - s_min) / (s_max - s_min)
+    boosted = (np.exp(k * s_norm) - 1.0) / (np.exp(k) - 1.0)
+    return boosted.astype(np.float32)
+
+
 async def forward(self) -> None:
+    """
+    One validator “tick” with score boosting:
+
+        1. sample miners
+        2. download / cache their models (size‑capped & validated)
+        3. evaluate models in sandboxed subprocesses
+        4. transform raw scores → boosted scores
+        5. push boosted scores on‑chain
+    """
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
+        # ---------- build secret task ---------------------------------
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+
+        # ---------- sample miners -------------------------------------
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
 
+        # ---------- handshake + secure download -----------------------
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
 
+        # ---------- sandboxed evaluation ------------------------------
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
-        if results:
-            best, avg = max(r.score for r in results), np.mean([r.score for r in results])
-            bt.logging.info(f"Scores – best: {best:.3f}  avg: {avg:.3f}")
-        else:
+        if not results:
             bt.logging.warning("No valid results this round.")
+            await asyncio.sleep(FORWARD_SLEEP_SEC)
+            return
 
-        # push weights
-        uids_np = np.asarray([r.uid   for r in results], dtype=np.int64)
-        sco_np  = np.asarray([r.score for r in results], dtype=np.float32)
-        self.update_scores(sco_np, uids_np)
+        raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
+        uids_np    = np.asarray([r.uid   for r in results], dtype=np.int64)
+
+        # ---------- non‑linear boost ----------------------------------
+        boosted = _boost_scores(raw_scores)
+        best, avg = boosted.max(), boosted.mean()
+        bt.logging.info(
+            f"Boosted scores → best: {best:.3f}   avg: {avg:.3f}   "
+            f"(raw best {raw_scores.max():.3f})"
+        )
+
+        # ---------- push weights --------------------------------------
+        self.update_scores(boosted, uids_np)
 
     except Exception as e:
         bt.logging.error(f"Validator forward error: {e}")
