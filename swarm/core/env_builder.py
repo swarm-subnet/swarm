@@ -23,7 +23,7 @@ from typing import Optional, Tuple
 
 import pybullet as p
 
-from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS
+from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS, PLATFORM
 
 # --------------------------------------------------------------------------
 # Tunables
@@ -232,189 +232,263 @@ def build_world(
     if goal is not None:
         gx, gy, gz = goal
 
-        # 1) Physical landing platform - SOLID AND PRECISE -----------
-        platform_radius = LANDING_PLATFORM_RADIUS  # Consistent radius
-        platform_height = 0.2         # Thicker for better physics stability
-        
-        # Create FLAT CIRCULAR platform - very short cylinder (like a coin)
-        platform_collision = p.createCollisionShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=platform_radius,
-            height=platform_height,
-            physicsClientId=cli,
-        )
-        
-        # Create visual shape for the platform 
-        platform_visual = p.createVisualShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=platform_radius,
-            length=platform_height,
-            rgbaColor=[0.15, 0.35, 0.8, 1.0],  # blue platform
-            specularColor=[0.8, 0.8, 0.9],     # High reflectivity for metallic look
-            physicsClientId=cli,
-        )
-        
-        # Create the physical landing platform - POSITIONED CORRECTLY
-        platform_uid = p.createMultiBody(
-            baseMass=0,  # Static platform (infinite mass)
-            baseCollisionShapeIndex=platform_collision,
-            baseVisualShapeIndex=platform_visual,
-            basePosition=[gx, gy, gz - platform_height / 2],  # Bottom at gz level
-            physicsClientId=cli
-        )
-        
-        # Set platform material properties for MAXIMUM stability
-        p.changeDynamics(
-            bodyUniqueId=platform_uid,
-            linkIndex=-1,
-            restitution=0.0,      # NO bounce whatsoever
-            lateralFriction=2.0,  # VERY high friction to prevent sliding
-            spinningFriction=1.0, # High spinning friction
-            rollingFriction=0.5,  # High rolling friction
-            physicsClientId=cli
-        )
+        # Platform mode: solid if PLATFORM else visual-only
+        if PLATFORM:
+            # 1) Physical landing platform - SOLID AND PRECISE -----------
+            platform_radius = LANDING_PLATFORM_RADIUS  # Consistent radius
+            platform_height = 0.2         # Thicker for better physics stability
+            
+            # Create FLAT CIRCULAR platform - very short cylinder (like a coin)
+            platform_collision = p.createCollisionShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=platform_radius,
+                height=platform_height,
+                physicsClientId=cli,
+            )
+            
+            # Create visual shape for the platform 
+            platform_visual = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=platform_radius,
+                length=platform_height,
+                rgbaColor=[0.15, 0.35, 0.8, 1.0],  # blue platform
+                specularColor=[0.8, 0.8, 0.9],     # High reflectivity for metallic look
+                physicsClientId=cli,
+            )
+            
+            # Create the physical landing platform - POSITIONED CORRECTLY
+            platform_uid = p.createMultiBody(
+                baseMass=0,  # Static platform (infinite mass)
+                baseCollisionShapeIndex=platform_collision,
+                baseVisualShapeIndex=platform_visual,
+                basePosition=[gx, gy, gz - platform_height / 2],  # Bottom at gz level
+                physicsClientId=cli
+            )
+            
+            # Set platform material properties for MAXIMUM stability
+            p.changeDynamics(
+                bodyUniqueId=platform_uid,
+                linkIndex=-1,
+                restitution=0.0,      # NO bounce whatsoever
+                lateralFriction=2.0,  # VERY high friction to prevent sliding
+                spinningFriction=1.0, # High spinning friction
+                rollingFriction=0.5,  # High rolling friction
+                physicsClientId=cli
+            )
 
-        # 3)landing zone ---------------
-        # Create multiple layers for depth and glow effect
-        surface_radius = platform_radius * 0.8  # Slightly smaller than platform
-        surface_height = 0.008                  # Slightly thicker for better visibility
-        
-        # Main green landing surface with glow effect
-        surface_visual = p.createVisualShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=surface_radius,
-            length=surface_height,
-            rgbaColor=[0.3, 0.9, 0.4, 0.9],  # Bright glowing green with slight transparency
-            specularColor=[0.6, 1.0, 0.6],   # Green specular highlight
-            physicsClientId=cli,
-        )
-        
-        # Position main green surface on top of platform
-        surface_uid = p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=-1,  # No collision for surface
-            baseVisualShapeIndex=surface_visual,
-            basePosition=[gx, gy, gz + surface_height / 2 + 0.001],  # On platform top
-            physicsClientId=cli,
-        )
-        
-        # Add SOLID FLAT landing surface for stable drone landing
-        # This invisible collision surface ensures drone lands on completely flat surface
-        flat_landing_collision = p.createCollisionShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=surface_radius,  # Same size as green circle
-            height=0.001,           # Paper-thin but solid
-            physicsClientId=cli,
-        )
-        
-        flat_landing_uid = p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=flat_landing_collision,
-            baseVisualShapeIndex=-1,  # Invisible
-            basePosition=[gx, gy, gz + surface_height + 0.002],  # Exactly on green surface
-            physicsClientId=cli
-        )
-        
-        # Set maximum friction for this landing surface
-        p.changeDynamics(
-            bodyUniqueId=flat_landing_uid,
-            linkIndex=-1,
-            restitution=0.0,      # No bounce at all
-            lateralFriction=3.0,  # MAXIMUM friction to prevent sliding
-            spinningFriction=2.0,
-            rollingFriction=1.0,
-            physicsClientId=cli
-        )
+            # 3)landing zone ---------------
+            # Create multiple layers for depth and glow effect
+            surface_radius = platform_radius * 0.8  # Slightly smaller than platform
+            surface_height = 0.008                  # Slightly thicker for better visibility
+            
+            # Main green landing surface with glow effect
+            surface_visual = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=surface_radius,
+                length=surface_height,
+                rgbaColor=[0.3, 0.9, 0.4, 0.9],  # Bright glowing green with slight transparency
+                specularColor=[0.6, 1.0, 0.6],   # Green specular highlight
+                physicsClientId=cli,
+            )
+            
+            # Position main green surface on top of platform
+            surface_uid = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,  # No collision for surface
+                baseVisualShapeIndex=surface_visual,
+                basePosition=[gx, gy, gz + surface_height / 2 + 0.001],  # On platform top
+                physicsClientId=cli,
+            )
+            
+            # Add SOLID FLAT landing surface for stable drone landing
+            # This invisible collision surface ensures drone lands on completely flat surface
+            flat_landing_collision = p.createCollisionShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=surface_radius,  # Same size as green circle
+                height=0.001,           # Paper-thin but solid
+                physicsClientId=cli,
+            )
+            
+            flat_landing_uid = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=flat_landing_collision,
+                baseVisualShapeIndex=-1,  # Invisible
+                basePosition=[gx, gy, gz + surface_height + 0.002],  # Exactly on green surface
+                physicsClientId=cli
+            )
+            
+            # Set maximum friction for this landing surface
+            p.changeDynamics(
+                bodyUniqueId=flat_landing_uid,
+                linkIndex=-1,
+                restitution=0.0,      # No bounce at all
+                lateralFriction=3.0,  # MAXIMUM friction to prevent sliding
+                spinningFriction=2.0,
+                rollingFriction=1.0,
+                physicsClientId=cli
+            )
 
-        # TAO logo as MASSIVE CIRCULAR badge covering the ENTIRE green surface  
-        # Make it BIG and OBVIOUS - covering all the green area
-        tao_logo_radius = surface_radius * 1.06  # Cover all of green circle
-        badge_height = 0.005       # Thicker for visibility
-        
-        # Create LARGE white circular background first
-        tao_background_visual = p.createVisualShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=tao_logo_radius,
-            length=badge_height,
-            rgbaColor=[1.0, 1.0, 1.0, 1.0],  # Pure white opaque background
-            physicsClientId=cli,
-        )
+            # TAO logo as MASSIVE CIRCULAR badge covering the ENTIRE green surface  
+            # Make it BIG and OBVIOUS - covering all the green area
+            tao_logo_radius = surface_radius * 1.06  # Cover all of green circle
+            badge_height = 0.005       # Thicker for visibility
+            
+            # Create LARGE white circular background first
+            tao_background_visual = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=tao_logo_radius,
+                length=badge_height,
+                rgbaColor=[1.0, 1.0, 1.0, 1.0],  # Pure white opaque background
+                physicsClientId=cli,
+            )
 
-        # Position the white background
-        tao_background_uid = p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=-1,  # No collision
-            baseVisualShapeIndex=tao_background_visual,
-            basePosition=[gx, gy, gz + surface_height + badge_height + 0.008],  # Higher for visibility
-            baseOrientation=[0, 0, 0, 1],
-            physicsClientId=cli,
-        )
-        
-        # Create MASSIVE circular TAO logo with texture on top
-        tao_logo_visual = p.createVisualShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=tao_logo_radius * 0.95,  # Slightly smaller for border effect
-            length=badge_height * 0.5,      # Thinner texture layer
-            rgbaColor=[1.0, 1.0, 1.0, 1.0],  # White for texture
-            physicsClientId=cli,
-        )
+            # Position the white background
+            tao_background_uid = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,  # No collision
+                baseVisualShapeIndex=tao_background_visual,
+                basePosition=[gx, gy, gz + surface_height + badge_height + 0.008],  # Higher for visibility
+                baseOrientation=[0, 0, 0, 1],
+                physicsClientId=cli,
+            )
+            
+            # Create MASSIVE circular TAO logo with texture on top
+            tao_logo_visual = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=tao_logo_radius * 0.95,  # Slightly smaller for border effect
+                length=badge_height * 0.5,      # Thinner texture layer
+                rgbaColor=[1.0, 1.0, 1.0, 1.0],  # White for texture
+                physicsClientId=cli,
+            )
 
-        # Position the TAO logo texture on top of background
-        tao_logo_uid = p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=-1,  # No collision
-            baseVisualShapeIndex=tao_logo_visual,
-            basePosition=[gx, gy, gz + surface_height + badge_height + 0.011],  # On top of background
-            baseOrientation=[0, 0, 0, 1],
-            physicsClientId=cli,
-        )
-        
-        # Apply TAO texture to the MASSIVE logo
-        p.changeVisualShape(
-            tao_logo_uid,
-            -1,
-            textureUniqueId=_get_tao_tex(cli),
-            flags=p.VISUAL_SHAPE_DOUBLE_SIDED,
-            physicsClientId=cli,
-        )
+            # Position the TAO logo texture on top of background
+            tao_logo_uid = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,  # No collision
+                baseVisualShapeIndex=tao_logo_visual,
+                basePosition=[gx, gy, gz + surface_height + badge_height + 0.011],  # On top of background
+                baseOrientation=[0, 0, 0, 1],
+                physicsClientId=cli,
+            )
+            
+            # Apply TAO texture to the MASSIVE logo
+            p.changeVisualShape(
+                tao_logo_uid,
+                -1,
+                textureUniqueId=_get_tao_tex(cli),
+                flags=p.VISUAL_SHAPE_DOUBLE_SIDED,
+                physicsClientId=cli,
+            )
 
-        # 4) glowing guidance beacon ----------------------
-        pole_h = 0.5              # Taller, more elegant
-        pole_radius = 0.012        # Sleeker profile
+            # 4) glowing guidance beacon ----------------------
+            pole_h = 0.5              # Taller, more elegant
+            pole_radius = 0.012        # Sleeker profile
+            
+            # Main beacon pole with gradient effect
+            pole_visual = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=pole_radius,
+                length=pole_h,
+                rgbaColor=[1.0, 0.2, 0.1, 0.9],  # Bright glowing red-orange
+                specularColor=[1.0, 0.8, 0.2],   # Golden specular highlight
+                physicsClientId=cli,
+            )
+            
+            # Add beacon top cap for elegant finish
+            cap_visual = p.createVisualShape(
+                shapeType=p.GEOM_SPHERE,
+                radius=pole_radius * 2,
+                rgbaColor=[1.0, 0.3, 0.0, 1.0],  # Bright orange cap
+                specularColor=[1.0, 1.0, 0.4],   # Bright golden specular
+                physicsClientId=cli,
+            )
+            
+            # Position main beacon pole
+            pole_uid = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,  # No collision for pole
+                baseVisualShapeIndex=pole_visual,
+                basePosition=[gx, gy, gz + pole_h / 2 + 0.008],  # Above platform
+                physicsClientId=cli,
+            )
+            
+            # Position beacon cap on top
+            cap_uid = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,  # No collision for cap
+                baseVisualShapeIndex=cap_visual,
+                basePosition=[gx, gy, gz + pole_h + 0.015],  # Top of pole
+                physicsClientId=cli,
+            )
         
-        # Main beacon pole with gradient effect
-        pole_visual = p.createVisualShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=pole_radius,
-            length=pole_h,
-            rgbaColor=[1.0, 0.2, 0.1, 0.9],  # Bright glowing red-orange
-            specularColor=[1.0, 0.8, 0.2],   # Golden specular highlight
-            physicsClientId=cli,
-        )
-        
-        # Add beacon top cap for elegant finish
-        cap_visual = p.createVisualShape(
-            shapeType=p.GEOM_SPHERE,
-            radius=pole_radius * 2,
-            rgbaColor=[1.0, 0.3, 0.0, 1.0],  # Bright orange cap
-            specularColor=[1.0, 1.0, 0.4],   # Bright golden specular
-            physicsClientId=cli,
-        )
-        
-        # Position main beacon pole
-        pole_uid = p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=-1,  # No collision for pole
-            baseVisualShapeIndex=pole_visual,
-            basePosition=[gx, gy, gz + pole_h / 2 + 0.008],  # Above platform
-            physicsClientId=cli,
-        )
-        
-        # Position beacon cap on top
-        cap_uid = p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=-1,  # No collision for cap
-            baseVisualShapeIndex=cap_visual,
-            basePosition=[gx, gy, gz + pole_h + 0.015],  # Top of pole
-            physicsClientId=cli,
-        )
+        else:
+            # Visual-only markers (legacy mode for easier challenges)
+            # 1) outer halo ------------------------------------------------
+            halo_thick = 0.02
+            halo = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=0.45,
+                length=halo_thick,
+                rgbaColor=[0.15, 0.8, 0.15, 1.0],
+                specularColor=[0.3, 0.3, 0.3],
+                physicsClientId=cli,
+            )
+            p.createMultiBody(
+                0, -1, halo, [gx, gy, gz - halo_thick / 2], physicsClientId=cli
+            )
+
+            # 2) TAO badge -------------------------------------------------
+            badge_size = 0.50
+            half = badge_size / 2
+            badge_offset = 0.001
+
+            vertices = [
+                [-half, -half, 0.0],
+                [ half, -half, 0.0],
+                [ half,  half, 0.0],
+                [-half,  half, 0.0],
+            ]
+            indices = [0, 1, 2, 0, 2, 3]
+            uvs = [[0, 0], [1, 0], [1, 1], [0, 1]]
+
+            vis = p.createVisualShape(
+                shapeType=p.GEOM_MESH,
+                vertices=vertices,
+                indices=indices,
+                uvs=uvs,
+                physicsClientId=cli,
+            )
+
+            uid = p.createMultiBody(
+                0,
+                -1,
+                vis,
+                [gx, gy, gz + badge_offset],
+                [0, 0, 0, 1],
+                physicsClientId=cli,
+            )
+            p.changeVisualShape(
+                uid,
+                -1,
+                textureUniqueId=_get_tao_tex(cli),
+                flags=p.VISUAL_SHAPE_DOUBLE_SIDED,
+                physicsClientId=cli,
+            )
+
+            # 3) red pole --------------------------------------------------
+            pole_h = 0.30
+            pole_vis = p.createVisualShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=0.012,
+                length=pole_h,
+                rgbaColor=[0.9, 0.1, 0.1, 1.0],
+                specularColor=[0.4, 0.4, 0.4],
+                physicsClientId=cli,
+            )
+            p.createMultiBody(
+                0,
+                -1,
+                pole_vis,
+                [gx, gy, gz + pole_h / 2 + 0.001],
+                physicsClientId=cli,
+            )

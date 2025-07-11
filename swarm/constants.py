@@ -29,3 +29,6 @@ R_MIN, R_MAX = 10.0, 30          # radial goal distance (m)
 H_MIN, H_MAX = 2, 10          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk
+
+# ────────── Platform mode toggle ─────────────────────────────────
+PLATFORM = True           # Toggle for solid platform (True) / visual-only (False)
