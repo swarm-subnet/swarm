@@ -7,7 +7,7 @@ This document shows how to install and operate the Swarm validator that drives t
 
 | Resource | Minimal | Notes                                |
 |----------|---------|--------------------------------------|
-| CPU      | 3 cores  | Map generation & scoring are light‑weight |
+| CPU      | 3 cores  | Miners are evaluated 1 by 1, no no need for much spec |
 | RAM      | 8 GB     |                     |
 | Disk     | 20 GB     | Environment                   |
 | GPU      | none     |  |
@@ -105,7 +105,7 @@ pm2 start --name auto_update_validator \
 
 1. Generate a map
    - Random obstacles, world limits, physics time‑step & horizon are packed into a MapTask (see `swarm/validator/task_gen.py`).
-2. Broadcast to miners
+2. Receive miners models
    - Sends the task to N randomly sampled miners
 3. Re‑simulate each returned FlightPlan in PyBullet (`replay_once`) measuring:
    - Goal reached?
