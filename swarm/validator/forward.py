@@ -1,59 +1,49 @@
 # ---------------------------------------------------------------
-#  Swarm validator – Policy API v2.4
-#  Hardened against large files, ZIP bombs, malicious payloads,
-#  and runaway evaluation (CPU/RAM/time capped).
+#  Swarm validator – Policy API v2   (hardened, 50 MiB limits)
 # ---------------------------------------------------------------
 from __future__ import annotations
 
-import asyncio, gc, multiprocessing as mp, os, signal, zipfile
+import asyncio
+import gc
+import traceback
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List
 
 import bittensor as bt
 import numpy as np
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO                       # SB‑3 loader
+from zipfile import ZipFile, BadZipFile
 
-from swarm.protocol   import MapTask, PolicySynapse, PolicyRef, ValidationResult
+from swarm.protocol import MapTask, PolicySynapse, PolicyRef, ValidationResult
 from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
 from swarm.utils.env_factory import make_env
 
 from .task_gen import random_task
 from .reward   import flight_reward
+
 from swarm.constants import (
-    SIM_DT, HORIZON_SEC, SAMPLE_K, QUERY_TIMEOUT, FORWARD_SLEEP_SEC, GOAL_TOL
+    SIM_DT,
+    HORIZON_SEC,
+    SAMPLE_K,
+    QUERY_TIMEOUT,
+    FORWARD_SLEEP_SEC,
+    GOAL_TOL,
 )
 
-# ----------------------------------------------------------------------
-# 0 · Security parameters (edit as needed)
-# ----------------------------------------------------------------------
-MAX_MODEL_BYTES       = 50 * 1024 * 1024          # 50 MiB on disk
-MAX_ZIP_CONTENT_BYTES = 100 * 1024 * 1024         # 100 MiB uncompressed
-EVAL_TIMEOUT_SEC      = HORIZON_SEC + 20          # safety margin
-MEM_LIMIT_MB          = 1024                      # per‑process address‑space
-MODEL_DIR             = Path("miner_models")
-CHUNK_SIZE            = 2 << 20                   # 2 MiB
+# ----------------------------------------------------------------
+# 0.  Helpers – run one episode with a Policy (.zip)
+# ----------------------------------------------------------------
+def _run_episode(task: MapTask, uid: int, model: PPO) -> ValidationResult:
+    """
+    Executes one closed‑loop flight using *model* as the policy.
 
-# ----------------------------------------------------------------------
-# 1 · Episode runner  (pure, no side‑effects, can run in subprocess)
-# ----------------------------------------------------------------------
-def _run_episode(task: MapTask, uid: int, model_path: str) -> ValidationResult:
-    """Sub‑process entry: loads model & runs one secret episode."""
-    # --- resource limits (Linux only) ----------------------------------
-    try:
-        import resource
-        resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT_MB << 20, MEM_LIMIT_MB << 20))
-        resource.setrlimit(resource.RLIMIT_CPU, (EVAL_TIMEOUT_SEC, EVAL_TIMEOUT_SEC + 2))
-    except Exception:
-        pass  # best‑effort; ignored on non‑POSIX or if perms missing
-
-    # --- load model ----------------------------------------------------
-    try:
-        model = PPO.load(model_path, device="cpu")
-    except Exception as e:
-        return ValidationResult(uid, False, 0.0, 0.0, 0.0)
-
-    # --- lightweight pilot wrapper ------------------------------------
+    Fixes:
+    • correctly unpack `env.reset()` which returns (obs, info)
+    • handles both 1‑D (single‑drone) and 2‑D (N×state) observation shapes
+    """
+    # --- light wrapper so the rest of the code can stay the same --------
     class _Pilot:
         def __init__(self, m): self.m = m
         def reset(self, task):  pass
@@ -63,20 +53,26 @@ def _run_episode(task: MapTask, uid: int, model_path: str) -> ValidationResult:
 
     pilot = _Pilot(model)
     env   = make_env(task, gui=False)
-    obs, _ = env.reset()
+    obs, _info = env.reset()                 # ← unpack the info dict
 
+    # Make sure we can index the position regardless of shape
+    if isinstance(obs, tuple):               # safety for unexpected returns
+        obs = obs[0]
     pos0 = obs[:3] if obs.ndim == 1 else obs[0, :3]
-    d_start = float(np.linalg.norm(pos0 - task.goal))
-    t_sim = energy = 0.0
-    success = False
+
+    d_start  = float(np.linalg.norm(pos0 - task.goal))
+    t_sim    = 0.0
+    energy   = 0.0
     last_pos = pos0
+    success  = False
 
     while t_sim < task.horizon:
-        rpm = pilot.act(obs, t_sim)
-        obs, _, terminated, truncated, info = env.step(rpm[None, :])
+        rpm  = pilot.act(obs, t_sim)
+        obs, _reward, terminated, truncated, info = env.step(rpm[None, :])
         t_sim   += SIM_DT
         energy  += np.abs(rpm).sum() * SIM_DT
         last_pos = obs[:3] if obs.ndim == 1 else obs[0, :3]
+
         if terminated or truncated:
             success = info.get("success", False)
             break
@@ -85,34 +81,70 @@ def _run_episode(task: MapTask, uid: int, model_path: str) -> ValidationResult:
     d_final = float(np.linalg.norm(last_pos - task.goal))
 
     score = flight_reward(
-        success, t_sim, d_start, d_final, task.horizon, GOAL_TOL,
-        t_to_goal=t_sim if success else None,
-        e_used=energy if success else None,
+        success   = success,
+        t_alive   = t_sim,
+        d_start   = d_start,
+        d_final   = d_final,
+        horizon   = task.horizon,
+        goal_tol  = GOAL_TOL,
+        t_to_goal = t_sim if success else None,
+        e_used    = energy if success else None,
     )
     return ValidationResult(uid, success, t_sim, energy, score)
 
-# ----------------------------------------------------------------------
-# 2 · ZIP sanity check (prevents ZIP bombs & corruption)
-# ----------------------------------------------------------------------
-def _is_zip_safe(fp: Path) -> bool:
+
+# ----------------------------------------------------------------
+# 1.  Model handshake, caching & safety limits
+# ----------------------------------------------------------------
+MODEL_DIR        = Path("miner_models")      # all zips stored here
+CHUNK_SIZE       = 2 << 20                   # 2 MiB – matches iter_chunks default
+MAX_MODEL_BYTES  = 50 * 1024 * 1024          # 50 MiB hard cap (compressed + uncompressed)
+
+def _zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
+    """
+    Cheap static inspection to reject dangerous ZIPs *without* extraction.
+
+    • Total uncompressed size must not exceed `max_uncompressed`.
+    • No absolute paths and no '..' path traversal sequences.
+    """
     try:
-        with zipfile.ZipFile(fp) as zf:
-            total = sum(i.file_size for i in zf.infolist())
-            return total <= MAX_ZIP_CONTENT_BYTES
-    except Exception:
+        with ZipFile(path) as zf:
+            total_uncompressed = 0
+            for info in zf.infolist():
+                # 1. forbid absolute paths or traversal
+                name = info.filename
+                if name.startswith("/") or name.startswith("\\") or ".." in Path(name).parts:
+                    bt.logging.error(f"ZIP path traversal attempt: {name}")
+                    return False
+                # 2. track size
+                total_uncompressed += info.file_size
+                if total_uncompressed > max_uncompressed:
+                    bt.logging.error(
+                        f"ZIP too large when decompressed "
+                        f"({total_uncompressed/1e6:.1f} MB > {max_uncompressed/1e6:.1f} MB)"
+                    )
+                    return False
+            return True
+    except BadZipFile:
+        bt.logging.error("Corrupted ZIP archive.")
+        return False
+    except Exception as e:
+        bt.logging.error(f"ZIP inspection error: {e}")
         return False
 
-# ----------------------------------------------------------------------
-# 3 · Handshake + secure download
-# ----------------------------------------------------------------------
+
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
+    """
+    For every UID return the local Path to its latest .zip.
+    Downloads if the cached SHA differs from the miner's PolicyRef.
+    """
     MODEL_DIR.mkdir(exist_ok=True)
     paths: Dict[int, Path] = {}
 
     for uid in uids:
         axon = self.metagraph.axons[uid]
 
-        # --- manifest ---------------------------------------------------
+        # 1 – ask for current PolicyRef ------------------------------
         try:
             syn: PolicySynapse = await self.dendrite(
                 axons=[axon],
@@ -121,87 +153,128 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                 timeout=QUERY_TIMEOUT,
             )
             if not syn.ref:
-                bt.logging.warning(f"Miner {uid} sent no PolicyRef.")
+                bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
                 continue
             ref = PolicyRef(**syn.ref)
         except Exception as e:
             bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
             continue
 
-        if ref.size_bytes > MAX_MODEL_BYTES:
-            bt.logging.warning(f"Miner {uid} model {ref.size_bytes/1e6:.1f} MB > limit.")
-            continue
-
+        # 2 – compare with cache ------------------------------------
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
-        if model_fp.exists() and sha256sum(model_fp) == ref.sha256:
+        up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
+        if up_to_date:
+            # confirm cached file is still within limits (allows lowering MAX_MODEL_BYTES later)
+            if model_fp.stat().st_size <= MAX_MODEL_BYTES and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES):
+                paths[uid] = model_fp
+                continue
+            else:
+                bt.logging.warning(f"Cached model for {uid} violates new limits; redownloading.")
+                model_fp.unlink(missing_ok=True)
+
+        # 3 – request payload ---------------------------------------
+        await _download_model(self, axon, ref, model_fp)
+        if (
+            model_fp.exists()
+            and sha256sum(model_fp) == ref.sha256
+            and model_fp.stat().st_size <= MAX_MODEL_BYTES
+            and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
+        ):
             paths[uid] = model_fp
-            continue
+        else:
+            bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
+            model_fp.unlink(missing_ok=True)
 
-        # --- download ---------------------------------------------------
-        if not await _download_blob(self, axon, ref, model_fp):
-            continue
-
-        paths[uid] = model_fp
     return paths
 
-async def _download_blob(self, axon, ref: PolicyRef, dest: Path) -> bool:
+
+async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
+    """
+    Stream a .zip from *axon* into *dest* atomically.
+    Enforces both compressed & uncompressed ≤ 50 MiB.
+    """
     tmp = dest.with_suffix(".part")
     tmp.unlink(missing_ok=True)
     received = 0
 
     try:
+        # tell miner we need the blob
         await self.dendrite(
             axons=[axon],
             synapse=PolicySynapse.request_blob(),
             timeout=QUERY_TIMEOUT,
         )
+
         async for msg in self.dendrite.stream(axon):
             if not msg or not msg.chunk:
                 break
+
             chunk = msg.chunk["data"]
             received += len(chunk)
+
+            # --- hard cap on compressed size -----------------------
             if received > MAX_MODEL_BYTES:
-                bt.logging.warning(f"Download from {axon.hotkey} exceeds limit.")
+                bt.logging.error(
+                    f"Miner {axon.hotkey} sent oversized blob "
+                    f"({received/1e6:.1f} MB > 50 MB). Aborting."
+                )
                 tmp.unlink(missing_ok=True)
-                return False
+                return
+
             with tmp.open("ab") as fh:
                 fh.write(chunk)
+
+        # --- verify compressed size --------------------------------
+        if tmp.stat().st_size > MAX_MODEL_BYTES:
+            bt.logging.error(
+                f"Compressed ZIP from {axon.hotkey} exceeds 50 MB "
+                f"({tmp.stat().st_size/1e6:.1f} MB)."
+            )
+            tmp.unlink(missing_ok=True)
+            return
+
+        # --- SHA‑256 integrity check -------------------------------
+        if sha256sum(tmp) != ref.sha256:
+            bt.logging.error(f"SHA mismatch for miner blob {axon.hotkey}.")
+            tmp.unlink(missing_ok=True)
+            return
+
+        # --- dry inspection of ZIP (no extraction) -----------------
+        if not _zip_is_safe(tmp, max_uncompressed=MAX_MODEL_BYTES):
+            bt.logging.error(f"Unsafe ZIP from miner {axon.hotkey}.")
+            tmp.unlink(missing_ok=True)
+            return
+
+        # passed all checks → promote
+        tmp.replace(dest)
+        bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
+
     except Exception as e:
-        bt.logging.warning(f"Stream error {axon.hotkey}: {e}")
+        bt.logging.warning(f"Streaming error ({axon.hotkey}): {e}")
         tmp.unlink(missing_ok=True)
-        return False
 
-    if sha256sum(tmp) != ref.sha256 or not _is_zip_safe(tmp):
-        bt.logging.warning(f"Model from {axon.hotkey} failed integrity/safety checks.")
-        tmp.unlink(missing_ok=True)
-        return False
-
-    tmp.replace(dest)
-    bt.logging.info(f"Cached {dest.name} ({received/1e6:.1f} MB).")
-    return True
-
-# ----------------------------------------------------------------------
-# 4 · Evaluate in sandboxed subprocess
-# ----------------------------------------------------------------------
+# ----------------------------------------------------------------
+# 3.  Evaluate one miner (load → run → free)
+# ----------------------------------------------------------------
 def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
-    queue: mp.Queue = mp.Queue(maxsize=1)
-    proc = mp.Process(target=lambda q: q.put(_run_episode(task, uid, str(model_fp))),
-                      args=(queue,), daemon=True)
-    proc.start()
-    proc.join(EVAL_TIMEOUT_SEC)
-    if proc.is_alive():
-        proc.kill()
-        bt.logging.warning(f"Timeout evaluating miner {uid}.")
-        return ValidationResult(uid, False, 0.0, 0.0, 0.0)
     try:
-        res: ValidationResult = queue.get_nowait()
-    except Exception:
+        model = PPO.load(model_fp, device="cpu")
+        res   = _run_episode(task, uid, model)
+    except Exception as e:
+        bt.logging.warning(f"Miner {uid} evaluation error: {e}")
         res = ValidationResult(uid, False, 0.0, 0.0, 0.0)
     finally:
-        queue.close(); queue.join_thread()
+        # free RAM
+        try:
+            del model
+        except UnboundLocalError:
+            pass
         gc.collect()
     return res
 
+# ----------------------------------------------------------------
+# 4.  Public coroutine – called by neurons/validator.py
+# ----------------------------------------------------------------
 def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
     """
     Exponential boost driven by *absolute* gap to the best score, *scaled
