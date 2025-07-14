@@ -57,6 +57,12 @@ def _replay_once_impl(
     # 1 ─ environment ---------------------------------------------------
     env = make_env(task, gui=gui, raw_rpm=True)   # RPM‑controlled
     cli = env.getPyBulletClient()                 # physicsClientId (int)
+    
+    # Retrieve avian simulation system if enabled
+    bird_system = getattr(env, '_bird_system', None)
+    
+    # Retrieve atmospheric wind simulation system if enabled
+    wind_system = getattr(env, '_wind_system', None)
 
     # 2 ─ turn the FlightPlan into a step‑indexed RPM table -------------
     last_t = plan.commands[-1].t
@@ -78,6 +84,27 @@ def _replay_once_impl(
         rpm_vec = rpm_table[k]
         obs, *_ = env.step(rpm_vec[None, :])          # shape (1,4)
         pos = obs[0, :3]
+        
+        # Update avian behavioral states
+        if bird_system:
+            bird_system.update(task.sim_dt)
+
+        # Update wind system states
+        if wind_system:
+            wind_system.update(task.sim_dt)
+            
+            # Apply wind force to drone
+            wind_force = wind_system.get_wind_force(pos)
+            if np.linalg.norm(wind_force) > 0.01:  # Only apply if force is significant
+                # Apply wind force as external force to drone
+                p.applyExternalForce(
+                    drone_id,
+                    -1,  # Link index (-1 for base)
+                    wind_force.tolist(),
+                    pos.tolist(),
+                    p.WORLD_FRAME,
+                    physicsClientId=cli
+                )
 
         # camera follow
         if gui and k % frames_per_cam == 0:
@@ -86,63 +113,81 @@ def _replay_once_impl(
         # energy bookkeeping
         energy += (np.square(rpm_vec).sum() * env.KF / PROP_EFF) * task.sim_dt
 
-        # Success check based on PLATFORM mode
+        # -------------------------------------------------------------
+        # Success & collision handling (platform vs legacy modes)
+        # -------------------------------------------------------------
         if PLATFORM:
-            # collision check – ignore platform contacts near goal
+            # ─── collision check (ignore contacts on the landing platform) ───
             if not collided:
                 contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
                 if contacts:
-                    allowed = True
+                    bird_collision = False
+                    allowed_contact = True  # assume contact is allowed until proven otherwise
+
                     for cp in contacts:
-                        # contact position on A (drone) in world coordinates is cp[5]
-                        cpos = cp[5]
-                        # Safeguard: ensure tuple length
-                        if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
-                            cx, cy, cz = cpos[:3]
-                            horiz = np.linalg.norm([cx - goal[0], cy - goal[1]])
-                            vert  = abs(cz - goal[2])
-                            # If contact is within platform radius and close to surface → allowed
-                            if horiz < _PR + 0.05 and vert < 0.3:
-                                continue  # allowed contact
-                        allowed = False
-                        break
-                    if not allowed:
+                        body_b = cp[2]
+
+                        # Detect avian collision events with drone
+                        if bird_system and body_b in bird_system.bird_ids:
+                            bird_collision = True
+                            bird_system.handle_bird_collision(body_b)
+                            break
+
+                        # Evaluate contact relative to platform only if not avian
+                        if not bird_collision:
+                            cpos = cp[5]
+                            if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
+                                cx, cy, cz = cpos[:3]
+                                horiz = np.linalg.norm([cx - goal[0], cy - goal[1]])
+                                vert = abs(cz - goal[2])
+                                # Contacts within platform radius & low vertical offset are allowed
+                                if horiz < _PR + 0.05 and vert < 0.3:
+                                    continue
+                                # Any other contact is disallowed
+                                allowed_contact = False
+                            break
+
+                    if bird_collision or not allowed_contact:
                         collided = True
                         break  # stop episode early
 
-            # ─ landing success logic: stable landing on green circle/TAO logo ─
-            horizontal_distance = np.linalg.norm(pos[:2] - goal[:2])  # X,Y distance only
-            vertical_distance = abs(pos[2] - goal[2])                  # Z distance only
-            
-            # TAO logo now covers 106% of green circle area (from env_builder.py)
-            tao_logo_radius = _PR * 0.8 * 1.06  # Green circle radius * TAO coverage
-            
-            # Check if drone is positioned correctly on large TAO logo surface
-            on_tao_logo = (horizontal_distance < tao_logo_radius and   # Within TAO logo
-                          vertical_distance < 0.3 and                 # Within 30cm of surface
-                          pos[2] >= goal[2] - 0.1)                    # Above platform (not below)
-            
+            # ─── landing success logic on platform ───
+            horizontal_distance = np.linalg.norm(pos[:2] - goal[:2])
+            vertical_distance = abs(pos[2] - goal[2])
+
+            tao_logo_radius = _PR * 0.8 * 1.06  # TAO logo slightly smaller than platform
+            on_tao_logo = (
+                horizontal_distance < tao_logo_radius
+                and vertical_distance < 0.3
+                and pos[2] >= goal[2] - 0.1
+            )
+        
             if on_tao_logo:
-                # ─ accumulate stable landing time ─
                 stable_landing_time += task.sim_dt
-                
-                # ─ success condition: stable for required duration ─
                 if stable_landing_time >= STABLE_LANDING_SEC:
                     success = True
                     break
             else:
-                # ─ reset landing timer if drone moves away ─
                 stable_landing_time = 0.0
-        
+
         else:
-            # Legacy visual-only mode: hover near goal, any collision = failure
+            # ─── legacy visual-only mode (hover) ───
             if not collided:
                 contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
-                if contacts:                     # any contact → collision
+                if contacts:
+                    # Treat ANY contact as failure in legacy mode (except avian entities)
+                    bird_collision = False
+                    for cp in contacts:
+                        body_b = cp[2]
+                        if bird_system and body_b in bird_system.bird_ids:
+                            bird_collision = True
+                            bird_system.handle_bird_collision(body_b)
+                            break
                     collided = True
-                    break                        # stop the episode early
+                    if bird_collision:
+                        break
 
-            # Simple hover success logic
+            # Hover success condition near goal
             if np.linalg.norm(pos - goal) < WAYPOINT_TOL:
                 hover_elapsed += task.sim_dt
                 if hover_elapsed >= HOVER_SEC:

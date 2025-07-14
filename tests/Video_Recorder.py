@@ -274,11 +274,38 @@ class EnhancedVideoRecorder:
             drone_id = env.DRONE_IDS[0]
             t_sim = 0.0
 
+            # Retrieve avian simulation system if enabled
+            bird_system = getattr(env, '_bird_system', None)
+            
+            # Retrieve atmospheric wind simulation system if enabled
+            wind_system = getattr(env, '_wind_system', None)
+
             for k in tqdm(range(max_steps), desc="Simulating Flight", unit="step"):
                 t_sim = k * task.sim_dt
                 rpm_vec = rpm_table[k]
                 obs, *_ = env.step(rpm_vec[None, :])
                 pos = obs[0, :3]
+                
+                # Update avian behavioral states if system present
+                if bird_system:
+                    bird_system.update(task.sim_dt)
+                
+                # Update atmospheric wind simulation if system present
+                if wind_system:
+                    wind_system.update(task.sim_dt)
+                    
+                    # Apply wind force to drone
+                    wind_force = wind_system.get_wind_force(pos)
+                    if np.linalg.norm(wind_force) > 0.01:  # Only apply if force is significant
+                        # Apply wind force as external force to drone
+                        p.applyExternalForce(
+                            drone_id,
+                            -1,  # Link index (-1 for base)
+                            wind_force.tolist(),
+                            pos.tolist(),
+                            p.WORLD_FRAME,
+                            physicsClientId=cli
+                        )
 
                 if k % frames_per_cam == 0:
                     track_drone(cli, drone_id)
@@ -288,8 +315,17 @@ class EnhancedVideoRecorder:
                 if not collided:
                     contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
                     if contacts:
+                        bird_collision = False
                         allowed = True
                         for cp in contacts:
+                            body_b = cp[2]
+                            
+                            # Detect avian collision events with drone
+                            if bird_system and body_b in bird_system.bird_ids:
+                                bird_collision = True
+                                bird_system.handle_bird_collision(body_b)
+                                break
+                            
                             cpos = cp[5]
                             if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
                                 cx, cy, cz = cpos[:3]
@@ -299,7 +335,8 @@ class EnhancedVideoRecorder:
                                     continue
                             allowed = False
                             break
-                        if not allowed:
+                        
+                        if bird_collision or not allowed:
                             collided = True
                             success = False
                             break
