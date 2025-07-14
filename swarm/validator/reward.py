@@ -43,7 +43,8 @@ def flight_reward(
     Parameters
     ----------
     success
-        ``True`` if the mission successfully landed on the platform.
+        ``True`` if the mission successfully reached its objective - landing 
+        on platform (PLATFORM=True) or hovering at goal (PLATFORM=False).
     t
         Time (in seconds) taken to reach the goal.
     e

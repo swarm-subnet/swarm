@@ -29,3 +29,19 @@ R_MIN, R_MAX = 10.0, 30          # radial goal distance (m)
 H_MIN, H_MAX = 2, 10          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk
+
+# ────────── Platform mode toggle ─────────────────────────────────
+PLATFORM = True           # Toggle for solid platform (True) / visual-only (False)
+
+# ────────── Bird Simulation System ─────────────────────────────────
+ENABLE_BIRDS = True        # Enable/disable avian simulation system
+N_BIRDS = 25               # Total avian entities spawned per simulation map
+BIRD_SIZE = 0.3            # Avian collision detection radius (meters)
+BIRD_SPEED_MIN = 2.5       # Minimum avian flight velocity (m/s)
+BIRD_SPEED_MAX = 5.0       # Maximum avian flight velocity (m/s)
+
+# ────────── Wind Simulation System ─────────────────────────────────
+ENABLE_WIND = True         # Enable/disable atmospheric wind simulation
+WIND_SPEED_MIN = 0.5       # Minimum wind velocity magnitude (m/s)
+WIND_SPEED_MAX = 3.0       # Maximum wind velocity magnitude (m/s)
+WIND_DIRECTION_CHANGE_INTERVAL = 10.0  # Wind direction change interval (seconds)
