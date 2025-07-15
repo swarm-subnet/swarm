@@ -97,7 +97,7 @@ class WandbHelper:
             entity_name = "swarm-subnet-swarm"
             validator_name = os.getenv('VALIDATOR_NAME', f"validator-{self.validator_uid}")
             ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-            run_name = f"{validator_name}-{ts}-{self.hotkey[:8]}"
+            run_name = f"{validator_name}-{ts}"
             
             wandb_config = {
                 "project": project_name,
