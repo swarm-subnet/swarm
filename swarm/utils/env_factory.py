@@ -18,9 +18,9 @@ from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
 from swarm.core.HoverAviaryRawRPM import HoverAviaryRawRPM
-from swarm.core.env_builder import build_world
+from swarm.core.env_builder import build_world, BirdSystem, WindSystem
 from swarm.protocol import MapTask
-from swarm.constants import SAFE_Z
+from swarm.constants import SAFE_Z, ENABLE_BIRDS, ENABLE_WIND
 
 # ---------------------------------------------------------------------
 def make_env(
@@ -70,12 +70,14 @@ def make_env(
         env.reset(seed=task.map_seed)
 
     # ⬇⬇⬇  NEW: pass *start* to the world builder for safe‑zone logic
-    build_world(
+    result = build_world(
         seed=task.map_seed,
         cli=cli,
         start=task.start,
         goal=task.goal,
     )
+    
+    bird_ids, obstacles = result if result else ([], [])
 
     # 4 ─ spawn drone at requested start pose --------------------------
     start_xyz = np.asarray(task.start, dtype=float)
@@ -87,5 +89,17 @@ def make_env(
         start_quat,
         physicsClientId=cli,
     )
+
+    # 5 ─ Initialize avian simulation system if enabled ----------------------------
+    if ENABLE_BIRDS and bird_ids:
+        import random
+        rng = random.Random(task.map_seed)
+        env._bird_system = BirdSystem(cli, bird_ids, obstacles, rng, task.start, task.goal)
+
+    # 6 ─ Initialize atmospheric wind simulation system if enabled ----------------------------
+    if ENABLE_WIND:
+        import random
+        rng = random.Random(task.map_seed)
+        env._wind_system = WindSystem(rng)
 
     return env

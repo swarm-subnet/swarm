@@ -19,17 +19,29 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
+import numpy as np
 import pybullet as p
 
-from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS, PLATFORM
+# Absolute path to the birds assets directory for reliable loading
+BIRD_ASSETS_DIR = (Path(__file__).parent.parent / "assets" / "birds").resolve()
+
+from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS, PLATFORM, ENABLE_BIRDS, N_BIRDS, BIRD_SIZE, ENABLE_WIND, WIND_SPEED_MIN, WIND_SPEED_MAX, WIND_DIRECTION_CHANGE_INTERVAL
 
 # --------------------------------------------------------------------------
 # Tunables
 # --------------------------------------------------------------------------
 SAFE_ZONE_RADIUS = 2.0         # keep at least 2 m of clearance
 MAX_ATTEMPTS_PER_OBS = 100     # retry limit when placing each obstacle
+
+# Avian Simulation Parameters - Enhanced Realistic Flight Dynamics
+BIRD_HEIGHT_MIN = 4.0          # Minimum flight altitude above ground (meters)
+BIRD_HEIGHT_MAX = 12.0         # Maximum flight altitude above ground (meters)
+BIRD_SPEED_MIN = 2.5           # Minimum flight velocity (m/s)
+BIRD_SPEED_MAX = 5.0           # Maximum flight velocity (m/s)
+BIRD_INDIVIDUAL_RATIO = 0.4    # Proportion of solitary avian entities
+BIRD_FLOCK_RATIO = 0.6         # Proportion of grouped avian entities
 
 # --------------------------------------------------------------------------
 # Internal helpers
@@ -76,7 +88,7 @@ def build_world(
     *,
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
-) -> None:
+) -> Optional[Tuple[List[int], List]]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
     is provided—place a visual TAO badge at that position.
@@ -87,6 +99,10 @@ def build_world(
     cli    : int      • PyBullet client id
     start  : (x,y,z)  • drone take‑off location (obstacles keep clear)
     goal   : (x,y,z)  • desired target (obstacles keep clear; visual marker)
+
+    Returns
+    -------
+    Optional[Tuple[List[int], List]] • (bird IDs, obstacles) if birds enabled, None otherwise
     """
     rng = random.Random(seed)
 
@@ -492,3 +508,916 @@ def build_world(
                 [gx, gy, gz + pole_h / 2 + 0.001],
                 physicsClientId=cli,
             )
+
+    # Spawn intelligent bird distribution based on flight distance
+    bird_ids = _spawn_birds(cli, rng, placed_obstacles, start, goal)
+    return bird_ids, placed_obstacles
+
+
+def _calculate_smart_height_distribution() -> dict:
+    """
+    Calculate smart height distribution for birds with more randomness.
+    
+    Height zones with increased randomness:
+    - Low altitude: 4-6m (20% of birds)
+    - Mid altitude: 6-9m (30% of birds) 
+    - High altitude: 9-11m (30% of birds)
+    - Very high altitude: 11-12m (20% of birds)
+    
+    Returns dict with height ranges and ratios.
+    """
+    return {
+        'low_altitude': {
+            'min': BIRD_HEIGHT_MIN,
+            'max': BIRD_HEIGHT_MIN + 2.0,
+            'ratio': 0.20
+        },
+        'mid_altitude': {
+            'min': BIRD_HEIGHT_MIN + 2.0,
+            'max': BIRD_HEIGHT_MIN + 5.0,
+            'ratio': 0.30
+        },
+        'high_altitude': {
+            'min': BIRD_HEIGHT_MIN + 5.0,
+            'max': BIRD_HEIGHT_MAX - 1.0,
+            'ratio': 0.30
+        },
+        'very_high_altitude': {
+            'min': BIRD_HEIGHT_MAX - 1.0,
+            'max': BIRD_HEIGHT_MAX,
+            'ratio': 0.20
+        }
+    }
+
+def _calculate_smart_bird_distribution(start_pos: Optional[Tuple] = None, 
+                                     goal_pos: Optional[Tuple] = None) -> dict:
+    """
+    Calculate intelligent bird distribution ratios based on flight distance.
+    
+    Distance-based distribution:
+    - 5m: 20% flight path birds (further increased)
+    - 8m: 25% flight path birds (further increased)
+    - 12m: 30% flight path birds (further increased)
+    - 16m: 35% flight path birds (further increased)
+    - 20m: 40% flight path birds (further increased)
+    - 25m: 45% flight path birds (further increased)
+    - 30m+: 50% flight path birds (further increased)
+    
+    Returns dict with zone ratios: {'flight_path': 0.30, 'perimeter': 0.20, ...}
+    """
+    if not start_pos or not goal_pos:
+        # Default distribution when no start/goal positions
+        return {
+            'flight_path': 0.30,  # Increased from 0.25
+            'perimeter': 0.20,    # Reduced from 0.25
+            'high_altitude': 0.25, # Same
+            'random': 0.25        # Same
+        }
+    
+    # Calculate flight distance
+    dx = goal_pos[0] - start_pos[0]
+    dy = goal_pos[1] - start_pos[1]
+    flight_distance = math.hypot(dx, dy)
+    
+    # Smart distribution based on distance - FURTHER INCREASED PERCENTAGES
+    if flight_distance <= 5.0:
+        flight_path_ratio = 0.20  # Increased from 0.15
+    elif flight_distance <= 8.0:
+        flight_path_ratio = 0.25  # Increased from 0.20
+    elif flight_distance <= 12.0:
+        flight_path_ratio = 0.30  # Increased from 0.25
+    elif flight_distance <= 16.0:
+        flight_path_ratio = 0.35  # Increased from 0.30
+    elif flight_distance <= 20.0:
+        flight_path_ratio = 0.40  # Increased from 0.35
+    elif flight_distance <= 25.0:
+        flight_path_ratio = 0.45  # Increased from 0.40
+    else:
+        flight_path_ratio = 0.50  # Increased from 0.45
+    
+    # Adjust other zones proportionally
+    remaining_ratio = 1.0 - flight_path_ratio
+    perimeter_ratio = remaining_ratio * 0.30    # Reduced from 0.35
+    high_altitude_ratio = remaining_ratio * 0.35  # Increased from 0.30
+    random_ratio = remaining_ratio * 0.35       # Same
+    
+    return {
+        'flight_path': flight_path_ratio,
+        'perimeter': perimeter_ratio,
+        'high_altitude': high_altitude_ratio,
+        'random': random_ratio
+    }
+
+def _find_safe_bird_position(rng: random.Random, placed_obstacles: List, 
+                            start_pos: Optional[Tuple] = None, 
+                            goal_pos: Optional[Tuple] = None,
+                            zone_type: str = "random", height_zone: str = "mid_altitude") -> List[float]:
+    """
+    Find safe bird position with strategic zone distribution.
+    
+    Zone types:
+    - 'flight_path': Birds along the drone's flight corridor
+    - 'perimeter': Birds around map boundaries
+    - 'high_altitude': Birds at maximum heights
+    - 'random': Birds scattered throughout the map
+    
+    Returns [x, y, z] position or fallback position if no safe spot found.
+    """
+    
+    for _ in range(100):  # Maximum attempts to find safe position
+        if zone_type == "flight_path" and start_pos and goal_pos:
+            # Birds along flight corridor - intelligent distribution with random heights
+            # Better distribution along the entire flight path with more randomness
+            t = rng.uniform(0.05, 0.95)  # Full flight path coverage with edge avoidance
+            path_x = start_pos[0] + t * (goal_pos[0] - start_pos[0])
+            path_y = start_pos[1] + t * (goal_pos[1] - start_pos[1])
+            
+            # Wider offset perpendicular to flight path for better coverage
+            perpendicular_offset = rng.uniform(-15, 15)  # Increased range for more spread
+            parallel_offset = rng.uniform(-10, 10)  # Increased range for more spread
+            
+            # Calculate perpendicular direction
+            dx = goal_pos[0] - start_pos[0]
+            dy = goal_pos[1] - start_pos[1]
+            length = math.hypot(dx, dy)
+            if length > 0:
+                perp_x = -dy / length * perpendicular_offset
+                perp_y = dx / length * perpendicular_offset
+                par_x = dx / length * parallel_offset
+                par_y = dy / length * parallel_offset
+            else:
+                perp_x = perp_y = par_x = par_y = 0
+            
+            x = path_x + perp_x + par_x
+            y = path_y + perp_y + par_y
+            
+            # More random height distribution for flight path birds
+            # Birds can be at any height with equal probability
+            z = rng.uniform(BIRD_HEIGHT_MIN, BIRD_HEIGHT_MAX)
+            
+        elif zone_type == "perimeter":
+            # Birds around map perimeter - better distribution along all sides
+            side = rng.choice(['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest'])
+            if side == 'north':
+                x = rng.uniform(-WORLD_RANGE + 8, WORLD_RANGE - 8)
+                y = rng.uniform(WORLD_RANGE - 15, WORLD_RANGE - 8)
+            elif side == 'south':
+                x = rng.uniform(-WORLD_RANGE + 8, WORLD_RANGE - 8)
+                y = rng.uniform(-WORLD_RANGE + 8, -WORLD_RANGE + 15)
+            elif side == 'east':
+                x = rng.uniform(WORLD_RANGE - 15, WORLD_RANGE - 8)
+                y = rng.uniform(-WORLD_RANGE + 8, WORLD_RANGE - 8)
+            elif side == 'west':
+                x = rng.uniform(-WORLD_RANGE + 8, -WORLD_RANGE + 15)
+                y = rng.uniform(-WORLD_RANGE + 8, WORLD_RANGE - 8)
+            elif side == 'northeast':
+                x = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 10)
+                y = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 10)
+            elif side == 'northwest':
+                x = rng.uniform(-WORLD_RANGE + 10, -WORLD_RANGE + 20)
+                y = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 10)
+            elif side == 'southeast':
+                x = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 10)
+                y = rng.uniform(-WORLD_RANGE + 10, -WORLD_RANGE + 20)
+            else:  # southwest
+                x = rng.uniform(-WORLD_RANGE + 10, -WORLD_RANGE + 20)
+                y = rng.uniform(-WORLD_RANGE + 10, -WORLD_RANGE + 20)
+            # Use smart height distribution for perimeter birds
+            height_dist = _calculate_smart_height_distribution()
+            height_range = height_dist['low_altitude']  # Perimeter birds prefer lower altitudes
+            z = rng.uniform(height_range['min'], height_range['max'])
+            
+        elif zone_type == "high_altitude":
+            # High-flying birds - better distribution across the entire map
+            # Use different patterns for high altitude birds
+            pattern = rng.choice(['center', 'corners', 'edges', 'random'])
+            
+            if pattern == 'center':
+                # Birds in the center area
+                x = rng.uniform(-WORLD_RANGE + 15, WORLD_RANGE - 15)
+                y = rng.uniform(-WORLD_RANGE + 15, WORLD_RANGE - 15)
+            elif pattern == 'corners':
+                # Birds in corner areas
+                corner = rng.choice(['nw', 'ne', 'sw', 'se'])
+                if corner == 'nw':
+                    x = rng.uniform(-WORLD_RANGE + 5, -WORLD_RANGE + 20)
+                    y = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 5)
+                elif corner == 'ne':
+                    x = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 5)
+                    y = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 5)
+                elif corner == 'sw':
+                    x = rng.uniform(-WORLD_RANGE + 5, -WORLD_RANGE + 20)
+                    y = rng.uniform(-WORLD_RANGE + 5, -WORLD_RANGE + 20)
+                else:  # se
+                    x = rng.uniform(WORLD_RANGE - 20, WORLD_RANGE - 5)
+                    y = rng.uniform(-WORLD_RANGE + 5, -WORLD_RANGE + 20)
+            elif pattern == 'edges':
+                # Birds along edges
+                edge = rng.choice(['north', 'south', 'east', 'west'])
+                if edge == 'north':
+                    x = rng.uniform(-WORLD_RANGE + 10, WORLD_RANGE - 10)
+                    y = rng.uniform(WORLD_RANGE - 15, WORLD_RANGE - 8)
+                elif edge == 'south':
+                    x = rng.uniform(-WORLD_RANGE + 10, WORLD_RANGE - 10)
+                    y = rng.uniform(-WORLD_RANGE + 8, -WORLD_RANGE + 15)
+                elif edge == 'east':
+                    x = rng.uniform(WORLD_RANGE - 15, WORLD_RANGE - 8)
+                    y = rng.uniform(-WORLD_RANGE + 10, WORLD_RANGE - 10)
+                else:  # west
+                    x = rng.uniform(-WORLD_RANGE + 8, -WORLD_RANGE + 15)
+                    y = rng.uniform(-WORLD_RANGE + 10, WORLD_RANGE - 10)
+            else:  # random
+                x = rng.uniform(-WORLD_RANGE + 8, WORLD_RANGE - 8)
+                y = rng.uniform(-WORLD_RANGE + 8, WORLD_RANGE - 8)
+            # Use smart height distribution for high altitude birds
+            height_dist = _calculate_smart_height_distribution()
+            height_range = height_dist['very_high_altitude']  # High altitude birds prefer maximum heights
+            z = rng.uniform(height_range['min'], height_range['max'])
+            
+        else:  # random distribution
+            # Birds scattered throughout map - better coverage with grid-like distribution
+            # Use grid-based random selection for more even distribution
+            grid_size = 6  # Divide map into 6x6 grid
+            grid_x = rng.randint(0, grid_size - 1)
+            grid_y = rng.randint(0, grid_size - 1)
+            
+            # Calculate position within the selected grid cell
+            cell_width = (2 * WORLD_RANGE - 20) / grid_size
+            x = -WORLD_RANGE + 10 + grid_x * cell_width + rng.uniform(0, cell_width)
+            y = -WORLD_RANGE + 10 + grid_y * cell_width + rng.uniform(0, cell_width)
+            # Use smart height distribution for random birds
+            height_dist = _calculate_smart_height_distribution()
+            # Random birds can be at any height, weighted by distribution
+            height_zones = list(height_dist.keys())
+            weights = [height_dist[zone]['ratio'] for zone in height_zones]
+            chosen_zone = rng.choices(height_zones, weights=weights)[0]
+            height_range = height_dist[chosen_zone]
+            z = rng.uniform(height_range['min'], height_range['max'])
+        
+        safe = True
+        
+        # Check obstacles with minimal safety margin
+        for obs_x, obs_y, obs_r in placed_obstacles:
+            distance = math.hypot(x - obs_x, y - obs_y)
+            if distance < (obs_r + 2.5):  # Small safety margin
+                safe = False
+                break
+        
+        # Minimal safe zones - only 1m protection around start and goal
+        if safe and start_pos:
+            start_distance = math.hypot(x - start_pos[0], y - start_pos[1])
+            if start_distance < 1.0:  # 1m safety zone around start position
+                safe = False
+        
+        if safe and goal_pos:
+            goal_distance = math.hypot(x - goal_pos[0], y - goal_pos[1])
+            if goal_distance < 1.0:  # 1m safety zone around goal position
+                safe = False
+        
+        if safe:
+            return [x, y, z]
+    
+    # Fallback: random safe position when no suitable location found
+    return [
+        rng.uniform(-WORLD_RANGE + 15, WORLD_RANGE - 15),
+        rng.uniform(-WORLD_RANGE + 15, WORLD_RANGE - 15),
+        rng.uniform(BIRD_HEIGHT_MIN + 2, BIRD_HEIGHT_MAX - 2)
+    ]
+
+def _spawn_birds(cli: int, rng: random.Random, placed_obstacles: List,
+                start_pos: Optional[Tuple] = None, 
+                goal_pos: Optional[Tuple] = None) -> List[int]:
+    """
+    Spawn birds with intelligent distribution based on flight distance.
+    
+    Uses smart ratios that adapt to the distance between start and goal:
+    - Short flights (≤10m): 18% flight path birds
+    - Medium flights (10-20m): 25% flight path birds  
+    - Long flights (20-30m): 30% flight path birds
+    - Very long flights (>30m): 40% flight path birds
+    """
+    if not ENABLE_BIRDS:
+        return []
+    
+    bird_ids = []
+    p.setAdditionalSearchPath(str(BIRD_ASSETS_DIR))
+    
+    # Calculate intelligent distribution based on flight distance
+    distribution = _calculate_smart_bird_distribution(start_pos, goal_pos)
+    
+    # Create zones with smart distribution ratios
+    zones = [
+        ("flight_path", int(N_BIRDS * distribution['flight_path'])),
+        ("perimeter", int(N_BIRDS * distribution['perimeter'])),
+        ("high_altitude", int(N_BIRDS * distribution['high_altitude'])),
+        ("random", int(N_BIRDS * distribution['random']))
+    ]
+    
+    # Ensure we spawn exactly N_BIRDS by adjusting the last zone if needed
+    total_assigned = sum(count for _, count in zones)
+    if total_assigned < N_BIRDS:
+        zones[-1] = (zones[-1][0], zones[-1][1] + (N_BIRDS - total_assigned))
+    
+    # Get height distribution for intelligent placement
+    height_dist = _calculate_smart_height_distribution()
+    
+    for zone_type, bird_count in zones:
+        for _ in range(bird_count):
+            # Determine appropriate height zone for this bird
+            if zone_type == "flight_path":
+                height_zone = rng.choices(
+                    ['low_altitude', 'mid_altitude', 'high_altitude'],
+                    weights=[0.3, 0.5, 0.2]
+                )[0]
+            elif zone_type == "perimeter":
+                height_zone = "low_altitude"  # Perimeter birds stay low
+            elif zone_type == "high_altitude":
+                height_zone = "very_high_altitude"  # High altitude birds go very high
+            else:  # random
+                height_zone = rng.choices(
+                    list(height_dist.keys()),
+                    weights=[height_dist[zone]['ratio'] for zone in height_dist.keys()]
+                )[0]
+            
+            pos = _find_safe_bird_position(rng, placed_obstacles, start_pos, goal_pos, zone_type, height_zone)
+            bird_id = p.loadURDF(str(BIRD_ASSETS_DIR / "bird.urdf"), basePosition=pos, physicsClientId=cli)
+            bird_ids.append(bird_id)
+    
+    return bird_ids
+
+class BirdSystem:
+    """
+    Advanced bird simulation system for drone environment.
+    
+    Features:
+    - Multiple flight patterns (circular, linear, patrol)
+    - Realistic physics-based movement
+    - Intelligent obstacle avoidance
+    - Personality-driven behavior variations
+    - Dynamic energy management system
+    
+    Designed for realistic drone simulation environments.
+    """
+    
+    def __init__(self, cli: int, bird_ids: List[int], obstacles: List, rng: random.Random, 
+                 start_pos: Optional[Tuple] = None, goal_pos: Optional[Tuple] = None):
+        """
+        Initialize the bird simulation system with behavioral parameters.
+        
+        Args:
+            cli: PyBullet physics client identifier
+            bird_ids: List of bird entity IDs in physics simulation
+            obstacles: List of obstacle coordinates and dimensions
+            rng: Seeded random number generator for deterministic behavior
+            start_pos: Drone starting coordinates (for safe zone calculation)
+            goal_pos: Drone target coordinates (for safe zone calculation)
+        """
+        self.cli = cli
+        self.bird_ids = bird_ids
+        self.obstacles = obstacles
+        self.rng = rng
+        self.start_pos = start_pos
+        self.goal_pos = goal_pos
+        self.birds = []
+        
+        # Initialize behavioral parameters for each bird entity
+        for bird_id in bird_ids:
+            # Assign flight pattern: circular, linear, or patrol
+            behavior = rng.choice(['circle', 'straight', 'patrol'])
+            speed = rng.uniform(BIRD_SPEED_MIN, BIRD_SPEED_MAX)
+            
+            # Core bird entity data structure
+            bird_data = {
+                'id': bird_id,
+                'behavior': behavior,
+                'speed': speed,
+                'timer': 0.0,
+                'duration': rng.uniform(15, 30),  # Behavior duration in seconds
+                'energy': rng.uniform(0.6, 1.0),  # Energy level (0.0 to 1.0)
+                'personality': rng.choice(['aggressive', 'cautious', 'curious', 'calm'])
+            }
+            
+            # Initialize pattern-specific movement parameters
+            if behavior == 'circle':
+                # Circular flight pattern configuration
+                pos, _ = p.getBasePositionAndOrientation(bird_id, physicsClientId=cli)
+                bird_data.update({
+                    'center': np.array(pos) + np.array([rng.uniform(-8, 8), rng.uniform(-8, 8), 0]),
+                    'radius': rng.uniform(4, 10),
+                    'angle': 0.0
+                })
+            elif behavior == 'straight':
+                # Linear flight pattern configuration
+                bird_data.update({
+                    'velocity': np.array([rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-0.2, 0.2)]),
+                    'direction_change_timer': 0.0
+                })
+            elif behavior == 'patrol':
+                # Patrol flight pattern configuration
+                bird_data.update({
+                    'waypoints': [
+                        np.array([rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5),
+                                rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5)]),
+                        np.array([rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5),
+                                rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5)]),
+                        np.array([rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5),
+                                rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5)])
+                    ],
+                    'current_waypoint': 0,
+                    'waypoint_progress': 0.0
+                })
+            
+            self.birds.append(bird_data)
+    
+    def update(self, dt: float):
+        """
+        Update bird positions and behavioral states for current simulation frame.
+        
+        Args:
+            dt: Time delta for physics integration
+        """
+        for bird in self.birds:
+            # Skip birds that have collided with drone
+            if bird.get('collision_hit', False):
+                continue
+            
+            # Retrieve current spatial position
+            pos, _ = p.getBasePositionAndOrientation(bird['id'], physicsClientId=self.cli)
+            pos = np.array(pos)
+            
+            # Compute movement vector based on behavioral pattern
+            direction = self._calculate_movement(bird, pos, dt)
+            
+            # Apply collision avoidance forces
+            avoidance = self._calculate_obstacle_avoidance(bird, pos)
+            
+            # Apply safe zone repulsion forces
+            safe_zone_force = self._calculate_safe_zone_avoidance(bird, pos)
+            
+            # Apply boundary constraint forces
+            boundary_force = self._calculate_boundary_force(bird, pos)
+            
+            # Synthesize total movement force vector
+            total_force = direction * 0.7 + avoidance * 0.2 + safe_zone_force * 0.05 + boundary_force * 0.05
+            
+            # Apply velocity limiting for realistic movement
+            max_speed = 1.2  # Maximum velocity in meters per second
+            force_magnitude = np.linalg.norm(total_force)
+            if force_magnitude > max_speed:
+                total_force = total_force * max_speed / force_magnitude
+            
+            # Integrate position update
+            new_pos = pos + total_force * dt
+            
+            # Constrain altitude to valid flight range
+            new_pos[2] = max(BIRD_HEIGHT_MIN, min(BIRD_HEIGHT_MAX, new_pos[2]))
+            
+            # Update bird entity position in physics simulation
+            p.resetBasePositionAndOrientation(
+                bird['id'], 
+                new_pos, 
+                [0, 0, 0, 1], 
+                physicsClientId=self.cli
+            )
+            
+            # Update behavioral timers and energy consumption
+            bird['timer'] += dt
+            bird['energy'] = max(0.0, bird['energy'] - 0.002)  # Energy decay rate
+            
+            # Trigger behavioral state transition when timer expires
+            if bird['timer'] > bird['duration']:
+                self._switch_behavior(bird, new_pos)
+    
+    def _calculate_movement(self, bird: dict, pos: np.ndarray, dt: float) -> np.ndarray:
+        """
+        Calculate movement direction vector based on bird behavioral pattern.
+        
+        Args:
+            bird: Bird entity data dictionary
+            pos: Current spatial position
+            dt: Time delta for integration
+            
+        Returns:
+            Movement direction vector in 3D space
+        """
+        if bird['behavior'] == 'circle':
+            return self._circle_movement(bird, pos, dt)
+        elif bird['behavior'] == 'straight':
+            return self._straight_movement(bird, pos, dt)
+        elif bird['behavior'] == 'patrol':
+            return self._patrol_movement(bird, pos, dt)
+        else:
+            return np.array([0, 0, 0])
+    
+    def _circle_movement(self, bird: dict, pos: np.ndarray, dt: float) -> np.ndarray:
+        """Calculate circular flight pattern movement vector."""
+        center = bird['center']
+        radius = bird['radius']
+        
+        # Compute angular velocity based on personality traits
+        base_speed = bird['speed'] * 0.15  # Base angular velocity multiplier
+        if bird['personality'] == 'aggressive':
+            base_speed *= 1.5  # Aggressive personality speed multiplier
+        elif bird['personality'] == 'calm':
+            base_speed *= 0.8  # Calm personality speed multiplier
+        
+        # Update angular position
+        bird['angle'] += base_speed * dt
+        
+        # Calculate target position on circular trajectory
+        target = center + np.array([
+            np.cos(bird['angle']) * radius,
+            np.sin(bird['angle']) * radius,
+            pos[2]  # Maintain current altitude
+        ])
+        
+        # Return direction vector toward target position
+        return (target - pos) * 0.7  # Movement strength coefficient
+    
+    def _straight_movement(self, bird: dict, pos: np.ndarray, dt: float) -> np.ndarray:
+        """Calculate linear flight pattern with periodic direction changes."""
+        # Update velocity vector at regular intervals
+        if bird['timer'] % 2.0 < dt:  # Direction change interval
+            bird['velocity'] = np.array([
+                self.rng.uniform(-1.5, 1.5),  # X-axis velocity range
+                self.rng.uniform(-1.5, 1.5),  # Y-axis velocity range
+                self.rng.uniform(-0.3, 0.3)   # Z-axis velocity range
+            ])
+        
+        # Apply personality-based velocity modifications
+        velocity = bird['velocity'].copy()
+        if bird['personality'] == 'cautious':
+            velocity *= 0.7  # Cautious personality velocity reduction
+        elif bird['personality'] == 'aggressive':
+            velocity *= 1.6  # Aggressive personality velocity increase
+        
+        return velocity * bird['speed']
+    
+    def _patrol_movement(self, bird: dict, pos: np.ndarray, dt: float) -> np.ndarray:
+        """Calculate waypoint-based patrol movement pattern."""
+        waypoints = bird['waypoints']
+        current_idx = bird['current_waypoint']
+        progress = bird['waypoint_progress']
+        
+        # Retrieve current and subsequent waypoint coordinates
+        current_waypoint = waypoints[current_idx]
+        next_idx = (current_idx + 1) % len(waypoints)
+        next_waypoint = waypoints[next_idx]
+        
+        # Update progress toward next waypoint
+        progress += bird['speed'] * dt * 0.03  # Progress rate multiplier
+        if progress >= 1.0:
+            # Transition to next waypoint in sequence
+            bird['current_waypoint'] = next_idx
+            progress = 0.0
+        
+        bird['waypoint_progress'] = progress
+        
+        # Interpolate target position between waypoints
+        target_2d = current_waypoint + (next_waypoint - current_waypoint) * progress
+        target = np.array([target_2d[0], target_2d[1], pos[2]])
+        
+        # Return direction vector toward interpolated target
+        return (target - pos) * 0.5  # Movement strength coefficient
+    
+    def _calculate_obstacle_avoidance(self, bird: dict, pos: np.ndarray) -> np.ndarray:
+        """Calculate collision avoidance forces from environmental obstacles."""
+        avoidance = np.zeros(3)
+        
+        # Identify nearest obstacle for collision prevention
+        closest_distance = float('inf')
+        closest_obstacle = None
+        
+        for obs_x, obs_y, obs_r in self.obstacles[:10]:  # Evaluate first 10 obstacles
+            distance = math.hypot(pos[0] - obs_x, pos[1] - obs_y)
+            if distance < closest_distance:
+                closest_distance = distance
+                closest_obstacle = (obs_x, obs_y, obs_r)
+        
+        # Apply repulsion force when approaching obstacle threshold
+        if closest_obstacle and closest_distance < closest_obstacle[2] + 3.0:
+            obs_x, obs_y, obs_r = closest_obstacle
+            
+            # Compute escape direction vector
+            escape_x = pos[0] - obs_x
+            escape_y = pos[1] - obs_y
+            escape_length = math.hypot(escape_x, escape_y)
+            
+            if escape_length > 0.1:
+                # Normalize escape vector and apply repulsion force
+                escape_x /= escape_length
+                escape_y /= escape_length
+                
+                # Adjust avoidance strength based on personality traits
+                strength = 5.0  # Base avoidance strength
+                if bird['personality'] == 'cautious':
+                    strength = 8.0  # Enhanced avoidance for cautious birds
+                elif bird['personality'] == 'aggressive':
+                    strength = 3.0  # Reduced avoidance for aggressive birds
+                
+                avoidance[0] = escape_x * strength
+                avoidance[1] = escape_y * strength
+        
+        return avoidance
+    
+    def _calculate_safe_zone_avoidance(self, bird: dict, pos: np.ndarray) -> np.ndarray:
+        """Calculate repulsion forces from drone start and goal positions."""
+        safe_zone_force = np.zeros(3)
+        safe_radius = 4.0  # Safe zone radius in meters
+        
+        # Apply repulsion from drone starting position
+        if self.start_pos:
+            start_distance = math.hypot(pos[0] - self.start_pos[0], pos[1] - self.start_pos[1])
+            if start_distance < safe_radius:
+                repel_force = (safe_radius - start_distance) / safe_radius
+                safe_zone_force[0] = (pos[0] - self.start_pos[0]) / max(start_distance, 0.1) * repel_force
+                safe_zone_force[1] = (pos[1] - self.start_pos[1]) / max(start_distance, 0.1) * repel_force
+        
+        # Apply repulsion from drone goal position
+        if self.goal_pos:
+            goal_distance = math.hypot(pos[0] - self.goal_pos[0], pos[1] - self.goal_pos[1])
+            if goal_distance < safe_radius:
+                repel_force = (safe_radius - goal_distance) / safe_radius
+                safe_zone_force[0] += (pos[0] - self.goal_pos[0]) / max(goal_distance, 0.1) * repel_force
+                safe_zone_force[1] += (pos[1] - self.goal_pos[1]) / max(goal_distance, 0.1) * repel_force
+        
+        return safe_zone_force
+    
+    def _calculate_boundary_force(self, bird: dict, pos: np.ndarray) -> np.ndarray:
+        """Calculate boundary constraint forces to maintain birds within simulation area."""
+        boundary_force = np.zeros(3)
+        margin = 5.0  # Boundary margin in meters
+        
+        # Apply horizontal boundary constraints
+        if pos[0] > WORLD_RANGE - margin:
+            boundary_force[0] = -3.0  # Repel from positive X boundary
+        elif pos[0] < -WORLD_RANGE + margin:
+            boundary_force[0] = 3.0   # Repel from negative X boundary
+        
+        if pos[1] > WORLD_RANGE - margin:
+            boundary_force[1] = -3.0  # Repel from positive Y boundary
+        elif pos[1] < -WORLD_RANGE + margin:
+            boundary_force[1] = 3.0   # Repel from negative Y boundary
+        
+        # Apply vertical boundary constraints
+        if pos[2] < BIRD_HEIGHT_MIN + 1:
+            boundary_force[2] = 2.0   # Repel from lower altitude boundary
+        elif pos[2] > BIRD_HEIGHT_MAX - 1:
+            boundary_force[2] = -2.0  # Repel from upper altitude boundary
+        
+        return boundary_force
+    
+    def _switch_behavior(self, bird: dict, pos: np.ndarray):
+        """Execute behavioral state transition based on energy levels and personality."""
+        old_behavior = bird['behavior']
+        
+        # Select new behavioral pattern based on energy state
+        if bird['energy'] < 0.3:
+            # Low energy state: prefer energy-efficient patterns
+            new_behavior = self.rng.choice(['circle', 'patrol'])
+        elif bird['energy'] > 0.7:
+            # High energy state: prefer active movement patterns
+            new_behavior = self.rng.choice(['straight', 'patrol', 'circle'])
+        else:
+            # Normal energy state: all patterns available
+            new_behavior = self.rng.choice(['circle', 'straight', 'patrol'])
+        
+        # Apply personality-based behavioral preferences
+        if bird['personality'] == 'aggressive' and new_behavior == 'straight':
+            new_behavior = 'straight'  # Maintain aggressive linear movement
+        elif bird['personality'] == 'cautious' and new_behavior == 'circle':
+            new_behavior = 'circle'    # Maintain cautious circular patterns
+        
+        # Update behavioral state parameters
+        bird['behavior'] = new_behavior
+        bird['timer'] = 0.0
+        bird['duration'] = self.rng.uniform(20, 40)  # New behavior duration in seconds
+        
+        # Initialize pattern-specific parameters for new behavior
+        if new_behavior == 'circle':
+            bird['center'] = np.array(pos) + np.array([self.rng.uniform(-8, 8), self.rng.uniform(-8, 8), 0])
+            bird['radius'] = self.rng.uniform(4, 10)
+            bird['angle'] = 0.0
+        elif new_behavior == 'straight':
+            bird['velocity'] = np.array([self.rng.uniform(-1, 1), self.rng.uniform(-1, 1), self.rng.uniform(-0.2, 0.2)])
+        elif new_behavior == 'patrol':
+            bird['waypoints'] = [
+                np.array([self.rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5),
+                         self.rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5)]),
+                np.array([self.rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5),
+                         self.rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5)]),
+                np.array([self.rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5),
+                         self.rng.uniform(-WORLD_RANGE + 5, WORLD_RANGE - 5)])
+            ]
+            bird['current_waypoint'] = 0
+            bird['waypoint_progress'] = 0.0
+        
+        # Energy recovery after behavioral transition
+        bird['energy'] = min(1.0, bird['energy'] + 0.2)
+    
+    def handle_bird_collision(self, bird_id: int):
+        """
+        Process collision event between bird and drone.
+        
+        Collision response:
+        1. Apply realistic physics (mass, gravity, rotation)
+        2. Mark bird as inactive in simulation
+        3. Remove from active behavioral processing
+        
+        Args:
+            bird_id: Physics entity identifier of collided bird
+        """
+        try:
+            # Apply realistic mass for gravity simulation
+            p.changeDynamics(
+                bird_id, 
+                -1, 
+                mass=0.3,  # Realistic bird mass in kilograms
+                physicsClientId=self.cli
+            )
+            
+            # Apply falling motion with rotation
+            p.resetBaseVelocity(
+                bird_id,
+                linearVelocity=[0, 0, -5],  # Downward velocity in m/s
+                angularVelocity=[1, 1, 1],  # Rotational velocity in rad/s
+                physicsClientId=self.cli
+            )
+            
+            # Mark bird entity as collision-inactive
+            for bird in self.birds:
+                if bird['id'] == bird_id:
+                    bird['collision_hit'] = True
+                    break
+                    
+        except Exception:
+            pass  # Gracefully handle physics simulation errors
+
+
+class WindSystem:
+    """
+    Advanced atmospheric wind simulation system for drone environment.
+    
+    Features:
+    - Dynamic wind direction changes
+    - Realistic wind speed variations
+    - Turbulence simulation
+    - Height-based wind effects
+    - Deterministic behavior with seed
+    
+    Designed for realistic atmospheric conditions in drone simulation.
+    """
+    
+    def __init__(self, rng: random.Random):
+        """
+        Initialize the wind simulation system with atmospheric parameters.
+        
+        Args:
+            rng: Seeded random number generator for deterministic wind behavior
+        """
+        self.rng = rng
+        self.timer = 0.0
+        
+        # Initialize wind parameters
+        self.wind_speed = rng.uniform(WIND_SPEED_MIN, WIND_SPEED_MAX)
+        self.wind_direction = rng.uniform(0, 2 * math.pi)  # Random initial direction
+        self.wind_vector = np.array([
+            self.wind_speed * math.cos(self.wind_direction),
+            self.wind_speed * math.sin(self.wind_direction),
+            0.0  # Minimal vertical wind component
+        ])
+        
+        # Turbulence parameters
+        self.turbulence_timer = 0.0
+        self.turbulence_vector = np.zeros(3)
+        
+        # Wind change parameters
+        self.direction_change_timer = 0.0
+        self.target_direction = self.wind_direction
+        self.direction_transition_speed = 0.1  # Radians per second
+        
+    def update(self, dt: float):
+        """
+        Update wind conditions for current simulation frame.
+        
+        Args:
+            dt: Time delta for physics integration
+        """
+        self.timer += dt
+        self.direction_change_timer += dt
+        self.turbulence_timer += dt
+        
+        # Update wind direction changes
+        if self.direction_change_timer >= WIND_DIRECTION_CHANGE_INTERVAL:
+            self._change_wind_direction()
+            self.direction_change_timer = 0.0
+        
+        # Smoothly transition to target direction
+        direction_diff = self.target_direction - self.wind_direction
+        if abs(direction_diff) > 0.01:
+            # Normalize angle difference
+            if direction_diff > math.pi:
+                direction_diff -= 2 * math.pi
+            elif direction_diff < -math.pi:
+                direction_diff += 2 * math.pi
+            
+            # Apply smooth transition
+            self.wind_direction += direction_diff * self.direction_transition_speed * dt
+            self.wind_direction = self.wind_direction % (2 * math.pi)
+        
+        # Update turbulence
+        if self.turbulence_timer >= 0.5:  # Update turbulence every 0.5 seconds
+            self._update_turbulence()
+            self.turbulence_timer = 0.0
+        
+        # Update main wind vector
+        self.wind_vector = np.array([
+            self.wind_speed * math.cos(self.wind_direction),
+            self.wind_speed * math.sin(self.wind_direction),
+            0.0
+        ])
+    
+    def get_wind_force(self, position: np.ndarray) -> np.ndarray:
+        """
+        Calculate physically accurate wind force at specific position.
+        
+        Uses the aerodynamic drag equation: F = 0.5 × ρ × A × v² × Cd
+        where:
+        - ρ (rho) = air density (1.225 kg/m³)
+        - A = drone cross-sectional area (0.05 m²)
+        - v = wind velocity magnitude
+        - Cd = drag coefficient (~1.0 for drone)
+        
+        Args:
+            position: 3D position in simulation space
+            
+        Returns:
+            Wind force vector in 3D space (Newtons)
+        """
+        # Atmospheric parameters for realistic wind force calculation
+        rho = 1.225  # Air density at sea level (kg/m³)
+        A = 0.02     # Reduced drone cross-sectional area (m²) - more realistic for small drone
+        Cd = 0.3     # Reduced drag coefficient for streamlined quadrotor
+        
+        # Calculate stable wind force (reduced turbulence effects)
+        wind_velocity = self.wind_vector.copy()  # Use only base wind, minimal turbulence
+        wind_speed = np.linalg.norm(wind_velocity)
+        
+        # Apply simplified and stable wind force calculation
+        if wind_speed > 0.01:  # Avoid division by zero
+            # Use simplified force calculation for stability
+            force_magnitude = 0.5 * rho * A * wind_speed**2 * Cd
+            
+            # Apply additional scaling factor for micro-drone sensitivity
+            force_magnitude *= 0.3  # Further reduce force for stability
+            
+            # Apply force in wind direction
+            wind_force = (wind_velocity / wind_speed) * force_magnitude
+        else:
+            wind_force = np.zeros(3)
+        
+        # Apply height-based wind effects (linear scaling with altitude)
+        # Force increases linearly with height: 0.01N at 1m, 0.02N at 2m, etc.
+        height_factor = position[2] * 1.0  # Reduced scale factor for gentler wind forces
+        wind_force *= height_factor
+        
+        # Apply maximum force limit for stability
+        max_force = 0.1  # Maximum wind force in Newtons
+        force_magnitude = np.linalg.norm(wind_force)
+        if force_magnitude > max_force:
+            wind_force = (wind_force / force_magnitude) * max_force
+        
+        return wind_force
+    
+    def _change_wind_direction(self):
+        """Generate new random wind direction."""
+        # Random direction change (can be any direction)
+        angle_change = self.rng.uniform(-math.pi/2, math.pi/2)  # ±90 degrees
+        self.target_direction = (self.wind_direction + angle_change) % (2 * math.pi)
+        
+        # Random speed variation
+        speed_change = self.rng.uniform(-0.5, 0.5)
+        self.wind_speed = max(WIND_SPEED_MIN, min(WIND_SPEED_MAX, self.wind_speed + speed_change))
+    
+    def _update_turbulence(self):
+        """Update turbulence vector for stable atmospheric effects."""
+        # Generate minimal turbulence for stability
+        self.turbulence_vector = np.array([
+            self.rng.uniform(-0.1, 0.1),  
+            self.rng.uniform(-0.1, 0.1), 
+            self.rng.uniform(-0.05, 0.05)  
+        ]) * self.wind_speed * 0.02  
+    
+    def get_wind_info(self) -> dict:
+        """
+        Get current wind information for debugging or display.
+        
+        Returns:
+            Dictionary containing wind parameters
+        """
+        return {
+            'speed': self.wind_speed,
+            'direction_degrees': math.degrees(self.wind_direction),
+            'vector': self.wind_vector.tolist(),
+            'turbulence': self.turbulence_vector.tolist()
+        }
