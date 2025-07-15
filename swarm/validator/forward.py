@@ -140,6 +140,18 @@ def _apply_weight_update(self, results: List[ValidationResult]) -> None:
     bt.logging.info(f"Updated scores for {len(uids_np)} miners.")
 
 
+    # ─────── Silent wandb weight logging ───────
+    if hasattr(self, 'wandb_helper') and self.wandb_helper:
+        try:
+            self.wandb_helper.log_weight_update(
+                uids=uids_np.tolist(),
+                scores=scores_np.tolist()
+            )
+            bt.logging.debug(f"Weight update logged to wandb for {len(uids_np)} miners")
+        except Exception as e:
+            bt.logging.debug(f"Wandb weight logging failed: {e}")
+
+
 # ────────── Public API: called from neurons/validator.py ────────
 async def forward(self) -> None:
     """
@@ -184,11 +196,37 @@ async def forward(self) -> None:
         # -------- 4) (optional) persist FlightPlans ----------
         save_flightplans(task, results, plans)
 
-        # -------- 5) weight update ---------------------------
+        # -------- 5) silent wandb logging --------------------
+        if hasattr(self, 'wandb_helper') and self.wandb_helper:
+            try:
+                import time
+                self.wandb_helper.log_forward_results(
+                    forward_count=self.forward_count,
+                    task=task,
+                    results=results,
+                    timestamp=time.time()
+                )
+                bt.logging.debug(f"Forward #{self.forward_count} logged to wandb ({len(results)} miners)")
+            except Exception as e:
+                bt.logging.debug(f"Wandb logging failed for forward #{self.forward_count}: {e}")
+
+        # -------- 6) weight update ---------------------------
         _apply_weight_update(self, results)
 
     except Exception as err:
         bt.logging.error(f"Validator forward error: {err}")
+
+        
+        # ─────── Silent wandb error logging ───────
+        if hasattr(self, 'wandb_helper') and self.wandb_helper:
+            try:
+                self.wandb_helper.log_error(
+                    f"Validator forward error: {err}",
+                    error_type="forward_general"
+                )
+                bt.logging.debug("Forward error logged to wandb")
+            except Exception as log_err:
+                bt.logging.debug(f"Failed to log error to wandb: {log_err}")
 
     # -------- 6) sleep --------------------------------------
     await asyncio.sleep(FORWARD_SLEEP_SEC)
