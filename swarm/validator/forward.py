@@ -148,6 +148,9 @@ def _apply_weight_update(self, results: List[ValidationResult]) -> None:
                 scores=scores_np.tolist()
             )
             bt.logging.debug(f"Weight update logged to wandb for {len(uids_np)} miners")
+            self.wandb_helper.finish()             # close current run
+            time.sleep(10)  # brief pause to ensure run closure
+            self.wandb_helper._init_wandb()        # open a new run
         except Exception as e:
             bt.logging.debug(f"Wandb weight logging failed: {e}")
 
