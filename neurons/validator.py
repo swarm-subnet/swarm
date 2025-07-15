@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.validator.forward import forward
 from swarm.protocol import ValidationResult, MapTask
+from datetime import datetime
 import swarm
 
 from loguru import logger
@@ -95,7 +96,8 @@ class WandbHelper:
             project_name = "validator-logs"
             entity_name = "swarm-subnet-swarm"
             validator_name = os.getenv('VALIDATOR_NAME', f"validator-{self.validator_uid}")
-            run_name = f"{validator_name}-{self.hotkey[:8]}"
+            ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            run_name = f"{validator_name}-{ts}-{self.hotkey[:8]}"
             
             wandb_config = {
                 "project": project_name,
