@@ -9,7 +9,10 @@ filelock
 pybullet
 bittensor
 msgpack
-importlib-metadata==7.0.0
-onnxruntime==1.18.0
+importlib-metadata
+onnxruntime
 stable-baselines3[extra]
-
+wandb
+python-dotenv
+typing-extensions
+tqdm
