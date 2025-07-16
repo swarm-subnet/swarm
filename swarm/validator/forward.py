@@ -120,7 +120,6 @@ def _run_episode(
         obs = obs[next(iter(obs))]
 
     pos0       = np.asarray(task.start, dtype=float)
-    d_start    = float(np.linalg.norm(pos0 - task.goal))
     last_pos   = pos0.copy()
     t_sim      = 0.0
     energy     = 0.0
@@ -154,17 +153,15 @@ def _run_episode(
     if not gui:
         env.close()
 
-    d_final = float(np.linalg.norm(last_pos - task.goal))
+    # ── final score with new reward function ──────────────────────────────
     score = flight_reward(
-        success   = success,
-        t_alive   = t_sim,
-        d_start   = d_start,
-        d_final   = d_final,
-        horizon   = task.horizon,
-        goal_tol  = GOAL_TOL,
-        t_to_goal = t_sim if success else None,
-        e_used    = energy if success else None,
+        success = success,
+        t       = t_sim,
+        e       = energy,
+        horizon = task.horizon,
+        # (optionally) tweak e_budget or weightings here if needed
     )
+
     return ValidationResult(uid, success, t_sim, energy, score)
 
 

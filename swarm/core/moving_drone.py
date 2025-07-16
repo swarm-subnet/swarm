@@ -1,39 +1,42 @@
+# swarm/envs/moving_drone.py
 from __future__ import annotations
+
 from typing import Optional, Tuple, Iterable
 import numpy as np
+import gymnasium.spaces as spaces
 
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import (
-    DroneModel, Physics, ActionType, ObservationType
+    DroneModel, Physics, ActionType, ObservationType,
 )
 
-# ---- task‑level utilities ----------------------------------------------------
-from swarm.validator.reward   import flight_reward          # new 5‑term scorer
-from swarm.constants          import GOAL_TOL, HOVER_SEC
-import gymnasium.spaces as spaces
+# ── project‑level utilities ────────────────────────────────────────────────
+from swarm.validator.reward import flight_reward          # 3‑term scorer
+from swarm.constants        import GOAL_TOL, HOVER_SEC
+
 
 class MovingDroneAviary(BaseRLAviary):
     """
-    Single‑drone environment whose *goal position and horizon* are
-    provided by an external MapTask (start, goal, horizon).
+    Single‑drone environment whose *start*, *goal* and *horizon* are supplied
+    via an external `MapTask`.
 
-    The episode reward is the *increment* of `flight_reward`, so you can
-    feed it straight into PPO/TD3/… without additional shaping.
+    The per‑step reward is the **increment** of `flight_reward`, so it can be
+    fed directly to PPO/TD3/etc. without extra shaping.
     """
-    MAX_TILT_RAD: float = 0.7
+    MAX_TILT_RAD: float = 0.7          # safety cut‑off for roll / pitch (rad)
 
     # --------------------------------------------------------------------- #
     # 1. constructor
     # --------------------------------------------------------------------- #
     def __init__(
         self,
-        task,                                  
-        drone_model : DroneModel = DroneModel.CF2X,
-        physics     : Physics     = Physics.PYB,
-        pyb_freq    : int         = 240,
-        ctrl_freq   : int         = 30,
-        gui         : bool        = False,
-        record      : bool        = False,
+        task,
+        drone_model : DroneModel   = DroneModel.CF2X,
+        physics     : Physics      = Physics.PYB,
+        pyb_freq    : int          = 240,
+        ctrl_freq   : int          = 30,
+        gui         : bool         = False,
+        record      : bool         = False,
         obs         : ObservationType = ObservationType.KIN,
         act         : ActionType      = ActionType.RPM,
     ):
@@ -41,76 +44,74 @@ class MovingDroneAviary(BaseRLAviary):
         Parameters
         ----------
         task : MapTask
-            Supplies `.start`, `.goal`, `.horizon`, `.sim_dt`.
-        *remaining args* : forwarded to BaseRLAviary
+            Must expose `.start`, `.goal`, `.horizon`, `.sim_dt`.
+        Remaining arguments are forwarded to ``BaseRLAviary`` unchanged.
         """
-        self.task             = task
-        self.GOAL_POS         = np.asarray(task.goal, dtype=float)
-        self.EP_LEN_SEC       = float(task.horizon)
+        self.task       = task
+        self.GOAL_POS   = np.asarray(task.goal, dtype=float)
+        self.EP_LEN_SEC = float(task.horizon)
 
-        # bookkeeping for reward shaping *inside* the aviary
-        self._time_alive      = 0.0
-        self._hover_sec       = 0.0
-        self._d_start         = 1.0          
-        self._prev_score      = 0.0
-        self._success         = False
-        self._t_to_goal       = None         
-        self.observation_space = None
+        # internal book‑keeping
+        self._time_alive   = 0.0
+        self._hover_sec    = 0.0
+        self._success      = False
+        self._t_to_goal    = None
+        self._prev_score   = 0.0
 
+        # Let BaseRLAviary set up the PyBullet world
         super().__init__(
-            drone_model   = drone_model,
-            num_drones    = 1,
-            initial_xyzs  = np.asarray([task.start]),
-            initial_rpys  = None,
-            physics       = physics,
-            pyb_freq      = pyb_freq,
-            ctrl_freq     = ctrl_freq,
-            gui           = gui,
-            record        = record,
-            obs           = obs,
-            act           = act,
+            drone_model  = drone_model,
+            num_drones   = 1,
+            initial_xyzs = np.asarray([task.start]),
+            initial_rpys = None,
+            physics      = physics,
+            pyb_freq     = pyb_freq,
+            ctrl_freq    = ctrl_freq,
+            gui          = gui,
+            record       = record,
+            obs          = obs,
+            act          = act,
         )
 
-        old_low, old_high = self.observation_space.low, self.observation_space.high
+        # ‑‑‑ extend observation with relative goal vector (x, y, z)/10 ‑‑‑
+        old_low,  old_high  = self.observation_space.low, self.observation_space.high
         pad_low  = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
         pad_high = +np.ones((old_high.shape[0], 3), dtype=np.float32) * np.inf
         self.observation_space = spaces.Box(
-            low  = np.concatenate([old_low,  pad_low ], axis=1),
-            high = np.concatenate([old_high, pad_high], axis=1),
-            dtype=np.float32,
+            low   = np.concatenate([old_low,  pad_low ], axis=1),
+            high  = np.concatenate([old_high, pad_high], axis=1),
+            dtype = np.float32,
         )
+
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
     # --------------------------------------------------------------------- #
     @property
     def _sim_dt(self) -> float:
-        """Physics step in seconds (PyBullet freq / ctrl freq already set)."""
+        """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
 
     # --------------------------------------------------------------------- #
-    # 3. Drone‑gym API overrides
+    # 3. OpenAI‑Gym API overrides
     # --------------------------------------------------------------------- #
     def reset(self, **kwargs):
-        obs, info = super().reset(**kwargs)   # BaseRLAviary does the heavy lift
+        """
+        Resets the underlying simulator and internal counters,
+        returns initial observation and info as usual.
+        """
+        obs, info = super().reset(**kwargs)
 
         self._time_alive = 0.0
         self._hover_sec  = 0.0
         self._success    = False
         self._t_to_goal  = None
 
-        pos0             = obs[0, :3]
-        self._d_start    = float(np.linalg.norm(pos0 - self.GOAL_POS))
-        if self._d_start <= 0.0:
-            self._d_start = 1e-9
-
-        # baseline score at t = 0
+        # baseline score (t = 0, e = 0)
         self._prev_score = flight_reward(
-            success   = False,
-            t_alive   = 0.0,
-            d_start   = self._d_start,
-            d_final   = self._d_start,
-            horizon   = self.EP_LEN_SEC,
-            goal_tol  = GOAL_TOL,
+            success = False,
+            t       = 0.0,
+            e       = 0.0,
+            horizon = self.EP_LEN_SEC,
         )
 
         return obs, info
@@ -118,40 +119,32 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """
-        Incremental shaped reward based on the new five‑term `flight_reward`.
+        **Incremental** reward based on the three‑term `flight_reward`.
         """
-        state   = self._getDroneStateVector(0)
-        dist    = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
+        # current distance to goal
+        state = self._getDroneStateVector(0)
+        dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
 
-        # ---------- success bookkeeping (hover inside tolerance) ----------
+        # ── success detection: remain inside GOAL_TOL for HOVER_SEC seconds ──
         reached = dist < GOAL_TOL
         if reached:
             self._hover_sec += self._sim_dt
             if self._hover_sec >= HOVER_SEC and not self._success:
-                # First time we are *certain* the goal is reached
                 self._success   = True
                 self._t_to_goal = self._time_alive
         else:
             self._hover_sec = 0.0
 
-        # ---------- clock update ----------
+        # ── clock update ────────────────────────────────────────────────────
         self._time_alive += self._sim_dt
 
-        # ---------- reward computation ----------
-        rw_args = dict(
+        # ── call new reward function ───────────────────────────────────────
+        score = flight_reward(
             success = self._success,
-            t_alive = self._time_alive,
-            d_start = self._d_start,
-            d_final = dist,
+            t       = (self._t_to_goal if self._success else self._time_alive),
+            e       = 0.0,                        # energy not tracked inside env
             horizon = self.EP_LEN_SEC,
-            goal_tol = GOAL_TOL,
         )
-        if self._success:
-            # `flight_reward` requires these when success == True
-            rw_args["t_to_goal"] = self._t_to_goal
-            rw_args["e_used"]    = 0.0   
-
-        score = flight_reward(**rw_args)
 
         r_t              = score - self._prev_score
         self._prev_score = score
@@ -160,26 +153,24 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
         """
-        Episode ends *only* when the success condition is met or PyBullet
-        flags a fatal collision (handled by BaseAviary internally).
+        Episode ends only when the success condition is definitely met *or*
+        PyBullet flags a fatal collision (handled upstream).
         """
-        #TODO - READD collision handling
+        # TODO: re‑enable collision handling (if desired)
         return bool(self._success)
 
     # -------- truncation (timeout / safety) ------------------------------ #
     def _computeTruncated(self) -> bool:
         """
-        Early‑terminate the episode when
-        1) the drone is tilted too much (safety), **or**
-        2) the configured horizon has elapsed (timeout).
+        Early termination on excessive tilt or elapsed horizon.
         """
-        # ---------- safety: roll / pitch limits ----------
+        # safety cut‑off
         state = self._getDroneStateVector(0)
         roll, pitch = state[7], state[8]
         if abs(roll) > self.MAX_TILT_RAD or abs(pitch) > self.MAX_TILT_RAD:
-            return True                           # stop immediately
+            return True
 
-        # ---------- timeout: task horizon ----------
+        # timeout
         return self._time_alive >= self.EP_LEN_SEC
 
     # -------- extra logging --------------------------------------------- #
@@ -192,13 +183,12 @@ class MovingDroneAviary(BaseRLAviary):
             "success"         : self._success,
             "t_to_goal"       : self._t_to_goal,
         }
-    
+
+    # -------- observation extension -------------------------------------- #
     def _computeObs(self) -> np.ndarray:
         """
-        Kinematics + relative goal vector  (15‑D).
-          • index 0‑11 : default KIN observation
-          • index 12‑14: (goal_x − x, goal_y − y, goal_z − z)
+        Default kinematics (12‑D) plus scaled relative goal vector (3‑D) → 15‑D.
         """
-        kin  = super()._computeObs()           # shape (12,)
-        rel = (self.GOAL_POS - kin[0, :3]).reshape(1, 3)/10.0
+        kin = super()._computeObs()                       # shape (1, 12)
+        rel = ((self.GOAL_POS - kin[0, :3]) / 10.0).reshape(1, 3)
         return np.concatenate([kin, rel], axis=1).astype(np.float32)
