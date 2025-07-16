@@ -10,6 +10,7 @@ from gym_pybullet_drones.utils.enums import (
 # ---- task‑level utilities ----------------------------------------------------
 from swarm.validator.reward   import flight_reward          # new 5‑term scorer
 from swarm.constants          import GOAL_TOL, HOVER_SEC
+import gymnasium.spaces as spaces
 
 class MovingDroneAviary(BaseRLAviary):
     """
@@ -26,7 +27,7 @@ class MovingDroneAviary(BaseRLAviary):
     # --------------------------------------------------------------------- #
     def __init__(
         self,
-        task,                                   # ← MapTask from random_task()
+        task,                                  
         drone_model : DroneModel = DroneModel.CF2X,
         physics     : Physics     = Physics.PYB,
         pyb_freq    : int         = 240,
@@ -50,10 +51,11 @@ class MovingDroneAviary(BaseRLAviary):
         # bookkeeping for reward shaping *inside* the aviary
         self._time_alive      = 0.0
         self._hover_sec       = 0.0
-        self._d_start         = 1.0          # filled at reset()
+        self._d_start         = 1.0          
         self._prev_score      = 0.0
         self._success         = False
-        self._t_to_goal       = None         # ← touchdown moment (reward needs it)
+        self._t_to_goal       = None         
+        self.observation_space = None
 
         super().__init__(
             drone_model   = drone_model,
@@ -69,6 +71,14 @@ class MovingDroneAviary(BaseRLAviary):
             act           = act,
         )
 
+        old_low, old_high = self.observation_space.low, self.observation_space.high
+        pad_low  = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
+        pad_high = +np.ones((old_high.shape[0], 3), dtype=np.float32) * np.inf
+        self.observation_space = spaces.Box(
+            low  = np.concatenate([old_low,  pad_low ], axis=1),
+            high = np.concatenate([old_high, pad_high], axis=1),
+            dtype=np.float32,
+        )
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
     # --------------------------------------------------------------------- #
@@ -139,7 +149,7 @@ class MovingDroneAviary(BaseRLAviary):
         if self._success:
             # `flight_reward` requires these when success == True
             rw_args["t_to_goal"] = self._t_to_goal
-            rw_args["e_used"]    = 0.0   # TODO: integrate a real energy model
+            rw_args["e_used"]    = 0.0   
 
         score = flight_reward(**rw_args)
 
@@ -153,6 +163,7 @@ class MovingDroneAviary(BaseRLAviary):
         Episode ends *only* when the success condition is met or PyBullet
         flags a fatal collision (handled by BaseAviary internally).
         """
+        #TODO - READD collision handling
         return bool(self._success)
 
     # -------- truncation (timeout / safety) ------------------------------ #
@@ -181,3 +192,13 @@ class MovingDroneAviary(BaseRLAviary):
             "success"         : self._success,
             "t_to_goal"       : self._t_to_goal,
         }
+    
+    def _computeObs(self) -> np.ndarray:
+        """
+        Kinematics + relative goal vector  (15‑D).
+          • index 0‑11 : default KIN observation
+          • index 12‑14: (goal_x − x, goal_y − y, goal_z − z)
+        """
+        kin  = super()._computeObs()           # shape (12,)
+        rel = (self.GOAL_POS - kin[0, :3]).reshape(1, 3)/10.0
+        return np.concatenate([kin, rel], axis=1).astype(np.float32)
