@@ -270,7 +270,7 @@ class EnhancedVideoRecorder:
             success = False
             collided = False
             stable_landing_time = 0.0
-            goal = np.asarray(task.goal, dtype=float)
+            goal = np.array(task.goal, dtype=np.float32)
             drone_id = env.DRONE_IDS[0]
             t_sim = 0.0
 
@@ -279,6 +279,9 @@ class EnhancedVideoRecorder:
             
             # Retrieve atmospheric wind simulation system if enabled
             wind_system = getattr(env, '_wind_system', None)
+            
+            # Retrieve moving platform system if enabled
+            moving_platform_system = getattr(env, '_moving_platform_system', None)
 
             for k in tqdm(range(max_steps), desc="Simulating Flight", unit="step"):
                 t_sim = k * task.sim_dt
@@ -307,6 +310,12 @@ class EnhancedVideoRecorder:
                             physicsClientId=cli
                         )
 
+                # Update moving platform system if enabled
+                if moving_platform_system:
+                    moving_platform_system.step(task.sim_dt)
+                    # Update goal position to track moving platform
+                    goal[:] = moving_platform_system.pos
+
                 if k % frames_per_cam == 0:
                     track_drone(cli, drone_id)
 
@@ -329,9 +338,11 @@ class EnhancedVideoRecorder:
                             cpos = cp[5]
                             if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
                                 cx, cy, cz = cpos[:3]
+                                # Use circular platform collision detection - back to original
+                                platform_radius = _PR * 0.9  # Platform is now circular and smaller
                                 horiz = np.linalg.norm([cx - goal[0], cy - goal[1]])
                                 vert = abs(cz - goal[2])
-                                if horiz < _PR + 0.05 and vert < 0.3:
+                                if horiz < platform_radius + 0.05 and vert < 0.3:
                                     continue
                             allowed = False
                             break
@@ -343,9 +354,11 @@ class EnhancedVideoRecorder:
                 
                 horizontal_distance = np.linalg.norm(pos[:2] - goal[:2])
                 vertical_distance = abs(pos[2] - goal[2])
-                tao_logo_radius = _PR * 0.8 * 1.06
                 
-                on_tao_logo = (horizontal_distance < tao_logo_radius and
+                # Use circular platform detection - back to original circular design
+                platform_radius = _PR * 0.9  # Platform is now circular and smaller
+                landing_radius = platform_radius * 0.8 * 0.9  # Landing area radius (80% of platform * 90% for TAO logo)
+                on_tao_logo = (horizontal_distance < landing_radius and
                                vertical_distance < 0.3 and
                                pos[2] >= goal[2] - 0.1)
                 

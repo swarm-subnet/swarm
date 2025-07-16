@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import random
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -27,7 +28,7 @@ import pybullet as p
 # Absolute path to the birds assets directory for reliable loading
 BIRD_ASSETS_DIR = (Path(__file__).parent.parent / "assets" / "birds").resolve()
 
-from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS, PLATFORM, ENABLE_BIRDS, N_BIRDS, BIRD_SIZE, ENABLE_WIND, WIND_SPEED_MIN, WIND_SPEED_MAX, WIND_DIRECTION_CHANGE_INTERVAL
+from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS, PLATFORM, ENABLE_BIRDS, N_BIRDS, BIRD_SIZE, ENABLE_WIND, WIND_SPEED_MIN, WIND_SPEED_MAX, WIND_DIRECTION_CHANGE_INTERVAL, ENABLE_MOVING_PLATFORM, PLATFORM_MOTION_TYPE, PLATFORM_MOTION_SPEED, PLATFORM_MOTION_RADIUS, PLATFORM_PATH_LENGTH, PLATFORM_SAFE_MARGIN
 
 # --------------------------------------------------------------------------
 # Tunables
@@ -76,8 +77,86 @@ def _get_tao_tex(cli: int) -> int:
     """Load swarm/assets/tao.png exactly once per PyBullet client."""
     if cli not in _TAO_TEX_ID:
         tex_path = Path(__file__).parent.parent / "assets" / "tao.png"
-        _TAO_TEX_ID[cli] = p.loadTexture(str(tex_path))
+        try:
+            if tex_path.exists():
+                _TAO_TEX_ID[cli] = p.loadTexture(str(tex_path))
+            else:
+                print(f"Warning: TAO texture not found at {tex_path}")
+                _TAO_TEX_ID[cli] = -1
+        except Exception as e:
+            print(f"Error loading TAO texture: {e}")
+            _TAO_TEX_ID[cli] = -1
     return _TAO_TEX_ID[cli]
+
+# --------------------------------------------------------------------------
+# Moving platform system
+# --------------------------------------------------------------------------
+@dataclass(slots=True)
+class _MovingPlatform:
+    cli: int
+    platform_uids: List[int]
+    motion_type: str
+    speed: float
+    radius: float
+    path_length: float
+    center: np.ndarray
+    rng: random.Random
+    
+    # Runtime state variables
+    elapsed: float = 0.0
+    pos: np.ndarray = None
+    direction: int = 1
+    phase_offset: float = 0.0
+    speed_variation: float = 1.0
+    
+    def __post_init__(self):
+        self.elapsed = 0.0
+        self.pos = self.center.copy()
+        self.direction = 1
+        self.phase_offset = self.rng.uniform(0, 2 * math.pi)
+        self.speed_variation = self.rng.uniform(0.8, 1.2)
+    
+    def _calculate_component_position(self, component_index: int) -> List[float]:
+        if component_index == 0:
+            return [self.pos[0], self.pos[1], self.pos[2] - 0.06]
+        elif component_index == 1:
+            return [self.pos[0], self.pos[1], self.pos[2] + 0.001]
+        elif component_index == 2:
+            return [self.pos[0], self.pos[1], self.pos[2] + 0.002]
+        elif component_index == 3:
+            return [self.pos[0], self.pos[1], self.pos[2] + 0.01]
+        elif component_index == 4:
+            return [self.pos[0], self.pos[1], self.pos[2] + 0.015]
+        elif component_index == 5:
+            return [self.pos[0], self.pos[1], self.pos[2] + 0.25]
+        elif component_index == 6:
+            return [self.pos[0], self.pos[1], self.pos[2] + 0.5]
+        else:
+            return [self.pos[0], self.pos[1], self.pos[2]]
+
+    def step(self, dt: float) -> None:
+        try:
+            old_pos = self.pos.copy()
+            self.elapsed += dt
+            effective_speed = self.speed * self.speed_variation
+            if self.motion_type == "circular":
+                angle = self.phase_offset + self.elapsed * (effective_speed / self.radius)
+                self.pos[0] = self.center[0] + self.radius * np.cos(angle)
+                self.pos[1] = self.center[1] + self.radius * np.sin(angle)
+                self.pos[2] = self.center[2]
+            else:
+                travel = (self.elapsed * effective_speed) % (2 * self.path_length)
+                if travel > self.path_length:
+                    travel = 2 * self.path_length - travel
+                self.pos[0] = self.center[0] + travel - self.path_length / 2
+                self.pos[1] = self.center[1]
+                self.pos[2] = self.center[2]
+            # Restore visual movement for all platform components
+            for i, uid in enumerate(self.platform_uids):
+                pos = self._calculate_component_position(i)
+                p.resetBasePositionAndOrientation(uid, pos, [0, 0, 0, 1], physicsClientId=self.cli)
+        except Exception:
+            self.pos = old_pos
 
 # --------------------------------------------------------------------------
 # Main world builder
@@ -88,7 +167,7 @@ def build_world(
     *,
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
-) -> Optional[Tuple[List[int], List]]:
+) -> Tuple[List[int], List, List[int]]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
     is provided—place a visual TAO badge at that position.
@@ -102,7 +181,7 @@ def build_world(
 
     Returns
     -------
-    Optional[Tuple[List[int], List]] • (bird IDs, obstacles) if birds enabled, None otherwise
+    Tuple[List[int], List, List[int]] • (bird IDs, obstacles, platform UIDs)
     """
     rng = random.Random(seed)
 
@@ -153,6 +232,25 @@ def build_world(
 
             if _violates(sx, sy) or _violates(gx, gy):
                 continue  # too close to start/goal – try another location
+
+            # — moving platform path avoidance ------------------------
+            if ENABLE_MOVING_PLATFORM and gx is not None and gy is not None:
+                # Calculate motion envelope based on platform type
+                if PLATFORM_MOTION_TYPE == "circular":
+                    motion_range = PLATFORM_MOTION_RADIUS
+                else:  # linear
+                    motion_range = PLATFORM_PATH_LENGTH * 0.5
+                
+                # Total reserved area around platform path
+                reserved_clearance = (LANDING_PLATFORM_RADIUS + 
+                                    SAFE_ZONE_RADIUS + 
+                                    motion_range + 
+                                    PLATFORM_SAFE_MARGIN + 
+                                    obj_r)
+                
+                # Check if obstacle would intersect with platform motion path
+                if math.hypot(x - gx, y - gy) < reserved_clearance:
+                    continue  # too close to platform motion path – try another location
 
             # — obstacle overlap prevention (improved) ----------------
             # Check distance to all previously placed obstacles
@@ -245,16 +343,18 @@ def build_world(
     # ------------------------------------------------------------------
     # Physical landing platform with visual goal marker
     # ------------------------------------------------------------------
+    platform_uids = []  # Initialize at function level
+    
     if goal is not None:
         gx, gy, gz = goal
 
         # Platform mode: solid if PLATFORM else visual-only
         if PLATFORM:
-            # 1) Physical landing platform - SOLID AND PRECISE -----------
-            platform_radius = LANDING_PLATFORM_RADIUS  # Consistent radius
-            platform_height = 0.2         # Thicker for better physics stability
+            # Physical landing platform base
+            platform_radius = LANDING_PLATFORM_RADIUS * 0.9
+            platform_height = 0.12
             
-            # Create FLAT CIRCULAR platform - very short cylinder (like a coin)
+            # Create circular platform collision shape
             platform_collision = p.createCollisionShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=platform_radius,
@@ -262,180 +362,206 @@ def build_world(
                 physicsClientId=cli,
             )
             
-            # Create visual shape for the platform 
+            # Create platform visual shape
             platform_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=platform_radius,
                 length=platform_height,
-                rgbaColor=[0.15, 0.35, 0.8, 1.0],  # blue platform
-                specularColor=[0.8, 0.8, 0.9],     # High reflectivity for metallic look
+                rgbaColor=[0.15, 0.35, 0.8, 1.0],
+                specularColor=[0.8, 0.8, 0.9],
                 physicsClientId=cli,
             )
             
-            # Create the physical landing platform - POSITIONED CORRECTLY
+            # Create the physical platform body
             platform_uid = p.createMultiBody(
-                baseMass=0,  # Static platform (infinite mass)
+                baseMass=0,
                 baseCollisionShapeIndex=platform_collision,
                 baseVisualShapeIndex=platform_visual,
-                basePosition=[gx, gy, gz - platform_height / 2],  # Bottom at gz level
+                basePosition=[gx, gy, gz - platform_height / 2],
                 physicsClientId=cli
             )
             
-            # Set platform material properties for MAXIMUM stability
+            # Set platform material properties
             p.changeDynamics(
                 bodyUniqueId=platform_uid,
                 linkIndex=-1,
-                restitution=0.0,      # NO bounce whatsoever
-                lateralFriction=2.0,  # VERY high friction to prevent sliding
-                spinningFriction=1.0, # High spinning friction
-                rollingFriction=0.5,  # High rolling friction
+                restitution=0.0,
+                lateralFriction=1.5,
+                spinningFriction=0.5,
+                rollingFriction=0.3,
                 physicsClientId=cli
             )
-
-            # 3)landing zone ---------------
-            # Create multiple layers for depth and glow effect
-            surface_radius = platform_radius * 0.8  # Slightly smaller than platform
-            surface_height = 0.008                  # Slightly thicker for better visibility
             
-            # Main green landing surface with glow effect
+
+            # Landing zone visual surface
+            surface_radius = platform_radius * 0.8
+            surface_height = 0.006
+            
+            # Green landing surface visual
             surface_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=surface_radius,
                 length=surface_height,
-                rgbaColor=[0.3, 0.9, 0.4, 0.9],  # Bright glowing green with slight transparency
-                specularColor=[0.6, 1.0, 0.6],   # Green specular highlight
+                rgbaColor=[0.3, 0.9, 0.4, 0.9],
+                specularColor=[0.6, 1.0, 0.6],
                 physicsClientId=cli,
             )
             
-            # Position main green surface on top of platform
+            # Position green surface on platform top
             surface_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision for surface
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=surface_visual,
-                basePosition=[gx, gy, gz + surface_height / 2 + 0.001],  # On platform top
+                basePosition=[gx, gy, gz + surface_height / 2 + 0.001],
                 physicsClientId=cli,
             )
             
-            # Add SOLID FLAT landing surface for stable drone landing
-            # This invisible collision surface ensures drone lands on completely flat surface
+            # Thin flat landing collision surface
             flat_landing_collision = p.createCollisionShape(
                 shapeType=p.GEOM_CYLINDER,
-                radius=surface_radius,  # Same size as green circle
-                height=0.001,           # Paper-thin but solid
+                radius=surface_radius,
+                height=0.001,
                 physicsClientId=cli,
             )
             
             flat_landing_uid = p.createMultiBody(
                 baseMass=0,
                 baseCollisionShapeIndex=flat_landing_collision,
-                baseVisualShapeIndex=-1,  # Invisible
-                basePosition=[gx, gy, gz + surface_height + 0.002],  # Exactly on green surface
+                baseVisualShapeIndex=-1,
+                basePosition=[gx, gy, gz + surface_height + 0.002],
                 physicsClientId=cli
             )
             
-            # Set maximum friction for this landing surface
+            # Set landing surface friction
             p.changeDynamics(
                 bodyUniqueId=flat_landing_uid,
                 linkIndex=-1,
-                restitution=0.0,      # No bounce at all
-                lateralFriction=3.0,  # MAXIMUM friction to prevent sliding
-                spinningFriction=2.0,
-                rollingFriction=1.0,
+                restitution=0.0,
+                lateralFriction=1.0,
+                spinningFriction=0.5,
+                rollingFriction=0.3,
                 physicsClientId=cli
             )
 
-            # TAO logo as MASSIVE CIRCULAR badge covering the ENTIRE green surface  
-            # Make it BIG and OBVIOUS - covering all the green area
-            tao_logo_radius = surface_radius * 1.06  # Cover all of green circle
-            badge_height = 0.005       # Thicker for visibility
+            # TAO logo badge
+            tao_logo_radius = surface_radius * 1.06
+            badge_height = 0.004
             
-            # Create LARGE white circular background first
+            # White circular background
             tao_background_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=tao_logo_radius,
                 length=badge_height,
-                rgbaColor=[1.0, 1.0, 1.0, 1.0],  # Pure white opaque background
+                rgbaColor=[1.0, 1.0, 1.0, 1.0],
                 physicsClientId=cli,
             )
 
-            # Position the white background
+            # Position background
             tao_background_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_background_visual,
-                basePosition=[gx, gy, gz + surface_height + badge_height + 0.008],  # Higher for visibility
+                basePosition=[gx, gy, gz + surface_height + badge_height + 0.008],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
             
-            # Create MASSIVE circular TAO logo with texture on top
+            # Create circular mesh for TAO logo
+            tao_logo_radius_inner = tao_logo_radius * 0.98
+            num_segments = 32
+            vertices = [[0.0, 0.0, 0.0]]
+            indices = []
+            uvs = [[0.5, 0.5]]
+            
+            # Generate circle vertices
+            for i in range(num_segments):
+                angle = 2 * math.pi * i / num_segments
+                x = tao_logo_radius_inner * math.cos(angle)
+                y = tao_logo_radius_inner * math.sin(angle)
+                vertices.append([x, y, 0.0])
+                uvs.append([0.5 + 0.5 * math.cos(angle), 0.5 + 0.5 * math.sin(angle)])
+            
+            # Create triangular faces
+            for i in range(num_segments):
+                next_i = (i + 1) % num_segments
+                indices.extend([0, i + 1, next_i + 1])
+            
             tao_logo_visual = p.createVisualShape(
-                shapeType=p.GEOM_CYLINDER,
-                radius=tao_logo_radius * 0.95,  # Slightly smaller for border effect
-                length=badge_height * 0.5,      # Thinner texture layer
-                rgbaColor=[1.0, 1.0, 1.0, 1.0],  # White for texture
+                shapeType=p.GEOM_MESH,
+                vertices=vertices,
+                indices=indices,
+                uvs=uvs,
+                rgbaColor=[1.0, 1.0, 1.0, 1.0],
                 physicsClientId=cli,
             )
 
-            # Position the TAO logo texture on top of background
+            # Position TAO logo
             tao_logo_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_logo_visual,
-                basePosition=[gx, gy, gz + surface_height + badge_height + 0.011],  # On top of background
+                basePosition=[gx, gy, gz + surface_height + badge_height + 0.011],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
             
-            # Apply TAO texture to the MASSIVE logo
-            p.changeVisualShape(
-                tao_logo_uid,
-                -1,
-                textureUniqueId=_get_tao_tex(cli),
-                flags=p.VISUAL_SHAPE_DOUBLE_SIDED,
-                physicsClientId=cli,
-            )
+            # Apply TAO texture
+            tao_tex = _get_tao_tex(cli)
+            if tao_tex != -1:
+                p.changeVisualShape(
+                    tao_logo_uid,
+                    -1,
+                    textureUniqueId=tao_tex,
+                    flags=p.VISUAL_SHAPE_DOUBLE_SIDED,
+                    physicsClientId=cli,
+                )
 
-            # 4) glowing guidance beacon ----------------------
-            pole_h = 0.5              # Taller, more elegant
-            pole_radius = 0.012        # Sleeker profile
+            # Guidance beacon pole
+            pole_h = 0.5
+            pole_radius = 0.012
             
-            # Main beacon pole with gradient effect
+            # Main beacon pole
             pole_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=pole_radius,
                 length=pole_h,
-                rgbaColor=[1.0, 0.2, 0.1, 0.9],  # Bright glowing red-orange
-                specularColor=[1.0, 0.8, 0.2],   # Golden specular highlight
+                rgbaColor=[1.0, 0.2, 0.1, 0.9],
+                specularColor=[1.0, 0.8, 0.2],
                 physicsClientId=cli,
             )
             
-            # Add beacon top cap for elegant finish
+            # Beacon top cap
             cap_visual = p.createVisualShape(
                 shapeType=p.GEOM_SPHERE,
                 radius=pole_radius * 2,
-                rgbaColor=[1.0, 0.3, 0.0, 1.0],  # Bright orange cap
-                specularColor=[1.0, 1.0, 0.4],   # Bright golden specular
+                rgbaColor=[1.0, 0.3, 0.0, 1.0],
+                specularColor=[1.0, 1.0, 0.4],
                 physicsClientId=cli,
             )
             
-            # Position main beacon pole
+            # Position beacon pole
             pole_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision for pole
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=pole_visual,
-                basePosition=[gx, gy, gz + pole_h / 2 + 0.008],  # Above platform
+                basePosition=[gx, gy, gz + pole_h / 2 + 0.008],
                 physicsClientId=cli,
             )
             
-            # Position beacon cap on top
+            # Position beacon cap
             cap_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision for cap
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=cap_visual,
-                basePosition=[gx, gy, gz + pole_h + 0.015],  # Top of pole
+                basePosition=[gx, gy, gz + pole_h + 0.015],
                 physicsClientId=cli,
             )
+            
+            # Collect all platform component UIDs for moving platform system
+            platform_uids = [
+                platform_uid, surface_uid, flat_landing_uid, 
+                tao_background_uid, tao_logo_uid, pole_uid, cap_uid
+            ]
         
         else:
             # Visual-only markers (legacy mode for easier challenges)
@@ -511,7 +637,7 @@ def build_world(
 
     # Spawn intelligent bird distribution based on flight distance
     bird_ids = _spawn_birds(cli, rng, placed_obstacles, start, goal)
-    return bird_ids, placed_obstacles
+    return bird_ids, placed_obstacles, platform_uids
 
 
 def _calculate_smart_height_distribution() -> dict:
@@ -979,7 +1105,6 @@ class BirdSystem:
                 [0, 0, 0, 1], 
                 physicsClientId=self.cli
             )
-            
             # Update behavioral timers and energy consumption
             bird['timer'] += dt
             bird['energy'] = max(0.0, bird['energy'] - 0.002)  # Energy decay rate

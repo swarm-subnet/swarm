@@ -33,6 +33,14 @@ SAVE_FLIGHTPLANS = False  # save flight plans to disk
 # ────────── Platform mode toggle ─────────────────────────────────
 PLATFORM = True           # Toggle for solid platform (True) / visual-only (False)
 
+# ────────── Moving Platform System ─────────────────────────────────
+ENABLE_MOVING_PLATFORM = True          # Enable/disable moving platform system
+PLATFORM_MOTION_TYPE = "circular"      # "circular" | "linear"
+PLATFORM_MOTION_SPEED = 0.5            # Platform motion speed (m/s)
+PLATFORM_MOTION_RADIUS = 3.0           # Radius for circular motion (m)
+PLATFORM_PATH_LENGTH = 6.0             # Full back-and-forth length for linear motion (m)
+PLATFORM_SAFE_MARGIN = 0.5             # Extra buffer around platform path (m)
+
 # ────────── Bird Simulation System ─────────────────────────────────
 ENABLE_BIRDS = True        # Enable/disable avian simulation system
 N_BIRDS = 25               # Total avian entities spawned per simulation map
@@ -41,7 +49,7 @@ BIRD_SPEED_MIN = 2.5       # Minimum avian flight velocity (m/s)
 BIRD_SPEED_MAX = 5.0       # Maximum avian flight velocity (m/s)
 
 # ────────── Wind Simulation System ─────────────────────────────────
-ENABLE_WIND = True         # Enable/disable atmospheric wind simulation
+ENABLE_WIND = False         # Enable/disable atmospheric wind simulation
 WIND_SPEED_MIN = 0.5       # Minimum wind velocity magnitude (m/s)
 WIND_SPEED_MAX = 3.0       # Maximum wind velocity magnitude (m/s)
 WIND_DIRECTION_CHANGE_INTERVAL = 10.0  # Wind direction change interval (seconds)

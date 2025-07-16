@@ -20,7 +20,7 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from swarm.core.HoverAviaryRawRPM import HoverAviaryRawRPM
 from swarm.core.env_builder import build_world, BirdSystem, WindSystem
 from swarm.protocol import MapTask
-from swarm.constants import SAFE_Z, ENABLE_BIRDS, ENABLE_WIND
+from swarm.constants import SAFE_Z, ENABLE_BIRDS, ENABLE_WIND, ENABLE_MOVING_PLATFORM
 
 # ---------------------------------------------------------------------
 def make_env(
@@ -77,7 +77,7 @@ def make_env(
         goal=task.goal,
     )
     
-    bird_ids, obstacles = result if result else ([], [])
+    bird_ids, obstacles, platform_uids = result if result else ([], [], [])
 
     # 4 ─ spawn drone at requested start pose --------------------------
     start_xyz = np.asarray(task.start, dtype=float)
@@ -101,5 +101,31 @@ def make_env(
         import random
         rng = random.Random(task.map_seed)
         env._wind_system = WindSystem(rng)
+
+    # 7 ─ Initialize moving platform system if enabled ----------------------------
+    if ENABLE_MOVING_PLATFORM and platform_uids and len(platform_uids) > 0:
+        import random
+        from swarm.core.env_builder import _MovingPlatform
+        from swarm.constants import (
+            PLATFORM_MOTION_TYPE, PLATFORM_MOTION_SPEED, 
+            PLATFORM_MOTION_RADIUS, PLATFORM_PATH_LENGTH
+        )
+        
+        # Create seeded random number generator for deterministic motion
+        platform_rng = random.Random(task.map_seed)
+        
+        # Create moving platform system using the same seed as other systems
+        moving_platform_system = _MovingPlatform(
+            cli=cli,
+            platform_uids=platform_uids,
+            motion_type=PLATFORM_MOTION_TYPE,
+            speed=PLATFORM_MOTION_SPEED,
+            radius=PLATFORM_MOTION_RADIUS,
+            path_length=PLATFORM_PATH_LENGTH,
+            center=np.array(task.goal, dtype=np.float32),
+            rng=platform_rng
+        )
+        
+        env._moving_platform_system = moving_platform_system
 
     return env

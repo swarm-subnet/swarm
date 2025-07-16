@@ -63,6 +63,9 @@ def _replay_once_impl(
     
     # Retrieve atmospheric wind simulation system if enabled
     wind_system = getattr(env, '_wind_system', None)
+    
+    # Retrieve moving platform system if enabled
+    moving_platform_system = getattr(env, '_moving_platform_system', None)
 
     # 2 ─ turn the FlightPlan into a step‑indexed RPM table -------------
     last_t = plan.commands[-1].t
@@ -76,7 +79,7 @@ def _replay_once_impl(
     collided = False
     stable_landing_time = 0.0  # accumulated stable landing time
     hover_elapsed = 0.0        # for legacy hover mode
-    goal = np.asarray(task.goal, dtype=float)
+    goal = np.array(task.goal, dtype=np.float32)
     drone_id = env.DRONE_IDS[0]
 
     for k in range(max_steps):
@@ -105,6 +108,12 @@ def _replay_once_impl(
                     p.WORLD_FRAME,
                     physicsClientId=cli
                 )
+
+        # Update moving platform system
+        if moving_platform_system:
+            moving_platform_system.step(task.sim_dt)
+            # Update goal position to track moving platform
+            goal[:] = moving_platform_system.pos
 
         # camera follow
         if gui and k % frames_per_cam == 0:
@@ -138,10 +147,12 @@ def _replay_once_impl(
                             cpos = cp[5]
                             if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
                                 cx, cy, cz = cpos[:3]
+                                # Use circular platform collision detection - back to original
+                                platform_radius = _PR * 0.9  # Platform is now circular and smaller
                                 horiz = np.linalg.norm([cx - goal[0], cy - goal[1]])
                                 vert = abs(cz - goal[2])
                                 # Contacts within platform radius & low vertical offset are allowed
-                                if horiz < _PR + 0.05 and vert < 0.3:
+                                if horiz < platform_radius + 0.05 and vert < 0.3:
                                     continue
                                 # Any other contact is disallowed
                                 allowed_contact = False
@@ -155,9 +166,11 @@ def _replay_once_impl(
             horizontal_distance = np.linalg.norm(pos[:2] - goal[:2])
             vertical_distance = abs(pos[2] - goal[2])
 
-            tao_logo_radius = _PR * 0.8 * 1.06  # TAO logo slightly smaller than platform
+            # Use circular platform detection - back to original circular design
+            platform_radius = _PR * 0.9  # Platform is now circular and smaller
+            landing_radius = platform_radius * 0.8 * 0.9  # Landing area radius (80% of platform * 90% for TAO logo)
             on_tao_logo = (
-                horizontal_distance < tao_logo_radius
+                horizontal_distance < landing_radius
                 and vertical_distance < 0.3
                 and pos[2] >= goal[2] - 0.1
             )
