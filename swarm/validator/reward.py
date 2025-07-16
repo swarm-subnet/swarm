@@ -118,7 +118,7 @@ def flight_reward(
     #     • Else       → linear up to 30 s, max contribution 0.20.
     # -------------------------------------------------------------------------
     if success:
-        alive_term = 0.5  # weight (0.2) × 0.5 → 0.1
+        alive_term = 1
     else:
         alive_term = _clamp(t_alive / 30.0)  # 30 s → term = 1.0 → 0.20
 
