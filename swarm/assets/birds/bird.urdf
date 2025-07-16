@@ -1,0 +1,245 @@
+<?xml version="1.0"?>
+<robot name="realistic_bird">
+  <!-- REALISTIC BIRD - Natural proportions and detailed features -->
+  <link name="base_link">
+    
+    <!-- Main bird body - Realistic bird proportions -->
+    <visual name="body">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.20 0.10 0.06"/>
+      </geometry>
+      <material name="body_color">
+        <color rgba="0.25 0.45 0.75 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Bird head - Proportional to real bird -->
+    <visual name="head">
+      <origin xyz="0.11 0 0.02" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.03"/>
+      </geometry>
+      <material name="head_color">
+        <color rgba="0.20 0.40 0.70 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Left wing - Realistic wing shape -->
+    <visual name="left_wing">
+      <origin xyz="0.03 0.06 0.01" rpy="0 0.1 0.2"/>
+      <geometry>
+        <box size="0.10 0.04 0.02"/>
+      </geometry>
+      <material name="wing_color">
+        <color rgba="0.15 0.35 0.65 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Right wing - Realistic wing shape -->
+    <visual name="right_wing">
+      <origin xyz="0.03 -0.06 0.01" rpy="0 -0.1 -0.2"/>
+      <geometry>
+        <box size="0.10 0.04 0.02"/>
+      </geometry>
+      <material name="wing_color">
+        <color rgba="0.15 0.35 0.65 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Wing tips - Primary feathers -->
+    <visual name="left_wing_primary">
+      <origin xyz="0.08 0.09 0.012" rpy="0 0.15 0.3"/>
+      <geometry>
+        <box size="0.06 0.025 0.015"/>
+      </geometry>
+      <material name="primary_color">
+        <color rgba="0.10 0.25 0.55 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="right_wing_primary">
+      <origin xyz="0.08 -0.09 0.012" rpy="0 -0.15 -0.3"/>
+      <geometry>
+        <box size="0.06 0.025 0.015"/>
+      </geometry>
+      <material name="primary_color">
+        <color rgba="0.10 0.25 0.55 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Secondary wing feathers -->
+    <visual name="left_secondary">
+      <origin xyz="0.01 0.05 0.008" rpy="0 0.05 0.1"/>
+      <geometry>
+        <box size="0.07 0.03 0.012"/>
+      </geometry>
+      <material name="secondary_color">
+        <color rgba="0.30 0.50 0.80 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="right_secondary">
+      <origin xyz="0.01 -0.05 0.008" rpy="0 -0.05 -0.1"/>
+      <geometry>
+        <box size="0.07 0.03 0.012"/>
+      </geometry>
+      <material name="secondary_color">
+        <color rgba="0.30 0.50 0.80 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Tail - Natural fan shape -->
+    <visual name="tail_main">
+      <origin xyz="-0.10 0 0.01" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.05 0.07 0.025"/>
+      </geometry>
+      <material name="tail_color">
+        <color rgba="0.12 0.30 0.58 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Tail outer feathers -->
+    <visual name="tail_left">
+      <origin xyz="-0.12 0.04 0.01" rpy="0 0 0.4"/>
+      <geometry>
+        <box size="0.04 0.02 0.015"/>
+      </geometry>
+      <material name="tail_outer_color">
+        <color rgba="0.08 0.22 0.50 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="tail_right">
+      <origin xyz="-0.12 -0.04 0.01" rpy="0 0 -0.4"/>
+      <geometry>
+        <box size="0.04 0.02 0.015"/>
+      </geometry>
+      <material name="tail_outer_color">
+        <color rgba="0.08 0.22 0.50 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Beak - Sharp and proportional -->
+    <visual name="beak">
+      <origin xyz="0.14 0 0.02" rpy="0 1.57 0"/>
+      <geometry>
+        <cylinder radius="0.004" length="0.015"/>
+      </geometry>
+      <material name="beak_color">
+        <color rgba="1.0 0.65 0.0 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Eyes - Natural bird eyes -->
+    <visual name="left_eye">
+      <origin xyz="0.12 0.015 0.032" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.008"/>
+      </geometry>
+      <material name="eye_color">
+        <color rgba="0.05 0.05 0.05 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="right_eye">
+      <origin xyz="0.12 -0.015 0.032" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.008"/>
+      </geometry>
+      <material name="eye_color">
+        <color rgba="0.05 0.05 0.05 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Eye highlights for life -->
+    <visual name="left_eye_shine">
+      <origin xyz="0.123 0.013 0.036" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.003"/>
+      </geometry>
+      <material name="eye_shine_color">
+        <color rgba="0.95 0.95 0.95 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="right_eye_shine">
+      <origin xyz="0.123 -0.013 0.036" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.003"/>
+      </geometry>
+      <material name="eye_shine_color">
+        <color rgba="0.95 0.95 0.95 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Breast - Lighter underside -->
+    <visual name="breast">
+      <origin xyz="0.05 0 -0.015" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.08 0.06 0.025"/>
+      </geometry>
+      <material name="breast_color">
+        <color rgba="0.75 0.85 0.95 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Wing shoulder markings -->
+    <visual name="left_shoulder">
+      <origin xyz="0.04 0.04 0.02" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.015 0.008"/>
+      </geometry>
+      <material name="shoulder_color">
+        <color rgba="0.90 0.90 0.90 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="right_shoulder">
+      <origin xyz="0.04 -0.04 0.02" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.015 0.008"/>
+      </geometry>
+      <material name="shoulder_color">
+        <color rgba="0.90 0.90 0.90 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Small feet -->
+    <visual name="left_foot">
+      <origin xyz="0.02 0.012 -0.04" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.002" length="0.012"/>
+      </geometry>
+      <material name="foot_color">
+        <color rgba="1.0 0.4 0.0 1.0"/>
+      </material>
+    </visual>
+    
+    <visual name="right_foot">
+      <origin xyz="0.02 -0.012 -0.04" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.002" length="0.012"/>
+      </geometry>
+      <material name="foot_color">
+        <color rgba="1.0 0.4 0.0 1.0"/>
+      </material>
+    </visual>
+    
+    <!-- Smaller collision sphere -->
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.05"/>
+      </geometry>
+    </collision>
+    
+    <!-- Zero mass for kinematic movement control -->
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0"/>
+      <inertia ixx="0.0" ixy="0" ixz="0" iyy="0.0" iyz="0" izz="0.0"/>
+    </inertial>
+  </link>
+</robot> 

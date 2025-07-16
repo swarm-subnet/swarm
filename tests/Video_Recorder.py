@@ -270,15 +270,51 @@ class EnhancedVideoRecorder:
             success = False
             collided = False
             stable_landing_time = 0.0
-            goal = np.asarray(task.goal, dtype=float)
+            goal = np.array(task.goal, dtype=np.float32)
             drone_id = env.DRONE_IDS[0]
             t_sim = 0.0
+
+            # Retrieve avian simulation system if enabled
+            bird_system = getattr(env, '_bird_system', None)
+            
+            # Retrieve atmospheric wind simulation system if enabled
+            wind_system = getattr(env, '_wind_system', None)
+            
+            # Retrieve moving platform system if enabled
+            moving_platform_system = getattr(env, '_moving_platform_system', None)
 
             for k in tqdm(range(max_steps), desc="Simulating Flight", unit="step"):
                 t_sim = k * task.sim_dt
                 rpm_vec = rpm_table[k]
                 obs, *_ = env.step(rpm_vec[None, :])
                 pos = obs[0, :3]
+                
+                # Update avian behavioral states if system present
+                if bird_system:
+                    bird_system.update(task.sim_dt)
+                
+                # Update atmospheric wind simulation if system present
+                if wind_system:
+                    wind_system.update(task.sim_dt)
+                    
+                    # Apply wind force to drone
+                    wind_force = wind_system.get_wind_force(pos)
+                    if np.linalg.norm(wind_force) > 0.01:  # Only apply if force is significant
+                        # Apply wind force as external force to drone
+                        p.applyExternalForce(
+                            drone_id,
+                            -1,  # Link index (-1 for base)
+                            wind_force.tolist(),
+                            pos.tolist(),
+                            p.WORLD_FRAME,
+                            physicsClientId=cli
+                        )
+
+                # Update moving platform system if enabled
+                if moving_platform_system:
+                    moving_platform_system.step(task.sim_dt)
+                    # Update goal position to track moving platform
+                    goal[:] = moving_platform_system.pos
 
                 if k % frames_per_cam == 0:
                     track_drone(cli, drone_id)
@@ -288,27 +324,41 @@ class EnhancedVideoRecorder:
                 if not collided:
                     contacts = p.getContactPoints(bodyA=drone_id, physicsClientId=cli)
                     if contacts:
+                        bird_collision = False
                         allowed = True
                         for cp in contacts:
+                            body_b = cp[2]
+                            
+                            # Detect avian collision events with drone
+                            if bird_system and body_b in bird_system.bird_ids:
+                                bird_collision = True
+                                bird_system.handle_bird_collision(body_b)
+                                break
+                            
                             cpos = cp[5]
                             if isinstance(cpos, (list, tuple)) and len(cpos) >= 3:
                                 cx, cy, cz = cpos[:3]
+                                # Use circular platform collision detection - back to original
+                                platform_radius = _PR * 0.9  # Platform is now circular and smaller
                                 horiz = np.linalg.norm([cx - goal[0], cy - goal[1]])
                                 vert = abs(cz - goal[2])
-                                if horiz < _PR + 0.05 and vert < 0.3:
+                                if horiz < platform_radius + 0.05 and vert < 0.3:
                                     continue
                             allowed = False
                             break
-                        if not allowed:
+                        
+                        if bird_collision or not allowed:
                             collided = True
                             success = False
                             break
                 
                 horizontal_distance = np.linalg.norm(pos[:2] - goal[:2])
                 vertical_distance = abs(pos[2] - goal[2])
-                tao_logo_radius = _PR * 0.8 * 1.06
                 
-                on_tao_logo = (horizontal_distance < tao_logo_radius and
+                # Use circular platform detection - back to original circular design
+                platform_radius = _PR * 0.9  # Platform is now circular and smaller
+                landing_radius = platform_radius * 0.8 * 0.9  # Landing area radius (80% of platform * 90% for TAO logo)
+                on_tao_logo = (horizontal_distance < landing_radius and
                                vertical_distance < 0.3 and
                                pos[2] >= goal[2] - 0.1)
                 
