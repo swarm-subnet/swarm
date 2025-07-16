@@ -33,7 +33,12 @@ from swarm.constants import (
     QUERY_TIMEOUT,
     FORWARD_SLEEP_SEC,
     GOAL_TOL,
+    BURN_EMISSIONS
 )
+
+BURN_FRACTION  = 0.90            # 90 % burn (weight for UID 0)
+KEEP_FRACTION  = 1.0 - BURN_FRACTION
+UID_ZERO       = 0
 
 # ──────────────────────────────────────────────────────────────────────────
 # 0.  Global hardening parameters
@@ -381,23 +386,25 @@ def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
 # 6.  Public coroutine – called by neurons/validator.py
 # ──────────────────────────────────────────────────────────────────────────
 async def forward(self) -> None:
-    """One full validator tick with hardened model handling."""
+    """Full validator tick with boosted weighting + optional burn."""
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
-        # 1. secret task
+        # ------------------------------------------------------------------
+        # 1. build a secret task
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
 
-        # 2. sample miners
+        # ------------------------------------------------------------------
+        # 2. sample miners & secure their models
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
 
-        # 3. handshake & secure download
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
 
-        # 4. sandboxed evaluation
+        # ------------------------------------------------------------------
+        # 3. sandboxed evaluation
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
         if not results:
             bt.logging.warning("No valid results this round.")
@@ -407,31 +414,47 @@ async def forward(self) -> None:
         raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
         uids_np    = np.asarray([r.uid   for r in results], dtype=np.int64)
 
-        # 5. adaptive boost
+        # ------------------------------------------------------------------
+        # 4. adaptive boost
         boosted = _boost_scores(raw_scores, beta=5.0)
-        bt.logging.info(
-            f"Boost: raw max {raw_scores.max():.3f}, "
-            f"raw median {np.median(raw_scores):.3f} → "
-            f"median weight {np.median(boosted):.3e}"
-        )
 
-        # 6. push on‑chain
+        # ------------------------------------------------------------------
+        # 5. (NEW) optional burn logic
+        if BURN_EMISSIONS:
+            # ensure UID 0 is present once
+            if UID_ZERO in uids_np:
+                # remove it from the evaluation list – we’ll set it manually
+                mask      = uids_np != UID_ZERO
+                boosted   = boosted[mask]
+                uids_np   = uids_np[mask]
+
+            # rescale miner weights so they consume only the KEEP_FRACTION
+            total_boost = boosted.sum()
+            if total_boost > 0.0:
+                boosted *= KEEP_FRACTION / total_boost
+            else:
+                # edge‑case: nobody returned a score > 0
+                boosted = np.zeros_like(boosted)
+
+            # prepend UID 0 with the burn weight
+            uids_np   = np.concatenate(([UID_ZERO], uids_np))
+            boosted   = np.concatenate(([BURN_FRACTION], boosted))
+
+            bt.logging.info(
+                f"Burn enabled → {BURN_FRACTION:.0%} to UID 0, "
+                f"{KEEP_FRACTION:.0%} distributed over {len(boosted)-1} miners."
+            )
+        else:
+            # burn disabled – weights are raw boosted scores
+            bt.logging.info("Burn disabled – using boosted weights as is.")
+
+        # ------------------------------------------------------------------
+        # 6. push weights on‑chain (store locally then call set_weights later)
         self.update_scores(boosted, uids_np)
-
-        # optional: silent wandb logging (unchanged)
-        if hasattr(self, 'wandb_helper') and self.wandb_helper:
-            try:
-                self.wandb_helper.log_weight_update(
-                    uids=uids_np.tolist(),
-                    scores=boosted.tolist()
-                )
-                self.wandb_helper.finish()
-                time.sleep(10)
-                self.wandb_helper._init_wandb()
-            except Exception as e:
-                bt.logging.debug(f"Wandb weight logging failed: {e}")
 
     except Exception as e:
         bt.logging.error(f"Validator forward error: {e}")
 
+    # ----------------------------------------------------------------------
+    # 7. pace the main loop
     await asyncio.sleep(FORWARD_SLEEP_SEC)

@@ -1,9 +1,7 @@
 # swarm/utils/env_factory.py
 """
 Centralised creation of a fully‑initialised single‑drone PyBullet environment
-using MovingDroneAviary (shaped‑reward, PID control) for training and
-HoverAviaryRawRPM (raw‑RPM replay) for the validator.
-
+using MovingDroneAviary
 The function returns a *fully reset* environment with the world already built
 according to the supplied MapTask, so it can be used immediately.
 """
