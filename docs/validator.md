@@ -9,7 +9,7 @@ This document shows how to install and operate the Swarm validator that evaluate
 |----------|---------|--------------------------------------|
 | CPU      | 3 cores  | Miners are evaluated 1 by 1, no no need for much spec |
 | RAM      | 8 GB     |                     |
-| Disk     | 20 GB     | Environment                   |
+| Disk     | 50 GB     | Environment                   |
 | GPU      | none     |  |
 
 **Supported & tested Linux distros:**
