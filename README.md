@@ -1,10 +1,11 @@
 <div align="center">
   <h1>🐝 <strong>Swarm</strong> – Bittensor Drone autopilot Subnet 🐝</h1>
-  <img src="swarm/assets/swarm.png" alt="Swarm"  width="300">
+  <img src="swarm/assets/Swarm2.png" alt="Swarm"  width="300">
   <p>
     <a href="docs/miner.md">🚀 Miner guide</a> &bull;
     <a href="docs/validator.md">🔐 Validator guide</a> &bull;
     <a href="docs/roadmap.md">🔐 Roadmap</a> &bull;
+    <a href="https://x.com/SwarmSubnet">🐦 Follow us on X</a> &bull;
     <a href="https://discord.com/channels/799672011265015819/1385341501130801172">💬 Join us on Discord</a>
   </p>
 </div>
@@ -12,9 +13,9 @@
 ## 🔍 Overview
 Swarm is a **Bittensor subnet engineered to enable decentralized autonomous drone flight**.
 
-Validators create synthetic “map tasks” and replay miner‑supplied **open‑loop rotor‑RPM flight plans** inside a PyBullet physics simulator.  
+Validators create synthetic "map tasks" and evaluate miner‑supplied **pre‑trained RL policies** inside a PyBullet physics simulator.  
 
-Miners that produce fast, battery efficient and *successful* flight plans earn the highest rewards
+Miners that produce fast, battery efficient and *successful* policies earn the highest rewards
 
 **Why OS drone flying?**
 
@@ -28,17 +29,14 @@ Miners that produce fast, battery efficient and *successful* flight plans earn t
 ### 🧑‍🏫 Validator
 
 - Generates unique MapTasks  
-- Replays plans head‑less and validates them
+- Evaluates policies head‑less and validates them
 - Assigns weights proportional to the final reward score
 
 ### ⛏️ Miner
 
-- Receives the MapTask and must output a FlightPlan before timeout.  
-- Any strategy is allowed – classical control, RL, planning, imitation …  
-- Must respect the `sim_dt` sampling time; extra points for finish < `horizon` and low energy.
-
-**Reference Strategy:** A trivial three‑way‑point PID controller is bundled in `swarm.core.flying_strategy`.  
-It reaches the goal some percentage of the time. Be aware, the challenges will get harder!
+- Provides pre‑trained RL policies that are evaluated on secret tasks.  
+- Any framework is allowed – Stable Baselines 3, custom PyTorch, etc.  
+- Must export models in compatible format for validator evaluation.
 
 ---
 
@@ -46,9 +44,9 @@ It reaches the goal some percentage of the time. Be aware, the challenges will g
 
 | Component             | Purpose                           | Key points (code refs)                                                      |
 |-----------------------|-----------------------------------|------------------------------------------------------------------------------|
-| **MapTask**           | Validator → Miner Task         | Random start→goal pair, simulation time‑step `sim_dt`, hard time limit `horizon` (`swarm.protocol.MapTask`) |
-| **Miner “FlightPlan”**| Open‑loop list of (t, rpm₁…₄)     | Set of instructions that will be replayed by the validator |
-| **Replay Engine**     | Deterministic PyBullet re‑execution | Converts ragged command list into step‑indexed RPM table, tracks energy (`swarm.validator.replay`) |
+| **MapTask**           | Internal validator task         | Random start→goal pair, simulation time‑step `sim_dt`, hard time limit `horizon` (`swarm.protocol.MapTask`) |
+| **PolicyRef**         | Model metadata                    | SHA256, framework, size (`swarm.protocol.PolicyRef`) |
+| **Policy Evaluation** | RL model testing                 | Loads and runs policy on secret tasks (`swarm.validator.forward`) |
 | **Reward**            | Maps outcome → [0,1] score        | 0.70 × success + 0.15 × time + 0.15 × energy (`swarm.validator.reward.flight_reward`) |
 
 ### Task generation
@@ -63,7 +61,7 @@ goal = rng.uniform(R_MIN, R_MAX)   # 10 m ≤ r ≤ 30 m
 ### Validation loop  
 The validator:
 
-1. Replays the provided FlightPlan
+1. Evaluates the provided policy
 2. Tracks distance‑to‑goal, hover duration and energy
 3. Scores the run and writes the weight to the chain
 

@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from swarm.validator.task_gen import random_task
 from swarm.validator.forward import SIM_DT, HORIZON_SEC
-from swarm.core.flying_strategy import flying_strategy           # reference strategy
+from swarm.core.legacy.flying_strategy import flying_strategy           # reference strategy
 from swarm.validator.replay import replay_once
 from swarm.validator.reward import flight_reward
 from swarm.protocol import MapTask, FlightPlan, ValidationResult
@@ -21,13 +21,16 @@ try:
 except ImportError:                                 # pragma: no cover
     import logging as logger
     logger.basicConfig(level=logger.INFO)
-
+import math
 
 # ---------------------------------------------------------------------
 # Helper factories
 # ---------------------------------------------------------------------
 def make_task() -> MapTask:
     return random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+def _euclid(a, b):
+    return math.dist(a, b)
+
 
 
 def make_plan(task: MapTask, gui: bool) -> FlightPlan:
@@ -48,7 +51,13 @@ def validate(task: MapTask,
              *,
              sim_gui: bool = False) -> ValidationResult:
     success, t_sim, energy = replay_once(task, plan, gui=sim_gui)
-    score = flight_reward(success, t_sim, energy, task.horizon)
+    score = score = flight_reward(
+        success=success,
+        t_alive=t_sim,
+        d_start=_euclid(task.start, task.goal),
+        d_final=_euclid(task.start, task.goal),
+        horizon=task.horizon,
+    )
     return ValidationResult(uid=-1,
                             success=success,
                             time_sec=t_sim,

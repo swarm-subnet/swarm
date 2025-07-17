@@ -85,8 +85,6 @@ class WandbHelper:
                 self.enabled = False
                 return
             
-            bt.logging.debug(f"WANDB_API_KEY found: {api_key[:10]}...")
-            
             # Configure wandb to run silently  
             os.environ["WANDB_SILENT"] = "true"
             os.environ["WANDB_QUIET"] = "true"
