@@ -101,8 +101,7 @@ pm2 start --name auto_update_validator \
           scripts/validator/update/auto_update_deploy.sh
 ```
 
-## 🧩 5 · What the validator actually does (v2.2)
-
+## 🧩 5 · What the validator actually does 
 1. **Build a secret task**  
    A random MapTask (world limits, obstacles, physics Δt, horizon) is produced  
    by `swarm/validator/task_gen.py`.  
@@ -142,6 +141,6 @@ Everything is orchestrated by the coroutine
 
 ## 🆘 Support
 
-- Discord: #swarm-dev – ping @Miguelikk
+- Discord: #swarm-dev – ping @Miguelikk or @AliSaaf
 
 Happy validating! 🚀
