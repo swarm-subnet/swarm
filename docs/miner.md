@@ -11,6 +11,9 @@ This guide shows how to install, configure and run a Swarm miner
 | CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
 | RAM       | 8 GB     | 8 GB         |                                               |
 | Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
+| CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
+| RAM       | 8 GB     | 8 GB         |                                               |
+| Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
 | GPU       | none     | Optional     | Depends on your model             |
 | OS        | Linux / macOS / WSL2 | —           | Scripts are written for Ubuntu 22.04          |
 
@@ -81,6 +84,7 @@ pm2 restart swarm_miner
 pm2 stop     swarm_miner
 ```
 
+
 ## ✈️ How does the miner work now?
 
 1. **Validator sends an empty `PolicySynapse`** to request your model manifest.
@@ -91,6 +95,16 @@ pm2 stop     swarm_miner
 4. **Validator requests the model** by sending `need_blob=True`.
 5. **Your miner streams the model** as a series of `PolicyChunk` messages until EOF.
 6. **Validator stores the model** as `miner_models/UID_<uid>.zip`, loads it with SB3, and evaluates it on secret tasks. Score ∈ [0, 1] is written on‑chain.
+
+
+| Step | Direction | Payload | What happens |
+|------|-----------|---------|--------------|
+| 1 | **Validator ➜ Miner** | empty `PolicySynapse` | “Send me your manifest.” |
+| 2 | **Miner ➜ Validator** | `ref` (`PolicyRef`) | Contains **sha256**, file size & framework tag (`sb3‑ppo`). |
+| 3 | **Validator** compares the SHA‑256 to its cache. | — | If identical → **done**. If different → **proceed**. |
+| 4 | **Validator ➜ Miner** | `need_blob=True` | “Stream me the new zip.” |
+| 5 | **Miner ➜ Validator** | series of `chunk` messages (`PolicyChunk`) | Raw bytes until EOF. |
+| 6 | **Validator** stores `miner_models/UID_<uid>.zip`, loads it with SB3 and evaluates it on secret tasks. | — | Score ∈ [0 … 1] is written on‑chain. |
 
 There is **no MapTask in the handshake**.  
 Miners never see the evaluation maps; only their exported policy is tested.
@@ -113,14 +127,18 @@ Update the path or filename in neurons/miner.py if you organise files differentl
 
 *Full logic: `swarm/validator/reward.py`.*
 
-## 🔄 Updating your model  
+
+## 🔄 Updating your model  
+
 Simply overwrite `model/ppo_policy.zip` with a new file; the miner computes
 its SHA‑256 at start‑up. Restart the process (or run `pm2 reload`) to serve
 the new hash. Validators will fetch it automatically at the next handshake.
 
 ## 🆘 Need help?
 
+
 - Discord – ping @Miguelikk or @AliSaaf
+- Discord – ping @Miguelikk
 - GitHub issues – open a ticket with logs & error trace
 
 Happy mining, and may your drones fly far 🚀!
