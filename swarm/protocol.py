@@ -1,33 +1,30 @@
-# swarm/protocol.py
-# -----------------------------------------------------------------------------
-#  Swarm – Bittensor subnet “Swarm”
-# -----------------------------------------------------------------------------
-"""Unified protocol definitions for the Swarm subnet.
+# --------------------------------------------------------------------------- #
+#  Swarm – unified protocol definitions (SDK v2.2, simplified handshake)
+# --------------------------------------------------------------------------- #
+"""
+Handshake (always two messages max):
 
-This revision *merges the former ``MapTaskSynapse`` into ``FlightPlanSynapse``* so
-only **one** synapse class remains.  The new ``FlightPlanSynapse`` is bidirectional:
+    Validator            Miner
+    ────────── empty ─────►      (request PolicyRef)
+                   ref   ◄──────
+    ─── need_blob=True ──►      (only if SHA mismatch)
+               chunks   ◄──────  (streamed until EOF)
 
-* **Validator ➜ Miner** – carries *only* the planning task fields.
-* **Miner ➜ Validator** – carries the flight‑plan fields and can optionally echo
-  the originating task back for stateless validation.
-
-All attributes are therefore declared **optional**; the producer of the message
-simply omits the fields that are not relevant in that direction.
+No MapTask data is exchanged; miners never know the evaluation map.
 """
 from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict, dataclass
-from typing import List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
-import msgpack  # still used locally for hashing / persistence
+import msgpack
 import bittensor as bt
 
-# --------------------------------------------------------------------------- #
-# 1.  Pure‑Python dataclasses                                                  #
-# --------------------------------------------------------------------------- #
 
-
+# --------------------------------------------------------------------------- #
+# 1.  Core dataclasses (unchanged)                                            #
+# --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class MapTask:
     map_seed: int
@@ -37,7 +34,6 @@ class MapTask:
     horizon: float
     version: str = "1"
 
-    # msgpack helpers remain for local persistence / hashing if you want them
     def pack(self) -> bytes:
         return msgpack.packb(asdict(self), use_bin_type=True)
 
@@ -52,6 +48,7 @@ class RPMCmd:
     rpm: Tuple[float, float, float, float]
 
 
+# Legacy – kept one cycle
 @dataclass(slots=True)
 class FlightPlan:
     commands: List[RPMCmd]
@@ -59,17 +56,15 @@ class FlightPlan:
 
     def __post_init__(self):
         if self.sha256 is None:
-            packed = msgpack.packb(
-                [(c.t, c.rpm) for c in self.commands], use_bin_type=True
-            )
-            self.sha256 = hashlib.sha256(packed).hexdigest()
+            payload = [(c.t, c.rpm) for c in self.commands]
+            self.sha256 = hashlib.sha256(
+                msgpack.packb(payload, use_bin_type=True)
+            ).hexdigest()
 
     def pack(self) -> bytes:
         return msgpack.packb(
-            {
-                "commands": [(c.t, c.rpm) for c in self.commands],
-                "sha256": self.sha256,
-            },
+            {"commands": [(c.t, c.rpm) for c in self.commands],
+             "sha256": self.sha256},
             use_bin_type=True,
         )
 
@@ -90,132 +85,104 @@ class ValidationResult:
 
 
 # --------------------------------------------------------------------------- #
-# 2.  Synapse helpers                                                          #
+# 2.  Model‑streaming helpers                                                 #
 # --------------------------------------------------------------------------- #
-
-
-def _tuple_to_list3(t: Tuple[float, float, float]) -> List[float]:
-    """Helper so tuples don’t get rejected by the JSON encoder."""
-    return [float(x) for x in t]
-
-
-# --------------------------------------------------------------------------- #
-# 3.  Unified Synapse                                                          #
-# --------------------------------------------------------------------------- #
-
-
-Synapse = bt.Synapse  # type alias for brevity; comes from bittensor
-
-
-class FlightPlanSynapse(Synapse):
-    """Bidirectional synapse used *both* for planning tasks and plan results.
-
-    **Direction 1 – Validator ➜ Miner**
-        ``map_seed`` … ``horizon`` fields *must* be present.
-
-    **Direction 2 – Miner ➜ Validator**
-        ``commands`` & ``sha256`` fields *must* be present and the task fields
-        *may* be echoed back as a convenience.
-    """
-
-    # --- MapTask fields --------------------------------------------------- #
-    map_seed: Optional[int] = None
-    start: Optional[List[float]] = None     # len == 3
-    goal: Optional[List[float]] = None      # len == 3
-    sim_dt: Optional[float] = None
-    horizon: Optional[float] = None
-
-    # --- FlightPlan fields ------------------------------------------------ #
-    commands: Optional[List[dict]] = None   # {"t": float, "rpm": [f,f,f,f]}
-    sha256: Optional[str] = None
-
-    # --- protocol meta ---------------------------------------------------- #
+@dataclass(slots=True)
+class PolicyRef:
+    sha256: str
+    entrypoint: str
+    framework: str
+    size_bytes: int
     version: str = "1"
 
-    # --- bittensor hook --------------------------------------------------- #
-    def deserialize(self) -> "FlightPlanSynapse":  # noqa: D401
-        # Attributes are already JSON‑native; simply return self.
+    def as_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class PolicyChunk:
+    sha256: str
+    data: bytes
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {"sha256": self.sha256, "data": self.data}
+
+
+# --------------------------------------------------------------------------- #
+# 3.  Bidirectional Synapse                                                   #
+# --------------------------------------------------------------------------- #
+Synapse = bt.Synapse     # alias
+
+
+class PolicySynapse(Synapse):
+    """
+    Fields                               Direction
+    ------                               ---------
+    need_blob    : bool                V → M   request model payload
+
+    ref          : PolicyRef dict      M → V   model manifest
+    chunk        : PolicyChunk dict    M → V   streamed binary data
+    result       : ValidationResult    V → M   evaluation score
+    """
+    need_blob: Optional[bool] = None           # validator ➜ miner
+
+    ref:   Optional[Dict[str, Any]] = None     # miner ➜ validator
+    chunk: Optional[Dict[str, Any]] = None     # miner ➜ validator
+
+    result: Optional[Dict[str, Any]] = None    # validator ➜ miner
+
+    version: str = "1"
+
+    # Bittensor hook
+    def deserialize(self) -> "PolicySynapse":
         return self
 
-    # --- convenience accessors ------------------------------------------- #
+    # -------- convenience accessors ---------------------------------
     @property
-    def task(self) -> Optional[MapTask]:
-        """Convert to :class:`MapTask` if task fields are present."""
-        if None in (
-            self.map_seed,
-            self.start,
-            self.goal,
-            self.sim_dt,
-            self.horizon,
-        ):
-            return None
-        return MapTask(
-            map_seed=self.map_seed,  # type: ignore[arg-type]
-            start=tuple(self.start),  # type: ignore[arg-type]
-            goal=tuple(self.goal),    # type: ignore[arg-type]
-            sim_dt=self.sim_dt,
-            horizon=self.horizon,
-            version=self.version,
-        )
+    def policy_ref(self) -> Optional[PolicyRef]:
+        return PolicyRef(**self.ref) if self.ref else None   # type: ignore[arg-type]
 
     @property
-    def plan(self) -> Optional[FlightPlan]:
-        """Convert to :class:`FlightPlan` if plan fields are present."""
-        if self.commands is None or self.sha256 is None:
-            return None
-        cmds = [RPMCmd(c["t"], tuple(c["rpm"])) for c in self.commands]
-        return FlightPlan(commands=cmds, sha256=self.sha256)
+    def policy_chunk(self) -> Optional[PolicyChunk]:
+        return PolicyChunk(**self.chunk) if self.chunk else None  # type: ignore[arg-type]
 
-    # --- builders --------------------------------------------------------- #
+    @property
+    def validation_result(self) -> Optional[ValidationResult]:
+        return ValidationResult(**self.result) if self.result else None  # type: ignore[arg-type]
+
+    # -------- static builders ---------------------------------------
     @staticmethod
-    def from_task(task: MapTask) -> "FlightPlanSynapse":
-        """Factory for the *Validator ➜ Miner* direction."""
-        return FlightPlanSynapse(
-            map_seed=task.map_seed,
-            start=_tuple_to_list3(task.start),
-            goal=_tuple_to_list3(task.goal),
-            sim_dt=float(task.sim_dt),
-            horizon=float(task.horizon),
-            version=task.version,
-        )
+    def request_ref() -> "PolicySynapse":
+        """Validator → Miner: “send me your current PolicyRef”"""
+        return PolicySynapse()
 
     @staticmethod
-    def from_plan(
-        plan: FlightPlan,
-        *,
-        task: Optional[MapTask] = None,
-    ) -> "FlightPlanSynapse":
-        """Factory for the *Miner ➜ Validator* direction.
+    def request_blob() -> "PolicySynapse":
+        """Validator → Miner: “stream me the binary”"""
+        return PolicySynapse(need_blob=True)
 
-        The originating :class:`MapTask` can be attached so the validator can
-        match the plan to its task without additional state.
-        """
-        payload: dict = {
-            "commands": [{"t": c.t, "rpm": list(c.rpm)} for c in plan.commands],
-            "sha256": plan.sha256,
-            "version": "1",
-        }
-        if task is not None:
-            payload.update(
-                {
-                    "map_seed": task.map_seed,
-                    "start": _tuple_to_list3(task.start),
-                    "goal": _tuple_to_list3(task.goal),
-                    "sim_dt": float(task.sim_dt),
-                    "horizon": float(task.horizon),
-                }
-            )
-        return FlightPlanSynapse(**payload)  # type: ignore[arg-type]
+    @staticmethod
+    def from_ref(ref: PolicyRef) -> "PolicySynapse":
+        return PolicySynapse(ref=ref.as_dict())
+
+    @staticmethod
+    def from_chunk(chunk: PolicyChunk) -> "PolicySynapse":
+        return PolicySynapse(chunk=chunk.as_dict())
+
+    @staticmethod
+    def from_result(res: ValidationResult) -> "PolicySynapse":
+        return PolicySynapse(result=asdict(res))
 
 
 # --------------------------------------------------------------------------- #
 # 4.  Export list                                                             #
 # --------------------------------------------------------------------------- #
-
 __all__ = [
     "MapTask",
     "RPMCmd",
-    "FlightPlan",
     "ValidationResult",
-    "FlightPlanSynapse",
+    "FlightPlan",
+    "PolicyRef",
+    "PolicyChunk",
+    "PolicySynapse",
 ]

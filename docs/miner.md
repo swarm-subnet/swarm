@@ -1,8 +1,8 @@
 # ⛏️ Swarm Miner Guide
 *(Swarm subnet)*
 
-The Swarm subnet tasks your miner with planning safe, energy‑efficient flight paths for a simulated drone across a procedurally generated world. 
-This guide shows how to install, configure and run a Swarm miner that answers MapTask requests with a FlightPlan.
+The Swarm subnet tasks your miner with developing pre‑trained flight‑control policies which dynamically generate safe, energy‑efficient flight paths for a simulated drone across a procedurally generated world. 
+This guide shows how to install, configure and run a Swarm miner
 
 ## 💻 System requirements to run the default miner code
 
@@ -11,10 +11,8 @@ This guide shows how to install, configure and run a Swarm miner that answers Ma
 | CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
 | RAM       | 8 GB     | 8 GB         |                                               |
 | Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
-| GPU       | none     | Optional     | Only if you integrate ML planners             |
+| GPU       | none     | Optional     | Depends on your model             |
 | OS        | Linux / macOS / WSL2 | —           | Scripts are written for Ubuntu 22.04          |
-
-ℹ️ The existing miner code just plans an straight line between the spawn point and the objective. Objects might be places randomly in that trajectory and the drone will crash! Improve the flying_strategy.py file to give better flight plans
 
 ## 🚀 Installation
 
@@ -83,36 +81,48 @@ pm2 restart swarm_miner
 pm2 stop     swarm_miner
 ```
 
-## ✈️ How does the miner work?
+## ✈️ How does the miner work now?
 
-1. Validator sends a MapTask (JSON with seed, world limits, time‑step, horizon, etc.)
-2. Your miner calls `flying_strategy(task)` – a function you implement inside `neurons/miner.py`. It must return a FlightPlan, i.e. a time_stamped list of rotor RPMs. So, what power per propeller per t the drone needs to have to reach the objective.
-3. Validator re‑simulates the plan inside PyBullet to verify:
-   - Reaches goal inside horizon
-   - Energy consumption below battery budget
-4. A reward ∈ [0, 1] is computed from success, time and energy, then broadcast back to the miner.
+| Step | Direction | Payload | What happens |
+|------|-----------|---------|--------------|
+| 1 | **Validator ➜ Miner** | empty `PolicySynapse` | “Send me your manifest.” |
+| 2 | **Miner ➜ Validator** | `ref` (`PolicyRef`) | Contains **sha256**, file size & framework tag (`sb3‑ppo`). |
+| 3 | **Validator** compares the SHA‑256 to its cache. | — | If identical → **done**. If different → **proceed**. |
+| 4 | **Validator ➜ Miner** | `need_blob=True` | “Stream me the new zip.” |
+| 5 | **Miner ➜ Validator** | series of `chunk` messages (`PolicyChunk`) | Raw bytes until EOF. |
+| 6 | **Validator** stores `miner_models/UID_<uid>.zip`, loads it with SB3 and evaluates it on secret tasks. | — | Score ∈ [0 … 1] is written on‑chain. |
 
-The template miner shipped in the repo implements a naïve straight‑line planner that:
+There is **no MapTask in the handshake**.  
+Miners never see the evaluation maps; only their exported policy is tested.
 
-```text
-spawn → (0,0,SAFE_Z) → (goal.x, goal.y, SAFE_Z) → goal
-```
+### Folder layout expected by the reference miner
 
-It is enough to start earning small rewards, but you are encouraged to replace `flying_strategy()` with smarter algorithms (A*, RRT*, PRM, NeRF, ML policies …).
+swarm/
+└── model/
+    └── ppo_policy.zip     ← your trained SB3 PPO policy
+   
+Update the path or filename in neurons/miner.py if you organise files differently.
 
-## 🏆 Reward formula (overview)
+## 🏆 Reward formula (v2)
 
-| Term            | Weight | Description                                      |
-|-----------------|--------|--------------------------------------------------|
-| Mission success | 70 %   | 1.0 if goal reached, else 0                      |
-| Time factor     | 15 %   | 1 − t_goal / horizon, clamped to [0,1]           |
-| Energy factor   | 15 %   | 1 − E_used / E_budget, clamped to [0,1]          |
+| Term            | Weight | Active when …              |
+|-----------------|:------:|----------------------------|
+| `success_term`  | 0.20   | Goal reached               |
+| `alive_term`    | 0.20   | Always (max at 30 s)       |
+| `progress_term` | 0.20   | Always                     |
+| `time_term`     | 0.20   | Only if success            |
+| `energy_term`   | 0.20   | Only if success            |
 
-Full logic: `swarm/validator/reward.py`.
+*Full logic: `swarm/validator/reward.py`.*
+
+## 🔄 Updating your model  
+Simply overwrite `model/ppo_policy.zip` with a new file; the miner computes
+its SHA‑256 at start‑up. Restart the process (or run `pm2 reload`) to serve
+the new hash. Validators will fetch it automatically at the next handshake.
 
 ## 🆘 Need help?
 
-- Discord  #swarm-dev channel – ping @Miguelikk
+- Discord – ping @Miguelikk
 - GitHub issues – open a ticket with logs & error trace
 
 Happy mining, and may your drones fly far 🚀!

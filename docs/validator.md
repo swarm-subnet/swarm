@@ -1,13 +1,13 @@
 # 🚀 Swarm Validator Guide
 *(Swarm subnet – netuid 124)*
 
-This document shows how to install and operate the Swarm validator that drives the MapTask → FlightPlan competition. The code‑base has zero external sub‑modules and runs on any recent CPU‑only server.
+This document shows how to install and operate the Swarm validator that evaluates models received from miners on dynamically generated maps
 
 ## 🖥️ System requirements
 
 | Resource | Minimal | Notes                                |
 |----------|---------|--------------------------------------|
-| CPU      | 3 cores  | Map generation & scoring are light‑weight |
+| CPU      | 3 cores  | Miners are evaluated 1 by 1, no no need for much spec |
 | RAM      | 8 GB     |                     |
 | Disk     | 20 GB     | Environment                   |
 | GPU      | none     |  |
@@ -101,20 +101,44 @@ pm2 start --name auto_update_validator \
           scripts/validator/update/auto_update_deploy.sh
 ```
 
-## 🧩 5 · What the validator actually does
+## 🧩 5 · What the validator actually does (v2.2)
 
-1. Generate a map
-   - Random obstacles, world limits, physics time‑step & horizon are packed into a MapTask (see `swarm/validator/task_gen.py`).
-2. Broadcast to miners
-   - Sends the task to N randomly sampled miners
-3. Re‑simulate each returned FlightPlan in PyBullet (`replay_once`) measuring:
-   - Goal reached?
-   - Time to goal
-   - Energy used
-4. Score → update weights
-   - Reward is computed (`swarm/validator/reward.py`), moving‑average weights are updated and pushed on‑chain.
+1. **Build a secret task**  
+   A random MapTask (world limits, obstacles, physics Δt, horizon) is produced  
+   by `swarm/validator/task_gen.py`.  
+   *The task is **never** sent to miners.*
 
-Sleep a couple seconds and repeat. Everything happens inside the easy‑to‑read loop in `swarm/validator/forward.py`.
+2. **Discover miners’ models**  
+   *File cache:* `miner_models/UID_<uid>.zip`  
+   For each sampled UID the validator  
+   1. sends an empty **`PolicySynapse`** → miner replies with a **`PolicyRef`**;  
+   2. compares the `sha256` to the cached file. If it differs, it sends  
+      `need_blob=True` and streams the new zip through `PolicyChunk` messages  
+      (`_download_model`).  
+   All handshake and caching logic lives in `_ensure_models()` inside  
+   `swarm/validator/forward.py`.
+
+3. **Evaluate miners one‑by‑one (low‑RAM loop)**  
+   Each model is loaded, exercised on the secret task, and immediately freed.  
+   The episode runner `_run_episode` measures:  
+   * success flag  
+   * time alive  
+   * distance closed (progress)  
+   * energy used  
+   These metrics are converted into a **score ∈ [0, 1]** by  
+   `swarm/validator/reward.py`.
+
+4. **Update on‑chain weights**  
+   Scores are fed into `BaseValidatorNeuron.update_scores()` and pushed to
+   subtensor, rewarding miners proportionally.
+
+5. **Sleep & repeat**  
+   The loop pauses for `FORWARD_SLEEP_SEC`, then returns to step 1.
+
+Everything is orchestrated by the coroutine
+`swarm/validator/forward.py::forward`.
+
+
 
 ## 🆘 Support
 

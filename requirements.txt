@@ -6,10 +6,12 @@ setuptools
 loguru
 xmldiff
 filelock
-# gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git
 pybullet
 bittensor
 msgpack
+importlib-metadata
+onnxruntime
+stable-baselines3[extra]
 wandb
 python-dotenv
 typing-extensions
