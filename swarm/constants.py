@@ -1,7 +1,7 @@
 # Constants for the Swarm project
 
-WORLD_RANGE = 30.0        # random scenery is placed in ±WORLD_RANGE (m)
-HEIGHT_SCALE = 1.8  # scale factor for the height of obstacles, lower tends to create easier maps
+WORLD_RANGE = 30        # random scenery is placed in ±WORLD_RANGE (m)
+HEIGHT_SCALE = 1  # scale factor for the height of obstacles, lower tends to create easier maps
 N_OBSTACLES = 100  # number of random obstacles in the world
 
 # ────────── Validator constants ─────────────────────────────────
@@ -21,14 +21,15 @@ PROP_EFF     = 0.60   # propeller efficiency
 LANDING_PLATFORM_RADIUS = 0.6  # Landing platform radius (m)
 STABLE_LANDING_SEC = 1.0       # Required stable landing duration for success (s)
 # ───────── parameters & constants ─────────
-SAFE_Z: float   = 2     # cruise altitude (m)
+SAFE_Z: float   = 3     # cruise altitude (m)
 GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
-R_MIN, R_MAX = 10.0, 30          # radial goal distance (m)
-H_MIN, H_MAX = 2, 10          # radial goal distance (m)
+R_MIN, R_MAX = 0, 30          # radial goal distance (m)
+H_MIN, H_MAX = 0, 30          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk
+BURN_EMISSIONS = True  # burn emissions in the validator
 
 # ────────── Platform mode toggle ─────────────────────────────────
-PLATFORM = True           # Toggle for solid platform (True) / visual-only (False)
+PLATFORM = False           # Toggle for solid platform (True) / visual-only (False)

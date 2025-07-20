@@ -1,29 +1,28 @@
 # neurons/miner.py
 # -------------------------------------------------------------------------
-#  Swarm Miner
+#  Swarm Miner (SDK v2.0.0 – Policy API)
 # -------------------------------------------------------------------------
-#  Receives a flight‑navigation *task* embedded in a ``FlightPlanSynapse``
-#  (task‑fields set, plan‑fields empty), runs a deterministic open‑loop
-#  planning policy (``flying_strategy``) and returns a ``FlightPlanSynapse``
-#  containing the resulting plan (and echoing the task for stateless
-#  validation).
+#  Implements the handshake described in Phase 2:
 #
-#  Generic blacklist / priority logic from ``BaseMinerNeuron`` is preserved.
+#  1) Every inbound request → send a PolicyRef (points at our model).
+#  2) If the validator replies with `need_blob=True` → stream the model
+#     back in fixed‑size chunks (PolicyChunk messages).
 # -------------------------------------------------------------------------
 
+from __future__ import annotations
+
 import time
-import typing
+from dataclasses import asdict
+from pathlib import Path
 from typing import Tuple
 
 import bittensor as bt
 
-# ── Swarm‑specific --------------------------------------------------------
+# ── Swarm core ────────────────────────────────────────────────────────────
 from swarm.base.miner import BaseMinerNeuron
-from swarm.protocol import (
-    FlightPlanSynapse,
-    FlightPlan,
-)
-from swarm.core.flying_strategy import flying_strategy
+from swarm.protocol import PolicySynapse, PolicyRef, PolicyChunk
+from swarm.utils.hash import sha256sum
+from swarm.utils.chunking import iter_chunks
 
 # Optional coloured logging – fall back gracefully if unavailable
 try:
@@ -57,77 +56,79 @@ except Exception:  # pragma: no cover – colour module optional
 # =========================================================================
 class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
-    # Life‑cycle
+    #  **Adjust these constants for your own model**
+    # ------------------------------------------------------------------
+    POLICY_PATH = Path("model/ppo_policy.zip")
+    ENTRYPOINT  = ""             # not used by SB3 but kept for future proofing
+    FRAMEWORK   = "sb3-ppo"
+
+    # ------------------------------------------------------------------
+    #  Life cycle
     # ------------------------------------------------------------------
     def __init__(self, config=None):
         super().__init__(config=config)
         self.load_state()
 
+        if not self.POLICY_PATH.exists():
+            raise FileNotFoundError(f"Model not found: {self.POLICY_PATH}")
+
+        self._sha256 = sha256sum(self.POLICY_PATH)
+        self._size   = self.POLICY_PATH.stat().st_size
+
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
 
     # ------------------------------------------------------------------
-    # Main RPC endpoint – the **only one** required for this subnet
+    #  Main RPC endpoint
     # ------------------------------------------------------------------
-    async def forward(self, synapse: FlightPlanSynapse) -> FlightPlanSynapse:  # noqa: D401
-        """Plan generator called by validators.
-
-        Parameters
-        ----------
-        synapse : FlightPlanSynapse
-            Inbound synapse from the validator.  Its *task* fields are set;
-            plan fields are empty.
-
-        Returns
-        -------
-        FlightPlanSynapse
-            Outbound synapse carrying the generated plan (plus a copy of the
-            task so the validator can match the result without extra state).
+    async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
+        """
+        *First call*  (need_blob absent/False)  -> send PolicyRef only.  
+        *Second call* (need_blob True)          -> stream raw bytes.
         """
         try:
-            # ---------------- log origin ---------------------------------
-            validator = getattr(synapse.dendrite, "hotkey", "<?>")  # type: ignore[attr-defined]
-            ColoredLogger.info(f"[forward] Request from {validator}", ColoredLogger.YELLOW)
+            vk = getattr(synapse.dendrite, "hotkey", "<??>")   # type: ignore[attr-defined]
+            ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
 
-            # ---------------- extract task -------------------------------
-            task = synapse.task
-            if task is None:
-                raise ValueError("Inbound synapse missing MapTask fields")
+            # ---------- stream binary if requested --------------------
+            if synapse.need_blob:
+                ColoredLogger.info("Streaming model …", ColoredLogger.BLUE)
+                for data in iter_chunks(self.POLICY_PATH):
+                    await synapse.dendrite.send(               # type: ignore[attr-defined]
+                        PolicySynapse.from_chunk(
+                            PolicyChunk(sha256=self._sha256, data=data)
+                        )
+                    )
+                ColoredLogger.success("Stream finished.", ColoredLogger.GREEN)
+                return PolicySynapse()        # nothing more for this call
 
-            bt.logging.info("Generating FlightPlan …")
+            # ---------- otherwise send manifest -----------------------
+            ref = PolicyRef(
+                sha256     = self._sha256,
+                entrypoint = self.ENTRYPOINT,
+                framework  = self.FRAMEWORK,
+                size_bytes = self._size,
+            )
+            ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
+            return PolicySynapse.from_ref(ref)
 
-            # ------------- deterministic planning ------------------------
-            cmds = flying_strategy(task, gui=False)
-            plan = FlightPlan(commands=cmds)  # sha256 auto‑computed
-
-            ColoredLogger.success("FlightPlan ready.", ColoredLogger.GREEN)
-
-            # ------------- wrap & return ---------------------------------
-            reply = FlightPlanSynapse.from_plan(plan, task=task)
-            return reply
-
-        except Exception as err:  # pragma: no cover – defensive path
-            # A failure must *never* crash the miner – reply with a stub plan.
-            bt.logging.error(f"Miner forward error: {err}")
-
-            empty_plan = FlightPlan(commands=[])
-            return FlightPlanSynapse.from_plan(empty_plan)
+        except Exception as e:                                    # defensive
+            bt.logging.error(f"Miner forward error: {e}")
+            return PolicySynapse()                                # empty reply
 
     # ------------------------------------------------------------------
     #  Black‑list logic (unchanged except for type names)
     # ------------------------------------------------------------------
-    async def blacklist(self, synapse: FlightPlanSynapse) -> Tuple[bool, str]:
+    async def blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
         return await self._common_blacklist(synapse)
 
-    async def _common_blacklist(self, synapse: FlightPlanSynapse) -> Tuple[bool, str]:
-        """Reject calls from unknown / under-staked callers – except the owner validator."""
-
+    async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Request without dendrite/hotkey.")
             return True, "Missing dendrite or hotkey"
 
         hotkey = synapse.dendrite.hotkey
 
-        # 1) unknown hotkey?
+        # 1 – unknown hotkey?
         if (
             not self.config.blacklist.allow_non_registered            # type: ignore[attr-defined]
             and hotkey not in self.metagraph.hotkeys
@@ -136,14 +137,14 @@ class Miner(BaseMinerNeuron):
 
         uid = self.metagraph.hotkeys.index(hotkey)
 
-        # 2) validator-permit enforcement
+        # 2 – validator permit enforcement
         if (
             self.config.blacklist.force_validator_permit              # type: ignore[attr-defined]
             and not self.metagraph.validator_permit[uid]
         ):
             return True, f"Hotkey {hotkey} lacks validator permit"
 
-        # 3) minimum stake check
+        # 3 – minimum stake check
         stake = self.metagraph.S[uid]
         min_stake = self.config.blacklist.minimum_stake_requirement   # type: ignore[attr-defined]
         if stake < min_stake:
@@ -154,10 +155,10 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     #  Priority logic
     # ------------------------------------------------------------------
-    async def priority(self, synapse: FlightPlanSynapse) -> float:
+    async def priority(self, synapse: PolicySynapse) -> float:
         return await self._common_priority(synapse)
 
-    async def _common_priority(self, synapse: FlightPlanSynapse) -> float:
+    async def _common_priority(self, synapse: PolicySynapse) -> float:
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             return 0.0
 
@@ -170,7 +171,7 @@ class Miner(BaseMinerNeuron):
 
 
 # -------------------------------------------------------------------------
-#  Stand‑alone entrypoint
+#  Stand‑alone entry‑point
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
     with Miner() as miner:
