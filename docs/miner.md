@@ -138,7 +138,6 @@ the new hash. Validators will fetch it automatically at the next handshake.
 
 
 - Discord – ping @Miguelikk or @AliSaaf
-- Discord – ping @Miguelikk
 - GitHub issues – open a ticket with logs & error trace
 
 Happy mining, and may your drones fly far 🚀!
