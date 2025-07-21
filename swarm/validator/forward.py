@@ -48,7 +48,7 @@ MODEL_DIR         = Path("miner_models")           # all zips stored here
 CHUNK_SIZE        = 2 << 20                        # 2 MiB
 MAX_MODEL_BYTES   = 50 * 1024 * 1024               # 50 MiB compressed cap
 EVAL_TIMEOUT_SEC  = 30.0                           # wall‑clock timeout
-SUBPROC_MEM_MB    = 600                            # RSS limit per subprocess
+SUBPROC_MEM_MB    = 2048                            # RSS limit per subprocess
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  Helpers – secure ZIP inspection
