@@ -171,22 +171,23 @@ def _run_episode(
 async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
     """
     Stream a .zip from *axon* into *dest* atomically, enforcing size caps.
+    Uses Dendrite.call_stream() (SDK v2) instead of the removed .stream().
     """
     tmp = dest.with_suffix(".part")
     tmp.unlink(missing_ok=True)
     received = 0
 
     try:
-        # tell miner we need the blob
-        await self.dendrite(
-            axons=[axon],
-            synapse=PolicySynapse.request_blob(),
-            timeout=QUERY_TIMEOUT,
-        )
-
-        async for msg in self.dendrite.stream(axon):
+        # open a streaming connection and iterate over the chunks
+        async for msg in self.dendrite.call_stream(               # <- NEW
+            target_axon = axon,
+            synapse     = PolicySynapse.request_blob(),           # ask for the blob
+            timeout     = QUERY_TIMEOUT,
+            deserialize = True,
+        ):
+            # The very last message is the closing PolicySynapse (no chunk).
             if not msg or not msg.chunk:
-                break
+                continue
 
             chunk = msg.chunk["data"]
             received += len(chunk)
@@ -195,7 +196,7 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
             if received > MAX_MODEL_BYTES:
                 bt.logging.error(
                     f"Miner {axon.hotkey} sent oversized blob "
-                    f"({received/1e6:.1f} MB > 50 MB). Aborting."
+                    f"({received/1e6:.1f} MB > 50 MB). Aborting."
                 )
                 tmp.unlink(missing_ok=True)
                 return
@@ -206,8 +207,8 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
         # (2) verify compressed size
         if tmp.stat().st_size > MAX_MODEL_BYTES:
             bt.logging.error(
-                f"Compressed ZIP from {axon.hotkey} exceeds 50 MB "
-                f"({tmp.stat().st_size/1e6:.1f} MB)."
+                f"Compressed ZIP from {axon.hotkey} exceeds 50 MB "
+                f"({tmp.stat().st_size/1e6:.1f} MB)."
             )
             tmp.unlink(missing_ok=True)
             return

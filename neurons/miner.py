@@ -78,28 +78,28 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     #  Main RPC endpoint
     # ------------------------------------------------------------------
-    async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
+     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
         """
-        *First call*  (need_blob absent/False)  -> send PolicyRef only.  
-        *Second call* (need_blob True)          -> stream raw bytes.
+        • need_blob absent / False → return PolicyRef  
+        • need_blob True            → stream PolicyChunk bytes
         """
         try:
-            vk = getattr(synapse.dendrite, "hotkey", "<??>")   # type: ignore[attr-defined]
+            vk = getattr(synapse.dendrite, "hotkey", "<??>")
             ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
 
-            # ---------- stream binary if requested --------------------
+            # (2) — validator asked for the binary
             if synapse.need_blob:
                 ColoredLogger.info("Streaming model …", ColoredLogger.BLUE)
                 for data in iter_chunks(self.POLICY_PATH):
-                    await synapse.dendrite.send(               # type: ignore[attr-defined]
+                    await synapse.dendrite.send(      # streaming back
                         PolicySynapse.from_chunk(
                             PolicyChunk(sha256=self._sha256, data=data)
                         )
                     )
                 ColoredLogger.success("Stream finished.", ColoredLogger.GREEN)
-                return PolicySynapse()        # nothing more for this call
+                return PolicySynapse()                # empty reply ends stream
 
-            # ---------- otherwise send manifest -----------------------
+            # (1) — normal handshake → send manifest
             ref = PolicyRef(
                 sha256     = self._sha256,
                 entrypoint = self.ENTRYPOINT,
@@ -109,10 +109,10 @@ class Miner(BaseMinerNeuron):
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
             return PolicySynapse.from_ref(ref)
 
-        except Exception as e:                                    # defensive
+        except Exception as e:
             bt.logging.error(f"Miner forward error: {e}")
-            return PolicySynapse()                                # empty reply
-
+            return PolicySynapse()    # defensive empty reply
+        
     # ------------------------------------------------------------------
     #  Black‑list logic (unchanged except for type names)
     # ------------------------------------------------------------------
