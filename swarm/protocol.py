@@ -48,33 +48,6 @@ class RPMCmd:
     rpm: Tuple[float, float, float, float]
 
 
-# Legacy – kept one cycle
-@dataclass(slots=True)
-class FlightPlan:
-    commands: List[RPMCmd]
-    sha256: str | None = None
-
-    def __post_init__(self):
-        if self.sha256 is None:
-            payload = [(c.t, c.rpm) for c in self.commands]
-            self.sha256 = hashlib.sha256(
-                msgpack.packb(payload, use_bin_type=True)
-            ).hexdigest()
-
-    def pack(self) -> bytes:
-        return msgpack.packb(
-            {"commands": [(c.t, c.rpm) for c in self.commands],
-             "sha256": self.sha256},
-            use_bin_type=True,
-        )
-
-    @staticmethod
-    def unpack(blob: bytes) -> "FlightPlan":
-        obj = msgpack.unpackb(blob, raw=False)
-        cmds = [RPMCmd(t, tuple(rpm)) for t, rpm in obj["commands"]]
-        return FlightPlan(commands=cmds, sha256=obj["sha256"])
-
-
 @dataclass(slots=True)
 class ValidationResult:
     uid: int
@@ -102,7 +75,7 @@ class PolicyRef:
 @dataclass(slots=True)
 class PolicyChunk:
     sha256: str
-    data: bytes
+    data: str
 
     def as_dict(self) -> Dict[str, Any]:
         return {"sha256": self.sha256, "data": self.data}
@@ -181,7 +154,6 @@ __all__ = [
     "MapTask",
     "RPMCmd",
     "ValidationResult",
-    "FlightPlan",
     "PolicyRef",
     "PolicyChunk",
     "PolicySynapse",
