@@ -32,4 +32,4 @@ SAVE_FLIGHTPLANS = False  # save flight plans to disk
 BURN_EMISSIONS = True  # burn emissions in the validator
 
 # ────────── Platform mode toggle ─────────────────────────────────
-PLATFORM = True           # Toggle for solid platform (True) / visual-only (False)
+PLATFORM = False           # Toggle for solid platform (True) / visual-only (False)

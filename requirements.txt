@@ -1,7 +1,7 @@
 pydantic
 rich
 pytest
-numpy==2.0.2
+numpy>=1.24,<2.0
 setuptools
 loguru
 xmldiff
@@ -16,3 +16,7 @@ wandb
 python-dotenv
 typing-extensions
 tqdm
+torch
+gymnasium
+requests
+git+https://github.com/utiasDSL/gym-pybullet-drones.git

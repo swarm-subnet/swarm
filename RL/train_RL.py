@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
+
 
 from stable_baselines3 import PPO
 
@@ -19,6 +21,9 @@ def main():
 
     model = PPO("MlpPolicy", env, verbose=1)
     model.learn(args.timesteps)
+    
+    # Create model directory if it doesn't exist
+    os.makedirs("model", exist_ok=True)
     model.save("model/ppo_policy")
 
     env.close()

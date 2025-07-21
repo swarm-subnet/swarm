@@ -56,8 +56,8 @@ compute_spec:
       ram_type: "DDR4"     # RAM type (e.g., DDR4, DDR3, etc.)
 
     storage:
-      min_space: 20           # Minimum free storage space (GB)
-      recommended_space: 50  # Recommended free storage space (GB)
+      min_space: 50           # Minimum free storage space (GB)
+      recommended_space: 100  # Recommended free storage space (GB)
 
     os:
       name: "Ubuntu"  # Name of the preferred operating system(s)
