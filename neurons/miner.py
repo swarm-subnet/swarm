@@ -13,7 +13,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
-
+import base64
 import bittensor as bt
 
 # ── Swarm core ────────────────────────────────────────────────────────────
@@ -81,21 +81,24 @@ class Miner(BaseMinerNeuron):
     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
         """
         • need_blob absent / False → return PolicyRef  
-        • need_blob True          → return a single PolicyChunk
+        • need_blob True          → return a single base‑64 chunk
         """
         try:
             vk = getattr(synapse.dendrite, "hotkey", "<??>")
             ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
 
-            # --- validator is asking for the binary -------------------
+            # ── validator wants the model binary ──────────────────────
             if synapse.need_blob:
                 ColoredLogger.info("Sending full model blob …", ColoredLogger.BLUE)
-                data = self.POLICY_PATH.read_bytes()
+
+                raw_bytes = self.POLICY_PATH.read_bytes()
+                b64_str   = base64.b64encode(raw_bytes).decode("ascii")
+
                 return PolicySynapse.from_chunk(
-                    PolicyChunk(sha256=self._sha256, data=data)
+                    PolicyChunk(sha256=self._sha256, data=b64_str)
                 )
 
-            # --- normal handshake: send manifest ----------------------
+            # ── first handshake: send manifest ────────────────────────
             ref = PolicyRef(
                 sha256     = self._sha256,
                 entrypoint = self.ENTRYPOINT,
@@ -105,9 +108,9 @@ class Miner(BaseMinerNeuron):
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
             return PolicySynapse.from_ref(ref)
 
-        except Exception as e:                     # defensive – never crash
+        except Exception as e:
             bt.logging.error(f"Miner forward error: {e}")
-            return PolicySynapse()                 # empty reply
+            return PolicySynapse()          # fail‑safe empty reply
 
         
     # ------------------------------------------------------------------

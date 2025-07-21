@@ -23,6 +23,7 @@ from swarm.protocol import MapTask, PolicySynapse, PolicyRef, ValidationResult
 from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
 from swarm.utils.env_factory import make_env
+import base64
 
 from .task_gen import random_task
 from .reward   import flight_reward
@@ -170,14 +171,14 @@ def _run_episode(
 # ──────────────────────────────────────────────────────────────────────────
 async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
     """
-    Ask the miner for the full ZIP in one message and save it to *dest*.
-    All the usual size / hash / safety checks are still enforced.
+    Ask the miner for the full ZIP in one message (base‑64 encoded)
+    and save it to *dest*.  All integrity and size checks still apply.
     """
     tmp = dest.with_suffix(".part")
     tmp.unlink(missing_ok=True)
 
     try:
-        # 1 – request the blob (need_blob=True)
+        # 1 – request the blob
         responses = await self.dendrite(
             axons       = [axon],
             synapse     = PolicySynapse.request_blob(),
@@ -191,36 +192,42 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
 
         syn = responses[0]
 
-        # 2 – basic validation of the reply
+        # 2 – make sure we actually got chunk data
         if not syn.chunk or "data" not in syn.chunk:
             bt.logging.warning(f"Miner {axon.hotkey} reply lacked chunk data")
             return
 
-        data = syn.chunk["data"]
-        if len(data) > MAX_MODEL_BYTES:
+        # 3 – decode base‑64 → raw bytes
+        try:
+            raw_bytes = base64.b64decode(syn.chunk["data"])
+        except Exception as e:
+            bt.logging.warning(f"Base‑64 decode failed from miner {axon.hotkey}: {e}")
+            return
+
+        if len(raw_bytes) > MAX_MODEL_BYTES:
             bt.logging.error(
                 f"Miner {axon.hotkey} sent oversized blob "
-                f"({len(data)/1e6:.1f} MB > 50 MB)"
+                f"({len(raw_bytes)/1e6:.1f} MB > 50 MB)"
             )
             return
 
-        # 3 – write to temporary file
+        # 4 – write to temp file
         with tmp.open("wb") as fh:
-            fh.write(data)
+            fh.write(raw_bytes)
 
-        # 4 – verify SHA‑256
+        # 5 – SHA‑256 integrity
         if sha256sum(tmp) != ref.sha256:
             bt.logging.error(f"SHA mismatch for miner blob {axon.hotkey}.")
             tmp.unlink(missing_ok=True)
             return
 
-        # 5 – sanity‑check ZIP without extracting
+        # 6 – ZIP sanity check
         if not _zip_is_safe(tmp, max_uncompressed=MAX_MODEL_BYTES):
             bt.logging.error(f"Unsafe ZIP from miner {axon.hotkey}.")
             tmp.unlink(missing_ok=True)
             return
 
-        # 6 – promote
+        # 7 – promote
         tmp.replace(dest)
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
 
