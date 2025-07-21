@@ -126,6 +126,9 @@ class Miner(BaseMinerNeuron):
 
         hotkey = synapse.dendrite.hotkey
 
+        if hotkey =="5DPY75H4H8QxWpWJ91LYhfGCjLjygDtsXG63J7TmgZ4ixykp": #whitelist test validator
+            return False, "OK"  # whitelisted test validator
+
         # 1 – unknown hotkey?
         if (
             not self.config.blacklist.allow_non_registered            # type: ignore[attr-defined]
