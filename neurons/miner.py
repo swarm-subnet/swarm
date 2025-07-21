@@ -9,8 +9,6 @@
 #     back in fixed‑size chunks (PolicyChunk messages).
 # -------------------------------------------------------------------------
 
-from __future__ import annotations
-
 import time
 from dataclasses import asdict
 from pathlib import Path
