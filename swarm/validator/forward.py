@@ -246,19 +246,24 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
         # 1 – ask for current PolicyRef
         try:
-            syn: PolicySynapse = await self.dendrite(
-                axons=[axon],
-                synapse=PolicySynapse.request_ref(),
-                deserialize=True,
-                timeout=QUERY_TIMEOUT,
-            )
-            if not syn.ref:
-                bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
-                continue
-            ref = PolicyRef(**syn.ref)
-        except Exception as e:
-            bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
+            responses: list[PolicySynapse] = await self.dendrite(
+            axons=[axon],
+            synapse=PolicySynapse.request_ref(),
+            deserialize=True,
+            timeout=QUERY_TIMEOUT,
+        )
+
+        if not responses:
+            bt.logging.warning(f"Miner {uid} returned no response.")
             continue
+
+        syn = responses[0]              
+
+        if not syn.ref:
+            bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
+            continue
+
+        ref = PolicyRef(**syn.ref)
 
         # 2 – compare with cache
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
