@@ -187,3 +187,4 @@ cython_debug/
 
 testing/
 data/mongodb_data/
+swarm_venv/

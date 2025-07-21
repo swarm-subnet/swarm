@@ -22,20 +22,26 @@
 - Moving goal-pole (linear / circular path).  
 - Collision penalties + no-fly zones.
 
-## Stage 3 – High-Fidelity Simulation (“Simulation Jump")
+## Stage 3 – Real world testing
+**Goal** To validate Swarm Miner's algorithms on real hardware, we will run trials with physical drones in realistic settings. The roadmap is:
+
+- **Sensor‑network adaptation:** Tune the SN so it meets all operational requirements for autonomous flight on actual drones.
+- **Initial proof‑of‑concept flights:** Begin with straightforward indoor missions in a controlled, well‑instrumented test environment.
+
+## Stage 4 – High-Fidelity Simulation ("Simulation Jump")
 **Goal** Narrow the Sim-to-Real gap.
 
 **🚀 Migration Path:** PyBullet ➜ New Simulator (TBD)  
 **🔍 Details:** Explore Gazebo, Airsim, Flightmare , Pegasus… and zero in on the ultimate real-world simulation platform!  
 
-## Stage 4 – Generic drone flight (“Random Drone”)
+## Stage 5 – Generic drone flight ("Random Drone")
 **Goal** Enable miners to competently operate a variety of commercially available drones—each with its own weight, power output, battery capacity, and flight dynamics.
 
 **Additions**  
 - A training fleet that includes multiple real-world drone models, covering a broad spectrum of sizes and performance characteristics
 - At this point we will start to talk to real business to adapt the SN output to their needs  
 
-## Stage 5 – Long-Range Navigation (“Travel Missions”)
+## Stage 6 – Long-Range Navigation ("Travel Missions")
 **Goal** Test endurance, GPS-denied odometry and multi-map stitching.
 
 **Additions**  
@@ -43,7 +49,7 @@
 - Mid-point recharging pads (energy budgeting becomes critical).  
 - Magnetometer & barometer sensor noise models.
 
-## Stage 6 – Interceptor
+## Stage 7 – Interceptor
 **Goal** Intercept another drone 
 
 - **Objective:** Your miner drone must lock onto and intercept a scripted target path **within the time budget**.  
@@ -51,13 +57,6 @@
   - ⏱️ **Capture-Time:** Faster intercepts score higher.  
   - 🛡️ **Safety:** Zero collisions—keep it clean and precise.  
 
-
-## Stage 7 – Controlled Real-World Pilots
-**Goal** Validate that Swarm-trained policies survive reality.
-
-**Track 6-R (Research)**  
-- Indoor motion-capture lab, Linux-based autopilot.  
-- Automated log upload → on-chain notarisation of real-world flights.
 
 ## Stage 8 – Commercial Partnerships & Services
 **Goal** Translate open research gains into sustainable value streams. We'll pitch (likely this will start around phase 5) to:
@@ -80,5 +79,4 @@
 | 2026 H2  | 5                |
 | 2027 H1  | 6                |
 | 2027 H2+ | 7, 8                |
-
 

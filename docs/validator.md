@@ -9,7 +9,7 @@ This document shows how to install and operate the Swarm validator that evaluate
 |----------|---------|--------------------------------------|
 | CPU      | 3 cores  | Miners are evaluated 1 by 1, no no need for much spec |
 | RAM      | 8 GB     |                     |
-| Disk     | 20 GB     | Environment                   |
+| Disk     | 50 GB     | Environment                   |
 | GPU      | none     |  |
 
 **Supported & tested Linux distros:**
@@ -101,6 +101,7 @@ pm2 start --name auto_update_validator \
           scripts/validator/update/auto_update_deploy.sh
 ```
 
+
 ## 🧩 5 · What the validator actually does (v2.2)
 
 1. **Build a secret task**  
@@ -142,6 +143,6 @@ Everything is orchestrated by the coroutine
 
 ## 🆘 Support
 
-- Discord: #swarm-dev – ping @Miguelikk
+- Discord: #swarm-dev – ping @Miguelikk or @AliSaaf
 
 Happy validating! 🚀
