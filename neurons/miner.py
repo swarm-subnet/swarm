@@ -78,7 +78,7 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     #  Main RPC endpoint
     # ------------------------------------------------------------------
-     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
+    async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
         """
         • need_blob absent / False → return PolicyRef  
         • need_blob True            → stream PolicyChunk bytes
