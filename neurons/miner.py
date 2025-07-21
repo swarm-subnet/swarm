@@ -81,25 +81,21 @@ class Miner(BaseMinerNeuron):
     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
         """
         • need_blob absent / False → return PolicyRef  
-        • need_blob True            → stream PolicyChunk bytes
+        • need_blob True          → return a single PolicyChunk
         """
         try:
             vk = getattr(synapse.dendrite, "hotkey", "<??>")
             ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
 
-            # (2) — validator asked for the binary
+            # --- validator is asking for the binary -------------------
             if synapse.need_blob:
-                ColoredLogger.info("Streaming model …", ColoredLogger.BLUE)
-                for data in iter_chunks(self.POLICY_PATH):
-                    await synapse.dendrite.send(      # streaming back
-                        PolicySynapse.from_chunk(
-                            PolicyChunk(sha256=self._sha256, data=data)
-                        )
-                    )
-                ColoredLogger.success("Stream finished.", ColoredLogger.GREEN)
-                return PolicySynapse()                # empty reply ends stream
+                ColoredLogger.info("Sending full model blob …", ColoredLogger.BLUE)
+                data = self.POLICY_PATH.read_bytes()
+                return PolicySynapse.from_chunk(
+                    PolicyChunk(sha256=self._sha256, data=data)
+                )
 
-            # (1) — normal handshake → send manifest
+            # --- normal handshake: send manifest ----------------------
             ref = PolicyRef(
                 sha256     = self._sha256,
                 entrypoint = self.ENTRYPOINT,
@@ -109,9 +105,10 @@ class Miner(BaseMinerNeuron):
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
             return PolicySynapse.from_ref(ref)
 
-        except Exception as e:
+        except Exception as e:                     # defensive – never crash
             bt.logging.error(f"Miner forward error: {e}")
-            return PolicySynapse()    # defensive empty reply
+            return PolicySynapse()                 # empty reply
+
         
     # ------------------------------------------------------------------
     #  Black‑list logic (unchanged except for type names)

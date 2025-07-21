@@ -170,69 +170,63 @@ def _run_episode(
 # ──────────────────────────────────────────────────────────────────────────
 async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
     """
-    Stream a .zip from *axon* into *dest* atomically, enforcing size caps.
-    Uses Dendrite.call_stream() (SDK v2) instead of the removed .stream().
+    Ask the miner for the full ZIP in one message and save it to *dest*.
+    All the usual size / hash / safety checks are still enforced.
     """
     tmp = dest.with_suffix(".part")
     tmp.unlink(missing_ok=True)
-    received = 0
 
     try:
-        # open a streaming connection and iterate over the chunks
-        async for msg in self.dendrite.call_stream(               # <- NEW
-            target_axon = axon,
-            synapse     = PolicySynapse.request_blob(),           # ask for the blob
-            timeout     = QUERY_TIMEOUT,
+        # 1 – request the blob (need_blob=True)
+        responses = await self.dendrite(
+            axons       = [axon],
+            synapse     = PolicySynapse.request_blob(),
             deserialize = True,
-        ):
-            # The very last message is the closing PolicySynapse (no chunk).
-            if not msg or not msg.chunk:
-                continue
+            timeout     = QUERY_TIMEOUT,
+        )
 
-            chunk = msg.chunk["data"]
-            received += len(chunk)
-
-            # (1) hard cap on compressed size
-            if received > MAX_MODEL_BYTES:
-                bt.logging.error(
-                    f"Miner {axon.hotkey} sent oversized blob "
-                    f"({received/1e6:.1f} MB > 50 MB). Aborting."
-                )
-                tmp.unlink(missing_ok=True)
-                return
-
-            with tmp.open("ab") as fh:
-                fh.write(chunk)
-
-        # (2) verify compressed size
-        if tmp.stat().st_size > MAX_MODEL_BYTES:
-            bt.logging.error(
-                f"Compressed ZIP from {axon.hotkey} exceeds 50 MB "
-                f"({tmp.stat().st_size/1e6:.1f} MB)."
-            )
-            tmp.unlink(missing_ok=True)
+        if not responses:
+            bt.logging.warning(f"Miner {axon.hotkey} sent no reply to blob request")
             return
 
-        # (3) SHA‑256 integrity check
+        syn = responses[0]
+
+        # 2 – basic validation of the reply
+        if not syn.chunk or "data" not in syn.chunk:
+            bt.logging.warning(f"Miner {axon.hotkey} reply lacked chunk data")
+            return
+
+        data = syn.chunk["data"]
+        if len(data) > MAX_MODEL_BYTES:
+            bt.logging.error(
+                f"Miner {axon.hotkey} sent oversized blob "
+                f"({len(data)/1e6:.1f} MB > 50 MB)"
+            )
+            return
+
+        # 3 – write to temporary file
+        with tmp.open("wb") as fh:
+            fh.write(data)
+
+        # 4 – verify SHA‑256
         if sha256sum(tmp) != ref.sha256:
             bt.logging.error(f"SHA mismatch for miner blob {axon.hotkey}.")
             tmp.unlink(missing_ok=True)
             return
 
-        # (4) dry inspection of ZIP (no extraction)
+        # 5 – sanity‑check ZIP without extracting
         if not _zip_is_safe(tmp, max_uncompressed=MAX_MODEL_BYTES):
             bt.logging.error(f"Unsafe ZIP from miner {axon.hotkey}.")
             tmp.unlink(missing_ok=True)
             return
 
-        # passed all checks → promote
+        # 6 – promote
         tmp.replace(dest)
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
 
     except Exception as e:
-        bt.logging.warning(f"Streaming error ({axon.hotkey}): {e}")
+        bt.logging.warning(f"Download error ({axon.hotkey}): {e}")
         tmp.unlink(missing_ok=True)
-
 
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
