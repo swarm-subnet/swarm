@@ -256,6 +256,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
             if not responses:
                 bt.logging.warning(f"Miner {uid} returned no response.")
                 continue
+            print(f"Miner {uid} returned {len(responses)} responses {responses}")
 
             syn = responses[0]              # <- get the first PolicySynapse
 
