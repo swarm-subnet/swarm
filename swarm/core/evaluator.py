@@ -9,23 +9,24 @@ import os
 import json
 import gc
 import traceback
+import resource
 from pathlib import Path
+
+# Add swarm to path BEFORE importing swarm modules
+swarm_path = str(Path(__file__).resolve().parent.parent.parent)
+if swarm_path not in sys.path:
+    sys.path.insert(0, swarm_path)
+
 from stable_baselines3 import PPO
 from dataclasses import asdict
 from swarm.protocol import MapTask
-import resource
-import logging
-from swarm.validator.forward import _run_episode
 
-# Add swarm to path  
-swarm_path = str(Path(__file__).resolve().parent.parent)
-if swarm_path not in sys.path:
-    sys.path.insert(0, swarm_path)
 
 def main():
     """Main evaluator entry point"""
     
     # Disable all logging to prevent any logging threads
+    import logging
     logging.disable(logging.CRITICAL)
     
     # Redirect stderr to suppress output
@@ -44,7 +45,7 @@ def main():
         
         # Set memory limits
         try:
-            SUBPROC_MEM_MB = 4096
+            SUBPROC_MEM_MB = 8192
             rss_bytes = SUBPROC_MEM_MB * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (rss_bytes, rss_bytes))
             resource.setrlimit(resource.RLIMIT_DATA, (rss_bytes, rss_bytes))
@@ -61,13 +62,23 @@ def main():
         model = PPO.load(model_path, device="cpu")
         
         # Import and run episode  
-        
+        from swarm.validator.forward import _run_episode
         result = _run_episode(task, uid, model)
         
         # Write result to file
         tmp_file = result_file + ".tmp"
+        result_dict = asdict(result)
+        # Convert numpy types to Python types for JSON serialization
+        for key, value in result_dict.items():
+            if key == 'success':
+                result_dict[key] = bool(value)
+            elif hasattr(value, 'item'):
+                result_dict[key] = value.item()
+            elif isinstance(value, (int, float)) and hasattr(value, '__float__'):
+                result_dict[key] = float(value)
+        
         with open(tmp_file, 'w') as f:
-            json.dump(asdict(result), f)
+            json.dump(result_dict, f)
         
         # Atomic rename
         os.rename(tmp_file, result_file)
@@ -79,14 +90,16 @@ def main():
         sys.exit(0)
         
     except Exception as e:
-        # Write error result
+        # Write error result with full traceback
+        import traceback
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
         error_result = {
             'uid': uid if 'uid' in locals() else 0,
             'success': False,
             'time_sec': 0.0,
             'energy': 0.0,
             'score': 0.0,
-            'error': str(e)
+            'error': error_msg
         }
         
         try:
