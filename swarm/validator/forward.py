@@ -311,82 +311,126 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
 def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
     """
-    Public wrapper: spawns sandboxed subprocess, enforces timeout,
-    returns ValidationResult (score 0 on any failure).
+    Spawn the standalone evaluator in a sandboxed subprocess, enforce a timeout,
+    and return a ValidationResult.
+
+    ─────────────────────────────────────────────────────────────────────────────
+    Key behaviour
+    ─────────────────────────────────────────────────────────────────────────────
+    1. Temporary files are stored under ./tmp (created if necessary, otherwise
+       we fall back to the system temp directory).
+    2. Temporary files are always deleted in the finally‑block.
+    3. If the evaluator reports success but a score of exactly 0.0, we bump it
+       to 0.01 to acknowledge a correct setup.  All other cases (errors, parse
+       failures, timeouts, etc.) return a 0.0 score.
     """
-    print(f"🔬 DEBUG: _evaluate_uid called for UID {uid}, model: {model_fp}")  # Temporary debug
-    
-    # create unique temporary files for this evaluation
-    temp_dir = Path(tempfile.gettempdir())
-    unique_id = f"{int(time.time() * 1000000)}_{os.getpid()}_{uid}_{uuid.uuid4().hex[:8]}"
-    task_file = temp_dir / f"swarm_task_{unique_id}.json"
-    result_file = temp_dir / f"swarm_result_{unique_id}.json"
-    
-    print(f"📁 DEBUG: Using temp files: {task_file}, {result_file}")  # Temporary debug
-    
+
+    print(f"🔬 DEBUG: _evaluate_uid called for UID {uid}, model: {model_fp}")
+
+    # ------------------------------------------------------------------
+    # 1. Resolve ./tmp directory (use system tmp if creation fails)
+    # ------------------------------------------------------------------
     try:
-        # write task to temporary file  
-        with open(task_file, 'w') as f:
+        tmp_dir = Path.cwd() / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        bt.logging.warning(f"Could not create ./tmp directory: {e}. Falling back to system tmp.")
+        tmp_dir = Path(tempfile.gettempdir())
+
+    unique_id   = f"{int(time.time() * 1_000_000)}_{os.getpid()}_{uid}_{uuid.uuid4().hex[:8]}"
+    task_file   = tmp_dir / f"swarm_task_{unique_id}.json"
+    result_file = tmp_dir / f"swarm_result_{unique_id}.json"
+    print(f"📁 DEBUG: Using temp files: {task_file}, {result_file}")
+
+    try:
+        # --------------------------------------------------------------
+        # Write task to disk for the evaluator subprocess
+        # --------------------------------------------------------------
+        with task_file.open("w") as f:
             json.dump(asdict(task), f)
-        
-        # path to evaluator script
+
+        # --------------------------------------------------------------
+        # Build subprocess command
+        # --------------------------------------------------------------
         evaluator_script = Path(__file__).parent.parent / "core" / "evaluator.py"
         if not evaluator_script.exists():
             bt.logging.error(f"Evaluator script not found at {evaluator_script}")
             return ValidationResult(uid, False, 0.0, 0.0, 0.0)
-        
-        # run subprocess
+
         cmd = [
-            sys.executable, str(evaluator_script),
-            str(task_file), str(uid), str(model_fp), str(result_file)
+            sys.executable,
+            str(evaluator_script),
+            str(task_file),
+            str(uid),
+            str(model_fp),
+            str(result_file),
         ]
-        
-        result = subprocess.run(
+
+        # ------------------------------------------------
+        # Launch evaluator (with timeout guard)
+        # ------------------------------------------------
+        proc = subprocess.run(
             cmd,
             timeout=EVAL_TIMEOUT_SEC,
             capture_output=True,
-            text=True
+            text=True,
         )
-        
-        # check if evaluation completed successfully
+
+        # ------------------------------------------------
+        # Process evaluator output
+        # ------------------------------------------------
         if result_file.exists():
             try:
-                with open(result_file, 'r') as f:
+                with result_file.open("r") as f:
                     data = json.load(f)
-                
-                # if error field present, it was an exception
-                if 'error' in data:
+
+                if "error" in data:
                     bt.logging.debug(f"Subprocess error for UID {uid}: {data['error']}")
-                
-                # create ValidationResult from data (excluding error field)
-                result_data = {k: v for k, v in data.items() if k != 'error'}
+
+                result_data = {k: v for k, v in data.items() if k != "error"}
+
+                # ───── Reward‑floor logic (only when success=True) ─────
+                if (
+                    result_data.get("success", False)
+                    and float(result_data.get("score", 0.0)) == 0.0
+                ):
+                    bt.logging.debug(f"UID {uid} score is 0 → bumping to 0.01")
+                    result_data["score"] = 0.01
+
                 return ValidationResult(**result_data)
-                
+
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 bt.logging.warning(f"Failed to parse result file for UID {uid}: {e}")
+
         else:
-            if result.returncode != 0:
-                bt.logging.warning(f"Subprocess failed for UID {uid}, returncode: {result.returncode}")
-                if result.stderr:
-                    bt.logging.debug(f"Subprocess stderr: {result.stderr}")
+            # The subprocess ended but produced no result file
+            if proc.returncode != 0:
+                bt.logging.warning(f"Subprocess failed for UID {uid}, returncode={proc.returncode}")
+                if proc.stderr:
+                    bt.logging.debug(f"Subprocess stderr: {proc.stderr}")
             else:
                 bt.logging.warning(f"No result file found for UID {uid}")
-            
+
     except subprocess.TimeoutExpired:
-        bt.logging.warning(f"Miner {uid} exceeded {EVAL_TIMEOUT_SEC}s timeout")
+        bt.logging.warning(f"Miner {uid} exceeded timeout of {EVAL_TIMEOUT_SEC}s")
     except Exception as e:
         bt.logging.warning(f"Subprocess evaluation failed for UID {uid}: {e}")
-        
+
     finally:
-        # cleanup temporary files
-        for temp_file in [task_file, result_file]:
+        # -----------------------------------------------------------
+        # 2. Always delete temporary files
+        # -----------------------------------------------------------
+        for tmp in (task_file, result_file):
             try:
-                temp_file.unlink(missing_ok=True)
+                tmp.unlink(missing_ok=True)
             except Exception:
                 pass
 
-    print(f"⚠️  DEBUG: Fallback result for UID {uid} - giving 0.01 reward to show cycle worked")
-    return ValidationResult(uid, False, 0.0, 0.0, 0.01)
+    print(f"⚠️  DEBUG: Fallback result for UID {uid} – giving 0.0 reward (error path)")
+    # ────────────────────────────────────────────────────────────────────
+    # Final fallback (evaluation failed entirely)  →  score = 0.0
+    # ────────────────────────────────────────────────────────────────────
+    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────
