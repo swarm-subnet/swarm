@@ -37,7 +37,9 @@ from swarm.constants import (
     SAMPLE_K,
     QUERY_TIMEOUT,
     FORWARD_SLEEP_SEC,
-    BURN_EMISSIONS
+    BURN_EMISSIONS,
+    MAX_MODEL_BYTES,
+    EVAL_TIMEOUT_SEC
 )
 
 BURN_FRACTION  = 0.90            # 90 % burn (weight for UID 0)
@@ -49,9 +51,9 @@ UID_ZERO       = 0
 # ──────────────────────────────────────────────────────────────────────────
 MODEL_DIR         = Path("miner_models")           # all zips stored here
 CHUNK_SIZE        = 2 << 20                        # 2 MiB
-MAX_MODEL_BYTES   = 50 * 1024 * 1024               # 50 MiB compressed cap
-EVAL_TIMEOUT_SEC  = 30.0                           # wall‑clock timeout
-SUBPROC_MEM_MB    = 4096                            # RSS limit per subprocess
+# MAX_MODEL_BYTES now imported from constants.py
+# EVAL_TIMEOUT_SEC now imported from constants.py
+SUBPROC_MEM_MB    = 8192                            # RSS limit per subprocess
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  Helpers – secure ZIP inspection
@@ -389,13 +391,14 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
 
                 result_data = {k: v for k, v in data.items() if k != "error"}
 
-                # ───── Reward‑floor logic (only when success=True) ─────
-                if (
-                    result_data.get("success", False)
-                    and float(result_data.get("score", 0.0)) == 0.0
-                ):
+                # DEBUG: Show actual result data
+                print(f"🔍 DEBUG: UID {uid} result_data: {result_data}")
+
+                # ───── Reward‑floor logic (evaluator completed successfully) ─────
+                if float(result_data.get("score", 0.0)) == 0.0:
                     bt.logging.debug(f"UID {uid} score is 0 → bumping to 0.01")
                     result_data["score"] = 0.01
+                    print(f"🎯 DEBUG: UID {uid} score bumped to 0.01!")
 
                 return ValidationResult(**result_data)
 
@@ -475,13 +478,13 @@ async def forward(self) -> None:
 
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
-        print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")  # Temporary debug
+        print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")
 
         # ------------------------------------------------------------------
         # 3. sandboxed evaluation
-        print(f"🚀 DEBUG: Starting evaluation for {len(model_paths)} models")  # Temporary debug
+        print(f"🚀 DEBUG: Starting evaluation for {len(model_paths)} models")
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
-        print(f"✅ DEBUG: Evaluation completed, got {len(results)} results")  # Temporary debug
+        print(f"✅ DEBUG: Evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
             await asyncio.sleep(FORWARD_SLEEP_SEC)
