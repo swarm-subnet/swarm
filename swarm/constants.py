@@ -13,7 +13,6 @@ FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
 EMA_ALPHA           = 0.20      # weights EMA coefficient
 FORWARD_SLEEP_SEC = 300  # pause between forwards (s)
 
-WAYPOINT_TOL = 1      # landing success radius  
 HOVER_SEC    = 3      # legacy constant (no longer used for landing)
 CAM_HZ       = 60     # camera update rate (Hz)
 PROP_EFF     = 0.60   # propeller efficiency 
@@ -25,8 +24,8 @@ SAFE_Z: float   = 3     # cruise altitude (m)
 GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
-R_MIN, R_MAX = 0, 30          # radial goal distance (m)
-H_MIN, H_MAX = 0, 30          # radial goal distance (m)
+R_MIN, R_MAX = 0, 5          # radial goal distance (m)
+H_MIN, H_MAX = 0, 5          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk
 BURN_EMISSIONS = True  # burn emissions in the validator

@@ -37,7 +37,6 @@ from swarm.constants import (
     SAMPLE_K,
     QUERY_TIMEOUT,
     FORWARD_SLEEP_SEC,
-    GOAL_TOL,
     BURN_EMISSIONS
 )
 
@@ -386,7 +385,6 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
             except Exception:
                 pass
 
-    # fallback → score 0.01 (debug reward to show cycle worked)
     print(f"⚠️  DEBUG: Fallback result for UID {uid} - giving 0.01 reward to show cycle worked")
     return ValidationResult(uid, False, 0.0, 0.0, 0.01)
 

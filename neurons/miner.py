@@ -10,7 +10,6 @@
 # -------------------------------------------------------------------------
 
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
 import base64
@@ -20,7 +19,6 @@ import bittensor as bt
 from swarm.base.miner import BaseMinerNeuron
 from swarm.protocol import PolicySynapse, PolicyRef, PolicyChunk
 from swarm.utils.hash import sha256sum
-from swarm.utils.chunking import iter_chunks
 
 # Optional coloured logging – fall back gracefully if unavailable
 try:

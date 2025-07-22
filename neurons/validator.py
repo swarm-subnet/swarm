@@ -34,20 +34,8 @@ from datetime import datetime
 import swarm
 
 from loguru import logger
-
-# ─────────── Environment variables loading ─────────────
-try:
-    from dotenv import load_dotenv
-    DOTENV_AVAILABLE = True
-except ImportError:
-    DOTENV_AVAILABLE = False
-
-# ─────────── Wandb integration ─────────────
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+from dotenv import load_dotenv
+import wandb
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -67,16 +55,16 @@ class WandbHelper:
         self.wandb_run = None
         self.enabled = False
         
-        if WANDB_AVAILABLE:
-            self._init_wandb()
+        
+        self._init_wandb()
 
     def _init_wandb(self) -> None:
         """Initialize wandb run silently."""
         try:
             # Load environment variables for API key
-            if DOTENV_AVAILABLE:
-                load_dotenv(dotenv_path=os.path.join(os.getcwd(), '.env'))
-                bt.logging.debug("Environment variables loaded from .env file")
+            
+            load_dotenv(dotenv_path=os.path.join(os.getcwd(), '.env'))
+            bt.logging.debug("Environment variables loaded from .env file")
             
             # Check if API key is available
             api_key = os.getenv('WANDB_API_KEY')
@@ -271,21 +259,20 @@ class Validator(BaseValidatorNeuron):
         
         # Initialize wandb logging
         self.wandb_helper: Optional[WandbHelper] = None
-        if WANDB_AVAILABLE:
-            try:
-                bt.logging.debug("Initializing Wandb helper")
-                self.wandb_helper = WandbHelper(
-                    validator_uid=self.uid,
-                    hotkey=self.wallet.hotkey.ss58_address,
-                    version=swarm.__version__
-                )
-                if self.wandb_helper.enabled:
-                    bt.logging.info("✅ Wandb logging enabled")
-                else:
-                    bt.logging.debug("Wandb helper created but disabled (no API key)")
-            except Exception as e:
-                bt.logging.debug(f"Wandb initialization failed: {e}")
-                self.wandb_helper = None
+        try:
+            bt.logging.debug("Initializing Wandb helper")
+            self.wandb_helper = WandbHelper(
+                validator_uid=self.uid,
+                hotkey=self.wallet.hotkey.ss58_address,
+                version=swarm.__version__
+            )
+            if self.wandb_helper.enabled:
+                bt.logging.info("✅ Wandb logging enabled")
+            else:
+                bt.logging.debug("Wandb helper created but disabled (no API key)")
+        except Exception as e:
+            bt.logging.debug(f"Wandb initialization failed: {e}")
+            self.wandb_helper = None
         else:
             bt.logging.debug("Wandb not available")
 

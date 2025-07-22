@@ -13,6 +13,9 @@ from pathlib import Path
 from stable_baselines3 import PPO
 from dataclasses import asdict
 from swarm.protocol import MapTask
+import resource
+import logging
+from swarm.validator.forward import _run_episode
 
 # Add swarm to path  
 swarm_path = str(Path(__file__).resolve().parent.parent)
@@ -23,7 +26,6 @@ def main():
     """Main evaluator entry point"""
     
     # Disable all logging to prevent any logging threads
-    import logging
     logging.disable(logging.CRITICAL)
     
     # Redirect stderr to suppress output
@@ -42,7 +44,6 @@ def main():
         
         # Set memory limits
         try:
-            import resource
             SUBPROC_MEM_MB = 4096
             rss_bytes = SUBPROC_MEM_MB * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (rss_bytes, rss_bytes))
@@ -60,7 +61,7 @@ def main():
         model = PPO.load(model_path, device="cpu")
         
         # Import and run episode  
-        from swarm.validator.forward import _run_episode
+        
         result = _run_episode(task, uid, model)
         
         # Write result to file
