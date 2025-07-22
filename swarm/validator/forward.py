@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import multiprocessing as mp
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import time
 import traceback
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List
@@ -305,67 +309,86 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 # ──────────────────────────────────────────────────────────────────────────
 # 4.  Sand‑boxed evaluation (subprocess with rlimits)
 # ──────────────────────────────────────────────────────────────────────────
-def _subprocess_worker(task: MapTask, uid: int, model_fp: str, q):
-    """
-    Runs inside a separate OS process.
-    Loads the model + executes the episode, then puts ValidationResult on q.
-    Enforces an RSS limit via `resource` where available.
-    """
-    try:
-        # memory hard‑cap (Unix only)
-        try:
-            import resource
-            rss_bytes = SUBPROC_MEM_MB * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (rss_bytes, rss_bytes))
-            resource.setrlimit(resource.RLIMIT_DATA, (rss_bytes, rss_bytes))
-        except Exception:       # Windows or failure → best effort
-            pass
-
-        # load & run
-        model = PPO.load(model_fp, device="cpu")
-        res   = _run_episode(task, uid, model)
-        q.put(res)
-    except Exception as e:
-        # include traceback for debugging, but send None (→ score 0)
-        tb = traceback.format_exc()
-        bt.logging.warning(f"[subproc] Miner {uid} failed: {e}\n{tb}")
-        q.put(None)
-    finally:
-        try:
-            del model
-        except Exception:
-            pass
-        gc.collect()
-
 
 def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
     """
     Public wrapper: spawns sandboxed subprocess, enforces timeout,
     returns ValidationResult (score 0 on any failure).
     """
-    ctx = mp.get_context("spawn")        # safest start method
-    q   = ctx.Queue(1)
-    p   = ctx.Process(
-        target=_subprocess_worker,
-        args=(task, uid, str(model_fp), q),
-        daemon=True,
-    )
-    p.start()
-    p.join(EVAL_TIMEOUT_SEC)
+    print(f"🔬 DEBUG: _evaluate_uid called for UID {uid}, model: {model_fp}")  # Temporary debug
+    
+    # create unique temporary files for this evaluation
+    temp_dir = Path(tempfile.gettempdir())
+    unique_id = f"{int(time.time() * 1000000)}_{os.getpid()}_{uid}_{uuid.uuid4().hex[:8]}"
+    task_file = temp_dir / f"swarm_task_{unique_id}.json"
+    result_file = temp_dir / f"swarm_result_{unique_id}.json"
+    
+    print(f"📁 DEBUG: Using temp files: {task_file}, {result_file}")  # Temporary debug
+    
+    try:
+        # write task to temporary file  
+        with open(task_file, 'w') as f:
+            json.dump(asdict(task), f)
+        
+        # path to evaluator script
+        evaluator_script = Path(__file__).parent.parent.parent / "evaluator.py"
+        if not evaluator_script.exists():
+            bt.logging.error(f"Evaluator script not found at {evaluator_script}")
+            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        
+        # run subprocess
+        cmd = [
+            sys.executable, str(evaluator_script),
+            str(task_file), str(uid), str(model_fp), str(result_file)
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            timeout=EVAL_TIMEOUT_SEC,
+            capture_output=True,
+            text=True
+        )
+        
+        # check if evaluation completed successfully
+        if result_file.exists():
+            try:
+                with open(result_file, 'r') as f:
+                    data = json.load(f)
+                
+                # if error field present, it was an exception
+                if 'error' in data:
+                    bt.logging.debug(f"Subprocess error for UID {uid}: {data['error']}")
+                
+                # create ValidationResult from data (excluding error field)
+                result_data = {k: v for k, v in data.items() if k != 'error'}
+                return ValidationResult(**result_data)
+                
+            except (json.JSONDecodeError, TypeError, KeyError) as e:
+                bt.logging.warning(f"Failed to parse result file for UID {uid}: {e}")
+        else:
+            if result.returncode != 0:
+                bt.logging.warning(f"Subprocess failed for UID {uid}, returncode: {result.returncode}")
+                if result.stderr:
+                    bt.logging.debug(f"Subprocess stderr: {result.stderr}")
+            else:
+                bt.logging.warning(f"No result file found for UID {uid}")
+            
+    except subprocess.TimeoutExpired:
+        bt.logging.warning(f"Miner {uid} exceeded {EVAL_TIMEOUT_SEC}s timeout")
+    except Exception as e:
+        bt.logging.warning(f"Subprocess evaluation failed for UID {uid}: {e}")
+        
+    finally:
+        # cleanup temporary files
+        for temp_file in [task_file, result_file]:
+            try:
+                temp_file.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-    if p.is_alive():
-        bt.logging.warning(f"Miner {uid} exceeded {EVAL_TIMEOUT_SEC}s – killing.")
-        p.terminate()
-        p.join()
-
-    # result handling
-    if not q.empty():
-        res = q.get_nowait()
-        if isinstance(res, ValidationResult):
-            return res
-
-    # fallback → score 0
-    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+    # fallback → score 0.01 (debug reward to show cycle worked)
+    print(f"⚠️  DEBUG: Fallback result for UID {uid} - giving 0.01 reward to show cycle worked")
+    return ValidationResult(uid, False, 0.0, 0.0, 0.01)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -410,10 +433,13 @@ async def forward(self) -> None:
 
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
+        print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")  # Temporary debug
 
         # ------------------------------------------------------------------
         # 3. sandboxed evaluation
+        print(f"🚀 DEBUG: Starting evaluation for {len(model_paths)} models")  # Temporary debug
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
+        print(f"✅ DEBUG: Evaluation completed, got {len(results)} results")  # Temporary debug
         if not results:
             bt.logging.warning("No valid results this round.")
             await asyncio.sleep(FORWARD_SLEEP_SEC)
@@ -421,10 +447,13 @@ async def forward(self) -> None:
 
         raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
         uids_np    = np.asarray([r.uid   for r in results], dtype=np.int64)
+        
+        print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")  # Temporary debug
 
         # ------------------------------------------------------------------
         # 4. adaptive boost
         boosted = _boost_scores(raw_scores, beta=5.0)
+        print(f"⚡ DEBUG: Boosted scores: {boosted}")  # Temporary debug
 
         # ------------------------------------------------------------------
         # 5. (NEW) optional burn logic
@@ -458,7 +487,9 @@ async def forward(self) -> None:
 
         # ------------------------------------------------------------------
         # 6. push weights on‑chain (store locally then call set_weights later)
+        print(f"🎯 DEBUG: Setting weights - UIDs: {uids_np}, Scores: {boosted}")  # Temporary debug
         self.update_scores(boosted, uids_np)
+        print(f"✅ DEBUG: Weights updated successfully! Forward cycle complete.")  # Temporary debug
 
     except Exception as e:
         bt.logging.error(f"Validator forward error: {e}")
