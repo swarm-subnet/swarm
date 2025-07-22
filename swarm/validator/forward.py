@@ -256,6 +256,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
             if not syn.ref:
                 bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
                 continue
+            bt.logging.warning(f"Miner {uid} returned PolicyRef.")
 
             ref = PolicyRef(**syn.ref)
         except Exception as e:
@@ -270,6 +271,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                 model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
+                bt.logging.warning(f"Miner {uid} cached model")
                 paths[uid] = model_fp
                 continue
             else:
@@ -277,7 +279,9 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                 model_fp.unlink(missing_ok=True)
 
         # 3 – request payload
+        bt.logging.warning(f"Miner {uid} downloading model")
         await _download_model(self, axon, ref, model_fp)
+        bt.logging.warning(f"Miner {uid} downloaded model")
         if (
             model_fp.exists()
             and sha256sum(model_fp) == ref.sha256
