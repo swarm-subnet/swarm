@@ -51,8 +51,6 @@ UID_ZERO       = 0
 # ──────────────────────────────────────────────────────────────────────────
 MODEL_DIR         = Path("miner_models")           # all zips stored here
 CHUNK_SIZE        = 2 << 20                        # 2 MiB
-# MAX_MODEL_BYTES now imported from constants.py
-# EVAL_TIMEOUT_SEC now imported from constants.py
 SUBPROC_MEM_MB    = 8192                            # RSS limit per subprocess
 
 # ──────────────────────────────────────────────────────────────────────────
