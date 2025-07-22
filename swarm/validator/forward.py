@@ -363,14 +363,15 @@ async def forward(self) -> None:
         # ------------------------------------------------------------------
         # 2. sample miners & secure their models
         uids = get_random_uids(self, k=SAMPLE_K)
-        bt.logging.info(f"Sampled miners: {uids}")
+        bt.logging.warning(f"Sampled miners: {uids}")
 
         model_paths = await _ensure_models(self, uids)
-        bt.logging.info(f"Verified models: {list(model_paths)}")
+        bt.logging.warning(f"Verified models: {list(model_paths)}")
 
         # ------------------------------------------------------------------
         # 3. evaluation *in‑process*
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
+        bt.logging.warning(f"results: {results}")
         if not results:
             bt.logging.warning("No valid results this round.")
             await asyncio.sleep(FORWARD_SLEEP_SEC)
