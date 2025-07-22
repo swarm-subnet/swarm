@@ -331,7 +331,7 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
             json.dump(asdict(task), f)
         
         # path to evaluator script
-        evaluator_script = Path(__file__).parent.parent.parent / "evaluator.py"
+        evaluator_script = Path(__file__).parent.parent / "core" / "evaluator.py"
         if not evaluator_script.exists():
             bt.logging.error(f"Evaluator script not found at {evaluator_script}")
             return ValidationResult(uid, False, 0.0, 0.0, 0.0)

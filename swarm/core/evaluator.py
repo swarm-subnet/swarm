@@ -10,9 +10,12 @@ import json
 import gc
 import traceback
 from pathlib import Path
+from stable_baselines3 import PPO
+from dataclasses import asdict
+from swarm.protocol import MapTask
 
 # Add swarm to path  
-swarm_path = str(Path(__file__).resolve().parent / "swarm")
+swarm_path = str(Path(__file__).resolve().parent.parent)
 if swarm_path not in sys.path:
     sys.path.insert(0, swarm_path)
 
@@ -47,15 +50,10 @@ def main():
         except Exception:
             pass
         
-        # Import required modules (avoiding bt imports)
-        from stable_baselines3 import PPO
-        from dataclasses import asdict
-        
         # Parse task from JSON
         with open(task_json, 'r') as f:
             task_data = json.load(f)
         
-        from swarm.protocol import MapTask
         task = MapTask(**task_data)
         
         # Load model and run evaluation
