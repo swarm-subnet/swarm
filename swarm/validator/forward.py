@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------
-#  Swarm validator – Policy API v2   (hardened, 50 MiB limits)
+#  Swarm validator – Policy API v2  (simplified, no subprocess)
 # ---------------------------------------------------------------
 from __future__ import annotations
 
 import asyncio
+import base64
 import gc
-import multiprocessing as mp
 import os
 import time
 import traceback
@@ -23,7 +23,6 @@ from swarm.protocol import MapTask, PolicySynapse, PolicyRef, ValidationResult
 from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
 from swarm.utils.env_factory import make_env
-import base64
 
 from .task_gen import random_task
 from .reward   import flight_reward
@@ -34,7 +33,7 @@ from swarm.constants import (
     QUERY_TIMEOUT,
     FORWARD_SLEEP_SEC,
     GOAL_TOL,
-    BURN_EMISSIONS
+    BURN_EMISSIONS,
 )
 
 BURN_FRACTION  = 0.90            # 90 % burn (weight for UID 0)
@@ -45,10 +44,7 @@ UID_ZERO       = 0
 # 0.  Global hardening parameters
 # ──────────────────────────────────────────────────────────────────────────
 MODEL_DIR         = Path("miner_models")           # all zips stored here
-CHUNK_SIZE        = 2 << 20                        # 2 MiB
 MAX_MODEL_BYTES   = 50 * 1024 * 1024               # 50 MiB compressed cap
-EVAL_TIMEOUT_SEC  = 30.0                           # wall‑clock timeout
-SUBPROC_MEM_MB    = 16384                            # RSS limit per subprocess
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  Helpers – secure ZIP inspection
@@ -120,8 +116,6 @@ def _run_episode(
     if isinstance(obs, dict):
         obs = obs[next(iter(obs))]
 
-    pos0       = np.asarray(task.start, dtype=float)
-    last_pos   = pos0.copy()
     t_sim      = 0.0
     energy     = 0.0
     success    = False
@@ -134,7 +128,6 @@ def _run_episode(
 
         t_sim   += SIM_DT
         energy  += np.abs(rpm).sum() * SIM_DT
-        last_pos = obs[:3] if obs.ndim == 1 else obs[0, :3]
 
         if gui and step_count % frames_per_cam == 0:
             try:
@@ -154,20 +147,19 @@ def _run_episode(
     if not gui:
         env.close()
 
-    # ── final score with new reward function ──────────────────────────────
+    # ── reward ──────────────────────────────────────────────────────────
     score = flight_reward(
         success = success,
         t       = t_sim,
         e       = energy,
         horizon = task.horizon,
-        # (optionally) tweak e_budget or weightings here if needed
     )
 
     return ValidationResult(uid, success, t_sim, energy, score)
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3.  Secure, cached model download
+# 3.  Secure, cached model download (unchanged)
 # ──────────────────────────────────────────────────────────────────────────
 async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
     """
@@ -235,6 +227,7 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
         bt.logging.warning(f"Download error ({axon.hotkey}): {e}")
         tmp.unlink(missing_ok=True)
 
+
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
     For every UID return the local Path to its latest .zip.
@@ -249,19 +242,17 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
         # 1 – ask for current PolicyRef
         try:
             responses: list[PolicySynapse] = await self.dendrite(
-            axons=[axon],
-            synapse=PolicySynapse.request_ref(),
-            deserialize=True,
-            timeout=QUERY_TIMEOUT,
+                axons=[axon],
+                synapse=PolicySynapse.request_ref(),
+                deserialize=True,
+                timeout=QUERY_TIMEOUT,
             )
 
             if not responses:
                 bt.logging.warning(f"Miner {uid} returned no response.")
                 continue
-            print(f"Miner {uid} returned {len(responses)} responses {responses}")
 
-            syn = responses[0]              # <- get the first PolicySynapse
-
+            syn = responses[0]
             if not syn.ref:
                 bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
                 continue
@@ -275,7 +266,6 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
         up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
         if up_to_date:
-            # confirm cached file is still within limits
             if (
                 model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
@@ -303,73 +293,32 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 4.  Sand‑boxed evaluation (subprocess with rlimits)
+# 4.  Single‑process evaluation helper
 # ──────────────────────────────────────────────────────────────────────────
-def _subprocess_worker(task: MapTask, uid: int, model_fp: str, q):
+def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
     """
-    Runs inside a separate OS process.
-    Loads the model + executes the episode, then puts ValidationResult on q.
-    Enforces an RSS limit via `resource` where available.
+    Load the miner's model and run one episode.
+    Returns a ValidationResult; on any exception the score is 0.
     """
     try:
-        # memory hard‑cap (Unix only)
-        try:
-            import resource
-            rss_bytes = SUBPROC_MEM_MB * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (rss_bytes, rss_bytes))
-            resource.setrlimit(resource.RLIMIT_DATA, (rss_bytes, rss_bytes))
-        except Exception:       # Windows or failure → best effort
-            pass
-        custom_objects = {          # ← add
-            "lr_schedule": 2.5e-4,  #   replace both lambdas by constants
+        bt.logging.debug(f"Loading model for UID {uid} from {model_fp}")
+        custom_objects = {
+            "lr_schedule": 2.5e-4,   # replace lambdas if present
             "clip_range": 0.2,
         }
-        # load & run
-        model = PPO.load(model_fp, device="cpu",
-                 custom_objects=custom_objects)
+        model = PPO.load(model_fp, device="cpu", custom_objects=custom_objects)
         res   = _run_episode(task, uid, model)
-        q.put(res)
+        return res
     except Exception as e:
-        # include traceback for debugging, but send None (→ score 0)
         tb = traceback.format_exc()
-        bt.logging.warning(f"[subproc] Miner {uid} failed: {e}\n{tb}")
-        q.put(None)
+        bt.logging.warning(f"[eval] Miner {uid} failed: {e}\n{tb}")
+        return ValidationResult(uid, False, 0.0, 0.0, 0.0)
     finally:
         try:
             del model
         except Exception:
             pass
         gc.collect()
-
-
-def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
-    """
-    Public wrapper: spawns sandboxed subprocess, enforces timeout,
-    returns ValidationResult (score 0 on any failure).
-    """
-    ctx = mp.get_context("spawn")        # safest start method
-    q   = ctx.Queue(1)
-    p   = ctx.Process(
-        target=_subprocess_worker,
-        args=(task, uid, str(model_fp), q),
-        daemon=True,
-    )
-    p.start()
-    p.join(EVAL_TIMEOUT_SEC)
-
-    if p.is_alive():
-        bt.logging.warning(f"Miner {uid} exceeded {EVAL_TIMEOUT_SEC}s – killing.")
-        p.terminate()
-        p.join()
-
-    # result handling
-    if not q.empty():
-        res = q.get_nowait()
-        if isinstance(res, ValidationResult):
-            return res
-
-    # fallback → score 0
-    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -416,7 +365,7 @@ async def forward(self) -> None:
         bt.logging.info(f"Verified models: {list(model_paths)}")
 
         # ------------------------------------------------------------------
-        # 3. sandboxed evaluation
+        # 3. evaluation *in‑process*
         results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
         if not results:
             bt.logging.warning("No valid results this round.")
@@ -431,24 +380,19 @@ async def forward(self) -> None:
         boosted = _boost_scores(raw_scores, beta=5.0)
 
         # ------------------------------------------------------------------
-        # 5. (NEW) optional burn logic
+        # 5. optional burn logic
         if BURN_EMISSIONS:
-            # ensure UID 0 is present once
             if UID_ZERO in uids_np:
-                # remove it from the evaluation list – we’ll set it manually
                 mask      = uids_np != UID_ZERO
                 boosted   = boosted[mask]
                 uids_np   = uids_np[mask]
 
-            # rescale miner weights so they consume only the KEEP_FRACTION
             total_boost = boosted.sum()
             if total_boost > 0.0:
                 boosted *= KEEP_FRACTION / total_boost
             else:
-                # edge‑case: nobody returned a score > 0
                 boosted = np.zeros_like(boosted)
 
-            # prepend UID 0 with the burn weight
             uids_np   = np.concatenate(([UID_ZERO], uids_np))
             boosted   = np.concatenate(([BURN_FRACTION], boosted))
 
@@ -457,11 +401,10 @@ async def forward(self) -> None:
                 f"{KEEP_FRACTION:.0%} distributed over {len(boosted)-1} miners."
             )
         else:
-            # burn disabled – weights are raw boosted scores
             bt.logging.info("Burn disabled – using boosted weights as is.")
 
         # ------------------------------------------------------------------
-        # 6. push weights on‑chain (store locally then call set_weights later)
+        # 6. push weights on‑chain
         self.update_scores(boosted, uids_np)
 
     except Exception as e:
