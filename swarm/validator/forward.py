@@ -320,9 +320,13 @@ def _subprocess_worker(task: MapTask, uid: int, model_fp: str, q):
             resource.setrlimit(resource.RLIMIT_DATA, (rss_bytes, rss_bytes))
         except Exception:       # Windows or failure → best effort
             pass
-
+        custom_objects = {          # ← add
+            "lr_schedule": 2.5e-4,  #   replace both lambdas by constants
+            "clip_range": 0.2,
+        }
         # load & run
-        model = PPO.load(model_fp, device="cpu")
+        model = PPO.load(model_fp, device="cpu",
+                 custom_objects=custom_objects)
         res   = _run_episode(task, uid, model)
         q.put(res)
     except Exception as e:
