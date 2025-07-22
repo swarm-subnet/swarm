@@ -27,8 +27,8 @@ SAFE_Z: float   = 3     # cruise altitude (m)
 GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
 CAM_HZ:  int    = 60
 # ───────────────────────────────────────────
-R_MIN, R_MAX = 1, 5          # radial goal distance (m)
-H_MIN, H_MAX = 1, 5          # radial goal distance (m)
+R_MIN, R_MAX = 3, 5          # radial goal distance (m)
+H_MIN, H_MAX = 0, 1          # radial goal distance (m)
 # ───────────────────────────────────────────
 SAVE_FLIGHTPLANS = False  # save flight plans to disk
 BURN_EMISSIONS = True  # burn emissions in the validator
