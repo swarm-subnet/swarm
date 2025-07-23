@@ -13,7 +13,7 @@ from swarm.validator.forward import SIM_DT, HORIZON_SEC
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timesteps", type=int, default=1)
+    parser.add_argument("--timesteps", type=int, default=1000)
     args = parser.parse_args()
 
     task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=1)
