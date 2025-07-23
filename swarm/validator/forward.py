@@ -270,7 +270,8 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
         # 2 – compare with cache
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
-        if model_fp.exists():
+        up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
+        if up_to_date:
             # confirm cached file is still within limits
             if (
                 model_fp.stat().st_size <= MAX_MODEL_BYTES
