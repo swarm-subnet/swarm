@@ -57,6 +57,19 @@ class Miner(BaseMinerNeuron):
     POLICY_PATH = Path("model/ppo_policy.zip")
     ENTRYPOINT  = ""             # not used by SB3 but kept for future proofing
     FRAMEWORK   = "sb3-ppo"
+    
+    # ------------------------------------------------------------------
+    #  Whitelisted validators - only these can access the miner
+    # ------------------------------------------------------------------
+    WHITELISTED_VALIDATORS = {
+        "5FTr8ZAQCGieBGdqXvGxHcAuzcEscEyvUQmnRZ8PJnEsn124": "RoundTable21",
+        "5FKk6ucEKuKzLspVYSv9fVHonumxMJ33MdHqbVjZi2NUs124": "Rizzo", 
+        "5FF6pxRem43f7wCisfXevqYVURZtxxnC4kYTx4dnNAWqi9vg": "Owner",
+        "5CsvRJXuR955WojnGMdok1hbhffZyB4N5ocrv82f3p5A2zVp": "tao5",
+        "5CUwbDbxCm3A4uk3rC69gQuphyG1CZaWBZRjFQTnvvMMPGun": "Yuma",
+        "5EhiBKjj56jE1a6rLPP14TtrzxiwgfG8qk7nuZprkbYKH87C": "OTF",
+        "5DPY75H4H8QxWpWJ91LYhfGCjLjygDtsXG63J7TmgZ4ixykp": "TestValidator"  # Keep existing test validator
+    }
 
     # ------------------------------------------------------------------
     #  Life cycle
@@ -124,32 +137,15 @@ class Miner(BaseMinerNeuron):
 
         hotkey = synapse.dendrite.hotkey
 
-        if hotkey =="5DPY75H4H8QxWpWJ91LYhfGCjLjygDtsXG63J7TmgZ4ixykp": #whitelist test validator
-            return False, "OK"  # whitelisted test validator
+        # Check if validator is whitelisted
+        if hotkey in self.WHITELISTED_VALIDATORS:
+            validator_name = self.WHITELISTED_VALIDATORS[hotkey]
+            ColoredLogger.success(f"Allowing whitelisted validator: {validator_name} ({hotkey})", ColoredLogger.GREEN)
+            return False, f"Whitelisted validator: {validator_name}"
 
-        # 1 – unknown hotkey?
-        if (
-            not self.config.blacklist.allow_non_registered            # type: ignore[attr-defined]
-            and hotkey not in self.metagraph.hotkeys
-        ):
-            return True, f"Unrecognised hotkey: {hotkey}"
-
-        uid = self.metagraph.hotkeys.index(hotkey)
-
-        # 2 – validator permit enforcement
-        if (
-            self.config.blacklist.force_validator_permit              # type: ignore[attr-defined]
-            and not self.metagraph.validator_permit[uid]
-        ):
-            return True, f"Hotkey {hotkey} lacks validator permit"
-
-        # 3 – minimum stake check
-        stake = self.metagraph.S[uid]
-        min_stake = self.config.blacklist.minimum_stake_requirement   # type: ignore[attr-defined]
-        if stake < min_stake:
-            return True, f"Stake {stake:.2f} < required {min_stake:.2f}"
-
-        return False, "OK"
+        # If not whitelisted, deny access
+        ColoredLogger.warning(f"Denying non-whitelisted validator: {hotkey}", ColoredLogger.RED)
+        return True, f"Validator {hotkey} not in whitelist"
 
     # ------------------------------------------------------------------
     #  Priority logic
