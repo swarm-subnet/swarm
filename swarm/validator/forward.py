@@ -218,13 +218,7 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
         with tmp.open("wb") as fh:
             fh.write(raw_bytes)
 
-        # 5 – SHA‑256 integrity
-        if sha256sum(tmp) != ref.sha256:
-            bt.logging.error(f"SHA mismatch for miner blob {axon.hotkey}.")
-            tmp.unlink(missing_ok=True)
-            return
-
-        # 6 – ZIP sanity check
+        # 5 – ZIP sanity check
         if not _zip_is_safe(tmp, max_uncompressed=MAX_MODEL_BYTES):
             bt.logging.error(f"Unsafe ZIP from miner {axon.hotkey}.")
             tmp.unlink(missing_ok=True)
@@ -276,8 +270,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
         # 2 – compare with cache
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
-        up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
-        if up_to_date:
+        if model_fp.exists():
             # confirm cached file is still within limits
             if (
                 model_fp.stat().st_size <= MAX_MODEL_BYTES
@@ -293,7 +286,6 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
         await _download_model(self, axon, ref, model_fp)
         if (
             model_fp.exists()
-            and sha256sum(model_fp) == ref.sha256
             and model_fp.stat().st_size <= MAX_MODEL_BYTES
             and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
         ):
