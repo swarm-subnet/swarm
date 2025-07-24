@@ -140,6 +140,7 @@ class Miner(BaseMinerNeuron):
             return True, "verification error"
 
         # 2 — now we can safely trust synapse.dendrite.hotkey
+        ColoredLogger.success(f"{name} has verified its hotkey ({hotkey})")
         hotkey = synapse.dendrite.hotkey
 
         if hotkey in self.WHITELISTED_VALIDATORS:
