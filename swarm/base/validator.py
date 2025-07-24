@@ -143,6 +143,10 @@ class BaseValidatorNeuron(BaseNeuron):
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
 
+                # Restart wandb after each forward cycle for cleaner tracking
+                if hasattr(self, 'wandb_helper') and self.wandb_helper:
+                    self.wandb_helper.restart()
+
                 # Check if we should exit.
                 if self.should_exit:
                     break
