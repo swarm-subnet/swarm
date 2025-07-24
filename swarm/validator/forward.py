@@ -377,19 +377,24 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
                 with result_file.open("r") as f:
                     data = json.load(f)
 
-                if "error" in data:
+                # Check if there was an error
+                had_error = "error" in data
+                if had_error:
                     bt.logging.debug(f"Subprocess error for UID {uid}: {data['error']}")
 
                 result_data = {k: v for k, v in data.items() if k != "error"}
 
                 # DEBUG: Show actual result data
-                print(f"🔍 DEBUG: UID {uid} result_data: {result_data}")
+                print(f"🔍 DEBUG: UID {uid} result_data: {result_data}, had_error: {had_error}")
 
-                # ───── Reward‑floor logic (evaluator completed successfully) ─────
-                if float(result_data.get("score", 0.0)) == 0.0:
-                    bt.logging.debug(f"UID {uid} score is 0 → bumping to 0.01")
+                # ───── Reward‑floor logic (evaluator completed successfully WITHOUT errors) ─────
+                if not had_error and float(result_data.get("score", 0.0)) == 0.0:
+                    bt.logging.debug(f"UID {uid} score is 0 but no errors → bumping to 0.01")
                     result_data["score"] = 0.01
-                    print(f"🎯 DEBUG: UID {uid} score bumped to 0.01!")
+                    print(f"🎯 DEBUG: UID {uid} score bumped to 0.01 (model worked but failed mission)!")
+                elif had_error:
+                    bt.logging.debug(f"UID {uid} had errors → keeping score at 0.0")
+                    print(f"❌ DEBUG: UID {uid} had errors, no reward bump")
 
                 return ValidationResult(**result_data)
 
