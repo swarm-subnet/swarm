@@ -131,21 +131,24 @@ class Miner(BaseMinerNeuron):
         return await self._common_blacklist(synapse)
 
     async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
-        if synapse.dendrite is None or synapse.dendrite.hotkey is None:
-            bt.logging.warning("Request without dendrite/hotkey.")
-            return True, "Missing dendrite or hotkey"
+        # 1 — cryptographic authentication
+        try:
+            if not synapse.verify(self.subtensor):        # ← the crucial line
+                return True, "signature verification failed"
+        except Exception as e:
+            bt.logging.warning(f"Verification error: {e}")
+            return True, "verification error"
 
+        # 2 — now we can safely trust synapse.dendrite.hotkey
         hotkey = synapse.dendrite.hotkey
 
-        # Check if validator is whitelisted
         if hotkey in self.WHITELISTED_VALIDATORS:
-            validator_name = self.WHITELISTED_VALIDATORS[hotkey]
-            ColoredLogger.success(f"Allowing whitelisted validator: {validator_name} ({hotkey})", ColoredLogger.GREEN)
-            return False, f"Whitelisted validator: {validator_name}"
+            name = self.WHITELISTED_VALIDATORS[hotkey]
+            ColoredLogger.success(f"Allowing {name} ({hotkey})")
+            return False, f"whitelisted: {name}"
 
-        # If not whitelisted, deny access
-        ColoredLogger.warning(f"Denying non-whitelisted validator: {hotkey}", ColoredLogger.RED)
-        return True, f"Validator {hotkey} not in whitelist"
+        ColoredLogger.warning(f"Denying non‑whitelisted validator {hotkey}")
+        return True, f"{hotkey} not in whitelist"
 
     # ------------------------------------------------------------------
     #  Priority logic
