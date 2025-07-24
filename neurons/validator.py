@@ -54,6 +54,7 @@ class WandbHelper:
         self.version = version
         self.wandb_run = None
         self.enabled = False
+        self.cycle_count = 0
         
         
         self._init_wandb()
@@ -83,7 +84,7 @@ class WandbHelper:
             entity_name = "swarm-subnet-swarm"
             validator_name = os.getenv('VALIDATOR_NAME', f"validator-{self.validator_uid}")
             ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-            run_name = f"{validator_name}-{ts}"
+            run_name = f"{validator_name}-cycle{self.cycle_count}-{ts}"
             
             wandb_config = {
                 "project": project_name,
@@ -93,9 +94,10 @@ class WandbHelper:
                     "hotkey": self.hotkey,
                     "version": self.version,
                     "subnet": 124,
-                    "neuron_type": "validator"
+                    "neuron_type": "validator",
+                    "cycle_number": self.cycle_count
                 },
-                "tags": ["validator", "swarm", "subnet-124"],
+                "tags": ["validator", "swarm", "subnet-124", f"cycle-{self.cycle_count}"],
                 "reinit": True,
                 "settings": wandb.Settings(
                     quiet=True,
@@ -226,6 +228,29 @@ class WandbHelper:
         except Exception:
             # Silent failure
             pass
+
+    def restart(self) -> None:
+        """Restart wandb run after each cycle for cleaner tracking."""
+        if not self.enabled:
+            return
+            
+        try:
+            # Finish current run
+            if self.wandb_run:
+                self.wandb_run.finish(quiet=True)
+                bt.logging.debug("Previous wandb run finished")
+            
+            # Increment cycle count for next run
+            self.cycle_count += 1
+            
+            # Start new run
+            self._init_wandb()
+            if self.enabled and self.wandb_run:
+                bt.logging.debug(f"New wandb run started: {self.wandb_run.name}")
+                
+        except Exception as e:
+            bt.logging.debug(f"Wandb restart failed: {e}")
+            self.enabled = False
 
     def finish(self) -> None:
         """Finish wandb run silently."""
