@@ -131,7 +131,7 @@ class Miner(BaseMinerNeuron):
         return await self._common_blacklist(synapse)
 
     async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
-        # SECURITY: First verify cryptographic signature to prevent hotkey spoofing
+        # SECURITY: First verify cryptographic signature
         try:
             await self.axon.default_verify(synapse)
         except Exception as e:
