@@ -15,7 +15,7 @@ FORWARD_SLEEP_SEC = 300  # pause between forwards (s)
 
 # ────────── Model evaluation constants ─────────────────────
 MAX_MODEL_BYTES     = 10 * 1024 * 1024  # 10 MB compressed model size limit
-EVAL_TIMEOUT_SEC    = 60.0               # evaluation subprocess timeout (s)
+EVAL_TIMEOUT_SEC    = 120.0               # evaluation subprocess timeout (s)
 HOVER_SEC    = 3      # legacy constant (no longer used for landing)
 CAM_HZ       = 60     # camera update rate (Hz)
 PROP_EFF     = 0.60   # propeller efficiency 
