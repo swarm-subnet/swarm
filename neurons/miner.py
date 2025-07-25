@@ -133,14 +133,13 @@ class Miner(BaseMinerNeuron):
     async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
         # 1 — cryptographic authentication
         try:
-            if not synapse.verify(self.subtensor):        # ← the crucial line
-                return True, "signature verification failed"
+            await self.axon.default_verify(synapse)
         except Exception as e:
-            bt.logging.warning(f"Verification error: {e}")
-            return True, "verification error"
+            bt.logging.warning(f"Cryptographic verification failed: {e}")
+            ColoredLogger.error(f"Invalid signature from claimed hotkey: {getattr(synapse.dendrite, 'hotkey', 'unknown')}", ColoredLogger.RED)
+            return True, f"Cryptographic verification failed: {str(e)}"
 
         # 2 — now we can safely trust synapse.dendrite.hotkey
-        ColoredLogger.success(f"{name} has verified its hotkey ({hotkey})")
         hotkey = synapse.dendrite.hotkey
 
         if hotkey in self.WHITELISTED_VALIDATORS:
