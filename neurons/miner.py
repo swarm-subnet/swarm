@@ -20,6 +20,9 @@ from swarm.base.miner import BaseMinerNeuron
 from swarm.protocol import PolicySynapse, PolicyRef, PolicyChunk
 from swarm.utils.hash import sha256sum
 
+from bittensor_wallet import Keypair                        
+from bittensor.core.errors import NotVerifiedException      
+
 # Optional coloured logging – fall back gracefully if unavailable
 try:
     from swarm.utils.logging import ColoredLogger
@@ -83,8 +86,62 @@ class Miner(BaseMinerNeuron):
 
         self._sha256 = sha256sum(self.POLICY_PATH)
         self._size   = self.POLICY_PATH.stat().st_size
-
+        self.axon.verify_fns[PolicySynapse.__name__] = self._verify_validator_request
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
+
+
+    async def _verify_validator_request(self, synapse: PolicySynapse) -> None:
+        """
+        Rejects any RPC that is not cryptographically proven to come from
+        one of the whitelisted validator hotkeys.
+
+        Signature *must* be present and valid.  If anything is missing or
+        incorrect we raise `NotVerifiedException`, which the Axon middleware
+        converts into a 401 reply.
+        """
+        # ----------  basic sanity checks  ----------
+        if synapse.dendrite is None:
+            raise NotVerifiedException("Missing dendrite terminal in request")
+
+        hotkey    = synapse.dendrite.hotkey
+        signature = synapse.dendrite.signature
+        nonce     = synapse.dendrite.nonce
+        uuid      = synapse.dendrite.uuid
+        body_hash = synapse.computed_body_hash
+
+        # 1 — is the sender even on our allow‑list?
+        if hotkey not in self.WHITELISTED_VALIDATORS:
+            raise NotVerifiedException(f"{hotkey} is not a whitelisted validator")
+
+        # 2 — signature header is mandatory
+        if not signature:
+            raise NotVerifiedException("Request carries no signature header")
+
+        # 3 — run all the standard Bittensor checks (nonce window, replay,
+        #     timeout, signature, …).  This *does not* insist on a signature,
+        #     so we still do step 4 afterwards.
+        await self.axon.default_verify(synapse)
+
+        # 4 — independently verify the cryptographic signature -------------
+        #
+        #     Signing rule (same as default_verify):
+        #       msg = f\"{nonce}.{hotkey}.{self.wallet.hotkey}.{uuid}.{body_hash}\"
+        #
+        message = (
+            f"{nonce}."
+            f"{hotkey}."
+            f"{self.wallet.hotkey.ss58_address}."
+            f"{uuid}."
+            f"{body_hash}"
+        )
+        if not Keypair(ss58_address=hotkey).verify(message, signature):
+            raise NotVerifiedException("Signature mismatch – forged request")
+
+        # 5 — all good ➜ let the middleware continue
+        ColoredLogger.success(
+            f"Verified call from {self.WHITELISTED_VALIDATORS[hotkey]} ({hotkey})",
+            ColoredLogger.GREEN,
+        )
 
     # ------------------------------------------------------------------
     #  Main RPC endpoint
