@@ -250,6 +250,9 @@ async def send_with_fresh_uuid(
     bt.logging.warning(
     f"➡️  sending: nonce={synapse.dendrite.nonce} "
     f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid}"
+    f"comcomputed_body_hash={synapse.computed_body_hash}"
+    f"axon={axon}"
+    f"dendrite={synapse.dendrite}"
 )
     async with bt.dendrite(wallet=wallet) as dend:
         return await dend(
