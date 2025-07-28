@@ -134,14 +134,6 @@ class Miner(BaseMinerNeuron):
 
         await self.axon.default_verify(synapse)
 
-        # 4 — independently verify the cryptographic signature -------------
-        #
-        #     Signing rule (same as default_verify):
-        #       msg = f\"{nonce}.{hotkey}.{self.wallet.hotkey}.{uuid}.{body_hash}\"
-        #
-        if not Keypair(ss58_address=hotkey).verify(message, signature):
-            raise NotVerifiedException("Signature mismatch – forged request")
-
         # 5 — all good ➜ let the middleware continue
         ColoredLogger.success(
             f"Verified call from {self.WHITELISTED_VALIDATORS[hotkey]} ({hotkey})",
