@@ -120,7 +120,7 @@ class Miner(BaseMinerNeuron):
         # 3 — run all the standard Bittensor checks (nonce window, replay,
         #     timeout, signature, …).  This *does not* insist on a signature,
         #     so we still do step 4 afterwards.
-         message = (
+        message = (
             f"{nonce}."
             f"{hotkey}."
             f"{self.wallet.hotkey.ss58_address}."
