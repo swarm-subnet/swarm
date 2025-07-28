@@ -120,6 +120,18 @@ class Miner(BaseMinerNeuron):
         # 3 — run all the standard Bittensor checks (nonce window, replay,
         #     timeout, signature, …).  This *does not* insist on a signature,
         #     so we still do step 4 afterwards.
+         message = (
+            f"{nonce}."
+            f"{hotkey}."
+            f"{self.wallet.hotkey.ss58_address}."
+            f"{uuid}."
+            f"{body_hash}"
+        )
+        ColoredLogger.warning(
+            f"Verifying message: {message}",
+            ColoredLogger.YELLOW,
+        )
+
         await self.axon.default_verify(synapse)
 
         # 4 — independently verify the cryptographic signature -------------
@@ -127,13 +139,6 @@ class Miner(BaseMinerNeuron):
         #     Signing rule (same as default_verify):
         #       msg = f\"{nonce}.{hotkey}.{self.wallet.hotkey}.{uuid}.{body_hash}\"
         #
-        message = (
-            f"{nonce}."
-            f"{hotkey}."
-            f"{self.wallet.hotkey.ss58_address}."
-            f"{uuid}."
-            f"{body_hash}"
-        )
         if not Keypair(ss58_address=hotkey).verify(message, signature):
             raise NotVerifiedException("Signature mismatch – forged request")
 
