@@ -247,20 +247,23 @@ async def send_with_fresh_uuid(
     library stamps a fresh `dendrite.uuid`.  That guarantees every miner sees
     an endpoint_key they have never stored before ⇒ no nonce collisions.
     """
-    bt.logging.warning(
-    f"➡️  sending: nonce={synapse.dendrite.nonce} "
-    f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid}"
-    f"comcomputed_body_hash={synapse.computed_body_hash}"
-    f"axon={axon}"
-    f"dendrite={synapse.dendrite}"
-)
+    
     async with bt.dendrite(wallet=wallet) as dend:
-        return await dend(
+        responses = await dend(
             axons=[axon],
             synapse=synapse,
             deserialize=deserialize,
             timeout=timeout,
         )
+
+    bt.logging.warning(
+        f"➡️  sending: nonce={synapse.dendrite.nonce} "
+        f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid}"
+        f"comcomputed_body_hash={synapse.computed_body_hash}"
+        f"axon={axon}"
+        f"dendrite"
+    )
+    return responses
 
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
