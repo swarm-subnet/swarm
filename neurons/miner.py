@@ -123,11 +123,11 @@ class Miner(BaseMinerNeuron):
         message = (
             f"nonce: {nonce}. \n "
             f"hotkey {hotkey}. \n"
-            f"seld hotkey {self.wallet.hotkey.ss58_address}. \n"
+            f"self hotkey {self.wallet.hotkey.ss58_address}. \n"
             f"uuid {uuid}. \n"
             f"body hash {body_hash} \n"
         )
-        ColoredLogger.warning(
+        ColoredLogger.info(
             f"Verifying message: {message}",
             ColoredLogger.YELLOW,
         )
@@ -191,7 +191,7 @@ class Miner(BaseMinerNeuron):
 
         if hotkey in self.WHITELISTED_VALIDATORS:
             name = self.WHITELISTED_VALIDATORS[hotkey]
-            ColoredLogger.success(f"Allowing {name} ({hotkey})")
+            ColoredLogger.success(f"Synapse from {name} with ({hotkey} arrived, starting verification.")
             return False, f"whitelisted: {name}"
 
         ColoredLogger.warning(f"Denying non‑whitelisted validator {hotkey}")
