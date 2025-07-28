@@ -121,11 +121,11 @@ class Miner(BaseMinerNeuron):
         #     timeout, signature, …).  This *does not* insist on a signature,
         #     so we still do step 4 afterwards.
         message = (
-            f"nonce: {nonce}. \n "
-            f"hotkey {hotkey}. \n"
-            f"self hotkey {self.wallet.hotkey.ss58_address}. \n"
-            f"uuid {uuid}. \n"
-            f"body hash {body_hash} \n"
+            f"nonce: {nonce}. "
+            f"hotkey {hotkey}. "
+            f"self hotkey {self.wallet.hotkey.ss58_address}. "
+            f"uuid {uuid}. "
+            f"body hash {body_hash} "
         )
         ColoredLogger.info(
             f"Verifying message: {message}",
