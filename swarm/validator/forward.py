@@ -28,6 +28,8 @@ from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
 from swarm.utils.env_factory import make_env
 import base64
+import uuid
+import bittensor as bt
 
 from .task_gen import random_task
 from .reward   import flight_reward
@@ -182,11 +184,11 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
 
     try:
         # 1 – request the blob
-        responses = await self.dendrite(
-            axons       = [axon],
-            synapse     = PolicySynapse.request_blob(),
-            deserialize = True,
-            timeout     = QUERY_TIMEOUT,
+        responses = await send_with_fresh_uuid(
+            wallet=self.wallet,
+            synapse=PolicySynapse.request_blob(),
+            axon=axon,
+            timeout=QUERY_TIMEOUT,
         )
 
         if not responses:
@@ -232,6 +234,27 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
         bt.logging.warning(f"Download error ({axon.hotkey}): {e}")
         tmp.unlink(missing_ok=True)
 
+async def send_with_fresh_uuid(
+    wallet: "bt.Wallet",
+    synapse: "bt.Synapse",
+    axon,
+    *,
+    timeout: float,
+    deserialize: bool = True,
+    ):
+    """
+    Creates a *new* transient Dendrite client for this single RPC so that the
+    library stamps a fresh `dendrite.uuid`.  That guarantees every miner sees
+    an endpoint_key they have never stored before ⇒ no nonce collisions.
+    """
+    temp_dendrite = bt.dendrite(wallet=wallet)  # brand‑new client
+    return await temp_dendrite(
+        axons=[axon],
+        synapse=synapse,
+        deserialize=deserialize,
+        timeout=timeout,
+    )
+
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
     For every UID return the local Path to its latest .zip.
@@ -245,12 +268,12 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
         # 1 – ask for current PolicyRef
         try:
-            responses: list[PolicySynapse] = await self.dendrite(
-            axons=[axon],
-            synapse=PolicySynapse.request_ref(),
-            deserialize=True,
-            timeout=QUERY_TIMEOUT,
-            )
+            responses = await send_with_fresh_uuid(
+                wallet=self.wallet,
+                synapse=PolicySynapse.request_ref(),
+                axon=axon,
+                timeout=QUERY_TIMEOUT,
+                )
 
             if not responses:
                 bt.logging.warning(f"Miner {uid} returned no response.")
