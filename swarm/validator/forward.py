@@ -516,6 +516,17 @@ async def forward(self) -> None:
         print(f"✅ DEBUG: Evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
+            # Log empty forward to wandb
+            if hasattr(self, 'wandb_helper') and self.wandb_helper:
+                try:
+                    self.wandb_helper.log_forward_results(
+                        forward_count=self.forward_count,
+                        task=task,
+                        results=[],
+                        timestamp=time.time()
+                    )
+                except Exception as e:
+                    bt.logging.debug(f"Wandb empty forward logging failed: {e}")
             await asyncio.sleep(FORWARD_SLEEP_SEC)
             return
 
@@ -560,13 +571,47 @@ async def forward(self) -> None:
             bt.logging.info("Burn disabled – using boosted weights as is.")
 
         # ------------------------------------------------------------------
-        # 6. push weights on‑chain (store locally then call set_weights later)
+        # 6. log results to wandb before updating scores
+        if hasattr(self, 'wandb_helper') and self.wandb_helper:
+            try:
+                self.wandb_helper.log_forward_results(
+                    forward_count=self.forward_count,
+                    task=task,
+                    results=results,
+                    timestamp=time.time()
+                )
+            except Exception as e:
+                bt.logging.debug(f"Wandb forward logging failed: {e}")
+
+        # ------------------------------------------------------------------
+        # 7. push weights on‑chain (store locally then call set_weights later)
         print(f"🎯 DEBUG: Setting weights - UIDs: {uids_np}, Scores: {boosted}")  # Temporary debug
         self.update_scores(boosted, uids_np)
+        
+        # ------------------------------------------------------------------
+        # 8. log weight updates to wandb
+        if hasattr(self, 'wandb_helper') and self.wandb_helper:
+            try:
+                self.wandb_helper.log_weight_update(
+                    uids=uids_np.tolist(),
+                    scores=boosted.tolist()
+                )
+            except Exception as e:
+                bt.logging.debug(f"Wandb weight logging failed: {e}")
+                
         print(f"✅ DEBUG: Weights updated successfully! Forward cycle complete.")  # Temporary debug
 
     except Exception as e:
         bt.logging.error(f"Validator forward error: {e}")
+        # Log error to wandb
+        if hasattr(self, 'wandb_helper') and self.wandb_helper:
+            try:
+                self.wandb_helper.log_error(
+                    error_message=str(e),
+                    error_type="forward_error"
+                )
+            except Exception:
+                pass
 
     # ----------------------------------------------------------------------
     # 7. pace the main loop
