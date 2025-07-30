@@ -8,7 +8,7 @@ import time
 from typing import List
 
 import bittensor as bt
-from base.validator import BaseValidatorNeuron
+from swarm.base.validator import BaseValidatorNeuron
 
 
 class Validator(BaseValidatorNeuron):
