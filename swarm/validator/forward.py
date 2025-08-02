@@ -33,6 +33,7 @@ import bittensor as bt
 
 from .task_gen import random_task
 from .reward   import flight_reward
+from .production_secure_evaluator import ProductionSecureEvaluator
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -350,8 +351,8 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
        to 0.01 to acknowledge a correct setup.  All other cases (errors, parse
        failures, timeouts, etc.) return a 0.0 score.
     """
-
     print(f"🔬 DEBUG: _evaluate_uid called for UID {uid}, model: {model_fp}")
+
 
     # ------------------------------------------------------------------
     # 1. Resolve ./tmp directory (use system tmp if creation fails)
@@ -466,25 +467,24 @@ def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 5.  Weight boosting (unchanged)
+# 5.  Weight boosting
 # ──────────────────────────────────────────────────────────────────────────
-def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
+def _boost_scores(raw: np.ndarray) -> np.ndarray:
     """
-    Exponential boost driven by absolute gap to the best score,
-    scaled by batch standard deviation.
+    Winner-takes-all reward distribution.
+    The highest scoring miner receives all rewards.
     """
     if raw.size == 0:
         return raw
 
-    s_max = float(raw.max())
-    sigma = float(raw.std())
-    if sigma < 1e-9:                          # all miners identical
-        weights = (raw == s_max).astype(np.float32)
-    else:
-        weights = np.exp(beta * (raw - s_max) / sigma)
-        weights /= weights.max()              # normalise so best → 1
-
-    return weights.astype(np.float32)
+    weights = np.zeros_like(raw, dtype=np.float32)
+    max_score = float(raw.max())
+    
+    if max_score > 0:
+        winner_idx = np.argmax(raw)
+        weights[winner_idx] = 1.0
+    
+    return weights
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -510,10 +510,52 @@ async def forward(self) -> None:
         print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")
 
         # ------------------------------------------------------------------
-        # 3. sandboxed evaluation
-        print(f"🚀 DEBUG: Starting evaluation for {len(model_paths)} models")
-        results = [_evaluate_uid(task, uid, fp) for uid, fp in model_paths.items()]
-        print(f"✅ DEBUG: Evaluation completed, got {len(results)} results")
+        # 3. secure lightweight evaluation
+        print(f"🚀 DEBUG: Starting secure evaluation for {len(model_paths)} models") 
+        
+        # Use production secure evaluator (prevents malicious model loading attacks)
+        evaluator = ProductionSecureEvaluator()
+        try:
+            # Evaluate all models with security isolation
+            evaluation_tasks = [
+                evaluator.evaluate_model(task, uid, fp) 
+                for uid, fp in model_paths.items()
+            ]
+            results = await asyncio.gather(*evaluation_tasks, return_exceptions=True)
+            
+            # Filter out exceptions and convert to ValidationResult list
+            valid_results = []
+            uids_list = list(model_paths.keys())
+            for i, result in enumerate(results):
+                uid = uids_list[i]
+                if isinstance(result, Exception):
+                    bt.logging.warning(f"Evaluation failed for UID {uid}: {result}")
+                    print(f"❌ DEBUG: UID {uid} evaluation failed with exception: {result}")
+                    valid_results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
+                else:
+                    # Add detailed debug logging like the original _evaluate_uid
+                    result_data = {
+                        'uid': result.uid,
+                        'success': result.success,
+                        'time_sec': result.time_sec,
+                        'energy': result.energy,
+                        'score': result.score
+                    }
+                    print(f"🔍 DEBUG: UID {uid} result_data: {result_data}, had_error: False")
+                    
+                    # Show reward bumping logic
+                    if result.success and result.score == 0.01:
+                        print(f"🎯 DEBUG: UID {uid} score bumped to 0.01 (model worked but failed mission)!")
+                    elif not result.success and result.score == 0.0:
+                        print(f"❌ DEBUG: UID {uid} failed evaluation, score remains 0.0")
+                    
+                    valid_results.append(result)
+            results = valid_results
+        finally:
+            # Clean up security isolation
+            evaluator.cleanup()
+        
+        print(f"✅ DEBUG: Secure evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
             # Log empty forward to wandb
@@ -536,8 +578,8 @@ async def forward(self) -> None:
         print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")  # Temporary debug
 
         # ------------------------------------------------------------------
-        # 4. adaptive boost
-        boosted = _boost_scores(raw_scores, beta=5.0)
+        # 4. winner-takes-all boost
+        boosted = _boost_scores(raw_scores)
         print(f"⚡ DEBUG: Boosted scores: {boosted}")  # Temporary debug
 
         # ------------------------------------------------------------------
