@@ -38,7 +38,7 @@ import shutil
 
 from .task_gen import random_task
 from .reward   import flight_reward
-from .production_secure_evaluator import ProductionSecureEvaluator
+from .docker_evaluator import DockerSecureEvaluator  # For _base_ready check
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -985,52 +985,29 @@ async def forward(self) -> None:
         print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")
 
         # ------------------------------------------------------------------
-        # 3. secure lightweight evaluation
-        print(f"🚀 DEBUG: Starting secure evaluation for {len(model_paths)} models") 
+        # 3. Docker-based secure evaluation (sequential)
+        print(f"🚀 DEBUG: Starting Docker evaluation for {len(model_paths)} models")
         
-        # Use production secure evaluator (prevents malicious model loading attacks)
-        evaluator = ProductionSecureEvaluator()
-        try:
-            # Evaluate all models with security isolation
-            evaluation_tasks = [
-                evaluator.evaluate_model(task, uid, fp) 
-                for uid, fp in model_paths.items()
-            ]
-            results = await asyncio.gather(*evaluation_tasks, return_exceptions=True)
+        # Use pre-initialized Docker evaluator
+        if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
+            bt.logging.error("Docker evaluator not ready - falling back to no evaluation")
+            results = [ValidationResult(uid, False, 0.0, 0.0, 0.0) for uid in model_paths.keys()]
+        else:
+            # Evaluate models sequentially in Docker containers
+            results = []
+            for uid, fp in model_paths.items():
+                print(f"🔄 DEBUG: Evaluating UID {uid}...")
+                try:
+                    result = await self.docker_evaluator.evaluate_model(task, uid, fp)
+                    results.append(result)
+                except Exception as e:
+                    bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
+                    results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
             
-            # Filter out exceptions and convert to ValidationResult list
-            valid_results = []
-            uids_list = list(model_paths.keys())
-            for i, result in enumerate(results):
-                uid = uids_list[i]
-                if isinstance(result, Exception):
-                    bt.logging.warning(f"Evaluation failed for UID {uid}: {result}")
-                    print(f"❌ DEBUG: UID {uid} evaluation failed with exception: {result}")
-                    valid_results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
-                else:
-                    # Add detailed debug logging like the original _evaluate_uid
-                    result_data = {
-                        'uid': result.uid,
-                        'success': result.success,
-                        'time_sec': result.time_sec,
-                        'energy': result.energy,
-                        'score': result.score
-                    }
-                    print(f"🔍 DEBUG: UID {uid} result_data: {result_data}, had_error: False")
-                    
-                    # Show reward bumping logic
-                    if result.success and result.score == 0.01:
-                        print(f"🎯 DEBUG: UID {uid} score bumped to 0.01 (model worked but failed mission)!")
-                    elif not result.success and result.score == 0.0:
-                        print(f"❌ DEBUG: UID {uid} failed evaluation, score remains 0.0")
-                    
-                    valid_results.append(result)
-            results = valid_results
-        finally:
-            # Clean up security isolation
-            evaluator.cleanup()
+            # Cleanup orphaned containers
+            self.docker_evaluator.cleanup()
         
-        print(f"✅ DEBUG: Secure evaluation completed, got {len(results)} results")
+        print(f"✅ DEBUG: Docker evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
             # Log empty forward to wandb

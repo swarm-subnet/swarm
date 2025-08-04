@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.validator.forward import forward
+from swarm.validator.docker_evaluator import DockerSecureEvaluator
 from swarm.protocol import ValidationResult, MapTask
 from datetime import datetime
 import swarm
@@ -300,6 +301,14 @@ class Validator(BaseValidatorNeuron):
             self.wandb_helper = None
         else:
             bt.logging.debug("Wandb not available")
+            
+        # Initialize Docker evaluator at startup
+        bt.logging.info("Initializing Docker secure evaluator...")
+        self.docker_evaluator = DockerSecureEvaluator()
+        if DockerSecureEvaluator._base_ready:
+            bt.logging.info("✅ Docker evaluator ready")
+        else:
+            bt.logging.warning("⚠️  Docker evaluator initialization failed")
 
     async def forward(self):
         """
@@ -313,7 +322,12 @@ class Validator(BaseValidatorNeuron):
         return await forward(self)
 
     def __del__(self):
-        """Cleanup wandb helper when validator is destroyed."""
+        """Cleanup wandb helper and docker evaluator when validator is destroyed."""
+        if hasattr(self, 'docker_evaluator'):
+            try:
+                self.docker_evaluator.cleanup()
+            except:
+                pass
         if hasattr(self, 'wandb_helper') and self.wandb_helper:
             self.wandb_helper.finish()
 
