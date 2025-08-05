@@ -34,9 +34,85 @@ class DockerSecureEvaluator:
             self._setup_base_container()
             DockerSecureEvaluator._base_ready = self.base_ready
     
+    def _ensure_docker_installed(self):
+        """Check if Docker is installed, install automatically if missing"""
+        try:
+            # Check if Docker command exists
+            result = subprocess.run(["docker", "--version"], 
+                                  capture_output=True, text=True, check=True)
+            bt.logging.info(f"Docker found: {result.stdout.strip()}")
+            return True
+            
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            bt.logging.warning("🐳 Docker not found - installing automatically...")
+            
+            try:
+                # Install Docker using official script
+                bt.logging.info("Downloading Docker installation script...")
+                
+                # Download Docker install script
+                download_cmd = ["curl", "-fsSL", "https://get.docker.com", "-o", "/tmp/get-docker.sh"]
+                subprocess.run(download_cmd, check=True, capture_output=True)
+                
+                # Make script executable
+                subprocess.run(["chmod", "+x", "/tmp/get-docker.sh"], check=True)
+                
+                # Run Docker installation
+                bt.logging.info("Installing Docker (this may take a few minutes)...")
+                install_result = subprocess.run(["sudo", "/tmp/get-docker.sh"], 
+                                              capture_output=True, text=True, timeout=300)
+                
+                if install_result.returncode == 0:
+                    bt.logging.info("✅ Docker installed successfully!")
+                    
+                    # Add current user to docker group
+                    import os
+                    username = os.getenv("USER", "root")
+                    subprocess.run(["sudo", "usermod", "-aG", "docker", username], 
+                                 capture_output=True)
+                    
+                    # Start Docker service
+                    subprocess.run(["sudo", "systemctl", "start", "docker"], 
+                                 capture_output=True)
+                    subprocess.run(["sudo", "systemctl", "enable", "docker"], 
+                                 capture_output=True)
+                    
+                    bt.logging.info("🔄 Docker service started")
+                    
+                    # Cleanup
+                    subprocess.run(["rm", "-f", "/tmp/get-docker.sh"], capture_output=True)
+                    
+                    # Wait a moment for Docker to be ready
+                    import time
+                    time.sleep(3)
+                    
+                    # Verify installation
+                    verify_result = subprocess.run(["docker", "--version"], 
+                                                 capture_output=True, text=True)
+                    if verify_result.returncode == 0:
+                        bt.logging.info(f"✅ Docker ready: {verify_result.stdout.strip()}")
+                        return True
+                    else:
+                        bt.logging.error("❌ Docker installation verification failed")
+                        return False
+                        
+                else:
+                    bt.logging.error(f"❌ Docker installation failed: {install_result.stderr}")
+                    return False
+                    
+            except subprocess.TimeoutExpired:
+                bt.logging.error("❌ Docker installation timed out")
+                return False
+            except Exception as e:
+                bt.logging.error(f"❌ Docker installation error: {e}")
+                return False
+    
     def _setup_base_container(self):
         """Build base Docker image with all dependencies"""
         try:
+            # Check if Docker is installed, install if missing
+            self._ensure_docker_installed()
+            
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             # Build context should be the parent of swarm package
             build_context = Path(__file__).parent.parent.parent
