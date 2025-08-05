@@ -19,7 +19,7 @@ if swarm_path not in sys.path:
 
 from stable_baselines3 import PPO
 from dataclasses import asdict
-from swarm.protocol import MapTask
+from swarm.protocol import MapTask, ValidationResult
 
 
 def main():
@@ -58,16 +58,40 @@ def main():
         
         task = MapTask(**task_data)
         
-        # Load model and run evaluation
-        model = PPO.load(model_path, device="cpu")
+        # First inspect model for fake indicators (safe within container)
+        from swarm.validator.forward import _inspect_model_structure, _is_fake_model
+        from pathlib import Path
         
-        # Import and run episode  
-        from swarm.validator.forward import _run_episode
-        result = _run_episode(task, uid, model)
+        inspection_results = _inspect_model_structure(Path(model_path))
+        is_fake, fake_reason = _is_fake_model(inspection_results)
+        
+        if is_fake:
+            # Return fake model detection result
+            result = ValidationResult(
+                uid=uid,
+                success=False,
+                time_sec=0.0,
+                energy=0.0,
+                score=0.0
+            )
+        else:
+            # Model is legitimate, proceed with evaluation
+            model = PPO.load(model_path, device="cpu")
+            
+            # Import and run episode  
+            from swarm.validator.forward import _run_episode
+            result = _run_episode(task, uid, model)
         
         # Write result to file
         tmp_file = result_file + ".tmp"
         result_dict = asdict(result)
+        
+        # Add fake model information if detected
+        if is_fake:
+            result_dict['is_fake_model'] = True
+            result_dict['fake_reason'] = fake_reason
+            result_dict['inspection_results'] = inspection_results
+        
         # Convert numpy types to Python types for JSON serialization
         for key, value in result_dict.items():
             if key == 'success':
@@ -84,7 +108,8 @@ def main():
         os.rename(tmp_file, result_file)
         
         # Cleanup
-        del model
+        if 'model' in locals():
+            del model
         gc.collect()
         
         sys.exit(0)

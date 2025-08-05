@@ -25,8 +25,12 @@ class DockerSecureEvaluator:
         return cls._instance
     
     def __init__(self):
-        if not DockerSecureEvaluator._base_ready:
+        # Only initialize attributes on first instantiation
+        if not hasattr(self, 'base_image'):
             self.base_image = "swarm_evaluator_base"
+            self.last_fake_model_info = None
+        
+        if not DockerSecureEvaluator._base_ready:
             self._setup_base_container()
             DockerSecureEvaluator._base_ready = self.base_ready
     
@@ -66,6 +70,7 @@ class DockerSecureEvaluator:
             self.base_ready = False
             DockerSecureEvaluator._base_ready = False
     
+
     async def evaluate_model(
         self, 
         task: MapTask, 
@@ -77,6 +82,9 @@ class DockerSecureEvaluator:
         if not DockerSecureEvaluator._base_ready:
             bt.logging.warning(f"Docker not ready for UID {uid}")
             return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        
+        # Track fake models detected for this evaluation
+        self.last_fake_model_info = None
         
         container_name = f"swarm_eval_{uid}_{int(time.time() * 1000)}"
         
@@ -141,18 +149,38 @@ class DockerSecureEvaluator:
                         with open(result_file, 'r') as f:
                             data = json.load(f)
                         
+                        # Check for fake model detection
+                        if data.get('is_fake_model', False):
+                            bt.logging.warning(f"🚫 FAKE MODEL DETECTED for UID {uid}: {data.get('fake_reason', 'Unknown')}")
+                            bt.logging.debug(f"Inspection results: {data.get('inspection_results', {})}")
+                            
+                            # Store fake model info for blacklisting
+                            self.last_fake_model_info = {
+                                'uid': uid,
+                                'reason': data.get('fake_reason', 'Unknown'),
+                                'inspection_results': data.get('inspection_results', {})
+                            }
+                            
+                            # Return zero score for fake models
+                            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+                        
                         had_error = "error" in data
                         if had_error:
                             bt.logging.debug(f"Evaluation error for UID {uid}: {data['error']}")
                         
-                        result_data = {k: v for k, v in data.items() if k != "error"}
+                        result_data = {k: v for k, v in data.items() if k not in ["error", "is_fake_model", "fake_reason", "inspection_results"]}
+                        
+                        # Clear fake model info since this was a legitimate evaluation
+                        self.last_fake_model_info = None
                         
                         # Apply reward floor logic
                         if not had_error and float(result_data.get("score", 0.0)) == 0.0:
                             result_data["score"] = 0.01
                         
-                        # Log result data exactly as requested
-                        bt.logging.debug(f"UID {uid} result_data: {result_data}")
+                        # Log result data exactly as requested - custom format with emoji
+                        from datetime import datetime
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        print(f"{timestamp} 🔍 DEBUG: UID {uid} result_data: {result_data}")
                         
                         return ValidationResult(**result_data)
                         

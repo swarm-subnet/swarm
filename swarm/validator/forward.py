@@ -670,40 +670,15 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
             tmp.unlink(missing_ok=True)
             return
         
-        # Inspect the model for fake indicators
-        bt.logging.info(f"🔍 Inspecting new model {ref.sha256[:16]}... from miner {axon.hotkey}")
-        inspection_results = _inspect_model_structure(tmp)
-        is_fake, reason = _is_fake_model(inspection_results)
+        # Model inspection will happen inside Docker for security
+        # For now, just store the model and let Docker handle validation
+        bt.logging.info(f"📦 Downloaded model {ref.sha256[:16]}... from miner {axon.hotkey}")
         
-        if is_fake:
-            bt.logging.warning(f"🚫 FAKE MODEL DETECTED from miner {axon.hotkey}")
-            bt.logging.warning(f"   Hash: {ref.sha256[:16]}...")
-            bt.logging.warning(f"   Reason: {reason}")
-            bt.logging.warning(f"   Inspection: {inspection_results}")
-            
-            # Save fake model for forensic analysis (max 3 per UID)
-            try:
-                uid = self._get_uid_from_axon(axon)
-                if uid is not None:
-                    _save_fake_model_for_analysis(tmp, uid, ref.sha256, reason, inspection_results)
-            except Exception as e:
-                bt.logging.warning(f"Failed to save fake model for analysis: {e}")
-            
-            # Add to blacklist
-            blacklist.add(ref.sha256)
-            _save_blacklist(blacklist)
-            
-            # Remove temp file and return without caching
-            tmp.unlink(missing_ok=True)
-            return
-        else:
-            bt.logging.success(f"✅ Model validation passed for miner {axon.hotkey}: {reason}")
-            bt.logging.info(f"   Parameters: {inspection_results.get('parameter_count', 'unknown')}")
-            bt.logging.info(f"   Weight variance: {inspection_results.get('weight_variance', 'unknown'):.2e}")
-
-        # 7 – promote
+        # Atomic replacement to prevent corruption
         tmp.replace(dest)
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
+        
+        # Model inspection and fake detection will happen during Docker evaluation
 
     except Exception as e:
         bt.logging.warning(f"Download error ({axon.hotkey}): {e}")
@@ -995,14 +970,47 @@ async def forward(self) -> None:
         else:
             # Evaluate models sequentially in Docker containers
             results = []
+            fake_models_detected = []
+            
             for uid, fp in model_paths.items():
                 print(f"🔄 DEBUG: Evaluating UID {uid}...")
                 try:
                     result = await self.docker_evaluator.evaluate_model(task, uid, fp)
+                    
+                    # Check if fake model was detected
+                    if self.docker_evaluator.last_fake_model_info and self.docker_evaluator.last_fake_model_info['uid'] == uid:
+                        # Get model hash for blacklisting
+                        from swarm.utils.hash import sha256sum
+                        model_hash = sha256sum(fp)
+                        fake_models_detected.append({
+                            'uid': uid,
+                            'hash': model_hash,
+                            'reason': self.docker_evaluator.last_fake_model_info['reason'],
+                            'inspection_results': self.docker_evaluator.last_fake_model_info['inspection_results']
+                        })
+                        
+                        # Save fake model for analysis
+                        try:
+                            _save_fake_model_for_analysis(
+                                fp, uid, model_hash,
+                                self.docker_evaluator.last_fake_model_info['reason'],
+                                self.docker_evaluator.last_fake_model_info['inspection_results']
+                            )
+                        except Exception as e:
+                            bt.logging.warning(f"Failed to save fake model for analysis: {e}")
+                    
                     results.append(result)
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
                     results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
+            
+            # Add detected fake models to blacklist
+            if fake_models_detected:
+                blacklist = _load_blacklist()
+                for fake_model in fake_models_detected:
+                    bt.logging.info(f"🚫 Adding fake model to blacklist: UID {fake_model['uid']}, hash {fake_model['hash'][:16]}...")
+                    blacklist.add(fake_model['hash'])
+                _save_blacklist(blacklist)
             
             # Cleanup orphaned containers
             self.docker_evaluator.cleanup()
