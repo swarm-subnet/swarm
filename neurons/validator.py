@@ -169,11 +169,11 @@ class WandbHelper:
                 # Log individual miner data  
                 for result in results:
                     miner_data = {
-                        f"miner_{result.uid}/score": result.score,
-                        f"miner_{result.uid}/success": 1 if result.success else 0,
-                        f"miner_{result.uid}/time_sec": result.time_sec,
-                        f"miner_{result.uid}/energy": result.energy,
-                        f"miner_{result.uid}/forward_count": forward_count
+                        f"miner_{int(result.uid)}/score": result.score,
+                        f"miner_{int(result.uid)}/success": 1 if result.success else 0,
+                        f"miner_{int(result.uid)}/time_sec": result.time_sec,
+                        f"miner_{int(result.uid)}/energy": result.energy,
+                        f"miner_{int(result.uid)}/forward_count": forward_count
                     }
                     self.wandb_run.log(miner_data)
             
@@ -207,7 +207,7 @@ class WandbHelper:
             
             # Individual weight data
             for uid, score in zip(uids, scores):
-                weight_data[f"weight_{uid}"] = score
+                weight_data[f"weight_{int(uid)}"] = score
                 
             self.wandb_run.log(weight_data)
             

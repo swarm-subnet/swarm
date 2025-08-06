@@ -704,7 +704,7 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> N
         if len(raw_bytes) > MAX_MODEL_BYTES:
             bt.logging.error(
                 f"Miner {axon.hotkey} sent oversized blob "
-                f"({len(raw_bytes)/1e6:.1f} MB > 50 MB)"
+                f"({len(raw_bytes)/1e6:.1f} MB > {MAX_MODEL_BYTES/1e6:.0f} MB)"
             )
             return
 
