@@ -525,6 +525,53 @@ def _is_fake_model(inspection_results: dict) -> tuple[bool, str]:
     if inspection_results["weight_variance"] < 1e-6:
         return True, f"Weights too uniform, variance: {inspection_results['weight_variance']}"
     
+    # ENHANCED DETECTION: Check for sophisticated fakes
+    layer_analysis = inspection_results.get("layer_analysis", {})
+    
+    # Check for all-zero biases (sign of artificial model)
+    all_zero_biases = 0
+    total_bias_layers = 0
+    
+    for layer_name, stats in layer_analysis.items():
+        if 'bias' in layer_name:
+            total_bias_layers += 1
+            if (stats.get('mean', 1.0) == 0.0 and 
+                stats.get('std', 1.0) == 0.0 and 
+                stats.get('min', 1.0) == 0.0 and 
+                stats.get('max', 1.0) == 0.0):
+                all_zero_biases += 1
+    
+    # If ALL bias layers are zero, likely fake
+    if total_bias_layers > 0 and all_zero_biases == total_bias_layers:
+        return True, f"All {all_zero_biases} bias layers are zero (artificial model)"
+    
+    # Check for suspicious log_std (PPO action noise parameter)
+    if 'log_std' in layer_analysis:
+        log_std_stats = layer_analysis['log_std']
+        if (log_std_stats.get('std', 1.0) == 0.0 and 
+            log_std_stats.get('mean', 1.0) == 0.0):
+            return True, "log_std parameter is all zeros (untrained PPO model)"
+    
+    # Check for lack of training artifacts
+    if not inspection_results.get("has_training_artifacts", True):
+        # This alone isn't enough, but combined with other factors...
+        # Count additional suspicious indicators
+        suspicious_indicators = 0
+        
+        # All zero biases
+        if total_bias_layers > 0 and all_zero_biases >= total_bias_layers * 0.8:  # 80% or more
+            suspicious_indicators += 1
+            
+        # Zero log_std
+        if 'log_std' in layer_analysis:
+            log_std_stats = layer_analysis['log_std']
+            if log_std_stats.get('std', 1.0) == 0.0:
+                suspicious_indicators += 1
+        
+        # If multiple indicators + no training artifacts = likely fake
+        if suspicious_indicators >= 2:
+            return True, "Multiple indicators of artificial model (no training artifacts + suspicious patterns)"
+    
     # Check minimum parameter count last (as it's the most generic)
     if inspection_results["parameter_count"] < 5000:
         return True, f"Too few parameters: {inspection_results['parameter_count']} < 5000"
