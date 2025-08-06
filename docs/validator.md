@@ -110,7 +110,7 @@ pm2 start --name auto_update_validator \
    *The task is **never** sent to miners.*
 
 2. **Discover miners’ models**  
-   *File cache:* `miner_models/UID_<uid>.zip`  
+   *File cache:* `miner_models_v2/UID_<uid>.zip`  
    For each sampled UID the validator  
    1. sends an empty **`PolicySynapse`** → miner replies with a **`PolicyRef`**;  
    2. compares the `sha256` to the cached file. If it differs, it sends  
