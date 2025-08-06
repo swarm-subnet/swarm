@@ -153,7 +153,7 @@ class DockerSecureEvaluator:
         uid: int, 
         model_path: Path
     ) -> ValidationResult:
-        """Evaluate model in isolated Docker container"""
+        """Evaluate model in isolated Docker container with proper lifecycle management"""
         
         if not DockerSecureEvaluator._base_ready:
             bt.logging.warning(f"Docker not ready for UID {uid}")
@@ -163,6 +163,9 @@ class DockerSecureEvaluator:
         self.last_fake_model_info = None
         
         container_name = f"swarm_eval_{uid}_{int(time.time() * 1000)}"
+        
+        # ENHANCED LOGGING: Starting Docker for UID
+        bt.logging.info(f"🐳 Starting Docker container for UID {uid} evaluation...")
         
         try:
             # Create temp directory for task/result files
@@ -218,6 +221,8 @@ class DockerSecureEvaluator:
                     # Kill container if timeout
                     subprocess.run(["docker", "kill", container_name], capture_output=True)
                     bt.logging.warning(f"Container timeout for UID {uid}")
+                    # ENHANCED LOGGING: Ending Docker for timeout
+                    bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation timed out")
                 
                 # Read results
                 if result_file.exists():
@@ -236,6 +241,9 @@ class DockerSecureEvaluator:
                                 'reason': data.get('fake_reason', 'Unknown'),
                                 'inspection_results': data.get('inspection_results', {})
                             }
+                            
+                            # ENHANCED LOGGING: Ending Docker for fake model
+                            bt.logging.info(f"🏁 Ending Docker container for UID {uid} - fake model detected")
                             
                             # Return zero score for fake models
                             return ValidationResult(uid, False, 0.0, 0.0, 0.0)
@@ -258,16 +266,29 @@ class DockerSecureEvaluator:
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         print(f"{timestamp} 🔍 DEBUG: UID {uid} result_data: {result_data}")
                         
+                        # ENHANCED LOGGING: Successfully ending Docker for UID
+                        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation completed successfully")
+                        
                         return ValidationResult(**result_data)
                         
                     except Exception as e:
                         bt.logging.warning(f"Failed to parse result for UID {uid}: {e}")
+                        # ENHANCED LOGGING: Ending Docker for result parsing error
+                        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - result parsing failed")
+                else:
+                    bt.logging.warning(f"No result file found for UID {uid}")
+                    # ENHANCED LOGGING: Ending Docker for missing results
+                    bt.logging.info(f"🏁 Ending Docker container for UID {uid} - no results generated")
                 
         except Exception as e:
             bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
             # Ensure container is killed
             subprocess.run(["docker", "kill", container_name], capture_output=True)
+            # ENHANCED LOGGING: Ending Docker for general error
+            bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation failed with error")
         
+        # ENHANCED LOGGING: Final fallback ending message
+        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - returning default result")
         return ValidationResult(uid, False, 0.0, 0.0, 0.0)
     
     

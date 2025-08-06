@@ -8,7 +8,6 @@ import sys
 import os
 import json
 import gc
-import traceback
 import resource
 from pathlib import Path
 
@@ -17,7 +16,6 @@ swarm_path = str(Path(__file__).resolve().parent.parent.parent)
 if swarm_path not in sys.path:
     sys.path.insert(0, swarm_path)
 
-from stable_baselines3 import PPO
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
 
@@ -29,19 +27,30 @@ def main():
     import logging
     logging.disable(logging.CRITICAL)
     
-    # Redirect stderr to suppress output
+    # Redirect stderr to suppress output (but keep for debugging in verify mode)
     original_stderr = sys.stderr
-    sys.stderr = open(os.devnull, 'w')
+    if len(sys.argv) > 1 and sys.argv[1] != "VERIFY_ONLY":
+        sys.stderr = open(os.devnull, 'w')
     
     try:
-        # Parse command line arguments
+        # Parse command line arguments - handle both regular evaluation and verification-only
         if len(sys.argv) != 5:
-            raise ValueError("Usage: evaluator.py <task_json> <uid> <model_path> <result_file>")
+            raise ValueError("Usage: evaluator.py <task_json|VERIFY_ONLY> <uid> <model_path> <result_file>")
         
-        task_json = sys.argv[1]
+        first_arg = sys.argv[1]
         uid = int(sys.argv[2])
         model_path = sys.argv[3]
         result_file = sys.argv[4]
+        
+        # Check if this is verification-only mode
+        verify_only_mode = (first_arg == "VERIFY_ONLY")
+        
+        # Clean verification mode logging
+        if verify_only_mode:
+            print(f"🔍 Verifying model for UID {uid}")
+        
+        if not verify_only_mode:
+            task_json = first_arg
         
         # Set memory limits
         try:
@@ -52,11 +61,11 @@ def main():
         except Exception:
             pass
         
-        # Parse task from JSON
-        with open(task_json, 'r') as f:
-            task_data = json.load(f)
-        
-        task = MapTask(**task_data)
+        # Parse task from JSON (only for regular evaluation)
+        if not verify_only_mode:
+            with open(task_json, 'r') as f:
+                task_data = json.load(f)
+            task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
         from swarm.validator.forward import _inspect_model_structure, _is_fake_model
@@ -64,6 +73,11 @@ def main():
         
         inspection_results = _inspect_model_structure(Path(model_path))
         is_fake, fake_reason = _is_fake_model(inspection_results)
+        
+        # Clean inspection result logging
+        if verify_only_mode:
+            status = "FAKE" if is_fake else "LEGITIMATE" 
+            print(f"📋 Model inspection: {status}" + (f" - {fake_reason}" if is_fake else ""))
         
         if is_fake:
             # Return fake model detection result
@@ -74,8 +88,18 @@ def main():
                 energy=0.0,
                 score=0.0
             )
+        elif verify_only_mode:
+            # VERIFICATION-ONLY MODE: Model is legitimate, return success without evaluation
+            result = ValidationResult(
+                uid=uid,
+                success=True,
+                time_sec=0.0,
+                energy=0.0,
+                score=0.0  # Not applicable for verification-only
+            )
         else:
-            # Model is legitimate, proceed with evaluation
+            # REGULAR EVALUATION MODE: Model is legitimate, proceed with evaluation
+            from stable_baselines3 import PPO
             model = PPO.load(model_path, device="cpu")
             
             # Import and run episode  
@@ -91,6 +115,13 @@ def main():
             result_dict['is_fake_model'] = True
             result_dict['fake_reason'] = fake_reason
             result_dict['inspection_results'] = inspection_results
+        else:
+            # Explicitly mark as not fake for verification mode
+            result_dict['is_fake_model'] = False
+            
+        # Clean result logging
+        if verify_only_mode:
+            print(f"✅ Verification complete")
         
         # Convert numpy types to Python types for JSON serialization
         for key, value in result_dict.items():
@@ -106,6 +137,7 @@ def main():
         
         # Atomic rename
         os.rename(tmp_file, result_file)
+        
         
         # Cleanup
         if 'model' in locals():
