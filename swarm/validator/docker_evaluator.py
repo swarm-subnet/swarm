@@ -170,6 +170,11 @@ class DockerSecureEvaluator:
         try:
             # Create temp directory for task/result files
             with tempfile.TemporaryDirectory() as tmpdir:
+                # Set ownership and permissions for container user (UID 1000)
+                import os
+                os.chown(tmpdir, 1000, 1000)
+                os.chmod(tmpdir, 0o755)
+                
                 task_file = Path(tmpdir) / "task.json"
                 result_file = Path(tmpdir) / "result.json"
                 
@@ -183,7 +188,7 @@ class DockerSecureEvaluator:
                     "docker", "run",
                     "--rm",
                     "--name", container_name,
-                    "--user", "root",  # Run as root to allow writing to mounted directories
+                    "--user", "1000:1000",
                     "--memory=6g",
                     "--cpus=2",
                     "--pids-limit=20",

@@ -757,6 +757,11 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     try:
         # Create temp directory for verification
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Set ownership and permissions for container user (UID 1000)
+            import os
+            os.chown(tmpdir, 1000, 1000)
+            os.chmod(tmpdir, 0o755)
+            
             verification_result_file = Path(tmpdir) / "verification_result.json"
             
             # Create minimal task for verification (not used for actual evaluation)
@@ -776,7 +781,7 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                 "docker", "run",
                 "--rm",
                 "--name", container_name,
-                "--user", "root",
+                "--user", "1000:1000",
                 "--memory=4g",  # Less memory needed for verification
                 "--cpus=1",     # Single CPU for verification
                 "--pids-limit=10",
