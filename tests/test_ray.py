@@ -57,24 +57,6 @@ class CameraController:
         if ord('e') in current_keys or ord('E') in current_keys:
             self.camera_target[2] += self.movement_speed * 60 * dt
             
-        # Arrow keys for target movement
-        if p.B3G_UP_ARROW in current_keys:
-            yaw_rad = math.radians(self.camera_yaw)
-            self.camera_target[0] += math.cos(yaw_rad) * self.movement_speed * 60 * dt
-            self.camera_target[1] += math.sin(yaw_rad) * self.movement_speed * 60 * dt
-        if p.B3G_DOWN_ARROW in current_keys:
-            yaw_rad = math.radians(self.camera_yaw)
-            self.camera_target[0] -= math.cos(yaw_rad) * self.movement_speed * 60 * dt
-            self.camera_target[1] -= math.sin(yaw_rad) * self.movement_speed * 60 * dt
-        if p.B3G_LEFT_ARROW in current_keys:
-            yaw_rad = math.radians(self.camera_yaw + 90)
-            self.camera_target[0] += math.cos(yaw_rad) * self.movement_speed * 60 * dt
-            self.camera_target[1] += math.sin(yaw_rad) * self.movement_speed * 60 * dt
-        if p.B3G_RIGHT_ARROW in current_keys:
-            yaw_rad = math.radians(self.camera_yaw - 90)
-            self.camera_target[0] += math.cos(yaw_rad) * self.movement_speed * 60 * dt
-            self.camera_target[1] -= math.sin(yaw_rad) * self.movement_speed * 60 * dt
-            
         # Reset camera with R
         if ord('r') in current_keys or ord('R') in current_keys:
             self.reset_camera()
