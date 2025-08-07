@@ -757,9 +757,10 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     try:
         # Create temp directory for verification
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Set permissions for container user (UID 1000)
+            # Set ownership and permissions for container user (UID 1000)
             import os
-            os.chmod(tmpdir, 0o777)
+            os.chown(tmpdir, 1000, 1000)
+            os.chmod(tmpdir, 0o755)
             
             verification_result_file = Path(tmpdir) / "verification_result.json"
             

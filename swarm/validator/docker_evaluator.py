@@ -170,9 +170,10 @@ class DockerSecureEvaluator:
         try:
             # Create temp directory for task/result files
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Set permissions for container user (UID 1000)
+                # Set ownership and permissions for container user (UID 1000)
                 import os
-                os.chmod(tmpdir, 0o777)
+                os.chown(tmpdir, 1000, 1000)
+                os.chmod(tmpdir, 0o755)
                 
                 task_file = Path(tmpdir) / "task.json"
                 result_file = Path(tmpdir) / "result.json"
