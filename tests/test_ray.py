@@ -227,8 +227,8 @@ def visualize_rays(env, obs):
     else:
         obs_flat = obs
         
-    if len(obs_flat) == 133:
-        distance_obs = obs_flat[112:130]  # 18 distance values (normalized)
+    if len(obs_flat) == 131:  # Updated: 112 base + 16 distances + 3 goal = 131
+        distance_obs = obs_flat[112:128]  # 16 distance values (normalized)
         distances = distance_obs * 10.0  # Convert back to meters
     else:
         distances = env._get_obstacle_distances(drone_pos, drone_rotation)

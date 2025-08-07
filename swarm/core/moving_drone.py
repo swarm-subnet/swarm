@@ -78,13 +78,13 @@ class MovingDroneAviary(BaseRLAviary):
             act          = act,
         )
 
-        # ‑‑‑ extend observation with obstacle distances (18-D) + goal vector (3-D) ‑‑‑
+        # ‑‑‑ extend observation with obstacle distances (16-D) + goal vector (3-D) ‑‑‑
         obs_space = cast(spaces.Box, self.observation_space)
         old_low,  old_high  = obs_space.low, obs_space.high
         
-        # Distance sensors: 18 dimensions, range [0.0, 1.0] (scaled from meters)
-        dist_low = np.zeros((old_low.shape[0], 18), dtype=np.float32)
-        dist_high = np.ones((old_high.shape[0], 18), dtype=np.float32)  # scaled to [0.0, 1.0]
+        # Distance sensors: 16 dimensions, range [0.0, 1.0] (scaled from meters)
+        dist_low = np.zeros((old_low.shape[0], 16), dtype=np.float32)
+        dist_high = np.ones((old_high.shape[0], 16), dtype=np.float32)  # scaled to [0.0, 1.0]
         
         # Goal vector: 3 dimensions, unlimited range  
         goal_low = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
@@ -105,44 +105,43 @@ class MovingDroneAviary(BaseRLAviary):
         return 1.0 / self.CTRL_FREQ
 
     def _init_ray_directions(self):
-        """Initialize the 18 ray directions for obstacle detection with exact mathematical expressions."""
+        """Initialize 16 ray directions for obstacle detection - balanced with side coverage."""
         # Mathematical constants
-        cos_45 = np.cos(np.radians(45))  # √2/2 ≈ 0.707107
-        sin_45 = np.sin(np.radians(45))  # √2/2 ≈ 0.707107
-        cos_30 = np.cos(np.radians(30))  # √3/2 ≈ 0.866025
-        sin_30 = np.sin(np.radians(30))  # 1/2 = 0.500000
+        cos_45 = np.cos(np.radians(45))      # √2/2 ≈ 0.707107
+        sin_45 = np.sin(np.radians(45))      # √2/2 ≈ 0.707107
+        cos_30 = np.cos(np.radians(30))      # √3/2 ≈ 0.866025
+        sin_30 = np.sin(np.radians(30))      # 1/2 = 0.500000
         
         self.ray_directions = np.array([
-            # 8 horizontal directions (every 45°)
-            [1, 0, 0],                    # 1: Forward (0°)
-            [cos_45, sin_45, 0],          # 2: Forward-Right (45°)  
-            [0, 1, 0],                    # 3: Right (90°)
-            [-cos_45, sin_45, 0],         # 4: Back-Right (135°)
-            [-1, 0, 0],                   # 5: Back (180°)
-            [-cos_45, -sin_45, 0],        # 6: Back-Left (225°)
-            [0, -1, 0],                   # 7: Left (270°)
-            [cos_45, -sin_45, 0],         # 8: Forward-Left (315°)
+            # ═══ 2 PURE VERTICAL (essential for landing/overhead) ═══
+            [0, 0, 1],                       # 1: Pure Up
+            [0, 0, -1],                      # 2: Pure Down
             
-            # 2 pure vertical
-            [0, 0, 1],                    # 9: Up (90° elevation)
-            [0, 0, -1],                   # 10: Down (-90° elevation)
+            # ═══ 8 HORIZONTAL - BALANCED COVERAGE ═══
+            [1, 0, 0],                       # 3: Forward (0°)
+            [cos_45, sin_45, 0],             # 4: Forward-Right (45°)
+            [0, 1, 0],                       # 5: Right (90°) - ESSENTIAL SIDE COVERAGE
+            [-cos_45, sin_45, 0],            # 6: Back-Right (135°)
+            [-1, 0, 0],                      # 7: Back (180°)
+            [-cos_45, -sin_45, 0],           # 8: Back-Left (225°)
+            [0, -1, 0],                      # 9: Left (270°) - ESSENTIAL SIDE COVERAGE
+            [cos_45, -sin_45, 0],            # 10: Forward-Left (315°)
             
-            # 8 diagonal (30° elevation angles)
-            [cos_30, 0, sin_30],          # 11: Forward-Up (30° elevation)
-            [cos_30, 0, -sin_30],         # 12: Forward-Down (-30° elevation)
-            [-cos_30, 0, sin_30],         # 13: Back-Up (30° elevation)
-            [-cos_30, 0, -sin_30],        # 14: Back-Down (-30° elevation)
-            [0, cos_30, sin_30],          # 15: Right-Up (30° elevation)
-            [0, cos_30, -sin_30],         # 16: Right-Down (-30° elevation)
-            [0, -cos_30, sin_30],         # 17: Left-Up (30° elevation)
-            [0, -cos_30, -sin_30],        # 18: Left-Down (-30° elevation)
+            # ═══ 6 DIAGONAL RAYS (3D coverage at ±30° elevation) ═══
+            [cos_30, 0, sin_30],             # 11: Forward-Up (30° elevation)
+            [cos_30, 0, -sin_30],            # 12: Forward-Down (-30° elevation)
+            [-cos_30, 0, sin_30],            # 13: Back-Up (30° elevation)
+            [-cos_30, 0, -sin_30],           # 14: Back-Down (-30° elevation)
+            [0, cos_30, sin_30],             # 15: Right-Up (30° elevation)
+            [0, -cos_30, sin_30],            # 16: Left-Up (30° elevation)
         ], dtype=np.float32)
         
-        self.max_ray_distance = 10.0  # Maximum detection range in meters
+        # Set maximum detection range (10 meters)
+        self.max_ray_distance = 10.0
 
     def _get_obstacle_distances(self, drone_position: np.ndarray, drone_orientation: np.ndarray) -> np.ndarray:
         """
-        Perform 18-ray casting for obstacle detection using batch processing.
+        Perform 16-ray casting for obstacle detection using batch processing.
         
         Parameters
         ----------
@@ -154,7 +153,7 @@ class MovingDroneAviary(BaseRLAviary):
         Returns
         -------
         np.ndarray
-            Array of 18 distances in meters [0.0 - 10.0]
+            Array of 16 distances in meters [0.0 - 10.0]
             Note: These are scaled by 10 in _computeObs() to match goal vector scaling
         """
         # Use the rotation matrix directly (no conversion needed!)
@@ -311,18 +310,18 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- observation extension -------------------------------------- #
     def _computeObs(self) -> np.ndarray:
         """
-        Full base observation (112-D) + obstacle distances (18-D) + goal vector (3-D) → 133-D.
+        Full base observation (112-D) + obstacle distances (16-D) + goal vector (3-D) → 131-D.
         """
         base_obs: NDArray[np.float32] | None = super()._computeObs()                  # shape (1, 112)
         if base_obs is None:
-            return np.zeros((1, 133), dtype=np.float32)
+            return np.zeros((1, 131), dtype=np.float32)
         
         # Get current drone state for ray casting (single drone at index 0)
         drone_position = base_obs[0, 0:3]  # Extract position from base_obs directly
         
         roll, pitch, yaw = base_obs[0, 6], base_obs[0, 7], base_obs[0, 8]
         rotation_matrix = self._euler_to_rotation_matrix(roll, pitch, yaw)
-        distances = self._get_obstacle_distances(drone_position, rotation_matrix).reshape(1, 18)
+        distances = self._get_obstacle_distances(drone_position, rotation_matrix).reshape(1, 16)
         
         distances_scaled = distances / 10.0
         rel = ((self.GOAL_POS - drone_position) / 10.0).reshape(1, 3)
