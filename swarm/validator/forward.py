@@ -125,6 +125,16 @@ def _save_blacklist(blacklist: set) -> None:
     except Exception as e:
         bt.logging.error(f"Error saving blacklist: {e}")
 
+def _add_to_blacklist(model_hash: str) -> None:
+    """Add a single model hash to the blacklist."""
+    try:
+        blacklist = _load_blacklist()
+        blacklist.add(model_hash)
+        _save_blacklist(blacklist)
+        bt.logging.info(f"🚫 Added {model_hash[:16]}... to blacklist")
+    except Exception as e:
+        bt.logging.error(f"Error adding to blacklist: {e}")
+
 def _inspect_model_structure(zip_path: Path) -> dict:
     """
     Inspect PPO model structure without loading it through SB3.
@@ -515,6 +525,53 @@ def _is_fake_model(inspection_results: dict) -> tuple[bool, str]:
     if inspection_results["weight_variance"] < 1e-6:
         return True, f"Weights too uniform, variance: {inspection_results['weight_variance']}"
     
+    # ENHANCED DETECTION: Check for sophisticated fakes
+    layer_analysis = inspection_results.get("layer_analysis", {})
+    
+    # Check for all-zero biases (sign of artificial model)
+    all_zero_biases = 0
+    total_bias_layers = 0
+    
+    for layer_name, stats in layer_analysis.items():
+        if 'bias' in layer_name:
+            total_bias_layers += 1
+            if (stats.get('mean', 1.0) == 0.0 and 
+                stats.get('std', 1.0) == 0.0 and 
+                stats.get('min', 1.0) == 0.0 and 
+                stats.get('max', 1.0) == 0.0):
+                all_zero_biases += 1
+    
+    # If ALL bias layers are zero, likely fake
+    if total_bias_layers > 0 and all_zero_biases == total_bias_layers:
+        return True, f"All {all_zero_biases} bias layers are zero (artificial model)"
+    
+    # Check for suspicious log_std (PPO action noise parameter)
+    if 'log_std' in layer_analysis:
+        log_std_stats = layer_analysis['log_std']
+        if (log_std_stats.get('std', 1.0) == 0.0 and 
+            log_std_stats.get('mean', 1.0) == 0.0):
+            return True, "log_std parameter is all zeros (untrained PPO model)"
+    
+    # Check for lack of training artifacts
+    if not inspection_results.get("has_training_artifacts", True):
+        # This alone isn't enough, but combined with other factors...
+        # Count additional suspicious indicators
+        suspicious_indicators = 0
+        
+        # All zero biases
+        if total_bias_layers > 0 and all_zero_biases >= total_bias_layers * 0.8:  # 80% or more
+            suspicious_indicators += 1
+            
+        # Zero log_std
+        if 'log_std' in layer_analysis:
+            log_std_stats = layer_analysis['log_std']
+            if log_std_stats.get('std', 1.0) == 0.0:
+                suspicious_indicators += 1
+        
+        # If multiple indicators + no training artifacts = likely fake
+        if suspicious_indicators >= 2:
+            return True, "Multiple indicators of artificial model (no training artifacts + suspicious patterns)"
+    
     # Check minimum parameter count last (as it's the most generic)
     if inspection_results["parameter_count"] < 5000:
         return True, f"Too few parameters: {inspection_results['parameter_count']} < 5000"
@@ -609,7 +666,7 @@ def _run_episode(
 # ──────────────────────────────────────────────────────────────────────────
 # 3.  Secure, cached model download
 # ──────────────────────────────────────────────────────────────────────────
-async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
+async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> None:
     """
     Ask the miner for the full ZIP in one message (base‑64 encoded)
     and save it to *dest*.  All integrity and size checks still apply.
@@ -647,7 +704,7 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
         if len(raw_bytes) > MAX_MODEL_BYTES:
             bt.logging.error(
                 f"Miner {axon.hotkey} sent oversized blob "
-                f"({len(raw_bytes)/1e6:.1f} MB > 50 MB)"
+                f"({len(raw_bytes)/1e6:.1f} MB > {MAX_MODEL_BYTES/1e6:.0f} MB)"
             )
             return
 
@@ -661,28 +718,164 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path) -> None:
             tmp.unlink(missing_ok=True)
             return
 
-        # 6 – Fake model detection (only for new models)
-        blacklist = _load_blacklist()
+        # 6 – Model is not blacklisted, proceed with storage and verification
         
-        # Check if this hash is already blacklisted
-        if ref.sha256 in blacklist:
-            bt.logging.warning(f"Skipping blacklisted fake model {ref.sha256[:16]}... from miner {axon.hotkey}")
-            tmp.unlink(missing_ok=True)
-            return
-        
-        # Model inspection will happen inside Docker for security
-        # For now, just store the model and let Docker handle validation
         bt.logging.info(f"📦 Downloaded model {ref.sha256[:16]}... from miner {axon.hotkey}")
         
         # Atomic replacement to prevent corruption
         tmp.replace(dest)
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
         
-        # Model inspection and fake detection will happen during Docker evaluation
+        # 7 – FIRST-TIME VERIFICATION: Run fake model detection in Docker container
+        await _verify_new_model_with_docker(dest, ref.sha256, axon.hotkey, uid)
 
     except Exception as e:
         bt.logging.warning(f"Download error ({axon.hotkey}): {e}")
         tmp.unlink(missing_ok=True)
+
+async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner_hotkey: str, uid: int):
+    """
+    FIRST-TIME MODEL VERIFICATION: Run fake model detection in Docker container
+    
+    Creates a fresh Docker container from base image, copies the model inside,
+    runs the 3-layer fake detection process, and handles fake model blacklisting.
+    """
+    from .docker_evaluator import DockerSecureEvaluator
+    
+    bt.logging.info(f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}")
+    
+    # Create Docker evaluator instance
+    docker_evaluator = DockerSecureEvaluator()
+    
+    if not docker_evaluator._base_ready:
+        bt.logging.warning(f"Docker not ready for verification of {model_hash[:16]}...")
+        return
+    
+    # Create verification container name
+    container_name = f"swarm_verify_{model_hash[:8]}_{int(time.time() * 1000)}"
+    
+    try:
+        # Create temp directory for verification
+        with tempfile.TemporaryDirectory() as tmpdir:
+            verification_result_file = Path(tmpdir) / "verification_result.json"
+            
+            # Create minimal task for verification (not used for actual evaluation)
+            dummy_task = {
+                "start": [0, 0, 1], "goal": [5, 5, 2], "obstacles": [],
+                "horizon": 30.0, "seed": 12345
+            }
+            
+            task_file = Path(tmpdir) / "task.json"
+            with open(task_file, 'w') as f:
+                json.dump(dummy_task, f)
+            
+            bt.logging.info(f"🐳 Starting Docker container for verification of UID model {model_hash[:16]}...")
+            
+            # Docker run command for verification (copy model inside container)
+            cmd = [
+                "docker", "run",
+                "--rm",
+                "--name", container_name,
+                "--user", "root",
+                "--memory=4g",  # Less memory needed for verification
+                "--cpus=1",     # Single CPU for verification
+                "--pids-limit=10",
+                "--ulimit", "nofile=32:32",
+                "--ulimit", "fsize=262144000:262144000",  # 250MB file size limit
+                "--security-opt", "no-new-privileges",
+                "--network", "none",
+                "-v", f"{tmpdir}:/workspace/shared",
+                "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
+                docker_evaluator.base_image,
+                # Use special verification mode
+                "VERIFY_ONLY",  # Special flag to run only verification
+                str(uid),  # Real UID for verification
+                "/workspace/model.zip",  # Model path
+                "/workspace/shared/verification_result.json"  # Result file
+            ]
+            
+            # Execute verification with timeout
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=60  # 1 minute timeout for verification
+                )
+                
+                # Enhanced debugging for verification
+                stdout_str = stdout.decode() if stdout else ""
+                stderr_str = stderr.decode() if stderr else ""
+                
+                bt.logging.debug(f"Verification container for {model_hash[:16]}:")
+                bt.logging.debug(f"  Return code: {proc.returncode}")
+                bt.logging.debug(f"  STDOUT: {stdout_str}")
+                bt.logging.debug(f"  STDERR: {stderr_str}")
+                
+                if proc.returncode != 0:
+                    bt.logging.warning(f"Verification container failed for {model_hash[:16]} with return code {proc.returncode}")
+                    bt.logging.warning(f"Error output: {stderr_str}")
+                
+            except asyncio.TimeoutError:
+                # Kill container if timeout
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                bt.logging.warning(f"⏰ Verification timeout for model {model_hash[:16]}...")
+                return
+            
+            bt.logging.info(f"🔚 Ending Docker container for verification of model {model_hash[:16]}...")
+            
+            # Read verification results
+            if verification_result_file.exists():
+                try:
+                    with open(verification_result_file, 'r') as f:
+                        verification_data = json.load(f)
+                    
+                    # Check if fake model was detected
+                    if verification_data.get('is_fake_model', False):
+                        fake_reason = verification_data.get('fake_reason', 'Unknown')
+                        inspection_results = verification_data.get('inspection_results', {})
+                        
+                        bt.logging.warning(f"🚫 FAKE MODEL DETECTED during verification: {fake_reason}")
+                        bt.logging.info(f"Model hash: {model_hash}")
+                        bt.logging.debug(f"Inspection details: {inspection_results}")
+                        
+                        # Save fake model for analysis and add to blacklist
+                        _save_fake_model_for_analysis(model_path, uid, model_hash, fake_reason, inspection_results)
+                        _add_to_blacklist(model_hash)
+                        
+                        # Remove the fake model from cache
+                        model_path.unlink(missing_ok=True)
+                        bt.logging.info(f"🗑️ Removed fake model {model_hash[:16]}... from cache")
+                        
+                    else:
+                        bt.logging.info(f"✅ Model {model_hash[:16]}... passed verification - legitimate model")
+                        
+                except Exception as e:
+                    bt.logging.warning(f"Failed to parse verification results for {model_hash[:16]}: {e}")
+            else:
+                bt.logging.warning(f"No verification results found for model {model_hash[:16]}...")
+                
+                # Debug: Check what files exist in the temp directory
+                try:
+                    temp_files = list(Path(tmpdir).glob("*"))
+                    bt.logging.debug(f"Files in temp directory: {[f.name for f in temp_files]}")
+                    
+                    # Check if the result file path is what we expect
+                    expected_file = Path(tmpdir) / "verification_result.json"
+                    bt.logging.debug(f"Expected result file: {expected_file}")
+                    bt.logging.debug(f"Expected file exists: {expected_file.exists()}")
+                    
+                except Exception as e:
+                    bt.logging.debug(f"Error checking temp directory: {e}")
+    
+    except Exception as e:
+        bt.logging.warning(f"Docker verification failed for model {model_hash[:16]}: {e}")
+        # Ensure container is killed
+        subprocess.run(["docker", "kill", container_name], capture_output=True)
 
 async def send_with_fresh_uuid(
     wallet: "bt.Wallet",
@@ -751,6 +944,12 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
             bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
             continue
 
+        # 2 – FIRST CHECK: Is this hash blacklisted?
+        blacklist = _load_blacklist()
+        if ref.sha256 in blacklist:
+            bt.logging.warning(f"Skipping blacklisted fake model {ref.sha256[:16]}... from miner {uid}")
+            continue
+
         # 2 – compare with cache
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
         up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
@@ -767,7 +966,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                 model_fp.unlink(missing_ok=True)
 
         # 3 – request payload
-        await _download_model(self, axon, ref, model_fp)
+        await _download_model(self, axon, ref, model_fp, uid)
         if (
             model_fp.exists()
             and model_fp.stat().st_size <= MAX_MODEL_BYTES
