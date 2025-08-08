@@ -1153,6 +1153,7 @@ async def forward(self) -> None:
         # ------------------------------------------------------------------
         # 1. build a secret task
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+        bt.logging.info(f"Cycle seed: {task.map_seed}")
 
         # ------------------------------------------------------------------
         # 2. sample miners & secure their models
