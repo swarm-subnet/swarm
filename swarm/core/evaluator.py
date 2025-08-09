@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 Standalone evaluator script for subprocess execution.
-This runs as a separate Python process to completely isolate from bittensor logging.
+Now supports a two-process design (within the same container) to isolate the
+model from the environment. In regular evaluation mode, the parent process runs
+the environment loop and spawns a child "MODEL_WORKER" process that only loads
+the model and returns actions. The two processes exchange strictly numerical
+data (observations and actions) via stdio JSON lines.
 """
 
 import sys
@@ -10,6 +14,9 @@ import json
 import gc
 import resource
 from pathlib import Path
+import subprocess
+import json as _json
+import select
 
 # Add swarm to path BEFORE importing swarm modules
 swarm_path = str(Path(__file__).resolve().parent.parent.parent)
@@ -20,10 +27,94 @@ from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
 
 
+def _spawn_model_worker(model_path: str) -> subprocess.Popen:
+    """Start a model-only worker process that returns actions for given obs.
+
+    The worker is invoked as: this_script MODEL_WORKER <model_path>
+    Communication protocol: parent writes one JSON line {"obs": [...]} per step;
+    worker replies with one JSON line {"act": [...]}.
+    """
+    cmd = [sys.executable, str(Path(__file__).resolve()), "MODEL_WORKER", model_path]
+    # Use unbuffered I/O to minimize latency
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    return proc
+
+
+def _model_predict_via_io(proc: subprocess.Popen, obs_array, timeout_s: float = 1.0):
+    """Send observation to the model worker and get an action back as list.
+
+    Returns a Python list representing the action on success; raises RuntimeError
+    on timeout or protocol errors.
+    """
+    if proc.poll() is not None:
+        raise RuntimeError("model worker terminated")
+
+    # Ensure 1-D list of floats
+    try:
+        obs_list = obs_array.tolist() if hasattr(obs_array, "tolist") else list(obs_array)
+    except Exception:
+        raise RuntimeError("invalid observation format")
+
+    line = _json.dumps({"obs": obs_list}) + "\n"
+    try:
+        proc.stdin.write(line)
+        proc.stdin.flush()
+    except Exception as e:
+        raise RuntimeError(f"failed to write to model worker: {e}")
+
+    # Wait for one line with timeout
+    rlist, _, _ = select.select([proc.stdout], [], [], timeout_s)
+    if not rlist:
+        raise RuntimeError("model worker timeout")
+    reply = proc.stdout.readline()
+    if not reply:
+        raise RuntimeError("model worker closed pipe")
+    try:
+        payload = _json.loads(reply)
+        act = payload.get("act", None)
+        if not isinstance(act, list) or len(act) == 0:
+            raise ValueError("bad action payload")
+        return act
+    except Exception as e:
+        raise RuntimeError(f"invalid model worker reply: {e}")
+
+
+def _wait_model_ready(proc: subprocess.Popen, timeout_s: float = 60.0) -> None:
+    """Block until the model worker prints a readiness line {"ready": true}."""
+    elapsed = 0.0
+    step = 0.1
+    while elapsed < timeout_s:
+        if proc.poll() is not None:
+            raise RuntimeError("model worker terminated prematurely")
+        rlist, _, _ = select.select([proc.stdout], [], [], step)
+        if rlist:
+            line = proc.stdout.readline()
+            if not line:
+                continue
+            try:
+                msg = _json.loads(line)
+                if msg.get("ready", False) is True:
+                    return
+            except Exception:
+                # ignore non-ready lines
+                pass
+        elapsed += step
+    raise RuntimeError("model worker ready timeout")
+
+
 def main():
     """Main evaluator entry point"""
     
-    # Disable all logging to prevent any logging threads
+    # Disable all logging to prevent any logging threads in parent or worker
     import logging
     logging.disable(logging.CRITICAL)
     
@@ -34,9 +125,50 @@ def main():
     
     try:
         # Parse command line arguments - handle both regular evaluation and verification-only
+        # Special worker mode: MODEL_WORKER <model_path>
+        if len(sys.argv) >= 2 and sys.argv[1] == "MODEL_WORKER":
+            # Child process that only loads the model and returns actions via stdio
+            # Import here to keep parent process free from model code
+            from stable_baselines3 import PPO
+            model_path = sys.argv[2]
+            try:
+                model = PPO.load(model_path, device="cpu")
+            except Exception as e:
+                sys.stderr.write(f"MODEL_WORKER_LOAD_ERROR: {e}\n")
+                sys.stderr.flush()
+                sys.exit(1)
+
+            # Signal readiness
+            sys.stdout.write(_json.dumps({"ready": True}) + "\n")
+            sys.stdout.flush()
+
+            # Serve an infinite loop over stdin
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = _json.loads(line)
+                    obs = msg.get("obs", None)
+                    if not isinstance(obs, list) or len(obs) == 0:
+                        raise ValueError("invalid obs")
+                    import numpy as _np
+                    obs_arr = _np.asarray(obs, dtype=_np.float32)
+                    # SB3 can accept 1-D obs; ensure proper shape is handled inside predict
+                    act, _ = model.predict(obs_arr, deterministic=True)
+                    act_list = act.squeeze().tolist() if hasattr(act, "tolist") else list(act)
+                    sys.stdout.write(_json.dumps({"act": act_list}) + "\n")
+                    sys.stdout.flush()
+                except Exception as e:
+                    # Protocol error: respond with an empty action to keep protocol flowing
+                    sys.stdout.write(_json.dumps({"act": []}) + "\n")
+                    sys.stdout.flush()
+            sys.exit(0)
+
+        # Normal modes
         if len(sys.argv) != 5:
             raise ValueError("Usage: evaluator.py <task_json|VERIFY_ONLY> <uid> <model_path> <result_file>")
-        
+
         first_arg = sys.argv[1]
         uid = int(sys.argv[2])
         model_path = sys.argv[3]
@@ -98,13 +230,77 @@ def main():
                 score=0.0  # Not applicable for verification-only
             )
         else:
-            # REGULAR EVALUATION MODE: Model is legitimate, proceed with evaluation
-            from stable_baselines3 import PPO
-            model = PPO.load(model_path, device="cpu")
-            
-            # Import and run episode  
-            from swarm.validator.forward import _run_episode
-            result = _run_episode(task, uid, model)
+            # REGULAR EVALUATION MODE: Model is legitimate, evaluate via two-process IPC
+            # Spawn untrusted model worker
+            worker = _spawn_model_worker(model_path)
+            # Wait up to 60s for worker to be ready (covers initial model load)
+            _wait_model_ready(worker, timeout_s=60.0)
+
+            # Build environment and roll out
+            # Import here to avoid bringing SB3 into the parent
+            import numpy as _np
+            from swarm.utils.env_factory import make_env
+            from swarm.constants import SIM_DT
+
+            class _PilotIPC:
+                def __init__(self, proc):
+                    self.proc = proc
+                def reset(self, task):
+                    pass
+                def act(self, obs, t):
+                    act_list = _model_predict_via_io(self.proc, obs, timeout_s=3.0)
+                    if not act_list:
+                        # fallback to zeros with safe shape
+                        return _np.zeros(4, dtype=_np.float32)
+                    return _np.asarray(act_list, dtype=_np.float32)
+
+            pilot = _PilotIPC(worker)
+            env = make_env(task, gui=False)
+
+            try:
+                try:
+                    obs = env._computeObs()  # type: ignore[attr-defined]
+                except AttributeError:
+                    obs = env.get_observation()  # type: ignore[attr-defined]
+                if isinstance(obs, dict):
+                    obs = obs[next(iter(obs))]
+
+                pos0 = _np.asarray(task.start, dtype=float)
+                t_sim = 0.0
+                energy = 0.0
+                success = False
+                step_count = 0
+
+                while t_sim < task.horizon:
+                    act = pilot.act(obs, t_sim)
+                    obs, _r, terminated, truncated, info = env.step(act[None, :])
+                    t_sim += SIM_DT
+                    energy += _np.abs(act).sum() * SIM_DT
+                    if terminated or truncated:
+                        success = info.get("success", False)
+                        break
+                    step_count += 1
+
+                # Compute score using reward function
+                from swarm.validator.reward import flight_reward
+                score = flight_reward(
+                    success=success,
+                    t=t_sim,
+                    e=energy,
+                    horizon=task.horizon,
+                )
+
+                result = ValidationResult(uid, success, t_sim, energy, score)
+            finally:
+                try:
+                    env.close()
+                except Exception:
+                    pass
+                try:
+                    # Terminate worker process
+                    worker.terminate()
+                except Exception:
+                    pass
         
         # Write result to file
         tmp_file = result_file + ".tmp"
