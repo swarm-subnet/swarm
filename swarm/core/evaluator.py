@@ -233,8 +233,8 @@ def main():
             # REGULAR EVALUATION MODE: Model is legitimate, evaluate via two-process IPC
             # Spawn untrusted model worker
             worker = _spawn_model_worker(model_path)
-            # Wait up to 60s for worker to be ready (covers initial model load)
-            _wait_model_ready(worker, timeout_s=60.0)
+            # Wait up to 90s for worker to be ready (covers initial model load)
+            _wait_model_ready(worker, timeout_s=90.0)
 
             # Build environment and roll out
             # Import here to avoid bringing SB3 into the parent
@@ -258,10 +258,7 @@ def main():
             env = make_env(task, gui=False)
 
             try:
-                try:
-                    obs = env._computeObs()  # type: ignore[attr-defined]
-                except AttributeError:
-                    obs = env.get_observation()  # type: ignore[attr-defined]
+                obs, _ = env.reset(seed=task.map_seed)
                 if isinstance(obs, dict):
                     obs = obs[next(iter(obs))]
 
@@ -270,10 +267,32 @@ def main():
                 energy = 0.0
                 success = False
                 step_count = 0
-
+                
+                lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
+                last_pos = pos0
+                overspeed_streak = 0
+                
                 while t_sim < task.horizon:
-                    act = pilot.act(obs, t_sim)
+                    act = _np.clip(_np.asarray(pilot.act(obs, t_sim), dtype=_np.float32).reshape(-1), lo, hi)
+                    
+                    # Apply speed scaling if persistent overspeed in VEL mode
+                    if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 5):
+                        from gym_pybullet_drones.utils.enums import ActionType
+                        if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
+                            n = max(_np.linalg.norm(act[:3]), 1e-6)
+                            scale = min(1.0, 0.9 / n)
+                            act[:3] *= scale
+                            act = _np.clip(act, lo, hi)
+                    
+                    prev = last_pos
                     obs, _r, terminated, truncated, info = env.step(act[None, :])
+                    last_pos = env._getDroneStateVector(0)[0:3]
+                    
+                    # Update overspeed streak for next iteration
+                    if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
+                        ratio = float(_np.linalg.norm(last_pos - prev) / SIM_DT) / env.SPEED_LIMIT
+                        overspeed_streak = (overspeed_streak + 1) if ratio > 1.5 else 0
+                    
                     t_sim += SIM_DT
                     energy += _np.abs(act).sum() * SIM_DT
                     if terminated or truncated:
