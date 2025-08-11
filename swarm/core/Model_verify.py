@@ -106,25 +106,13 @@ def inspect_model_structure(zip_path: Path) -> Dict:
                 except Exception as e:
                     return {"error": f"Failed to analyze SB3 neural network: {e}"}
             
-            # Look for pickle files (for custom/fake models that might use old format)
-            pkl_files = [name for name in file_list if name.endswith('.pkl')]
+            # Reject models with executable/code files
+            suspicious_files = [f for f in file_list if f.endswith(('.py', '.pkl', '.pyc', '.so', '.exe', '.sh', '.bat'))]
+            if suspicious_files:
+                return {"error": f"Executable/code files detected: {suspicious_files}"}
             
-            if not pkl_files:
-                # No SB3 structure AND no pickle files = suspicious
-                return {"error": f"No valid model files found. Files in ZIP: {file_list}"}
-            
-            # Inspect the first/main pkl file for custom models
-            pkl_data = zf.read(pkl_files[0])
-            
-            # Load pickle data safely (without executing)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                try:
-                    model_data = pickle.loads(pkl_data)
-                except Exception as e:
-                    return {"error": f"Failed to load pickle: {e}"}
-            
-            return analyze_model_data(model_data)
+            # Only accept legitimate SB3 structure
+            return {"error": f"Invalid model structure. Files: {file_list}"}
             
     except Exception as e:
         return {"error": f"ZIP inspection failed: {e}"}
