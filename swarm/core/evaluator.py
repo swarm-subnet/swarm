@@ -200,11 +200,11 @@ def main():
             task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
-        from swarm.validator.forward import _inspect_model_structure, _is_fake_model
+        from swarm.core.Model_verify import inspect_model_structure, is_fake_model
         from pathlib import Path
         
-        inspection_results = _inspect_model_structure(Path(model_path))
-        is_fake, fake_reason = _is_fake_model(inspection_results)
+        inspection_results = inspect_model_structure(Path(model_path))
+        is_fake, fake_reason = is_fake_model(inspection_results)
         
         # Clean inspection result logging
         if verify_only_mode:
