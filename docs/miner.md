@@ -11,9 +11,6 @@ This guide shows how to install, configure and run a Swarm miner
 | CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
 | RAM       | 8 GB     | 8 GB         |                                               |
 | Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
-| CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
-| RAM       | 8 GB     | 8 GB         |                                               |
-| Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
 | GPU       | none     | Optional     | Depends on your model             |
 | OS        | Linux / macOS / WSL2 | —           | Scripts are written for Ubuntu 22.04          |
 
@@ -33,6 +30,7 @@ chmod +x scripts/miner/setup.sh
 # 4) Activate virtual env
 source miner_env/bin/activate
 
+```
 ```bash
 sudo apt update && sudo apt install -y \
      build-essential git pkg-config libgl1-mesa-glx mesa-utils

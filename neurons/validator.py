@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import bittensor as bt
+import subprocess
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -304,6 +305,24 @@ class Validator(BaseValidatorNeuron):
             
         # Initialize Docker evaluator at startup
         bt.logging.info("Initializing Docker secure evaluator...")
+        # Pre-clean Docker environment BEFORE building base image to ensure fresh base
+        try:
+            # Ensure docker exists before attempting cleanup
+            docker_ok = subprocess.run(["docker", "--version"], capture_output=True).returncode == 0
+            if docker_ok:
+                # Kill and remove any lingering eval/verify containers
+                subprocess.run("docker kill $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true", shell=True)
+                subprocess.run("docker kill $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true", shell=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true", shell=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true", shell=True)
+                # Remove previous base image if present to force a brand new base
+                subprocess.run(["docker", "rmi", "-f", "swarm_evaluator_base"], capture_output=True)
+                # Global pruning (images, cache, volumes)
+                subprocess.run(["docker", "system", "prune", "-af", "--volumes"], capture_output=True)
+                subprocess.run(["docker", "builder", "prune", "-af"], capture_output=True)
+        except Exception:
+            # Non-fatal; DockerSecureEvaluator will still try to set up
+            pass
         self.docker_evaluator = DockerSecureEvaluator()
         if DockerSecureEvaluator._base_ready:
             bt.logging.info("✅ Docker evaluator ready")

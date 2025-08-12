@@ -27,7 +27,7 @@ class DockerSecureEvaluator:
     def __init__(self):
         # Only initialize attributes on first instantiation
         if not hasattr(self, 'base_image'):
-            self.base_image = "swarm_evaluator_base"
+            self.base_image = "swarm_evaluator_base:latest"
             self.last_fake_model_info = None
         
         if not DockerSecureEvaluator._base_ready:
@@ -113,6 +113,24 @@ class DockerSecureEvaluator:
             # Check if Docker is installed, install if missing
             self._ensure_docker_installed()
             
+            # Aggressive cleanup to prevent disk bloat from dangling images/containers
+            try:
+                # Remove stopped containers and any leftover eval/verify containers
+                subprocess.run(["docker", "container", "prune", "-f"], capture_output=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_eval_)", shell=True, capture_output=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_verify_)", shell=True, capture_output=True)
+            except Exception:
+                pass
+            try:
+                # Remove only dangling images (not all unused images)
+                # This prevents accidentally removing the base image
+                subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
+                # Remove builder cache to reclaim space
+                subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
+                subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
+            except Exception:
+                pass
+            
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             # Build context should be the parent of swarm package
             build_context = Path(__file__).parent.parent.parent
@@ -157,6 +175,23 @@ class DockerSecureEvaluator:
         
         if not DockerSecureEvaluator._base_ready:
             bt.logging.warning(f"Docker not ready for UID {uid}")
+            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        
+        # Double-check that base image exists before proceeding
+        try:
+            check_result = subprocess.run(
+                ["docker", "images", "-q", self.base_image],
+                capture_output=True,
+                text=True
+            )
+            if not check_result.stdout.strip():
+                bt.logging.error(f"Base image {self.base_image} not found - rebuilding...")
+                self._setup_base_container()
+                if not DockerSecureEvaluator._base_ready:
+                    bt.logging.error(f"Failed to rebuild base image for UID {uid}")
+                    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        except Exception as e:
+            bt.logging.warning(f"Failed to check for base image: {e}")
             return ValidationResult(uid, False, 0.0, 0.0, 0.0)
         
         # Track fake models detected for this evaluation
@@ -225,6 +260,7 @@ class DockerSecureEvaluator:
                 except asyncio.TimeoutError:
                     # Kill container if timeout
                     subprocess.run(["docker", "kill", container_name], capture_output=True)
+                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
                     bt.logging.warning(f"Container timeout for UID {uid}")
                     # ENHANCED LOGGING: Ending Docker for timeout
                     bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation timed out")
@@ -294,13 +330,28 @@ class DockerSecureEvaluator:
                     bt.logging.warning(f"No result file found for UID {uid}")
                     # ENHANCED LOGGING: Ending Docker for missing results
                     bt.logging.info(f"🏁 Ending Docker container for UID {uid} - no results generated")
-                
+        
         except Exception as e:
             bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
             # Ensure container is killed
             subprocess.run(["docker", "kill", container_name], capture_output=True)
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
             # ENHANCED LOGGING: Ending Docker for general error
             bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation failed with error")
+        finally:
+            # Best-effort ensure container is removed even if --rm didn't trigger
+            try:
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+            except Exception:
+                pass
+            # Periodically prune dangling images/caches to keep disk usage low
+            # IMPORTANT: Only prune dangling images, NOT all unused images (removed -a flag)
+            # This preserves the base image between evaluations
+            try:
+                subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
+                subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
+            except Exception:
+                pass
         
         # ENHANCED LOGGING: Final fallback ending message
         bt.logging.info(f"🏁 Ending Docker container for UID {uid} - returning default result")
@@ -308,7 +359,7 @@ class DockerSecureEvaluator:
     
     
     def cleanup(self):
-        """Clean up any orphaned containers"""
+        """Clean up any orphaned containers and prune unused images/cache"""
         try:
             # List all swarm evaluation containers
             result = subprocess.run(
@@ -323,6 +374,27 @@ class DockerSecureEvaluator:
                     if container:
                         subprocess.run(["docker", "rm", "-f", container], capture_output=True)
                         bt.logging.debug(f"Cleaned up orphaned container: {container}")
+
+            # Also clean up verification containers
+            result_verify = subprocess.run(
+                ["docker", "ps", "-a", "--filter", "name=swarm_verify_", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True
+            )
+            if result_verify.returncode == 0 and result_verify.stdout:
+                containers_v = result_verify.stdout.strip().split('\n')
+                for container in containers_v:
+                    if container:
+                        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+                        bt.logging.debug(f"Cleaned up orphaned verify container: {container}")
+
+            # Prune only dangling images and builder cache to reclaim disk space
+            # IMPORTANT: Only prune dangling images, NOT all unused images (removed -a flag)
+            # This preserves the base image
+            subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
+            subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
+            subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
         
         except Exception as e:
             bt.logging.warning(f"Container cleanup failed: {e}")
+
