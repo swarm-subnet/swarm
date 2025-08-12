@@ -5,7 +5,7 @@ HEIGHT_SCALE = 1  # scale factor for the height of obstacles, lower tends to cre
 N_OBSTACLES = 100  # number of random obstacles in the world
 
 # ────────── Validator constants ─────────────────────────────────
-SIM_DT              = 1/50      # 50 Hz physics step sent to miners
+SIM_DT              = 1/50      # 50 Hz physics step sent to miners
 HORIZON_SEC         = 30      # max simulated flight time
 SAMPLE_K            = 256       # miners sampled per forward
 QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
