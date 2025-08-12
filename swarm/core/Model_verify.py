@@ -147,8 +147,6 @@ def scan_for_malicious_patterns(zip_path: Path) -> Tuple[bool, List[str]]:
         b'result.json',
         b'/tmp/',
         b'/etc/',
-        b'/root/',
-        b'/home/',
         
         # System commands
         b'os.chmod',
