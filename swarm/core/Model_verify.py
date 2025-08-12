@@ -19,8 +19,10 @@ import warnings
 import shutil
 import io
 import pickle
+import base64
+import re
 from pathlib import Path
-from typing import Dict, Tuple, Set
+from typing import Dict, Tuple, Set, List
 from zipfile import ZipFile, BadZipFile
 
 import numpy as np
@@ -74,6 +76,271 @@ def add_to_blacklist(model_hash: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Malicious Pattern Detection
+# ──────────────────────────────────────────────────────────────────────────
+
+def analyze_pickle_structure(pickle_bytes: bytes) -> Tuple[bool, List[str]]:
+    """Deep structural analysis of pickle bytecode."""
+    findings = []
+    
+    dangerous_imports = [
+        b'cos\nsystem',
+        b'cos\nexec',
+        b'csubprocess\n',
+        b'cbuiltins\neval',
+        b'cbuiltins\nexec',
+        b'c__builtin__\neval',
+        b'c__builtin__\nexec',
+    ]
+    
+    for pattern in dangerous_imports:
+        if pattern in pickle_bytes:
+            findings.append(f"CRITICAL: Dangerous import detected")
+    
+    execution_patterns = [
+        b'R}q\x00(X',  
+        b'cbuiltins\n',
+        b'c__builtin__\n',
+    ]
+    
+    reduce_count = pickle_bytes.count(b'R')
+    if reduce_count > 30:
+        for pattern in execution_patterns:
+            if pattern in pickle_bytes:
+                findings.append(f"CRITICAL: High REDUCE count with execution pattern")
+    
+    if len(pickle_bytes) > 10000:
+        findings.append("WARNING: Large pickle size")
+    
+    import math
+    from collections import Counter
+    byte_counts = Counter(pickle_bytes)
+    entropy = -sum((count/len(pickle_bytes)) * math.log2(count/len(pickle_bytes)) 
+                   for count in byte_counts.values() if count > 0)
+    
+    if entropy > 7.8:
+        findings.append(f"WARNING: High entropy ({entropy:.2f})")
+    
+    exec_indicators = [
+        b'\x8c\x04exec',
+        b'\x8c\x06compile',
+        b'builtins\neval',
+        b'builtins\nexec',
+    ]
+    
+    for indicator in exec_indicators:
+        if indicator in pickle_bytes:
+            findings.append(f"CRITICAL: Dangerous execution pattern found")
+    
+    is_malicious = len([f for f in findings if 'CRITICAL' in f]) > 0
+    return is_malicious, findings
+
+
+def scan_for_malicious_patterns(zip_path: Path) -> Tuple[bool, List[str]]:
+    """Pre-execution security scan for RCE and code injection patterns."""
+    
+    malicious_patterns = [
+        # File system manipulation
+        b'/workspace/shared/result.json',
+        b'/workspace/shared',
+        b'/workspace',
+        b'result.json',
+        b'/tmp/',
+        b'/etc/',
+        b'/root/',
+        b'/home/',
+        
+        # System commands
+        b'os.chmod',
+        b'os.system',
+        b'os.popen',
+        b'os.execv',
+        b'subprocess.call',
+        b'subprocess.run',
+        b'subprocess.Popen',
+        b'commands.get',
+        
+        # Code execution
+        b'eval(',
+        b'exec(',
+        b'compile(',
+        b'__import__',
+        b'importlib.import',
+        b'builtins.eval',
+        b'builtins.exec',
+        b'builtins.compile',
+        b'globals()[',
+        b'locals()[',
+        b'setattr(',
+        b'delattr(',
+        
+        # Pickle exploits
+        b'reduce',
+        b'apply',
+        b'__reduce__',
+        b'__reduce_ex__',
+        b'find_class',
+        b'dispatch_table',
+        b'persistent_id',
+        b'inst_persistent_id',
+        
+        # Network operations
+        b'socket.',
+        b'urllib.request',
+        b'requests.get',
+        b'requests.post',
+        b'http.client',
+        b'ftplib',
+        b'smtplib',
+        
+        # File operations
+        b'open(',
+        b'.write(',
+        b'.writelines(',
+        b'with open',
+        b'file(',
+        b'input(',
+        b'raw_input(',
+        
+        # Dangerous functions
+        b'do_rewrite',
+        b'atexit.register',
+        b'signal.signal',
+        b'threading.Thread',
+        b'multiprocessing.Process',
+        
+        # String obfuscation techniques
+        b'chr(',
+        b'ord(',
+        b'join([',
+        b'.join(',
+        b'base64.b64decode',
+        b'base64.b32decode',
+        b'base64.b16decode',
+        b'codecs.decode',
+        b'binascii.unhexlify',
+        b'bytes.fromhex',
+        
+        # Pickle-specific dangerous patterns (removed single byte checks)
+        b'cbuiltins\n',
+        b'cos\nsystem',
+        b'csubprocess\n',
+        b'c__builtin__\n',
+        
+        # Score/result manipulation
+        b'"score"',
+        b"'score'",
+        b'"success": true',
+        b"'success': True",
+        b'"energy": 0',
+        b"'energy': 0",
+    ]
+    
+    findings = []
+    
+    try:
+        with ZipFile(zip_path, 'r') as zf:
+            for filename in zf.namelist():
+                try:
+                    # Path traversal check
+                    if '..' in filename or filename.startswith('/'):
+                        findings.append(f"CRITICAL: Path traversal attempt in filename: {filename}")
+                        continue
+                    
+                    content = zf.read(filename)
+                    
+                    # Direct pattern scanning
+                    for pattern in malicious_patterns:
+                        if pattern in content:
+                            findings.append(f"Pattern '{pattern.decode('utf-8', errors='ignore')}' in {filename}")
+                    
+                    # Special handling for data file
+                    if filename == 'data':
+                        try:
+                            data_json = json.loads(content)
+                            if isinstance(data_json, dict) and 'policy_class' in data_json:
+                                policy = data_json['policy_class']
+                                if isinstance(policy, dict) and ':serialized:' in policy:
+                                    # Decode base64 pickle
+                                    try:
+                                        b64_data = policy[':serialized:']
+                                        pickle_bytes = base64.b64decode(b64_data)
+                                        
+                                        # Scan decoded pickle
+                                        for pattern in malicious_patterns:
+                                            if pattern in pickle_bytes:
+                                                findings.append(f"CRITICAL: Hidden pattern '{pattern.decode('utf-8', errors='ignore')}' in base64 pickle")
+                                        
+                                        # Error suppression detection
+                                        if b'try:' in pickle_bytes or b'except:' in pickle_bytes:
+                                            if b'pass' in pickle_bytes or b'continue' in pickle_bytes:
+                                                findings.append("CRITICAL: Error suppression pattern detected")
+                                                
+                                        # Deep structural analysis of pickle
+                                        struct_malicious, struct_findings = analyze_pickle_structure(pickle_bytes)
+                                        findings.extend(struct_findings)
+                                        
+                                        if struct_malicious:
+                                            findings.append("CRITICAL: Pickle structure analysis detected malicious patterns")
+                                        
+                                        # Check for any executable-like patterns
+                                        if len(pickle_bytes) > 5000:
+                                            # Very large pickle might be suspicious
+                                            findings.append(f"WARNING: Large pickle size ({len(pickle_bytes)} bytes)")
+                                        
+                                        # Check if pickle contains too much non-printable data
+                                        non_printable = sum(1 for b in pickle_bytes if b < 32 or b > 126)
+                                        if non_printable > len(pickle_bytes) * 0.7:
+                                            findings.append("WARNING: High ratio of non-printable bytes")
+                                            
+                                    except Exception:
+                                        findings.append("WARNING: Failed to decode base64 in data file")
+                        except json.JSONDecodeError:
+                            pass  # Not JSON, continue
+                    
+                    # Look for hidden base64 in any text file
+                    if filename.endswith(('.json', '.txt', '.xml', '.yaml', '.yml')):
+                        base64_pattern = re.compile(b'[A-Za-z0-9+/]{100,}={0,2}')
+                        matches = base64_pattern.findall(content)
+                        for match in matches[:5]:  # Check first 5 long base64 strings
+                            try:
+                                decoded = base64.b64decode(match)
+                                for pattern in malicious_patterns:
+                                    if pattern in decoded:
+                                        findings.append(f"CRITICAL: Hidden pattern in base64 string in {filename}")
+                                        break
+                            except Exception:
+                                pass
+                                
+                except Exception as e:
+                    findings.append(f"Error scanning {filename}: {str(e)}")
+        
+        # Determine if malicious
+        critical_count = sum(1 for f in findings if 'CRITICAL' in f)
+        is_malicious = critical_count > 0
+        
+        # Also flag if multiple suspicious patterns
+        workspace_patterns = sum(1 for f in findings if 'workspace' in f.lower())
+        exec_patterns = sum(1 for f in findings if any(x in f.lower() for x in ['eval', 'exec', 'compile', '__import__']))
+        file_patterns = sum(1 for f in findings if any(x in f.lower() for x in ['open(', 'write', 'chmod']))
+        obfuscation_patterns = sum(1 for f in findings if any(x in f.lower() for x in ['chr(', 'b64decode', 'fromhex', 'opcode', 'entropy', 'obfuscat']))
+        structural_patterns = sum(1 for f in findings if any(x in f.lower() for x in ['reduce', 'stack_global', 'opcode', 'pickle']))
+        
+        if workspace_patterns >= 2 or exec_patterns >= 2 or file_patterns >= 3 or obfuscation_patterns >= 2 or structural_patterns >= 3:
+            is_malicious = True
+        
+        # Special case: if we find high entropy or unusual structure, be more strict
+        if any('entropy' in f.lower() or 'large pickle' in f.lower() for f in findings):
+            if critical_count >= 2:  # Lower threshold when obfuscation detected
+                is_malicious = True
+            
+        return is_malicious, findings
+        
+    except Exception as e:
+        return True, [f"Failed to scan ZIP: {str(e)}"]
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Model Structure Analysis
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -83,6 +350,21 @@ def inspect_model_structure(zip_path: Path) -> Dict:
     Returns dict with inspection results.
     """
     try:
+        # Security scan before any processing
+        is_malicious, findings = scan_for_malicious_patterns(zip_path)
+        
+        if is_malicious:
+            bt.logging.error(f"🚨 Malicious patterns detected in {zip_path.name}")
+            critical_findings = [f for f in findings if 'CRITICAL' in f]
+            for finding in critical_findings[:5]:  # Show first 5 critical findings
+                bt.logging.error(f"  {finding}")
+            
+            return {
+                "error": "Security violation: Malicious code patterns detected",
+                "malicious_findings": findings,
+                "suspicious_patterns": ["RCE exploit patterns found"]
+            }
+        
         with ZipFile(zip_path, 'r') as zf:
             file_list = zf.namelist()
             
@@ -364,7 +646,13 @@ def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
     Determine if model is fake based on inspection results.
     Returns (is_fake, reason).
     """
+    # Priority: Check for malicious code first
+    if "malicious_findings" in inspection_results:
+        return True, "Security violation: Malicious code detected"
+    
     if "error" in inspection_results:
+        if "Security violation" in inspection_results["error"]:
+            return True, inspection_results["error"]
         return True, f"Inspection error: {inspection_results['error']}"
     
     # Prioritize structural issues first
