@@ -345,10 +345,34 @@ def scan_for_malicious_patterns(zip_path: Path) -> Tuple[bool, List[str]]:
 def inspect_model_structure(zip_path: Path) -> Dict:
     """
     Inspect PPO model structure without loading it through SB3.
-    Returns dict with inspection results.
+    NOW REQUIRES secure loading metadata.
     """
     try:
-        # Security scan before any processing
+        # FIRST: Check for secure loading metadata (REQUIRED)
+        with ZipFile(zip_path, 'r') as zf:
+            file_list = zf.namelist()
+            
+            # Require safe_policy_meta.json
+            if "safe_policy_meta.json" not in file_list:
+                return {
+                    "error": "Missing safe_policy_meta.json - model not compatible with secure loading",
+                    "missing_secure_metadata": True
+                }
+            
+            # Validate JSON structure
+            try:
+                meta_content = zf.read("safe_policy_meta.json").decode("utf-8")
+                meta = json.loads(meta_content)
+                
+                required_keys = ["activation_fn", "net_arch", "use_sde"]
+                for key in required_keys:
+                    if key not in meta:
+                        return {"error": f"Invalid metadata: missing {key}"}
+                        
+            except json.JSONDecodeError as e:
+                return {"error": f"Invalid JSON in safe_policy_meta.json: {e}"}
+
+        # Continue with existing security scan...
         is_malicious, findings = scan_for_malicious_patterns(zip_path)
         
         if is_malicious:
@@ -379,7 +403,7 @@ def inspect_model_structure(zip_path: Path) -> Dict:
                     policy_data = zf.read('policy.pth')
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        state_dict = torch.load(io.BytesIO(policy_data), map_location='cpu')
+                        state_dict = torch.load(io.BytesIO(policy_data), map_location='cpu', weights_only=True)
                     
                     return analyze_pytorch_neural_network(state_dict, file_list)
                     
@@ -642,14 +666,20 @@ def extract_weights(obj, weights_list: list, max_depth: int = 5) -> None:
 def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
     """
     Determine if model is fake based on inspection results.
-    Returns (is_fake, reason).
+    NOW REJECTS models without secure metadata.
     """
-    # Priority: Check for malicious code first
+    # PRIORITY 1: Missing secure metadata
+    if inspection_results.get("missing_secure_metadata", False):
+        return True, "Missing secure loading metadata - model rejected"
+    
+    # PRIORITY 2: Security violations
     if "malicious_findings" in inspection_results:
         return True, "Security violation: Malicious code detected"
     
     if "error" in inspection_results:
         if "Security violation" in inspection_results["error"]:
+            return True, inspection_results["error"]
+        if "Missing safe_policy_meta.json" in inspection_results["error"]:
             return True, inspection_results["error"]
         return True, f"Inspection error: {inspection_results['error']}"
     

@@ -197,6 +197,17 @@ class DockerSecureEvaluator:
         # Track fake models detected for this evaluation
         self.last_fake_model_info = None
         
+        # Validate model has secure metadata before Docker execution
+        try:
+            import zipfile
+            with zipfile.ZipFile(model_path, 'r') as zf:
+                if "safe_policy_meta.json" not in zf.namelist():
+                    bt.logging.warning(f"Model {uid} missing secure metadata")
+                    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        except Exception as e:
+            bt.logging.warning(f"Failed to validate model {uid}: {e}")
+            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        
         container_name = f"swarm_eval_{uid}_{int(time.time() * 1000)}"
         
         # ENHANCED LOGGING: Starting Docker for UID
