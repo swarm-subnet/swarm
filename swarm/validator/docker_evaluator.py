@@ -256,6 +256,9 @@ class DockerSecureEvaluator:
                     if proc.returncode != 0:
                         stderr_str = stderr.decode() if stderr else ""
                         bt.logging.debug(f"Container failed for UID {uid}: {stderr_str[:300]}")
+                        # Container failed - return zero score immediately
+                        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation failed")
+                        return ValidationResult(uid, False, 0.0, 0.0, 0.0)
                     
                 except asyncio.TimeoutError:
                     # Kill container if timeout
