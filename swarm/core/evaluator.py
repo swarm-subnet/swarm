@@ -158,6 +158,7 @@ def main():
             # Serve an infinite loop over stdin
             for line in sys.stdin:
                 line = line.strip()
+                
                 if not line:
                     continue
                 try:
@@ -213,19 +214,33 @@ def main():
             task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
-        from swarm.core.Model_verify import inspect_model_structure, is_fake_model
+        from swarm.core.Model_verify import inspect_model_structure, classify_model_validity
         from pathlib import Path
         
         inspection_results = inspect_model_structure(Path(model_path))
-        is_fake, fake_reason = is_fake_model(inspection_results)
+        model_status, model_reason = classify_model_validity(inspection_results)
         
         # Clean inspection result logging
         if verify_only_mode:
-            status = "FAKE" if is_fake else "LEGITIMATE" 
-            print(f"📋 Model inspection: {status}" + (f" - {fake_reason}" if is_fake else ""))
+            if model_status == "legitimate":
+                status = "LEGITIMATE"
+            elif model_status == "missing_metadata":
+                status = "MISSING METADATA"
+            else:  # fake
+                status = "FAKE"
+            print(f"📋 Model inspection: {status}" + (f" - {model_reason}" if model_status != "legitimate" else ""))
         
-        if is_fake:
-            # Return fake model detection result
+        if model_status == "fake":
+            # Return fake model detection result (will be blacklisted)
+            result = ValidationResult(
+                uid=uid,
+                success=False,
+                time_sec=0.0,
+                energy=0.0,
+                score=0.0
+            )
+        elif model_status == "missing_metadata":
+            # Return rejection result (zero score but no blacklist)
             result = ValidationResult(
                 uid=uid,
                 success=False,
@@ -289,7 +304,7 @@ def main():
                     act = _np.clip(_np.asarray(pilot.act(obs, t_sim), dtype=_np.float32).reshape(-1), lo, hi)
                     
                     # Apply speed scaling if persistent overspeed in VEL mode
-                    if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 5):
+                    if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
                         from gym_pybullet_drones.utils.enums import ActionType
                         if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                             n = max(_np.linalg.norm(act[:3]), 1e-6)
@@ -304,7 +319,7 @@ def main():
                     # Update overspeed streak for next iteration
                     if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
                         ratio = float(_np.linalg.norm(last_pos - prev) / SIM_DT) / env.SPEED_LIMIT
-                        overspeed_streak = (overspeed_streak + 1) if ratio > 1.5 else 0
+                        overspeed_streak = (overspeed_streak + 1) if ratio > 1.2 else 0
                     
                     t_sim += SIM_DT
                     energy += _np.abs(act).sum() * SIM_DT
@@ -338,13 +353,18 @@ def main():
         tmp_file = result_file + ".tmp"
         result_dict = asdict(result)
         
-        # Add fake model information if detected
-        if is_fake:
+        # Add model status information
+        if model_status == "fake":
             result_dict['is_fake_model'] = True
-            result_dict['fake_reason'] = fake_reason
+            result_dict['fake_reason'] = model_reason
+            result_dict['inspection_results'] = inspection_results
+        elif model_status == "missing_metadata":
+            result_dict['is_fake_model'] = False
+            result_dict['missing_metadata'] = True
+            result_dict['rejection_reason'] = model_reason
             result_dict['inspection_results'] = inspection_results
         else:
-            # Explicitly mark as not fake for verification mode
+            # Legitimate model
             result_dict['is_fake_model'] = False
             
         # Clean result logging

@@ -663,49 +663,53 @@ def extract_weights(obj, weights_list: list, max_depth: int = 5) -> None:
         pass  # Skip problematic objects
 
 
-def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
+def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
     """
-    Determine if model is fake based on inspection results.
-    NOW REJECTS models without secure metadata.
-    """
-    # PRIORITY 1: Missing secure metadata
-    if inspection_results.get("missing_secure_metadata", False):
-        return True, "Missing secure loading metadata - model rejected"
+    Classify model validity into three categories:
+    - "legitimate": Model passes all checks
+    - "missing_metadata": Model lacks secure metadata (reject but don't blacklist)  
+    - "fake": Model is actually fake/malicious (reject and blacklist)
     
-    # PRIORITY 2: Security violations
+    Returns (status, reason)
+    """
+    # PRIORITY 1: Missing secure metadata (reject but don't blacklist)
+    if inspection_results.get("missing_secure_metadata", False):
+        return "missing_metadata", "Missing secure loading metadata - model rejected"
+    
+    # PRIORITY 2: Security violations (fake models)
     if "malicious_findings" in inspection_results:
-        return True, "Security violation: Malicious code detected"
+        return "fake", "Security violation: Malicious code detected"
     
     if "error" in inspection_results:
         if "Security violation" in inspection_results["error"]:
-            return True, inspection_results["error"]
+            return "fake", inspection_results["error"]
         if "Missing safe_policy_meta.json" in inspection_results["error"]:
-            return True, inspection_results["error"]
-        return True, f"Inspection error: {inspection_results['error']}"
+            return "missing_metadata", inspection_results["error"]
+        return "fake", f"Inspection error: {inspection_results['error']}"
     
-    # Prioritize structural issues first
+    # PRIORITY 3: Structural issues (fake models)
     
     # Check for MLP extractor (required for valid PPO)
     if not inspection_results["has_mlp_extractor"]:
-        return True, "Missing mlp_extractor (required for valid PPO model)"
+        return "fake", "Missing mlp_extractor (required for valid PPO model)"
     
     # Check for suspicious patterns (includes missing layers, extreme weights, etc)
     if inspection_results["suspicious_patterns"]:
         # Check for critical missing components first
         for pattern in inspection_results["suspicious_patterns"]:
             if "missing" in pattern.lower():
-                return True, pattern
+                return "fake", pattern
         
         # Check for extreme/suspicious weight patterns
         for pattern in inspection_results["suspicious_patterns"]:
             if any(keyword in pattern.lower() for keyword in ["extreme", "suspicious", "hardcoded", "few unique"]):
-                return True, f"Suspicious patterns: {', '.join(inspection_results['suspicious_patterns'])}"
+                return "fake", f"Suspicious patterns: {', '.join(inspection_results['suspicious_patterns'])}"
     
     # Check weight variance (should not be uniform)
     if inspection_results["weight_variance"] < 1e-6:
-        return True, f"Weights too uniform, variance: {inspection_results['weight_variance']}"
+        return "fake", f"Weights too uniform, variance: {inspection_results['weight_variance']}"
     
-    # ENHANCED DETECTION: Check for sophisticated fakes
+    # PRIORITY 4: Enhanced detection for sophisticated fakes
     layer_analysis = inspection_results.get("layer_analysis", {})
     
     # Check for all-zero biases (sign of artificial model)
@@ -723,14 +727,14 @@ def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
     
     # If ALL bias layers are zero, likely fake
     if total_bias_layers > 0 and all_zero_biases == total_bias_layers:
-        return True, f"All {all_zero_biases} bias layers are zero (artificial model)"
+        return "fake", f"All {all_zero_biases} bias layers are zero (artificial model)"
     
     # Check for suspicious log_std (PPO action noise parameter)
     if 'log_std' in layer_analysis:
         log_std_stats = layer_analysis['log_std']
         if (log_std_stats.get('std', 1.0) == 0.0 and 
             log_std_stats.get('mean', 1.0) == 0.0):
-            return True, "log_std parameter is all zeros (untrained PPO model)"
+            return "fake", "log_std parameter is all zeros (untrained PPO model)"
     
     # Check for lack of training artifacts
     if not inspection_results.get("has_training_artifacts", True):
@@ -750,18 +754,27 @@ def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
         
         # If multiple indicators + no training artifacts = likely fake
         if suspicious_indicators >= 2:
-            return True, "Multiple indicators of artificial model (no training artifacts + suspicious patterns)"
+            return "fake", "Multiple indicators of artificial model (no training artifacts + suspicious patterns)"
     
     # Check minimum parameter count last (as it's the most generic)
     if inspection_results["parameter_count"] < 5000:
-        return True, f"Too few parameters: {inspection_results['parameter_count']} < 5000"
+        return "fake", f"Too few parameters: {inspection_results['parameter_count']} < 5000"
     
     # Additional check for remaining suspicious patterns
     if inspection_results["suspicious_patterns"]:
-        return True, f"Suspicious patterns: {', '.join(inspection_results['suspicious_patterns'])}"
+        return "fake", f"Suspicious patterns: {', '.join(inspection_results['suspicious_patterns'])}"
     
     # Passed all checks
-    return False, "Model appears legitimate"
+    return "legitimate", "Model appears legitimate"
+
+
+def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
+    """
+    Legacy compatibility wrapper for classify_model_validity().
+    Returns True for both fake and missing_metadata cases.
+    """
+    status, reason = classify_model_validity(inspection_results)
+    return status != "legitimate", reason
 
 
 # ──────────────────────────────────────────────────────────────────────────
