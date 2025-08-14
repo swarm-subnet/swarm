@@ -353,8 +353,9 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                     with open(verification_result_file, 'r') as f:
                         verification_data = json.load(f)
                     
-                    # Check if fake model was detected
+                    # Handle different verification outcomes
                     if verification_data.get('is_fake_model', False):
+                        # Actually fake/malicious model → blacklist
                         fake_reason = verification_data.get('fake_reason', 'Unknown')
                         inspection_results = verification_data.get('inspection_results', {})
                         
@@ -368,9 +369,21 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                         
                         # Remove the fake model from cache
                         model_path.unlink(missing_ok=True)
-                        bt.logging.info(f"🗑️ Removed fake model {model_hash[:16]}... from cache")
+                        bt.logging.info(f"🗑️ Removed fake model {model_hash[:16]}... from cache and blacklisted")
+                        
+                    elif verification_data.get('missing_metadata', False):
+                        # Missing metadata → reject but don't blacklist
+                        rejection_reason = verification_data.get('rejection_reason', 'Missing secure metadata')
+                        
+                        bt.logging.warning(f"⚠️ MISSING METADATA during verification: {rejection_reason}")
+                        bt.logging.info(f"Model hash: {model_hash}")
+                        
+                        # Remove model but don't blacklist (allows resubmission)
+                        model_path.unlink(missing_ok=True)
+                        bt.logging.info(f"🗑️ Removed model {model_hash[:16]}... from cache (missing metadata - can resubmit)")
                         
                     else:
+                        # Legitimate model
                         bt.logging.info(f"✅ Model {model_hash[:16]}... passed verification - legitimate model")
                         
                 except Exception as e:
