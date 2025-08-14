@@ -25,6 +25,7 @@ if swarm_path not in sys.path:
 
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
+from swarm.core.secure_loader import secure_load_ppo
 
 
 def _spawn_model_worker(model_path: str) -> subprocess.Popen:
@@ -130,9 +131,21 @@ def main():
             # Child process that only loads the model and returns actions via stdio
             # Import here to keep parent process free from model code
             from stable_baselines3 import PPO
+            from swarm.core.secure_loader import secure_load_ppo
+            from swarm.utils.env_factory import make_env
+            from swarm.validator.task_gen import random_task
+            from swarm.constants import SIM_DT, HORIZON_SEC
+            from pathlib import Path
+
             model_path = sys.argv[2]
             try:
-                model = PPO.load(model_path, device="cpu")
+                # Create minimal environment for policy initialization
+                task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=1)
+                init_env = make_env(task, gui=False)
+                try:
+                    model = secure_load_ppo(Path(model_path), env=init_env, device="cpu")
+                finally:
+                    init_env.close()
             except Exception as e:
                 sys.stderr.write(f"MODEL_WORKER_LOAD_ERROR: {e}\n")
                 sys.stderr.flush()
