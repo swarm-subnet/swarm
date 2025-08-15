@@ -278,6 +278,9 @@ class Validator(BaseValidatorNeuron):
 
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
+        
+        # Log validator version info
+        bt.logging.info(f"🚀 Swarm Validator v{swarm.__version__} started")
 
         self.forward_count = 0
 
