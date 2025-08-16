@@ -32,13 +32,16 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 import torch as th
+import numpy as np
 from stable_baselines3 import PPO
 
 # Project imports
 from swarm.constants import SIM_DT, HORIZON_SEC
 from swarm.validator.task_gen import random_task
 from swarm.validator.forward import _run_episode  # public helper
+from swarm.validator.reward import flight_reward
 from swarm.utils.env_factory import make_env
+from swarm.protocol import ValidationResult
 
 # Try gymnasium first, then gym (for policy selection based on obs space)
 try:
@@ -170,6 +173,73 @@ def secure_ppo_load_weights_only(checkpoint_zip: str | Path, *, env, device: str
     return model
 
 
+def _run_episode_speed_limit(task, uid, model, *, gui=False):
+    class _Pilot:
+        def __init__(self, m): self.m = m
+        def reset(self, task): pass
+        def act(self, obs, t):
+            act, _ = self.m.predict(obs, deterministic=True)
+            return act.squeeze()
+
+    pilot = _Pilot(model)
+    env = make_env(task, gui=gui)
+    
+    try:
+        obs, _ = env.reset(seed=task.map_seed)
+    except:
+        obs = env._computeObs()
+    
+    if isinstance(obs, dict):
+        obs = obs[next(iter(obs))]
+
+    pos0 = np.asarray(task.start, dtype=float)
+    t_sim = 0.0
+    energy = 0.0
+    success = False
+    speeds = []
+    
+    lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
+    last_pos = pos0
+    overspeed_streak = 0
+
+    while t_sim < task.horizon:
+        act = np.clip(np.asarray(pilot.act(obs, t_sim), dtype=np.float32).reshape(-1), lo, hi)
+        
+        if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
+            from gym_pybullet_drones.utils.enums import ActionType
+            if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
+                n = max(np.linalg.norm(act[:3]), 1e-6)
+                scale = min(1.0, 0.9 / n)
+                act[:3] *= scale
+                act = np.clip(act, lo, hi)
+        
+        prev = last_pos
+        obs, _r, terminated, truncated, info = env.step(act[None, :])
+        last_pos = env._getDroneStateVector(0)[0:3]
+        
+        speed = np.linalg.norm(last_pos - prev) / SIM_DT
+        speeds.append(speed)
+        
+        if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
+            ratio = float(speed) / env.SPEED_LIMIT
+            overspeed_streak = (overspeed_streak + 1) if ratio > 1.2 else 0
+
+        t_sim += SIM_DT
+        energy += np.abs(act).sum() * SIM_DT
+
+        if terminated or truncated:
+            success = info.get("success", False)
+            break
+
+    if not gui:
+        env.close()
+
+    score = flight_reward(success=success, t=t_sim, e=energy, horizon=task.horizon)
+    avg_speed = np.mean(speeds) if speeds else 0.0
+    result = ValidationResult(uid, success, t_sim, energy, score)
+    return result, avg_speed
+
+
 # ──────────────────────────────────────────────────────────────────────
 # CLI + evaluation
 # ──────────────────────────────────────────────────────────────────────
@@ -204,14 +274,15 @@ def main() -> None:
         except Exception:
             pass
 
-    # Run the episode exactly like your validator
-    result = _run_episode(task=task, uid=0, model=model, gui=args.gui)
+    # Run the episode exactly like validator
+    result, avg_speed = _run_episode_speed_limit(task=task, uid=0, model=model, gui=args.gui)
 
     print("----------------------------------------------------")
     print(f"Success: {result.success}")
     print(f"Time    : {result.time_sec:.2f} s")
     print(f"Energy  : {result.energy:.1f} J")
     print(f"Score   : {result.score:.3f}")
+    print(f"Avg Speed: {avg_speed:.3f} m/s")
     print("----------------------------------------------------")
 
 
