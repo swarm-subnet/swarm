@@ -1,37 +1,79 @@
-# Constants for the Swarm project
+# =============================================================================
+# SWARM SUBNET CONSTANTS
+# =============================================================================
+# Centralized constants for the Swarm Bittensor subnet. This file contains all
+# configuration values, limits, and parameters used throughout the system.
+# =============================================================================
 
-WORLD_RANGE = 30        # random scenery is placed in ±WORLD_RANGE (m)
-HEIGHT_SCALE = 1  # scale factor for the height of obstacles, lower tends to create easier maps
-N_OBSTACLES = 100  # number of random obstacles in the world
+from pathlib import Path
 
-# ────────── Validator constants ─────────────────────────────────
-SIM_DT              = 1/50      # 50 Hz physics step sent to miners
-HORIZON_SEC         = 30      # max simulated flight time
-SAMPLE_K            = 256       # miners sampled per forward
-QUERY_TIMEOUT       = 30.0      # dendrite timeout (s)
-FORWARD_SLEEP_SEC   = 2.0       # pause between forwards
-EMA_ALPHA           = 0.20      # weights EMA coefficient
-FORWARD_SLEEP_SEC = 300  # pause between forwards (s)
 
-# ────────── Model evaluation constants ─────────────────────
-MAX_MODEL_BYTES     = 10 * 1024 * 1024  # 10 MB compressed model size limit
-EVAL_TIMEOUT_SEC    = 120.0               # evaluation subprocess timeout (s)
-HOVER_SEC    = 3      # legacy constant (no longer used for landing)
-CAM_HZ       = 60     # camera update rate (Hz)
-PROP_EFF     = 0.60   # propeller efficiency 
+# =============================================================================
+# NETWORK & COMMUNICATION
+# =============================================================================
 
-LANDING_PLATFORM_RADIUS = 0.6  # Landing platform radius (m)
-STABLE_LANDING_SEC = 1.0       # Required stable landing duration for success (s)
-# ───────── parameters & constants ─────────
-SAFE_Z: float   = 3     # cruise altitude (m)
-GOAL_TOL: float = 1    # waypoint acceptance sphere (m)
-CAM_HZ:  int    = 60
-# ───────────────────────────────────────────
-R_MIN, R_MAX = 3, 5          # radial goal distance (m)
-H_MIN, H_MAX = 0, 1          # radial goal distance (m)
-# ───────────────────────────────────────────
-SAVE_FLIGHTPLANS = False  # save flight plans to disk
-BURN_EMISSIONS = True  # burn emissions in the validator
+QUERY_TIMEOUT = 30.0                    # Dendrite query timeout (seconds)
+FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
 
-# ────────── Platform mode toggle ─────────────────────────────────
-PLATFORM = False           # Toggle for solid platform (True) / visual-only (False)
+# =============================================================================
+# SIMULATION & PHYSICS
+# =============================================================================
+
+# Core simulation parameters
+SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
+HORIZON_SEC = 30                        # Maximum simulated flight duration (seconds)
+# World generation parameters
+WORLD_RANGE = 30                        # Random scenery placement range (±meters)
+HEIGHT_SCALE = 1                        # Obstacle height scale factor (lower = easier maps)
+N_OBSTACLES = 100                       # Number of random obstacles in simulation world
+# Camera and rendering settings
+CAM_HZ = 60                             # Camera update frequency (Hz)
+# Propulsion efficiency
+PROP_EFF = 0.60                         # Propeller efficiency coefficient
+
+# =============================================================================
+# MODEL & AI EVALUATION
+# =============================================================================
+
+# Model size and validation limits
+MAX_MODEL_BYTES = 10 * 1024 * 1024      # Maximum compressed model size (10 MiB)
+EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
+# Model storage and processing
+MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
+BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file
+CHUNK_SIZE = 2 * 1024 * 1024            # File transfer chunk size (2 MiB)
+SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess (MB)
+# Security metadata requirements
+SAFE_META_FILENAME = "safe_policy_meta.json"  # Required metadata file in model archives
+
+# =============================================================================
+# DRONE & FLIGHT CONTROL
+# =============================================================================
+
+# Landing and positioning parameters
+LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
+STABLE_LANDING_SEC = 1.0                # Required stable landing duration for success (seconds)
+HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
+SAFE_Z = 3                              # Default cruise altitude (meters)
+GOAL_TOL = 1                            # Waypoint acceptance sphere radius (meters)
+# Goal generation ranges
+R_MIN, R_MAX = 3, 5                     # Radial goal distance range (meters)
+H_MIN, H_MAX = 0, 1                     # Height variation range for goals (meters)
+# Environment building limits
+SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
+MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles
+
+# =============================================================================
+# SCORING & REWARDS
+# =============================================================================
+
+# Miner sampling and evaluation
+SAMPLE_K = 256                          # Number of miners sampled per forward pass
+EMA_ALPHA = 0.20                        # Exponential moving average coefficient for weights
+# Emission burning mechanism
+BURN_EMISSIONS = True                   # Enable emission burning to UID 0
+BURN_FRACTION = 0.90                    # Fraction of emissions to burn (90%)
+KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute (10%)
+UID_ZERO = 0                            # Special UID for burning emissions
+
+

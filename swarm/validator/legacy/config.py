@@ -1,3 +1,11 @@
+# =============================================================================
+# LEGACY VALIDATOR CONFIG (NO LONGER USED)
+# =============================================================================
+# This file contains constants and configuration from an earlier validation
+# system. It has been moved to legacy/ as it's no longer referenced anywhere
+# in the current Swarm project. Current constants are in swarm/constants.py
+# =============================================================================
+
 import argparse
 import bittensor as bt
 import os

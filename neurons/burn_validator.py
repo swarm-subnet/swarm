@@ -9,6 +9,7 @@ from typing import List
 
 import bittensor as bt
 from swarm.base.validator import BaseValidatorNeuron
+from swarm.constants import SAMPLE_K
 
 
 class Validator(BaseValidatorNeuron):
@@ -32,7 +33,7 @@ class Validator(BaseValidatorNeuron):
         • Update scores in‑memory and broadcast on‑chain (unless --no-epoch)
         """
         time.sleep(300)
-        miner_uids: List[int] = list(range(0,256))
+        miner_uids: List[int] = list(range(0, SAMPLE_K))
         weights = [1.0 if uid == 0 else 0.0 for uid in miner_uids]
 
         # Store scores locally so they can be inspected via RPC

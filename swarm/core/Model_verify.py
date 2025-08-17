@@ -29,11 +29,8 @@ import numpy as np
 import torch
 import bittensor as bt
 
-# ──────────────────────────────────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────────────────────────────────
-MODEL_DIR = Path("miner_models_v2")
-BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"
+# Import centralized constants
+from swarm.constants import MODEL_DIR, BLACKLIST_FILE
 
 
 # ──────────────────────────────────────────────────────────────────────────

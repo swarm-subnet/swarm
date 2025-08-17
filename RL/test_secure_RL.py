@@ -53,7 +53,8 @@ except Exception:
         _spaces = None
 
 
-SAFE_META_FILENAME = "safe_policy_meta.json"
+# Import from centralized constants
+from swarm.constants import SAFE_META_FILENAME
 
 
 # ──────────────────────────────────────────────────────────────────────

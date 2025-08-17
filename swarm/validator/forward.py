@@ -48,19 +48,15 @@ from swarm.constants import (
     FORWARD_SLEEP_SEC,
     BURN_EMISSIONS,
     MAX_MODEL_BYTES,
-    EVAL_TIMEOUT_SEC
+    EVAL_TIMEOUT_SEC,
+    BURN_FRACTION,
+    KEEP_FRACTION,
+    UID_ZERO,
+    MODEL_DIR,
+    CHUNK_SIZE,
+    SUBPROC_MEM_MB
 )
 
-BURN_FRACTION  = 0.90            # 90 % burn (weight for UID 0)
-KEEP_FRACTION  = 1.0 - BURN_FRACTION
-UID_ZERO       = 0
-
-# ──────────────────────────────────────────────────────────────────────────
-# 0.  Global hardening parameters
-# ──────────────────────────────────────────────────────────────────────────
-MODEL_DIR         = Path("miner_models_v2")        # all zips stored here - v2 for fresh start
-CHUNK_SIZE        = 2 << 20                        # 2 MiB
-SUBPROC_MEM_MB    = 8192                            # RSS limit per subprocess
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  Helpers – secure ZIP inspection
