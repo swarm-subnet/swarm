@@ -39,7 +39,7 @@ from ..core.Model_verify import (
 )
 from .task_gen import random_task
 from .reward   import flight_reward
-from .docker_evaluator import DockerSecureEvaluator  # For _base_ready check
+from .docker.docker_evaluator import DockerSecureEvaluator  # For _base_ready check
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -254,7 +254,7 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     Creates a fresh Docker container from base image, copies the model inside,
     runs the 3-layer fake detection process, and handles fake model blacklisting.
     """
-    from .docker_evaluator import DockerSecureEvaluator
+    from .docker.docker_evaluator import DockerSecureEvaluator
     
     bt.logging.info(f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}")
     

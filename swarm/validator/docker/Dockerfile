@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --upgrade pip setuptools wheel
 
 # Install Docker-specific Python dependencies (without gym-pybullet-drones)
-COPY swarm/validator/docker-requirements.txt /tmp/docker-requirements.txt
+COPY swarm/validator/docker/docker-requirements.txt /tmp/docker-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/docker-requirements.txt
 
 # Install gym-pybullet-drones (with numpy 1.x) then upgrade to numpy 2.x

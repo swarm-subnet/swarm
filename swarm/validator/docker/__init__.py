@@ -1,0 +1,1 @@
+# Docker-based secure evaluation components for Swarm validator
