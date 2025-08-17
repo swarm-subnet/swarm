@@ -27,6 +27,7 @@ import argparse
 import io
 import json
 import sys
+import time
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -37,8 +38,8 @@ from stable_baselines3 import PPO
 
 # Project imports
 from swarm.constants import SIM_DT, HORIZON_SEC
+from swarm.core.drone import track_drone
 from swarm.validator.task_gen import random_task
-from swarm.validator.forward import _run_episode  # public helper
 from swarm.validator.reward import flight_reward
 from swarm.utils.env_factory import make_env
 from swarm.protocol import ValidationResult
@@ -172,6 +173,82 @@ def secure_ppo_load_weights_only(checkpoint_zip: str | Path, *, env, device: str
         model.policy.reset_noise()
 
     return model
+
+
+def _run_episode(
+    task: "MapTask",
+    uid: int,
+    model: PPO,
+    *,
+    gui: bool = False,
+) -> ValidationResult:
+    """
+    Executes one closed‑loop flight using *model* as the policy.
+    Returns a fully‑populated ValidationResult.
+    """
+    class _Pilot:
+        def __init__(self, m): self.m = m
+        def reset(self, task):  pass
+        def act(self, obs, t):
+            act, _ = self.m.predict(obs, deterministic=True)
+            return act.squeeze()
+
+    pilot = _Pilot(model)
+    env   = make_env(task, gui=gui)
+
+    # initial observation
+    try:
+        obs = env._computeObs()                # type: ignore[attr-defined]
+    except AttributeError:
+        obs = env.get_observation()            # type: ignore[attr-defined]
+
+    if isinstance(obs, dict):
+        obs = obs[next(iter(obs))]
+
+    pos0       = np.asarray(task.start, dtype=float)
+    last_pos   = pos0.copy()
+    t_sim      = 0.0
+    energy     = 0.0
+    success    = False
+    step_count = 0
+    frames_per_cam = max(1, int(round(1.0 / (SIM_DT * 60.0))))   # ≈60 Hz
+
+    while t_sim < task.horizon:
+        rpm  = pilot.act(obs, t_sim)
+        obs, _r, terminated, truncated, info = env.step(rpm[None, :])
+
+        t_sim   += SIM_DT
+        energy  += np.abs(rpm).sum() * SIM_DT
+        last_pos = obs[:3] if obs.ndim == 1 else obs[0, :3]
+
+        if gui and step_count % frames_per_cam == 0:
+            try:
+                cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0))
+                track_drone(cli=cli_id, drone_id=env.DRONE_IDS[0])
+            except Exception:
+                pass
+        if gui:
+            time.sleep(SIM_DT)
+
+        if terminated or truncated:
+            success = info.get("success", False)
+            break
+
+        step_count += 1
+
+    if not gui:
+        env.close()
+
+    # ── final score with new reward function ──────────────────────────────
+    score = flight_reward(
+        success = success,
+        t       = t_sim,
+        e       = energy,
+        horizon = task.horizon,
+        # (optionally) tweak e_budget or weightings here if needed
+    )
+
+    return ValidationResult(uid, success, t_sim, energy, score)
 
 
 def _run_episode_speed_limit(task, uid, model, *, gui=False):
