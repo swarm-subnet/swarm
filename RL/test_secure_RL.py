@@ -8,7 +8,6 @@ Offline validator for a single Stable‑Baselines3 PPO policy using a
 activation function, `net_arch`, and SDE flag, then loads only the
 policy weights (no pickles, no code execution).
 
-This version adds **Option 1**:
 If the current env observation is wider than what the checkpoint expects
 (by exactly +16 columns), we attach a *stateless* column‑selector features
 extractor so the policy still sees the original dimensionality (115‑D).
