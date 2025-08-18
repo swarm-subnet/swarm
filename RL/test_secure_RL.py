@@ -42,6 +42,7 @@ from swarm.core.drone import track_drone
 from swarm.validator.task_gen import random_task
 from swarm.validator.reward import flight_reward
 from swarm.utils.env_factory import make_env
+from gym_pybullet_drones.utils.enums import ActionType
 from swarm.protocol import ValidationResult
 
 # Try gymnasium first, then gym (for policy selection based on obs space)
@@ -269,16 +270,18 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False):
     energy = 0.0
     success = False
     speeds = []
+    step_count = 0
+    frames_per_cam = max(1, int(round(1.0 / (SIM_DT * 60.0))))   # ≈60 Hz
     
     lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
     last_pos = pos0
     overspeed_streak = 0
 
+
     while t_sim < task.horizon:
         act = np.clip(np.asarray(pilot.act(obs, t_sim), dtype=np.float32).reshape(-1), lo, hi)
         
         if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
-            from gym_pybullet_drones.utils.enums import ActionType
             if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                 n = max(np.linalg.norm(act[:3]), 1e-6)
                 scale = min(1.0, 0.9 / n)
@@ -299,9 +302,20 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False):
         t_sim += SIM_DT
         energy += np.abs(act).sum() * SIM_DT
 
+        if gui and step_count % frames_per_cam == 0:
+            try:
+                cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0))
+                track_drone(cli=cli_id, drone_id=env.DRONE_IDS[0])
+            except Exception:
+                pass
+        if gui:
+            time.sleep(SIM_DT)
+
+
         if terminated or truncated:
             success = info.get("success", False)
             break
+        step_count += 1
 
     if not gui:
         env.close()
