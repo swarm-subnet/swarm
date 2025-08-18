@@ -280,7 +280,6 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False):
 
     while t_sim < task.horizon:
         act = np.clip(np.asarray(pilot.act(obs, t_sim), dtype=np.float32).reshape(-1), lo, hi)
-        
         if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
             if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                 n = max(np.linalg.norm(act[:3]), 1e-6)

@@ -26,6 +26,7 @@ if swarm_path not in sys.path:
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
 from swarm.core.secure_loader import secure_load_ppo
+from gym_pybullet_drones.utils.enums import ActionType
 
 
 def _spawn_model_worker(model_path: str) -> subprocess.Popen:
@@ -304,7 +305,6 @@ def main():
                     
                     # Apply speed scaling if persistent overspeed in VEL mode
                     if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
-                        from gym_pybullet_drones.utils.enums import ActionType
                         if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                             n = max(_np.linalg.norm(act[:3]), 1e-6)
                             scale = min(1.0, 0.9 / n)
