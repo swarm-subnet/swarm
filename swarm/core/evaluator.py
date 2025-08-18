@@ -136,7 +136,6 @@ def main():
             from swarm.utils.env_factory import make_env
             from swarm.validator.task_gen import random_task
             from swarm.constants import SIM_DT, HORIZON_SEC
-            from pathlib import Path
 
             model_path = sys.argv[2]
             try:

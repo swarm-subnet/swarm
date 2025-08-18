@@ -83,7 +83,7 @@ class DockerSecureEvaluator:
             
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             # Build context should be the parent of swarm package
-            build_context = Path(__file__).parent.parent.parent
+            build_context = Path(__file__).parent.parent.parent.parent
             
             # Build base image (always fresh to get latest swarm scripts)
             cmd = [
