@@ -158,7 +158,6 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     Creates a fresh Docker container from base image, copies the model inside,
     runs the 3-layer fake detection process, and handles fake model blacklisting.
     """
-    from .docker.docker_evaluator import DockerSecureEvaluator
     
     bt.logging.info(f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}")
     
@@ -176,7 +175,6 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
         # Create temp directory for verification
         with tempfile.TemporaryDirectory() as tmpdir:
             # Set ownership and permissions for container user (UID 1000)
-            import os
             os.chown(tmpdir, 1000, 1000)
             os.chmod(tmpdir, 0o755)
             
@@ -484,7 +482,6 @@ async def forward(self) -> None:
                     # Check if fake model was detected
                     if self.docker_evaluator.last_fake_model_info and self.docker_evaluator.last_fake_model_info['uid'] == uid:
                         # Get model hash for blacklisting
-                        from swarm.utils.hash import sha256sum
                         model_hash = sha256sum(fp)
                         fake_models_detected.append({
                             'uid': uid,

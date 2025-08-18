@@ -4,6 +4,9 @@ import os
 import subprocess
 import tempfile
 import time
+import zipfile
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +14,8 @@ import bittensor as bt
 
 from swarm.protocol import MapTask, ValidationResult
 from swarm.constants import EVAL_TIMEOUT_SEC
+from swarm.utils.hash import sha256sum
+from swarm.core.Model_verify import add_to_blacklist
 
 
 class DockerSecureEvaluator:
@@ -144,7 +149,6 @@ class DockerSecureEvaluator:
         
         # Validate model has secure metadata before Docker execution
         try:
-            import zipfile
             with zipfile.ZipFile(model_path, 'r') as zf:
                 if "safe_policy_meta.json" not in zf.namelist():
                     bt.logging.warning(f"Model {uid} missing secure metadata")
@@ -162,7 +166,6 @@ class DockerSecureEvaluator:
             # Create temp directory for task/result files
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Set ownership and permissions for container user (UID 1000)
-                import os
                 os.chown(tmpdir, 1000, 1000)
                 os.chmod(tmpdir, 0o755)
                 
@@ -170,7 +173,6 @@ class DockerSecureEvaluator:
                 result_file = Path(tmpdir) / "result.json"
                 
                 # Write task data
-                from dataclasses import asdict
                 with open(task_file, 'w') as f:
                     json.dump(asdict(task), f)
                 
@@ -265,14 +267,11 @@ class DockerSecureEvaluator:
                         score = float(result_data.get("score", 0.0))
                         if not (0.0 <= score <= 1.0):
                             bt.logging.error(f"🚫 Invalid score {score} for UID {uid} - blacklisting model")
-                            from swarm.utils.hash import sha256sum
-                            from swarm.core.Model_verify import add_to_blacklist
                             model_hash = sha256sum(model_path)
                             add_to_blacklist(model_hash)
                             return ValidationResult(uid, False, 0.0, 0.0, 0.0)
                         
                         # Log result data exactly as requested - custom format with emoji
-                        from datetime import datetime
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         print(f"{timestamp} 🔍 DEBUG: UID {uid} result_data: {result_data}")
                         
