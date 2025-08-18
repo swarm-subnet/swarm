@@ -15,7 +15,7 @@ import bittensor as bt
 from swarm.protocol import MapTask, ValidationResult
 from swarm.constants import EVAL_TIMEOUT_SEC
 from swarm.utils.hash import sha256sum
-from swarm.core.Model_verify import add_to_blacklist
+from swarm.core.model_verify import add_to_blacklist
 
 
 class DockerSecureEvaluator:

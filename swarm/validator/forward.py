@@ -22,7 +22,7 @@ from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
 import base64
 
-from ..core.Model_verify import (
+from ..core.model_verify import (
     load_blacklist,
     save_blacklist, 
     add_to_blacklist,

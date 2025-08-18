@@ -214,7 +214,7 @@ def main():
             task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
-        from swarm.core.Model_verify import inspect_model_structure, classify_model_validity
+        from swarm.core.model_verify import inspect_model_structure, classify_model_validity
         
         inspection_results = inspect_model_structure(Path(model_path))
         model_status, model_reason = classify_model_validity(inspection_results)
