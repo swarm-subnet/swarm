@@ -285,7 +285,7 @@ def main():
             env = make_env(task, gui=False)
 
             try:
-                obs, _ = env.reset(seed=task.map_seed)
+                obs = env._computeObs()
                 if isinstance(obs, dict):
                     obs = obs[next(iter(obs))]
 

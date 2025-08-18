@@ -197,10 +197,7 @@ def _run_episode(
     env   = make_env(task, gui=gui)
 
     # initial observation
-    try:
-        obs = env._computeObs()                # type: ignore[attr-defined]
-    except AttributeError:
-        obs = env.get_observation()            # type: ignore[attr-defined]
+    obs = env._computeObs()
 
     if isinstance(obs, dict):
         obs = obs[next(iter(obs))]
@@ -262,10 +259,7 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False):
     pilot = _Pilot(model)
     env = make_env(task, gui=gui)
     
-    try:
-        obs, _ = env.reset(seed=task.map_seed)
-    except:
-        obs = env._computeObs()
+    obs = env._computeObs()
     
     if isinstance(obs, dict):
         obs = obs[next(iter(obs))]
