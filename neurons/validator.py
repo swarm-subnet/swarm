@@ -24,11 +24,13 @@ from pathlib import Path
 from typing import List, Optional
 
 import bittensor as bt
+import subprocess
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.validator.forward import forward
+from swarm.validator.docker_evaluator import DockerSecureEvaluator
 from swarm.protocol import ValidationResult, MapTask
 from datetime import datetime
 import swarm
@@ -168,11 +170,11 @@ class WandbHelper:
                 # Log individual miner data  
                 for result in results:
                     miner_data = {
-                        f"miner_{result.uid}/score": result.score,
-                        f"miner_{result.uid}/success": 1 if result.success else 0,
-                        f"miner_{result.uid}/time_sec": result.time_sec,
-                        f"miner_{result.uid}/energy": result.energy,
-                        f"miner_{result.uid}/forward_count": forward_count
+                        f"miner_{int(result.uid)}/score": result.score,
+                        f"miner_{int(result.uid)}/success": 1 if result.success else 0,
+                        f"miner_{int(result.uid)}/time_sec": result.time_sec,
+                        f"miner_{int(result.uid)}/energy": result.energy,
+                        f"miner_{int(result.uid)}/forward_count": forward_count
                     }
                     self.wandb_run.log(miner_data)
             
@@ -206,7 +208,7 @@ class WandbHelper:
             
             # Individual weight data
             for uid, score in zip(uids, scores):
-                weight_data[f"weight_{uid}"] = score
+                weight_data[f"weight_{int(uid)}"] = score
                 
             self.wandb_run.log(weight_data)
             
@@ -276,6 +278,9 @@ class Validator(BaseValidatorNeuron):
 
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
+        
+        # Log validator version info
+        bt.logging.info(f"🚀 Swarm Validator v{swarm.__version__} started")
 
         self.forward_count = 0
 
@@ -300,6 +305,32 @@ class Validator(BaseValidatorNeuron):
             self.wandb_helper = None
         else:
             bt.logging.debug("Wandb not available")
+            
+        # Initialize Docker evaluator at startup
+        bt.logging.info("Initializing Docker secure evaluator...")
+        # Pre-clean Docker environment BEFORE building base image to ensure fresh base
+        try:
+            # Ensure docker exists before attempting cleanup
+            docker_ok = subprocess.run(["docker", "--version"], capture_output=True).returncode == 0
+            if docker_ok:
+                # Kill and remove any lingering eval/verify containers
+                subprocess.run("docker kill $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true", shell=True)
+                subprocess.run("docker kill $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true", shell=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true", shell=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true", shell=True)
+                # Remove previous base image if present to force a brand new base
+                subprocess.run(["docker", "rmi", "-f", "swarm_evaluator_base"], capture_output=True)
+                # Global pruning (images, cache, volumes)
+                subprocess.run(["docker", "system", "prune", "-af", "--volumes"], capture_output=True)
+                subprocess.run(["docker", "builder", "prune", "-af"], capture_output=True)
+        except Exception:
+            # Non-fatal; DockerSecureEvaluator will still try to set up
+            pass
+        self.docker_evaluator = DockerSecureEvaluator()
+        if DockerSecureEvaluator._base_ready:
+            bt.logging.info("✅ Docker evaluator ready")
+        else:
+            bt.logging.warning("⚠️  Docker evaluator initialization failed")
 
     async def forward(self):
         """
@@ -313,7 +344,12 @@ class Validator(BaseValidatorNeuron):
         return await forward(self)
 
     def __del__(self):
-        """Cleanup wandb helper when validator is destroyed."""
+        """Cleanup wandb helper and docker evaluator when validator is destroyed."""
+        if hasattr(self, 'docker_evaluator'):
+            try:
+                self.docker_evaluator.cleanup()
+            except:
+                pass
         if hasattr(self, 'wandb_helper') and self.wandb_helper:
             self.wandb_helper.finish()
 

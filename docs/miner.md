@@ -11,9 +11,6 @@ This guide shows how to install, configure and run a Swarm miner
 | CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
 | RAM       | 8 GB     | 8 GB         |                                               |
 | Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
-| CPU       | 3 cores  | 6 cores      | Path‑planning is light‑weight                 |
-| RAM       | 8 GB     | 8 GB         |                                               |
-| Disk      | 20 GB     | 100 GB         | Repository + virtual‑env                      |
 | GPU       | none     | Optional     | Depends on your model             |
 | OS        | Linux / macOS / WSL2 | —           | Scripts are written for Ubuntu 22.04          |
 
@@ -33,6 +30,7 @@ chmod +x scripts/miner/setup.sh
 # 4) Activate virtual env
 source miner_env/bin/activate
 
+```
 ```bash
 sudo apt update && sudo apt install -y \
      build-essential git pkg-config libgl1-mesa-glx mesa-utils
@@ -94,7 +92,7 @@ pm2 stop     swarm_miner
    - If different → **proceed** to download.
 4. **Validator requests the model** by sending `need_blob=True`.
 5. **Your miner streams the model** as a series of `PolicyChunk` messages until EOF.
-6. **Validator stores the model** as `miner_models/UID_<uid>.zip`, loads it with SB3, and evaluates it on secret tasks. Score ∈ [0, 1] is written on‑chain.
+6. **Validator stores the model** as `miner_models_v2/UID_<uid>.zip`, loads it with SB3, and evaluates it on secret tasks. Score ∈ [0, 1] is written on‑chain.
 
 
 | Step | Direction | Payload | What happens |
@@ -104,7 +102,7 @@ pm2 stop     swarm_miner
 | 3 | **Validator** compares the SHA‑256 to its cache. | — | If identical → **done**. If different → **proceed**. |
 | 4 | **Validator ➜ Miner** | `need_blob=True` | “Stream me the new zip.” |
 | 5 | **Miner ➜ Validator** | series of `chunk` messages (`PolicyChunk`) | Raw bytes until EOF. |
-| 6 | **Validator** stores `miner_models/UID_<uid>.zip`, loads it with SB3 and evaluates it on secret tasks. | — | Score ∈ [0 … 1] is written on‑chain. |
+| 6 | **Validator** stores `miner_models_v2/UID_<uid>.zip`, loads it with SB3 and evaluates it on secret tasks. | — | Score ∈ [0 … 1] is written on‑chain. |
 
 There is **no MapTask in the handshake**.  
 Miners never see the evaluation maps; only their exported policy is tested.
