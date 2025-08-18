@@ -8,12 +8,6 @@ This guide shows how to install, configure and run a Swarm miner
 
 **CRITICAL**: Validators use Docker-based secure evaluation with **strict model requirements**. Models missing required security metadata are **automatically rejected** and scored 0.0.
 
-### Why Security Matters
-- **Untrusted code execution**: Your models run inside validator Docker containers for security isolation
-- **Malicious model protection**: Validators scan for fake models and maintain shared blacklists
-- **Secure loading**: Models must support PyTorch `weights_only=True` loading (no pickle execution)
-- **Automatic rejection**: Non-compliant models are rejected before evaluation
-
 ### Required Model Structure
 Your model ZIP **must contain exactly these files**:
 ```
@@ -163,14 +157,6 @@ python -m RL.test_secure_RL --model your_model.zip
 
 **Step 4: Deploy**
 Place compliant model in `model/ppo_policy.zip`
-
-### Advanced Training Approaches
-Successful miners typically:
-- Use advanced RL algorithms beyond basic PPO
-- Implement curriculum learning for complex navigation
-- Optimize for speed, energy efficiency, and success rate
-- Use custom reward shaping and exploration strategies
-- Train on diverse procedurally generated environments
 
 The provided scripts are **starting points** - build better ones to compete effectively.
 

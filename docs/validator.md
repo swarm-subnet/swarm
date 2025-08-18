@@ -3,16 +3,6 @@
 
 This document shows how to install and operate the Swarm validator that securely evaluates models received from miners on dynamically generated maps using Docker-based isolation.
 
-## 🔒 Security Overview
-
-**Why Docker is Required:** Miners submit potentially untrusted RL policy code that runs during evaluation. The Swarm validator uses Docker containers to:
-- **Isolate untrusted code** in secure sandboxed environments
-- **Prevent malicious models** from accessing your system
-- **Detect fake models** using 3-layer verification system
-- **Blacklist malicious models** automatically
-
-Without Docker, **your validator cannot safely evaluate miner models**.
-
 ## 🖥️ System Requirements
 
 | Resource | Minimal | Notes                                |
@@ -82,26 +72,6 @@ Docker version 24.0.0+
 Hello from Docker! (success message)
 ● docker.service - Docker Application Container Engine
    Active: active (running)
-```
-
-### Manual Docker Installation (Alternative)
-
-If automatic installation fails:
-
-```bash
-# Download Docker installation script
-curl -fsSL https://get.docker.com -o get-docker.sh
-
-# Review the script (recommended)
-less get-docker.sh
-
-# Run installation script
-sudo sh get-docker.sh
-
-# Post-installation setup
-sudo usermod -aG docker $USER
-sudo systemctl start docker
-sudo systemctl enable docker
 ```
 
 ## 📦 Installation & Setup
@@ -243,7 +213,6 @@ pm2 start --name auto_update_validator \
    The episode runner `_run_episode` measures:  
    * success flag  
    * time alive  
-   * distance closed (progress)  
    * energy used  
    These metrics are converted into a **score ∈ [0, 1]** by  
    `swarm/validator/reward.py`.
@@ -310,18 +279,6 @@ docker system df
 docker system prune  # Clean up if needed
 ```
 
-### Performance Optimization
-
-**High memory usage:**
-- Increase system RAM (minimum 12GB recommended)
-- Monitor with `docker stats` during evaluation
-- Clean model cache periodically: `rm -rf miner_models_v2/*.zip`
-
-**Slow model evaluation:**
-- Increase CPU cores (6+ cores recommended)
-- Check Docker resource limits
-- Monitor system load with `htop`
-
 ### Security Warnings
 
 **Blacklisted model detected:**
@@ -338,6 +295,6 @@ docker system prune  # Clean up if needed
 
 ## 🆘 Support
 
-- Discord: #swarm-dev – ping @Miguelikk or @AliSaaf
+- Discord – ping @Miguelikk or @AliSaaf
 
 Happy validating! 🚀
