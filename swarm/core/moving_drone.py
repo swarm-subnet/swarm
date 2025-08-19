@@ -60,7 +60,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._t_to_goal    = None
         self._prev_score   = 0.0
 
-        # ‑‑‑ define 18 ray directions for obstacle detection ‑‑‑
+        # ‑‑‑ define 16 ray directions for obstacle detection ‑‑‑
         self._init_ray_directions()
 
         # Let BaseRLAviary set up the PyBullet world
@@ -81,15 +81,15 @@ class MovingDroneAviary(BaseRLAviary):
         # ‑‑‑ extend observation with obstacle distances (16-D) + goal vector (3-D) ‑‑‑
         obs_space = cast(spaces.Box, self.observation_space)
         old_low,  old_high  = obs_space.low, obs_space.high
-        
+
         # Distance sensors: 16 dimensions, range [0.0, 1.0] (scaled from meters)
         dist_low = np.zeros((old_low.shape[0], 16), dtype=np.float32)
         dist_high = np.ones((old_high.shape[0], 16), dtype=np.float32)  # scaled to [0.0, 1.0]
-        
-        # Goal vector: 3 dimensions, unlimited range  
+
+        # Goal vector: 3 dimensions, unlimited range
         goal_low = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
         goal_high = +np.ones((old_high.shape[0], 3), dtype=np.float32) * np.inf
-        
+
         self.observation_space = spaces.Box(
             low   = np.concatenate([old_low, dist_low, goal_low], axis=1),
             high  = np.concatenate([old_high, dist_high, goal_high], axis=1),
@@ -111,103 +111,105 @@ class MovingDroneAviary(BaseRLAviary):
         sin_45 = np.sin(np.radians(45))      # √2/2 ≈ 0.707107
         cos_30 = np.cos(np.radians(30))      # √3/2 ≈ 0.866025
         sin_30 = np.sin(np.radians(30))      # 1/2 = 0.500000
-        
+
         self.ray_directions = np.array([
             # ═══ 2 PURE VERTICAL (essential for landing/overhead) ═══
             [0, 0, 1],                       # 1: Pure Up
             [0, 0, -1],                      # 2: Pure Down
-            
+
             # ═══ 8 HORIZONTAL - BALANCED COVERAGE ═══
             [1, 0, 0],                       # 3: Forward (0°)
             [cos_45, sin_45, 0],             # 4: Forward-Right (45°)
-            [0, 1, 0],                       # 5: Right (90°) - ESSENTIAL SIDE COVERAGE
+            [0, 1, 0],                       # 5: Right (90°)
             [-cos_45, sin_45, 0],            # 6: Back-Right (135°)
             [-1, 0, 0],                      # 7: Back (180°)
             [-cos_45, -sin_45, 0],           # 8: Back-Left (225°)
-            [0, -1, 0],                      # 9: Left (270°) - ESSENTIAL SIDE COVERAGE
+            [0, -1, 0],                      # 9: Left (270°)
             [cos_45, -sin_45, 0],            # 10: Forward-Left (315°)
-            
+
             # ═══ 6 DIAGONAL RAYS (3D coverage at ±30° elevation) ═══
-            [cos_30, 0, sin_30],             # 11: Forward-Up (30° elevation)
-            [cos_30, 0, -sin_30],            # 12: Forward-Down (-30° elevation)
-            [-cos_30, 0, sin_30],            # 13: Back-Up (30° elevation)
-            [-cos_30, 0, -sin_30],           # 14: Back-Down (-30° elevation)
-            [0, cos_30, sin_30],             # 15: Right-Up (30° elevation)
-            [0, -cos_30, sin_30],            # 16: Left-Up (30° elevation)
+            [cos_30, 0, sin_30],             # 11: Forward-Up (30°)
+            [cos_30, 0, -sin_30],            # 12: Forward-Down (-30°)
+            [-cos_30, 0, sin_30],            # 13: Back-Up (30°)
+            [-cos_30, 0, -sin_30],           # 14: Back-Down (-30°)
+            [0, cos_30, sin_30],             # 15: Right-Up (30°)
+            [0, -cos_30, sin_30],            # 16: Left-Up (30°)
         ], dtype=np.float32)
-        
-        # Set maximum detection range (10 meters)
-        self.max_ray_distance = 10.0
+
+        # Detection range and small origin offset to avoid self-hits
+        self.max_ray_distance: float = 10.0
+        self._ray_origin_offset: float = 0.12   # ~12 cm outside the hull
 
     def _get_obstacle_distances(self, drone_position: np.ndarray, drone_orientation: np.ndarray) -> np.ndarray:
         """
         Perform 16-ray casting for obstacle detection using batch processing.
-        
+
         Parameters
         ----------
         drone_position : np.ndarray
-            Current drone position [x, y, z]
+            Current drone position [x, y, z] in world frame
         drone_orientation : np.ndarray
-            Current drone orientation as 3x3 rotation matrix
-            
+            Current drone orientation as 3x3 rotation matrix (body->world)
+
         Returns
         -------
         np.ndarray
-            Array of 16 distances in meters [0.0 - 10.0]
-            Note: These are scaled by 10 in _computeObs() to match goal vector scaling
+            Array of 16 distances in meters [0.0 - 10.0].
+            Distances are measured from the drone COM and clamped to max range.
         """
-        # Use the rotation matrix directly (no conversion needed!)
         rot_matrix = drone_orientation
-        
-        # Transform all ray directions to world coordinates
+
         start_positions = []
         end_positions = []
-        
+
+        # Length of the ray segment when starting offset outside the hull
+        seg_len = self.max_ray_distance - self._ray_origin_offset
+        if seg_len <= 0:
+            seg_len = 1e-6
+
         for direction in self.ray_directions:
-            # Transform direction from drone body frame to world frame
-            world_direction = rot_matrix @ direction
-            end_position = drone_position + world_direction * self.max_ray_distance
-            
-            start_positions.append(drone_position.tolist())
-            end_positions.append(end_position.tolist())
-        
-        # Batch ray test - much faster than individual rays
-        results = p.rayTestBatch(start_positions, end_positions)
-        
-        # Extract distances from results
+            # Transform direction from body frame to world frame and normalize
+            world_dir = rot_matrix @ direction
+            n = float(np.linalg.norm(world_dir))
+            if n < 1e-9:
+                world_dir = np.array([0.0, 0.0, 1.0], dtype=float)  # fallback
+            else:
+                world_dir = world_dir / n
+
+            # Start just outside the drone to avoid self-hit, end at max range from COM
+            start_pos = drone_position + world_dir * self._ray_origin_offset
+            end_pos   = drone_position + world_dir * self.max_ray_distance
+
+            start_positions.append(start_pos.tolist())
+            end_positions.append(end_pos.tolist())
+
+        # Batch ray test - pass the correct physics client
+        results = p.rayTestBatch(
+            start_positions, end_positions,
+            physicsClientId=getattr(self, "CLIENT", 0)
+        )
+
+        # Extract distances from results, converting "from start" to "from COM"
         distances = []
-        for result in results:
-            hit_object_id = result[0]
-            if hit_object_id != -1:  # Hit detected
-                hit_distance = result[2] * self.max_ray_distance
-                distances.append(float(hit_distance))
-            else:  # No hit - max distance
+        for r in results:
+            hit_uid = r[0]          # -1 means no hit
+            hit_frac = float(r[2])  # [0,1] along the segment (start->end)
+            if hit_uid != -1:
+                # distance from COM = offset + fraction*segment_length, clamped
+                d = self._ray_origin_offset + hit_frac * seg_len
+                distances.append(float(min(self.max_ray_distance, max(0.0, d))))
+            else:
                 distances.append(self.max_ray_distance)
-        
+
         return np.array(distances, dtype=np.float32)
 
     def _euler_to_rotation_matrix(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
         """
-        Convert Euler angles directly to rotation matrix
-        
-        Parameters
-        ----------
-        roll : float
-            Roll angle in radians
-        pitch : float
-            Pitch angle in radians  
-        yaw : float
-            Yaw angle in radians
-            
-        Returns
-        -------
-        np.ndarray
-            3x3 rotation matrix for transforming from body frame to world frame
+        Convert Euler angles directly to rotation matrix (body->world).
         """
         cr, sr = np.cos(roll), np.sin(roll)
         cp, sp = np.cos(pitch), np.sin(pitch)
         cy, sy = np.cos(yaw), np.sin(yaw)
-        
         return np.array([
             [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr],
             [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr],
@@ -311,19 +313,27 @@ class MovingDroneAviary(BaseRLAviary):
     def _computeObs(self) -> np.ndarray:
         """
         Full base observation (112-D) + obstacle distances (16-D) + goal vector (3-D) → 131-D.
+
+        Distances are computed from the **current PyBullet pose** and
+        then scaled to [0,1] by dividing by `max_ray_distance` (10 m).
         """
-        base_obs: NDArray[np.float32] | None = super()._computeObs()                  # shape (1, 112)
+        base_obs: NDArray[np.float32] | None = super()._computeObs()  # shape (1, 112) in your setup
         if base_obs is None:
             return np.zeros((1, 131), dtype=np.float32)
-        
-        # Get current drone state for ray casting (single drone at index 0)
-        drone_position = base_obs[0, 0:3]  # Extract position from base_obs directly
-        
-        roll, pitch, yaw = base_obs[0, 6], base_obs[0, 7], base_obs[0, 8]
-        rotation_matrix = self._euler_to_rotation_matrix(roll, pitch, yaw)
-        distances = self._get_obstacle_distances(drone_position, rotation_matrix).reshape(1, 16)
-        
-        distances_scaled = distances / 10.0
-        rel = ((self.GOAL_POS - drone_position) / 10.0).reshape(1, 3)
-        
+
+        # --- Get exact pose from PyBullet to stay in sync with physics ---
+        uid = self.DRONE_IDS[0]
+        pos_w, orn_w = p.getBasePositionAndOrientation(uid, physicsClientId=getattr(self, "CLIENT", 0))
+        pos_w = np.asarray(pos_w, dtype=float)
+        rot_m = np.asarray(p.getMatrixFromQuaternion(orn_w), dtype=float).reshape(3, 3)
+
+        # --- Cast rays from that pose ---
+        distances_m = self._get_obstacle_distances(pos_w, rot_m).reshape(1, 16)
+
+        # Scale to [0,1] for the observation (10 m range)
+        distances_scaled = distances_m / self.max_ray_distance
+
+        # Goal vector relative to current position (scaled by 10 for consistency with your setup)
+        rel = ((self.GOAL_POS - pos_w) / 10.0).reshape(1, 3)
+
         return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
