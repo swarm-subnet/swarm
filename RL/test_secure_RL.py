@@ -42,7 +42,6 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 # Project imports
 from swarm.constants import SIM_DT, HORIZON_SEC, SPEED_LIMIT
 from swarm.validator.task_gen import random_task
-from swarm.validator.forward import _run_episode  # public helper
 from swarm.validator.reward import flight_reward
 from swarm.utils.env_factory import make_env
 from swarm.protocol import ValidationResult
@@ -507,8 +506,7 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
     lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
     last_pos = pos0
 
-    cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0))
-    time.sleep(30)  
+    cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0)) 
     while t_sim < task.horizon:
         act = np.clip(np.asarray(pilot.act(obs, t_sim), dtype=np.float32).reshape(-1), lo, hi)
 
