@@ -53,7 +53,6 @@ class ValidationResult:
     uid: int
     success: bool
     time_sec: float
-    energy: float
     score: float
 
 

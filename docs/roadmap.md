@@ -46,7 +46,7 @@
 
 **Additions**  
 - Multi-kilometre procedurally-generated landscapes.  
-- Mid-point recharging pads (energy budgeting becomes critical).  
+- Mid-point recharging pads for extended missions.  
 - Magnetometer & barometer sensor noise models.
 
 ## Stage 7 – Interceptor

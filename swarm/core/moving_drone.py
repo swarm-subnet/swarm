@@ -235,7 +235,6 @@ class MovingDroneAviary(BaseRLAviary):
         self._prev_score = flight_reward(
             success = False,
             t       = 0.0,
-            e       = 0.0,
             horizon = self.EP_LEN_SEC,
         )
 
@@ -267,7 +266,6 @@ class MovingDroneAviary(BaseRLAviary):
         score = flight_reward(
             success = self._success,
             t       = (self._t_to_goal if self._success else self._time_alive),
-            e       = 0.0,                        # energy not tracked inside env
             horizon = self.EP_LEN_SEC,
         )
 

@@ -125,7 +125,7 @@ class DockerSecureEvaluator:
         
         if not DockerSecureEvaluator._base_ready:
             bt.logging.warning(f"Docker not ready for UID {uid}")
-            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+            return ValidationResult(uid, False, 0.0, 0.0)
         
         # Double-check that base image exists before proceeding
         try:
@@ -139,10 +139,10 @@ class DockerSecureEvaluator:
                 self._setup_base_container()
                 if not DockerSecureEvaluator._base_ready:
                     bt.logging.error(f"Failed to rebuild base image for UID {uid}")
-                    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+                    return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
             bt.logging.warning(f"Failed to check for base image: {e}")
-            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+            return ValidationResult(uid, False, 0.0, 0.0)
         
         # Track fake models detected for this evaluation
         self.last_fake_model_info = None
@@ -152,10 +152,10 @@ class DockerSecureEvaluator:
             with zipfile.ZipFile(model_path, 'r') as zf:
                 if "safe_policy_meta.json" not in zf.namelist():
                     bt.logging.warning(f"Model {uid} missing secure metadata")
-                    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+                    return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
             bt.logging.warning(f"Failed to validate model {uid}: {e}")
-            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+            return ValidationResult(uid, False, 0.0, 0.0)
         
         container_name = f"swarm_eval_{uid}_{int(time.time() * 1000)}"
         
@@ -216,7 +216,7 @@ class DockerSecureEvaluator:
                         bt.logging.debug(f"Container failed for UID {uid}: {stderr_str[:300]}")
                         # Container failed - return zero score immediately
                         bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation failed")
-                        return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+                        return ValidationResult(uid, False, 0.0, 0.0)
                     
                 except asyncio.TimeoutError:
                     # Kill container if timeout
@@ -248,13 +248,13 @@ class DockerSecureEvaluator:
                             bt.logging.info(f"🏁 Ending Docker container for UID {uid} - fake model detected")
                             
                             # Return zero score for fake models
-                            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+                            return ValidationResult(uid, False, 0.0, 0.0)
                         
                         had_error = "error" in data
                         if had_error:
                             bt.logging.debug(f"Evaluation error for UID {uid}: {data['error']}")
                         
-                        result_data = {k: v for k, v in data.items() if k not in ["error", "is_fake_model", "fake_reason", "inspection_results"]}
+                        result_data = {k: v for k, v in data.items() if k not in ["error", "is_fake_model", "fake_reason", "inspection_results", "energy"]}
                         
                         # Clear fake model info since this was a legitimate evaluation
                         self.last_fake_model_info = None
@@ -269,7 +269,7 @@ class DockerSecureEvaluator:
                             bt.logging.error(f"🚫 Invalid score {score} for UID {uid} - blacklisting model")
                             model_hash = sha256sum(model_path)
                             add_to_blacklist(model_hash)
-                            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+                            return ValidationResult(uid, False, 0.0, 0.0)
                         
                         # Log result data exactly as requested - custom format with emoji
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -313,7 +313,7 @@ class DockerSecureEvaluator:
         
         # ENHANCED LOGGING: Final fallback ending message
         bt.logging.info(f"🏁 Ending Docker container for UID {uid} - returning default result")
-        return ValidationResult(uid, False, 0.0, 0.0, 0.0)
+        return ValidationResult(uid, False, 0.0, 0.0)
     
     
     def cleanup(self):

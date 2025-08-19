@@ -6,10 +6,12 @@ Replaces all PPO.load() calls in the Swarm system.
 
 import io
 import json
+import warnings
 import zipfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Dict, Mapping, Optional
 
+import numpy as np
 import torch as th
 from stable_baselines3 import PPO
 
@@ -28,6 +30,20 @@ _ACT_MAP = {
 
 # Import from centralized constants
 from swarm.constants import SAFE_META_FILENAME
+
+
+def _flat_box_dim(space) -> Optional[int]:
+    """Return flattened dimension for Box spaces."""
+    try:
+        from gymnasium import spaces as gym_spaces
+        if isinstance(space, gym_spaces.Box):
+            return int(np.prod(space.shape))
+    except ImportError:
+        pass
+    try:
+        return int(np.prod(space.shape))
+    except Exception:
+        return None
 
 
 def _parse_activation(name: str) -> type[th.nn.Module]:
@@ -104,9 +120,31 @@ def secure_load_ppo(model_path: Path, *, env, device: str = "cpu") -> PPO:
     obj = th.load(io.BytesIO(raw), map_location=device, weights_only=True)
     state_dict = _extract_policy_state_dict(obj)
 
-    # Create fresh PPO
+    # Infer checkpoint's expected input dimension from first layer
+    ckpt_in: Optional[int] = None
+    for k in (
+        "mlp_extractor.policy_net.0.weight",
+        "mlp_extractor.shared_net.0.weight",
+        "mlp_extractor.value_net.0.weight",
+    ):
+        if k in state_dict:
+            ckpt_in = int(state_dict[k].shape[1])
+            break
+    if ckpt_in is None:
+        raise RuntimeError("Could not find first-layer weight in checkpoint state_dict")
+
+    # Check observation dimension compatibility
     policy_class = _choose_policy_class_from_env(env)
-    policy_kwargs = {"activation_fn": _parse_activation(act_name), "net_arch": net_arch}
+    env_in = _flat_box_dim(env.observation_space) if policy_class == "MlpPolicy" else None
+    policy_kwargs: Dict[str, Any] = {"activation_fn": _parse_activation(act_name), "net_arch": net_arch}
+
+    if policy_class == "MlpPolicy" and env_in is not None and env_in != ckpt_in:
+        raise RuntimeError(
+            f"Observation dimension mismatch: checkpoint expects {ckpt_in}, env provides {env_in}. "
+            f"Model and environment observation dimensions must match exactly."
+        )
+
+    # Create fresh PPO
     model = PPO(policy_class, env, device=device, policy_kwargs=policy_kwargs, use_sde=use_sde)
 
     # Load weights strictly

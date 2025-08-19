@@ -494,7 +494,6 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
 
     pos0 = np.asarray(task.start, dtype=float)
     t_sim = 0.0
-    energy = 0.0
     success = False
     speeds = []
     step_count = 0
@@ -539,7 +538,6 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
             ratio = float(speed) / env.SPEED_LIMIT
 
         t_sim += SIM_DT
-        energy += np.abs(act).sum() * SIM_DT
 
         if gui and step_count % frames_per_cam == 0:
             try:
@@ -557,9 +555,9 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
     if not gui:
         env.close()
 
-    score = flight_reward(success=success, t=t_sim, e=energy, horizon=task.horizon)
+    score = flight_reward(success=success, t=t_sim, horizon=task.horizon)
     avg_speed = np.mean(speeds) if speeds else 0.0
-    result = ValidationResult(uid, success, t_sim, energy, score)
+    result = ValidationResult(uid, success, t_sim, score)
     return result, avg_speed
 
 
@@ -607,7 +605,6 @@ def main() -> None:
     print("----------------------------------------------------")
     print(f"Success : {result.success}")
     print(f"Time    : {result.time_sec:.2f} s")
-    print(f"Energy  : {result.energy:.1f} J")
     print(f"Score   : {result.score:.3f}")
     print(f"Avg Speed: {avg_speed:.3f} m/s")
     print("----------------------------------------------------")

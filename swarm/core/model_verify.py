@@ -227,8 +227,6 @@ def scan_for_malicious_patterns(zip_path: Path) -> Tuple[bool, List[str]]:
         b"'score'",
         b'"success": true',
         b"'success': True",
-        b'"energy": 0',
-        b"'energy': 0",
     ]
     
     findings = []
