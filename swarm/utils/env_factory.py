@@ -21,7 +21,7 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.core.env_builder        import build_world
 from swarm.protocol                import MapTask
-from swarm.constants               import SAFE_Z     # noqa: F401  (may be useful elsewhere)
+from swarm.constants               import SAFE_Z, SPEED_LIMIT
 
 # ──────────────────────────────────────────────────────────────────────────────
 def make_env(
@@ -59,6 +59,10 @@ def make_env(
                 act=ActionType.VEL,
                 **common_kwargs,
             )
+
+    # Override parent class speed limit (0.25 m/s → 3.0 m/s)
+    env.SPEED_LIMIT = SPEED_LIMIT
+    env.ACT_TYPE = ActionType.VEL
 
     # 2 ─ generic PyBullet plumbing ------------------------------------------
     cli = env.getPyBulletClient()

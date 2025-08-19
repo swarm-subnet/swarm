@@ -40,7 +40,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 # Project imports
-from swarm.constants import SIM_DT, HORIZON_SEC
+from swarm.constants import SIM_DT, HORIZON_SEC, SPEED_LIMIT
 from swarm.validator.task_gen import random_task
 from swarm.validator.forward import _run_episode  # public helper
 from swarm.validator.reward import flight_reward
@@ -506,19 +506,18 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
 
     lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
     last_pos = pos0
-    overspeed_streak = 0
 
     cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0))
     time.sleep(30)  
     while t_sim < task.horizon:
         act = np.clip(np.asarray(pilot.act(obs, t_sim), dtype=np.float32).reshape(-1), lo, hi)
 
-        # Optional speed limiting for VEL control with SPEED_LIMIT
-        if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
+        # Apply speed limiting every step for VEL control
+        if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
             from gym_pybullet_drones.utils.enums import ActionType
             if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                 n = max(np.linalg.norm(act[:3]), 1e-6)
-                scale = min(1.0, 0.9 / n)
+                scale = min(1.0, SPEED_LIMIT / n)
                 act[:3] *= scale
                 act = np.clip(act, lo, hi)
 
@@ -540,7 +539,6 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
 
         if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
             ratio = float(speed) / env.SPEED_LIMIT
-            overspeed_streak = (overspeed_streak + 1) if ratio > 1.2 else 0
 
         t_sim += SIM_DT
         energy += np.abs(act).sum() * SIM_DT

@@ -26,6 +26,7 @@ if swarm_path not in sys.path:
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
 from swarm.core.secure_loader import secure_load_ppo
+from swarm.constants import SPEED_LIMIT
 from gym_pybullet_drones.utils.enums import ActionType
 
 
@@ -297,16 +298,15 @@ def main():
                 
                 lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
                 last_pos = pos0
-                overspeed_streak = 0
                 
                 while t_sim < task.horizon:
                     act = _np.clip(_np.asarray(pilot.act(obs, t_sim), dtype=_np.float32).reshape(-1), lo, hi)
                     
-                    # Apply speed scaling if persistent overspeed in VEL mode
-                    if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
+                    # Apply speed scaling every step in VEL mode
+                    if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
                         if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                             n = max(_np.linalg.norm(act[:3]), 1e-6)
-                            scale = min(1.0, 0.9 / n)
+                            scale = min(1.0, SPEED_LIMIT / n)
                             act[:3] *= scale
                             act = _np.clip(act, lo, hi)
                     
@@ -314,10 +314,9 @@ def main():
                     obs, _r, terminated, truncated, info = env.step(act[None, :])
                     last_pos = env._getDroneStateVector(0)[0:3]
                     
-                    # Update overspeed streak for next iteration
+                    # Monitor speed ratio for telemetry
                     if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
                         ratio = float(_np.linalg.norm(last_pos - prev) / SIM_DT) / env.SPEED_LIMIT
-                        overspeed_streak = (overspeed_streak + 1) if ratio > 1.2 else 0
                     
                     t_sim += SIM_DT
                     energy += _np.abs(act).sum() * SIM_DT

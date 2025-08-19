@@ -57,6 +57,7 @@ STABLE_LANDING_SEC = 1.0                # Required stable landing duration for s
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = 1                            # Waypoint acceptance sphere radius (meters)
+SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 # Goal generation ranges
 R_MIN, R_MAX = 3, 5                     # Radial goal distance range (meters)
 H_MIN, H_MAX = 0, 1                     # Height variation range for goals (meters)
