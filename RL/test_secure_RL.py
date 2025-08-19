@@ -41,10 +41,11 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 # Project imports
 from swarm.constants import SIM_DT, HORIZON_SEC
+from swarm.core.drone import track_drone
 from swarm.validator.task_gen import random_task
-from swarm.validator.forward import _run_episode  # public helper
 from swarm.validator.reward import flight_reward
 from swarm.utils.env_factory import make_env
+from gym_pybullet_drones.utils.enums import ActionType
 from swarm.protocol import ValidationResult
 
 # Try gymnasium first, then gym (for policy selection based on obs space)
@@ -62,7 +63,8 @@ try:
 except Exception:
     p = None  # type: ignore
 
-SAFE_META_FILENAME = "safe_policy_meta.json"
+# Import from centralized constants
+from swarm.constants import SAFE_META_FILENAME
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -270,215 +272,7 @@ def secure_ppo_load_weights_only(checkpoint_zip: str | Path, *, env, device: str
     return model
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Ray overlay + logging helpers
-# ──────────────────────────────────────────────────────────────────────
-
-def _get_or_init_ray_cache(env, n_rays: int):
-    """
-    Persistent cache on the env:
-      {
-        "n": int,
-        "line_ids": [int],  # main rays
-        "tip_ids":  [int],  # yellow ticks on hits
-        "hit":      [bool]  # previous hit state for color change detection
-      }
-    """
-    if not hasattr(env, "_ray_vis_cache"):
-        env._ray_vis_cache = None
-    cache = env._ray_vis_cache
-    if cache is None or cache.get("n", 0) != n_rays:
-        # Clean up any previous items
-        try:
-            if cache is not None:
-                for uid in cache.get("line_ids", []):
-                    if uid is not None and uid >= 0:
-                        p.removeUserDebugItem(uid)
-                for uid in cache.get("tip_ids", []):
-                    if uid is not None and uid >= 0:
-                        p.removeUserDebugItem(uid)
-        except Exception:
-            pass
-        cache = {
-            "n": n_rays,
-            "line_ids": [-1] * n_rays,
-            "tip_ids":  [-1] * n_rays,
-            "hit":      [None] * n_rays,
-        }
-        env._ray_vis_cache = cache
-    return cache
-
-
-def _probe_ray_data(env, obs, *, cli_id: int):
-    """
-    Compute the exact data used for drawing/logging rays.
-
-    Returns dict with:
-      pos (3,), rot_m (3,3), ray_dirs (N,3), dist_m (N,), max_d (float), src ('obs'|'env')
-    or None if rays are unavailable.
-    """
-    if p is None:
-        return None
-    try:
-        # Current pose (from PyBullet so it matches the GUI)
-        body_uid = env.DRONE_IDS[0]
-        pos, orn = p.getBasePositionAndOrientation(body_uid, physicsClientId=cli_id)
-        pos = np.asarray(pos, dtype=float)
-        rot_m = np.asarray(p.getMatrixFromQuaternion(orn), dtype=float).reshape(3, 3)
-
-        # Ray directions
-        ray_dirs = getattr(env, "ray_directions", None)
-        if ray_dirs is None:
-            ray_dirs = getattr(env, "ray_dirs", None)
-        if ray_dirs is None:
-            return None
-        ray_dirs = np.asarray(ray_dirs, dtype=float)
-        if ray_dirs.ndim != 2 or ray_dirs.shape[1] != 3:
-            return None
-        # Normalize defensively
-        norms = np.linalg.norm(ray_dirs, axis=1, keepdims=True) + 1e-9
-        ray_dirs = ray_dirs / norms
-        n_rays = int(ray_dirs.shape[0])
-
-        max_d = float(getattr(env, "max_ray_distance", 10.0))
-
-        # Flatten observation
-        if isinstance(obs, dict):
-            obs = obs[next(iter(obs))]
-        if hasattr(obs, "shape") and obs.ndim == 2 and obs.shape[0] == 1:
-            obs_flat = obs[0]
-        else:
-            obs_flat = obs
-
-        # Prefer obs distances if they match n_rays (assumed right before last 3 goal dims)
-        distances_m = None
-        src = "env"
-        if isinstance(obs_flat, np.ndarray) and obs_flat.ndim == 1 and obs_flat.size >= (n_rays + 3):
-            start = obs_flat.size - (n_rays + 3)
-            maybe_norm = obs_flat[start:start + n_rays]
-            if maybe_norm.size == n_rays and np.all(maybe_norm >= -1e-6) and np.all(maybe_norm <= 1.0 + 1e-6):
-                distances_m = maybe_norm.astype(float) * max_d
-                src = "obs"
-
-        # Fallback to env getter
-        if distances_m is None:
-            getter = getattr(env, "_get_obstacle_distances", None)
-            if callable(getter):
-                distances_m = np.asarray(getter(pos, rot_m), dtype=float)
-                src = "env"
-                if distances_m.shape[0] != n_rays:
-                    if distances_m.shape[0] > n_rays:
-                        distances_m = distances_m[:n_rays]
-                    else:
-                        pad = np.full((n_rays - distances_m.shape[0],), max_d, dtype=float)
-                        distances_m = np.concatenate([distances_m, pad], axis=0)
-            else:
-                return None
-
-        return {
-            "pos": pos,
-            "rot_m": rot_m,
-            "ray_dirs": ray_dirs,
-            "dist_m": distances_m.astype(float),
-            "max_d": float(max_d),
-            "src": src,
-        }
-    except Exception:
-        return None
-
-
-def _print_ray_values(ray_data, t_sim: float):
-    """Console print of the ray distances for debugging."""
-    if ray_data is None:
-        print(f"[rays] t={t_sim:7.3f}s  (no ray data)", flush=True)
-        return
-
-    d = ray_data["dist_m"]
-    n = int(d.shape[0])
-    max_d = ray_data["max_d"]
-    src = ray_data["src"]
-    norm = np.clip(d / max_d, 0.0, 1.0)
-    hit = (d < max_d).astype(int)
-
-    # Format: print first 16 values (or all if <=16)
-    show = min(16, n)
-    tail = f" (+{n-show} more)" if n > show else ""
-    d16 = " ".join(f"{x:5.2f}" for x in d[:show])
-    n16 = " ".join(f"{x:4.2f}" for x in norm[:show])
-    h16 = " ".join(str(int(x)) for x in hit[:show])
-
-    print(
-        f"[rays] t={t_sim:7.3f}s  n={n:2d}  src={src}  "
-        f"m=[{d16}]{tail}  "
-        f"norm=[{n16}]{tail}  "
-        f"hit=[{h16}]{tail}",
-        flush=True,
-    )
-
-
-def _draw_rays_in_gui(env, *, cli_id: int, ray_data) -> None:
-    """
-    Draw/update rays in the current GUI using provided ray_data.
-    - Update endpoints every call using replaceItemUniqueId (cheap).
-    - If hit state changed (and thus color), remove & recreate that line to ensure recolor.
-    """
-    if p is None or ray_data is None:
-        return
-    try:
-        pos = ray_data["pos"]
-        rot_m = ray_data["rot_m"]
-        ray_dirs = ray_data["ray_dirs"]
-        distances_m = ray_data["dist_m"]
-        max_d = ray_data["max_d"]
-
-        n_rays = int(ray_dirs.shape[0])
-        cache = _get_or_init_ray_cache(env, n_rays)
-
-        for i in range(n_rays):
-            d = float(distances_m[i])
-            world_dir = rot_m @ ray_dirs[i]
-            end = pos + world_dir * d
-            hit = d < max_d
-
-            if cache["hit"][i] is None or cache["hit"][i] != hit:
-                if cache["line_ids"][i] >= 0:
-                    p.removeUserDebugItem(cache["line_ids"][i], physicsClientId=cli_id)
-                cache["line_ids"][i] = -1
-                if cache["tip_ids"][i] >= 0:
-                    p.removeUserDebugItem(cache["tip_ids"][i], physicsClientId=cli_id)
-                cache["tip_ids"][i] = -1
-                cache["hit"][i] = hit
-
-            color = [1, 0, 0] if hit else [0, 0, 1]
-
-            cache["line_ids"][i] = p.addUserDebugLine(
-                pos.tolist(), end.tolist(),
-                lineColorRGB=color, lineWidth=1.0, lifeTime=0.0,
-                physicsClientId=cli_id, replaceItemUniqueId=cache["line_ids"][i]
-            )
-
-            if hit:
-                tip_from = end.tolist()
-                tip_to = (end + np.array([0, 0, 0.2])).tolist()
-                cache["tip_ids"][i] = p.addUserDebugLine(
-                    tip_from, tip_to,
-                    lineColorRGB=[1, 1, 0], lineWidth=3.0, lifeTime=0.0,
-                    physicsClientId=cli_id, replaceItemUniqueId=cache["tip_ids"][i]
-                )
-            else:
-                if cache["tip_ids"][i] >= 0:
-                    p.removeUserDebugItem(cache["tip_ids"][i], physicsClientId=cli_id)
-                    cache["tip_ids"][i] = -1
-    except Exception:
-        # Never interfere with the episode if visualization errors occur
-        return
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Episode runner (unchanged logic + ray overlay/logging)
-# ──────────────────────────────────────────────────────────────────────
-
-def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = False):
+def _run_episode_speed_limit(task, uid, model, *, gui=False):
     class _Pilot:
         def __init__(self, m): self.m = m
         def reset(self, task): pass
@@ -508,14 +302,10 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
     last_pos = pos0
     overspeed_streak = 0
 
-    cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0))
-    time.sleep(30)  
     while t_sim < task.horizon:
         act = np.clip(np.asarray(pilot.act(obs, t_sim), dtype=np.float32).reshape(-1), lo, hi)
-
-        # Optional speed limiting for VEL control with SPEED_LIMIT
+        
         if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
-            from gym_pybullet_drones.utils.enums import ActionType
             if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                 n = max(np.linalg.norm(act[:3]), 1e-6)
                 scale = min(1.0, 0.9 / n)
@@ -544,14 +334,6 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False, show_rays: bool = F
 
         t_sim += SIM_DT
         energy += np.abs(act).sum() * SIM_DT
-
-        if gui and step_count % frames_per_cam == 0:
-            try:
-                track_drone(cli=cli_id, drone_id=env.DRONE_IDS[0])
-            except Exception:
-                pass
-        if gui:
-            time.sleep(SIM_DT)
 
         if terminated or truncated:
             success = info.get("success", False)

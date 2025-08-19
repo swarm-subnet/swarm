@@ -13,7 +13,7 @@ from typing import Dict, List
 import bittensor as bt
 import dataclasses
 import numpy as np                      # ← NEW
-from swarm.constants import SAVE_FLIGHTPLANS
+# Note: SAVE_FLIGHTPLANS removed as obsolete functionality
 from swarm.protocol import MapTask, ValidationResult
 from swarm.utils.logging import ColoredLogger  # keep existing import
 

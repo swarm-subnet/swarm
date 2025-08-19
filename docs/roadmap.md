@@ -14,13 +14,13 @@
 **Key upgrades**  
 - **Larger search space** Pole further away, elevation changes, occluding obstacles. 
 
-## Stage 2 – Dynamic Obstacles & Moving Goals
-**Goal** Introduce temporal planning.
+## Stage 2 – Advanced Sensing & RL Policy Incentives
+**Goal** Enhanced perception and intelligent navigation policy development.
 
-**New mechanics**  
-- NPC drones / birds with randomized trajectories.  
-- Moving goal-pole (linear / circular path).  
-- Collision penalties + no-fly zones.
+**Key Features**  
+- **Ray-based LiDAR simulation** for distance sensing and obstacle detection.  
+- **RL Policy Incentives** to encourage reinforcement learning approaches over static flight plans.  
+- **Enhanced observation space** with sensor data integration for improved decision making.
 
 ## Stage 3 – Real world testing
 **Goal** To validate Swarm Miner's algorithms on real hardware, we will run trials with physical drones in realistic settings. The roadmap is:

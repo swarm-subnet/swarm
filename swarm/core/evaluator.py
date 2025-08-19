@@ -26,6 +26,7 @@ if swarm_path not in sys.path:
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
 from swarm.core.secure_loader import secure_load_ppo
+from gym_pybullet_drones.utils.enums import ActionType
 
 
 def _spawn_model_worker(model_path: str) -> subprocess.Popen:
@@ -135,7 +136,6 @@ def main():
             from swarm.utils.env_factory import make_env
             from swarm.validator.task_gen import random_task
             from swarm.constants import SIM_DT, HORIZON_SEC
-            from pathlib import Path
 
             model_path = sys.argv[2]
             try:
@@ -214,8 +214,7 @@ def main():
             task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
-        from swarm.core.Model_verify import inspect_model_structure, classify_model_validity
-        from pathlib import Path
+        from swarm.core.model_verify import inspect_model_structure, classify_model_validity
         
         inspection_results = inspect_model_structure(Path(model_path))
         model_status, model_reason = classify_model_validity(inspection_results)
@@ -286,7 +285,7 @@ def main():
             env = make_env(task, gui=False)
 
             try:
-                obs, _ = env.reset(seed=task.map_seed)
+                obs = env._computeObs()
                 if isinstance(obs, dict):
                     obs = obs[next(iter(obs))]
 
@@ -305,7 +304,6 @@ def main():
                     
                     # Apply speed scaling if persistent overspeed in VEL mode
                     if (hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT') and overspeed_streak >= 2):
-                        from gym_pybullet_drones.utils.enums import ActionType
                         if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                             n = max(_np.linalg.norm(act[:3]), 1e-6)
                             scale = min(1.0, 0.9 / n)

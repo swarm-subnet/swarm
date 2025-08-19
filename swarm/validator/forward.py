@@ -8,38 +8,28 @@ import gc
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import time
-import traceback
-import uuid
-from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List
 
 import bittensor as bt
 import numpy as np
-from stable_baselines3 import PPO                       # SB‑3 loader
 from zipfile import ZipFile, BadZipFile
 
-from swarm.core.drone import track_drone
-from swarm.protocol import MapTask, PolicySynapse, PolicyRef, ValidationResult
+from swarm.protocol import PolicySynapse, PolicyRef, ValidationResult
 from swarm.utils.uids import get_random_uids
 from swarm.utils.hash import sha256sum
-from swarm.utils.env_factory import make_env
 import base64
 
-from ..core.Model_verify import (
+from ..core.model_verify import (
     load_blacklist,
     save_blacklist, 
     add_to_blacklist,
     save_fake_model_for_analysis,
-    inspect_model_structure,
-    is_fake_model
 )
 from .task_gen import random_task
-from .reward   import flight_reward
-from .docker_evaluator import DockerSecureEvaluator  # For _base_ready check
+from .docker.docker_evaluator import DockerSecureEvaluator  # For _base_ready check
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -48,19 +38,12 @@ from swarm.constants import (
     FORWARD_SLEEP_SEC,
     BURN_EMISSIONS,
     MAX_MODEL_BYTES,
-    EVAL_TIMEOUT_SEC
+    BURN_FRACTION,
+    KEEP_FRACTION,
+    UID_ZERO,
+    MODEL_DIR,
 )
 
-BURN_FRACTION  = 0.90            # 90 % burn (weight for UID 0)
-KEEP_FRACTION  = 1.0 - BURN_FRACTION
-UID_ZERO       = 0
-
-# ──────────────────────────────────────────────────────────────────────────
-# 0.  Global hardening parameters
-# ──────────────────────────────────────────────────────────────────────────
-MODEL_DIR         = Path("miner_models_v2")        # all zips stored here - v2 for fresh start
-CHUNK_SIZE        = 2 << 20                        # 2 MiB
-SUBPROC_MEM_MB    = 8192                            # RSS limit per subprocess
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  Helpers – secure ZIP inspection
@@ -99,86 +82,7 @@ def _zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
         return False
 
 # ──────────────────────────────────────────────────────────────────────────
-# 2.  Episode roll‑out (unchanged)
-# ──────────────────────────────────────────────────────────────────────────
-def _run_episode(
-    task: "MapTask",
-    uid: int,
-    model: PPO,
-    *,
-    gui: bool = False,
-) -> ValidationResult:
-    """
-    Executes one closed‑loop flight using *model* as the policy.
-    Returns a fully‑populated ValidationResult.
-    """
-    class _Pilot:
-        def __init__(self, m): self.m = m
-        def reset(self, task):  pass
-        def act(self, obs, t):
-            act, _ = self.m.predict(obs, deterministic=True)
-            return act.squeeze()
-
-    pilot = _Pilot(model)
-    env   = make_env(task, gui=gui)
-
-    # initial observation
-    try:
-        obs = env._computeObs()                # type: ignore[attr-defined]
-    except AttributeError:
-        obs = env.get_observation()            # type: ignore[attr-defined]
-
-    if isinstance(obs, dict):
-        obs = obs[next(iter(obs))]
-
-    pos0       = np.asarray(task.start, dtype=float)
-    last_pos   = pos0.copy()
-    t_sim      = 0.0
-    energy     = 0.0
-    success    = False
-    step_count = 0
-    frames_per_cam = max(1, int(round(1.0 / (SIM_DT * 60.0))))   # ≈60 Hz
-
-    while t_sim < task.horizon:
-        rpm  = pilot.act(obs, t_sim)
-        obs, _r, terminated, truncated, info = env.step(rpm[None, :])
-
-        t_sim   += SIM_DT
-        energy  += np.abs(rpm).sum() * SIM_DT
-        last_pos = obs[:3] if obs.ndim == 1 else obs[0, :3]
-
-        if gui and step_count % frames_per_cam == 0:
-            try:
-                cli_id = getattr(env, "CLIENT", getattr(env, "_cli", 0))
-                track_drone(cli=cli_id, drone_id=env.DRONE_IDS[0])
-            except Exception:
-                pass
-        if gui:
-            time.sleep(SIM_DT)
-
-        if terminated or truncated:
-            success = info.get("success", False)
-            break
-
-        step_count += 1
-
-    if not gui:
-        env.close()
-
-    # ── final score with new reward function ──────────────────────────────
-    score = flight_reward(
-        success = success,
-        t       = t_sim,
-        e       = energy,
-        horizon = task.horizon,
-        # (optionally) tweak e_budget or weightings here if needed
-    )
-
-    return ValidationResult(uid, success, t_sim, energy, score)
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# 3.  Secure, cached model download
+# 2.  Secure, cached model download
 # ──────────────────────────────────────────────────────────────────────────
 async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> None:
     """
@@ -254,7 +158,6 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     Creates a fresh Docker container from base image, copies the model inside,
     runs the 3-layer fake detection process, and handles fake model blacklisting.
     """
-    from .docker_evaluator import DockerSecureEvaluator
     
     bt.logging.info(f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}")
     
@@ -272,7 +175,6 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
         # Create temp directory for verification
         with tempfile.TemporaryDirectory() as tmpdir:
             # Set ownership and permissions for container user (UID 1000)
-            import os
             os.chown(tmpdir, 1000, 1000)
             os.chmod(tmpdir, 0o755)
             
@@ -512,142 +414,10 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     return paths
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# 4.  Sand‑boxed evaluation (subprocess with rlimits)
-# ──────────────────────────────────────────────────────────────────────────
-
-def _evaluate_uid(task: MapTask, uid: int, model_fp: Path) -> ValidationResult:
-    """
-    Spawn the standalone evaluator in a sandboxed subprocess, enforce a timeout,
-    and return a ValidationResult.
-
-    ─────────────────────────────────────────────────────────────────────────────
-    Key behaviour
-    ─────────────────────────────────────────────────────────────────────────────
-    1. Temporary files are stored under ./tmp (created if necessary, otherwise
-       we fall back to the system temp directory).
-    2. Temporary files are always deleted in the finally‑block.
-    3. If the evaluator reports success but a score of exactly 0.0, we bump it
-       to 0.01 to acknowledge a correct setup.  All other cases (errors, parse
-       failures, timeouts, etc.) return a 0.0 score.
-    """
-    print(f"🔬 DEBUG: _evaluate_uid called for UID {uid}, model: {model_fp}")
-
-
-    # ------------------------------------------------------------------
-    # 1. Resolve ./tmp directory (use system tmp if creation fails)
-    # ------------------------------------------------------------------
-    try:
-        tmp_dir = Path.cwd() / "tmp"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        bt.logging.warning(f"Could not create ./tmp directory: {e}. Falling back to system tmp.")
-        tmp_dir = Path(tempfile.gettempdir())
-
-    unique_id   = f"{int(time.time() * 1_000_000)}_{os.getpid()}_{uid}_{uuid.uuid4().hex[:8]}"
-    task_file   = tmp_dir / f"swarm_task_{unique_id}.json"
-    result_file = tmp_dir / f"swarm_result_{unique_id}.json"
-    print(f"📁 DEBUG: Using temp files: {task_file}, {result_file}")
-
-    try:
-        # --------------------------------------------------------------
-        # Write task to disk for the evaluator subprocess
-        # --------------------------------------------------------------
-        with task_file.open("w") as f:
-            json.dump(asdict(task), f)
-
-        # --------------------------------------------------------------
-        # Build subprocess command
-        # --------------------------------------------------------------
-        evaluator_script = Path(__file__).parent.parent / "core" / "evaluator.py"
-        if not evaluator_script.exists():
-            bt.logging.error(f"Evaluator script not found at {evaluator_script}")
-            return ValidationResult(uid, False, 0.0, 0.0, 0.0)
-
-        cmd = [
-            sys.executable,
-            str(evaluator_script),
-            str(task_file),
-            str(uid),
-            str(model_fp),
-            str(result_file),
-        ]
-
-        # ------------------------------------------------
-        # Launch evaluator (with timeout guard)
-        # ------------------------------------------------
-        proc = subprocess.run(
-            cmd,
-            timeout=EVAL_TIMEOUT_SEC,
-            capture_output=True,
-            text=True,
-        )
-
-        # ------------------------------------------------
-        # Process evaluator output
-        # ------------------------------------------------
-        if result_file.exists():
-            try:
-                with result_file.open("r") as f:
-                    data = json.load(f)
-
-                # Check if there was an error
-                had_error = "error" in data
-                if had_error:
-                    bt.logging.debug(f"Subprocess error for UID {uid}: {data['error']}")
-
-                result_data = {k: v for k, v in data.items() if k != "error"}
-
-                # DEBUG: Show actual result data
-                print(f"🔍 DEBUG: UID {uid} result_data: {result_data}, had_error: {had_error}")
-
-                # ───── Reward‑floor logic (evaluator completed successfully WITHOUT errors) ─────
-                if not had_error and float(result_data.get("score", 0.0)) == 0.0:
-                    bt.logging.debug(f"UID {uid} score is 0 but no errors → bumping to 0.01")
-                    result_data["score"] = 0.01
-                    print(f"🎯 DEBUG: UID {uid} score bumped to 0.01 (model worked but failed mission)!")
-                elif had_error:
-                    bt.logging.debug(f"UID {uid} had errors → keeping score at 0.0")
-                    print(f"❌ DEBUG: UID {uid} had errors, no reward bump")
-
-                return ValidationResult(**result_data)
-
-            except (json.JSONDecodeError, TypeError, KeyError) as e:
-                bt.logging.warning(f"Failed to parse result file for UID {uid}: {e}")
-
-        else:
-            # The subprocess ended but produced no result file
-            if proc.returncode != 0:
-                bt.logging.warning(f"Subprocess failed for UID {uid}, returncode={proc.returncode}")
-                if proc.stderr:
-                    bt.logging.debug(f"Subprocess stderr: {proc.stderr}")
-            else:
-                bt.logging.warning(f"No result file found for UID {uid}")
-
-    except subprocess.TimeoutExpired:
-        bt.logging.warning(f"Miner {uid} exceeded timeout of {EVAL_TIMEOUT_SEC}s")
-    except Exception as e:
-        bt.logging.warning(f"Subprocess evaluation failed for UID {uid}: {e}")
-
-    finally:
-        # -----------------------------------------------------------
-        # 2. Always delete temporary files
-        # -----------------------------------------------------------
-        for tmp in (task_file, result_file):
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    print(f"⚠️  DEBUG: Fallback result for UID {uid} – giving 0.0 reward (error path)")
-    # ────────────────────────────────────────────────────────────────────
-    # Final fallback (evaluation failed entirely)  →  score = 0.0
-    # ────────────────────────────────────────────────────────────────────
-    return ValidationResult(uid, False, 0.0, 0.0, 0.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 5.  Weight boosting
+# 3.  Weight boosting
 # ──────────────────────────────────────────────────────────────────────────
 def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
     """
@@ -669,7 +439,7 @@ def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 6.  Public coroutine – called by neurons/validator.py
+# 4.  Public coroutine – called by neurons/validator.py
 # ──────────────────────────────────────────────────────────────────────────
 async def forward(self) -> None:
     """Full validator tick with boosted weighting + optional burn."""
@@ -712,7 +482,6 @@ async def forward(self) -> None:
                     # Check if fake model was detected
                     if self.docker_evaluator.last_fake_model_info and self.docker_evaluator.last_fake_model_info['uid'] == uid:
                         # Get model hash for blacklisting
-                        from swarm.utils.hash import sha256sum
                         model_hash = sha256sum(fp)
                         fake_models_detected.append({
                             'uid': uid,

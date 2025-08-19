@@ -4,6 +4,9 @@ import os
 import subprocess
 import tempfile
 import time
+import zipfile
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +14,8 @@ import bittensor as bt
 
 from swarm.protocol import MapTask, ValidationResult
 from swarm.constants import EVAL_TIMEOUT_SEC
+from swarm.utils.hash import sha256sum
+from swarm.core.model_verify import add_to_blacklist
 
 
 class DockerSecureEvaluator:
@@ -34,8 +39,8 @@ class DockerSecureEvaluator:
             self._setup_base_container()
             DockerSecureEvaluator._base_ready = self.base_ready
     
-    def _ensure_docker_installed(self):
-        """Check if Docker is installed, install automatically if missing"""
+    def _check_docker_available(self):
+        """Check if Docker is installed and available"""
         try:
             # Check if Docker command exists
             result = subprocess.run(["docker", "--version"], 
@@ -44,74 +49,19 @@ class DockerSecureEvaluator:
             return True
             
         except (subprocess.CalledProcessError, FileNotFoundError):
-            bt.logging.warning("🐳 Docker not found - installing automatically...")
-            
-            try:
-                # Install Docker using official script
-                bt.logging.info("Downloading Docker installation script...")
-                
-                # Download Docker install script
-                download_cmd = ["curl", "-fsSL", "https://get.docker.com", "-o", "/tmp/get-docker.sh"]
-                subprocess.run(download_cmd, check=True, capture_output=True)
-                
-                # Make script executable
-                subprocess.run(["chmod", "+x", "/tmp/get-docker.sh"], check=True)
-                
-                # Run Docker installation
-                bt.logging.info("Installing Docker (this may take a few minutes)...")
-                install_result = subprocess.run(["sudo", "/tmp/get-docker.sh"], 
-                                              capture_output=True, text=True, timeout=300)
-                
-                if install_result.returncode == 0:
-                    bt.logging.info("✅ Docker installed successfully!")
-                    
-                    # Add current user to docker group
-                    import os
-                    username = os.getenv("USER", "root")
-                    subprocess.run(["sudo", "usermod", "-aG", "docker", username], 
-                                 capture_output=True)
-                    
-                    # Start Docker service
-                    subprocess.run(["sudo", "systemctl", "start", "docker"], 
-                                 capture_output=True)
-                    subprocess.run(["sudo", "systemctl", "enable", "docker"], 
-                                 capture_output=True)
-                    
-                    bt.logging.info("🔄 Docker service started")
-                    
-                    # Cleanup
-                    subprocess.run(["rm", "-f", "/tmp/get-docker.sh"], capture_output=True)
-                    
-                    # Wait a moment for Docker to be ready
-                    import time
-                    time.sleep(3)
-                    
-                    # Verify installation
-                    verify_result = subprocess.run(["docker", "--version"], 
-                                                 capture_output=True, text=True)
-                    if verify_result.returncode == 0:
-                        bt.logging.info(f"✅ Docker ready: {verify_result.stdout.strip()}")
-                        return True
-                    else:
-                        bt.logging.error("❌ Docker installation verification failed")
-                        return False
-                        
-                else:
-                    bt.logging.error(f"❌ Docker installation failed: {install_result.stderr}")
-                    return False
-                    
-            except subprocess.TimeoutExpired:
-                bt.logging.error("❌ Docker installation timed out")
-                return False
-            except Exception as e:
-                bt.logging.error(f"❌ Docker installation error: {e}")
-                return False
+            bt.logging.error("🐳 Docker not found! Please install Docker manually.")
+            bt.logging.error("📖 See installation instructions in swarm/requirements.txt")
+            return False
     
     def _setup_base_container(self):
         """Build base Docker image with all dependencies"""
         try:
-            # Check if Docker is installed, install if missing
-            self._ensure_docker_installed()
+            # Check if Docker is installed
+            if not self._check_docker_available():
+                bt.logging.error("❌ Docker is required but not installed")
+                self.base_ready = False
+                DockerSecureEvaluator._base_ready = False
+                return
             
             # Aggressive cleanup to prevent disk bloat from dangling images/containers
             try:
@@ -133,7 +83,7 @@ class DockerSecureEvaluator:
             
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             # Build context should be the parent of swarm package
-            build_context = Path(__file__).parent.parent.parent
+            build_context = Path(__file__).parent.parent.parent.parent
             
             # Build base image (always fresh to get latest swarm scripts)
             cmd = [
@@ -199,7 +149,6 @@ class DockerSecureEvaluator:
         
         # Validate model has secure metadata before Docker execution
         try:
-            import zipfile
             with zipfile.ZipFile(model_path, 'r') as zf:
                 if "safe_policy_meta.json" not in zf.namelist():
                     bt.logging.warning(f"Model {uid} missing secure metadata")
@@ -217,7 +166,6 @@ class DockerSecureEvaluator:
             # Create temp directory for task/result files
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Set ownership and permissions for container user (UID 1000)
-                import os
                 os.chown(tmpdir, 1000, 1000)
                 os.chmod(tmpdir, 0o755)
                 
@@ -225,7 +173,6 @@ class DockerSecureEvaluator:
                 result_file = Path(tmpdir) / "result.json"
                 
                 # Write task data
-                from dataclasses import asdict
                 with open(task_file, 'w') as f:
                     json.dump(asdict(task), f)
                 
@@ -320,14 +267,11 @@ class DockerSecureEvaluator:
                         score = float(result_data.get("score", 0.0))
                         if not (0.0 <= score <= 1.0):
                             bt.logging.error(f"🚫 Invalid score {score} for UID {uid} - blacklisting model")
-                            from swarm.utils.hash import sha256sum
-                            from swarm.core.Model_verify import add_to_blacklist
                             model_hash = sha256sum(model_path)
                             add_to_blacklist(model_hash)
                             return ValidationResult(uid, False, 0.0, 0.0, 0.0)
                         
                         # Log result data exactly as requested - custom format with emoji
-                        from datetime import datetime
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         print(f"{timestamp} 🔍 DEBUG: UID {uid} result_data: {result_data}")
                         

@@ -23,13 +23,15 @@ from typing import Optional, Tuple
 
 import pybullet as p
 
-from swarm.constants import WORLD_RANGE, HEIGHT_SCALE, N_OBSTACLES, LANDING_PLATFORM_RADIUS, PLATFORM
-
-# --------------------------------------------------------------------------
-# Tunables
-# --------------------------------------------------------------------------
-SAFE_ZONE_RADIUS = 2.0         # keep at least 2 m of clearance
-MAX_ATTEMPTS_PER_OBS = 100     # retry limit when placing each obstacle
+from swarm.constants import (
+    WORLD_RANGE, 
+    HEIGHT_SCALE, 
+    N_OBSTACLES, 
+    LANDING_PLATFORM_RADIUS, 
+    PLATFORM,
+    SAFE_ZONE_RADIUS,
+    MAX_ATTEMPTS_PER_OBS
+)
 
 # --------------------------------------------------------------------------
 # Internal helpers

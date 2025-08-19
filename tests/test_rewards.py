@@ -16,6 +16,8 @@ import math
 import numpy as np
 import pandas as pd
 
+from swarm.constants import SAMPLE_K
+
 
 # ────────────────────────────────────────────────────────────────
 # 1.  Boosting functions
@@ -58,7 +60,7 @@ def _boost_scores_trimmed(
 # ────────────────────────────────────────────────────────────────
 # 2.  Build batch
 # ────────────────────────────────────────────────────────────────
-N_TOTAL            = 256
+N_TOTAL            = SAMPLE_K
 cluster_zero       = np.full(10, 0.0, dtype=np.float32)        # 10 miners at 0
 cluster_point1     = np.full(10, 0.1, dtype=np.float32)        # 10 miners at 0.1
 remaining          = N_TOTAL - 20

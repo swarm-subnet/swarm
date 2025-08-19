@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.validator.forward import forward
-from swarm.validator.docker_evaluator import DockerSecureEvaluator
+from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.protocol import ValidationResult, MapTask
 from datetime import datetime
 import swarm

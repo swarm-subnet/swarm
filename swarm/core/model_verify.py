@@ -14,6 +14,7 @@ Key Components:
 """
 
 import json
+import math
 import time
 import warnings
 import shutil
@@ -21,6 +22,7 @@ import io
 import pickle
 import base64
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Dict, Tuple, Set, List
 from zipfile import ZipFile, BadZipFile
@@ -29,11 +31,8 @@ import numpy as np
 import torch
 import bittensor as bt
 
-# ──────────────────────────────────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────────────────────────────────
-MODEL_DIR = Path("miner_models_v2")
-BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"
+# Import centralized constants
+from swarm.constants import MODEL_DIR, BLACKLIST_FILE
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -112,8 +111,6 @@ def analyze_pickle_structure(pickle_bytes: bytes) -> Tuple[bool, List[str]]:
     if len(pickle_bytes) > 10000:
         findings.append("WARNING: Large pickle size")
     
-    import math
-    from collections import Counter
     byte_counts = Counter(pickle_bytes)
     entropy = -sum((count/len(pickle_bytes)) * math.log2(count/len(pickle_bytes)) 
                    for count in byte_counts.values() if count > 0)

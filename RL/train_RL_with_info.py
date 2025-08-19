@@ -12,10 +12,8 @@ from stable_baselines3 import PPO
 
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import random_task
-from swarm.validator.forward import SIM_DT, HORIZON_SEC
-
-
-SAFE_META_FILENAME = "safe_policy_meta.json"
+# Import from centralized constants
+from swarm.constants import SIM_DT, HORIZON_SEC, SAFE_META_FILENAME
 
 
 def information_save(model: PPO, save_stem: str) -> None:

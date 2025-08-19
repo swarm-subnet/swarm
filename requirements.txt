@@ -1,3 +1,6 @@
+# VALIDATORS: Install Docker manually before running
+# Ubuntu: sudo apt-get install docker.io && sudo usermod -aG docker $USER
+
 pydantic
 rich
 pytest
