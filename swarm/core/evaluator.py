@@ -236,7 +236,6 @@ def main():
                 uid=uid,
                 success=False,
                 time_sec=0.0,
-                energy=0.0,
                 score=0.0
             )
         elif model_status == "missing_metadata":
@@ -245,7 +244,6 @@ def main():
                 uid=uid,
                 success=False,
                 time_sec=0.0,
-                energy=0.0,
                 score=0.0
             )
         elif verify_only_mode:
@@ -254,7 +252,6 @@ def main():
                 uid=uid,
                 success=True,
                 time_sec=0.0,
-                energy=0.0,
                 score=0.0  # Not applicable for verification-only
             )
         else:
@@ -292,7 +289,6 @@ def main():
 
                 pos0 = _np.asarray(task.start, dtype=float)
                 t_sim = 0.0
-                energy = 0.0
                 success = False
                 step_count = 0
                 
@@ -319,7 +315,6 @@ def main():
                         ratio = float(_np.linalg.norm(last_pos - prev) / SIM_DT) / env.SPEED_LIMIT
                     
                     t_sim += SIM_DT
-                    energy += _np.abs(act).sum() * SIM_DT
                     if terminated or truncated:
                         success = info.get("success", False)
                         break
@@ -330,11 +325,10 @@ def main():
                 score = flight_reward(
                     success=success,
                     t=t_sim,
-                    e=energy,
                     horizon=task.horizon,
                 )
 
-                result = ValidationResult(uid, success, t_sim, energy, score)
+                result = ValidationResult(uid, success, t_sim, score)
             finally:
                 try:
                     env.close()
@@ -399,7 +393,6 @@ def main():
             'uid': uid if 'uid' in locals() else 0,
             'success': False,
             'time_sec': 0.0,
-            'energy': 0.0,
             'score': 0.0,
             'error': error_msg
         }

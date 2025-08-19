@@ -1,7 +1,7 @@
 # ⛏️ Swarm Miner Guide
 *(Swarm subnet)*
 
-The Swarm subnet tasks your miner with developing pre‑trained flight‑control policies which dynamically generate safe, energy‑efficient flight paths for a simulated drone across a procedurally generated world. 
+The Swarm subnet tasks your miner with developing pre‑trained flight‑control policies which dynamically generate safe flight paths for a simulated drone across a procedurally generated world. 
 This guide shows how to install, configure and run a Swarm miner
 
 ## 🔒 Model Security Requirements
@@ -202,9 +202,8 @@ Update the path or filename in `neurons/miner.py` if you organize files differen
 
 | Term            | Weight | Description                                      |
 |-----------------|--------|--------------------------------------------------|
-| Mission success | 0.70   | 1.0 if goal reached, else 0                      |
-| Time factor     | 0.15   | 1 − t_goal / horizon, clamped to [0,1]           |
-| Energy factor   | 0.15   | 1 − E_used / E_budget, clamped to [0,1]          |
+| Mission success | 0.50   | 1.0 if goal reached, else 0                      |
+| Time factor     | 0.50   | 1 − t_goal / horizon, clamped to [0,1]           |
 
 *Full logic: `swarm/validator/reward.py`.*
 

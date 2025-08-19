@@ -213,7 +213,7 @@ pm2 start --name auto_update_validator \
    The episode runner `_run_episode` measures:  
    * success flag  
    * time alive  
-   * energy used  
+  
    These metrics are converted into a **score ∈ [0, 1]** by  
    `swarm/validator/reward.py`.
 

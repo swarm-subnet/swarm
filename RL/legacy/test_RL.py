@@ -61,6 +61,5 @@ result = _run_episode(task=task, uid=0, model=model, gui=args.gui)     # gui=Fal
 print("----------------------------------------------------")
 print(f"Success: {result.success}")
 print(f"Time    : {result.time_sec:.2f} s")
-print(f"Energy  : {result.energy:.1f} J")
 print(f"Score   : {result.score:.3f}")
 print("----------------------------------------------------")

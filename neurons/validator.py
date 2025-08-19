@@ -160,7 +160,6 @@ class WandbHelper:
                     "raw_uids": uids,
                     "raw_success": [1 if r.success else 0 for r in results],
                     "raw_time_sec": [r.time_sec for r in results],
-                    "raw_energy": [r.energy for r in results]
                 }
                 
                 # Combine aggregate stats with raw data
@@ -173,7 +172,6 @@ class WandbHelper:
                         f"miner_{int(result.uid)}/score": result.score,
                         f"miner_{int(result.uid)}/success": 1 if result.success else 0,
                         f"miner_{int(result.uid)}/time_sec": result.time_sec,
-                        f"miner_{int(result.uid)}/energy": result.energy,
                         f"miner_{int(result.uid)}/forward_count": forward_count
                     }
                     self.wandb_run.log(miner_data)
