@@ -8,13 +8,7 @@ Offline validator for a single Stable‑Baselines3 PPO policy using a
 activation function, `net_arch`, and SDE flag, then loads only the
 policy weights (no pickles, no code execution).
 
-If the current env observation is wider than what the checkpoint expects
-(by exactly +16 columns), we attach a *stateless* column‑selector features
-extractor so the policy still sees the original dimensionality (115‑D).
-We keep the first 112 columns and the last 3 goal‑vector columns, and
-skip the 16 newly‑inserted distance features.
-
-A friendly warning is printed when this compatibility path is taken.
+Model and environment observation dimensions must match exactly.
 
 Usage
 -----
@@ -37,7 +31,6 @@ import numpy as np
 import torch as th
 from swarm.core.drone import track_drone
 from stable_baselines3 import PPO
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 # Project imports
 from swarm.constants import SIM_DT, HORIZON_SEC, SPEED_LIMIT
@@ -139,41 +132,13 @@ def _flat_box_dim(space) -> Optional[int]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Stateless column‑selection features extractor (no params/buffers)
-# ──────────────────────────────────────────────────────────────────────
-
-class ColumnSelectExtractor(BaseFeaturesExtractor):
-    """
-    Flattens Box(obs) and selects a subset of columns by index.
-    *Stateless*: no nn.Parameters or buffers are registered so that
-    strict=True loading of the policy state_dict remains possible.
-    """
-
-    def __init__(self, observation_space, indices: np.ndarray):
-        # features_dim must equal len(indices) so SB3 sizes the MLP correctly
-        super().__init__(observation_space, features_dim=int(indices.shape[0]))
-        # keep indices as plain numpy; convert to torch on the fly in forward()
-        self._idx_np = np.asarray(indices, dtype=np.int64)
-
-    def forward(self, observations: th.Tensor) -> th.Tensor:
-        # Defer tensor creation to here so it lands on the correct device/dtype
-        idx = th.from_numpy(self._idx_np).to(device=observations.device)
-        flat = observations.view(observations.shape[0], -1)
-        return th.index_select(flat, dim=1, index=idx)
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Secure, JSON‑guided weights loader with Option 1 compatibility
+# Secure, JSON‑guided weights loader
 # ──────────────────────────────────────────────────────────────────────
 
 def secure_ppo_load_weights_only(checkpoint_zip: str | Path, *, env, device: str = "cpu") -> PPO:
     """
     Build a clean PPO and load ONLY the policy weights from an SB3 .zip, using
     the activation/net_arch/use_sde from `safe_policy_meta.json`.
-
-    If the env observation is wider than the checkpoint by exactly +16 columns,
-    a ColumnSelectExtractor is installed to keep the original input width
-    (keep first BASE columns and final 3 goal columns; drop the 16 new ones).
     """
     if not _torch_supports_weights_only():
         raise RuntimeError(
@@ -223,38 +188,11 @@ def secure_ppo_load_weights_only(checkpoint_zip: str | Path, *, env, device: str
     # Prepare policy kwargs from JSON meta
     policy_kwargs: Dict[str, Any] = dict(activation_fn=_parse_activation(act_name), net_arch=net_arch)
 
-    # If mismatch, optionally install the selector
+    # Check for dimension mismatch
     if policy_class == "MlpPolicy" and env_in is not None and env_in != ckpt_in:
-        extra = env_in - ckpt_in
-        if extra == 16 and ckpt_in >= 3:
-            base = ckpt_in - 3  # e.g. 115 - 3 = 112 (original base obs width)
-            # Keep [0:base] and the last 3 dims [-3:] → drop the 16 newly inserted columns
-            keep = np.r_[np.arange(0, base), np.arange(env_in - 3, env_in)]
-            policy_kwargs.update({
-                "features_extractor_class": ColumnSelectExtractor,
-                "features_extractor_kwargs": {"indices": keep},
-            })
-
-            # Friendly, explicit warning
-            msg = (
-                f"Running with observation dim {env_in} but checkpoint expects {ckpt_in}.\n"
-                f"Ignoring +{extra} new feature(s) (likely obstacle distances). "
-                f"Keeping first {base} columns and final 3 goal columns."
-            )
-            warnings.warn(msg)
-            print(f"⚠️  {msg}", file=sys.stderr)
-        else:
-            raise RuntimeError(
-                f"Observation dim mismatch: checkpoint expects {ckpt_in}, env provides {env_in}.\n"
-                f"To validate without retraining, either attach a custom features extractor to map "
-                f"{env_in}→{ckpt_in}, or run the env in a backward‑compatible mode."
-            )
-    elif policy_class == "MultiInputPolicy" and env_in is None and env.observation_space is not None:
-        # For Dict observations we don't attempt automatic column slicing
         raise RuntimeError(
-            "This loader currently supports automatic column selection only for Box observations (MlpPolicy). "
-            "Your env appears to use a Dict observation (MultiInputPolicy). Provide a compatible features "
-            "extractor or use a Box observation to validate this checkpoint."
+            f"Observation dimension mismatch: checkpoint expects {ckpt_in}, env provides {env_in}. "
+            f"Model and environment observation dimensions must match exactly."
         )
 
     # Build fresh PPO with the desired policy config

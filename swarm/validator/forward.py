@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-#  Swarm validator – Policy API v2   (hardened, 50 MiB limits)
+#  Swarm validator – Policy API v2   (hardened, 10 MiB limits)
 # ---------------------------------------------------------------
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import asyncio
 import gc
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -141,6 +142,9 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> N
         bt.logging.info(f"📦 Downloaded model {ref.sha256[:16]}... from miner {axon.hotkey}")
         
         # Atomic replacement to prevent corruption
+        if dest.exists() and dest.is_dir():
+            bt.logging.warning(f"Replacing directory with file: {dest}")
+            shutil.rmtree(dest)
         tmp.replace(dest)
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
         
@@ -158,6 +162,10 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     Creates a fresh Docker container from base image, copies the model inside,
     runs the 3-layer fake detection process, and handles fake model blacklisting.
     """
+    
+    if not model_path.is_file():
+        bt.logging.warning(f"Verification skipped; model file missing: {model_path}")
+        return
     
     bt.logging.info(f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}")
     
@@ -351,65 +359,81 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     paths: Dict[int, Path] = {}
 
     for uid in uids:
-        axon = self.metagraph.axons[uid]
-
-        # 1 – ask for current PolicyRef
         try:
-            responses = await send_with_fresh_uuid(
-                wallet=self.wallet,
-                synapse=PolicySynapse.request_ref(),
-                axon=axon,
-                timeout=QUERY_TIMEOUT,
-                )
+            axon = self.metagraph.axons[uid]
 
-            if not responses:
-                bt.logging.warning(f"Miner {uid} returned no response.")
+            # 1 – ask for current PolicyRef
+            try:
+                responses = await send_with_fresh_uuid(
+                    wallet=self.wallet,
+                    synapse=PolicySynapse.request_ref(),
+                    axon=axon,
+                    timeout=QUERY_TIMEOUT,
+                    )
+
+                if not responses:
+                    bt.logging.warning(f"Miner {uid} returned no response.")
+                    continue
+                print(f"Miner {uid} returned {len(responses)} responses {responses}")
+
+                syn = responses[0]              # <- get the first PolicySynapse
+
+                if not syn.ref:
+                    bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
+                    continue
+
+                ref = PolicyRef(**syn.ref)
+            except Exception as e:
+                bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
                 continue
-            print(f"Miner {uid} returned {len(responses)} responses {responses}")
 
-            syn = responses[0]              # <- get the first PolicySynapse
-
-            if not syn.ref:
-                bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
+            # 2 – FIRST CHECK: Is this hash blacklisted?
+            blacklist = load_blacklist()
+            if ref.sha256 in blacklist:
+                bt.logging.warning(f"Skipping blacklisted fake model {ref.sha256[:16]}... from miner {uid}")
                 continue
 
-            ref = PolicyRef(**syn.ref)
-        except Exception as e:
-            bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
-            continue
+            # 3 – compare with cache (directory-safe)
+            model_fp = MODEL_DIR / f"UID_{uid}.zip"
+            if model_fp.exists() and model_fp.is_dir():
+                bt.logging.warning(f"Cache path is a directory (fixing): {model_fp}")
+                shutil.rmtree(model_fp)
 
-        # 2 – FIRST CHECK: Is this hash blacklisted?
-        blacklist = load_blacklist()
-        if ref.sha256 in blacklist:
-            bt.logging.warning(f"Skipping blacklisted fake model {ref.sha256[:16]}... from miner {uid}")
-            continue
+            up_to_date = False
+            if model_fp.is_file():
+                try:
+                    up_to_date = sha256sum(model_fp) == ref.sha256
+                except Exception as e:
+                    bt.logging.warning(f"Hash check failed for {model_fp}: {e}")
+                    up_to_date = False
 
-        # 2 – compare with cache
-        model_fp = MODEL_DIR / f"UID_{uid}.zip"
-        up_to_date = model_fp.exists() and sha256sum(model_fp) == ref.sha256
-        if up_to_date:
-            # confirm cached file is still within limits
+            if up_to_date:
+                # confirm cached file is still within limits
+                if (
+                    model_fp.stat().st_size <= MAX_MODEL_BYTES
+                    and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
+                ):
+                    paths[uid] = model_fp
+                    continue
+                else:
+                    bt.logging.warning(f"Cached model for {uid} violates limits; redownloading.")
+                    model_fp.unlink(missing_ok=True)
+
+            # 4 – request payload
+            await _download_model(self, axon, ref, model_fp, uid)
             if (
-                model_fp.stat().st_size <= MAX_MODEL_BYTES
+                model_fp.is_file()
+                and model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
                 paths[uid] = model_fp
-                continue
             else:
-                bt.logging.warning(f"Cached model for {uid} violates limits; redownloading.")
+                bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
                 model_fp.unlink(missing_ok=True)
 
-        # 3 – request payload
-        await _download_model(self, axon, ref, model_fp, uid)
-        if (
-            model_fp.exists()
-            and model_fp.stat().st_size <= MAX_MODEL_BYTES
-            and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
-        ):
-            paths[uid] = model_fp
-        else:
-            bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
-            model_fp.unlink(missing_ok=True)
+        except Exception as e:
+            bt.logging.warning(f"UID {uid}: model preparation failed: {e}")
+            continue
 
     return paths
 
