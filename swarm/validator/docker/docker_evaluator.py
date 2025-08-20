@@ -123,6 +123,10 @@ class DockerSecureEvaluator:
     ) -> ValidationResult:
         """Evaluate model in isolated Docker container with proper lifecycle management"""
         
+        if not model_path.is_file():
+            bt.logging.warning(f"Model path is missing or not a file: {model_path}")
+            return ValidationResult(uid, False, 0.0, 0.0)
+        
         if not DockerSecureEvaluator._base_ready:
             bt.logging.warning(f"Docker not ready for UID {uid}")
             return ValidationResult(uid, False, 0.0, 0.0)
