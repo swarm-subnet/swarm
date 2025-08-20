@@ -474,7 +474,13 @@ async def forward(self) -> None:
         # ------------------------------------------------------------------
         # 1. build a secret task
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
-        bt.logging.info(f"Cycle seed: {task.map_seed}")
+        
+        # Calculate distance from start to goal
+        start_pos = np.array(task.start)
+        goal_pos = np.array(task.goal)
+        distance = np.linalg.norm(goal_pos - start_pos)
+        
+        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m")
 
         # ------------------------------------------------------------------
         # 2. sample miners & secure their models
