@@ -73,7 +73,7 @@ MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing ob
 SAMPLE_K = 256                          # Number of miners sampled per forward pass
 EMA_ALPHA = 0.20                        # Exponential moving average coefficient for weights
 # Emission burning mechanism
-BURN_EMISSIONS = True                   # Enable emission burning to UID 0
+BURN_EMISSIONS = False                   # Enable emission burning to UID 0
 BURN_FRACTION = 0.90                    # Fraction of emissions to burn (90%)
 KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute (10%)
 UID_ZERO = 0                            # Special UID for burning emissions
