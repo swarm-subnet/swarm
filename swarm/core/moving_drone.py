@@ -57,6 +57,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive   = 0.0
         self._hover_sec    = 0.0
         self._success      = False
+        self._collision    = False
         self._t_to_goal    = None
         self._prev_score   = 0.0
 
@@ -216,6 +217,28 @@ class MovingDroneAviary(BaseRLAviary):
             [-sp,   cp*sr,            cp*cr           ]
         ])
 
+    def _check_collision(self) -> bool:
+        """
+        Check if drone has collided with any obstacle using PyBullet contact points.
+        Returns True if collision detected, False otherwise.
+        """
+        drone_id = self.DRONE_IDS[0]
+        contact_points = p.getContactPoints(
+            bodyA=drone_id,
+            physicsClientId=getattr(self, "CLIENT", 0)
+        )
+        
+        # Check if drone is in contact with any body other than ground plane
+        for contact in contact_points:
+            body_b = contact[2]  # Second body in contact
+            if body_b != -1:  # -1 means no contact or ground plane
+                # Additional check: ensure meaningful contact force
+                normal_force = contact[9]
+                if normal_force > 0.01:  # Minimum threshold to avoid numerical noise
+                    return True
+        
+        return False
+
     # --------------------------------------------------------------------- #
     # 3. OpenAI‑Gym API overrides
     # --------------------------------------------------------------------- #
@@ -229,6 +252,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive = 0.0
         self._hover_sec  = 0.0
         self._success    = False
+        self._collision  = False
         self._t_to_goal  = None
 
         # baseline score (t = 0, e = 0)
@@ -263,11 +287,15 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive += self._sim_dt
 
         # ── call new reward function ───────────────────────────────────────
-        score = flight_reward(
-            success = self._success,
-            t       = (self._t_to_goal if self._success else self._time_alive),
-            horizon = self.EP_LEN_SEC,
-        )
+        # If collision detected, force score to 0
+        if self._collision:
+            score = 0.0
+        else:
+            score = flight_reward(
+                success = self._success,
+                t       = (self._t_to_goal if self._success else self._time_alive),
+                horizon = self.EP_LEN_SEC,
+            )
 
         r_t              = score - self._prev_score
         self._prev_score = score
@@ -276,10 +304,14 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
         """
-        Episode ends only when the success condition is definitely met *or*
-        PyBullet flags a fatal collision (handled upstream).
+        Episode ends when success condition is met OR collision detected.
         """
-        # TODO: re‑enable collision handling (if desired)
+        # Check for collision first
+        if self._check_collision():
+            self._collision = True
+            return True
+            
+        # Check for success
         return bool(self._success)
 
     # -------- truncation (timeout / safety) ------------------------------ #
@@ -304,6 +336,7 @@ class MovingDroneAviary(BaseRLAviary):
             "distance_to_goal": dist,
             "score"           : self._prev_score,
             "success"         : self._success,
+            "collision"       : self._collision,
             "t_to_goal"       : self._t_to_goal,
         }
 
