@@ -52,7 +52,7 @@ SAFE_META_FILENAME = "safe_policy_meta.json"  # Required metadata file in model 
 
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
-PLATFORM = False                        # Enable landing platform rendering
+PLATFORM = True                         # Enable landing platform rendering
 STABLE_LANDING_SEC = 1.0                # Required stable landing duration for success (seconds)
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)

@@ -260,6 +260,7 @@ class MovingDroneAviary(BaseRLAviary):
             success = False,
             t       = 0.0,
             horizon = self.EP_LEN_SEC,
+            task    = None,
         )
 
         return obs, info
@@ -295,6 +296,7 @@ class MovingDroneAviary(BaseRLAviary):
                 success = self._success,
                 t       = (self._t_to_goal if self._success else self._time_alive),
                 horizon = self.EP_LEN_SEC,
+                task    = None,
             )
 
         r_t              = score - self._prev_score
