@@ -25,7 +25,7 @@ class MovingDroneAviary(BaseRLAviary):
     The per‑step reward is the **increment** of `flight_reward`, so it can be
     fed directly to PPO/TD3/etc. without extra shaping.
     """
-    MAX_TILT_RAD: float = 0.7          # safety cut‑off for roll / pitch (rad)
+    MAX_TILT_RAD: float = 1.047         # safety cut‑off for roll / pitch (rad)
 
     # --------------------------------------------------------------------- #
     # 1. constructor
