@@ -114,12 +114,12 @@ Swarm uses a **fixed-percentage reward system** designed to create fair incentiv
 - Miners don't need to register hundreds of UIDs to earn substantial rewards
 - Top miners get substantial returns (20%, 15%, 12%) without needing massive UID counts
 - UIDs 101-256 earn nothing but retain their positions for when they improve and re-enter top 100
-- Mid-tier miners (ranks 6-50) get substantial rewards while developing better models
-- Low-tier miners (ranks 51-100) still earn meaningful rewards during model improvement
 
 **📈 Quality Incentives**
-- Better models earn exponentially more rewards (20% vs 4% vs 0.4%)
+- Better models earn exponentially more rewards (top performers vs mid vs low tiers)
 - Performance improvements directly translate to higher earnings
+- Mid-tier miners (ranks 6-50) get substantial rewards while developing better models
+- Low-tier miners (ranks 51-100) get some rewards to keep going while improving their miners
 
 ---
 
