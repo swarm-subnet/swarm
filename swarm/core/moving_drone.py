@@ -222,7 +222,8 @@ class MovingDroneAviary(BaseRLAviary):
         Check if drone has collided with any obstacle using PyBullet contact points.
         Returns True if collision detected, False otherwise.
         
-       Platform contact near goal is landing (good), not collision (bad).
+        CRITICAL: Only contacts with the flat landing surface are allowed (landing on TAO badge).
+        All other contacts are collisions (platform sides, obstacles, etc.).
         """
         drone_id = self.DRONE_IDS[0]
         contact_points = p.getContactPoints(
@@ -230,12 +231,13 @@ class MovingDroneAviary(BaseRLAviary):
             physicsClientId=getattr(self, "CLIENT", 0)
         )
         
-        # Get current drone position for goal distance check
-        state = self._getDroneStateVector(0)
-        drone_pos = state[0:3]
-        dist_to_goal = float(np.linalg.norm(drone_pos - self.GOAL_POS))
+        if not contact_points:
+            return False
         
-        # Check if drone is in contact with any body other than ground plane
+        # Get the landing surface body ID from the environment
+        landing_surface_uid = getattr(self, '_landing_surface_uid', None)
+        
+        # Check each contact point
         for contact in contact_points:
             body_b = contact[2]  # Second body in contact
             if body_b != -1:  # -1 means no contact or ground plane
@@ -243,13 +245,11 @@ class MovingDroneAviary(BaseRLAviary):
                 normal_force = contact[9]
                 if normal_force > 0.01:  # Minimum threshold to avoid numerical noise
                     
-                    # If drone is near goal, platform contact is landing, NOT collision
-                    from swarm.constants import GOAL_TOL
-                    if dist_to_goal <= GOAL_TOL:
-                        # Drone is in success zone - platform contact is landing, not collision
-                        continue
+                    # CRITICAL FIX: Only allow contacts with the flat landing surface
+                    if landing_surface_uid is not None and body_b == landing_surface_uid:
+                        continue  # This contact is allowed (landing on TAO badge surface)
                     
-                    # Drone is outside success zone - any contact is collision
+                    # All other contacts are collisions (platform side, obstacles, etc.)
                     return True
         
         return False
@@ -289,8 +289,15 @@ class MovingDroneAviary(BaseRLAviary):
         state = self._getDroneStateVector(0)
         dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
 
-        # ── success detection: remain inside GOAL_TOL for HOVER_SEC seconds ──
-        reached = dist < GOAL_TOL
+        # ── success detection: remain inside TAO badge with proper height constraints ──
+        # Use 2D horizontal distance + vertical constraints
+        horizontal_distance = float(np.linalg.norm(state[0:2] - self.GOAL_POS[0:2]))  # X,Y only
+        vertical_distance = abs(state[2] - self.GOAL_POS[2])                          # Z only
+        
+        # Success requires: within TAO badge horizontally + proper height + above platform
+        reached = (horizontal_distance < GOAL_TOL and       # Within TAO badge radius
+                  vertical_distance < 0.3 and              # Within 30cm of surface  
+                  state[2] >= self.GOAL_POS[2] - 0.1)      # Above platform (not below)
         if reached:
             self._hover_sec += self._sim_dt
             if self._hover_sec >= HOVER_SEC and not self._success:
