@@ -244,7 +244,6 @@ class MovingDroneAviary(BaseRLAviary):
                 if normal_force > 0.01:  # Minimum threshold to avoid numerical noise
                     
                     # If drone is near goal, platform contact is landing, NOT collision
-                    from swarm.constants import GOAL_TOL
                     if dist_to_goal <= GOAL_TOL:
                         # Drone is in success zone - platform contact is landing, not collision
                         continue
