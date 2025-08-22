@@ -73,12 +73,52 @@ Here is an example image of our GUI!
 
 ---
 
-## 🎯 Incentive model
+## 🎯 Reward Mechanism
 
+### Performance Scoring
 | Term        | Weight | Rationale                               |
 |-------------|--------|-----------------------------------------|
 | Success     | 0.50   | Reached + 5 s hover; safety first       |
 | Time        | 0.50   | 1 − t / horizon; encourages speed       |
+
+### Reward Distribution System
+
+Swarm uses a **fixed-percentage reward system** designed to create fair incentives while reducing registration fees for new miners.
+
+#### 🏆 Top Performer Allocations
+| Rank | Percentage | Reasoning |
+|------|------------|-----------|
+| 🥇 1st | **20.00%** | Winner takes largest share |
+| 🥈 2nd | **15.00%** | Strong second place reward |
+| 🥉 3rd | **12.00%** | Solid podium position |
+| 4th  | **8.00%**  | Top tier completion |
+| 5th  | **4.25%**  | Entry to elite group |
+
+#### 📊 Ranks 6-100: Fair Decay Distribution
+- **40.75%** distributed among ranks 6-100 using hybrid linear-exponential decay
+- **Minimum guarantee**: Even rank 100 receives meaningful rewards
+- **Gradual decrease**: Each rank earns less than the one above it
+
+#### 🚫 Rank 101+: Zero Rewards
+- Only **top 100 miners** receive rewards
+- Ranks 101+ receive 0% to maintain reward concentration
+
+#### ⚖️ Zero-Score Redistribution
+- Miners with zero performance scores receive 0%
+- Their allocated rewards are **redistributed proportionally** among all performing miners
+- Maintains fairness while ensuring only productive miners are rewarded
+
+### 💡 Why This System?
+
+**🔻 Lower Registration Fees**
+- New miners don't need to achieve #1 rank to earn meaningful rewards
+- Mid-tier performance (ranks 20-50) still provides substantial returns
+- Reduces registration costs and encourages participation
+
+**📈 Quality Incentives**
+- Better models earn exponentially more rewards (20% vs 4% vs 0.4%)
+- Performance improvements directly translate to higher earnings
+- Identical scores are ranked by UID for consistent ordering
 
 ---
 
