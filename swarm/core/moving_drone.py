@@ -221,12 +221,19 @@ class MovingDroneAviary(BaseRLAviary):
         """
         Check if drone has collided with any obstacle using PyBullet contact points.
         Returns True if collision detected, False otherwise.
+        
+       Platform contact near goal is landing (good), not collision (bad).
         """
         drone_id = self.DRONE_IDS[0]
         contact_points = p.getContactPoints(
             bodyA=drone_id,
             physicsClientId=getattr(self, "CLIENT", 0)
         )
+        
+        # Get current drone position for goal distance check
+        state = self._getDroneStateVector(0)
+        drone_pos = state[0:3]
+        dist_to_goal = float(np.linalg.norm(drone_pos - self.GOAL_POS))
         
         # Check if drone is in contact with any body other than ground plane
         for contact in contact_points:
@@ -235,6 +242,14 @@ class MovingDroneAviary(BaseRLAviary):
                 # Additional check: ensure meaningful contact force
                 normal_force = contact[9]
                 if normal_force > 0.01:  # Minimum threshold to avoid numerical noise
+                    
+                    # If drone is near goal, platform contact is landing, NOT collision
+                    from swarm.constants import GOAL_TOL
+                    if dist_to_goal <= GOAL_TOL:
+                        # Drone is in success zone - platform contact is landing, not collision
+                        continue
+                    
+                    # Drone is outside success zone - any contact is collision
                     return True
         
         return False
