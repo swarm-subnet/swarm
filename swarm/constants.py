@@ -56,7 +56,7 @@ PLATFORM = True                         # Enable landing platform rendering
 STABLE_LANDING_SEC = 1.0                # Required stable landing duration for success (seconds)
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)
-GOAL_TOL = 1                            # Waypoint acceptance sphere radius (meters)
+GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 # Goal generation ranges
 R_MIN, R_MAX = 3, 30                    # Radial goal distance range (meters)
