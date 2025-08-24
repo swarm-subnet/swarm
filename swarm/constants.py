@@ -53,7 +53,7 @@ SAFE_META_FILENAME = "safe_policy_meta.json"  # Required metadata file in model 
 # Drone physical specifications
 DRONE_MASS = 0.027                          # Drone mass (kg) - CF2X Crazyflie
 DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to edge (meters)
-MAX_RAY_DISTANCE = 10.0                     # Maximum obstacle detection range (meters)
+MAX_RAY_DISTANCE = 20.0                     # Maximum obstacle detection range (meters)
 
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)

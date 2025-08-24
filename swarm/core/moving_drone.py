@@ -155,7 +155,7 @@ class MovingDroneAviary(BaseRLAviary):
         Returns
         -------
         np.ndarray
-            Array of 16 distances in meters [0.0 - 10.0].
+            Array of 16 distances in meters [0.0 - MAX_RAY_DISTANCE].
             Distances are measured from the drone COM and clamped to max range.
         """
         rot_matrix = drone_orientation
@@ -385,10 +385,10 @@ class MovingDroneAviary(BaseRLAviary):
         # --- Cast rays from that pose ---
         distances_m = self._get_obstacle_distances(pos_w, rot_m).reshape(1, 16)
 
-        # Scale to [0,1] for the observation (10 m range)
+        # Scale to [0,1] for the observation
         distances_scaled = distances_m / self.max_ray_distance
 
-        # Goal vector relative to current position (scaled by 10 for consistency with your setup)
-        rel = ((self.GOAL_POS - pos_w) / 10.0).reshape(1, 3)
+        # Goal vector relative to current position (scaled by ray distance)
+        rel = ((self.GOAL_POS - pos_w) / self.max_ray_distance).reshape(1, 3)
 
         return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
