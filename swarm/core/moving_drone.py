@@ -14,7 +14,7 @@ from gym_pybullet_drones.utils.enums import (
 
 # ── project‑level utilities ────────────────────────────────────────────────
 from swarm.validator.reward import flight_reward          # 3‑term scorer
-from swarm.constants        import GOAL_TOL, HOVER_SEC
+from swarm.constants        import GOAL_TOL, HOVER_SEC, DRONE_HULL_RADIUS, MAX_RAY_DISTANCE
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -138,8 +138,8 @@ class MovingDroneAviary(BaseRLAviary):
         ], dtype=np.float32)
 
         # Detection range and small origin offset to avoid self-hits
-        self.max_ray_distance: float = 10.0
-        self._ray_origin_offset: float = 0.12   # ~12 cm outside the hull
+        self.max_ray_distance: float = MAX_RAY_DISTANCE
+        self._ray_origin_offset: float = DRONE_HULL_RADIUS
 
     def _get_obstacle_distances(self, drone_position: np.ndarray, drone_orientation: np.ndarray) -> np.ndarray:
         """
