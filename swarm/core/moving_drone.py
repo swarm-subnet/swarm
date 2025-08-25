@@ -25,7 +25,7 @@ class MovingDroneAviary(BaseRLAviary):
     The per‑step reward is the **increment** of `flight_reward`, so it can be
     fed directly to PPO/TD3/etc. without extra shaping.
     """
-    MAX_TILT_RAD: float = 0.7          # safety cut‑off for roll / pitch (rad)
+    MAX_TILT_RAD: float = 1.047         # safety cut‑off for roll / pitch (rad)
 
     # --------------------------------------------------------------------- #
     # 1. constructor
@@ -57,6 +57,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive   = 0.0
         self._hover_sec    = 0.0
         self._success      = False
+        self._collision    = False
         self._t_to_goal    = None
         self._prev_score   = 0.0
 
@@ -216,6 +217,43 @@ class MovingDroneAviary(BaseRLAviary):
             [-sp,   cp*sr,            cp*cr           ]
         ])
 
+    def _check_collision(self) -> bool:
+        """
+        Check if drone has collided with any obstacle using PyBullet contact points.
+        Returns True if collision detected, False otherwise.
+        
+        CRITICAL: Only contacts with the flat landing surface are allowed (landing on TAO badge).
+        All other contacts are collisions (platform sides, obstacles, etc.).
+        """
+        drone_id = self.DRONE_IDS[0]
+        contact_points = p.getContactPoints(
+            bodyA=drone_id,
+            physicsClientId=getattr(self, "CLIENT", 0)
+        )
+        
+        if not contact_points:
+            return False
+        
+        # Get the landing surface body ID from the environment
+        landing_surface_uid = getattr(self, '_landing_surface_uid', None)
+        
+        # Check each contact point
+        for contact in contact_points:
+            body_b = contact[2]  # Second body in contact
+            if body_b != -1:  # -1 means no contact or ground plane
+                # Additional check: ensure meaningful contact force
+                normal_force = contact[9]
+                if normal_force > 0.01:  # Minimum threshold to avoid numerical noise
+                    
+                    # CRITICAL FIX: Only allow contacts with the flat landing surface
+                    if landing_surface_uid is not None and body_b == landing_surface_uid:
+                        continue  # This contact is allowed (landing on TAO badge surface)
+                    
+                    # All other contacts are collisions (platform side, obstacles, etc.)
+                    return True
+        
+        return False
+
     # --------------------------------------------------------------------- #
     # 3. OpenAI‑Gym API overrides
     # --------------------------------------------------------------------- #
@@ -229,6 +267,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive = 0.0
         self._hover_sec  = 0.0
         self._success    = False
+        self._collision  = False
         self._t_to_goal  = None
 
         # baseline score (t = 0, e = 0)
@@ -236,6 +275,7 @@ class MovingDroneAviary(BaseRLAviary):
             success = False,
             t       = 0.0,
             horizon = self.EP_LEN_SEC,
+            task    = None,
         )
 
         return obs, info
@@ -249,8 +289,15 @@ class MovingDroneAviary(BaseRLAviary):
         state = self._getDroneStateVector(0)
         dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
 
-        # ── success detection: remain inside GOAL_TOL for HOVER_SEC seconds ──
-        reached = dist < GOAL_TOL
+        # ── success detection: remain inside TAO badge with proper height constraints ──
+        # Use 2D horizontal distance + vertical constraints
+        horizontal_distance = float(np.linalg.norm(state[0:2] - self.GOAL_POS[0:2]))  # X,Y only
+        vertical_distance = abs(state[2] - self.GOAL_POS[2])                          # Z only
+        
+        # Success requires: within TAO badge horizontally + proper height + above platform
+        reached = (horizontal_distance < GOAL_TOL and       # Within TAO badge radius
+                  vertical_distance < 0.3 and              # Within 30cm of surface  
+                  state[2] >= self.GOAL_POS[2] - 0.1)      # Above platform (not below)
         if reached:
             self._hover_sec += self._sim_dt
             if self._hover_sec >= HOVER_SEC and not self._success:
@@ -263,11 +310,16 @@ class MovingDroneAviary(BaseRLAviary):
         self._time_alive += self._sim_dt
 
         # ── call new reward function ───────────────────────────────────────
-        score = flight_reward(
-            success = self._success,
-            t       = (self._t_to_goal if self._success else self._time_alive),
-            horizon = self.EP_LEN_SEC,
-        )
+        # If collision detected, force score to 0
+        if self._collision:
+            score = 0.0
+        else:
+            score = flight_reward(
+                success = self._success,
+                t       = (self._t_to_goal if self._success else self._time_alive),
+                horizon = self.EP_LEN_SEC,
+                task    = None,
+            )
 
         r_t              = score - self._prev_score
         self._prev_score = score
@@ -276,10 +328,14 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
         """
-        Episode ends only when the success condition is definitely met *or*
-        PyBullet flags a fatal collision (handled upstream).
+        Episode ends when success condition is met OR collision detected.
         """
-        # TODO: re‑enable collision handling (if desired)
+        # Check for collision first
+        if self._check_collision():
+            self._collision = True
+            return True
+            
+        # Check for success
         return bool(self._success)
 
     # -------- truncation (timeout / safety) ------------------------------ #
@@ -304,6 +360,7 @@ class MovingDroneAviary(BaseRLAviary):
             "distance_to_goal": dist,
             "score"           : self._prev_score,
             "success"         : self._success,
+            "collision"       : self._collision,
             "t_to_goal"       : self._t_to_goal,
         }
 

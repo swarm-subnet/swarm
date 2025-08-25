@@ -24,7 +24,7 @@ SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
 HORIZON_SEC = 30                        # Maximum simulated flight duration (seconds)
 # World generation parameters
 WORLD_RANGE = 30                        # Random scenery placement range (±meters)
-HEIGHT_SCALE = 1                        # Obstacle height scale factor (lower = easier maps)
+HEIGHT_SCALE = 2                        # Obstacle height scale factor (lower = easier maps)
 N_OBSTACLES = 100                       # Number of random obstacles in simulation world
 # Camera and rendering settings
 CAM_HZ = 60                             # Camera update frequency (Hz)
@@ -52,15 +52,15 @@ SAFE_META_FILENAME = "safe_policy_meta.json"  # Required metadata file in model 
 
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
-PLATFORM = False                        # Enable landing platform rendering
+PLATFORM = True                         # Enable landing platform rendering
 STABLE_LANDING_SEC = 1.0                # Required stable landing duration for success (seconds)
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)
-GOAL_TOL = 1                            # Waypoint acceptance sphere radius (meters)
+GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 # Goal generation ranges
-R_MIN, R_MAX = 3, 10                    # Radial goal distance range (meters)
-H_MIN, H_MAX = 0, 10                    # Height variation range for goals (meters)
+R_MIN, R_MAX = 3, 30                    # Radial goal distance range (meters)
+H_MIN, H_MAX = 1, 10                    # Height variation range for goals (meters)
 # Environment building limits
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
 MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles

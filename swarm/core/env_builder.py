@@ -78,7 +78,7 @@ def build_world(
     *,
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
-) -> None:
+) -> Optional[int]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
     is provided—place a visual TAO badge at that position.
@@ -422,6 +422,9 @@ def build_world(
                 basePosition=[gx, gy, gz + pole_h + 0.015],  # Top of pole
                 physicsClientId=cli,
             )
+            
+            # Return the landing surface body ID for the environment to store
+            return flat_landing_uid
         
         else:
             # Visual-only markers (legacy mode for easier challenges)
@@ -494,3 +497,6 @@ def build_world(
                 [gx, gy, gz + pole_h / 2 + 0.001],
                 physicsClientId=cli,
             )
+            
+    # Return None if no platform was created
+    return None

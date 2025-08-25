@@ -31,6 +31,7 @@ from ..core.model_verify import (
 )
 from .task_gen import random_task
 from .docker.docker_evaluator import DockerSecureEvaluator  # For _base_ready check
+from .rewards_system import compute_tiered_weights
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -441,25 +442,8 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3.  Weight boosting
+# 3.  Tiered reward system (see rewards_system.py)
 # ──────────────────────────────────────────────────────────────────────────
-def _boost_scores(raw: np.ndarray, *, beta: float = 5.0) -> np.ndarray:
-    """
-    Exponential boost driven by absolute gap to the best score,
-    scaled by batch standard deviation.
-    """
-    if raw.size == 0:
-        return raw
-
-    s_max = float(raw.max())
-    sigma = float(raw.std())
-    if sigma < 1e-9:                          # all miners identical
-        weights = (raw == s_max).astype(np.float32)
-    else:
-        weights = np.exp(beta * (raw - s_max) / sigma)
-        weights /= weights.max()              # normalise so best → 1
-
-    return weights.astype(np.float32)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -569,9 +553,15 @@ async def forward(self) -> None:
         print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")  # Temporary debug
 
         # ------------------------------------------------------------------
-        # 4. adaptive boost
-        boosted = _boost_scores(raw_scores, beta=5.0)
-        print(f"⚡ DEBUG: Boosted scores: {boosted}")  # Temporary debug
+        # 4. reward weight allocation
+        uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
+        uids_np = uids_out  # use reordered UIDs from reward system
+        
+        bt.logging.info(f"Reward distribution: {debug_info['n_rewarded']} rewarded, {debug_info['n_excluded']} excluded")
+        bt.logging.info(f"Zero redistribution: {debug_info['zero_score_miners']} zeros → {debug_info['zero_redistribution_amount']:.4f} redistributed")
+        bt.logging.info(f"Winner: {debug_info['winner_percentage']:.2f}%, Top tier: {debug_info['top_tier_allocation']:.1%}")
+        
+        print(f"🏆 DEBUG: Reward weights: {boosted[:5]}... (rewarded={debug_info['n_rewarded']}, zeros={debug_info['zero_score_miners']})")
 
         # ------------------------------------------------------------------
         # 5. (NEW) optional burn logic

@@ -73,12 +73,53 @@ Here is an example image of our GUI!
 
 ---
 
-## 🎯 Incentive model
+## 🎯 Reward Mechanism
 
+### Performance Scoring
 | Term        | Weight | Rationale                               |
 |-------------|--------|-----------------------------------------|
 | Success     | 0.50   | Reached + 5 s hover; safety first       |
 | Time        | 0.50   | 1 − t / horizon; encourages speed       |
+
+### Reward Distribution System
+
+Swarm uses a **fixed-percentage reward system** designed to create fair incentives while reducing registration fees for new miners.
+
+#### 🏆 Top Performer Allocations
+| Rank | Percentage | Reasoning |
+|------|------------|-----------|
+| 🥇 1st | **20.00%** | Winner takes largest share |
+| 🥈 2nd | **15.00%** | Strong second place reward |
+| 🥉 3rd | **12.00%** | Solid podium position |
+| 4th  | **8.00%**  | Top tier completion |
+| 5th  | **4.25%**  | Entry to elite group |
+
+#### 📊 Ranks 6-100: Fair Decay Distribution
+- **40.75%** distributed among ranks 6-100 using hybrid linear-exponential decay
+- **Minimum guarantee**: Even rank 100 receives meaningful rewards
+- **Gradual decrease**: Each rank earns less than the one above it
+
+#### 🚫 Rank 101+: Zero Rewards
+- Only **top 100 miners** receive rewards
+- Ranks 101+ receive 0% to maintain reward concentration
+
+#### ⚖️ Zero-Score Redistribution
+- Miners with zero performance scores receive 0%
+- Their allocated rewards are **redistributed proportionally** among all performing miners
+- Maintains fairness while ensuring only productive miners are rewarded
+
+### 💡 Why This System?
+
+**🔻 Less Registration & Less Sell Pressure**
+- Miners don't need to register hundreds of UIDs to earn substantial rewards
+- Top miners get substantial returns (20%, 15%, 12%) without needing massive UID counts
+- UIDs 101-256 earn nothing but retain their positions for when they improve and re-enter top 100
+
+**📈 Quality Incentives**
+- Better models earn exponentially more rewards (top performers vs mid vs low tiers)
+- Performance improvements directly translate to higher earnings
+- Mid-tier miners (ranks 6-50) get substantial rewards while developing better models
+- Low-tier miners (ranks 51-100) get some rewards to keep going while improving their miners
 
 ---
 

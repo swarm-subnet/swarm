@@ -326,6 +326,7 @@ def main():
                     success=success,
                     t=t_sim,
                     horizon=task.horizon,
+                    task=task,
                 )
 
                 result = ValidationResult(uid, success, t_sim, score)
