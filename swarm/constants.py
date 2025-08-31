@@ -82,4 +82,7 @@ BURN_FRACTION = 0.75                    # Fraction of emissions to burn
 KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute 
 UID_ZERO = 0                            # Special UID for burning emissions
 
+# Reward distribution mechanism
+WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
+
 

@@ -44,6 +44,7 @@ from swarm.constants import (
     KEEP_FRACTION,
     UID_ZERO,
     MODEL_DIR,
+    WINNER_TAKE_ALL,
 )
 
 
@@ -442,7 +443,79 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3.  Tiered reward system (see rewards_system.py)
+# 3.  Winner-take-all reward system
+# ──────────────────────────────────────────────────────────────────────────
+
+def compute_winner_take_all_weights(uids: np.ndarray, raw_scores: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """
+    Compute winner-take-all weights where only the highest scoring miner gets rewards.
+    
+    Args:
+        uids: Array of miner unique identifiers
+        raw_scores: Array of performance scores (higher = better)
+        
+    Returns:
+        Tuple containing:
+        - sorted_uids: UIDs ordered by performance (winner first)
+        - weights: Winner gets 1.0, all others get 0.0
+        - debug_info: Dictionary with allocation statistics
+    """
+    if len(uids) == 0 or len(raw_scores) == 0:
+        bt.logging.warning("Winner-take-all: Empty inputs")
+        return np.array([]), np.array([]), {"error": "Empty input arrays"}
+    
+    if len(uids) != len(raw_scores):
+        bt.logging.error(f"Winner-take-all: Input length mismatch: {len(uids)} UIDs vs {len(raw_scores)} scores")
+        return np.array([]), np.array([]), {"error": "Input length mismatch"}
+    
+    # Remove invalid entries
+    valid_mask = np.isfinite(raw_scores) & np.isfinite(uids.astype(float))
+    if not np.any(valid_mask):
+        bt.logging.warning("Winner-take-all: No valid numeric data")
+        return np.array([]), np.array([]), {"error": "No valid numeric data"}
+    
+    clean_uids = uids[valid_mask]
+    clean_scores = raw_scores[valid_mask]
+    
+    # Sort by score (descending) then by UID (ascending) for deterministic tiebreaking
+    sort_indices = np.lexsort((clean_uids, -clean_scores))
+    sorted_uids = clean_uids[sort_indices]
+    sorted_scores = clean_scores[sort_indices]
+    
+    # Create winner-take-all weights
+    weights = np.zeros(len(sorted_uids), dtype=np.float32)
+    
+    # Check if the winner has a positive score
+    if len(sorted_scores) > 0 and sorted_scores[0] > 0:
+        weights[0] = 1.0  # Winner takes all
+        winner_uid = sorted_uids[0]
+        winner_score = sorted_scores[0]
+        bt.logging.info(f"Winner-take-all: UID {winner_uid} wins with score {winner_score:.4f}")
+    else:
+        bt.logging.warning("Winner-take-all: No miners with positive scores")
+    
+    # Count zero-score miners for debugging
+    zero_score_count = np.sum(sorted_scores <= 0.0)
+    non_zero_count = len(sorted_scores) - zero_score_count
+    
+    debug_info = {
+        "n_total": len(sorted_uids),
+        "n_rewarded": 1 if weights[0] > 0 else 0,
+        "n_excluded": len(sorted_uids) - (1 if weights[0] > 0 else 0),
+        "zero_score_miners": zero_score_count,
+        "non_zero_miners": non_zero_count,
+        "zero_redistribution_amount": 0.0,  # No redistribution in winner-take-all
+        "top_tier_allocation": 1.0,  # Winner gets 100%
+        "winner_percentage": weights[0] * 100,
+        "winner_uid": sorted_uids[0] if len(sorted_uids) > 0 and weights[0] > 0 else None,
+        "winner_score": sorted_scores[0] if len(sorted_scores) > 0 and weights[0] > 0 else None,
+    }
+    
+    return sorted_uids, weights, debug_info
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 4.  Tiered reward system (see rewards_system.py)
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -554,14 +627,30 @@ async def forward(self) -> None:
 
         # ------------------------------------------------------------------
         # 4. reward weight allocation
-        uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
+        if WINNER_TAKE_ALL:
+            # Use winner-take-all system: only the best performer gets rewards
+            uids_out, boosted, debug_info = compute_winner_take_all_weights(uids_np, raw_scores)
+            reward_system = "Winner-Take-All"
+        else:
+            # Use tiered reward system: balanced distribution across top performers
+            uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
+            reward_system = "Tiered"
+        
         uids_np = uids_out  # use reordered UIDs from reward system
         
-        bt.logging.info(f"Reward distribution: {debug_info['n_rewarded']} rewarded, {debug_info['n_excluded']} excluded")
-        bt.logging.info(f"Zero redistribution: {debug_info['zero_score_miners']} zeros → {debug_info['zero_redistribution_amount']:.4f} redistributed")
-        bt.logging.info(f"Winner: {debug_info['winner_percentage']:.2f}%, Top tier: {debug_info['top_tier_allocation']:.1%}")
+        bt.logging.info(f"{reward_system} reward distribution: {debug_info['n_rewarded']} rewarded, {debug_info['n_excluded']} excluded")
+        if not WINNER_TAKE_ALL:
+            # Only log these stats for tiered system
+            bt.logging.info(f"Zero redistribution: {debug_info['zero_score_miners']} zeros → {debug_info.get('zero_redistribution_amount', 0.0):.4f} redistributed")
+            bt.logging.info(f"Winner: {debug_info['winner_percentage']:.2f}%, Top tier: {debug_info.get('top_tier_allocation', 0.0):.1%}")
+        else:
+            # Log winner-take-all specific stats
+            if debug_info.get('winner_uid') is not None:
+                bt.logging.info(f"Winner: UID {debug_info['winner_uid']} with {debug_info['winner_percentage']:.1f}% (score: {debug_info.get('winner_score', 0.0):.4f})")
+            else:
+                bt.logging.info("No winner (all miners scored 0.0)")
         
-        print(f"🏆 DEBUG: Reward weights: {boosted[:5]}... (rewarded={debug_info['n_rewarded']}, zeros={debug_info['zero_score_miners']})")
+        print(f"🏆 DEBUG: {reward_system} weights: {boosted[:5]}... (rewarded={debug_info['n_rewarded']}, zeros={debug_info.get('zero_score_miners', 0)})")
 
         # ------------------------------------------------------------------
         # 5. (NEW) optional burn logic
