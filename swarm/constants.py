@@ -7,7 +7,6 @@
 
 from pathlib import Path
 
-
 # =============================================================================
 # NETWORK & COMMUNICATION
 # =============================================================================
@@ -50,6 +49,11 @@ SAFE_META_FILENAME = "safe_policy_meta.json"  # Required metadata file in model 
 # DRONE & FLIGHT CONTROL
 # =============================================================================
 
+# Drone physical specifications
+DRONE_MASS = 0.027                          # Drone mass (kg) - CF2X Crazyflie
+DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to edge (meters)
+MAX_RAY_DISTANCE = 20.0                     # Maximum obstacle detection range (meters)
+
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
 PLATFORM = True                         # Enable landing platform rendering
@@ -73,9 +77,12 @@ MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing ob
 SAMPLE_K = 256                          # Number of miners sampled per forward pass
 EMA_ALPHA = 0.20                        # Exponential moving average coefficient for weights
 # Emission burning mechanism
-BURN_EMISSIONS = False                   # Enable emission burning to UID 0
-BURN_FRACTION = 0.90                    # Fraction of emissions to burn (90%)
-KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute (10%)
+BURN_EMISSIONS = True                   # Enable emission burning to UID 0
+BURN_FRACTION = 0.75                    # Fraction of emissions to burn 
+KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute 
 UID_ZERO = 0                            # Special UID for burning emissions
+
+# Reward distribution mechanism
+WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
 
 

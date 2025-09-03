@@ -14,7 +14,7 @@ from gym_pybullet_drones.utils.enums import (
 
 # ── project‑level utilities ────────────────────────────────────────────────
 from swarm.validator.reward import flight_reward          # 3‑term scorer
-from swarm.constants        import GOAL_TOL, HOVER_SEC
+from swarm.constants        import GOAL_TOL, HOVER_SEC, DRONE_HULL_RADIUS, MAX_RAY_DISTANCE
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -138,8 +138,8 @@ class MovingDroneAviary(BaseRLAviary):
         ], dtype=np.float32)
 
         # Detection range and small origin offset to avoid self-hits
-        self.max_ray_distance: float = 10.0
-        self._ray_origin_offset: float = 0.12   # ~12 cm outside the hull
+        self.max_ray_distance: float = MAX_RAY_DISTANCE
+        self._ray_origin_offset: float = DRONE_HULL_RADIUS
 
     def _get_obstacle_distances(self, drone_position: np.ndarray, drone_orientation: np.ndarray) -> np.ndarray:
         """
@@ -155,7 +155,7 @@ class MovingDroneAviary(BaseRLAviary):
         Returns
         -------
         np.ndarray
-            Array of 16 distances in meters [0.0 - 10.0].
+            Array of 16 distances in meters [0.0 - MAX_RAY_DISTANCE].
             Distances are measured from the drone COM and clamped to max range.
         """
         rot_matrix = drone_orientation
@@ -385,10 +385,10 @@ class MovingDroneAviary(BaseRLAviary):
         # --- Cast rays from that pose ---
         distances_m = self._get_obstacle_distances(pos_w, rot_m).reshape(1, 16)
 
-        # Scale to [0,1] for the observation (10 m range)
+        # Scale to [0,1] for the observation
         distances_scaled = distances_m / self.max_ray_distance
 
-        # Goal vector relative to current position (scaled by 10 for consistency with your setup)
-        rel = ((self.GOAL_POS - pos_w) / 10.0).reshape(1, 3)
+        # Goal vector relative to current position (scaled by ray distance)
+        rel = ((self.GOAL_POS - pos_w) / self.max_ray_distance).reshape(1, 3)
 
         return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
