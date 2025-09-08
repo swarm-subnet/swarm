@@ -132,34 +132,35 @@ class WandbHelper:
             return
             
         try:
-            # Calculate aggregate statistics
+            # Calculate aggregate statistics - ensure all values are JSON serializable
             if results:
-                scores = [r.score for r in results]
+                # Convert numpy types to native Python types
+                scores = [float(r.score) for r in results]
                 success_count = sum(1 for r in results if r.success)
                 
                 aggregate_stats = {
-                    "forward_count": forward_count,
-                    "timestamp": timestamp,
+                    "forward_count": int(forward_count),
+                    "timestamp": float(timestamp),
                     "total_miners": len(results),
                     "successful_miners": success_count,
                     "success_rate": success_count / len(results) if results else 0,
                     "max_score": max(scores) if scores else 0,
                     "min_score": min(scores) if scores else 0,
                     "avg_score": sum(scores) / len(scores) if scores else 0,
-                    "task_horizon": task.horizon,
-                    "task_goal_x": task.goal[0],
-                    "task_goal_y": task.goal[1],
-                    "task_goal_z": task.goal[2],
+                    "task_horizon": float(task.horizon),
+                    "task_goal_x": float(task.goal[0]),
+                    "task_goal_y": float(task.goal[1]), 
+                    "task_goal_z": float(task.goal[2]),
                     "obstacles_count": len(getattr(task, 'obstacles', []))
                 }
                 
-                # Add raw validator arrays
-                uids = [r.uid for r in results]
+                # Add raw validator arrays - ensure all values are JSON serializable
+                uids = [int(r.uid) for r in results]
                 raw_data = {
                     "raw_scores": scores,
                     "raw_uids": uids,
                     "raw_success": [1 if r.success else 0 for r in results],
-                    "raw_time_sec": [r.time_sec for r in results],
+                    "raw_time_sec": [float(r.time_sec) for r in results],
                 }
                 
                 # Combine aggregate stats with raw data

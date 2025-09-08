@@ -755,8 +755,8 @@ async def forward(self) -> None:
         if hasattr(self, 'wandb_helper') and self.wandb_helper:
             try:
                 self.wandb_helper.log_weight_update(
-                    uids=uids_np.tolist(),
-                    scores=boosted.tolist()
+                    uids=[int(uid) for uid in uids_np],
+                    scores=[float(score) for score in boosted]
                 )
             except Exception as e:
                 bt.logging.debug(f"Wandb weight logging failed: {e}")
