@@ -466,7 +466,7 @@ def update_victory_history(history: dict, uid: int, won: bool, score: float) -> 
     if uid_str not in history:
         history[uid_str] = {"runs": []}
     
-    history[uid_str]["runs"].append({"won": won, "score": score})
+    history[uid_str]["runs"].append({"won": won, "score": float(score)})
     
     if len(history[uid_str]["runs"]) > N_RUNS_HISTORY:
         history[uid_str]["runs"] = history[uid_str]["runs"][-N_RUNS_HISTORY:]
