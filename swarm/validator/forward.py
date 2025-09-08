@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import bittensor as bt
 import numpy as np
@@ -45,6 +45,7 @@ from swarm.constants import (
     UID_ZERO,
     MODEL_DIR,
     WINNER_TAKE_ALL,
+    N_RUNS_HISTORY,
 )
 
 
@@ -443,16 +444,61 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3.  Winner-take-all reward system
+# 3.  Victory history tracking system
 # ──────────────────────────────────────────────────────────────────────────
 
-def compute_winner_take_all_weights(uids: np.ndarray, raw_scores: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+def load_victory_history() -> dict:
+    """Load victory history from temp file."""
+    try:
+        with open("/tmp/victory_history.json", "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_victory_history(history: dict) -> None:
+    """Save victory history to temp file."""
+    with open("/tmp/victory_history.json", "w") as f:
+        json.dump(history, f)
+
+def update_victory_history(history: dict, uid: int, won: bool, score: float) -> None:
+    """Update victory history for a UID with rolling window."""
+    uid_str = str(uid)
+    if uid_str not in history:
+        history[uid_str] = {"runs": []}
+    
+    history[uid_str]["runs"].append({"won": won, "score": score})
+    
+    if len(history[uid_str]["runs"]) > N_RUNS_HISTORY:
+        history[uid_str]["runs"] = history[uid_str]["runs"][-N_RUNS_HISTORY:]
+
+def calculate_victory_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
+    """Calculate victory rate and avg winning score for each UID."""
+    metrics = []
+    for uid in uids:
+        uid_str = str(uid)
+        if uid_str not in history or not history[uid_str]["runs"]:
+            continue
+            
+        runs = history[uid_str]["runs"]
+        wins = [run for run in runs if run["won"]]
+        
+        victory_rate = len(wins) / len(runs)
+        avg_winning_score = sum(run["score"] for run in wins) / len(wins) if wins else 0.0
+        
+        metrics.append((uid, victory_rate, avg_winning_score))
+    
+    return metrics
+
+# ──────────────────────────────────────────────────────────────────────────
+# 4.  Winner-take-all reward system
+# ──────────────────────────────────────────────────────────────────────────
+
+def compute_winner_take_all_weights(victory_metrics: List[tuple]) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
-    Compute winner-take-all weights where only the highest scoring miner gets rewards.
+    Compute winner-take-all weights using 3-level tiebreaking system.
     
     Args:
-        uids: Array of miner unique identifiers
-        raw_scores: Array of performance scores (higher = better)
+        victory_metrics: List of (uid, victory_rate, avg_winning_score) tuples
         
     Returns:
         Tuple containing:
@@ -460,55 +506,39 @@ def compute_winner_take_all_weights(uids: np.ndarray, raw_scores: np.ndarray) ->
         - weights: Winner gets 1.0, all others get 0.0
         - debug_info: Dictionary with allocation statistics
     """
-    if len(uids) == 0 or len(raw_scores) == 0:
-        bt.logging.warning("Winner-take-all: Empty inputs")
-        return np.array([]), np.array([]), {"error": "Empty input arrays"}
+    if not victory_metrics:
+        bt.logging.warning("Winner-take-all: No victory metrics provided")
+        return np.array([]), np.array([]), {"error": "No victory metrics"}
     
-    if len(uids) != len(raw_scores):
-        bt.logging.error(f"Winner-take-all: Input length mismatch: {len(uids)} UIDs vs {len(raw_scores)} scores")
-        return np.array([]), np.array([]), {"error": "Input length mismatch"}
+    # Sort by: victory_rate (desc), avg_winning_score (desc), uid (asc)
+    sorted_metrics = sorted(victory_metrics, key=lambda x: (-x[1], -x[2], x[0]))
     
-    # Remove invalid entries
-    valid_mask = np.isfinite(raw_scores) & np.isfinite(uids.astype(float))
-    if not np.any(valid_mask):
-        bt.logging.warning("Winner-take-all: No valid numeric data")
-        return np.array([]), np.array([]), {"error": "No valid numeric data"}
-    
-    clean_uids = uids[valid_mask]
-    clean_scores = raw_scores[valid_mask]
-    
-    # Sort by score (descending) then by UID (ascending) for deterministic tiebreaking
-    sort_indices = np.lexsort((clean_uids, -clean_scores))
-    sorted_uids = clean_uids[sort_indices]
-    sorted_scores = clean_scores[sort_indices]
-    
-    # Create winner-take-all weights
+    sorted_uids = np.array([m[0] for m in sorted_metrics], dtype=np.int64)
     weights = np.zeros(len(sorted_uids), dtype=np.float32)
     
-    # Check if the winner has a positive score
-    if len(sorted_scores) > 0 and sorted_scores[0] > 0:
-        weights[0] = 1.0  # Winner takes all
-        winner_uid = sorted_uids[0]
-        winner_score = sorted_scores[0]
-        bt.logging.info(f"Winner-take-all: UID {winner_uid} wins with score {winner_score:.4f}")
+    if sorted_metrics[0][1] > 0:
+        weights[0] = 1.0
+        winner_uid = sorted_metrics[0][0]
+        winner_victory_rate = sorted_metrics[0][1]
+        winner_avg_score = sorted_metrics[0][2]
+        bt.logging.info(f"Winner-take-all: UID {winner_uid} wins (victory_rate: {winner_victory_rate:.2f}, avg_score: {winner_avg_score:.4f})")
     else:
-        bt.logging.warning("Winner-take-all: No miners with positive scores")
+        bt.logging.warning("Winner-take-all: No miners with positive victory rate")
     
-    # Count zero-score miners for debugging
-    zero_score_count = np.sum(sorted_scores <= 0.0)
-    non_zero_count = len(sorted_scores) - zero_score_count
+    zero_victory_count = sum(1 for m in sorted_metrics if m[1] <= 0.0)
+    non_zero_count = len(sorted_metrics) - zero_victory_count
     
     debug_info = {
         "n_total": len(sorted_uids),
         "n_rewarded": 1 if weights[0] > 0 else 0,
         "n_excluded": len(sorted_uids) - (1 if weights[0] > 0 else 0),
-        "zero_score_miners": zero_score_count,
+        "zero_score_miners": zero_victory_count,
         "non_zero_miners": non_zero_count,
-        "zero_redistribution_amount": 0.0,  # No redistribution in winner-take-all
-        "top_tier_allocation": 1.0,  # Winner gets 100%
+        "zero_redistribution_amount": 0.0,
+        "top_tier_allocation": 1.0,
         "winner_percentage": weights[0] * 100,
         "winner_uid": sorted_uids[0] if len(sorted_uids) > 0 and weights[0] > 0 else None,
-        "winner_score": sorted_scores[0] if len(sorted_scores) > 0 and weights[0] > 0 else None,
+        "winner_score": sorted_metrics[0][2] if sorted_metrics and weights[0] > 0 else None,
     }
     
     return sorted_uids, weights, debug_info
@@ -623,14 +653,34 @@ async def forward(self) -> None:
         raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
         uids_np    = np.asarray([r.uid   for r in results], dtype=np.int64)
         
-        print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")  # Temporary debug
+        print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")
 
         # ------------------------------------------------------------------
-        # 4. reward weight allocation
+        # 4. victory history tracking and reward weight allocation
+        history = load_victory_history()
+        
+        # Determine winners from current run
+        if len(raw_scores) > 0:
+            max_score = raw_scores.max()
+            current_winners = uids_np[raw_scores == max_score]
+            
+            # Update victory history for all evaluated UIDs
+            for i, uid in enumerate(uids_np):
+                won = uid in current_winners
+                score = raw_scores[i]
+                update_victory_history(history, uid, won, score)
+            
+            save_victory_history(history)
+        
         if WINNER_TAKE_ALL:
-            # Use winner-take-all system: only the best performer gets rewards
-            uids_out, boosted, debug_info = compute_winner_take_all_weights(uids_np, raw_scores)
-            reward_system = "Winner-Take-All"
+            # Use victory-based winner-take-all system
+            victory_metrics = calculate_victory_metrics(history, uids_np)
+            if victory_metrics:
+                uids_out, boosted, debug_info = compute_winner_take_all_weights(victory_metrics)
+            else:
+                # Fallback to single-run if no history
+                uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, 1.0 if raw_scores[i] == max_score else 0.0, raw_scores[i]) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
+            reward_system = "Winner-Take-All (Victory-Based)"
         else:
             # Use tiered reward system: balanced distribution across top performers
             uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
