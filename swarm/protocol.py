@@ -104,7 +104,7 @@ class PolicySynapse(Synapse):
     result: Optional[Dict[str, Any]] = None    # validator ➜ miner
 
     version: str = "1"
-    timeout: float = 8.0                      # custom timeout in seconds
+    timeout: float = 5.0                      # custom timeout in seconds
 
     # Bittensor hook
     def deserialize(self) -> "PolicySynapse":
