@@ -597,8 +597,11 @@ async def forward(self) -> None:
         # Use pre-initialized Docker evaluator
         if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
             bt.logging.error("Docker evaluator not ready - falling back to no evaluation")
-            results = [ValidationResult(uid, False, 0.0, 0.0, 0.0) for uid in model_paths.keys()]
+            results = [ValidationResult(uid, False, 0.0, 0.0) for uid in model_paths.keys()]
         else:
+            # Load history for UID performance tracking
+            history = load_victory_history()
+            
             # Evaluate models sequentially in Docker containers
             results = []
             fake_models_detected = []
@@ -636,7 +639,7 @@ async def forward(self) -> None:
                     
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
-                    results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
+                    results.append(ValidationResult(uid, False, 0.0, 0.0))
             
             # Add detected fake models to blacklist
             if fake_models_detected:
@@ -673,7 +676,6 @@ async def forward(self) -> None:
 
         # ------------------------------------------------------------------
         # 4. performance history tracking and reward weight allocation
-        history = load_victory_history()
         
         # Determine winners from current run
         if len(raw_scores) > 0:
