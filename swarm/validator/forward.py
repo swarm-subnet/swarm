@@ -574,13 +574,6 @@ async def forward(self) -> None:
         # 1. build a secret task
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
         
-        # Calculate distance from start to goal
-        start_pos = np.array(task.start)
-        goal_pos = np.array(task.goal)
-        distance = np.linalg.norm(goal_pos - start_pos)
-        
-        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m")
-
         # ------------------------------------------------------------------
         # 2. sample miners & secure their models
         uids = get_random_uids(self, k=SAMPLE_K)
@@ -589,6 +582,13 @@ async def forward(self) -> None:
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
         print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")
+        
+        # Calculate distance from start to goal  
+        start_pos = np.array(task.start)
+        goal_pos = np.array(task.goal)
+        distance = np.linalg.norm(goal_pos - start_pos)
+        
+        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m")
 
         # ------------------------------------------------------------------
         # 3. Docker-based secure evaluation (sequential)
