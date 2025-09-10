@@ -447,6 +447,19 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 # 3.  Performance history tracking system
 # ──────────────────────────────────────────────────────────────────────────
 
+def _log_uid_performance(uid: int, current_score: float, history: dict) -> None:
+    """Log simple UID performance summary after evaluation"""
+    uid_str = str(uid)
+    
+    if uid_str in history and history[uid_str]["runs"]:
+        runs = history[uid_str]["runs"]
+        avg_score = sum(run["score"] for run in runs) / len(runs)
+        total_runs = len(runs)
+        
+        bt.logging.info(f"📊 UID {uid:3d} | avg: {avg_score:.4f} ({total_runs} runs)")
+    else:
+        bt.logging.info(f"📊 UID {uid:3d} | current: {current_score:.4f} (first evaluation)")
+
 def load_victory_history() -> dict:
     """Load victory history from temp file."""
     try:
@@ -521,7 +534,6 @@ def compute_winner_take_all_weights(score_metrics: List[tuple]) -> Tuple[np.ndar
         winner_uid = sorted_metrics[0][0]
         winner_avg_score = sorted_metrics[0][1]
         winner_victory_rate = sorted_metrics[0][2]
-        bt.logging.info(f"Winner-take-all: UID {winner_uid} wins (avg_score: {winner_avg_score:.4f}, victory_rate: {winner_victory_rate:.2f})")
     else:
         bt.logging.warning("Winner-take-all: No miners with positive average score")
     
@@ -618,6 +630,10 @@ async def forward(self) -> None:
                             bt.logging.warning(f"Failed to save fake model for analysis: {e}")
                     
                     results.append(result)
+                    
+                    # Log UID historical performance summary
+                    _log_uid_performance(uid, result.score, history)
+                    
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
                     results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
@@ -688,19 +704,22 @@ async def forward(self) -> None:
         
         uids_np = uids_out  # use reordered UIDs from reward system
         
-        bt.logging.info(f"{reward_system} reward distribution: {debug_info['n_rewarded']} rewarded, {debug_info['n_excluded']} excluded")
-        if not WINNER_TAKE_ALL:
-            # Only log these stats for tiered system
-            bt.logging.info(f"Zero redistribution: {debug_info['zero_score_miners']} zeros → {debug_info.get('zero_redistribution_amount', 0.0):.4f} redistributed")
-            bt.logging.info(f"Winner: {debug_info['winner_percentage']:.2f}%, Top tier: {debug_info.get('top_tier_allocation', 0.0):.1%}")
+        # Professional round summary
+        winner_uid = debug_info.get('winner_uid')
+        if winner_uid is not None:
+            winner_avg_score = debug_info.get('winner_score', 0.0)
+            current_score = raw_scores[uids_np == winner_uid][0] if winner_uid in uids_np else 0.0
+            
+            bt.logging.info(f"ROUND {self.forward_count}: Winner UID {winner_uid} (score: {current_score:.4f}, avg: {winner_avg_score:.4f})")
+            
+            # Top 5 performers by average
+            if score_metrics:
+                sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0]))
+                top_5 = sorted_metrics[:5]
+                top_5_str = ", ".join([f"UID {uid} ({avg:.4f})" for uid, avg, _ in top_5])
+                bt.logging.info(f"TOP 5: {top_5_str}")
         else:
-            # Log winner-take-all specific stats
-            if debug_info.get('winner_uid') is not None:
-                bt.logging.info(f"Winner: UID {debug_info['winner_uid']} with {debug_info['winner_percentage']:.1f}% (score: {debug_info.get('winner_score', 0.0):.4f})")
-            else:
-                bt.logging.info("No winner (all miners scored 0.0)")
-        
-        print(f"🏆 DEBUG: {reward_system} weights: {boosted[:5]}... (rewarded={debug_info['n_rewarded']}, zeros={debug_info.get('zero_score_miners', 0)})")
+            bt.logging.info(f"ROUND {self.forward_count}: No winner (all miners scored 0.0)")
 
         # ------------------------------------------------------------------
         # 5. (NEW) optional burn logic
