@@ -36,7 +36,8 @@ from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
     SAMPLE_K,
-    QUERY_TIMEOUT,
+    QUERY_REF_TIMEOUT,
+    QUERY_BLOB_TIMEOUT,
     FORWARD_SLEEP_SEC,
     BURN_EMISSIONS,
     MAX_MODEL_BYTES,
@@ -102,7 +103,7 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> N
             wallet=self.wallet,
             synapse=PolicySynapse.request_blob(),
             axon=axon,
-            timeout=QUERY_TIMEOUT,
+            timeout=QUERY_BLOB_TIMEOUT,
         )
 
         if not responses:
@@ -371,7 +372,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                     wallet=self.wallet,
                     synapse=PolicySynapse.request_ref(),
                     axon=axon,
-                    timeout=QUERY_TIMEOUT,
+                    timeout=QUERY_REF_TIMEOUT,
                     )
 
                 if not responses:
