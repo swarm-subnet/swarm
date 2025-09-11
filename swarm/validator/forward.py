@@ -453,8 +453,10 @@ def _log_uid_performance(uid: int, current_score: float, history: dict) -> None:
     
     if uid_str in history and history[uid_str]["runs"]:
         runs = history[uid_str]["runs"]
-        avg_score = sum(run["score"] for run in runs) / len(runs)
-        total_runs = len(runs)
+        # Include current score in average calculation
+        all_scores = [run["score"] for run in runs] + [current_score]
+        avg_score = sum(all_scores) / len(all_scores)
+        total_runs = len(all_scores)
         
         bt.logging.info(f"📊 UID {uid:3d} | avg: {avg_score:.4f} ({total_runs} runs)")
     else:
