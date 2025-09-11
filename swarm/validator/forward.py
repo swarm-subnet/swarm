@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 
 import bittensor as bt
 import numpy as np
@@ -444,8 +444,27 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3.  Victory history tracking system
+# 3.  Performance history tracking system
 # ──────────────────────────────────────────────────────────────────────────
+
+def _log_uid_performance(uid: int, current_score: float, history: dict) -> None:
+    """Log simple UID performance summary after evaluation"""
+    uid_str = str(uid)
+    
+    if uid_str in history and history[uid_str]["runs"]:
+        runs = history[uid_str]["runs"]
+        # Include current score and enforce 10-run rolling window
+        all_scores = [run["score"] for run in runs] + [current_score]
+        # Keep only last 10 runs (same as N_RUNS_HISTORY)
+        if len(all_scores) > 10:
+            all_scores = all_scores[-10:]
+        
+        avg_score = sum(all_scores) / len(all_scores)
+        total_runs = len(all_scores)
+        
+        bt.logging.info(f"📊 UID {uid:3d} | avg: {avg_score:.4f} ({total_runs} runs)")
+    else:
+        bt.logging.info(f"📊 UID {uid:3d} | current: {current_score:.4f} (first evaluation)")
 
 def load_victory_history() -> dict:
     """Load victory history from temp file."""
@@ -471,8 +490,8 @@ def update_victory_history(history: dict, uid: int, won: bool, score: float) -> 
     if len(history[uid_str]["runs"]) > N_RUNS_HISTORY:
         history[uid_str]["runs"] = history[uid_str]["runs"][-N_RUNS_HISTORY:]
 
-def calculate_victory_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
-    """Calculate victory rate and avg winning score for each UID."""
+def calculate_score_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
+    """Calculate average score and victory rate for each UID."""
     metrics = []
     for uid in uids:
         uid_str = str(uid)
@@ -482,10 +501,10 @@ def calculate_victory_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
         runs = history[uid_str]["runs"]
         wins = [run for run in runs if run["won"]]
         
+        avg_score = sum(run["score"] for run in runs) / len(runs)
         victory_rate = len(wins) / len(runs)
-        avg_winning_score = sum(run["score"] for run in wins) / len(wins) if wins else 0.0
         
-        metrics.append((uid, victory_rate, avg_winning_score))
+        metrics.append((uid, avg_score, victory_rate))
     
     return metrics
 
@@ -493,12 +512,12 @@ def calculate_victory_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
 # 4.  Winner-take-all reward system
 # ──────────────────────────────────────────────────────────────────────────
 
-def compute_winner_take_all_weights(victory_metrics: List[tuple]) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+def compute_winner_take_all_weights(score_metrics: List[tuple]) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Compute winner-take-all weights using 3-level tiebreaking system.
     
     Args:
-        victory_metrics: List of (uid, victory_rate, avg_winning_score) tuples
+        score_metrics: List of (uid, avg_score, victory_rate) tuples
         
     Returns:
         Tuple containing:
@@ -506,12 +525,12 @@ def compute_winner_take_all_weights(victory_metrics: List[tuple]) -> Tuple[np.nd
         - weights: Winner gets 1.0, all others get 0.0
         - debug_info: Dictionary with allocation statistics
     """
-    if not victory_metrics:
-        bt.logging.warning("Winner-take-all: No victory metrics provided")
-        return np.array([]), np.array([]), {"error": "No victory metrics"}
+    if not score_metrics:
+        bt.logging.warning("Winner-take-all: No score metrics provided")
+        return np.array([]), np.array([]), {"error": "No score metrics"}
     
-    # Sort by: victory_rate (desc), avg_winning_score (desc), uid (asc)
-    sorted_metrics = sorted(victory_metrics, key=lambda x: (-x[1], -x[2], x[0]))
+    # Sort by: avg_score (desc), victory_rate (desc), uid (asc)
+    sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0]))
     
     sorted_uids = np.array([m[0] for m in sorted_metrics], dtype=np.int64)
     weights = np.zeros(len(sorted_uids), dtype=np.float32)
@@ -519,26 +538,25 @@ def compute_winner_take_all_weights(victory_metrics: List[tuple]) -> Tuple[np.nd
     if sorted_metrics[0][1] > 0:
         weights[0] = 1.0
         winner_uid = sorted_metrics[0][0]
-        winner_victory_rate = sorted_metrics[0][1]
-        winner_avg_score = sorted_metrics[0][2]
-        bt.logging.info(f"Winner-take-all: UID {winner_uid} wins (victory_rate: {winner_victory_rate:.2f}, avg_score: {winner_avg_score:.4f})")
+        winner_avg_score = sorted_metrics[0][1]
+        winner_victory_rate = sorted_metrics[0][2]
     else:
-        bt.logging.warning("Winner-take-all: No miners with positive victory rate")
+        bt.logging.warning("Winner-take-all: No miners with positive average score")
     
-    zero_victory_count = sum(1 for m in sorted_metrics if m[1] <= 0.0)
-    non_zero_count = len(sorted_metrics) - zero_victory_count
+    zero_score_count = sum(1 for m in sorted_metrics if m[1] <= 0.0)
+    non_zero_count = len(sorted_metrics) - zero_score_count
     
     debug_info = {
         "n_total": len(sorted_uids),
         "n_rewarded": 1 if weights[0] > 0 else 0,
         "n_excluded": len(sorted_uids) - (1 if weights[0] > 0 else 0),
-        "zero_score_miners": zero_victory_count,
+        "zero_score_miners": zero_score_count,
         "non_zero_miners": non_zero_count,
         "zero_redistribution_amount": 0.0,
         "top_tier_allocation": 1.0,
         "winner_percentage": weights[0] * 100,
         "winner_uid": sorted_uids[0] if len(sorted_uids) > 0 and weights[0] > 0 else None,
-        "winner_score": sorted_metrics[0][2] if sorted_metrics and weights[0] > 0 else None,
+        "winner_score": sorted_metrics[0][1] if sorted_metrics and weights[0] > 0 else None,
     }
     
     return sorted_uids, weights, debug_info
@@ -562,13 +580,6 @@ async def forward(self) -> None:
         # 1. build a secret task
         task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
         
-        # Calculate distance from start to goal
-        start_pos = np.array(task.start)
-        goal_pos = np.array(task.goal)
-        distance = np.linalg.norm(goal_pos - start_pos)
-        
-        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m")
-
         # ------------------------------------------------------------------
         # 2. sample miners & secure their models
         uids = get_random_uids(self, k=SAMPLE_K)
@@ -577,6 +588,13 @@ async def forward(self) -> None:
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
         print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")
+        
+        # Calculate distance from start to goal  
+        start_pos = np.array(task.start)
+        goal_pos = np.array(task.goal)
+        distance = np.linalg.norm(goal_pos - start_pos)
+        
+        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m")
 
         # ------------------------------------------------------------------
         # 3. Docker-based secure evaluation (sequential)
@@ -585,8 +603,11 @@ async def forward(self) -> None:
         # Use pre-initialized Docker evaluator
         if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
             bt.logging.error("Docker evaluator not ready - falling back to no evaluation")
-            results = [ValidationResult(uid, False, 0.0, 0.0, 0.0) for uid in model_paths.keys()]
+            results = [ValidationResult(uid, False, 0.0, 0.0) for uid in model_paths.keys()]
         else:
+            # Load history for UID performance tracking
+            history = load_victory_history()
+            
             # Evaluate models sequentially in Docker containers
             results = []
             fake_models_detected = []
@@ -618,9 +639,13 @@ async def forward(self) -> None:
                             bt.logging.warning(f"Failed to save fake model for analysis: {e}")
                     
                     results.append(result)
+                    
+                    # Log UID historical performance summary
+                    _log_uid_performance(uid, result.score, history)
+                    
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
-                    results.append(ValidationResult(uid, False, 0.0, 0.0, 0.0))
+                    results.append(ValidationResult(uid, False, 0.0, 0.0))
             
             # Add detected fake models to blacklist
             if fake_models_detected:
@@ -656,8 +681,7 @@ async def forward(self) -> None:
         print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")
 
         # ------------------------------------------------------------------
-        # 4. victory history tracking and reward weight allocation
-        history = load_victory_history()
+        # 4. performance history tracking and reward weight allocation
         
         # Determine winners from current run
         if len(raw_scores) > 0:
@@ -673,14 +697,14 @@ async def forward(self) -> None:
             save_victory_history(history)
         
         if WINNER_TAKE_ALL:
-            # Use victory-based winner-take-all system
-            victory_metrics = calculate_victory_metrics(history, uids_np)
-            if victory_metrics:
-                uids_out, boosted, debug_info = compute_winner_take_all_weights(victory_metrics)
+            # Use average score-based winner-take-all system
+            score_metrics = calculate_score_metrics(history, uids_np)
+            if score_metrics:
+                uids_out, boosted, debug_info = compute_winner_take_all_weights(score_metrics)
             else:
                 # Fallback to single-run if no history
-                uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, 1.0 if raw_scores[i] == max_score else 0.0, raw_scores[i]) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
-            reward_system = "Winner-Take-All (Victory-Based)"
+                uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
+            reward_system = "Winner-Take-All (Avg Score-Based)"
         else:
             # Use tiered reward system: balanced distribution across top performers
             uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
@@ -688,19 +712,22 @@ async def forward(self) -> None:
         
         uids_np = uids_out  # use reordered UIDs from reward system
         
-        bt.logging.info(f"{reward_system} reward distribution: {debug_info['n_rewarded']} rewarded, {debug_info['n_excluded']} excluded")
-        if not WINNER_TAKE_ALL:
-            # Only log these stats for tiered system
-            bt.logging.info(f"Zero redistribution: {debug_info['zero_score_miners']} zeros → {debug_info.get('zero_redistribution_amount', 0.0):.4f} redistributed")
-            bt.logging.info(f"Winner: {debug_info['winner_percentage']:.2f}%, Top tier: {debug_info.get('top_tier_allocation', 0.0):.1%}")
+        # Professional round summary
+        winner_uid = debug_info.get('winner_uid')
+        if winner_uid is not None:
+            winner_avg_score = debug_info.get('winner_score', 0.0)
+            current_score = raw_scores[uids_np == winner_uid][0] if winner_uid in uids_np else 0.0
+            
+            bt.logging.info(f"ROUND {self.forward_count}: Winner UID {winner_uid} (score: {current_score:.4f}, avg: {winner_avg_score:.4f})")
+            
+            # Top 5 performers by average
+            if score_metrics:
+                sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0]))
+                top_5 = sorted_metrics[:5]
+                top_5_str = ", ".join([f"UID {uid} ({avg:.4f})" for uid, avg, _ in top_5])
+                bt.logging.info(f"TOP 5: {top_5_str}")
         else:
-            # Log winner-take-all specific stats
-            if debug_info.get('winner_uid') is not None:
-                bt.logging.info(f"Winner: UID {debug_info['winner_uid']} with {debug_info['winner_percentage']:.1f}% (score: {debug_info.get('winner_score', 0.0):.4f})")
-            else:
-                bt.logging.info("No winner (all miners scored 0.0)")
-        
-        print(f"🏆 DEBUG: {reward_system} weights: {boosted[:5]}... (rewarded={debug_info['n_rewarded']}, zeros={debug_info.get('zero_score_miners', 0)})")
+            bt.logging.info(f"ROUND {self.forward_count}: No winner (all miners scored 0.0)")
 
         # ------------------------------------------------------------------
         # 5. (NEW) optional burn logic
