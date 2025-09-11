@@ -711,13 +711,16 @@ async def forward(self) -> None:
             uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
             reward_system = "Tiered"
         
+        # Create UID to current score mapping BEFORE reordering
+        uid_to_score = dict(zip(uids_np, raw_scores))
+        
         uids_np = uids_out  # use reordered UIDs from reward system
         
         # Professional round summary
         winner_uid = debug_info.get('winner_uid')
         if winner_uid is not None:
             winner_avg_score = debug_info.get('winner_score', 0.0)
-            current_score = raw_scores[uids_np == winner_uid][0] if winner_uid in uids_np else 0.0
+            current_score = uid_to_score.get(winner_uid, 0.0)
             
             bt.logging.info(f"ROUND {self.forward_count}: Winner UID {winner_uid} (score: {current_score:.4f}, avg: {winner_avg_score:.4f})")
             
