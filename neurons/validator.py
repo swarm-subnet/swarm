@@ -330,15 +330,6 @@ class Validator(BaseValidatorNeuron):
             bt.logging.info("✅ Docker evaluator ready")
         else:
             bt.logging.warning("⚠️  Docker evaluator initialization failed")
-        
-        # Clear victory history on startup for fresh performance tracking
-        try:
-            import os
-            if os.path.exists("/tmp/victory_history.json"):
-                os.remove("/tmp/victory_history.json")
-                bt.logging.info("🔄 Cleared performance history for fresh start")
-        except Exception:
-            pass
 
     async def forward(self):
         """
