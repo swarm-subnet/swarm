@@ -78,7 +78,7 @@ Here is an example image of our GUI!
 ### Performance Scoring
 | Term        | Weight | Rationale                               |
 |-------------|--------|-----------------------------------------|
-| Success     | 0.50   | Reached + 5 s hover; safety first       |
+| Success     | 0.50   | Reached + 3 s hover; safety first       |
 | Time        | 0.50   | 1 − t / horizon; encourages speed       |
 
 ### Reward Distribution
