@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-__version__ = "2.2.8.2"
+__version__ = "2.2.8.3"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
 
@@ -32,4 +32,3 @@ src_path = Path(__file__).resolve().parent / "src"
 
 if src_path.is_dir() and str(src_path) not in sys.path:
     sys.path.append(str(src_path))
-

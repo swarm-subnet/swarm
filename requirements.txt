@@ -22,4 +22,4 @@ tqdm
 torch
 gymnasium
 requests
-git+https://github.com/utiasDSL/gym-pybullet-drones.git
+git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git

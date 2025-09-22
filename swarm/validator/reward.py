@@ -20,7 +20,7 @@ from typing import Optional, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from swarm.protocol import MapTask
 
-from swarm.constants import SPEED_LIMIT, STABLE_LANDING_SEC
+from swarm.constants import SPEED_LIMIT, HOVER_SEC
 
 __all__ = ["flight_reward"]
 
@@ -38,7 +38,8 @@ def _calculate_target_time(task: "MapTask") -> float:
     goal_pos = np.array(task.goal)
     distance = np.linalg.norm(goal_pos - start_pos)
     
-    min_time = (distance / SPEED_LIMIT) + STABLE_LANDING_SEC
+    # Minimum achievable duration includes the mandatory hover window for success.
+    min_time = (distance / SPEED_LIMIT) + HOVER_SEC
     return min_time * 1.02
 
 

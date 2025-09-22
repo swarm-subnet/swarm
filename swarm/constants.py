@@ -58,7 +58,6 @@ MAX_RAY_DISTANCE = 20.0                     # Maximum obstacle detection range (
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
 PLATFORM = True                         # Enable landing platform rendering
-STABLE_LANDING_SEC = 1.0                # Required stable landing duration for success (seconds)
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
