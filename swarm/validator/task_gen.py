@@ -4,7 +4,7 @@ import random, math
 from typing import Tuple
 from swarm.protocol import MapTask
 
-from swarm.constants import R_MIN, R_MAX, H_MIN, H_MAX, WORLD_RANGE
+from swarm.constants import R_MIN, R_MAX, H_MIN, H_MAX, WORLD_RANGE, RANDOM_START
 from typing import Optional   
 
 def _goal(seed_rng: random.Random) -> Tuple[float, float, float]:
@@ -75,8 +75,12 @@ def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> Ma
         # If no seed is provided, generate a random one
         seed  = random.randrange(2**32)
     rng   = random.Random(seed)
-    start = _random_start(rng)
-    goal = _goal_from_start(rng, start)
+    if RANDOM_START:
+        start = _random_start(rng)
+        goal = _goal_from_start(rng, start)
+    else:
+        start = (0.0, 0.0, 1.5)
+        goal = _goal(rng)
     return MapTask(
         map_seed = seed,
         start    = start,
