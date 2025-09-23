@@ -23,9 +23,9 @@ FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes
 SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
 HORIZON_SEC = 30                        # Maximum simulated flight duration (seconds)
 # World generation parameters
-WORLD_RANGE = 30                        # Random scenery placement range (±meters)
-HEIGHT_SCALE = 2                        # Obstacle height scale factor (lower = easier maps)
-N_OBSTACLES = 100                       # Number of random obstacles in simulation world
+WORLD_RANGE = 35                        # Random scenery placement range (±meters)
+HEIGHT_SCALE = 3                        # Obstacle height scale factor
+N_OBSTACLES = 120                       # Number of random obstacles in simulation world
 # Camera and rendering settings
 CAM_HZ = 60                             # Camera update frequency (Hz)
 # Propulsion efficiency
@@ -63,7 +63,7 @@ SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 # Goal generation ranges
-R_MIN, R_MAX = 10, 30                    # Radial goal distance range (meters)
+R_MIN, R_MAX = 15, 35                    # Radial goal distance range (meters)
 H_MIN, H_MAX = 1, 10                    # Height variation range for goals (meters)
 # Environment building limits
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
