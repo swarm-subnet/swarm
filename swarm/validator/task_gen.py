@@ -4,7 +4,16 @@ import random, math
 from typing import Tuple
 from swarm.protocol import MapTask
 
-from swarm.constants import R_MIN, R_MAX, H_MIN, H_MAX, WORLD_RANGE, RANDOM_START
+from swarm.constants import (
+    R_MIN,
+    R_MAX,
+    H_MIN,
+    H_MAX,
+    WORLD_RANGE,
+    RANDOM_START,
+    START_H_MIN,
+    START_H_MAX,
+)
 from typing import Optional   
 
 def _goal(seed_rng: random.Random) -> Tuple[float, float, float]:
@@ -19,7 +28,7 @@ def _random_start(seed_rng: random.Random) -> Tuple[float, float, float]:
     """Generate random start position within world bounds."""
     x = seed_rng.uniform(-WORLD_RANGE, WORLD_RANGE)
     y = seed_rng.uniform(-WORLD_RANGE, WORLD_RANGE)
-    z = 1.5
+    z = seed_rng.uniform(START_H_MIN, START_H_MAX)
     return x, y, z
 
 def _goal_from_start(seed_rng: random.Random, start: Tuple[float, float, float]) -> Tuple[float, float, float]:

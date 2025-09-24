@@ -66,6 +66,7 @@ SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 # Goal generation ranges
 R_MIN, R_MAX = 10, 30                    # Radial goal distance range (meters)
 H_MIN, H_MAX = 1, 10                    # Height variation range for goals (meters)
+START_H_MIN, START_H_MAX = 0.05, 10     # Random start height range (meters)
 # Environment building limits
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
 MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles
