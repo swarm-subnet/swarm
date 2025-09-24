@@ -13,8 +13,30 @@ from swarm.constants import (
     RANDOM_START,
     START_H_MIN,
     START_H_MAX,
+    START_PLATFORM,
+    START_PLATFORM_SURFACE_Z,
+    START_PLATFORM_TAKEOFF_BUFFER,
+    START_PLATFORM_RANDOMIZE,
+    START_PLATFORM_MIN_Z,
+    START_PLATFORM_MAX_Z,
 )
 from typing import Optional   
+
+def get_platform_height_for_seed(seed: int, start_pos: Tuple[float, float, float]) -> float:
+    """Calculate platform height for a given seed and start position.
+    
+    This ensures env_builder uses the same random platform height as task generation.
+    """
+    if not START_PLATFORM or not START_PLATFORM_RANDOMIZE:
+        return START_PLATFORM_SURFACE_Z
+    
+    # Use same random sequence as _random_start
+    rng = random.Random(seed)
+    # Skip the x, y generation to get to the platform height part
+    rng.uniform(-WORLD_RANGE, WORLD_RANGE)  # x
+    rng.uniform(-WORLD_RANGE, WORLD_RANGE)  # y
+    # Now generate the same platform height
+    return rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
 
 def _goal(seed_rng: random.Random) -> Tuple[float, float, float]:
     """Legacy goal generation from origin."""
@@ -28,7 +50,16 @@ def _random_start(seed_rng: random.Random) -> Tuple[float, float, float]:
     """Generate random start position within world bounds."""
     x = seed_rng.uniform(-WORLD_RANGE, WORLD_RANGE)
     y = seed_rng.uniform(-WORLD_RANGE, WORLD_RANGE)
-    z = seed_rng.uniform(START_H_MIN, START_H_MAX)
+    if START_PLATFORM:
+        if START_PLATFORM_RANDOMIZE:
+            # Random platform height within specified range
+            platform_z = seed_rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
+        else:
+            # Fixed platform height
+            platform_z = START_PLATFORM_SURFACE_Z
+        z = platform_z + START_PLATFORM_TAKEOFF_BUFFER
+    else:
+        z = seed_rng.uniform(START_H_MIN, START_H_MAX)
     return x, y, z
 
 def _goal_from_start(seed_rng: random.Random, start: Tuple[float, float, float]) -> Tuple[float, float, float]:
@@ -88,7 +119,11 @@ def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> Ma
         start = _random_start(rng)
         goal = _goal_from_start(rng, start)
     else:
-        start = (0.0, 0.0, 1.5)
+        if START_PLATFORM:
+            start_z = START_PLATFORM_SURFACE_Z + START_PLATFORM_TAKEOFF_BUFFER
+        else:
+            start_z = 1.5
+        start = (0.0, 0.0, start_z)
         goal = _goal(rng)
     return MapTask(
         map_seed = seed,

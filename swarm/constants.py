@@ -59,6 +59,14 @@ MAX_RAY_DISTANCE = 20.0                     # Maximum obstacle detection range (
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
 PLATFORM = True                         # Enable landing platform rendering
+START_PLATFORM = True                  # Enable solid start platform spawn
+START_PLATFORM_RADIUS = 0.6
+START_PLATFORM_HEIGHT = 0.2            # Physical height of the start platform (meters)
+START_PLATFORM_SURFACE_Z = 0.2         # Absolute Z height of the platform surface (meters)
+START_PLATFORM_TAKEOFF_BUFFER = 0.001   # Initial clearance above platform surface (meters)
+START_PLATFORM_RANDOMIZE = True        # Enable random platform heights when random start is used
+START_PLATFORM_MIN_Z = 0.2             # Minimum platform surface height when randomizing (meters)
+START_PLATFORM_MAX_Z = 10             # Maximum platform surface height when randomizing (meters)
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
