@@ -6,6 +6,7 @@
     <a href="docs/validator.md">🔐 Validator guide</a> &bull;
     <a href="docs/roadmap.md">🔐 Roadmap</a> &bull;
     <a href="https://x.com/SwarmSubnet">🐦 Follow us on X</a> &bull;
+    <a href="https://swarm124.com/">🐦 Web & Leaderboard </a> &bull;
     <a href="https://discord.com/channels/799672011265015819/1385341501130801172">💬 Join us on Discord</a>
   </p>
 </div>
