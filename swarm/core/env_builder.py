@@ -24,13 +24,19 @@ from typing import Optional, Tuple
 import pybullet as p
 
 from swarm.constants import (
-    WORLD_RANGE, 
-    HEIGHT_SCALE, 
-    N_OBSTACLES, 
-    LANDING_PLATFORM_RADIUS, 
+    WORLD_RANGE,
+    HEIGHT_SCALE,
+    N_OBSTACLES,
+    LANDING_PLATFORM_RADIUS,
     PLATFORM,
     SAFE_ZONE_RADIUS,
-    MAX_ATTEMPTS_PER_OBS
+    MAX_ATTEMPTS_PER_OBS,
+    START_PLATFORM,
+    START_PLATFORM_RADIUS,
+    START_PLATFORM_HEIGHT,
+    START_PLATFORM_SURFACE_Z,
+    START_PLATFORM_TAKEOFF_BUFFER,
+    START_PLATFORM_RANDOMIZE,
 )
 
 # --------------------------------------------------------------------------
@@ -92,7 +98,10 @@ def build_world(
     """
     rng = random.Random(seed)
 
-    sx, sy = (start[0], start[1]) if start is not None else (None, None)
+    if start is not None:
+        sx, sy, sz = start
+    else:
+        sx = sy = sz = None
     gx, gy = (goal[0], goal[1]) if goal is not None else (None, None)
 
     # ------------------------------------------------------------------
@@ -227,6 +236,89 @@ def build_world(
     if placed < N_OBSTACLES:
         if placed < N_OBSTACLES * 0.8:
             pass  
+
+    # ------------------------------------------------------------------
+    # Optional solid start platform
+    # ------------------------------------------------------------------
+    if START_PLATFORM and sx is not None and sy is not None and sz is not None:
+        platform_radius = START_PLATFORM_RADIUS
+        platform_height = START_PLATFORM_HEIGHT
+        
+        # Calculate platform surface height (random or fixed)
+        if START_PLATFORM_RANDOMIZE:
+            from swarm.validator.task_gen import get_platform_height_for_seed
+            surface_z = get_platform_height_for_seed(seed, start)
+        else:
+            surface_z = START_PLATFORM_SURFACE_Z
+
+        base_position = [sx, sy, surface_z - platform_height / 1.7]
+
+        start_platform_collision = p.createCollisionShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=platform_radius,
+            height=platform_height,
+            physicsClientId=cli,
+        )
+
+        start_platform_uid = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=start_platform_collision,
+            baseVisualShapeIndex=-1,
+            basePosition=base_position,
+            physicsClientId=cli,
+        )
+
+        p.changeDynamics(
+            bodyUniqueId=start_platform_uid,
+            linkIndex=-1,
+            restitution=0.0,
+            lateralFriction=2.5,
+            spinningFriction=1.2,
+            rollingFriction=0.6,
+            physicsClientId=cli,
+        )
+
+        flat_surface_collision = p.createCollisionShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=platform_radius * 0.9,
+            height=0.001,
+            physicsClientId=cli,
+        )
+
+        flat_surface_uid = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=flat_surface_collision,
+            baseVisualShapeIndex=-1,
+            basePosition=[sx, sy, surface_z],
+            physicsClientId=cli,
+        )
+
+        p.changeDynamics(
+            bodyUniqueId=flat_surface_uid,
+            linkIndex=-1,
+            restitution=0.0,
+            lateralFriction=3.0,
+            spinningFriction=2.0,
+            rollingFriction=1.0,
+            physicsClientId=cli,
+        )
+
+        start_surface_visual = p.createVisualShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=platform_radius * 0.9,
+            length=0.002,
+            rgbaColor=[1.0, 1.0, 1.0, 1.0],
+            specularColor=[0.9, 0.9, 0.9],
+            physicsClientId=cli,
+        )
+
+        p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=-1,
+            baseVisualShapeIndex=start_surface_visual,
+            basePosition=[sx, sy, surface_z + 0.001],
+            physicsClientId=cli,
+        )
 
     # ------------------------------------------------------------------
     # Physical landing platform with visual goal marker

@@ -24,8 +24,9 @@ SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
 HORIZON_SEC = 30                        # Maximum simulated flight duration (seconds)
 # World generation parameters
 WORLD_RANGE = 30                        # Random scenery placement range (±meters)
-HEIGHT_SCALE = 2                        # Obstacle height scale factor (lower = easier maps)
+HEIGHT_SCALE = 2                        # Obstacle height scale factor
 N_OBSTACLES = 100                       # Number of random obstacles in simulation world
+RANDOM_START = True                    # Toggle random starting point generation
 # Camera and rendering settings
 CAM_HZ = 60                             # Camera update frequency (Hz)
 # Propulsion efficiency
@@ -58,6 +59,14 @@ MAX_RAY_DISTANCE = 20.0                     # Maximum obstacle detection range (
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
 PLATFORM = True                         # Enable landing platform rendering
+START_PLATFORM = True                  # Enable solid start platform spawn
+START_PLATFORM_RADIUS = 0.6
+START_PLATFORM_HEIGHT = 0.2            # Physical height of the start platform (meters)
+START_PLATFORM_SURFACE_Z = 0.2         # Absolute Z height of the platform surface (meters)
+START_PLATFORM_TAKEOFF_BUFFER = 0.121   # Initial clearance above platform surface (meters)
+START_PLATFORM_RANDOMIZE = True        # Enable random platform heights when random start is used
+START_PLATFORM_MIN_Z = 0.2             # Minimum platform surface height when randomizing (meters)
+START_PLATFORM_MAX_Z = 10             # Maximum platform surface height when randomizing (meters)
 HOVER_SEC = 3                           # Required hover duration for mission success (seconds)
 SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
@@ -65,6 +74,7 @@ SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 # Goal generation ranges
 R_MIN, R_MAX = 10, 30                    # Radial goal distance range (meters)
 H_MIN, H_MAX = 1, 10                    # Height variation range for goals (meters)
+START_H_MIN, START_H_MAX = 0.05, 10     # Random start height range (meters)
 # Environment building limits
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
 MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles
