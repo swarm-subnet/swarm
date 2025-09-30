@@ -19,6 +19,16 @@ from swarm.constants import (
     START_PLATFORM_RANDOMIZE,
     START_PLATFORM_MIN_Z,
     START_PLATFORM_MAX_Z,
+    CHALLENGE_TYPE_DISTRIBUTION,
+    TYPE_1_N_OBSTACLES,
+    TYPE_1_HEIGHT_SCALE,
+    TYPE_1_SAFE_ZONE,
+    TYPE_2_N_OBSTACLES,
+    TYPE_2_HEIGHT_SCALE,
+    TYPE_2_SAFE_ZONE,
+    TYPE_3_N_OBSTACLES,
+    TYPE_3_HEIGHT_SCALE,
+    TYPE_3_SAFE_ZONE,
 )
 from typing import Optional   
 
@@ -115,6 +125,7 @@ def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> Ma
         # If no seed is provided, generate a random one
         seed  = random.randrange(2**32)
     rng   = random.Random(seed)
+
     if RANDOM_START:
         start = _random_start(rng)
         goal = _goal_from_start(rng, start)
@@ -125,11 +136,18 @@ def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> Ma
             start_z = 1.5
         start = (0.0, 0.0, start_z)
         goal = _goal(rng)
+    
+    # Select challenge type AFTER generating start/goal to avoid affecting random sequence
+    challenge_types = list(CHALLENGE_TYPE_DISTRIBUTION.keys())
+    probabilities = list(CHALLENGE_TYPE_DISTRIBUTION.values())
+    chosen_type = rng.choices(challenge_types, weights=probabilities, k=1)[0]
+    
     return MapTask(
         map_seed = seed,
         start    = start,
         goal     = goal,
         sim_dt   = sim_dt,
         horizon  = horizon,
+        challenge_type = chosen_type,
         version  = "1",
     )

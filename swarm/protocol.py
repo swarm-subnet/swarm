@@ -32,6 +32,7 @@ class MapTask:
     goal: Tuple[float, float, float]
     sim_dt: float
     horizon: float
+    challenge_type: int
     version: str = "1"
 
     def pack(self) -> bytes:

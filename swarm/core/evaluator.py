@@ -74,21 +74,24 @@ def _model_predict_via_io(proc: subprocess.Popen, obs_array, timeout_s: float = 
     except Exception as e:
         raise RuntimeError(f"failed to write to model worker: {e}")
 
-    # Wait for one line with timeout
-    rlist, _, _ = select.select([proc.stdout], [], [], timeout_s)
-    if not rlist:
-        raise RuntimeError("model worker timeout")
-    reply = proc.stdout.readline()
-    if not reply:
-        raise RuntimeError("model worker closed pipe")
-    try:
-        payload = _json.loads(reply)
-        act = payload.get("act", None)
-        if not isinstance(act, list) or len(act) == 0:
-            raise ValueError("bad action payload")
-        return act
-    except Exception as e:
-        raise RuntimeError(f"invalid model worker reply: {e}")
+    # Wait for one line with timeout - increased timeout and retry logic
+    for retry in range(2):  # Retry once if first attempt times out
+        rlist, _, _ = select.select([proc.stdout], [], [], timeout_s)
+        if rlist:
+            reply = proc.stdout.readline()
+            if reply:
+                try:
+                    payload = _json.loads(reply)
+                    act = payload.get("act", None)
+                    if isinstance(act, list) and len(act) > 0:
+                        return act
+                except Exception:
+                    pass
+        # If first attempt failed, wait a bit shorter for retry
+        timeout_s = timeout_s / 2
+    
+    # Both attempts failed
+    raise RuntimeError("model worker timeout after retries")
 
 
 def _wait_model_ready(proc: subprocess.Popen, timeout_s: float = 60.0) -> None:
@@ -175,7 +178,11 @@ def main():
                     sys.stdout.write(_json.dumps({"act": act_list}) + "\n")
                     sys.stdout.flush()
                 except Exception as e:
-                    # Protocol error: respond with an empty action to keep protocol flowing
+                    # Log error to stderr for debugging, then respond with empty action
+                    import traceback
+                    sys.stderr.write(f"MODEL_WORKER_PREDICT_ERROR: {e}\n")
+                    sys.stderr.write(traceback.format_exc())
+                    sys.stderr.flush()
                     sys.stdout.write(_json.dumps({"act": []}) + "\n")
                     sys.stdout.flush()
             sys.exit(0)
@@ -273,11 +280,14 @@ def main():
                 def reset(self, task):
                     pass
                 def act(self, obs, t):
-                    act_list = _model_predict_via_io(self.proc, obs, timeout_s=3.0)
-                    if not act_list:
-                        # fallback to zeros with safe shape
-                        return _np.zeros(4, dtype=_np.float32)
-                    return _np.asarray(act_list, dtype=_np.float32)
+                    try:
+                        act_list = _model_predict_via_io(self.proc, obs, timeout_s=10.0)
+                        if act_list and len(act_list) > 0:
+                            return _np.asarray(act_list, dtype=_np.float32)
+                    except Exception:
+                        pass
+                    # Fallback to zeros only after all retries failed
+                    return _np.zeros(4, dtype=_np.float32)
 
             pilot = _PilotIPC(worker)
             env = make_env(task, gui=False)

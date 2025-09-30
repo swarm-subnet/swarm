@@ -83,6 +83,7 @@ def make_env(
         cli=cli,
         start=task.start,
         goal=task.goal,
+        challenge_type=task.challenge_type,
     )
     
     # Store landing surface body ID in environment for collision detection

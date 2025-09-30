@@ -37,6 +37,15 @@ from swarm.constants import (
     START_PLATFORM_SURFACE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
     START_PLATFORM_RANDOMIZE,
+    TYPE_1_N_OBSTACLES,
+    TYPE_1_HEIGHT_SCALE,
+    TYPE_1_SAFE_ZONE,
+    TYPE_2_N_OBSTACLES,
+    TYPE_2_HEIGHT_SCALE,
+    TYPE_2_SAFE_ZONE,
+    TYPE_3_N_OBSTACLES,
+    TYPE_3_HEIGHT_SCALE,
+    TYPE_3_SAFE_ZONE,
 )
 
 # --------------------------------------------------------------------------
@@ -84,6 +93,7 @@ def build_world(
     *,
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
+    challenge_type: int = 1,
 ) -> Optional[int]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
@@ -98,6 +108,25 @@ def build_world(
     """
     rng = random.Random(seed)
 
+    # Set challenge-specific parameters
+    if challenge_type == 1:
+        n_obstacles = TYPE_1_N_OBSTACLES
+        height_scale = TYPE_1_HEIGHT_SCALE
+        safe_zone = TYPE_1_SAFE_ZONE
+    elif challenge_type == 2:
+        n_obstacles = TYPE_2_N_OBSTACLES
+        height_scale = TYPE_2_HEIGHT_SCALE
+        safe_zone = TYPE_2_SAFE_ZONE
+    elif challenge_type == 3:
+        n_obstacles = TYPE_3_N_OBSTACLES
+        height_scale = TYPE_3_HEIGHT_SCALE
+        safe_zone = TYPE_3_SAFE_ZONE
+    else:
+        # Default to type 1
+        n_obstacles = TYPE_1_N_OBSTACLES
+        height_scale = TYPE_1_HEIGHT_SCALE
+        safe_zone = TYPE_1_SAFE_ZONE
+
     if start is not None:
         sx, sy, sz = start
     else:
@@ -111,7 +140,7 @@ def build_world(
     placed_obstacles = []  # Track all placed obstacles: [(x, y, radius), ...]
     MIN_OBSTACLE_DISTANCE = 0.6  # Reduced minimum distance between obstacles
     
-    while placed < N_OBSTACLES:
+    while placed < n_obstacles:
         for _ in range(MAX_ATTEMPTS_PER_OBS):
             kind = rng.choice(["wall", "pillar", "box"])
             x = rng.uniform(-WORLD_RANGE, WORLD_RANGE)
@@ -121,19 +150,19 @@ def build_world(
             # — determine random size & bounding radius ---------------
             if kind == "box":
                 sx_len, sy_len, sz_len = (rng.uniform(1, 4) for _ in range(3))
-                sz_len *= HEIGHT_SCALE
+                sz_len *= height_scale
                 # 2‑D footprint radius (half diagonal of rectangle)
                 obj_r = math.hypot(sx_len / 2, sy_len / 2)
 
             elif kind == "wall":
                 length = rng.uniform(5, 15)
-                height = rng.uniform(2, 5) * HEIGHT_SCALE
+                height = rng.uniform(2, 5) * height_scale
                 sx_len, sy_len, sz_len = length, 0.3, height
                 obj_r = length / 2.0
 
             else:  # pillar
                 r = rng.uniform(0.3, 1.0)
-                h = rng.uniform(2, 7) * HEIGHT_SCALE
+                h = rng.uniform(2, 7) * height_scale
                 sx_len = sy_len = r * 2
                 sz_len = h
                 obj_r = r
@@ -143,7 +172,7 @@ def build_world(
                 if cx is None:
                     return False
                 # More conservative safe zone calculation
-                required_clearance = obj_r + SAFE_ZONE_RADIUS + 0.5  # Extra 0.5m margin
+                required_clearance = obj_r + safe_zone + 0.5  # Extra 0.5m margin
                 return math.hypot(x - cx, y - cy) < required_clearance
 
             if _violates(sx, sy) or _violates(gx, gy):
@@ -225,7 +254,7 @@ def build_world(
         else:
             # Unable to place this obstacle after many attempts
             # Try with reduced requirements for the remaining obstacles
-            if placed < N_OBSTACLES * 0.7:  # If we've placed less than 70% of obstacles
+            if placed < n_obstacles * 0.7:  # If we've placed less than 70% of obstacles
                 # Reduce minimum distance temporarily for dense worlds
                 MIN_OBSTACLE_DISTANCE = max(0.8, MIN_OBSTACLE_DISTANCE - 0.1)
             break
@@ -233,8 +262,8 @@ def build_world(
     # ------------------------------------------------------------------
     # World building report
     # ------------------------------------------------------------------
-    if placed < N_OBSTACLES:
-        if placed < N_OBSTACLES * 0.8:
+    if placed < n_obstacles:
+        if placed < n_obstacles * 0.8:
             pass  
 
     # ------------------------------------------------------------------
