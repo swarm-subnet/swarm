@@ -101,9 +101,11 @@ N_RUNS_HISTORY = 10                     # Number of runs to track for victory av
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.40,  # Standard navigation
-    2: 0.30,  # higher obstacles challenge
-    3: 0.30,  # Easy navigation
+    1: 0.30,
+    2: 0.25,
+    3: 0.25,
+    4: 0.15,
+    5: 0.05,
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
@@ -115,13 +117,36 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 TYPE_1_N_OBSTACLES = 100
 TYPE_1_HEIGHT_SCALE = 2
 TYPE_1_SAFE_ZONE = 2.0
+TYPE_1_R_MIN = 10
+TYPE_1_R_MAX = 30
+TYPE_1_WORLD_RANGE = 30
 
 TYPE_2_N_OBSTACLES = 125
 TYPE_2_HEIGHT_SCALE = 6
 TYPE_2_SAFE_ZONE = 2.0
+TYPE_2_R_MIN = 10
+TYPE_2_R_MAX = 30
+TYPE_2_WORLD_RANGE = 30
 
 TYPE_3_N_OBSTACLES = 75
 TYPE_3_HEIGHT_SCALE = 1
 TYPE_3_SAFE_ZONE = 2.0
+TYPE_3_R_MIN = 10
+TYPE_3_R_MAX = 30
+TYPE_3_WORLD_RANGE = 30
+
+TYPE_4_N_OBSTACLES = 100
+TYPE_4_HEIGHT_SCALE = 2
+TYPE_4_SAFE_ZONE = 2.0
+TYPE_4_R_MIN = 20
+TYPE_4_R_MAX = 30
+TYPE_4_WORLD_RANGE = 30
+
+TYPE_5_N_OBSTACLES = 0
+TYPE_5_HEIGHT_SCALE = 0
+TYPE_5_SAFE_ZONE = 2.0
+TYPE_5_R_MIN = 30
+TYPE_5_R_MAX = 50
+TYPE_5_WORLD_RANGE = 55
 
 
