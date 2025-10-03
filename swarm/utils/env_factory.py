@@ -21,15 +21,15 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.core.env_builder        import build_world
 from swarm.protocol                import MapTask
-from swarm.constants               import SAFE_Z, SPEED_LIMIT
+from swarm.constants               import SAFE_Z, SPEED_LIMIT, ENABLE_NOISE, DEFAULT_NOISE_LEVEL
 
 # ──────────────────────────────────────────────────────────────────────────────
 def make_env(
     task: MapTask,
     *,
     gui: bool = False,
-    enable_noise: bool = False,
-    noise_level: str = "medium",
+    enable_noise: bool = ENABLE_NOISE,
+    noise_level: str = DEFAULT_NOISE_LEVEL,
 ) -> Union[MovingDroneAviary]:
     """
     Create and fully‑initialise a single‑drone PyBullet Crazyflie environment.

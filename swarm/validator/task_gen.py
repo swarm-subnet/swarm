@@ -89,11 +89,16 @@ def _goal_from_start(seed_rng: random.Random, start: Tuple[float, float, float],
 def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> MapTask:
     if seed is None:
         seed = random.randrange(2**32)
-    rng = random.Random(seed)
     
+    # Use separate RNG for type selection to avoid affecting position randomness
+    # This ensures same seed always produces same start/goal positions regardless of type
+    type_rng = random.Random(seed + 2**31)
     challenge_types = list(CHALLENGE_TYPE_DISTRIBUTION.keys())
     probabilities = list(CHALLENGE_TYPE_DISTRIBUTION.values())
-    chosen_type = rng.choices(challenge_types, weights=probabilities, k=1)[0]
+    chosen_type = type_rng.choices(challenge_types, weights=probabilities, k=1)[0]
+    
+    # Use original seed for position generation (consistent across all types)
+    rng = random.Random(seed)
     
     if chosen_type == 1:
         r_min, r_max, world_range = TYPE_1_R_MIN, TYPE_1_R_MAX, TYPE_1_WORLD_RANGE

@@ -56,6 +56,10 @@ DRONE_MASS = 0.027                          # Drone mass (kg) - CF2X Crazyflie
 DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to edge (meters)
 MAX_RAY_DISTANCE = 20.0                     # Maximum obstacle detection range (meters)
 
+# Sensor Noise Configuration
+ENABLE_NOISE = True                        # Enable sensor noise simulation by default
+DEFAULT_NOISE_LEVEL = "good"              # Default noise difficulty: "good", "medium", or "hard"
+
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
 PLATFORM = True                         # Enable landing platform rendering
