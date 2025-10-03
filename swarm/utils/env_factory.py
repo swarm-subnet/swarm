@@ -28,6 +28,8 @@ def make_env(
     task: MapTask,
     *,
     gui: bool = False,
+    enable_noise: bool = False,
+    noise_level: str = "medium",
 ) -> Union[MovingDroneAviary]:
     """
     Create and fully‑initialise a single‑drone PyBullet Crazyflie environment.
@@ -57,6 +59,8 @@ def make_env(
             env = MovingDroneAviary(
                 task,
                 act=ActionType.VEL,
+                enable_noise=enable_noise,
+                noise_level=noise_level,
                 **common_kwargs,
             )
 

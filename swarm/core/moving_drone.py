@@ -15,6 +15,7 @@ from gym_pybullet_drones.utils.enums import (
 # ── project‑level utilities ────────────────────────────────────────────────
 from swarm.validator.reward import flight_reward          # 3‑term scorer
 from swarm.constants        import GOAL_TOL, HOVER_SEC, DRONE_HULL_RADIUS, MAX_RAY_DISTANCE
+from swarm.core.randomizer  import SensorNoiseModule
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -41,6 +42,8 @@ class MovingDroneAviary(BaseRLAviary):
         record      : bool         = False,
         obs         : ObservationType = ObservationType.KIN,
         act         : ActionType      = ActionType.RPM,
+        enable_noise: bool         = False,
+        noise_level : str          = "medium",
     ):
         """
         Parameters
@@ -63,6 +66,12 @@ class MovingDroneAviary(BaseRLAviary):
 
         # ‑‑‑ define 16 ray directions for obstacle detection ‑‑‑
         self._init_ray_directions()
+
+        # ‑‑‑ sensor noise module for sim‑to‑real transfer ‑‑‑
+        self.noise_module = SensorNoiseModule(
+            noise_level=noise_level,
+            enable_noise=enable_noise
+        )
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -270,6 +279,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._collision  = False
         self._t_to_goal  = None
 
+        self.noise_module.reset()
+
         # baseline score (t = 0, e = 0)
         self._prev_score = flight_reward(
             success = False,
@@ -391,4 +402,8 @@ class MovingDroneAviary(BaseRLAviary):
         # Goal vector relative to current position (scaled by ray distance)
         rel = ((self.GOAL_POS - pos_w) / self.max_ray_distance).reshape(1, 3)
 
-        return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
+        obs = np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
+        
+        obs = self.noise_module.apply_noise(obs, self.GOAL_POS)
+        
+        return obs
