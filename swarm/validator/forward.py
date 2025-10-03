@@ -595,7 +595,15 @@ async def forward(self) -> None:
         goal_pos = np.array(task.goal)
         distance = np.linalg.norm(goal_pos - start_pos)
         
-        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m")
+        # Map challenge type to name
+        challenge_type_names = {
+            1: "Type 1 (Standard)",
+            2: "Type 2 (higher obstacles)",
+            3: "Type 3 (Easy)"
+        }
+        type_name = challenge_type_names.get(task.challenge_type, f"Type {task.challenge_type}")
+        
+        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m, Challenge: {type_name}")
 
         # ------------------------------------------------------------------
         # 3. Docker-based secure evaluation (sequential)

@@ -96,4 +96,32 @@ UID_ZERO = 0                            # Special UID for burning emissions
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
 N_RUNS_HISTORY = 10                     # Number of runs to track for victory average
 
+# =============================================================================
+# CHALLENGE TYPE DISTRIBUTION
+# =============================================================================
+
+CHALLENGE_TYPE_DISTRIBUTION = {
+    1: 0.40,  # Standard navigation
+    2: 0.30,  # higher obstacles challenge
+    3: 0.30,  # Easy navigation
+}
+
+assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
+
+# =============================================================================
+# CHALLENGE TYPE PARAMETERS
+# =============================================================================
+
+TYPE_1_N_OBSTACLES = 100
+TYPE_1_HEIGHT_SCALE = 2
+TYPE_1_SAFE_ZONE = 2.0
+
+TYPE_2_N_OBSTACLES = 125
+TYPE_2_HEIGHT_SCALE = 6
+TYPE_2_SAFE_ZONE = 2.0
+
+TYPE_3_N_OBSTACLES = 75
+TYPE_3_HEIGHT_SCALE = 1
+TYPE_3_SAFE_ZONE = 2.0
+
 
