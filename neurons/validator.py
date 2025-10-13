@@ -20,6 +20,7 @@
 import sys
 import time
 import os
+import asyncio
 from pathlib import Path
 from typing import List, Optional
 
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.validator.forward import forward
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+from swarm.validator.training_verifier import TrainingVerifier
 from swarm.protocol import ValidationResult, MapTask
 from datetime import datetime
 import swarm
@@ -331,6 +333,24 @@ class Validator(BaseValidatorNeuron):
         else:
             bt.logging.warning("⚠️  Docker evaluator initialization failed")
 
+        # Initialize training verification system
+        bt.logging.info("Initializing training verification system...")
+        self.training_verifier = TrainingVerifier(self)
+        self._verification_task = None
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                self._verification_task = loop.create_task(self.training_verifier.start_verification_loop())
+            else:
+                asyncio.run(self._start_verification_loop_sync())
+            bt.logging.info("✅ Training verification loop started")
+        except Exception as e:
+            bt.logging.warning(f"Failed to start training verification loop: {e}")
+
+    async def _start_verification_loop_sync(self):
+        """Helper to start verification loop synchronously"""
+        await self.training_verifier.start_verification_loop()
+
     async def forward(self):
         """
         Validator forward pass. Consists of:
@@ -343,7 +363,14 @@ class Validator(BaseValidatorNeuron):
         return await forward(self)
 
     def __del__(self):
-        """Cleanup wandb helper and docker evaluator when validator is destroyed."""
+        """Cleanup wandb helper, docker evaluator, and training verifier when validator is destroyed."""
+        if hasattr(self, 'training_verifier'):
+            try:
+                self.training_verifier.stop_verification_loop()
+                if self._verification_task and not self._verification_task.done():
+                    self._verification_task.cancel()
+            except:
+                pass
         if hasattr(self, 'docker_evaluator'):
             try:
                 self.docker_evaluator.cleanup()

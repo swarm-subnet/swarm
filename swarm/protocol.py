@@ -67,6 +67,7 @@ class PolicyRef:
     framework: str
     size_bytes: int
     version: str = "1"
+    training_code_sha256: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)

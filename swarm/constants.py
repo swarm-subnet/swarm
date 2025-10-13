@@ -124,4 +124,22 @@ TYPE_3_N_OBSTACLES = 75
 TYPE_3_HEIGHT_SCALE = 1
 TYPE_3_SAFE_ZONE = 2.0
 
+# =============================================================================
+# TRAINING CODE VERIFICATION
+# =============================================================================
+
+TRAINING_CODE_MAX_SIZE = 5 * 1024 * 1024         # Max training code size (5 MB)
+TRAINING_CODE_MAX_FILES = 20                     # Max files in training_code.zip
+TRAINING_TIMEOUT_SEC = 7200.0                    # Training timeout (2 hours)
+TRAINING_LOOP_INTERVAL_SEC = 21600.0             # Training loop interval (6 hours)
+
+VERIFICATION_TOP_N = 5                           # Verify top N miners only
+VERIFICATION_CACHE_DAYS = 7                      # Cache verification results (days)
+VERIFICATION_PASS_THRESHOLD = 0.75               # Min score to pass verification
+VERIFICATION_CORRELATION_THRESHOLD = 0.85        # Min correlation for performance match
+VERIFICATION_MEAN_DIFF_THRESHOLD = 0.15          # Max mean difference for performance match
+
+VERIFICATION_TEST_TASKS = 10                     # Number of tasks for performance testing
+VERIFICATION_STATE_FILE = Path("/tmp/verification_state.json")  # Verification state storage
+
 

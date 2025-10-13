@@ -11,8 +11,11 @@
 
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
 import base64
+import tempfile
+import shutil
+from zipfile import ZipFile
 import bittensor as bt
 
 # ── Swarm core ────────────────────────────────────────────────────────────
@@ -84,10 +87,47 @@ class Miner(BaseMinerNeuron):
         if not self.POLICY_PATH.exists():
             raise FileNotFoundError(f"Model not found: {self.POLICY_PATH}")
 
-        self._sha256 = sha256sum(self.POLICY_PATH)
-        self._size   = self.POLICY_PATH.stat().st_size
+        self._training_code_sha256: Optional[str] = None
+        self._serving_path = self._prepare_model_with_training_code()
+
+        self._sha256 = sha256sum(self._serving_path)
+        self._size   = self._serving_path.stat().st_size
         self.axon.verify_fns[PolicySynapse.__name__] = self._verify_validator_request
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
+
+    def _prepare_model_with_training_code(self) -> Path:
+        """Package training code into model.zip if available"""
+        training_code_path = self.POLICY_PATH.parent / "training_code.zip"
+
+        if not training_code_path.exists():
+            ColoredLogger.info("No training_code.zip found - serving model without training code", ColoredLogger.YELLOW)
+            return self.POLICY_PATH
+
+        try:
+            self._training_code_sha256 = sha256sum(training_code_path)
+
+            with ZipFile(self.POLICY_PATH, 'r') as model_zip:
+                if 'training_code.zip' in model_zip.namelist():
+                    ColoredLogger.info("Model already contains training code", ColoredLogger.GREEN)
+                    return self.POLICY_PATH
+
+            tmpdir = Path(tempfile.mkdtemp(prefix="miner_model_"))
+            packaged_model = tmpdir / "model_with_training.zip"
+
+            with ZipFile(packaged_model, 'w') as out_zip:
+                with ZipFile(self.POLICY_PATH, 'r') as model_zip:
+                    for item in model_zip.namelist():
+                        data = model_zip.read(item)
+                        out_zip.writestr(item, data)
+
+                out_zip.write(training_code_path, arcname='training_code.zip')
+
+            ColoredLogger.success(f"Packaged training code (SHA: {self._training_code_sha256[:16]}...)", ColoredLogger.GREEN)
+            return packaged_model
+
+        except Exception as e:
+            ColoredLogger.error(f"Failed to package training code: {e}", ColoredLogger.RED)
+            return self.POLICY_PATH
 
 
     async def _verify_validator_request(self, synapse: PolicySynapse) -> None:
@@ -145,7 +185,7 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
         """
-        • need_blob absent / False → return PolicyRef  
+        • need_blob absent / False → return PolicyRef
         • need_blob True          → return a single base‑64 chunk
         """
         try:
@@ -156,7 +196,7 @@ class Miner(BaseMinerNeuron):
             if synapse.need_blob:
                 ColoredLogger.info("Sending full model blob …", ColoredLogger.BLUE)
 
-                raw_bytes = self.POLICY_PATH.read_bytes()
+                raw_bytes = self._serving_path.read_bytes()
                 b64_str   = base64.b64encode(raw_bytes).decode("ascii")
 
                 return PolicySynapse.from_chunk(
@@ -169,6 +209,7 @@ class Miner(BaseMinerNeuron):
                 entrypoint = self.ENTRYPOINT,
                 framework  = self.FRAMEWORK,
                 size_bytes = self._size,
+                training_code_sha256 = self._training_code_sha256,
             )
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
             return PolicySynapse.from_ref(ref)
