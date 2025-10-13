@@ -46,9 +46,16 @@ class VerificationState:
         uid_str = str(uid)
         if uid_str in state["verifications"]:
             verification = state["verifications"][uid_str]
-            valid_until = datetime.fromisoformat(verification.get("valid_until", "2000-01-01T00:00:00Z"))
-            if datetime.utcnow() < valid_until:
-                return verification.get("status")
+            status = verification.get("status")
+
+            # Only check expiration for verified status
+            if status == "verified":
+                valid_until_str = verification.get("valid_until", "2000-01-01T00:00:00Z").replace("Z", "")
+                valid_until = datetime.fromisoformat(valid_until_str)
+                if datetime.utcnow() >= valid_until:
+                    return None
+
+            return status
         return None
 
     def set_verified(self, uid: int, score: float, details: Dict):
@@ -142,7 +149,8 @@ class VerificationState:
 
         expired_uids = []
         for uid_str, verification in state["verifications"].items():
-            valid_until = datetime.fromisoformat(verification.get("valid_until", "2000-01-01T00:00:00Z"))
+            valid_until_str = verification.get("valid_until", "2000-01-01T00:00:00Z").replace("Z", "")
+            valid_until = datetime.fromisoformat(valid_until_str)
             if now > valid_until and verification.get("status") == "verified":
                 expired_uids.append(uid_str)
 
