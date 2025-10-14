@@ -101,7 +101,7 @@ N_RUNS_HISTORY = 50                     # Number of runs to track for victory av
 # =============================================================================
 
 LOW_PERFORMER_FILTER_ENABLED = True     # Enable filtering of consistently low-scoring models
-MIN_AVG_SCORE_THRESHOLD = 0.6          # Minimum average score to remain in active evaluation pool
+MIN_AVG_SCORE_THRESHOLD = 0.2          # Minimum average score to remain in active evaluation pool
 MIN_EVALUATION_RUNS = 20               # Minimum runs required before applying low-performer filter
 
 # =============================================================================
