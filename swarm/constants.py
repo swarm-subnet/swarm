@@ -97,6 +97,14 @@ WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner
 N_RUNS_HISTORY = 50                     # Number of runs to track for victory average
 
 # =============================================================================
+# LOW-PERFORMER FILTERING
+# =============================================================================
+
+LOW_PERFORMER_FILTER_ENABLED = True     # Enable filtering of consistently low-scoring models
+MIN_AVG_SCORE_THRESHOLD = 0.6          # Minimum average score to remain in active evaluation pool
+MIN_EVALUATION_RUNS = 20               # Minimum runs required before applying low-performer filter
+
+# =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
 # =============================================================================
 

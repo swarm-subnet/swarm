@@ -323,6 +323,68 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
         # Ensure container is killed
         subprocess.run(["docker", "kill", container_name], capture_output=True)
 
+def load_model_hash_tracker() -> dict:
+    """Load UID to model hash mapping."""
+    hash_tracker_file = Path("/tmp/uid_model_hashes.json")
+    try:
+        if hash_tracker_file.exists():
+            with open(hash_tracker_file, 'r') as f:
+                return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def save_model_hash_tracker(tracker: dict) -> None:
+    """Save UID to model hash mapping."""
+    hash_tracker_file = Path("/tmp/uid_model_hashes.json")
+    with open(hash_tracker_file, 'w') as f:
+        json.dump(tracker, f)
+
+
+def clear_low_performer_status(uid: int) -> None:
+    """Clear low-performer status for a UID when model is updated."""
+    history_file = Path("/tmp/victory_history.json")
+    if not history_file.exists():
+        return
+
+    try:
+        with open(history_file, 'r') as f:
+            history = json.load(f)
+
+        uid_str = str(uid)
+        if uid_str in history:
+            history[uid_str] = {"runs": []}
+            with open(history_file, 'w') as f:
+                json.dump(history, f)
+            bt.logging.info(f"Cleared performance history for UID {uid} (model updated)")
+    except Exception as e:
+        bt.logging.debug(f"Failed to clear low-performer status for UID {uid}: {e}")
+
+
+def check_and_update_model_hash(uid: int, new_hash: str) -> bool:
+    """Check if model hash has changed and update tracker.
+
+    Returns:
+        True if hash changed (model updated), False otherwise
+    """
+    tracker = load_model_hash_tracker()
+    uid_str = str(uid)
+    old_hash = tracker.get(uid_str)
+
+    if old_hash and old_hash != new_hash:
+        bt.logging.info(f"Model update detected for UID {uid}: {old_hash[:16]}... → {new_hash[:16]}...")
+        clear_low_performer_status(uid)
+        tracker[uid_str] = new_hash
+        save_model_hash_tracker(tracker)
+        return True
+    elif not old_hash:
+        tracker[uid_str] = new_hash
+        save_model_hash_tracker(tracker)
+
+    return False
+
+
 async def send_with_fresh_uuid(
     wallet: "bt.Wallet",
     synapse: "bt.Synapse",
@@ -417,6 +479,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                     model_fp.stat().st_size <= MAX_MODEL_BYTES
                     and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
                 ):
+                    check_and_update_model_hash(uid, ref.sha256)
                     paths[uid] = model_fp
                     continue
                 else:
@@ -430,6 +493,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                 and model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
+                check_and_update_model_hash(uid, ref.sha256)
                 paths[uid] = model_fp
             else:
                 bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
