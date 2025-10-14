@@ -94,7 +94,7 @@ UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
-N_RUNS_HISTORY = 10                     # Number of runs to track for victory average
+N_RUNS_HISTORY = 50                     # Number of runs to track for victory average
 
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
