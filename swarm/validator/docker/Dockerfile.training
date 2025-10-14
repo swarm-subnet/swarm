@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --upgrade pip setuptools wheel
 
-COPY swarm/validator/docker/docker-requirements.txt /tmp/docker-requirements.txt
+COPY swarm/swarm/validator/docker/docker-requirements.txt /tmp/docker-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/docker-requirements.txt
 
 RUN pip install --no-cache-dir git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git
@@ -39,4 +39,4 @@ ENV NUMEXPR_NUM_THREADS=4
 ENV OMP_NUM_THREADS=4
 ENV DETERMINISTIC=1
 
-ENTRYPOINT ["python", "/workspace/code/train.py"]
+ENTRYPOINT ["python", "/app/swarm/swarm/core/training_verification.py"]

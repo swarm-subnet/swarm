@@ -13,8 +13,8 @@ from swarm.constants import (
 
 class VerificationState:
 
-    def __init__(self, state_file: Path = VERIFICATION_STATE_FILE):
-        self.state_file = state_file
+    def __init__(self, state_file = VERIFICATION_STATE_FILE):
+        self.state_file = Path(state_file) if not isinstance(state_file, Path) else state_file
         self._ensure_file()
 
     def _ensure_file(self):
@@ -40,7 +40,7 @@ class VerificationState:
         except Exception as e:
             bt.logging.error(f"Failed to save verification state: {e}")
 
-    def get_status(self, uid: int) -> Optional[str]:
+    def get_status(self, uid: int) -> str:
         """Get verification status for UID"""
         state = self._load_state()
         uid_str = str(uid)
@@ -53,10 +53,10 @@ class VerificationState:
                 valid_until_str = verification.get("valid_until", "2000-01-01T00:00:00Z").replace("Z", "")
                 valid_until = datetime.fromisoformat(valid_until_str)
                 if datetime.utcnow() >= valid_until:
-                    return None
+                    return "unknown"
 
             return status
-        return None
+        return "unknown"
 
     def set_verified(self, uid: int, score: float, details: Dict):
         """Mark UID as verified"""

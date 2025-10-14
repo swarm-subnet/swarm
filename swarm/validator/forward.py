@@ -47,6 +47,8 @@ from swarm.constants import (
     MODEL_DIR,
     WINNER_TAKE_ALL,
     N_RUNS_HISTORY,
+    VERIFICATION_ENFORCEMENT_ENABLED,
+    VERIFICATION_TOP_N,
 )
 
 
@@ -714,6 +716,23 @@ async def forward(self) -> None:
                 # Fallback to single-run if no history
                 uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
             reward_system = "Winner-Take-All (Avg Score-Based)"
+
+            # Training verification enforcement
+            if VERIFICATION_ENFORCEMENT_ENABLED and hasattr(self, 'training_verifier'):
+                winner_uid = debug_info.get('winner_uid')
+                if winner_uid is not None:
+                    sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0])) if score_metrics else []
+                    top_n_uids = [m[0] for m in sorted_metrics[:VERIFICATION_TOP_N]]
+
+                    if winner_uid in top_n_uids:
+                        is_verified = self.training_verifier.is_miner_verified(winner_uid)
+                        if not is_verified:
+                            winner_idx = np.where(uids_out == winner_uid)[0]
+                            if len(winner_idx) > 0:
+                                boosted[winner_idx[0]] = 0.0
+                                bt.logging.warning(f"⚠️ ENFORCEMENT: Winner UID {winner_uid} NOT VERIFIED - setting weight to 0")
+                                debug_info['enforcement_applied'] = True
+                                debug_info['winner_unverified'] = True
         else:
             # Use tiered reward system: balanced distribution across top performers
             uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)

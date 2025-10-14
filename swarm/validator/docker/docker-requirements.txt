@@ -16,5 +16,6 @@ python-dotenv
 typing-extensions
 tqdm
 torch
+numpy
 gymnasium
 requests

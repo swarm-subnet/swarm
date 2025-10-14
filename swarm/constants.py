@@ -94,7 +94,7 @@ UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
-N_RUNS_HISTORY = 10                     # Number of runs to track for victory average
+N_RUNS_HISTORY = 50                     # Number of runs to track for victory average
 
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
@@ -139,7 +139,8 @@ VERIFICATION_PASS_THRESHOLD = 0.75               # Min score to pass verificatio
 VERIFICATION_CORRELATION_THRESHOLD = 0.85        # Min correlation for performance match
 VERIFICATION_MEAN_DIFF_THRESHOLD = 0.15          # Max mean difference for performance match
 
-VERIFICATION_TEST_TASKS = 10                     # Number of tasks for performance testing
+VERIFICATION_TEST_TASKS = 20                     # Number of tasks for performance testing
 VERIFICATION_STATE_FILE = Path("/tmp/verification_state.json")  # Verification state storage
+VERIFICATION_ENFORCEMENT_ENABLED = False         # Enable verification enforcement (set to True to penalize unverified miners)
 
 
