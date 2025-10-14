@@ -454,11 +454,11 @@ def _log_uid_performance(uid: int, current_score: float, history: dict) -> None:
     
     if uid_str in history and history[uid_str]["runs"]:
         runs = history[uid_str]["runs"]
-        # Include current score and enforce 10-run rolling window
+        # Include current score and enforce N_RUNS_HISTORY rolling window
         all_scores = [run["score"] for run in runs] + [current_score]
-        # Keep only last 10 runs (same as N_RUNS_HISTORY)
-        if len(all_scores) > 10:
-            all_scores = all_scores[-10:]
+        # Keep only last N_RUNS_HISTORY runs
+        if len(all_scores) > N_RUNS_HISTORY:
+            all_scores = all_scores[-N_RUNS_HISTORY:]
         
         avg_score = sum(all_scores) / len(all_scores)
         total_runs = len(all_scores)
