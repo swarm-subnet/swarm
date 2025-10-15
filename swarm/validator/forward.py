@@ -343,7 +343,7 @@ def save_model_hash_tracker(tracker: dict) -> None:
 
 
 def clear_low_performer_status(uid: int) -> None:
-    """Clear low-performer status for a UID when model is updated."""
+    """Clear low-performer flag and start grace period when model is updated."""
     history_file = Path("/tmp/victory_history.json")
     if not history_file.exists():
         return
@@ -354,10 +354,14 @@ def clear_low_performer_status(uid: int) -> None:
 
         uid_str = str(uid)
         if uid_str in history:
-            history[uid_str] = {"runs": []}
+            if "is_low_performer" in history[uid_str]:
+                del history[uid_str]["is_low_performer"]
+
+            history[uid_str]["grace_period_start"] = len(history[uid_str].get("runs", []))
+
             with open(history_file, 'w') as f:
                 json.dump(history, f)
-            bt.logging.info(f"Cleared performance history for UID {uid} (model updated)")
+            bt.logging.info(f"Cleared low-performer flag for UID {uid}, grace period started (runs preserved)")
     except Exception as e:
         bt.logging.debug(f"Failed to clear low-performer status for UID {uid}: {e}")
 

@@ -7,7 +7,11 @@ from pathlib import Path
 
 
 def is_low_performer(uid: int) -> bool:
-    """Check if UID is a low performer based on recent evaluation history.
+    """Check if UID is a low performer based on periodic evaluation.
+
+    Evaluates every MIN_EVALUATION_RUNS runs. Once flagged as low performer,
+    stays filtered until model is updated. When model is updated, miner gets
+    EVALUATION_WINDOW runs as grace period before being evaluated again.
 
     Args:
         uid: UID to check
@@ -18,7 +22,8 @@ def is_low_performer(uid: int) -> bool:
     from swarm.constants import (
         LOW_PERFORMER_FILTER_ENABLED,
         MIN_AVG_SCORE_THRESHOLD,
-        MIN_EVALUATION_RUNS
+        MIN_EVALUATION_RUNS,
+        EVALUATION_WINDOW
     )
 
     if not LOW_PERFORMER_FILTER_ENABLED:
@@ -36,15 +41,38 @@ def is_low_performer(uid: int) -> bool:
         if uid_str not in history:
             return False
 
-        runs = history[uid_str].get("runs", [])
-        if len(runs) < MIN_EVALUATION_RUNS:
+        uid_data = history[uid_str]
+        runs = uid_data.get("runs", [])
+
+        if uid_data.get("is_low_performer", False):
+            return True
+
+        total_runs = len(runs)
+
+        grace_period_start = uid_data.get("grace_period_start", None)
+        if grace_period_start is not None:
+            runs_since_update = total_runs - grace_period_start
+            if runs_since_update < EVALUATION_WINDOW:
+                return False
+
+        if total_runs < MIN_EVALUATION_RUNS:
             return False
 
-        recent_runs = runs[-MIN_EVALUATION_RUNS:]
+        if total_runs % MIN_EVALUATION_RUNS != 0:
+            return False
+
+        recent_runs = runs[-EVALUATION_WINDOW:]
         scores = [run.get("score", 0.0) for run in recent_runs]
         avg_score = sum(scores) / len(scores) if scores else 0.0
 
-        return avg_score < MIN_AVG_SCORE_THRESHOLD
+        if avg_score < MIN_AVG_SCORE_THRESHOLD:
+            uid_data["is_low_performer"] = True
+            with open(history_file, 'w') as f:
+                json.dump(history, f)
+            bt.logging.info(f"UID {uid} marked as low performer (avg: {avg_score:.4f} over {len(recent_runs)} runs)")
+            return True
+
+        return False
 
     except Exception as e:
         bt.logging.debug(f"Error checking low performer status for UID {uid}: {e}")
