@@ -323,6 +323,72 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
         # Ensure container is killed
         subprocess.run(["docker", "kill", container_name], capture_output=True)
 
+def load_model_hash_tracker() -> dict:
+    """Load UID to model hash mapping."""
+    hash_tracker_file = Path("/tmp/uid_model_hashes.json")
+    try:
+        if hash_tracker_file.exists():
+            with open(hash_tracker_file, 'r') as f:
+                return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def save_model_hash_tracker(tracker: dict) -> None:
+    """Save UID to model hash mapping."""
+    hash_tracker_file = Path("/tmp/uid_model_hashes.json")
+    with open(hash_tracker_file, 'w') as f:
+        json.dump(tracker, f)
+
+
+def clear_low_performer_status(uid: int) -> None:
+    """Clear low-performer flag and start grace period when model is updated."""
+    history_file = Path("/tmp/victory_history.json")
+    if not history_file.exists():
+        return
+
+    try:
+        with open(history_file, 'r') as f:
+            history = json.load(f)
+
+        uid_str = str(uid)
+        if uid_str in history:
+            if "is_low_performer" in history[uid_str]:
+                del history[uid_str]["is_low_performer"]
+
+            history[uid_str]["grace_period_start"] = len(history[uid_str].get("runs", []))
+
+            with open(history_file, 'w') as f:
+                json.dump(history, f)
+            bt.logging.info(f"Cleared low-performer flag for UID {uid}, grace period started (runs preserved)")
+    except Exception as e:
+        bt.logging.debug(f"Failed to clear low-performer status for UID {uid}: {e}")
+
+
+def check_and_update_model_hash(uid: int, new_hash: str) -> bool:
+    """Check if model hash has changed and update tracker.
+
+    Returns:
+        True if hash changed (model updated), False otherwise
+    """
+    tracker = load_model_hash_tracker()
+    uid_str = str(uid)
+    old_hash = tracker.get(uid_str)
+
+    if old_hash and old_hash != new_hash:
+        bt.logging.info(f"Model update detected for UID {uid}: {old_hash[:16]}... → {new_hash[:16]}...")
+        clear_low_performer_status(uid)
+        tracker[uid_str] = new_hash
+        save_model_hash_tracker(tracker)
+        return True
+    elif not old_hash:
+        tracker[uid_str] = new_hash
+        save_model_hash_tracker(tracker)
+
+    return False
+
+
 async def send_with_fresh_uuid(
     wallet: "bt.Wallet",
     synapse: "bt.Synapse",
@@ -417,6 +483,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                     model_fp.stat().st_size <= MAX_MODEL_BYTES
                     and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
                 ):
+                    check_and_update_model_hash(uid, ref.sha256)
                     paths[uid] = model_fp
                     continue
                 else:
@@ -430,6 +497,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                 and model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
+                check_and_update_model_hash(uid, ref.sha256)
                 paths[uid] = model_fp
             else:
                 bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
@@ -454,11 +522,11 @@ def _log_uid_performance(uid: int, current_score: float, history: dict) -> None:
     
     if uid_str in history and history[uid_str]["runs"]:
         runs = history[uid_str]["runs"]
-        # Include current score and enforce 10-run rolling window
+        # Include current score and enforce N_RUNS_HISTORY rolling window
         all_scores = [run["score"] for run in runs] + [current_score]
-        # Keep only last 10 runs (same as N_RUNS_HISTORY)
-        if len(all_scores) > 10:
-            all_scores = all_scores[-10:]
+        # Keep only last N_RUNS_HISTORY runs
+        if len(all_scores) > N_RUNS_HISTORY:
+            all_scores = all_scores[-N_RUNS_HISTORY:]
         
         avg_score = sum(all_scores) / len(all_scores)
         total_runs = len(all_scores)
