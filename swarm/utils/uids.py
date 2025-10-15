@@ -132,12 +132,6 @@ def get_random_uids(self, k: int, exclude: List[int] = None) -> np.ndarray:
     if filtered_low_performers:
         bt.logging.info(f"Filtered {len(filtered_low_performers)} low-performer UIDs: {filtered_low_performers[:10]}{'...' if len(filtered_low_performers) > 10 else ''}")
 
-    k = min(k, len(avail_uids))
-    available_uids = candidate_uids
-    if len(candidate_uids) < k:
-        available_uids += random.sample(
-            [uid for uid in avail_uids if uid not in candidate_uids],
-            k - len(candidate_uids),
-        )
-    uids = np.array(random.sample(available_uids, k))
+    k = min(k, len(candidate_uids))
+    uids = np.array(random.sample(candidate_uids, k))
     return uids
