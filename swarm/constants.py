@@ -94,13 +94,13 @@ UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
-N_RUNS_HISTORY = 50                     # Number of runs to track for victory average
+N_RUNS_HISTORY = 250                     # Number of runs to track for victory average
 
 # =============================================================================
 # LOW-PERFORMER FILTERING
 # =============================================================================
 
-LOW_PERFORMER_FILTER_ENABLED = False     # Enable filtering of consistently low-scoring models
+LOW_PERFORMER_FILTER_ENABLED = True     # Enable filtering of consistently low-scoring models
 MIN_AVG_SCORE_THRESHOLD = 0.2          # Minimum average score to remain in active evaluation pool
 MIN_EVALUATION_RUNS = 20                # Check interval and minimum runs before filtering
 EVALUATION_WINDOW = 20                 # Number of recent runs to evaluate for low-performer detection
