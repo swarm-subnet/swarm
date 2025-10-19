@@ -589,6 +589,7 @@ def ensure_avgs_directory():
 
 def load_uid_history(uid: int) -> dict:
     ensure_avgs_directory()
+    uid = int(uid)
     file_path = AVGS_DIR / f"uid_{uid}.json"
 
     if file_path.exists():
