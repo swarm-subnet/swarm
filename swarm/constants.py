@@ -132,4 +132,11 @@ TYPE_3_N_OBSTACLES = 75
 TYPE_3_HEIGHT_SCALE = 1
 TYPE_3_SAFE_ZONE = 2.0
 
+# =============================================================================
+# PER-TYPE NORMALIZATION SYSTEM
+# =============================================================================
+
+AVGS_DIR = Path("avgs")
+ENABLE_PER_TYPE_NORMALIZATION = True
+
 

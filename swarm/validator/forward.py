@@ -47,6 +47,9 @@ from swarm.constants import (
     MODEL_DIR,
     WINNER_TAKE_ALL,
     N_RUNS_HISTORY,
+    AVGS_DIR,
+    ENABLE_PER_TYPE_NORMALIZATION,
+    CHALLENGE_TYPE_DISTRIBUTION,
 )
 
 
@@ -578,6 +581,133 @@ def calculate_score_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
     return metrics
 
 # ──────────────────────────────────────────────────────────────────────────
+# 3.5.  Per-Type Normalization System
+# ──────────────────────────────────────────────────────────────────────────
+
+def ensure_avgs_directory():
+    AVGS_DIR.mkdir(parents=True, exist_ok=True)
+
+def load_uid_history(uid: int) -> dict:
+    ensure_avgs_directory()
+    file_path = AVGS_DIR / f"uid_{uid}.json"
+
+    if file_path.exists():
+        try:
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            bt.logging.warning(f"Failed to load history for UID {uid}: {e}")
+
+    return {
+        "uid": uid,
+        "total_runs": 0,
+        "last_updated": 0.0,
+        "runs_by_type": {
+            "1": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
+            "2": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
+            "3": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0}
+        },
+        "normalized_score": 0.0
+    }
+
+def save_uid_history(uid: int, history: dict):
+    ensure_avgs_directory()
+    file_path = AVGS_DIR / f"uid_{uid}.json"
+    history["last_updated"] = time.time()
+
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(history, f, indent=2)
+    except Exception as e:
+        bt.logging.error(f"Failed to save history for UID {uid}: {e}")
+
+def update_per_type_history(uid: int, challenge_type: int, score: float, success: bool, time_sec: float):
+    history = load_uid_history(uid)
+    type_str = str(challenge_type)
+
+    if type_str not in history["runs_by_type"]:
+        bt.logging.error(f"Invalid challenge type {challenge_type} for UID {uid}")
+        return
+
+    run_data = {
+        "score": float(score),
+        "success": success,
+        "time_sec": float(time_sec),
+        "timestamp": time.time()
+    }
+
+    type_data = history["runs_by_type"][type_str]
+    type_data["runs"].append(run_data)
+    type_data["count"] += 1
+
+    if len(type_data["runs"]) > N_RUNS_HISTORY:
+        type_data["runs"] = type_data["runs"][-N_RUNS_HISTORY:]
+        type_data["count"] = len(type_data["runs"])
+
+    scores = [r["score"] for r in type_data["runs"]]
+    successes = [r["success"] for r in type_data["runs"]]
+
+    type_data["avg_score"] = sum(scores) / len(scores) if scores else 0.0
+    type_data["success_rate"] = sum(successes) / len(successes) if successes else 0.0
+
+    history["total_runs"] += 1
+    history["normalized_score"] = calculate_normalized_score(history)
+
+    save_uid_history(uid, history)
+
+def calculate_normalized_score(history: dict) -> float:
+    if not ENABLE_PER_TYPE_NORMALIZATION:
+        all_runs = []
+        for type_data in history["runs_by_type"].values():
+            all_runs.extend(type_data["runs"])
+
+        if not all_runs:
+            return 0.0
+        scores = [r["score"] for r in all_runs]
+        return sum(scores) / len(scores)
+
+    runs_by_type = history["runs_by_type"]
+    normalized = 0.0
+    total_weight = 0.0
+
+    for type_id, weight in CHALLENGE_TYPE_DISTRIBUTION.items():
+        type_str = str(type_id)
+        type_data = runs_by_type[type_str]
+
+        if type_data["count"] > 0:
+            normalized += weight * type_data["avg_score"]
+            total_weight += weight
+
+    if total_weight > 0:
+        normalized = normalized / total_weight
+
+    return normalized
+
+def calculate_all_normalized_scores(uids: List[int]) -> Dict[int, float]:
+    scores = {}
+
+    for uid in uids:
+        history = load_uid_history(uid)
+        normalized_score = calculate_normalized_score(history)
+        scores[uid] = normalized_score
+
+        if ENABLE_PER_TYPE_NORMALIZATION:
+            type_info = []
+            for type_id in [1, 2, 3]:
+                type_str = str(type_id)
+                type_data = history["runs_by_type"][type_str]
+                weight = CHALLENGE_TYPE_DISTRIBUTION[type_id]
+                type_info.append(
+                    f"T{type_id}({weight:.0%}):{type_data['count']}runs/{type_data['avg_score']:.3f}avg"
+                )
+
+            bt.logging.info(
+                f"UID {uid:3d} | normalized: {normalized_score:.4f} | {' | '.join(type_info)}"
+            )
+
+    return scores
+
+# ──────────────────────────────────────────────────────────────────────────
 # 4.  Winner-take-all reward system
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -716,10 +846,10 @@ async def forward(self) -> None:
                             bt.logging.warning(f"Failed to save fake model for analysis: {e}")
                     
                     results.append(result)
-                    
-                    # Log UID historical performance summary
+
+                    update_per_type_history(uid, task.challenge_type, result.score, result.success, result.time_sec)
                     _log_uid_performance(uid, result.score, history)
-                    
+
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
                     results.append(ValidationResult(uid, False, 0.0, 0.0))
@@ -754,60 +884,65 @@ async def forward(self) -> None:
 
         raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
         uids_np    = np.asarray([r.uid   for r in results], dtype=np.int64)
-        
-        print(f"📊 DEBUG: Raw scores: {raw_scores}, UIDs: {uids_np}")
 
         # ------------------------------------------------------------------
         # 4. performance history tracking and reward weight allocation
-        
-        # Determine winners from current run
+
         if len(raw_scores) > 0:
             max_score = raw_scores.max()
             current_winners = uids_np[raw_scores == max_score]
-            
-            # Update victory history for all evaluated UIDs
+
             for i, uid in enumerate(uids_np):
                 won = uid in current_winners
                 score = raw_scores[i]
                 update_victory_history(history, uid, won, score)
-            
+
             save_victory_history(history)
-        
+
+        normalized_scores_dict = calculate_all_normalized_scores(uids_np.tolist())
+
         if WINNER_TAKE_ALL:
-            # Use average score-based winner-take-all system
-            score_metrics = calculate_score_metrics(history, uids_np)
-            if score_metrics:
-                uids_out, boosted, debug_info = compute_winner_take_all_weights(score_metrics)
+            if ENABLE_PER_TYPE_NORMALIZATION and normalized_scores_dict:
+                sorted_items = sorted(normalized_scores_dict.items(), key=lambda x: (-x[1], x[0]))
+                uids_out = np.array([uid for uid, _ in sorted_items], dtype=np.int64)
+
+                if sorted_items[0][1] > 0:
+                    boosted = np.zeros(len(sorted_items), dtype=np.float32)
+                    boosted[0] = 1.0
+                else:
+                    boosted = np.zeros(len(sorted_items), dtype=np.float32)
+
+                debug_info = {
+                    "winner_uid": sorted_items[0][0] if sorted_items[0][1] > 0 else None,
+                    "winner_score": sorted_items[0][1] if sorted_items else 0.0,
+                }
+                reward_system = "Winner-Take-All (Per-Type Normalized)"
             else:
-                # Fallback to single-run if no history
-                uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
-            reward_system = "Winner-Take-All (Avg Score-Based)"
+                score_metrics = calculate_score_metrics(history, uids_np)
+                if score_metrics:
+                    uids_out, boosted, debug_info = compute_winner_take_all_weights(score_metrics)
+                else:
+                    uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
+                reward_system = "Winner-Take-All (Avg Score-Based)"
         else:
-            # Use tiered reward system: balanced distribution across top performers
             uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
             reward_system = "Tiered"
-        
-        # Create UID to current score mapping BEFORE reordering
+
         uid_to_score = dict(zip(uids_np, raw_scores))
-        
-        uids_np = uids_out  # use reordered UIDs from reward system
-        
-        # Professional round summary
+        uids_np = uids_out
+
         winner_uid = debug_info.get('winner_uid')
         if winner_uid is not None:
-            winner_avg_score = debug_info.get('winner_score', 0.0)
-            current_score = uid_to_score.get(winner_uid, 0.0)
-            
-            bt.logging.info(f"ROUND {self.forward_count}: Winner UID {winner_uid} (score: {current_score:.4f}, avg: {winner_avg_score:.4f})")
-            
-            # Top 5 performers by average
-            if score_metrics:
-                sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0]))
-                top_5 = sorted_metrics[:5]
-                top_5_str = ", ".join([f"UID {uid} ({avg:.4f})" for uid, avg, _ in top_5])
-                bt.logging.info(f"TOP 5: {top_5_str}")
+            winner_normalized = normalized_scores_dict.get(winner_uid, 0.0)
+            current_raw = uid_to_score.get(winner_uid, 0.0)
+
+            bt.logging.info(f"🏆 ROUND {self.forward_count}: Winner UID {winner_uid} | Normalized: {winner_normalized:.4f}, Current Raw: {current_raw:.4f}")
+
+            top_5 = sorted(normalized_scores_dict.items(), key=lambda x: (-x[1], x[0]))[:5]
+            top_5_str = ", ".join([f"UID {uid} ({score:.4f})" for uid, score in top_5])
+            bt.logging.info(f"📊 TOP 5 (Normalized): {top_5_str}")
         else:
-            bt.logging.info(f"ROUND {self.forward_count}: No winner (all miners scored 0.0)")
+            bt.logging.info(f"ROUND {self.forward_count}: No winner (all scores 0.0)")
 
         # ------------------------------------------------------------------
         # 5. (NEW) optional burn logic
