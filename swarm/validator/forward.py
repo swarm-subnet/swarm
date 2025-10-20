@@ -519,24 +519,24 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 # 3.  Performance history tracking system
 # ──────────────────────────────────────────────────────────────────────────
 
-def _log_uid_performance(uid: int, current_score: float, history: dict) -> None:
-    """Log simple UID performance summary after evaluation"""
-    uid_str = str(uid)
-    
-    if uid_str in history and history[uid_str]["runs"]:
-        runs = history[uid_str]["runs"]
-        # Include current score and enforce N_RUNS_HISTORY rolling window
-        all_scores = [run["score"] for run in runs] + [current_score]
-        # Keep only last N_RUNS_HISTORY runs
-        if len(all_scores) > N_RUNS_HISTORY:
-            all_scores = all_scores[-N_RUNS_HISTORY:]
-        
-        avg_score = sum(all_scores) / len(all_scores)
-        total_runs = len(all_scores)
-        
-        bt.logging.info(f"📊 UID {uid:3d} | avg: {avg_score:.4f} ({total_runs} runs)")
-    else:
-        bt.logging.info(f"📊 UID {uid:3d} | current: {current_score:.4f} (first evaluation)")
+def _log_normalized_score(uid: int) -> None:
+    """Log normalized score with per-type breakdown after evaluation"""
+    history = load_uid_history(uid)
+    normalized_score = calculate_normalized_score(history)
+
+    if ENABLE_PER_TYPE_NORMALIZATION:
+        type_info = []
+        for type_id in [1, 2, 3]:
+            type_str = str(type_id)
+            type_data = history["runs_by_type"][type_str]
+            weight = CHALLENGE_TYPE_DISTRIBUTION[type_id]
+            type_info.append(
+                f"T{type_id}({weight:.0%}):{type_data['count']}runs/{type_data['avg_score']:.3f}avg"
+            )
+
+        bt.logging.info(
+            f"UID {uid:3d} | normalized: {normalized_score:.4f} | {' | '.join(type_info)}"
+        )
 
 def load_victory_history() -> dict:
     """Load victory history from temp file."""
@@ -686,26 +686,10 @@ def calculate_normalized_score(history: dict) -> float:
 
 def calculate_all_normalized_scores(uids: List[int]) -> Dict[int, float]:
     scores = {}
-
     for uid in uids:
         history = load_uid_history(uid)
         normalized_score = calculate_normalized_score(history)
         scores[uid] = normalized_score
-
-        if ENABLE_PER_TYPE_NORMALIZATION:
-            type_info = []
-            for type_id in [1, 2, 3]:
-                type_str = str(type_id)
-                type_data = history["runs_by_type"][type_str]
-                weight = CHALLENGE_TYPE_DISTRIBUTION[type_id]
-                type_info.append(
-                    f"T{type_id}({weight:.0%}):{type_data['count']}runs/{type_data['avg_score']:.3f}avg"
-                )
-
-            bt.logging.info(
-                f"UID {uid:3d} | normalized: {normalized_score:.4f} | {' | '.join(type_info)}"
-            )
-
     return scores
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -849,7 +833,7 @@ async def forward(self) -> None:
                     results.append(result)
 
                     update_per_type_history(uid, task.challenge_type, result.score, result.success, result.time_sec)
-                    _log_uid_performance(uid, result.score, history)
+                    _log_normalized_score(uid)
 
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
@@ -966,10 +950,11 @@ async def forward(self) -> None:
             # prepend UID 0 with the burn weight
             uids_np   = np.concatenate(([UID_ZERO], uids_np))
             boosted   = np.concatenate(([BURN_FRACTION], boosted))
+            non_zero_miners = np.count_nonzero(boosted[1:])
 
             bt.logging.info(
                 f"Burn enabled → {BURN_FRACTION:.0%} to UID 0, "
-                f"{KEEP_FRACTION:.0%} distributed over {len(boosted)-1} miners."
+                f"{KEEP_FRACTION:.0%} to {non_zero_miners} winner{'s' if non_zero_miners != 1 else ''}"
             )
         else:
             # burn disabled – weights are raw boosted scores
