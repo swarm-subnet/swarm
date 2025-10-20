@@ -1,15 +1,12 @@
 #!/bin/bash
-# setup.sh — create venv, install Python deps 
-# TODO - REVIEW
+# setup.sh — create venv, install Python deps
 set -e
 
-# Print error and exit
 handle_error() {
   echo -e "\e[31m[ERROR]\e[0m $1" >&2
   exit 1
 }
 
-# Print success message
 success_msg() {
   echo -e "\e[32m[SUCCESS]\e[0m $1"
 }
@@ -48,9 +45,6 @@ install_python_reqs() {
 
   pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
-
-  pip install "swarm-gym-pybullet-drones@git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git"
-    
   success_msg "Dependencies installed."
 }
 
