@@ -25,13 +25,14 @@ import base64
 
 from ..core.model_verify import (
     load_blacklist,
-    save_blacklist, 
+    save_blacklist,
     add_to_blacklist,
     save_fake_model_for_analysis,
 )
 from .task_gen import random_task
-from .docker.docker_evaluator import DockerSecureEvaluator  # For _base_ready check
+from .docker.docker_evaluator import DockerSecureEvaluator
 from .rewards_system import compute_tiered_weights
+from .seed_manager import SynchronizedSeedManager
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -50,6 +51,8 @@ from swarm.constants import (
     AVGS_DIR,
     ENABLE_PER_TYPE_NORMALIZATION,
     CHALLENGE_TYPE_DISTRIBUTION,
+    USE_SYNCHRONIZED_SEEDS,
+    SEED_WINDOW_MINUTES,
 )
 
 
@@ -762,7 +765,18 @@ async def forward(self) -> None:
 
         # ------------------------------------------------------------------
         # 1. build a secret task
-        task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+        if USE_SYNCHRONIZED_SEEDS:
+            if not hasattr(self, 'seed_manager'):
+                secret_key = os.getenv("VALIDATOR_SECRET_KEY")
+                if not secret_key:
+                    bt.logging.error("VALIDATOR_SECRET_KEY not set in environment")
+                    raise ValueError("VALIDATOR_SECRET_KEY required for synchronized seeds")
+                self.seed_manager = SynchronizedSeedManager(secret_key, SEED_WINDOW_MINUTES)
+
+            seed, window_start, window_end = self.seed_manager.generate_seed()
+            task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=seed)
+        else:
+            task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
         
         # ------------------------------------------------------------------
         # 2. sample miners & secure their models
@@ -1005,4 +1019,10 @@ async def forward(self) -> None:
 
     # ----------------------------------------------------------------------
     # 7. pace the main loop
-    await asyncio.sleep(FORWARD_SLEEP_SEC)
+    if USE_SYNCHRONIZED_SEEDS and hasattr(self, 'seed_manager'):
+        if self.seed_manager.should_wait():
+            self.seed_manager.wait_for_next_window()
+        else:
+            await asyncio.sleep(FORWARD_SLEEP_SEC)
+    else:
+        await asyncio.sleep(FORWARD_SLEEP_SEC)
