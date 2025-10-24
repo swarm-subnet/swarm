@@ -807,12 +807,12 @@ async def forward(self) -> None:
         print(f"🚀 DEBUG: Starting Docker evaluation for {len(model_paths)} models")
 
         # Use pre-initialized Docker evaluator
+        history = load_victory_history()
+
         if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
             bt.logging.error("Docker evaluator not ready - falling back to no evaluation")
             results = [ValidationResult(uid, False, 0.0, 0.0) for uid in model_paths.keys()]
         else:
-            # Load history for UID performance tracking
-            history = load_victory_history()
             
             # Evaluate models sequentially in Docker containers
             results = []
