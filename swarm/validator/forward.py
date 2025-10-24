@@ -25,13 +25,14 @@ import base64
 
 from ..core.model_verify import (
     load_blacklist,
-    save_blacklist, 
+    save_blacklist,
     add_to_blacklist,
     save_fake_model_for_analysis,
 )
 from .task_gen import random_task
-from .docker.docker_evaluator import DockerSecureEvaluator  # For _base_ready check
+from .docker.docker_evaluator import DockerSecureEvaluator
 from .rewards_system import compute_tiered_weights
+from .seed_manager import SynchronizedSeedManager
 from swarm.constants import (
     SIM_DT,
     HORIZON_SEC,
@@ -50,6 +51,8 @@ from swarm.constants import (
     AVGS_DIR,
     ENABLE_PER_TYPE_NORMALIZATION,
     CHALLENGE_TYPE_DISTRIBUTION,
+    USE_SYNCHRONIZED_SEEDS,
+    SEED_WINDOW_MINUTES,
 )
 
 
@@ -449,7 +452,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
                     continue
                 print(f"Miner {uid} returned {len(responses)} responses {responses}")
 
-                syn = responses[0]              # <- get the first PolicySynapse
+                syn = responses[0]
 
                 if not syn.ref:
                     bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
@@ -760,38 +763,50 @@ async def forward(self) -> None:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
-        # ------------------------------------------------------------------
-        # 1. build a secret task
-        task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
-        
-        # ------------------------------------------------------------------
-        # 2. sample miners & secure their models
+        if USE_SYNCHRONIZED_SEEDS:
+            if not hasattr(self, 'seed_manager'):
+                secret_key = os.getenv("VALIDATOR_SECRET_KEY")
+                if not secret_key:
+                    bt.logging.error("VALIDATOR_SECRET_KEY not set in environment")
+                    raise ValueError("VALIDATOR_SECRET_KEY required for synchronized seeds")
+                self.seed_manager = SynchronizedSeedManager(secret_key, SEED_WINDOW_MINUTES)
+
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
 
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
-        print(f"🔍 DEBUG: Verified models: {list(model_paths.keys())}")
-        
-        # Calculate distance from start to goal  
+
+        if not model_paths:
+            bt.logging.warning("No models available this cycle")
+            if USE_SYNCHRONIZED_SEEDS and hasattr(self, 'seed_manager'):
+                self.seed_manager.wait_for_next_window()
+            else:
+                await asyncio.sleep(FORWARD_SLEEP_SEC)
+            return
+
+        if USE_SYNCHRONIZED_SEEDS:
+            seed, window_start, window_end = self.seed_manager.generate_seed()
+            task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=seed)
+        else:
+            task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+
         start_pos = np.array(task.start)
         goal_pos = np.array(task.goal)
         distance = np.linalg.norm(goal_pos - start_pos)
-        
-        # Map challenge type to name
+
         challenge_type_names = {
             1: "Type 1 (Standard)",
             2: "Type 2 (higher obstacles)",
             3: "Type 3 (Easy)"
         }
         type_name = challenge_type_names.get(task.challenge_type, f"Type {task.challenge_type}")
-        
-        bt.logging.info(f"Cycle seed: {task.map_seed}, Distance: {distance:.2f}m, Challenge: {type_name}")
 
-        # ------------------------------------------------------------------
-        # 3. Docker-based secure evaluation (sequential)
+        bt.logging.info(f"Seed: {task.map_seed}, Distance: {distance:.2f}m, Challenge: {type_name}")
+
         print(f"🚀 DEBUG: Starting Docker evaluation for {len(model_paths)} models")
 
+        # Use pre-initialized Docker evaluator
         history = load_victory_history()
 
         if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
@@ -848,11 +863,10 @@ async def forward(self) -> None:
             
             # Cleanup orphaned containers
             self.docker_evaluator.cleanup()
-        
+
         print(f"✅ DEBUG: Docker evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
-            # Log empty forward to wandb
             if hasattr(self, 'wandb_helper') and self.wandb_helper:
                 try:
                     self.wandb_helper.log_forward_results(
@@ -863,7 +877,10 @@ async def forward(self) -> None:
                     )
                 except Exception as e:
                     bt.logging.debug(f"Wandb empty forward logging failed: {e}")
-            await asyncio.sleep(FORWARD_SLEEP_SEC)
+            if USE_SYNCHRONIZED_SEEDS and hasattr(self, 'seed_manager'):
+                self.seed_manager.wait_for_next_window()
+            else:
+                await asyncio.sleep(FORWARD_SLEEP_SEC)
             return
 
         raw_scores = np.asarray([r.score for r in results], dtype=np.float32)
@@ -972,13 +989,8 @@ async def forward(self) -> None:
             except Exception as e:
                 bt.logging.debug(f"Wandb forward logging failed: {e}")
 
-        # ------------------------------------------------------------------
-        # 7. push weights on‑chain (store locally then call set_weights later)
-        print(f"🎯 DEBUG: Setting weights - UIDs: {uids_np}, Scores: {boosted}")  # Temporary debug
+        print(f"🎯 DEBUG: Setting weights - UIDs: {uids_np}, Scores: {boosted}")
         self.update_scores(boosted, uids_np)
-        
-        # ------------------------------------------------------------------
-        # 8. log weight updates to wandb
         if hasattr(self, 'wandb_helper') and self.wandb_helper:
             try:
                 self.wandb_helper.log_weight_update(
@@ -987,8 +999,8 @@ async def forward(self) -> None:
                 )
             except Exception as e:
                 bt.logging.debug(f"Wandb weight logging failed: {e}")
-                
-        print(f"✅ DEBUG: Weights updated successfully! Forward cycle complete.")  # Temporary debug
+
+        print(f"✅ DEBUG: Weights updated successfully! Forward cycle complete.")
 
     except Exception as e:
         bt.logging.error(f"Validator forward error: {e}")
@@ -1004,4 +1016,10 @@ async def forward(self) -> None:
 
     # ----------------------------------------------------------------------
     # 7. pace the main loop
-    await asyncio.sleep(FORWARD_SLEEP_SEC)
+    if USE_SYNCHRONIZED_SEEDS and hasattr(self, 'seed_manager'):
+        if self.seed_manager.should_wait():
+            self.seed_manager.wait_for_next_window()
+        else:
+            await asyncio.sleep(FORWARD_SLEEP_SEC)
+    else:
+        await asyncio.sleep(FORWARD_SLEEP_SEC)

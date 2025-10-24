@@ -16,6 +16,13 @@ QUERY_BLOB_TIMEOUT = 30.0               # Model blob download timeout (seconds)
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
 
 # =============================================================================
+# SEED SYNCHRONIZATION
+# =============================================================================
+
+USE_SYNCHRONIZED_SEEDS = True           # Enable synchronized seed generation across validators
+SEED_WINDOW_MINUTES = 10                # Time window duration for seed synchronization (minutes)
+
+# =============================================================================
 # SIMULATION & PHYSICS
 # =============================================================================
 
@@ -94,7 +101,7 @@ UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
-N_RUNS_HISTORY = 250                     # Number of runs to track for victory average
+N_RUNS_HISTORY = 50                     # Number of runs to track for victory average
 
 # =============================================================================
 # LOW-PERFORMER FILTERING
