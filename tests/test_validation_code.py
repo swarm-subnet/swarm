@@ -13,7 +13,7 @@ from swarm.constants import SIM_DT, HORIZON_SEC
 from swarm.utils.env_factory import make_env
 
 
-MODEL_PATH = Path("/root/swarm/miner_models_v2/UID_117.zip")
+MODEL_PATH = Path("/home/wsl/subnets/sn124/swarm/miner_models_v2/UID_117.zip")
 SNAPSHOT_PATH = Path(__file__).with_name("test_validation_code_results.json")
 SEEDS = tuple(range(1, 101))
 REFERENCE_UID = 117
