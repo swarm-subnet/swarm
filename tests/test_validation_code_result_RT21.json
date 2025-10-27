@@ -1,0 +1,601 @@
+[
+  {
+    "score": 0.955217,
+    "seed": 1,
+    "success": true,
+    "time_sec": 9.92
+  },
+  {
+    "score": 0.0,
+    "seed": 2,
+    "success": false,
+    "time_sec": 6.34
+  },
+  {
+    "score": 0.937928,
+    "seed": 3,
+    "success": true,
+    "time_sec": 10.92
+  },
+  {
+    "score": 0.97605,
+    "seed": 4,
+    "success": true,
+    "time_sec": 8.02
+  },
+  {
+    "score": 0.964822,
+    "seed": 5,
+    "success": true,
+    "time_sec": 11.44
+  },
+  {
+    "score": 0.903754,
+    "seed": 6,
+    "success": true,
+    "time_sec": 11.04
+  },
+  {
+    "score": 0.950791,
+    "seed": 7,
+    "success": true,
+    "time_sec": 12.1
+  },
+  {
+    "score": 0.950671,
+    "seed": 8,
+    "success": true,
+    "time_sec": 9.34
+  },
+  {
+    "score": 0.960089,
+    "seed": 9,
+    "success": true,
+    "time_sec": 8.6
+  },
+  {
+    "score": 0.0,
+    "seed": 10,
+    "success": false,
+    "time_sec": 9.12
+  },
+  {
+    "score": 0.979679,
+    "seed": 11,
+    "success": true,
+    "time_sec": 10.44
+  },
+  {
+    "score": 0.973081,
+    "seed": 12,
+    "success": true,
+    "time_sec": 7.88
+  },
+  {
+    "score": 0.958139,
+    "seed": 13,
+    "success": true,
+    "time_sec": 9.76
+  },
+  {
+    "score": 0.97236,
+    "seed": 14,
+    "success": true,
+    "time_sec": 9.62
+  },
+  {
+    "score": 0.902462,
+    "seed": 15,
+    "success": true,
+    "time_sec": 12.9
+  },
+  {
+    "score": 0.91212,
+    "seed": 16,
+    "success": true,
+    "time_sec": 12.14
+  },
+  {
+    "score": 0.975887,
+    "seed": 17,
+    "success": true,
+    "time_sec": 8.16
+  },
+  {
+    "score": 0.831473,
+    "seed": 18,
+    "success": true,
+    "time_sec": 15.68
+  },
+  {
+    "score": 0.943552,
+    "seed": 19,
+    "success": true,
+    "time_sec": 11.66
+  },
+  {
+    "score": 0.979404,
+    "seed": 20,
+    "success": true,
+    "time_sec": 9.28
+  },
+  {
+    "score": 0.886191,
+    "seed": 21,
+    "success": true,
+    "time_sec": 13.72
+  },
+  {
+    "score": 0.936371,
+    "seed": 22,
+    "success": true,
+    "time_sec": 10.4
+  },
+  {
+    "score": 0.95031,
+    "seed": 23,
+    "success": true,
+    "time_sec": 11.48
+  },
+  {
+    "score": 0.951672,
+    "seed": 24,
+    "success": true,
+    "time_sec": 9.48
+  },
+  {
+    "score": 0.938977,
+    "seed": 25,
+    "success": true,
+    "time_sec": 13.46
+  },
+  {
+    "score": 0.935779,
+    "seed": 26,
+    "success": true,
+    "time_sec": 10.08
+  },
+  {
+    "score": 0.981675,
+    "seed": 27,
+    "success": true,
+    "time_sec": 7.54
+  },
+  {
+    "score": 0.938414,
+    "seed": 28,
+    "success": true,
+    "time_sec": 10.16
+  },
+  {
+    "score": 0.0,
+    "seed": 29,
+    "success": false,
+    "time_sec": 5.76
+  },
+  {
+    "score": 0.912816,
+    "seed": 30,
+    "success": true,
+    "time_sec": 11.3
+  },
+  {
+    "score": 0.962649,
+    "seed": 31,
+    "success": true,
+    "time_sec": 8.94
+  },
+  {
+    "score": 0.945693,
+    "seed": 32,
+    "success": true,
+    "time_sec": 10.96
+  },
+  {
+    "score": 0.985729,
+    "seed": 33,
+    "success": true,
+    "time_sec": 9.8
+  },
+  {
+    "score": 0.929551,
+    "seed": 34,
+    "success": true,
+    "time_sec": 15.02
+  },
+  {
+    "score": 0.902252,
+    "seed": 35,
+    "success": true,
+    "time_sec": 12.66
+  },
+  {
+    "score": 0.972156,
+    "seed": 36,
+    "success": true,
+    "time_sec": 12.84
+  },
+  {
+    "score": 0.0,
+    "seed": 37,
+    "success": false,
+    "time_sec": 4.7
+  },
+  {
+    "score": 0.805045,
+    "seed": 38,
+    "success": true,
+    "time_sec": 17.66
+  },
+  {
+    "score": 0.950442,
+    "seed": 39,
+    "success": true,
+    "time_sec": 10.04
+  },
+  {
+    "score": 0.926562,
+    "seed": 40,
+    "success": true,
+    "time_sec": 13.78
+  },
+  {
+    "score": 0.859549,
+    "seed": 41,
+    "success": true,
+    "time_sec": 15.62
+  },
+  {
+    "score": 0.939594,
+    "seed": 42,
+    "success": true,
+    "time_sec": 13.8
+  },
+  {
+    "score": 0.925795,
+    "seed": 43,
+    "success": true,
+    "time_sec": 12.68
+  },
+  {
+    "score": 0.947415,
+    "seed": 44,
+    "success": true,
+    "time_sec": 10.86
+  },
+  {
+    "score": 0.910866,
+    "seed": 45,
+    "success": true,
+    "time_sec": 11.06
+  },
+  {
+    "score": 0.969869,
+    "seed": 46,
+    "success": true,
+    "time_sec": 7.92
+  },
+  {
+    "score": 0.940176,
+    "seed": 47,
+    "success": true,
+    "time_sec": 12.34
+  },
+  {
+    "score": 0.965778,
+    "seed": 48,
+    "success": true,
+    "time_sec": 14.12
+  },
+  {
+    "score": 0.887182,
+    "seed": 49,
+    "success": true,
+    "time_sec": 13.76
+  },
+  {
+    "score": 0.965409,
+    "seed": 50,
+    "success": true,
+    "time_sec": 11.16
+  },
+  {
+    "score": 0.938466,
+    "seed": 51,
+    "success": true,
+    "time_sec": 10.9
+  },
+  {
+    "score": 0.942672,
+    "seed": 52,
+    "success": true,
+    "time_sec": 14.86
+  },
+  {
+    "score": 0.859859,
+    "seed": 53,
+    "success": true,
+    "time_sec": 17.64
+  },
+  {
+    "score": 0.0,
+    "seed": 54,
+    "success": false,
+    "time_sec": 5.56
+  },
+  {
+    "score": 0.837925,
+    "seed": 55,
+    "success": true,
+    "time_sec": 18.1
+  },
+  {
+    "score": 0.843502,
+    "seed": 56,
+    "success": true,
+    "time_sec": 17.52
+  },
+  {
+    "score": 0.916126,
+    "seed": 57,
+    "success": true,
+    "time_sec": 12.76
+  },
+  {
+    "score": 0.96802,
+    "seed": 58,
+    "success": true,
+    "time_sec": 8.22
+  },
+  {
+    "score": 0.0,
+    "seed": 59,
+    "success": false,
+    "time_sec": 5.78
+  },
+  {
+    "score": 0.905744,
+    "seed": 60,
+    "success": true,
+    "time_sec": 13.48
+  },
+  {
+    "score": 0.974082,
+    "seed": 61,
+    "success": true,
+    "time_sec": 9.7
+  },
+  {
+    "score": 0.965175,
+    "seed": 62,
+    "success": true,
+    "time_sec": 11.04
+  },
+  {
+    "score": 0.94546,
+    "seed": 63,
+    "success": true,
+    "time_sec": 9.5
+  },
+  {
+    "score": 0.956377,
+    "seed": 64,
+    "success": true,
+    "time_sec": 9.06
+  },
+  {
+    "score": 0.981678,
+    "seed": 65,
+    "success": true,
+    "time_sec": 10.24
+  },
+  {
+    "score": 0.939212,
+    "seed": 66,
+    "success": true,
+    "time_sec": 14.52
+  },
+  {
+    "score": 0.973015,
+    "seed": 67,
+    "success": true,
+    "time_sec": 10.58
+  },
+  {
+    "score": 0.936421,
+    "seed": 68,
+    "success": true,
+    "time_sec": 9.76
+  },
+  {
+    "score": 0.926749,
+    "seed": 69,
+    "success": true,
+    "time_sec": 15.4
+  },
+  {
+    "score": 0.0,
+    "seed": 70,
+    "success": false,
+    "time_sec": 4.7
+  },
+  {
+    "score": 0.0,
+    "seed": 71,
+    "success": false,
+    "time_sec": 3.82
+  },
+  {
+    "score": 0.920927,
+    "seed": 72,
+    "success": true,
+    "time_sec": 14.18
+  },
+  {
+    "score": 0.936983,
+    "seed": 73,
+    "success": true,
+    "time_sec": 10.7
+  },
+  {
+    "score": 0.934256,
+    "seed": 74,
+    "success": true,
+    "time_sec": 10.4
+  },
+  {
+    "score": 0.878238,
+    "seed": 75,
+    "success": true,
+    "time_sec": 15.26
+  },
+  {
+    "score": 0.932901,
+    "seed": 76,
+    "success": true,
+    "time_sec": 12.5
+  },
+  {
+    "score": 0.922551,
+    "seed": 77,
+    "success": true,
+    "time_sec": 10.58
+  },
+  {
+    "score": 0.0,
+    "seed": 78,
+    "success": false,
+    "time_sec": 5.38
+  },
+  {
+    "score": 0.867357,
+    "seed": 79,
+    "success": true,
+    "time_sec": 16.16
+  },
+  {
+    "score": 0.954955,
+    "seed": 80,
+    "success": true,
+    "time_sec": 10.88
+  },
+  {
+    "score": 0.0,
+    "seed": 81,
+    "success": false,
+    "time_sec": 5.0
+  },
+  {
+    "score": 0.810994,
+    "seed": 82,
+    "success": true,
+    "time_sec": 18.82
+  },
+  {
+    "score": 0.95351,
+    "seed": 83,
+    "success": true,
+    "time_sec": 9.14
+  },
+  {
+    "score": 0.0,
+    "seed": 84,
+    "success": false,
+    "time_sec": 5.56
+  },
+  {
+    "score": 0.958678,
+    "seed": 85,
+    "success": true,
+    "time_sec": 9.76
+  },
+  {
+    "score": 0.0,
+    "seed": 86,
+    "success": false,
+    "time_sec": 2.3
+  },
+  {
+    "score": 0.92848,
+    "seed": 87,
+    "success": true,
+    "time_sec": 11.84
+  },
+  {
+    "score": 0.956784,
+    "seed": 88,
+    "success": true,
+    "time_sec": 9.52
+  },
+  {
+    "score": 0.847476,
+    "seed": 89,
+    "success": true,
+    "time_sec": 17.92
+  },
+  {
+    "score": 0.951351,
+    "seed": 90,
+    "success": true,
+    "time_sec": 9.0
+  },
+  {
+    "score": 0.947294,
+    "seed": 91,
+    "success": true,
+    "time_sec": 14.72
+  },
+  {
+    "score": 0.766316,
+    "seed": 92,
+    "success": true,
+    "time_sec": 20.38
+  },
+  {
+    "score": 0.977338,
+    "seed": 93,
+    "success": true,
+    "time_sec": 8.3
+  },
+  {
+    "score": 0.960772,
+    "seed": 94,
+    "success": true,
+    "time_sec": 8.5
+  },
+  {
+    "score": 0.0,
+    "seed": 95,
+    "success": false,
+    "time_sec": 6.1
+  },
+  {
+    "score": 0.896747,
+    "seed": 96,
+    "success": true,
+    "time_sec": 15.46
+  },
+  {
+    "score": 0.0,
+    "seed": 97,
+    "success": false,
+    "time_sec": 8.52
+  },
+  {
+    "score": 0.0,
+    "seed": 98,
+    "success": false,
+    "time_sec": 6.64
+  },
+  {
+    "score": 0.903351,
+    "seed": 99,
+    "success": true,
+    "time_sec": 15.18
+  },
+  {
+    "score": 0.892496,
+    "seed": 100,
+    "success": true,
+    "time_sec": 15.16
+  }
