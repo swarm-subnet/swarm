@@ -15,6 +15,7 @@ miner_env
 miner_env/
 miner_env/*
 swarm_env/*
+swarm_env_updated/*
 runs/
 ~
 ~/*
