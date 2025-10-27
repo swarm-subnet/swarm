@@ -222,8 +222,8 @@ class MovingDroneAviary(BaseRLAviary):
         Check if drone has collided with any obstacle using PyBullet contact points.
         Returns True if collision detected, False otherwise.
         
-        CRITICAL: Only contacts with the flat landing surface are allowed (landing on TAO badge).
-        All other contacts are collisions (platform sides, obstacles, etc.).
+        Allowed contacts: landing surface and platform support cylinder.
+        Collision contacts: obstacles, walls, ground plane.
         """
         drone_id = self.DRONE_IDS[0]
         contact_points = p.getContactPoints(
@@ -234,22 +234,18 @@ class MovingDroneAviary(BaseRLAviary):
         if not contact_points:
             return False
         
-        # Get the landing surface body ID from the environment
         landing_surface_uid = getattr(self, '_landing_surface_uid', None)
+        platform_support_uid = getattr(self, '_platform_support_uid', None)
         
-        # Check each contact point
         for contact in contact_points:
-            body_b = contact[2]  # Second body in contact
-            if body_b != -1:  # -1 means no contact or ground plane
-                # Additional check: ensure meaningful contact force
+            body_b = contact[2]
+            if body_b != -1:
                 normal_force = contact[9]
-                if normal_force > 0.01:  # Minimum threshold to avoid numerical noise
-                    
-                    # CRITICAL FIX: Only allow contacts with the flat landing surface
+                if normal_force > 0.01:
                     if landing_surface_uid is not None and body_b == landing_surface_uid:
-                        continue  # This contact is allowed (landing on TAO badge surface)
-                    
-                    # All other contacts are collisions (platform side, obstacles, etc.)
+                        continue
+                    if platform_support_uid is not None and body_b == platform_support_uid:
+                        continue
                     return True
         
         return False
