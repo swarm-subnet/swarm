@@ -48,6 +48,7 @@ from swarm.constants import (
     MODEL_DIR,
     WINNER_TAKE_ALL,
     N_RUNS_HISTORY,
+    MIN_RUNS_FOR_WEIGHTS,
     AVGS_DIR,
     ENABLE_PER_TYPE_NORMALIZATION,
     CHALLENGE_TYPE_DISTRIBUTION,
@@ -904,26 +905,103 @@ async def forward(self) -> None:
 
         if WINNER_TAKE_ALL:
             if ENABLE_PER_TYPE_NORMALIZATION and normalized_scores_dict:
-                sorted_items = sorted(normalized_scores_dict.items(), key=lambda x: (-x[1], x[0]))
-                uids_out = np.array([uid for uid, _ in sorted_items], dtype=np.int64)
+                eligible_scores = {}
+                ineligible_uids = []
 
-                if sorted_items[0][1] > 0:
-                    boosted = np.zeros(len(sorted_items), dtype=np.float32)
-                    boosted[0] = 1.0
+                for uid, score in normalized_scores_dict.items():
+                    uid_history = load_uid_history(uid)
+                    if uid_history["total_runs"] >= MIN_RUNS_FOR_WEIGHTS:
+                        eligible_scores[uid] = score
+                    else:
+                        ineligible_uids.append(uid)
+                        bt.logging.info(f"UID {uid} ineligible: {uid_history['total_runs']}/{MIN_RUNS_FOR_WEIGHTS} runs")
+
+                if eligible_scores:
+                    sorted_items = sorted(eligible_scores.items(), key=lambda x: (-x[1], x[0]))
+                    uids_out = np.array([uid for uid, _ in sorted_items], dtype=np.int64)
+
+                    if sorted_items[0][1] > 0:
+                        boosted = np.zeros(len(sorted_items), dtype=np.float32)
+                        boosted[0] = 1.0
+                    else:
+                        boosted = np.zeros(len(sorted_items), dtype=np.float32)
+
+                    if ineligible_uids:
+                        uids_out = np.concatenate([uids_out, np.array(ineligible_uids, dtype=np.int64)])
+                        boosted = np.concatenate([boosted, np.zeros(len(ineligible_uids), dtype=np.float32)])
+
+                    debug_info = {
+                        "winner_uid": sorted_items[0][0] if sorted_items[0][1] > 0 else None,
+                        "winner_score": sorted_items[0][1] if sorted_items else 0.0,
+                    }
                 else:
-                    boosted = np.zeros(len(sorted_items), dtype=np.float32)
+                    bt.logging.warning(f"No miners meet {MIN_RUNS_FOR_WEIGHTS} run requirement")
+                    uids_out = np.array(list(normalized_scores_dict.keys()), dtype=np.int64)
+                    boosted = np.zeros(len(uids_out), dtype=np.float32)
+                    debug_info = {
+                        "winner_uid": None,
+                        "winner_score": 0.0,
+                    }
 
-                debug_info = {
-                    "winner_uid": sorted_items[0][0] if sorted_items[0][1] > 0 else None,
-                    "winner_score": sorted_items[0][1] if sorted_items else 0.0,
-                }
                 reward_system = "Winner-Take-All (Per-Type Normalized)"
             else:
                 score_metrics = calculate_score_metrics(history, uids_np)
+
                 if score_metrics:
-                    uids_out, boosted, debug_info = compute_winner_take_all_weights(score_metrics)
+                    eligible_metrics = []
+                    ineligible_uids = []
+
+                    for uid, avg_score, victory_rate in score_metrics:
+                        uid_history = load_uid_history(uid)
+                        if uid_history["total_runs"] >= MIN_RUNS_FOR_WEIGHTS:
+                            eligible_metrics.append((uid, avg_score, victory_rate))
+                        else:
+                            ineligible_uids.append(uid)
+                            bt.logging.info(f"UID {uid} ineligible: {uid_history['total_runs']}/{MIN_RUNS_FOR_WEIGHTS} runs")
+
+                    if eligible_metrics:
+                        uids_out, boosted, debug_info = compute_winner_take_all_weights(eligible_metrics)
+
+                        if ineligible_uids:
+                            uids_out = np.concatenate([uids_out, np.array(ineligible_uids, dtype=np.int64)])
+                            boosted = np.concatenate([boosted, np.zeros(len(ineligible_uids), dtype=np.float32)])
+                    else:
+                        bt.logging.warning(f"No miners meet {MIN_RUNS_FOR_WEIGHTS} run requirement")
+                        all_uids = [uid for uid, _, _ in score_metrics]
+                        uids_out = np.array(all_uids, dtype=np.int64)
+                        boosted = np.zeros(len(uids_out), dtype=np.float32)
+                        debug_info = {
+                            "winner_uid": None,
+                            "winner_score": 0.0,
+                        }
                 else:
-                    uids_out, boosted, debug_info = compute_winner_take_all_weights([(uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0) for i, uid in enumerate(uids_np) if raw_scores[i] > 0])
+                    eligible_metrics = []
+                    ineligible_uids = []
+
+                    for i, uid in enumerate(uids_np):
+                        if raw_scores[i] > 0:
+                            uid_history = load_uid_history(uid)
+                            if uid_history["total_runs"] >= MIN_RUNS_FOR_WEIGHTS:
+                                eligible_metrics.append((uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0))
+                            else:
+                                ineligible_uids.append(uid)
+                                bt.logging.info(f"UID {uid} ineligible: {uid_history['total_runs']}/{MIN_RUNS_FOR_WEIGHTS} runs")
+
+                    if eligible_metrics:
+                        uids_out, boosted, debug_info = compute_winner_take_all_weights(eligible_metrics)
+
+                        if ineligible_uids:
+                            uids_out = np.concatenate([uids_out, np.array(ineligible_uids, dtype=np.int64)])
+                            boosted = np.concatenate([boosted, np.zeros(len(ineligible_uids), dtype=np.float32)])
+                    else:
+                        bt.logging.warning(f"No miners meet {MIN_RUNS_FOR_WEIGHTS} run requirement")
+                        uids_out = np.array([uid for i, uid in enumerate(uids_np) if raw_scores[i] > 0], dtype=np.int64)
+                        boosted = np.zeros(len(uids_out), dtype=np.float32)
+                        debug_info = {
+                            "winner_uid": None,
+                            "winner_score": 0.0,
+                        }
+
                 reward_system = "Winner-Take-All (Avg Score-Based)"
         else:
             uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
