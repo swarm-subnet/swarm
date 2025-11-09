@@ -79,23 +79,53 @@ class MovingDroneAviary(BaseRLAviary):
             act          = act,
         )
 
-        # ‑‑‑ extend observation with obstacle distances (16-D) + goal vector (3-D) ‑‑‑
-        obs_space = cast(spaces.Box, self.observation_space)
-        old_low,  old_high  = obs_space.low, obs_space.high
+        if self.OBS_TYPE == ObservationType.RGB:
+            enhanced_width, enhanced_height = 480, 360
+            self.IMG_RES = np.array([enhanced_width, enhanced_height])
+            self.rgb = np.zeros((self.NUM_DRONES, enhanced_height, enhanced_width, 4), dtype=np.uint8)
+            self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
+            self.seg = np.zeros((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.uint8)
+            
+            parent_space = cast(spaces.Box, self.observation_space)
+            img_shape = (enhanced_height, enhanced_width, 4)
 
-        # Distance sensors: 16 dimensions, range [0.0, 1.0] (scaled from meters)
-        dist_low = np.zeros((old_low.shape[0], 16), dtype=np.float32)
-        dist_high = np.ones((old_high.shape[0], 16), dtype=np.float32)  # scaled to [0.0, 1.0]
+            state_dim = 12 + self.ACTION_BUFFER_SIZE * 4
 
-        # Goal vector: 3 dimensions, unlimited range
-        goal_low = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
-        goal_high = +np.ones((old_high.shape[0], 3), dtype=np.float32) * np.inf
+            self.observation_space = spaces.Dict({
+                "rgb": spaces.Box(
+                    low=0,
+                    high=255,
+                    shape=img_shape,
+                    dtype=np.uint8
+                ),
+                "state": spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(state_dim,),
+                    dtype=np.float32
+                ),
+                "goal": spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(3,),
+                    dtype=np.float32
+                )
+            })
+        else:
+            obs_space = cast(spaces.Box, self.observation_space)
+            old_low,  old_high  = obs_space.low, obs_space.high
 
-        self.observation_space = spaces.Box(
-            low   = np.concatenate([old_low, dist_low, goal_low], axis=1),
-            high  = np.concatenate([old_high, dist_high, goal_high], axis=1),
-            dtype = np.float32,
-        )
+            dist_low = np.zeros((old_low.shape[0], 16), dtype=np.float32)
+            dist_high = np.ones((old_high.shape[0], 16), dtype=np.float32)
+
+            goal_low = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
+            goal_high = +np.ones((old_high.shape[0], 3), dtype=np.float32) * np.inf
+
+            self.observation_space = spaces.Box(
+                low   = np.concatenate([old_low, dist_low, goal_low], axis=1),
+                high  = np.concatenate([old_high, dist_high, goal_high], axis=1),
+                dtype = np.float32,
+            )
 
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
@@ -140,6 +170,60 @@ class MovingDroneAviary(BaseRLAviary):
         # Detection range and small origin offset to avoid self-hits
         self.max_ray_distance: float = MAX_RAY_DISTANCE
         self._ray_origin_offset: float = DRONE_HULL_RADIUS
+
+    def _getDroneImages(self, nth_drone, segmentation: bool = True):
+        if self.OBS_TYPE != ObservationType.RGB:
+            return super()._getDroneImages(nth_drone, segmentation)
+        
+        if self.IMG_RES is None:
+            print("[ERROR] in MovingDroneAviary._getDroneImages(), IMG_RES not set")
+            exit()
+        
+        cli = getattr(self, "CLIENT", 0)
+        drone_pos = self.pos[nth_drone, :]
+        rot_mat = np.array(p.getMatrixFromQuaternion(self.quat[nth_drone, :])).reshape(3, 3)
+        
+        forward = rot_mat @ np.array([1.0, 0.0, 0.0])
+        forward = forward / np.linalg.norm(forward)
+        up = rot_mat @ np.array([0.0, 0.0, 1.0])
+        
+        camera_offset = 0.35
+        camera_pos = drone_pos + forward * camera_offset + up * 0.05
+        
+        target = camera_pos + forward * 20.0
+        
+        DRONE_CAM_VIEW = p.computeViewMatrix(
+            cameraEyePosition=camera_pos,
+            cameraTargetPosition=target,
+            cameraUpVector=[0, 0, 1],
+            physicsClientId=cli
+        )
+        
+        aspect = self.IMG_RES[0] / self.IMG_RES[1]
+        DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
+            fov=90.0,
+            aspect=aspect,
+            nearVal=0.05,
+            farVal=1000.0,
+            physicsClientId=cli
+        )
+        
+        SEG_FLAG = p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX if segmentation else p.ER_NO_SEGMENTATION_MASK
+        [w, h, rgb, dep, seg] = p.getCameraImage(
+            width=self.IMG_RES[0],
+            height=self.IMG_RES[1],
+            shadow=1,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+            viewMatrix=DRONE_CAM_VIEW,
+            projectionMatrix=DRONE_CAM_PRO,
+            flags=SEG_FLAG,
+            physicsClientId=cli
+        )
+        
+        rgb = np.reshape(rgb, (h, w, 4))
+        dep = np.reshape(dep, (h, w))
+        seg = np.reshape(seg, (h, w))
+        return rgb, dep, seg
 
     def _get_obstacle_distances(self, drone_position: np.ndarray, drone_orientation: np.ndarray) -> np.ndarray:
         """
@@ -266,7 +350,6 @@ class MovingDroneAviary(BaseRLAviary):
         self._collision  = False
         self._t_to_goal  = None
 
-        # baseline score (t = 0, e = 0)
         self._prev_score = flight_reward(
             success = False,
             t       = 0.0,
@@ -274,7 +357,35 @@ class MovingDroneAviary(BaseRLAviary):
             task    = None,
         )
 
+        self._spawn_task_world()
+
         return obs, info
+
+    def _spawn_task_world(self):
+        """Rebuild the procedural world defined by self.task."""
+        from swarm.core.env_builder import build_world
+        
+        cli = getattr(self, "CLIENT", 0)
+        platform_support_uid, landing_surface_uid = build_world(
+            seed=self.task.map_seed,
+            cli=cli,
+            start=self.task.start,
+            goal=self.task.goal,
+            challenge_type=self.task.challenge_type,
+        )
+        
+        self._platform_support_uid = platform_support_uid
+        self._landing_surface_uid = landing_surface_uid
+        
+        start_xyz = np.asarray(self.task.start, dtype=float)
+        start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
+        
+        p.resetBasePositionAndOrientation(
+            self.DRONE_IDS[0],
+            start_xyz,
+            start_quat,
+            physicsClientId=cli,
+        )
 
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
@@ -368,23 +479,55 @@ class MovingDroneAviary(BaseRLAviary):
         Distances are computed from the **current PyBullet pose** and
         then scaled to [0,1] by dividing by `max_ray_distance` (10 m).
         """
-        base_obs: NDArray[np.float32] | None = super()._computeObs()  # shape (1, 112) in your setup
-        if base_obs is None:
-            return np.zeros((1, 131), dtype=np.float32)
+        if self.OBS_TYPE == ObservationType.RGB:
+            rgb_obs = super()._computeObs()
+            if rgb_obs is None:
+                # Use dynamic dimensions from IMG_RES
+                h, w = (self.IMG_RES[1], self.IMG_RES[0]) if self.IMG_RES is not None else (48, 64)
+                return {
+                    "rgb": np.zeros((h, w, 4), dtype=np.uint8),
+                    "state": np.zeros((112,), dtype=np.float32),
+                    "goal": np.zeros((3,), dtype=np.float32)
+                }
 
-        # --- Get exact pose from PyBullet to stay in sync with physics ---
-        uid = self.DRONE_IDS[0]
-        pos_w, orn_w = p.getBasePositionAndOrientation(uid, physicsClientId=getattr(self, "CLIENT", 0))
-        pos_w = np.asarray(pos_w, dtype=float)
-        rot_m = np.asarray(p.getMatrixFromQuaternion(orn_w), dtype=float).reshape(3, 3)
+            img = rgb_obs[0].astype(np.uint8)
 
-        # --- Cast rays from that pose ---
-        distances_m = self._get_obstacle_distances(pos_w, rot_m).reshape(1, 16)
+            uid = self.DRONE_IDS[0]
+            pos_w, orn_w = p.getBasePositionAndOrientation(uid, physicsClientId=getattr(self, "CLIENT", 0))
+            pos_w = np.asarray(pos_w, dtype=float)
 
-        # Scale to [0,1] for the observation
-        distances_scaled = distances_m / self.max_ray_distance
+            state_vec = self._getDroneStateVector(0)
+            obs_12 = np.hstack([
+                state_vec[0:3],
+                state_vec[7:10],
+                state_vec[10:13],
+                state_vec[13:16]
+            ]).astype(np.float32)
 
-        # Goal vector relative to current position (scaled by ray distance)
-        rel = ((self.GOAL_POS - pos_w) / self.max_ray_distance).reshape(1, 3)
+            state_full = np.array([obs_12], dtype=np.float32)
+            for i in range(self.ACTION_BUFFER_SIZE):
+                state_full = np.hstack([state_full, np.array([self.action_buffer[i][0, :]])])
+            state_full = state_full.flatten().astype(np.float32)
 
-        return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
+            goal_vec = ((self.GOAL_POS - pos_w) / self.max_ray_distance).astype(np.float32)
+
+            return {
+                "rgb": img,
+                "state": state_full,
+                "goal": goal_vec
+            }
+        else:
+            base_obs: NDArray[np.float32] | None = super()._computeObs()
+            if base_obs is None:
+                return np.zeros((1, 131), dtype=np.float32)
+
+            uid = self.DRONE_IDS[0]
+            pos_w, orn_w = p.getBasePositionAndOrientation(uid, physicsClientId=getattr(self, "CLIENT", 0))
+            pos_w = np.asarray(pos_w, dtype=float)
+            rot_m = np.asarray(p.getMatrixFromQuaternion(orn_w), dtype=float).reshape(3, 3)
+
+            distances_m = self._get_obstacle_distances(pos_w, rot_m).reshape(1, 16)
+            distances_scaled = distances_m / self.max_ray_distance
+            rel = ((self.GOAL_POS - pos_w) / self.max_ray_distance).reshape(1, 3)
+
+            return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
