@@ -12,8 +12,7 @@ from stable_baselines3 import PPO
 
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import random_task
-# Import from centralized constants
-from swarm.constants import SIM_DT, HORIZON_SEC, SAFE_META_FILENAME
+from swarm.constants import SIM_DT, HORIZON_SEC, SAFE_META_FILENAME, RGB_VISION
 
 
 def information_save(model: PPO, save_stem: str) -> None:
@@ -82,17 +81,22 @@ def main():
     task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=1)
     env = make_env(task, gui=False)
 
-    model = PPO("MlpPolicy", env, verbose=1)
+    if RGB_VISION:
+        from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
+
+        env = DummyVecEnv([lambda: env])
+        env = VecTransposeImage(env)
+        model = PPO("MultiInputPolicy", env, verbose=1)
+    else:
+        model = PPO("MlpPolicy", env, verbose=1)
+
     model.learn(args.timesteps)
 
-    # Create model directory if it doesn't exist
     os.makedirs("model", exist_ok=True)
 
-    # Save as usual
-    save_stem = "model/ppo_policy"   # SB3 will create "model/ppo_policy.zip"
+    save_stem = "model/ppo_policy"
     model.save(save_stem)
 
-    # Append minimal, safe metadata for the secure loader
     information_save(model, save_stem)
 
     env.close()

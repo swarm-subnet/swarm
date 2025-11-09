@@ -61,13 +61,21 @@ def _model_predict_via_io(proc: subprocess.Popen, obs_array, timeout_s: float = 
     if proc.poll() is not None:
         raise RuntimeError("model worker terminated")
 
-    # Ensure 1-D list of floats
     try:
-        obs_list = obs_array.tolist() if hasattr(obs_array, "tolist") else list(obs_array)
+        if isinstance(obs_array, dict):
+            obs_dict = {}
+            for key, val in obs_array.items():
+                if hasattr(val, "tolist"):
+                    obs_dict[key] = val.tolist()
+                else:
+                    obs_dict[key] = list(val) if hasattr(val, "__iter__") else [val]
+            line = _json.dumps({"obs": obs_dict}) + "\n"
+        else:
+            obs_list = obs_array.tolist() if hasattr(obs_array, "tolist") else list(obs_array)
+            line = _json.dumps({"obs": obs_list}) + "\n"
     except Exception:
         raise RuntimeError("invalid observation format")
 
-    line = _json.dumps({"obs": obs_list}) + "\n"
     try:
         proc.stdin.write(line)
         proc.stdin.flush()
@@ -162,18 +170,28 @@ def main():
             # Serve an infinite loop over stdin
             for line in sys.stdin:
                 line = line.strip()
-                
+
                 if not line:
                     continue
                 try:
                     msg = _json.loads(line)
                     obs = msg.get("obs", None)
-                    if not isinstance(obs, list) or len(obs) == 0:
-                        raise ValueError("invalid obs")
                     import numpy as _np
-                    obs_arr = _np.asarray(obs, dtype=_np.float32)
-                    # SB3 can accept 1-D obs; ensure proper shape is handled inside predict
-                    act, _ = model.predict(obs_arr, deterministic=True)
+
+                    if isinstance(obs, dict):
+                        obs_dict = {}
+                        for key, val in obs.items():
+                            arr = _np.asarray(val)
+                            if key == "rgb" and len(arr.shape) == 1:
+                                obs_dict[key] = arr.reshape(48, 64, 4).astype(_np.uint8)
+                            else:
+                                obs_dict[key] = arr.astype(_np.float32)
+                        act, _ = model.predict(obs_dict, deterministic=True)
+                    else:
+                        if not isinstance(obs, list) or len(obs) == 0:
+                            raise ValueError("invalid obs")
+                        obs_arr = _np.asarray(obs, dtype=_np.float32)
+                        act, _ = model.predict(obs_arr, deterministic=True)
                     act_list = act.squeeze().tolist() if hasattr(act, "tolist") else list(act)
                     sys.stdout.write(_json.dumps({"act": act_list}) + "\n")
                     sys.stdout.flush()
@@ -293,9 +311,7 @@ def main():
             env = make_env(task, gui=False)
 
             try:
-                obs = env._computeObs()
-                if isinstance(obs, dict):
-                    obs = obs[next(iter(obs))]
+                obs, _ = env.reset()
 
                 pos0 = _np.asarray(task.start, dtype=float)
                 t_sim = 0.0

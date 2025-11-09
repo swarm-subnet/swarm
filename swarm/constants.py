@@ -23,6 +23,12 @@ USE_SYNCHRONIZED_SEEDS = True           # Enable synchronized seed generation ac
 SEED_WINDOW_MINUTES = 10                # Time window duration for seed synchronization (minutes)
 
 # =============================================================================
+# OBSERVATION MODE
+# =============================================================================
+
+RGB_VISION = True                       # Use RGB camera vision (True) or LiDAR rays (False)
+
+# =============================================================================
 # SIMULATION & PHYSICS
 # =============================================================================
 
