@@ -51,7 +51,6 @@ def _run_reference_suite(model) -> List[dict]:
             uid=REFERENCE_UID,
             model=model,
             gui=False,
-            show_rays=False,
         )
         results.append(
             {

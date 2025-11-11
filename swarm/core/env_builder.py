@@ -25,8 +25,6 @@ import pybullet as p
 
 from swarm.constants import (
     WORLD_RANGE,
-    HEIGHT_SCALE,
-    N_OBSTACLES,
     LANDING_PLATFORM_RADIUS,
     PLATFORM,
     SAFE_ZONE_RADIUS,

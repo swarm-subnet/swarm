@@ -10,9 +10,7 @@ from __future__ import annotations
 import io
 import time
 import contextlib
-from typing import Union
 
-import numpy as np
 import pybullet as p
 import pybullet_data
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
@@ -20,15 +18,14 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 # ─── project‑level imports ────────────────────────────────────────────────────
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.protocol                import MapTask
-from swarm.constants               import SAFE_Z, SPEED_LIMIT, RGB_VISION
+from swarm.constants               import SPEED_LIMIT
 
 # ──────────────────────────────────────────────────────────────────────────────
 def make_env(
     task: MapTask,
     *,
     gui: bool = False,
-    obs_mode: str = None,
-) -> Union[MovingDroneAviary]:
+) -> MovingDroneAviary:
     """
     Create and fully‑initialised single‑drone PyBullet Crazyflie environment.
 
@@ -36,34 +33,28 @@ def make_env(
     ----------
     task     : MapTask   • scenario description (start, goal, map seed, dt, …)
     gui      : bool      • enable/disable PyBullet viewer (default False)
-    obs_mode : str       • observation mode: "rgb" or "kin" (default from RGB_VISION)
     Returns
     -------
     env : MovingDroneAviary
         A ready‑to‑use environment that has already been reset and whose world
         (obstacles, safe zone, goal beacon, …) has been spawned.
     """
-    if obs_mode is None:
-        obs_mode = "rgb" if RGB_VISION else "kin"
-
-    obs_type = ObservationType.RGB if obs_mode == "rgb" else ObservationType.KIN
-
     ctrl_freq = int(round(1.0 / task.sim_dt))
     common_kwargs = dict(
         gui=gui,
         record=False,
-        obs=obs_type,
+        obs=ObservationType.RGB,
         ctrl_freq=ctrl_freq,
         pyb_freq=ctrl_freq,
     )
 
     # Silence the copious PyBullet stdout spam when instantiating the env
     with contextlib.redirect_stdout(io.StringIO()):
-            env = MovingDroneAviary(
-                task,
-                act=ActionType.VEL,
-                **common_kwargs,
-            )
+        env = MovingDroneAviary(
+            task,
+            act=ActionType.VEL,
+            **common_kwargs,
+        )
 
     # Override parent class speed limit (0.25 m/s → 3.0 m/s)
     env.SPEED_LIMIT = SPEED_LIMIT
