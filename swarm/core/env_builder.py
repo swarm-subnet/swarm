@@ -341,8 +341,8 @@ def build_world(
             shapeType=p.GEOM_CYLINDER,
             radius=platform_radius * 0.9,
             length=0.002,
-            rgbaColor=[1.0, 1.0, 1.0, 1.0],
-            specularColor=[0.9, 0.9, 0.9],
+            rgbaColor=[1.0, 0.0, 0.0, 1.0],  # BRIGHT RED - Start platform
+            specularColor=[1.0, 0.3, 0.3],   # Red specular highlight
             physicsClientId=cli,
         )
 
