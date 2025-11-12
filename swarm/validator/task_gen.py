@@ -29,6 +29,9 @@ from swarm.constants import (
     TYPE_3_N_OBSTACLES,
     TYPE_3_HEIGHT_SCALE,
     TYPE_3_SAFE_ZONE,
+    TYPE_4_N_OBSTACLES,
+    TYPE_4_HEIGHT_SCALE,
+    TYPE_4_SAFE_ZONE,
 )
 from typing import Optional   
 

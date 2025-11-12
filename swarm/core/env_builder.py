@@ -44,6 +44,9 @@ from swarm.constants import (
     TYPE_3_N_OBSTACLES,
     TYPE_3_HEIGHT_SCALE,
     TYPE_3_SAFE_ZONE,
+    TYPE_4_N_OBSTACLES,
+    TYPE_4_HEIGHT_SCALE,
+    TYPE_4_SAFE_ZONE,
 )
 
 # --------------------------------------------------------------------------
@@ -119,6 +122,10 @@ def build_world(
         n_obstacles = TYPE_3_N_OBSTACLES
         height_scale = TYPE_3_HEIGHT_SCALE
         safe_zone = TYPE_3_SAFE_ZONE
+    elif challenge_type == 4:
+        n_obstacles = TYPE_4_N_OBSTACLES
+        height_scale = TYPE_4_HEIGHT_SCALE
+        safe_zone = TYPE_4_SAFE_ZONE
     else:
         # Default to type 1
         n_obstacles = TYPE_1_N_OBSTACLES
@@ -372,8 +379,8 @@ def build_world(
                 shapeType=p.GEOM_CYLINDER,
                 radius=platform_radius,
                 length=platform_height,
-                rgbaColor=[0.15, 0.35, 0.8, 1.0],  # blue platform
-                specularColor=[0.8, 0.8, 0.9],     # High reflectivity for metallic look
+                rgbaColor=[0.0, 0.8, 0.0, 1.0],  # green platform (matches goal)
+                specularColor=[0.5, 1.0, 0.5],   # Green specular for consistency
                 physicsClientId=cli,
             )
             
@@ -407,8 +414,8 @@ def build_world(
                 shapeType=p.GEOM_CYLINDER,
                 radius=surface_radius,
                 length=surface_height,
-                rgbaColor=[0.3, 0.9, 0.4, 0.9],  # Bright glowing green with slight transparency
-                specularColor=[0.6, 1.0, 0.6],   # Green specular highlight
+                rgbaColor=[0.0, 1.0, 0.0, 1.0],  # Bright neon green (fully saturated)
+                specularColor=[0.8, 1.0, 0.8],   # Bright green specular highlight
                 physicsClientId=cli,
             )
             
@@ -454,12 +461,12 @@ def build_world(
             tao_logo_radius = surface_radius * 1.06  # Cover all of green circle
             badge_height = 0.005       # Thicker for visibility
             
-            # Create LARGE white circular background first
+            # Create LARGE bright green circular background first
             tao_background_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=tao_logo_radius,
                 length=badge_height,
-                rgbaColor=[1.0, 1.0, 1.0, 1.0],  # Pure white opaque background
+                rgbaColor=[0.0, 1.0, 0.0, 1.0],  # Bright neon green background
                 physicsClientId=cli,
             )
 
@@ -478,7 +485,7 @@ def build_world(
                 shapeType=p.GEOM_CYLINDER,
                 radius=tao_logo_radius * 0.95,  # Slightly smaller for border effect
                 length=badge_height * 0.5,      # Thinner texture layer
-                rgbaColor=[1.0, 1.0, 1.0, 1.0],  # White for texture
+                rgbaColor=[0.0, 1.0, 0.0, 1.0],  # Bright green for texture
                 physicsClientId=cli,
             )
 

@@ -116,9 +116,10 @@ EVALUATION_WINDOW = 20                 # Number of recent runs to evaluate for l
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.40,  # Standard navigation
-    2: 0.30,  # higher obstacles challenge
-    3: 0.30,  # Easy navigation
+    1: 0.30,  # Standard navigation
+    2: 0.25,  # higher obstacles challenge
+    3: 0.25,  # Easy navigation
+    4: 0.20,  # No obstacles (open flight)
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
@@ -138,6 +139,10 @@ TYPE_2_SAFE_ZONE = 2.0
 TYPE_3_N_OBSTACLES = 25
 TYPE_3_HEIGHT_SCALE = 0.8
 TYPE_3_SAFE_ZONE = 2.0
+
+TYPE_4_N_OBSTACLES = 0
+TYPE_4_HEIGHT_SCALE = 1.0
+TYPE_4_SAFE_ZONE = 0.0
 
 # =============================================================================
 # PER-TYPE NORMALIZATION SYSTEM

@@ -75,7 +75,7 @@ class MovingDroneAviary(BaseRLAviary):
         if self.OBS_TYPE != ObservationType.RGB:
             raise ValueError("MovingDroneAviary only supports ObservationType.RGB observations.")
 
-        enhanced_width, enhanced_height = 480, 360
+        enhanced_width, enhanced_height = 96, 96
         self.IMG_RES = np.array([enhanced_width, enhanced_height])
         self.rgb = np.zeros((self.NUM_DRONES, enhanced_height, enhanced_width, 4), dtype=np.uint8)
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)

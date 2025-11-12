@@ -530,8 +530,10 @@ def _log_normalized_score(uid: int) -> None:
 
     if ENABLE_PER_TYPE_NORMALIZATION:
         type_info = []
-        for type_id in [1, 2, 3]:
+        for type_id in [1, 2, 3, 4]:
             type_str = str(type_id)
+            if type_str not in history["runs_by_type"]:
+                continue
             type_data = history["runs_by_type"][type_str]
             weight = CHALLENGE_TYPE_DISTRIBUTION[type_id]
             type_info.append(
@@ -610,7 +612,8 @@ def load_uid_history(uid: int) -> dict:
         "runs_by_type": {
             "1": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
             "2": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
-            "3": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0}
+            "3": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
+            "4": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0}
         },
         "normalized_score": 0.0
     }
@@ -677,6 +680,8 @@ def calculate_normalized_score(history: dict) -> float:
 
     for type_id, weight in CHALLENGE_TYPE_DISTRIBUTION.items():
         type_str = str(type_id)
+        if type_str not in runs_by_type:
+            continue
         type_data = runs_by_type[type_str]
 
         if type_data["count"] > 0:
@@ -799,7 +804,8 @@ async def forward(self) -> None:
         challenge_type_names = {
             1: "Type 1 (Standard)",
             2: "Type 2 (higher obstacles)",
-            3: "Type 3 (Easy)"
+            3: "Type 3 (Easy)",
+            4: "Type 4 (No obstacles)"
         }
         type_name = challenge_type_names.get(task.challenge_type, f"Type {task.challenge_type}")
 
