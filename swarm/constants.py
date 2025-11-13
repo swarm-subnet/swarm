@@ -44,7 +44,7 @@ PROP_EFF = 0.60                         # Propeller efficiency coefficient
 # =============================================================================
 
 # Model size and validation limits
-MAX_MODEL_BYTES = 10 * 1024 * 1024      # Maximum compressed model size (10 MiB)
+MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
 EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
