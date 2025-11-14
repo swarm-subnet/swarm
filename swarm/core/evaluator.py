@@ -17,6 +17,7 @@ from pathlib import Path
 import subprocess
 import json as _json
 import select
+import zipfile
 
 # Add swarm to path BEFORE importing swarm modules
 swarm_path = str(Path(__file__).resolve().parent.parent.parent)
@@ -100,6 +101,162 @@ def _model_predict_via_io(proc: subprocess.Popen, obs_array, timeout_s: float = 
     
     # Both attempts failed
     raise RuntimeError("model worker timeout after retries")
+
+
+def _is_rpc_submission(model_path: Path) -> bool:
+    try:
+        with zipfile.ZipFile(model_path, 'r') as zf:
+            return "main.py" in zf.namelist()
+    except Exception:
+        return False
+
+
+def _evaluate_with_rpc(task: MapTask, uid: int, model_path: Path) -> ValidationResult:
+    import shutil
+    import time
+    import asyncio
+    
+    submission_dir = Path("/tmp") / f"submission_{uid}_{int(time.time())}"
+    submission_dir.mkdir(exist_ok=True)
+    
+    try:
+        with zipfile.ZipFile(model_path, 'r') as zf:
+            zf.extractall(submission_dir)
+        
+        agent_process = subprocess.Popen(
+            [sys.executable, "main.py"],
+            cwd=str(submission_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=os.environ.copy()
+        )
+        
+        max_retries = 10
+        connected = False
+        
+        for retry in range(max_retries):
+            if agent_process.poll() is not None:
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            time.sleep(1)
+            
+            try:
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.5)
+                result = sock.connect_ex(('localhost', 8000))
+                sock.close()
+                if result == 0:
+                    connected = True
+                    break
+            except Exception:
+                pass
+        
+        if not connected:
+            agent_process.terminate()
+            agent_process.wait(timeout=5)
+            return ValidationResult(uid, False, 0.0, 0.0)
+        
+        try:
+            import capnp
+            schema_file = Path(__file__).parent.parent / "submission_template" / "agent.capnp"
+            agent_capnp = capnp.load(str(schema_file))
+            
+            async def run_evaluation():
+                async with capnp.kj_loop():
+                    client = capnp.TwoPartyClient("localhost:8000")
+                    agent = client.bootstrap().cast_as(agent_capnp.Agent)
+                    
+                    ping_result = await agent.ping("test")
+                    if ping_result != "pong":
+                        raise RuntimeError("RPC ping failed")
+                    
+                    import numpy as _np
+                    from swarm.utils.env_factory import make_env
+                    from swarm.constants import SIM_DT
+                    from gym_pybullet_drones.utils.enums import ActionType
+                    
+                    env = make_env(task, gui=False)
+                    
+                    try:
+                        obs, _ = env.reset()
+                        
+                        pos0 = _np.asarray(task.start, dtype=float)
+                        t_sim = 0.0
+                        success = False
+                        
+                        lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
+                        last_pos = pos0
+                        
+                        while t_sim < task.horizon:
+                            try:
+                                obs_tensor = agent_capnp.Tensor.new_message()
+                                obs_tensor.data = obs.tobytes()
+                                obs_tensor.shape = list(obs.shape)
+                                obs_tensor.dtype = str(obs.dtype)
+                                
+                                observation = agent_capnp.Observation.new_message()
+                                entry = observation.init("entries", 1)[0]
+                                entry.key = "__value__"
+                                entry.tensor = obs_tensor
+                                
+                                action_tensor = await agent.act(observation)
+                                action = _np.frombuffer(
+                                    action_tensor.data,
+                                    dtype=_np.dtype(action_tensor.dtype)
+                                ).reshape(tuple(action_tensor.shape))
+                            except Exception:
+                                action = _np.zeros(4, dtype=_np.float32)
+                            
+                            act = _np.clip(_np.asarray(action, dtype=_np.float32).reshape(-1), lo, hi)
+                            
+                            if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
+                                if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
+                                    n = max(_np.linalg.norm(act[:3]), 1e-6)
+                                    scale = min(1.0, SPEED_LIMIT / n)
+                                    act[:3] *= scale
+                                    act = _np.clip(act, lo, hi)
+                            
+                            prev = last_pos
+                            obs, _r, terminated, truncated, info = env.step(act[None, :])
+                            last_pos = env._getDroneStateVector(0)[0:3]
+                            
+                            t_sim += SIM_DT
+                            if terminated or truncated:
+                                success = info.get("success", False)
+                                break
+                        
+                        from swarm.validator.reward import flight_reward
+                        score = flight_reward(
+                            success=success,
+                            t=t_sim,
+                            horizon=task.horizon,
+                            task=task,
+                        )
+                        
+                        return ValidationResult(uid, success, t_sim, score)
+                    finally:
+                        try:
+                            env.close()
+                        except Exception:
+                            pass
+            
+            result = asyncio.run(run_evaluation())
+        except Exception:
+            result = ValidationResult(uid, False, 0.0, 0.0)
+        finally:
+            try:
+                agent_process.terminate()
+                agent_process.wait(timeout=5)
+            except Exception:
+                pass
+        
+        return result
+    finally:
+        try:
+            shutil.rmtree(submission_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def _wait_model_ready(proc: subprocess.Popen, timeout_s: float = 60.0) -> None:
@@ -280,92 +437,86 @@ def main():
                 score=0.0  # Not applicable for verification-only
             )
         else:
-            # REGULAR EVALUATION MODE: Model is legitimate, evaluate via two-process IPC
-            # Spawn untrusted model worker
-            worker = _spawn_model_worker(model_path)
-            # Wait up to 90s for worker to be ready (covers initial model load)
-            _wait_model_ready(worker, timeout_s=90.0)
+            # REGULAR EVALUATION MODE: Check if RPC-based submission
+            model_path_obj = Path(model_path)
+            is_rpc_submission = _is_rpc_submission(model_path_obj)
+            
+            if is_rpc_submission:
+                result = _evaluate_with_rpc(task, uid, model_path_obj)
+            else:
+                worker = _spawn_model_worker(model_path)
+                _wait_model_ready(worker, timeout_s=90.0)
 
-            # Build environment and roll out
-            # Import here to avoid bringing SB3 into the parent
-            import numpy as _np
-            from swarm.utils.env_factory import make_env
-            from swarm.constants import SIM_DT
+                import numpy as _np
+                from swarm.utils.env_factory import make_env
+                from swarm.constants import SIM_DT
 
-            class _PilotIPC:
-                def __init__(self, proc):
-                    self.proc = proc
-                def reset(self, task):
-                    pass
-                def act(self, obs, t):
+                class _PilotIPC:
+                    def __init__(self, proc):
+                        self.proc = proc
+                    def reset(self, task):
+                        pass
+                    def act(self, obs, t):
+                        try:
+                            act_list = _model_predict_via_io(self.proc, obs, timeout_s=10.0)
+                            if act_list and len(act_list) > 0:
+                                return _np.asarray(act_list, dtype=_np.float32)
+                        except Exception:
+                            pass
+                        return _np.zeros(4, dtype=_np.float32)
+
+                pilot = _PilotIPC(worker)
+                env = make_env(task, gui=False)
+
+                try:
+                    obs, _ = env.reset()
+
+                    pos0 = _np.asarray(task.start, dtype=float)
+                    t_sim = 0.0
+                    success = False
+                    step_count = 0
+                    
+                    lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
+                    last_pos = pos0
+                    
+                    while t_sim < task.horizon:
+                        act = _np.clip(_np.asarray(pilot.act(obs, t_sim), dtype=_np.float32).reshape(-1), lo, hi)
+                        
+                        if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
+                            if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
+                                n = max(_np.linalg.norm(act[:3]), 1e-6)
+                                scale = min(1.0, SPEED_LIMIT / n)
+                                act[:3] *= scale
+                                act = _np.clip(act, lo, hi)
+                        
+                        prev = last_pos
+                        obs, _r, terminated, truncated, info = env.step(act[None, :])
+                        last_pos = env._getDroneStateVector(0)[0:3]
+                        
+                        t_sim += SIM_DT
+                        if terminated or truncated:
+                            success = info.get("success", False)
+                            break
+                        step_count += 1
+
+                    from swarm.validator.reward import flight_reward
+                    score = flight_reward(
+                        success=success,
+                        t=t_sim,
+                        horizon=task.horizon,
+                        task=task,
+                    )
+
+                    result = ValidationResult(uid, success, t_sim, score)
+                finally:
                     try:
-                        act_list = _model_predict_via_io(self.proc, obs, timeout_s=10.0)
-                        if act_list and len(act_list) > 0:
-                            return _np.asarray(act_list, dtype=_np.float32)
+                        env.close()
                     except Exception:
                         pass
-                    # Fallback to zeros only after all retries failed
-                    return _np.zeros(4, dtype=_np.float32)
-
-            pilot = _PilotIPC(worker)
-            env = make_env(task, gui=False)
-
-            try:
-                obs, _ = env.reset()
-
-                pos0 = _np.asarray(task.start, dtype=float)
-                t_sim = 0.0
-                success = False
-                step_count = 0
-                
-                lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
-                last_pos = pos0
-                
-                while t_sim < task.horizon:
-                    act = _np.clip(_np.asarray(pilot.act(obs, t_sim), dtype=_np.float32).reshape(-1), lo, hi)
-                    
-                    # Apply speed scaling every step in VEL mode
-                    if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
-                        if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
-                            n = max(_np.linalg.norm(act[:3]), 1e-6)
-                            scale = min(1.0, SPEED_LIMIT / n)
-                            act[:3] *= scale
-                            act = _np.clip(act, lo, hi)
-                    
-                    prev = last_pos
-                    obs, _r, terminated, truncated, info = env.step(act[None, :])
-                    last_pos = env._getDroneStateVector(0)[0:3]
-                    
-                    # Monitor speed ratio for telemetry
-                    if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
-                        ratio = float(_np.linalg.norm(last_pos - prev) / SIM_DT) / env.SPEED_LIMIT
-                    
-                    t_sim += SIM_DT
-                    if terminated or truncated:
-                        success = info.get("success", False)
-                        break
-                    step_count += 1
-
-                # Compute score using reward function
-                from swarm.validator.reward import flight_reward
-                score = flight_reward(
-                    success=success,
-                    t=t_sim,
-                    horizon=task.horizon,
-                    task=task,
-                )
-
-                result = ValidationResult(uid, success, t_sim, score)
-            finally:
-                try:
-                    env.close()
-                except Exception:
-                    pass
-                try:
-                    # Terminate worker process
-                    worker.terminate()
-                except Exception:
-                    pass
+                    try:
+                        worker.terminate()
+                    except Exception:
+                        pass
         
         # Write result to file
         tmp_file = result_file + ".tmp"

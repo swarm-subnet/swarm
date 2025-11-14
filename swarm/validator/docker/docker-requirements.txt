@@ -18,3 +18,4 @@ tqdm
 torch
 gymnasium
 requests
+pycapnp

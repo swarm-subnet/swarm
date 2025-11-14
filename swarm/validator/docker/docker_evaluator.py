@@ -151,10 +151,11 @@ class DockerSecureEvaluator:
         # Track fake models detected for this evaluation
         self.last_fake_model_info = None
         
-        # Validate model has secure metadata before Docker execution
+        is_rpc_submission = False
         try:
             with zipfile.ZipFile(model_path, 'r') as zf:
-                if "safe_policy_meta.json" not in zf.namelist():
+                is_rpc_submission = "main.py" in zf.namelist()
+                if not is_rpc_submission and "safe_policy_meta.json" not in zf.namelist():
                     bt.logging.warning(f"Model {uid} missing secure metadata")
                     return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
@@ -180,7 +181,8 @@ class DockerSecureEvaluator:
                 with open(task_file, 'w') as f:
                     json.dump(asdict(task), f)
                 
-                # Docker run command with security limits - mount entire temp dir
+                network_mode = "bridge" if is_rpc_submission else "none"
+                
                 cmd = [
                     "docker", "run",
                     "--rm",
@@ -192,7 +194,7 @@ class DockerSecureEvaluator:
                     "--ulimit", "nofile=64:64",
                     "--ulimit", "fsize=524288000:524288000",
                     "--security-opt", "no-new-privileges",
-                    "--network", "none",
+                    "--network", network_mode,
                     "-v", f"{tmpdir}:/workspace/shared",
                     "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
                     self.base_image,
