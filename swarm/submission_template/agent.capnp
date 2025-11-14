@@ -2,7 +2,7 @@
 
 interface Agent {
   ping @0 (message :Text) -> (response :Text);
-  act  @1 (obs :Tensor) -> (action :Tensor);
+  act  @1 (obs :Observation) -> (action :Tensor);
   reset @2 ();
 }
 
@@ -20,4 +20,3 @@ struct ObservationEntry {
 struct Observation {
   entries @0 :List(ObservationEntry);
 }
-
