@@ -18,7 +18,7 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 # ─── project‑level imports ────────────────────────────────────────────────────
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.protocol                import MapTask
-from swarm.constants               import SPEED_LIMIT
+from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE
 
 # ──────────────────────────────────────────────────────────────────────────────
 def make_env(
@@ -56,8 +56,8 @@ def make_env(
             **common_kwargs,
         )
 
-    # Override parent class speed limit (0.25 m/s → 3.0 m/s)
     env.SPEED_LIMIT = SPEED_LIMIT
+    env.MAX_YAW_RATE = MAX_YAW_RATE
     env.ACT_TYPE = ActionType.VEL
 
     cli = env.getPyBulletClient()
