@@ -82,22 +82,35 @@ def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
 
 def inspect_model_structure(zip_path: Path) -> Dict:
     """
-    Inspect PPO model structure without loading it through SB3.
-    NOW REQUIRES secure loading metadata.
+    Inspect model structure - supports two submission types:
+    1. SB3 models: policy.pth + safe_policy_meta.json (no .py files)
+    2. RPC submissions: main.py + custom agent code (.py files allowed)
     """
     try:
-        # FIRST: Check for secure loading metadata (REQUIRED)
         with ZipFile(zip_path, 'r') as zf:
             file_list = zf.namelist()
             
-            # Require safe_policy_meta.json
+            is_rpc_submission = "main.py" in file_list
+            
+            if is_rpc_submission:
+                dangerous_files = [f for f in file_list 
+                                  if f.endswith(('.exe', '.so', '.dll', '.sh', '.bat', '.pkl'))]
+                if dangerous_files:
+                    return {"error": f"Dangerous executable files detected: {dangerous_files}"}
+                
+                return {
+                    "submission_type": "rpc",
+                    "has_mlp_extractor": True,
+                    "suspicious_patterns": [],
+                    "class_names": ["RPC Custom Agent"]
+                }
+            
             if "safe_policy_meta.json" not in file_list:
                 return {
                     "error": "Missing safe_policy_meta.json - model not compatible with secure loading",
                     "missing_secure_metadata": True
                 }
             
-            # Validate JSON structure
             try:
                 meta_content = zf.read("safe_policy_meta.json").decode("utf-8")
                 meta = json.loads(meta_content)
@@ -109,27 +122,22 @@ def inspect_model_structure(zip_path: Path) -> Dict:
                         
             except json.JSONDecodeError as e:
                 return {"error": f"Invalid JSON in safe_policy_meta.json: {e}"}
-
-        # Model metadata validation complete - proceed to structural analysis
         
         with ZipFile(zip_path, 'r') as zf:
             file_list = zf.namelist()
 
-            # Reject models with executable/code files (CHECK FIRST)
-            suspicious_files = [f for f in file_list if f.endswith(('.py', '.pkl', '.pyc', '.so', '.exe', '.sh', '.bat'))]
+            suspicious_files = [f for f in file_list 
+                              if f.endswith(('.py', '.pkl', '.pyc', '.so', '.exe', '.sh', '.bat'))]
             if suspicious_files:
                 return {"error": f"Executable/code files detected: {suspicious_files}"}
 
-            # Check if this is a legitimate SB3 model structure
             sb3_required_files = ['policy.pth', 'data', '_stable_baselines3_version']
             is_legitimate_sb3 = all(f in file_list for f in sb3_required_files)
 
             if is_legitimate_sb3:
-                # SB3 structure found - but we need to validate the actual neural network
                 bt.logging.info(f"🔍 Found SB3 structure, analyzing neural network content...")
 
                 try:
-                    # Load and analyze the actual PyTorch state dict
                     policy_data = zf.read('policy.pth')
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
@@ -140,7 +148,6 @@ def inspect_model_structure(zip_path: Path) -> Dict:
                 except Exception as e:
                     return {"error": f"Failed to analyze SB3 neural network: {e}"}
 
-            # Only accept legitimate SB3 structure
             return {"error": f"Invalid model structure. Files: {file_list}"}
             
     except Exception as e:
@@ -302,11 +309,9 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
     
     Returns (status, reason)
     """
-    # PRIORITY 1: Missing secure metadata (reject but don't blacklist)
     if inspection_results.get("missing_secure_metadata", False):
         return "missing_metadata", "Missing secure loading metadata - model rejected"
     
-    # PRIORITY 2: Security violations (fake models)
     if "malicious_findings" in inspection_results:
         return "fake", "Security violation: Malicious code detected"
     
@@ -317,9 +322,9 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
             return "missing_metadata", inspection_results["error"]
         return "fake", f"Inspection error: {inspection_results['error']}"
     
-    # PRIORITY 3: Structural issues (fake models)
-
-    # Check for MLP extractor (required for valid PPO)
+    if inspection_results.get("submission_type") == "rpc":
+        return "legitimate", "RPC submission validated"
+    
     if not inspection_results.get("has_mlp_extractor", False):
         return "fake", "Missing mlp_extractor (required for valid PPO model)"
     
