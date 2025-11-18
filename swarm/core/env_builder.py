@@ -294,10 +294,19 @@ def build_world(
             physicsClientId=cli,
         )
 
+        start_platform_visual = p.createVisualShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=platform_radius,
+            length=platform_height,
+            rgbaColor=[1.0, 0.0, 0.0, 1.0],
+            specularColor=[1.0, 0.3, 0.3],
+            physicsClientId=cli,
+        )
+
         start_platform_uid = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=start_platform_collision,
-            baseVisualShapeIndex=-1,
+            baseVisualShapeIndex=start_platform_visual,
             basePosition=base_position,
             physicsClientId=cli,
         )
