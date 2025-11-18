@@ -1,8 +1,7 @@
-import sys
-from agent import RLAgent
+from drone_agent import DroneFlightController
 from agent_server import start_server
 
 if __name__ == "__main__":
-    agent = RLAgent()
+    agent = DroneFlightController()
     start_server(agent, port=8000)
 

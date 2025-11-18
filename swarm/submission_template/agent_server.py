@@ -13,7 +13,7 @@ except ImportError:
 schema_file = Path(__file__).parent / "agent.capnp"
 agent_capnp = capnp.load(str(schema_file))
 
-from agent import RLAgent
+from drone_agent import DroneFlightController
 
 
 class AgentServer(agent_capnp.Agent.Server):
@@ -78,6 +78,6 @@ def start_server(agent, port=8000):
 
 
 if __name__ == "__main__":
-    agent = RLAgent()
+    agent = DroneFlightController()
     start_server(agent, port=8000)
 

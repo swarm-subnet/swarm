@@ -1,4 +1,4 @@
-@0xbf5147e1a2a3a3b1;
+@0xa5d4b3c2e1f09876;
 
 interface Agent {
   ping @0 (message :Text) -> (response :Text);
