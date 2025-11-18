@@ -77,7 +77,7 @@ HOVER_SEC = 0                           # Required hover duration for mission su
 SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
-MAX_YAW_RATE = 1.57                     # Maximum yaw rotation rate (rad/s) - ~90 degrees per second
+MAX_YAW_RATE = 3.141                    # Maximum yaw rotation rate (rad/s) - 180 degrees per second
 # Goal generation ranges
 R_MIN, R_MAX = 5, 15                    # Radial goal distance range (meters)
 H_MIN, H_MAX = 1, 5                     # Height variation range for goals (meters)
