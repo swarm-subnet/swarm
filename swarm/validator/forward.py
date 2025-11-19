@@ -202,7 +202,7 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
             # Create minimal task for verification (not used for actual evaluation)
             dummy_task = {
                 "start": [0, 0, 1], "goal": [5, 5, 2], "obstacles": [],
-                "horizon": 30.0, "seed": 12345
+                "horizon": HORIZON_SEC, "seed": 12345
             }
             
             task_file = Path(tmpdir) / "task.json"
