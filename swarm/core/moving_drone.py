@@ -82,7 +82,8 @@ class MovingDroneAviary(BaseRLAviary):
         self.seg = np.zeros((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.uint8)
 
         img_shape = (enhanced_height, enhanced_width, 4)
-        state_dim = 12 + self.ACTION_BUFFER_SIZE * 4
+        action_dim = self.action_space.shape[-1]
+        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim
         self._state_dim = state_dim
 
         self.observation_space = spaces.Dict({
@@ -233,6 +234,21 @@ class MovingDroneAviary(BaseRLAviary):
         )
 
         self._spawn_task_world()
+        
+        obs_after = self._computeObs()
+        if obs_after is not None and "state" in obs_after:
+            actual_state_dim = obs_after["state"].shape[0]
+            if actual_state_dim != self._state_dim:
+                self._state_dim = actual_state_dim
+                self.observation_space = spaces.Dict({
+                    "rgb": self.observation_space["rgb"],
+                    "state": spaces.Box(
+                        low=-np.inf,
+                        high=np.inf,
+                        shape=(actual_state_dim,),
+                        dtype=np.float32
+                    ),
+                })
 
         return obs, info
 
@@ -355,6 +371,19 @@ class MovingDroneAviary(BaseRLAviary):
         for i in range(self.ACTION_BUFFER_SIZE):
             state_full = np.hstack([state_full, np.array([self.action_buffer[i][0, :]])])
         state_full = state_full.flatten().astype(np.float32)
+        
+        actual_state_dim = state_full.shape[0]
+        if actual_state_dim != self._state_dim:
+            self._state_dim = actual_state_dim
+            self.observation_space = spaces.Dict({
+                "rgb": self.observation_space["rgb"],
+                "state": spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(actual_state_dim,),
+                    dtype=np.float32
+                ),
+            })
 
         return {
             "rgb": img,

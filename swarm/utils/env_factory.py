@@ -11,6 +11,7 @@ import io
 import time
 import contextlib
 
+import numpy as np
 import pybullet as p
 import pybullet_data
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
@@ -69,6 +70,21 @@ def make_env(
             time.sleep(0.1)
 
     with contextlib.redirect_stdout(io.StringIO()):
-        env.reset(seed=task.map_seed)
+        obs, _ = env.reset(seed=task.map_seed)
+        
+        if obs is not None and "state" in obs:
+            actual_state_dim = obs["state"].shape[0]
+            if actual_state_dim != env._state_dim:
+                import gymnasium.spaces as spaces
+                env._state_dim = actual_state_dim
+                env.observation_space = spaces.Dict({
+                    "rgb": env.observation_space["rgb"],
+                    "state": spaces.Box(
+                        low=-np.inf,
+                        high=np.inf,
+                        shape=(actual_state_dim,),
+                        dtype=np.float32
+                    ),
+                })
 
     return env
