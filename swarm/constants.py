@@ -28,7 +28,7 @@ SEED_WINDOW_MINUTES = 10                # Time window duration for seed synchron
 
 # Core simulation parameters
 SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
-HORIZON_SEC = 30                        # Maximum simulated flight duration (seconds)
+HORIZON_SEC = 60                        # Maximum simulated flight duration (seconds)
 # World generation parameters
 WORLD_RANGE = 20                        # Random scenery placement range (±meters)
 HEIGHT_SCALE = 1.5                      # Obstacle height scale factor
