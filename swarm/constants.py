@@ -51,8 +51,6 @@ MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model file
 BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file
 CHUNK_SIZE = 2 * 1024 * 1024            # File transfer chunk size (2 MiB)
 SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess (MB)
-# Security metadata requirements
-SAFE_META_FILENAME = "safe_policy_meta.json"  # Required metadata file in model archives
 
 # =============================================================================
 # DRONE & FLIGHT CONTROL

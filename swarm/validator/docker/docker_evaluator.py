@@ -154,9 +154,8 @@ class DockerSecureEvaluator:
         is_rpc_submission = False
         try:
             with zipfile.ZipFile(model_path, 'r') as zf:
-                is_rpc_submission = "main.py" in zf.namelist()
-                if not is_rpc_submission and "safe_policy_meta.json" not in zf.namelist():
-                    bt.logging.warning(f"Model {uid} missing secure metadata")
+                if "main.py" not in zf.namelist():
+                    bt.logging.warning(f"Model {uid} missing main.py - RPC agent required")
                     return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
             bt.logging.warning(f"Failed to validate model {uid}: {e}")

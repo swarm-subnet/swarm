@@ -36,9 +36,9 @@ Miners that produce fast and *successful* policies earn the highest rewards
 
 ### ⛏️ Miner
 
-- Provides pre-trained RL policies that are evaluated on secret tasks
-- Any framework is allowed – Stable Baselines 3, custom PyTorch, or RPC agents
-- Must export models in compatible format with security metadata for validator evaluation
+- Provides RPC agents that are evaluated on secret tasks
+- Any framework is allowed – Stable Baselines 3, PyTorch, JAX, or custom implementations
+- Must submit RPC agent with main.py entry point
 
 ---
 
@@ -48,7 +48,7 @@ Miners that produce fast and *successful* policies earn the highest rewards
 |-----------------------|-----------------------------------|------------------------------------------------------------------------------|
 | **MapTask**           | Internal validator task         | Random start→goal pair, simulation time‑step `sim_dt`, hard time limit `horizon` (`swarm.protocol.MapTask`) |
 | **PolicyRef**         | Model metadata                    | SHA256, framework, size (`swarm.protocol.PolicyRef`) |
-| **Policy Evaluation** | RL model testing                 | Loads and runs policy on secret tasks (`swarm.validator.forward`) |
+| **Policy Evaluation** | RL model testing                 | Evaluates RPC agents on secret tasks in Docker (`swarm.core.evaluator`) |
 | **Reward**            | Maps outcome → [0,1] score        | 0.50 × success + 0.50 × time (`swarm.validator.reward.flight_reward`) |
 
 ### Task generation

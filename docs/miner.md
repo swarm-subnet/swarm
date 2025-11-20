@@ -4,34 +4,41 @@
 The Swarm subnet tasks your miner with developing pre‑trained flight‑control policies which dynamically generate safe flight paths for a simulated drone across a procedurally generated world. 
 This guide shows how to install, configure and run a Swarm miner
 
-## 🔒 Model Security Requirements
+## 🔒 RPC Submission Requirements
 
-**CRITICAL**: Validators use Docker-based secure evaluation with **strict model requirements**. Models missing required security metadata are **automatically rejected** and scored 0.0.
+**CRITICAL**: All submissions must be RPC agents. Validators evaluate agents in secure Docker containers.
 
-### Required Model Structure
-Your model ZIP **must contain exactly these files**:
+### Required RPC Agent Structure
+Your submission ZIP **must contain**:
 ```
-ppo_policy.zip
-├── policy.pth              ← PyTorch weights (no pickle objects)
-└── safe_policy_meta.json   ← REQUIRED security metadata
-```
-
-**Missing either file = automatic rejection**
-
-### safe_policy_meta.json Requirements
-This JSON file enables secure weights-only loading and **must contain**:
-```json
-{
-  "activation_fn": "relu",
-  "net_arch": {"pi": [64, 64], "vf": [64, 64]},
-  "use_sde": false
-}
+agent_submission.zip
+├── main.py              ← REQUIRED entry point
+├── drone_agent.py       ← Your flight controller
+├── agent_server.py      ← Cap'n Proto RPC server
+├── agent.capnp          ← RPC schema
+└── [your model files]   ← Optional: SB3, PyTorch, etc.
 ```
 
-**Required fields:**
-- `activation_fn`: Activation function name (relu, tanh, elu, leakyrelu, silu, gelu, mish, selu, celu)
-- `net_arch`: Network architecture - `{"pi": [...], "vf": [...]}` for policy/value networks
-- `use_sde`: State-dependent exploration boolean (usually `false`)
+**Missing main.py = automatic rejection**
+
+### Using SB3 Models in RPC Agent
+You can use Stable Baselines 3 models inside your RPC agent:
+
+```python
+# drone_agent.py
+from stable_baselines3 import PPO
+
+class DroneFlightController:
+    def __init__(self):
+        self.model = PPO.load("./my_sb3_model.zip")
+    
+    def act(self, observation):
+        action, _ = self.model.predict(observation, deterministic=True)
+        return action
+    
+    def reset(self):
+        pass
+```
 
 ## 💻 System Requirements
 
@@ -110,87 +117,113 @@ pm2 stop     swarm_miner
 ```
 
 
-## 🛠️ Creating Compliant Models
+## 🛠️ Creating RPC Agents
 
-### Basic Training Scripts (Starting Points)
-Swarm provides **basic example scripts** in `RL/` that miners should **improve upon**:
+### Using Submission Template
+Swarm provides a submission template in `swarm/submission_template/`:
 
-**Basic Training Example:**
 ```bash
-# Basic PPO training example - IMPROVE THIS for better performance
-python swarm/RL/train_RL_with_info.py
+# Copy template files
+cp -r swarm/submission_template/* your_agent/
+cd your_agent
 ```
 
-**Model Compliance Testing:**
+### Basic RPC Agent Structure
+
+**main.py** (entry point):
+```python
+from drone_agent import DroneFlightController
+from agent_server import start_server
+
+if __name__ == "__main__":
+    agent = DroneFlightController()
+    start_server(agent, port=8000)
+```
+
+**drone_agent.py** (your controller):
+```python
+class DroneFlightController:
+    def __init__(self):
+        # Load your model here (SB3, PyTorch, JAX, etc.)
+        from stable_baselines3 import PPO
+        self.model = PPO.load("./my_model.zip")
+    
+    def act(self, observation):
+        # Return action array [vx, vy, vz, speed, yaw]
+        action, _ = self.model.predict(observation, deterministic=True)
+        return action
+    
+    def reset(self):
+        # Reset state between missions
+        pass
+```
+
+### Using SB3 Models
+You can use any SB3 model inside your RPC agent. Just load it in `__init__` and use it in `act()`.
+
+### Using Custom PyTorch Models
+```python
+import torch
+
+class DroneFlightController:
+    def __init__(self):
+        self.model = torch.load("my_model.pt")
+        self.model.eval()
+    
+    def act(self, observation):
+        with torch.no_grad():
+            obs_tensor = torch.FloatTensor(observation)
+            action = self.model(obs_tensor).numpy()
+        return action
+```
+
+### Deploy Your Agent
 ```bash
-# Test ANY model for security compliance (ALWAYS use this)
-python -m RL.test_secure_RL --model model/ppo_policy.zip [--seed 42] [--gui]
+# Create ZIP with all required files
+zip -r agent_submission.zip main.py drone_agent.py agent_server.py agent.capnp [your_model_files]
+
+# Place in model directory
+cp agent_submission.zip model/ppo_policy.zip
 ```
-
-⚠️ **The provided scripts are minimal examples** - successful miners develop their own advanced training approaches.
-
-### Making ANY Model Compliant
-
-**Step 1: Export Compatible Format**
-Whatever training framework you use, export your model as:
-- `policy.pth` - PyTorch state dict (weights only)
-- `safe_policy_meta.json` - Metadata for secure loading
-
-**Step 2: Create Metadata File**
-Generate `safe_policy_meta.json` matching your model architecture:
-```json
-{
-  "activation_fn": "relu",
-  "net_arch": {"pi": [64, 64], "vf": [64, 64]},
-  "use_sde": false
-}
-```
-
-**Step 3: Test Compliance**
-```bash
-python -m RL.test_secure_RL --model your_model.zip
-```
-
-**Step 4: Deploy**
-Place compliant model in `model/ppo_policy.zip`
-
-The provided scripts are **starting points** - build better ones to compete effectively.
 
 ## ✈️ How the Miner Works
 
-1. **Validator sends an empty `PolicySynapse`** to request your model manifest.
-2. **Your miner responds with a `PolicyRef`** containing the SHA256 hash, file size, and framework tag (`sb3‑ppo`) of your trained model.
+1. **Validator sends an empty `PolicySynapse`** to request your agent manifest.
+2. **Your miner responds with a `PolicyRef`** containing the SHA256 hash, file size, and framework tag (`rpc-agent`) of your RPC agent.
 3. **Validator compares the SHA‑256 to its cache.**
-   - If identical → **done** (uses cached model).
+   - If identical → **done** (uses cached agent).
    - If different → **proceed** to download.
-4. **Validator requests the model** by sending `need_blob=True`.
-5. **Your miner streams the model** as a series of `PolicyChunk` messages until EOF.
-6. **Validator stores the model** as `miner_models_v2/UID_<uid>.zip`, loads it with SB3, and evaluates it on secret tasks. Score ∈ [0, 1] is written on‑chain.
+4. **Validator requests the agent** by sending `need_blob=True`.
+5. **Your miner streams the agent** as a series of `PolicyChunk` messages until EOF.
+6. **Validator stores the agent** as `miner_models_v2/UID_<uid>.zip`, extracts it, runs `main.py`, connects via RPC, and evaluates on secret tasks. Score ∈ [0, 1] is written on‑chain.
 
 
 | Step | Direction | Payload | What happens |
 |------|-----------|---------|--------------|
 | 1 | **Validator ➜ Miner** | empty `PolicySynapse` | “Send me your manifest.” |
-| 2 | **Miner ➜ Validator** | `ref` (`PolicyRef`) | Contains **sha256**, file size & framework tag (`sb3‑ppo`). |
+| 2 | **Miner ➜ Validator** | `ref` (`PolicyRef`) | Contains **sha256**, file size & framework tag (`rpc-agent`). |
 | 3 | **Validator** compares the SHA‑256 to its cache. | — | If identical → **done**. If different → **proceed**. |
 | 4 | **Validator ➜ Miner** | `need_blob=True` | “Stream me the new zip.” |
 | 5 | **Miner ➜ Validator** | series of `chunk` messages (`PolicyChunk`) | Raw bytes until EOF. |
 | 6 | **Validator** stores `miner_models_v2/UID_<uid>.zip`, loads it with SB3 and evaluates it on secret tasks. | — | Score ∈ [0 … 1] is written on‑chain. |
 
 There is **no MapTask in the handshake**.  
-Miners never see the evaluation maps; only their exported policy is tested.
+Miners never see the evaluation maps; only their RPC agent is tested.
 
 ### Required Folder Layout
 
 ```
 swarm/
 └── model/
-    └── ppo_policy.zip     ← your trained SB3 PPO policy
-        ├── policy.pth              ← PyTorch weights (REQUIRED)
-        └── safe_policy_meta.json   ← Security metadata (REQUIRED)
+    └── ppo_policy.zip     ← your RPC agent submission
+        ├── main.py              ← Entry point (REQUIRED)
+        ├── drone_agent.py       ← Your controller
+        ├── agent_server.py      ← RPC server
+        ├── agent.capnp          ← RPC schema
+        └── [your model files]   ← Optional: SB3, PyTorch, etc.
 ```
 
-**Both files inside the ZIP are mandatory** - missing either file results in automatic model rejection.
+**main.py is mandatory** - missing it results in automatic rejection.
 
 Update the path or filename in `neurons/miner.py` if you organize files differently.
 
@@ -206,55 +239,52 @@ Target time is computed as `(distance / 3.0 m/s) × 1.06` to allow a 6% buffer f
 *Full logic: `swarm/validator/reward.py`.*
 
 
-## 🔄 Updating your model  
+## 🔄 Updating your agent  
 
-**ALWAYS test compliance locally before deployment:**
+**ALWAYS test your agent locally before deployment:**
 ```bash
-# Test your new model BEFORE deploying
-python -m RL.test_secure_RL --model your_new_model.zip
+# Test your RPC agent locally
+cd your_agent_directory
+python main.py
+# In another terminal, test RPC connection
 
-# If test passes, deploy to miner
-cp your_new_model.zip model/ppo_policy.zip
+# If test passes, create ZIP and deploy
+zip -r agent_submission.zip main.py drone_agent.py agent_server.py agent.capnp [your_model_files]
+cp agent_submission.zip model/ppo_policy.zip
 
 # Restart miner to serve new hash
 pm2 restart swarm_miner
 ```
 
-The miner computes SHA‑256 at startup. Validators fetch new models automatically at the next handshake.
+The miner computes SHA‑256 at startup. Validators fetch new agents automatically at the next handshake.
 
 ## 🔧 Troubleshooting
 
-### Model Rejection Issues
+### Agent Rejection Issues
 
-**❌ "Missing safe_policy_meta.json"**
+**❌ "Missing main.py"**
 ```
-Error: Model missing secure metadata
+Error: Missing main.py - RPC agent submission required
 ```
-**Solution:** Create `safe_policy_meta.json` with required fields inside your model ZIP
+**Solution:** Ensure your ZIP contains `main.py` as entry point
 
-**❌ "Invalid JSON structure"**  
+**❌ "Dangerous executable files detected"**
 ```
-Error: Invalid JSON in safe_policy_meta.json
+Error: Dangerous executable files detected: [.exe, .so, .dll]
 ```
-**Solution:** Check JSON syntax and ensure all required fields: `activation_fn`, `net_arch`, `use_sde`
+**Solution:** Remove executable files from your submission. Only Python code and model files allowed.
 
-**❌ "Model too large"**
+**❌ "Agent too large"**
 ```
-Error: Model exceeds size limit
+Error: Agent exceeds size limit
 ```
-**Solution:** Models must be ≤ **50 MiB** compressed. Reduce network size or remove unnecessary files.
+**Solution:** Submissions must be ≤ **50 MiB** compressed. Reduce model size or remove unnecessary files.
 
-**❌ "PyTorch weights_only not supported"**
+**❌ "RPC connection failed"**
 ```
-Error: PyTorch version doesn't support weights_only=True
+Error: RPC ping failed
 ```
-**Solution:** Upgrade PyTorch: `pip install torch>=1.9.0`
-
-### Model Compliance Check
-```bash
-# Always test before deployment
-python -m RL.test_secure_RL --model model/ppo_policy.zip
-```
+**Solution:** Ensure your `main.py` starts RPC server on port 8000 and responds to ping requests
 
 ## 🆘 Need help?
 
