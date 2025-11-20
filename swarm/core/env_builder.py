@@ -19,7 +19,7 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import pybullet as p
 
@@ -95,7 +95,7 @@ def build_world(
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
     challenge_type: int = 1,
-) -> Tuple[Optional[int], Optional[int]]:
+) -> Tuple[List[int], List[int]]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
     is provided—place a visual TAO badge at that position.
@@ -271,6 +271,9 @@ def build_world(
         if placed < n_obstacles * 0.8:
             pass  
 
+    start_platform_uids: List[int] = []
+    end_platform_uids: List[int] = []
+
     # ------------------------------------------------------------------
     # Optional solid start platform
     # ------------------------------------------------------------------
@@ -310,6 +313,7 @@ def build_world(
             basePosition=base_position,
             physicsClientId=cli,
         )
+        start_platform_uids.append(start_platform_uid)
 
         p.changeDynamics(
             bodyUniqueId=start_platform_uid,
@@ -335,6 +339,7 @@ def build_world(
             basePosition=[sx, sy, surface_z],
             physicsClientId=cli,
         )
+        start_platform_uids.append(flat_surface_uid)
 
         p.changeDynamics(
             bodyUniqueId=flat_surface_uid,
@@ -350,18 +355,19 @@ def build_world(
             shapeType=p.GEOM_CYLINDER,
             radius=platform_radius * 0.9,
             length=0.002,
-            rgbaColor=[1.0, 0.0, 0.0, 1.0],  # BRIGHT RED - Start platform
-            specularColor=[1.0, 0.3, 0.3],   # Red specular highlight
+            rgbaColor=[1.0, 0.0, 0.0, 1.0],
+            specularColor=[1.0, 0.3, 0.3],
             physicsClientId=cli,
         )
 
-        p.createMultiBody(
+        start_visual_uid = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=-1,
             baseVisualShapeIndex=start_surface_visual,
             basePosition=[sx, sy, surface_z + 0.001],
             physicsClientId=cli,
         )
+        start_platform_uids.append(start_visual_uid)
 
     # ------------------------------------------------------------------
     # Physical landing platform with visual goal marker
@@ -395,21 +401,21 @@ def build_world(
             
             # Create the physical landing platform - POSITIONED CORRECTLY
             platform_uid = p.createMultiBody(
-                baseMass=0,  # Static platform (infinite mass)
+                baseMass=0,
                 baseCollisionShapeIndex=platform_collision,
                 baseVisualShapeIndex=platform_visual,
-                basePosition=[gx, gy, gz - platform_height / 2],  # Bottom at gz level
+                basePosition=[gx, gy, gz - platform_height / 2],
                 physicsClientId=cli
             )
+            end_platform_uids.append(platform_uid)
             
-            # Set platform material properties for MAXIMUM stability
             p.changeDynamics(
                 bodyUniqueId=platform_uid,
                 linkIndex=-1,
-                restitution=0.0,      # NO bounce whatsoever
-                lateralFriction=2.0,  # VERY high friction to prevent sliding
-                spinningFriction=1.0, # High spinning friction
-                rollingFriction=0.5,  # High rolling friction
+                restitution=0.0,
+                lateralFriction=2.0,
+                spinningFriction=1.0,
+                rollingFriction=0.5,
                 physicsClientId=cli
             )
 
@@ -431,35 +437,34 @@ def build_world(
             # Position main green surface on top of platform
             surface_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision for surface
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=surface_visual,
-                basePosition=[gx, gy, gz + surface_height / 2 + 0.001],  # On platform top
+                basePosition=[gx, gy, gz + surface_height / 2 + 0.001],
                 physicsClientId=cli,
             )
+            end_platform_uids.append(surface_uid)
             
-            # Add SOLID FLAT landing surface for stable drone landing
-            # This invisible collision surface ensures drone lands on completely flat surface
             flat_landing_collision = p.createCollisionShape(
                 shapeType=p.GEOM_CYLINDER,
-                radius=surface_radius,  # Same size as green circle
-                height=0.001,           # Paper-thin but solid
+                radius=surface_radius,
+                height=0.001,
                 physicsClientId=cli,
             )
             
             flat_landing_uid = p.createMultiBody(
                 baseMass=0,
                 baseCollisionShapeIndex=flat_landing_collision,
-                baseVisualShapeIndex=-1,  # Invisible
-                basePosition=[gx, gy, gz + surface_height + 0.002],  # Exactly on green surface
+                baseVisualShapeIndex=-1,
+                basePosition=[gx, gy, gz + surface_height + 0.002],
                 physicsClientId=cli
             )
+            end_platform_uids.append(flat_landing_uid)
             
-            # Set maximum friction for this landing surface
             p.changeDynamics(
                 bodyUniqueId=flat_landing_uid,
                 linkIndex=-1,
-                restitution=0.0,      # No bounce at all
-                lateralFriction=3.0,  # MAXIMUM friction to prevent sliding
+                restitution=0.0,
+                lateralFriction=3.0,
                 spinningFriction=2.0,
                 rollingFriction=1.0,
                 physicsClientId=cli
@@ -482,33 +487,32 @@ def build_world(
             # Position the white background
             tao_background_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_background_visual,
-                basePosition=[gx, gy, gz + surface_height + badge_height + 0.008],  # Higher for visibility
+                basePosition=[gx, gy, gz + surface_height + badge_height + 0.008],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
+            end_platform_uids.append(tao_background_uid)
             
-            # Create MASSIVE circular TAO logo with texture on top
             tao_logo_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
-                radius=tao_logo_radius * 0.95,  # Slightly smaller for border effect
-                length=badge_height * 0.5,      # Thinner texture layer
-                rgbaColor=[0.0, 1.0, 0.0, 1.0],  # Bright green for texture
+                radius=tao_logo_radius * 0.95,
+                length=badge_height * 0.5,
+                rgbaColor=[0.0, 1.0, 0.0, 1.0],
                 physicsClientId=cli,
             )
 
-            # Position the TAO logo texture on top of background
             tao_logo_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_logo_visual,
-                basePosition=[gx, gy, gz + surface_height + badge_height + 0.011],  # On top of background
+                basePosition=[gx, gy, gz + surface_height + badge_height + 0.011],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
+            end_platform_uids.append(tao_logo_uid)
             
-            # Apply TAO texture to the MASSIVE logo
             p.changeVisualShape(
                 tao_logo_uid,
                 -1,
@@ -543,22 +547,23 @@ def build_world(
             # Position main beacon pole
             pole_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision for pole
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=pole_visual,
-                basePosition=[gx, gy, gz + pole_h / 2 + 0.008],  # Above platform
+                basePosition=[gx, gy, gz + pole_h / 2 + 0.008],
                 physicsClientId=cli,
             )
+            end_platform_uids.append(pole_uid)
             
-            # Position beacon cap on top
             cap_uid = p.createMultiBody(
                 baseMass=0,
-                baseCollisionShapeIndex=-1,  # No collision for cap
+                baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=cap_visual,
-                basePosition=[gx, gy, gz + pole_h + 0.015],  # Top of pole
+                basePosition=[gx, gy, gz + pole_h + 0.015],
                 physicsClientId=cli,
             )
+            end_platform_uids.append(cap_uid)
             
-            return (platform_uid, flat_landing_uid)
+            return (end_platform_uids, start_platform_uids)
         
         else:
             # Visual-only markers (legacy mode for easier challenges)
@@ -624,13 +629,13 @@ def build_world(
                 specularColor=[0.4, 0.4, 0.4],
                 physicsClientId=cli,
             )
-            p.createMultiBody(
+            pole_uid_legacy = p.createMultiBody(
                 0,
                 -1,
                 pole_vis,
                 [gx, gy, gz + pole_h / 2 + 0.001],
                 physicsClientId=cli,
             )
+            end_platform_uids.append(pole_uid_legacy)
             
-    # Return None if no platform was created
-    return (None, None)
+    return (end_platform_uids, start_platform_uids)

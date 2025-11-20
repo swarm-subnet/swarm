@@ -177,8 +177,8 @@ class MovingDroneAviary(BaseRLAviary):
         if not contact_points:
             return False
 
-        landing_surface_uid = getattr(self, '_landing_surface_uid', None)
-        platform_support_uid = getattr(self, '_platform_support_uid', None)
+        end_platform_uids = getattr(self, '_end_platform_uids', [])
+        start_platform_uids = getattr(self, '_start_platform_uids', [])
 
         platform_hit = False
         obstacle_hit = False
@@ -192,11 +192,11 @@ class MovingDroneAviary(BaseRLAviary):
             if normal_force <= 0.01:
                 continue
 
-            if (
-                (landing_surface_uid is not None and body_b == landing_surface_uid)
-                or (platform_support_uid is not None and body_b == platform_support_uid)
-            ):
+            if body_b in end_platform_uids:
                 platform_hit = True
+                continue
+
+            if body_b in start_platform_uids:
                 continue
 
             obstacle_hit = True
@@ -257,7 +257,7 @@ class MovingDroneAviary(BaseRLAviary):
         from swarm.core.env_builder import build_world
         
         cli = getattr(self, "CLIENT", 0)
-        platform_support_uid, landing_surface_uid = build_world(
+        end_platform_uids, start_platform_uids = build_world(
             seed=self.task.map_seed,
             cli=cli,
             start=self.task.start,
@@ -265,8 +265,8 @@ class MovingDroneAviary(BaseRLAviary):
             challenge_type=self.task.challenge_type,
         )
         
-        self._platform_support_uid = platform_support_uid
-        self._landing_surface_uid = landing_surface_uid
+        self._end_platform_uids = end_platform_uids if end_platform_uids else []
+        self._start_platform_uids = start_platform_uids if start_platform_uids else []
         
         start_xyz = np.asarray(self.task.start, dtype=float)
         start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
