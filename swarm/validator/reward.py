@@ -9,7 +9,7 @@ where
 
 * ``success_term`` is ``1`` if the mission reaches its goal and ``0``
   otherwise.
-* ``time_term`` is based on minimum theoretical time with 2% buffer.
+* ``time_term`` is based on minimum theoretical time with 6% buffer.
 
 Both weights sum to one. The final score is clamped to ``[0, 1]``.
 """
@@ -31,7 +31,7 @@ def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
 
 
 def _calculate_target_time(task: "MapTask") -> float:
-    """Calculate target time based on distance and 2% buffer."""
+    """Calculate target time based on distance and 6% buffer."""
     import numpy as np
     
     start_pos = np.array(task.start)
@@ -40,7 +40,7 @@ def _calculate_target_time(task: "MapTask") -> float:
     
     # Minimum achievable duration includes the mandatory hover window for success.
     min_time = (distance / SPEED_LIMIT) + HOVER_SEC
-    return min_time * 1.02
+    return min_time * 1.06
 
 
 def flight_reward(

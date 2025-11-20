@@ -1,5 +1,5 @@
 # 🚀 Swarm Validator Guide
-*(Swarm subnet – netuid 124)*
+*(Swarm subnet – netuid 124)*
 
 This document shows how to install and operate the Swarm validator that securely evaluates models received from miners on dynamically generated maps using Docker-based isolation.
 
@@ -7,9 +7,9 @@ This document shows how to install and operate the Swarm validator that securely
 
 | Resource | Minimal | Notes                                |
 |----------|---------|--------------------------------------|
-| CPU      | 3 cores  | Miners are evaluated 1 by 1, no no need for much spec |
-| RAM      | 8 GB     |                     |
-| Disk     | 50 GB     | Environment                   |
+| CPU      | 3 cores  | Miners are evaluated 1 by 1 |
+| RAM      | 8 GB     |                     |
+| Disk     | 50 GB     | Environment                   |
 | GPU      | none     |  |
 
 **Supported & tested Linux distros:**
@@ -114,6 +114,20 @@ python -c "import subprocess; print('Docker status:', subprocess.run(['docker', 
 
 **Expected Output:** `Docker status: True`
 
+### 5. Configure Environment Variables
+
+Create `.env` file in repository root:
+
+```bash
+# REQUIRED for synchronized seeds (Contact the team)
+VALIDATOR_SECRET_KEY=your_secret_key_here 
+
+# Optional: WandB logging
+WANDB_API_KEY=your_wandb_key_here
+VALIDATOR_NAME=my_validator_name
+```
+
+**Note:** `VALIDATOR_SECRET_KEY` is used for synchronized seed generation across validators. Contact the team to obtain it.
 
 ## 🔑 Wallet & Registration Setup
 
@@ -134,7 +148,7 @@ btcli subnet register --wallet.name my_cold --wallet.hotkey my_validator --netui
 btcli wallet overview --wallet.name my_cold --subtensor.network finney
 ```
 
-## ⚙️ 3 · Run the validator
+## ⚙️ Run the validator
 
 ### PM2 launch example
 
@@ -162,14 +176,14 @@ pm2 restart swarm_validator
 pm2 stop     swarm_validator
 ```
 
-## 🔄 4 · Automatic update & deploy
+## 🔄 Automatic update & deploy
 
-**scripts/auto_update_deploy.sh**
+**scripts/validator/update/auto_update_deploy.sh**
 
 **What it does**
 
-- Every _n_ minutes checks `origin/main` for a higher `swarm/__init__.py::__version__`.
-- Pulls, resets to the new commit and calls `scripts/update_deploy.sh` to rebuild & restart the PM2 validator process – zero downtime.
+- Every *n* minutes checks `origin/main` for a higher `swarm/__init__.py::__version__`.
+- Pulls, resets to the new commit and calls `scripts/validator/update/update_deploy.sh` to rebuild & restart the PM2 validator process.
 
 **How to use**
 
@@ -183,46 +197,45 @@ nano ./scripts/validator/update/auto_update_deploy.sh
 #   WALLET_NAME="my_cold"
 #   WALLET_HOTKEY="my_validator"
 #   SUBTENSOR_PARAM="--subtensor.network finney"
+#   CHECK_INTERVAL_MINUTES=30
 
-# then run it under pm2 / tmux / systemd
+# then run it under pm2
 pm2 start --name auto_update_validator \
           --interpreter /bin/bash \
           scripts/validator/update/auto_update_deploy.sh
 ```
 
 
-## 🧩 5 · What the validator actually does (v2.0.3)
+## 🧩 What the validator actually does
 
-1. **Build a secret task**  
-   A random MapTask (world limits, obstacles, physics Δt, horizon) is produced  
-   by `swarm/validator/task_gen.py`.  
-   *The task is **never** sent to miners.*
+1. **Generate synchronized seed**  
+   All validators generate identical seeds based on 10-minute time windows using `VALIDATOR_SECRET_KEY`.  
+   This ensures all validators evaluate miners on identical maps.
 
-2. **Discover miners’ models**  
-   *File cache:* `miner_models_v2/UID_<uid>.zip`  
-   For each sampled UID the validator  
-   1. sends an empty **`PolicySynapse`** → miner replies with a **`PolicyRef`**;  
-   2. compares the `sha256` to the cached file. If it differs, it sends  
-      `need_blob=True` and streams the new zip through `PolicyChunk` messages  
-      (`_download_model`).  
-   All handshake and caching logic lives in `_ensure_models()` inside  
-   `swarm/validator/forward.py`.
+2. **Sample miners**  
+   Sample up to 256 miners from metagraph, filtering out low performers (avg score < 0.2) and validators.
 
-3. **Evaluate miners one‑by‑one (low‑RAM loop)**  
-   Each model is loaded, exercised on the secret task, and immediately freed.  
-   The episode runner `_run_episode` measures:  
-   * success flag  
-   * time alive  
-  
-   These metrics are converted into a **score ∈ [0, 1]** by  
-   `swarm/validator/reward.py`.
+3. **Discover miners' models**  
+   For each sampled UID:
+   - Send empty `PolicySynapse` → miner replies with `PolicyRef`
+   - Compare SHA256 to cache at `miner_models_v2/UID_<uid>.zip`
+   - If hash differs, request `need_blob=True` and stream via `PolicyChunk` messages
 
-4. **Update on‑chain weights**  
-   Scores are fed into `BaseValidatorNeuron.update_scores()` and pushed to
-   subtensor, rewarding miners proportionally.
+4. **Multi-layer fake detection**  
+   Models are validated for security and authenticity before evaluation.
 
-5. **Sleep & repeat**  
-   The loop pauses for `FORWARD_SLEEP_SEC`, then returns to step 1.
+5. **Docker evaluation**  
+   Each model evaluated in isolated container on secret tasks.
+
+6. **Score normalization**  
+   Compute normalized score as weighted average across all challenge types.  
+   Minimum 25 runs required before miner is eligible for rewards.
+
+7. **Winner-take-all rewards**  
+   Winner take all
+
+8. **Update weights and repeat**  
+   Write weights to chain, sleep until next seed window, cleanup Docker resources.
 
 Everything is orchestrated by the coroutine
 `swarm/validator/forward.py::forward`.
@@ -259,6 +272,12 @@ sudo systemctl enable docker
 
 ### Validator Startup Issues
 
+**Missing VALIDATOR_SECRET_KEY:**
+```
+Error: VALIDATOR_SECRET_KEY not set
+```
+**Solution:** Create `.env` file with `VALIDATOR_SECRET_KEY=your_secret_here`
+
 **PyBullet/OpenGL errors:**
 ```bash
 # Install missing graphics libraries
@@ -276,7 +295,7 @@ chmod 755 miner_models_v2
 ```bash
 # Check Docker system status
 docker system df
-docker system prune  # Clean up if needed
+docker system prune -f  # Clean up if needed
 ```
 
 ### Security Warnings

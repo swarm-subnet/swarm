@@ -48,23 +48,20 @@ This JSON file enables secure weights-only loading and **must contain**:
 ## 🚀 Installation
 
 ```bash
-# 1) clone the repo (no sub‑modules required)
+# 1) clone the repo
 git clone https://github.com/swarm-subnet/swarm
 cd swarm
+
 # 2) install dependencies
 chmod +x scripts/miner/install_dependencies.sh
 ./scripts/miner/install_dependencies.sh
+
 # 3) Miner setup
 chmod +x scripts/miner/setup.sh
 ./scripts/miner/setup.sh
 
 # 4) Activate virtual env
 source miner_env/bin/activate
-
-```
-```bash
-sudo apt update && sudo apt install -y \
-     build-essential git pkg-config libgl1-mesa-glx mesa-utils
 ```
 
 ## 🔧 Configuration
@@ -89,7 +86,7 @@ btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
 ## 🏃‍♂️ Running the miner (PM2 example)
 
 ```bash
-source miner_env/bin/activate      # if not already active
+source miner_env/bin/activate
 
 pm2 start neurons/miner.py --name swarm_miner -- \
      --netuid 124 \
@@ -97,7 +94,6 @@ pm2 start neurons/miner.py --name swarm_miner -- \
      --wallet.name my_cold \
      --wallet.hotkey my_hot \
      --axon.port 8091
-
 ```
 
 Check logs:
@@ -202,8 +198,10 @@ Update the path or filename in `neurons/miner.py` if you organize files differen
 
 | Term            | Weight | Description                                      |
 |-----------------|--------|--------------------------------------------------|
-| Mission success | 0.50   | 1.0 if goal reached, else 0                      |
-| Time factor     | 0.50   | 1 − t_goal / horizon, clamped to [0,1]           |
+| Mission success | 0.50   | 1.0 if goal reached, else 0      |
+| Time factor     | 0.50   | 1.0 if time ≤ target, linear decay otherwise    |
+
+Target time is computed as `(distance / 3.0 m/s) × 1.06` to allow a 6% buffer for optimal flight.
 
 *Full logic: `swarm/validator/reward.py`.*
 
@@ -244,7 +242,7 @@ Error: Invalid JSON in safe_policy_meta.json
 ```
 Error: Model exceeds size limit
 ```
-**Solution:** Models must be ≤ **10 MiB** compressed. Reduce network size or remove unnecessary files.
+**Solution:** Models must be ≤ **50 MiB** compressed. Reduce network size or remove unnecessary files.
 
 **❌ "PyTorch weights_only not supported"**
 ```
@@ -259,7 +257,6 @@ python -m RL.test_secure_RL --model model/ppo_policy.zip
 ```
 
 ## 🆘 Need help?
-
 
 - Discord – ping @Miguelikk or @AliSaaf
 - GitHub issues – open a ticket with logs & error trace
