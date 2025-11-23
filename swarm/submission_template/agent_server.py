@@ -17,10 +17,18 @@ from drone_agent import DroneFlightController
 
 
 class AgentServer(agent_capnp.Agent.Server):
-    def __init__(self, agent):
+    def __init__(self, agent, auth_token=None):
         self.agent = agent
+        self.auth_token = auth_token
+        self.authenticated = auth_token is None
     
     async def ping(self, message, **kwargs):
+        if self.auth_token and not self.authenticated:
+            if message == self.auth_token:
+                self.authenticated = True
+                return "pong"
+            else:
+                raise ValueError("Authentication failed")
         return "pong"
     
     async def act(self, obs, **kwargs):
@@ -53,9 +61,9 @@ class AgentServer(agent_capnp.Agent.Server):
         self.agent.reset()
 
 
-async def serve(agent, port=8000):
+async def serve(agent, port=9000, auth_token=None):
     async def new_connection(stream):
-        server = capnp.TwoPartyServer(stream, bootstrap=AgentServer(agent))
+        server = capnp.TwoPartyServer(stream, bootstrap=AgentServer(agent, auth_token))
         await server.on_disconnect()
     
     server = await capnp.AsyncIoStream.create_server(
@@ -66,10 +74,10 @@ async def serve(agent, port=8000):
         await server.serve_forever()
 
 
-def start_server(agent, port=8000):
+def start_server(agent, port=9000, auth_token=None):
     async def run_with_kj():
         async with capnp.kj_loop():
-            await serve(agent, port)
+            await serve(agent, port, auth_token)
     
     try:
         asyncio.run(run_with_kj())
@@ -79,5 +87,5 @@ def start_server(agent, port=8000):
 
 if __name__ == "__main__":
     agent = DroneFlightController()
-    start_server(agent, port=8000)
+    start_server(agent, port=9000)
 

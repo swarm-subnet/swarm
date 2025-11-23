@@ -1,11 +1,10 @@
 import asyncio
 import json
 import os
+import secrets
 import subprocess
-import tempfile
 import time
 import zipfile
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -113,7 +112,54 @@ class DockerSecureEvaluator:
             bt.logging.error(f"Failed to setup Docker environment: {e}")
             self.base_ready = False
             DockerSecureEvaluator._base_ready = False
+        
+        if not hasattr(self, '_isolated_network'):
+            self._setup_isolated_network()
     
+    def _setup_isolated_network(self):
+        pass
+    
+    def _get_container_ip(self, container_name: str) -> str:
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except Exception:
+            return None
+    
+    def _apply_container_egress_blocking(self, container_name: str, container_ip: str):
+        try:
+            gateway_result = subprocess.run(
+                ["docker", "network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            gateway_ip = gateway_result.stdout.strip()
+            
+            if not gateway_ip:
+                bt.logging.warning(f"Could not get bridge gateway IP for egress blocking")
+                return
+            
+            iptables_result = subprocess.run([
+                "iptables", "-I", "DOCKER-USER", "1",
+                "-s", container_ip,
+                "!", "-d", gateway_ip,
+                "-j", "DROP"
+            ], capture_output=True)
+            
+            if iptables_result.returncode == 0:
+                bt.logging.info(f"✅ Egress blocking applied for container {container_name}")
+            else:
+                bt.logging.error(f"❌ SECURITY WARNING: Failed to apply egress blocking for {container_name}")
+                bt.logging.error(f"Container may have outbound internet access")
+                bt.logging.error(f"Error: {iptables_result.stderr.decode()}")
+        except Exception as e:
+            bt.logging.error(f"❌ SECURITY WARNING: Exception applying egress blocking: {e}")
 
     async def evaluate_model(
         self, 
@@ -148,159 +194,122 @@ class DockerSecureEvaluator:
             bt.logging.warning(f"Failed to check for base image: {e}")
             return ValidationResult(uid, False, 0.0, 0.0)
         
-        # Track fake models detected for this evaluation
         self.last_fake_model_info = None
         
-        is_rpc_submission = False
-        try:
-            with zipfile.ZipFile(model_path, 'r') as zf:
-                if "main.py" not in zf.namelist():
-                    bt.logging.warning(f"Model {uid} missing main.py - RPC agent required")
-                    return ValidationResult(uid, False, 0.0, 0.0)
-        except Exception as e:
-            bt.logging.warning(f"Failed to validate model {uid}: {e}")
+        from swarm.core.model_verify import inspect_model_structure, classify_model_validity
+        
+        inspection_results = inspect_model_structure(model_path)
+        model_status, model_reason = classify_model_validity(inspection_results)
+        
+        if model_status == "fake":
+            bt.logging.warning(f"🚫 FAKE MODEL DETECTED for UID {uid}: {model_reason}")
+            bt.logging.debug(f"Inspection results: {inspection_results}")
+            
+            self.last_fake_model_info = {
+                'uid': uid,
+                'reason': model_reason,
+                'inspection_results': inspection_results
+            }
+            
+            model_hash = sha256sum(model_path)
+            add_to_blacklist(model_hash)
+            
+            bt.logging.info(f"🏁 Ending evaluation for UID {uid} - fake model detected")
+            return ValidationResult(uid, False, 0.0, 0.0)
+        
+        if model_status == "missing_metadata":
+            bt.logging.warning(f"Model {uid} missing metadata: {model_reason}")
+            bt.logging.info(f"🏁 Ending evaluation for UID {uid} - missing metadata")
             return ValidationResult(uid, False, 0.0, 0.0)
         
         container_name = f"swarm_eval_{uid}_{int(time.time() * 1000)}"
         
-        # ENHANCED LOGGING: Starting Docker for UID
         bt.logging.info(f"🐳 Starting Docker container for UID {uid} evaluation...")
         
+        auth_token = secrets.token_hex(32)
+        
         try:
-            # Create temp directory for task/result files
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Set ownership and permissions for container user (UID 1000)
-                os.chown(tmpdir, 1000, 1000)
-                os.chmod(tmpdir, 0o755)
-                
-                task_file = Path(tmpdir) / "task.json"
-                result_file = Path(tmpdir) / "result.json"
-                
-                # Write task data
-                with open(task_file, 'w') as f:
-                    json.dump(asdict(task), f)
-                
-                network_mode = "bridge" if is_rpc_submission else "none"
-                
-                cmd = [
-                    "docker", "run",
-                    "--rm",
-                    "--name", container_name,
-                    "--user", "1000:1000",
-                    "--memory=6g",
-                    "--cpus=2",
-                    "--pids-limit=20",
-                    "--ulimit", "nofile=64:64",
-                    "--ulimit", "fsize=524288000:524288000",
-                    "--security-opt", "no-new-privileges",
-                    "--network", network_mode,
-                    "-v", f"{tmpdir}:/workspace/shared",
-                    "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
-                    self.base_image,
-                    "/workspace/shared/task.json",
-                    str(uid),
-                    "/workspace/model.zip",
-                    "/workspace/shared/result.json"
-                ]
-                
-                # Execute with timeout
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+            cmd = [
+                "docker", "run",
+                "--rm",
+                "--name", container_name,
+                "--user", "1000:1000",
+                "--memory=6g",
+                "--cpus=2",
+                "--pids-limit=20",
+                "--ulimit", "nofile=64:64",
+                "--ulimit", "fsize=524288000:524288000",
+                "--security-opt", "no-new-privileges",
+                "--network", "bridge",
+                "-e", f"AUTH_TOKEN={auth_token}",
+                "-e", f"RPC_PORT=9000",
+                "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
+                self.base_image,
+                "container_launcher",
+                "/workspace/model.zip"
+            ]
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            bt.logging.info(f"⏳ Waiting 3 minutes for pip install to complete (miner's requirements.txt)...")
+            await asyncio.sleep(180)
+            
+            container_ip = self._get_container_ip(container_name)
+            if container_ip:
+                self._apply_container_egress_blocking(container_name, container_ip)
+            if not container_ip:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except Exception:
+                    pass
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            from swarm.core.evaluator_host import evaluate_with_rpc_client
+            
+            try:
+                result = await asyncio.wait_for(
+                    evaluate_with_rpc_client(task, uid, container_ip, auth_token),
+                    timeout=EVAL_TIMEOUT_SEC
                 )
                 
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(),
-                        timeout=EVAL_TIMEOUT_SEC + 10
-                    )
-                    
-                    if proc.returncode != 0:
-                        stderr_str = stderr.decode() if stderr else ""
-                        bt.logging.debug(f"Container failed for UID {uid}: {stderr_str[:300]}")
-                        # Container failed - return zero score immediately
-                        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation failed")
-                        return ValidationResult(uid, False, 0.0, 0.0)
-                    
-                except asyncio.TimeoutError:
-                    # Kill container if timeout
-                    subprocess.run(["docker", "kill", container_name], capture_output=True)
-                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-                    bt.logging.warning(f"Container timeout for UID {uid}")
-                    # ENHANCED LOGGING: Ending Docker for timeout
-                    bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation timed out")
+                if not (0.0 <= result.score <= 1.0):
+                    bt.logging.error(f"🚫 Invalid score {result.score} for UID {uid} - blacklisting model")
+                    model_hash = sha256sum(model_path)
+                    add_to_blacklist(model_hash)
+                    result = ValidationResult(uid, False, 0.0, 0.0)
                 
-                # Read results
-                if result_file.exists():
-                    try:
-                        with open(result_file, 'r') as f:
-                            data = json.load(f)
-                        
-                        # Check for fake model detection
-                        if data.get('is_fake_model', False):
-                            bt.logging.warning(f"🚫 FAKE MODEL DETECTED for UID {uid}: {data.get('fake_reason', 'Unknown')}")
-                            bt.logging.debug(f"Inspection results: {data.get('inspection_results', {})}")
-                            
-                            # Store fake model info for blacklisting
-                            self.last_fake_model_info = {
-                                'uid': uid,
-                                'reason': data.get('fake_reason', 'Unknown'),
-                                'inspection_results': data.get('inspection_results', {})
-                            }
-                            
-                            # ENHANCED LOGGING: Ending Docker for fake model
-                            bt.logging.info(f"🏁 Ending Docker container for UID {uid} - fake model detected")
-                            
-                            # Return zero score for fake models
-                            return ValidationResult(uid, False, 0.0, 0.0)
-                        
-                        had_error = "error" in data
-                        if had_error:
-                            bt.logging.debug(f"Evaluation error for UID {uid}: {data['error']}")
-                        
-                        result_data = {k: v for k, v in data.items() if k not in ["error", "is_fake_model", "fake_reason", "inspection_results", "energy"]}
-                        
-                        # Clear fake model info since this was a legitimate evaluation
-                        self.last_fake_model_info = None
-                        
-                        # Apply reward floor logic
-                        if not had_error and float(result_data.get("score", 0.0)) == 0.0:
-                            result_data["score"] = 0.01
-                        
-                        # Validate score range [0,1]
-                        score = float(result_data.get("score", 0.0))
-                        if not (0.0 <= score <= 1.0):
-                            bt.logging.error(f"🚫 Invalid score {score} for UID {uid} - blacklisting model")
-                            model_hash = sha256sum(model_path)
-                            add_to_blacklist(model_hash)
-                            return ValidationResult(uid, False, 0.0, 0.0)
-                        
-                        # Log result data exactly as requested - custom format with emoji
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        print(f"{timestamp} 🔍 DEBUG: UID {uid} result_data: {result_data}")
-                        
-                        # ENHANCED LOGGING: Successfully ending Docker for UID
-                        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation completed successfully")
-                        
-                        return ValidationResult(**result_data)
-                        
-                    except Exception as e:
-                        bt.logging.warning(f"Failed to parse result for UID {uid}: {e}")
-                        # ENHANCED LOGGING: Ending Docker for result parsing error
-                        bt.logging.info(f"🏁 Ending Docker container for UID {uid} - result parsing failed")
-                else:
-                    bt.logging.warning(f"No result file found for UID {uid}")
-                    # ENHANCED LOGGING: Ending Docker for missing results
-                    bt.logging.info(f"🏁 Ending Docker container for UID {uid} - no results generated")
+                if result.score == 0.0:
+                    result = ValidationResult(uid, result.success, result.time_sec, 0.01)
+                
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"{timestamp} 🔍 DEBUG: UID {uid} result: uid={result.uid}, success={result.success}, time={result.time_sec}, score={result.score}")
+                
+                bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation completed successfully")
+                
+                return result
+                
+            except asyncio.TimeoutError:
+                bt.logging.warning(f"Container timeout for UID {uid}")
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            finally:
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except Exception:
+                    subprocess.run(["docker", "kill", container_name], capture_output=True)
         
         except Exception as e:
             bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
-            # Ensure container is killed
             subprocess.run(["docker", "kill", container_name], capture_output=True)
             subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-            # ENHANCED LOGGING: Ending Docker for general error
-            bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation failed with error")
         finally:
             # Best-effort ensure container is removed even if --rm didn't trigger
             try:
