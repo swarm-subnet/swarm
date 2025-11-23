@@ -258,6 +258,16 @@ pm2 restart swarm_miner
 
 The miner computes SHA‑256 at startup. Validators fetch new agents automatically at the next handshake.
 
+## 🧪 Test Before Submitting
+
+```bash
+python tests/test_rpc.py swarm/submission_template/ --seed 42
+```
+
+Test your agent locally using the same evaluation logic as validators.
+
+---
+
 ## 🔧 Troubleshooting
 
 ### Agent Rejection Issues
