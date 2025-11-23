@@ -48,4 +48,4 @@ ENV NUMEXPR_NUM_THREADS=1
 ENV OMP_NUM_THREADS=1
 
 # Entry point
-ENTRYPOINT ["python", "/app/swarm/core/evaluator.py"]
+ENTRYPOINT ["python", "/app/swarm/core/entrypoint.py"]
