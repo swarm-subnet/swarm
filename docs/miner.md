@@ -12,34 +12,37 @@ This guide shows how to install, configure and run a Swarm miner
 Your submission ZIP **must contain**:
 ```
 agent_submission.zip
-├── main.py              ← REQUIRED entry point (DO NOT MODIFY)
-├── drone_agent.py       ← Your flight controller (CUSTOMIZE THIS)
-├── agent_server.py      ← Cap'n Proto RPC server (DO NOT MODIFY)
-├── agent.capnp          ← RPC schema (DO NOT MODIFY)
+├── drone_agent.py       ← Your flight controller (REQUIRED)
+├── requirements.txt     ← Optional: additional dependencies
 └── [your model files]   ← SB3, PyTorch, etc.
 ```
 
-### ⚠️ Template File Restrictions
+**Template files (`main.py`, `agent.capnp`, `agent_server.py`) are automatically provided by validators** - you don't need to include them in your submission.
 
-**DO NOT MODIFY** these files from the template:
-- `agent.capnp` - Protocol schema (modification = model blacklist)
-- `agent_server.py` - RPC server (modification = model blacklist)
-- `main.py` - Entry point (modification = model blacklist)
+### Template Files (Auto-Injected)
 
-**ONLY CUSTOMIZE** `drone_agent.py` - this is where you implement your controller and load your model.
+The following files are automatically injected from official templates during evaluation:
+- `main.py` - Entry point (provided automatically)
+- `agent.capnp` - RPC schema (provided automatically)
+- `agent_server.py` - Cap'n Proto RPC server (provided automatically)
 
-Validators verify template files byte-by-byte. Any modification to protected files results in:
-- Immediate submission rejection
-- **Modified model hash added to blacklist** (not your UID)
-- You can retry with a corrected submission
-- Fix the template files and resubmit
-
-**Important**: Blacklist applies to the specific model hash, not your miner UID. You can always resubmit with correct template files.
+**You only need to submit `drone_agent.py`** - this is where you implement your controller and load your model.
 
 All customization belongs in `drone_agent.py` where you have complete freedom to:
 - Load any ML framework (SB3, PyTorch, TensorFlow, JAX)
 - Implement custom preprocessing/postprocessing
 - Use any model architecture
+
+### Optional: requirements.txt
+
+If your agent needs additional Python packages, include a `requirements.txt` file:
+```
+numpy>=1.20.0
+torch>=1.9.0
+stable-baselines3>=2.0.0
+```
+
+Dependencies will be installed automatically before evaluation.
 
 
 
@@ -126,18 +129,22 @@ pm2 stop     swarm_miner
 Swarm provides a submission template in `swarm/submission_template/`:
 
 ```bash
-# Copy template files (DO NOT MODIFY agent.capnp, agent_server.py, main.py)
-cp -r swarm/submission_template/* your_agent/
+# Copy only drone_agent.py (template files are auto-injected)
+cp swarm/submission_template/drone_agent.py your_agent/
 cd your_agent
 
-# Only modify drone_agent.py for your custom implementation
+# Customize drone_agent.py with your controller
 ```
 
-**Template files you receive:**
-- `agent.capnp` - Copy as-is (DO NOT MODIFY)
-- `agent_server.py` - Copy as-is (DO NOT MODIFY)
-- `main.py` - Copy as-is (DO NOT MODIFY)
-- `drone_agent.py` - Customize this file with your controller
+**What you need:**
+- `drone_agent.py` - Customize this file with your controller (REQUIRED)
+- `requirements.txt` - Optional: additional dependencies
+- Your model files - SB3, PyTorch, etc.
+
+**Template files (auto-provided, no need to include):**
+- `agent.capnp` - Automatically injected during evaluation
+- `agent_server.py` - Automatically injected during evaluation
+- `main.py` - Automatically injected during evaluation
 
 ### Basic RPC Agent Structure
 
@@ -190,8 +197,11 @@ class DroneFlightController:
 
 ### Deploy Your Agent
 ```bash
-# Create ZIP with all required files
-zip -r agent_submission.zip main.py drone_agent.py agent_server.py agent.capnp [your_model_files]
+# Create ZIP with only drone_agent.py + model files
+zip -r agent_submission.zip drone_agent.py [your_model_files]
+
+# Optional: include requirements.txt if needed
+zip -r agent_submission.zip requirements.txt
 
 # Place in model directory
 cp agent_submission.zip model/ppo_policy.zip
@@ -227,14 +237,14 @@ Miners never see the evaluation maps; only their RPC agent is tested.
 swarm/
 └── model/
     └── ppo_policy.zip     ← your RPC agent submission
-        ├── main.py              ← Entry point (REQUIRED)
-        ├── drone_agent.py       ← Your controller
-        ├── agent_server.py      ← RPC server
-        ├── agent.capnp          ← RPC schema
+        ├── drone_agent.py       ← Your controller (REQUIRED)
+        ├── requirements.txt     ← Optional: additional dependencies
         └── [your model files]   ← Optional: SB3, PyTorch, etc.
 ```
 
-**main.py is mandatory** - missing it results in automatic rejection.
+**drone_agent.py is mandatory** - missing it results in automatic rejection.
+
+Template files (`main.py`, `agent.capnp`, `agent_server.py`) are automatically injected during evaluation.
 
 Update the path or filename in `neurons/miner.py` if you organize files differently.
 
@@ -254,13 +264,17 @@ Target time is computed as `(distance / 3.0 m/s) × 1.06` to allow a 6% buffer f
 
 **ALWAYS test your agent locally before deployment:**
 ```bash
-# Test your RPC agent locally
+# Test your RPC agent locally (copy template files for local testing)
+cp swarm/submission_template/* your_agent_directory/
 cd your_agent_directory
 python main.py
 # In another terminal, test RPC connection
 
-# If test passes, create ZIP and deploy
-zip -r agent_submission.zip main.py drone_agent.py agent_server.py agent.capnp [your_model_files]
+# If test passes, create ZIP with only your files
+zip -r agent_submission.zip drone_agent.py [your_model_files]
+# Optional: include requirements.txt
+zip -r agent_submission.zip requirements.txt
+
 cp agent_submission.zip model/ppo_policy.zip
 
 # Restart miner to serve new hash
@@ -283,24 +297,11 @@ Test your agent locally using the same evaluation logic as validators.
 
 ### Agent Rejection Issues
 
-**❌ "Template files modified or missing"**
+**❌ "Missing drone_agent.py"**
 ```
-Error: Template files modified or missing: agent_server.py
-Error: RPC server modification (security violation)
+Error: Missing drone_agent.py - RPC agent submission required
 ```
-**Solution:** Do not modify `agent.capnp`, `agent_server.py`, or `main.py`. Copy these files from the template without changes. Only customize `drone_agent.py`.
-
-**Recovery:** The modified model hash is blacklisted, but you can resubmit:
-1. Copy fresh template files from `swarm/submission_template/`
-2. Keep your custom `drone_agent.py`
-3. Create new ZIP and redeploy
-4. Your miner will serve the new (correct) model hash
-
-**❌ "Missing main.py"**
-```
-Error: Missing main.py - RPC agent submission required
-```
-**Solution:** Ensure your ZIP contains `main.py` as entry point (copy from template without modification)
+**Solution:** Ensure your ZIP contains `drone_agent.py`. Template files (`main.py`, `agent.capnp`, `agent_server.py`) are automatically provided - you don't need to include them.
 
 **❌ "Dangerous executable files detected"**
 ```

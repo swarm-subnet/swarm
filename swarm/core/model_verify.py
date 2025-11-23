@@ -78,135 +78,23 @@ def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Template Files Verification
-# ──────────────────────────────────────────────────────────────────────────
-
-_OFFICIAL_TEMPLATE_CACHE: Optional[Dict[str, bytes]] = None
-
-def _get_template_directory() -> Path:
-    """Get path to submission_template directory."""
-    current_file = Path(__file__)
-    core_dir = current_file.parent
-    swarm_dir = core_dir.parent
-    template_dir = swarm_dir / "submission_template"
-    return template_dir
-
-def _load_official_templates() -> Dict[str, bytes]:
-    """Load official template files with caching."""
-    global _OFFICIAL_TEMPLATE_CACHE
-    
-    if _OFFICIAL_TEMPLATE_CACHE is not None:
-        return _OFFICIAL_TEMPLATE_CACHE
-    
-    template_dir = _get_template_directory()
-    templates = {}
-    
-    required_files = ["agent.capnp", "agent_server.py", "main.py"]
-    
-    for filename in required_files:
-        filepath = template_dir / filename
-        if not filepath.exists():
-            bt.logging.error(f"Template file not found: {filepath}")
-            continue
-        
-        try:
-            with open(filepath, 'rb') as f:
-                templates[filename] = f.read()
-        except Exception as e:
-            bt.logging.error(f"Failed to read template file {filename}: {e}")
-    
-    _OFFICIAL_TEMPLATE_CACHE = templates
-    return templates
-
-def verify_template_files(zip_path: Path) -> Tuple[bool, List[str], Dict[str, Dict]]:
-    """
-    Verify template files match official versions using dynamic comparison.
-    
-    Args:
-        zip_path: Path to submitted model ZIP file
-    
-    Returns:
-        Tuple of (is_valid, modified_files, details)
-    """
-    modified_files = []
-    details = {}
-    
-    try:
-        official_templates = _load_official_templates()
-        
-        if not official_templates:
-            bt.logging.error("Failed to load official template files")
-            return False, ["error"], {"error": "template_files_not_found"}
-        
-        with ZipFile(zip_path, 'r') as zf:
-            file_list = zf.namelist()
-            
-            for filename, official_content in official_templates.items():
-                if filename not in file_list:
-                    modified_files.append(filename)
-                    details[filename] = {
-                        "status": "missing",
-                        "expected_size": len(official_content)
-                    }
-                    continue
-                
-                submitted_content = zf.read(filename)
-                
-                if official_content == submitted_content:
-                    details[filename] = {
-                        "status": "valid",
-                        "size": len(official_content)
-                    }
-                else:
-                    modified_files.append(filename)
-                    official_hash = hashlib.sha256(official_content).hexdigest()
-                    submitted_hash = hashlib.sha256(submitted_content).hexdigest()
-                    
-                    details[filename] = {
-                        "status": "modified",
-                        "expected_size": len(official_content),
-                        "actual_size": len(submitted_content),
-                        "expected_hash": official_hash[:16] + "...",
-                        "actual_hash": submitted_hash[:16] + "...",
-                        "size_difference": len(submitted_content) - len(official_content)
-                    }
-        
-        is_valid = len(modified_files) == 0
-        return is_valid, modified_files, details
-        
-    except Exception as e:
-        bt.logging.error(f"Template verification failed: {e}")
-        return False, ["error"], {"error": str(e)}
-
-
-# ──────────────────────────────────────────────────────────────────────────
 # Model Structure Analysis
 # ──────────────────────────────────────────────────────────────────────────
 
 def inspect_model_structure(zip_path: Path) -> Dict:
     """
     Inspect RPC agent submission structure.
-    All submissions must be RPC agents with main.py entry point.
+    Miners submit only drone_agent.py + model files.
+    Template files (main.py, agent.capnp, agent_server.py) are injected automatically.
     """
     try:
         with ZipFile(zip_path, 'r') as zf:
             file_list = zf.namelist()
             
-            valid, modified, template_details = verify_template_files(zip_path)
-            
-            if not valid:
-                modified_list = ', '.join(modified)
+            if "drone_agent.py" not in file_list:
                 return {
-                    "error": f"Template files modified or missing: {modified_list}",
-                    "template_violation": True,
-                    "modified_template_files": modified,
-                    "template_details": template_details
-                }
-            
-            if "main.py" not in file_list:
-                return {
-                    "error": "Missing main.py - RPC agent submission required",
-                    "missing_main": True
+                    "error": "Missing drone_agent.py - RPC agent submission required",
+                    "missing_drone_agent": True
                 }
             
             dangerous_files = [f for f in file_list 
@@ -216,7 +104,6 @@ def inspect_model_structure(zip_path: Path) -> Dict:
             
             return {
                 "submission_type": "rpc",
-                "template_files_verified": True,
                 "has_mlp_extractor": True,
                 "suspicious_patterns": [],
                 "class_names": ["RPC Custom Agent"]
@@ -230,33 +117,21 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
     """
     Classify RPC agent validity:
     - "legitimate": RPC agent passes all checks
-    - "missing_metadata": Missing main.py (reject but don't blacklist)
-    - "fake": Dangerous files detected or template modification (reject and blacklist)
+    - "missing_metadata": Missing drone_agent.py (reject but don't blacklist)
+    - "fake": Dangerous files detected (reject and blacklist)
     
     Returns (status, reason)
     """
-    if inspection_results.get("template_violation", False):
-        modified = inspection_results.get("modified_template_files", [])
-        if "agent.capnp" in modified:
-            return "fake", "Protocol schema modification (security violation)"
-        if "agent_server.py" in modified:
-            return "fake", "RPC server modification (security violation)"
-        if "main.py" in modified:
-            return "fake", "Entry point modification (security violation)"
-        return "fake", f"Forbidden template modification: {', '.join(modified)}"
-    
-    if inspection_results.get("missing_main", False):
-        return "missing_metadata", "Missing main.py - RPC agent submission required"
+    if inspection_results.get("missing_drone_agent", False):
+        return "missing_metadata", "Missing drone_agent.py - RPC agent submission required"
     
     if "malicious_findings" in inspection_results:
         return "fake", "Security violation: Malicious code detected"
     
     if "error" in inspection_results:
-        if "Template files modified" in inspection_results["error"]:
-            return "fake", inspection_results["error"]
         if "Security violation" in inspection_results["error"]:
             return "fake", inspection_results["error"]
-        if "Missing main.py" in inspection_results["error"]:
+        if "Missing drone_agent.py" in inspection_results["error"]:
             return "missing_metadata", inspection_results["error"]
         if "Dangerous executable" in inspection_results["error"]:
             return "fake", inspection_results["error"]

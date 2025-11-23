@@ -22,4 +22,5 @@ tqdm
 torch
 gymnasium
 requests
+pycapnp
 git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git

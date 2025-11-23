@@ -32,8 +32,26 @@ def _evaluate_with_rpc(task: MapTask, uid: int, model_path: Path) -> ValidationR
     submission_dir.mkdir(exist_ok=True)
     
     try:
+        template_dir = Path(swarm_path) / "swarm" / "submission_template"
+        
         with zipfile.ZipFile(model_path, 'r') as zf:
             zf.extractall(submission_dir)
+        
+        shutil.copy(template_dir / "agent.capnp", submission_dir)
+        shutil.copy(template_dir / "agent_server.py", submission_dir)
+        shutil.copy(template_dir / "main.py", submission_dir)
+        
+        requirements_file = submission_dir / "requirements.txt"
+        if requirements_file.exists():
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
+                    capture_output=True,
+                    timeout=60,
+                    check=False
+                )
+            except Exception:
+                pass
         
         agent_process = subprocess.Popen(
             [sys.executable, "main.py"],
