@@ -1,7 +1,7 @@
 # 🚀 Swarm Validator Guide
 *(Swarm subnet – netuid 124)*
 
-This document shows how to install and operate the Swarm validator that securely evaluates models received from miners on dynamically generated maps using Docker-based isolation.
+This document shows how to install and operate the Swarm validator that securely evaluates models received from miners on dynamically generated maps. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
 
 ## 🖥️ System Requirements
 
@@ -225,7 +225,7 @@ pm2 start --name auto_update_validator \
    Models are validated for security and authenticity before evaluation.
 
 5. **Docker evaluation**  
-   Each model evaluated in isolated container on secret tasks.
+   Miner code runs in isolated Docker container serving RPC endpoint. PyBullet simulation and scoring execute on validator host for security.
 
 6. **Score normalization**  
    Compute normalized score as weighted average across all challenge types.  

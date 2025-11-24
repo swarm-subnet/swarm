@@ -19,174 +19,8 @@ if swarm_path not in sys.path:
 
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
-from swarm.constants import SPEED_LIMIT
-from gym_pybullet_drones.utils.enums import ActionType
 
 
-def _evaluate_with_rpc(task: MapTask, uid: int, model_path: Path) -> ValidationResult:
-    import shutil
-    import time
-    import asyncio
-    
-    submission_dir = Path("/tmp") / f"submission_{uid}_{int(time.time())}"
-    submission_dir.mkdir(exist_ok=True)
-    
-    try:
-        template_dir = Path(swarm_path) / "swarm" / "submission_template"
-        
-        with zipfile.ZipFile(model_path, 'r') as zf:
-            zf.extractall(submission_dir)
-        
-        shutil.copy(template_dir / "agent.capnp", submission_dir)
-        shutil.copy(template_dir / "agent_server.py", submission_dir)
-        shutil.copy(template_dir / "main.py", submission_dir)
-        
-        requirements_file = submission_dir / "requirements.txt"
-        if requirements_file.exists():
-            try:
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
-                    capture_output=True,
-                    timeout=60,
-                    check=False
-                )
-            except Exception:
-                pass
-        
-        agent_process = subprocess.Popen(
-            [sys.executable, "main.py"],
-            cwd=str(submission_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=os.environ.copy()
-        )
-        
-        max_retries = 10
-        connected = False
-        
-        for retry in range(max_retries):
-            if agent_process.poll() is not None:
-                return ValidationResult(uid, False, 0.0, 0.0)
-            
-            time.sleep(1)
-            
-            try:
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.5)
-                result = sock.connect_ex(('localhost', 8000))
-                sock.close()
-                if result == 0:
-                    connected = True
-                    break
-            except Exception:
-                pass
-        
-        if not connected:
-            agent_process.terminate()
-            agent_process.wait(timeout=5)
-            return ValidationResult(uid, False, 0.0, 0.0)
-        
-        try:
-            import capnp
-            schema_file = Path(__file__).parent.parent / "submission_template" / "agent.capnp"
-            agent_capnp = capnp.load(str(schema_file))
-            
-            async def run_evaluation():
-                async with capnp.kj_loop():
-                    client = capnp.TwoPartyClient("localhost:8000")
-                    agent = client.bootstrap().cast_as(agent_capnp.Agent)
-                    
-                    ping_result = await agent.ping("test")
-                    if ping_result != "pong":
-                        raise RuntimeError("RPC ping failed")
-                    
-                    import numpy as _np
-                    from swarm.utils.env_factory import make_env
-                    from swarm.constants import SIM_DT
-                    from gym_pybullet_drones.utils.enums import ActionType
-                    
-                    env = make_env(task, gui=False)
-                    
-                    try:
-                        obs, _ = env.reset()
-                        
-                        pos0 = _np.asarray(task.start, dtype=float)
-                        t_sim = 0.0
-                        success = False
-                        
-                        lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
-                        last_pos = pos0
-                        
-                        while t_sim < task.horizon:
-                            try:
-                                obs_tensor = agent_capnp.Tensor.new_message()
-                                obs_tensor.data = obs.tobytes()
-                                obs_tensor.shape = list(obs.shape)
-                                obs_tensor.dtype = str(obs.dtype)
-                                
-                                observation = agent_capnp.Observation.new_message()
-                                entry = observation.init("entries", 1)[0]
-                                entry.key = "__value__"
-                                entry.tensor = obs_tensor
-                                
-                                action_tensor = await agent.act(observation)
-                                action = _np.frombuffer(
-                                    action_tensor.data,
-                                    dtype=_np.dtype(action_tensor.dtype)
-                                ).reshape(tuple(action_tensor.shape))
-                            except Exception:
-                                action = _np.zeros(4, dtype=_np.float32)
-                            
-                            act = _np.clip(_np.asarray(action, dtype=_np.float32).reshape(-1), lo, hi)
-                            
-                            if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
-                                if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
-                                    n = max(_np.linalg.norm(act[:3]), 1e-6)
-                                    scale = min(1.0, SPEED_LIMIT / n)
-                                    act[:3] *= scale
-                                    act = _np.clip(act, lo, hi)
-                            
-                            prev = last_pos
-                            obs, _r, terminated, truncated, info = env.step(act[None, :])
-                            last_pos = env._getDroneStateVector(0)[0:3]
-                            
-                            t_sim += SIM_DT
-                            if terminated or truncated:
-                                success = info.get("success", False)
-                                break
-                        
-                        from swarm.validator.reward import flight_reward
-                        score = flight_reward(
-                            success=success,
-                            t=t_sim,
-                            horizon=task.horizon,
-                            task=task,
-                        )
-                        
-                        return ValidationResult(uid, success, t_sim, score)
-                    finally:
-                        try:
-                            env.close()
-                        except Exception:
-                            pass
-            
-            result = asyncio.run(run_evaluation())
-        except Exception:
-            result = ValidationResult(uid, False, 0.0, 0.0)
-        finally:
-            try:
-                agent_process.terminate()
-                agent_process.wait(timeout=5)
-            except Exception:
-                pass
-        
-        return result
-    finally:
-        try:
-            shutil.rmtree(submission_dir, ignore_errors=True)
-        except Exception:
-            pass
 
 
 def main():
@@ -229,11 +63,6 @@ def main():
         except Exception:
             pass
         
-        # Parse task from JSON (only for regular evaluation)
-        if not verify_only_mode:
-            with open(task_json, 'r') as f:
-                task_data = json.load(f)
-            task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
         from swarm.core.model_verify import inspect_model_structure, classify_model_validity
@@ -268,16 +97,14 @@ def main():
                 score=0.0
             )
         elif verify_only_mode:
-            # VERIFICATION-ONLY MODE: Model is legitimate, return success without evaluation
             result = ValidationResult(
                 uid=uid,
                 success=True,
                 time_sec=0.0,
-                score=0.0  # Not applicable for verification-only
+                score=0.0
             )
         else:
-            model_path_obj = Path(model_path)
-            result = _evaluate_with_rpc(task, uid, model_path_obj)
+            raise ValueError("Regular evaluation mode not supported in Docker container. Use HostRPCEvaluator instead.")
         
         # Write result to file
         tmp_file = result_file + ".tmp"

@@ -6,7 +6,7 @@ This guide shows how to install, configure and run a Swarm miner
 
 ## 🔒 RPC Submission Requirements
 
-**CRITICAL**: All submissions must be RPC agents. Validators evaluate agents in secure Docker containers.
+**CRITICAL**: All submissions must be RPC agents. Miner code runs in isolated Docker containers while evaluation executes on the validator host.
 
 ### Required RPC Agent Structure
 Your submission ZIP **must contain**:
