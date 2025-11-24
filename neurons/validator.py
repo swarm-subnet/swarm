@@ -149,8 +149,9 @@ class WandbHelper:
                     "avg_score": sum(scores) / len(scores) if scores else 0,
                     "task_horizon": float(task.horizon),
                     "task_goal_x": float(task.goal[0]),
-                    "task_goal_y": float(task.goal[1]), 
+                    "task_goal_y": float(task.goal[1]),
                     "task_goal_z": float(task.goal[2]),
+                    "task_challenge_type": int(task.challenge_type),
                     "obstacles_count": len(getattr(task, 'obstacles', []))
                 }
                 
