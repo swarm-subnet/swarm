@@ -217,21 +217,21 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                 "--rm",
                 "--name", container_name,
                 "--user", "1000:1000",
-                "--memory=4g",  # Less memory needed for verification
-                "--cpus=1",     # Single CPU for verification
+                "--memory=4g",
+                "--cpus=1",
                 "--pids-limit=10",
                 "--ulimit", "nofile=32:32",
-                "--ulimit", "fsize=262144000:262144000",  # 250MB file size limit
+                "--ulimit", "fsize=262144000:262144000",
                 "--security-opt", "no-new-privileges",
                 "--network", "none",
                 "-v", f"{tmpdir}:/workspace/shared",
                 "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
                 docker_evaluator.base_image,
-                # Use special verification mode
-                "VERIFY_ONLY",  # Special flag to run only verification
-                str(uid),  # Real UID for verification
-                "/workspace/model.zip",  # Model path
-                "/workspace/shared/verification_result.json"  # Result file
+                "python", "/app/swarm/core/evaluator.py",
+                "VERIFY_ONLY",
+                str(uid),
+                "/workspace/model.zip",
+                "/workspace/shared/verification_result.json"
             ]
             
             # Execute verification with timeout

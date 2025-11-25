@@ -57,8 +57,8 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     #  **Adjust these constants for your own model**
     # ------------------------------------------------------------------
-    POLICY_PATH = Path("model/ppo_policy.zip")
-    ENTRYPOINT  = ""             # not used by SB3 but kept for future proofing
+    POLICY_PATH = Path("Submission/submission.zip")
+    ENTRYPOINT  = ""
     FRAMEWORK   = "sb3-ppo"
     
     # ------------------------------------------------------------------

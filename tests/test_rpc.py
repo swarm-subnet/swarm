@@ -7,15 +7,18 @@ like the validator does before you submit.
 
 Usage:
     python tests/test_rpc.py swarm/submission_template/ --seed 42 --gui
+    python tests/test_rpc.py swarm/submission_template/ --zip  # Create submission.zip
 """
 
 import argparse
 import asyncio
 import os
+import shutil
 import socket
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -89,25 +92,32 @@ async def _run_episode(task: MapTask, uid: int, agent, gui=False):
         
         while t_sim < task.horizon:
             try:
-                
-                obs_tensor = agent_capnp.Tensor.new_message()
-                obs_tensor.data = obs.tobytes()
-                obs_tensor.shape = list(obs.shape)
-                obs_tensor.dtype = str(obs.dtype)
-                
                 observation = agent_capnp.Observation.new_message()
-                entry = observation.init("entries", 1)[0]
-                entry.key = "__value__"
-                entry.tensor = obs_tensor
                 
-                action_tensor = await agent.act(observation)
+                if isinstance(obs, dict):
+                    entries = observation.init("entries", len(obs))
+                    for i, (key, value) in enumerate(obs.items()):
+                        arr = np.asarray(value, dtype=np.float32)
+                        entries[i].key = key
+                        entries[i].tensor.data = arr.tobytes()
+                        entries[i].tensor.shape = list(arr.shape)
+                        entries[i].tensor.dtype = str(arr.dtype)
+                else:
+                    arr = np.asarray(obs, dtype=np.float32)
+                    entry = observation.init("entries", 1)[0]
+                    entry.key = "__value__"
+                    entry.tensor.data = arr.tobytes()
+                    entry.tensor.shape = list(arr.shape)
+                    entry.tensor.dtype = str(arr.dtype)
+                
+                action_response = await agent.act(observation)
                 action = np.frombuffer(
-                    action_tensor.data,
-                    dtype=np.dtype(action_tensor.dtype)
-                ).reshape(tuple(action_tensor.shape))
+                    action_response.action.data,
+                    dtype=np.dtype(action_response.action.dtype)
+                ).reshape(tuple(action_response.action.shape))
             except Exception as e:
                 print(f"⚠️  Action error at t={t_sim:.2f}s: {e}")
-                action = np.zeros(4, dtype=np.float32)
+                action = np.zeros(5, dtype=np.float32)
             
             act = np.clip(np.asarray(action, dtype=np.float32).reshape(-1), lo, hi)
             
@@ -183,18 +193,19 @@ async def _test_rpc_agent(submission_folder: Path, task: MapTask, gui=False):
         print("✅ Connecting via Cap'n Proto...")
         
         async with capnp.kj_loop():
-            client = capnp.TwoPartyClient("localhost:8000")
+            stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=8000)
+            client = capnp.TwoPartyClient(stream)
             schema_file = Path(__file__).parent.parent / "swarm" / "submission_template" / "agent.capnp"
             agent_capnp = capnp.load(str(schema_file))
             agent = client.bootstrap().cast_as(agent_capnp.Agent)
             
-            ping_result = await agent.ping("test")
-            if ping_result != "pong":
-                print("❌ RPC ping test failed")
+            ping_response = await agent.ping("test")
+            if ping_response.response != "pong":
+                print(f"❌ RPC ping test failed: got {ping_response.response}")
                 return None, 0.0
             
             print("✅ RPC connection established")
-            print(f"🚁 Running evaluation (seed: {task.seed})...")
+            print(f"🚁 Running evaluation (seed: {task.map_seed})...")
             
             result, avg_speed = await _run_episode(task, uid=0, agent=agent, gui=gui)
             
@@ -229,6 +240,11 @@ def main():
         action="store_true",
         help="Show PyBullet GUI during evaluation",
     )
+    parser.add_argument(
+        "--zip",
+        action="store_true",
+        help="Create submission.zip after testing",
+    )
     args = parser.parse_args()
     
     if not args.folder.exists():
@@ -249,7 +265,7 @@ def main():
     print(f"\n📋 Task Details:")
     print(f"   Start: {task.start}")
     print(f"   Goal:  {task.goal}")
-    print(f"   Seed:  {task.seed}")
+    print(f"   Seed:  {task.map_seed}")
     print(f"   Horizon: {task.horizon}s\n")
     
     result, avg_speed = asyncio.run(_test_rpc_agent(args.folder, task, gui=args.gui))
@@ -274,7 +290,40 @@ def main():
     else:
         print("\n⚠️  Mission failed. Debug and try again.")
     
+    # Create submission.zip if requested
+    if args.zip:
+        _create_submission_zip(args.folder)
+    
     sys.exit(0 if result.success else 1)
+
+
+def _create_submission_zip(folder: Path):
+    """Create submission.zip from the tested folder"""
+    submission_dir = Path(__file__).parent.parent / "Submission"
+    submission_dir.mkdir(parents=True, exist_ok=True)
+    
+    zip_path = submission_dir / "submission.zip"
+    
+    miner_files = ["drone_agent.py", "requirements.txt", "ppo_policy.zip"]
+    model_extensions = [".pt", ".pth", ".onnx", ".pkl", ".h5", ".weights"]
+    
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for file in folder.iterdir():
+            if file.is_file():
+                if file.name in miner_files:
+                    zf.write(file, file.name)
+                elif any(file.name.endswith(ext) for ext in model_extensions):
+                    zf.write(file, file.name)
+    
+    print(f"\n📦 Created submission: {zip_path}")
+    print("   Contents:")
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        for info in zf.infolist():
+            size_kb = info.file_size / 1024
+            print(f"   - {info.filename} ({size_kb:.1f} KB)")
+    
+    print(f"\n✅ Submission ready at: {zip_path}")
+    print("   Miner will read from: Submission/submission.zip")
 
 
 if __name__ == "__main__":

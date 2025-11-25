@@ -119,96 +119,132 @@ class DockerSecureEvaluator:
             self.base_ready = False
             DockerSecureEvaluator._base_ready = False
     
+    def _evaluate_with_rpc_sync(
+        self,
+        task: MapTask,
+        uid: int,
+        rpc_port: int
+    ) -> ValidationResult:
+        """Synchronous RPC evaluation - runs in separate thread to avoid kj_loop conflicts"""
+        import capnp
+        schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
+        agent_capnp = capnp.load(str(schema_file))
+        
+        async def run_evaluation():
+            async with capnp.kj_loop():
+                stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=rpc_port)
+                client = capnp.TwoPartyClient(stream)
+                agent = client.bootstrap().cast_as(agent_capnp.Agent)
+                
+                ping_response = await agent.ping("test")
+                if ping_response.response != "pong":
+                    raise RuntimeError("RPC ping failed")
+                
+                from swarm.utils.env_factory import make_env
+                
+                env = make_env(task, gui=False)
+                
+                try:
+                    obs, _ = env.reset()
+                    
+                    pos0 = np.asarray(task.start, dtype=float)
+                    t_sim = 0.0
+                    success = False
+                    
+                    lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
+                    last_pos = pos0
+                    
+                    while t_sim < task.horizon:
+                        try:
+                            observation = agent_capnp.Observation.new_message()
+                            
+                            if isinstance(obs, dict):
+                                entries = observation.init("entries", len(obs))
+                                for i, (key, value) in enumerate(obs.items()):
+                                    arr = np.asarray(value, dtype=np.float32)
+                                    entries[i].key = key
+                                    entries[i].tensor.data = arr.tobytes()
+                                    entries[i].tensor.shape = list(arr.shape)
+                                    entries[i].tensor.dtype = str(arr.dtype)
+                            else:
+                                arr = np.asarray(obs, dtype=np.float32)
+                                entry = observation.init("entries", 1)[0]
+                                entry.key = "__value__"
+                                entry.tensor.data = arr.tobytes()
+                                entry.tensor.shape = list(arr.shape)
+                                entry.tensor.dtype = str(arr.dtype)
+                            
+                            action_response = await agent.act(observation)
+                            action = np.frombuffer(
+                                action_response.action.data,
+                                dtype=np.dtype(action_response.action.dtype)
+                            ).reshape(tuple(action_response.action.shape))
+                        except Exception:
+                            action = np.zeros(5, dtype=np.float32)
+                        
+                        act = np.clip(np.asarray(action, dtype=np.float32).reshape(-1), lo, hi)
+                        
+                        if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
+                            if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
+                                n = max(np.linalg.norm(act[:3]), 1e-6)
+                                scale = min(1.0, SPEED_LIMIT / n)
+                                act[:3] *= scale
+                                act = np.clip(act, lo, hi)
+                        
+                        prev = last_pos
+                        obs, _r, terminated, truncated, info = env.step(act[None, :])
+                        last_pos = env._getDroneStateVector(0)[0:3]
+                        
+                        t_sim += SIM_DT
+                        if terminated or truncated:
+                            success = info.get("success", False)
+                            break
+                    
+                    score = flight_reward(
+                        success=success,
+                        t=t_sim,
+                        horizon=task.horizon,
+                        task=task,
+                    )
+                    
+                    return ValidationResult(uid, success, t_sim, score)
+                finally:
+                    try:
+                        env.close()
+                    except Exception:
+                        pass
+        
+        # Run in fresh event loop to avoid kj_loop conflicts
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(run_evaluation())
+        finally:
+            loop.close()
+    
     async def _evaluate_with_rpc_host(
         self,
         task: MapTask,
         uid: int,
         rpc_port: int
     ) -> ValidationResult:
+        """Async wrapper that runs RPC evaluation in thread pool"""
         try:
-            import capnp
-            schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
-            agent_capnp = capnp.load(str(schema_file))
-            
-            async def run_evaluation():
-                async with capnp.kj_loop():
-                    client = capnp.TwoPartyClient(f"localhost:{rpc_port}")
-                    agent = client.bootstrap().cast_as(agent_capnp.Agent)
-                    
-                    ping_result = await agent.ping("test")
-                    if ping_result != "pong":
-                        raise RuntimeError("RPC ping failed")
-                    
-                    from swarm.utils.env_factory import make_env
-                    
-                    env = make_env(task, gui=False)
-                    
-                    try:
-                        obs, _ = env.reset()
-                        
-                        pos0 = np.asarray(task.start, dtype=float)
-                        t_sim = 0.0
-                        success = False
-                        
-                        lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
-                        last_pos = pos0
-                        
-                        while t_sim < task.horizon:
-                            try:
-                                obs_tensor = agent_capnp.Tensor.new_message()
-                                obs_tensor.data = obs.tobytes()
-                                obs_tensor.shape = list(obs.shape)
-                                obs_tensor.dtype = str(obs.dtype)
-                                
-                                observation = agent_capnp.Observation.new_message()
-                                entry = observation.init("entries", 1)[0]
-                                entry.key = "__value__"
-                                entry.tensor = obs_tensor
-                                
-                                action_tensor = await agent.act(observation)
-                                action = np.frombuffer(
-                                    action_tensor.data,
-                                    dtype=np.dtype(action_tensor.dtype)
-                                ).reshape(tuple(action_tensor.shape))
-                            except Exception:
-                                action = np.zeros(4, dtype=np.float32)
-                            
-                            act = np.clip(np.asarray(action, dtype=np.float32).reshape(-1), lo, hi)
-                            
-                            if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
-                                if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
-                                    n = max(np.linalg.norm(act[:3]), 1e-6)
-                                    scale = min(1.0, SPEED_LIMIT / n)
-                                    act[:3] *= scale
-                                    act = np.clip(act, lo, hi)
-                            
-                            prev = last_pos
-                            obs, _r, terminated, truncated, info = env.step(act[None, :])
-                            last_pos = env._getDroneStateVector(0)[0:3]
-                            
-                            t_sim += SIM_DT
-                            if terminated or truncated:
-                                success = info.get("success", False)
-                                break
-                        
-                        score = flight_reward(
-                            success=success,
-                            t=t_sim,
-                            horizon=task.horizon,
-                            task=task,
-                        )
-                        
-                        return ValidationResult(uid, success, t_sim, score)
-                    finally:
-                        try:
-                            env.close()
-                        except Exception:
-                            pass
-            
-            result = await run_evaluation()
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._evaluate_with_rpc_sync,
+                task,
+                uid,
+                rpc_port
+            )
             return result
+        except (BrokenPipeError, ConnectionResetError, ConnectionRefusedError, OSError) as e:
+            bt.logging.debug(f"RPC connection error for UID {uid}: {e}")
+            return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
-            bt.logging.debug(f"RPC evaluation failed for UID {uid}: {e}")
+            import traceback
+            bt.logging.debug(f"RPC evaluation failed for UID {uid}: {e}\n{traceback.format_exc()}")
             return ValidationResult(uid, False, 0.0, 0.0)
     
     def _find_free_port(self) -> int:
@@ -262,25 +298,62 @@ class DockerSecureEvaluator:
         
         bt.logging.info(f"🐳 Starting Docker container for UID {uid} evaluation...")
         
+        tmpdir = None
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                os.chown(tmpdir, 1000, 1000)
-                os.chmod(tmpdir, 0o755)
+            tmpdir = tempfile.mkdtemp()
+            os.chown(tmpdir, 1000, 1000)
+            os.chmod(tmpdir, 0o755)
+            
+            submission_dir = Path(tmpdir) / "submission"
+            submission_dir.mkdir(exist_ok=True)
+            os.chown(submission_dir, 1000, 1000)
+            os.chmod(submission_dir, 0o755)
+            
+            template_dir = Path(__file__).parent.parent.parent / "submission_template"
+            
+            with zipfile.ZipFile(model_path, 'r') as zf:
+                zf.extractall(submission_dir)
+            
+            shutil.copy(template_dir / "agent.capnp", submission_dir)
+            shutil.copy(template_dir / "agent_server.py", submission_dir)
+            shutil.copy(template_dir / "main.py", submission_dir)
+            
+            for f in submission_dir.iterdir():
+                os.chown(f, 1000, 1000)
+                os.chmod(f, 0o644)
+            
+            miner_requirements = submission_dir / "requirements.txt"
+            has_requirements = miner_requirements.exists()
+            
+            if has_requirements:
+                bt.logging.info(f"📦 Miner has requirements.txt for UID {uid}")
+                startup_script = submission_dir / "startup.sh"
+                with open(startup_script, 'w') as f:
+                    f.write("#!/bin/bash\n")
+                    f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt 2>/dev/null\n")
+                    f.write("exec python /workspace/submission/main.py\n")
+                os.chmod(startup_script, 0o755)
+                os.chown(startup_script, 1000, 1000)
                 
-                submission_dir = Path(tmpdir) / "submission"
-                submission_dir.mkdir(exist_ok=True)
-                os.chown(submission_dir, 1000, 1000)
-                os.chmod(submission_dir, 0o755)
-                
-                template_dir = Path(__file__).parent.parent.parent / "submission_template"
-                
-                with zipfile.ZipFile(model_path, 'r') as zf:
-                    zf.extractall(submission_dir)
-                
-                shutil.copy(template_dir / "agent.capnp", submission_dir)
-                shutil.copy(template_dir / "agent_server.py", submission_dir)
-                shutil.copy(template_dir / "main.py", submission_dir)
-                
+                cmd = [
+                    "docker", "run",
+                    "--rm",
+                    "-d",
+                    "--name", container_name,
+                    "--user", "1000:1000",
+                    "--memory=6g",
+                    "--cpus=2",
+                    "--pids-limit=50",
+                    "--ulimit", "nofile=256:256",
+                    "--ulimit", "fsize=524288000:524288000",
+                    "--security-opt", "no-new-privileges",
+                    "--network", "bridge",
+                    "-p", f"{host_port}:8000",
+                    "-v", f"{submission_dir}:/workspace/submission:rw",
+                    self.base_image,
+                    "bash", "/workspace/submission/startup.sh"
+                ]
+            else:
                 cmd = [
                     "docker", "run",
                     "--rm",
@@ -299,72 +372,90 @@ class DockerSecureEvaluator:
                     self.base_image,
                     "python", "/workspace/submission/main.py"
                 ]
-                
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
+            
+            bt.logging.debug(f"Docker command for UID {uid}: {' '.join(cmd[:10])}...")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                bt.logging.debug(f"Container start failed for UID {uid}: {result.stderr[:300]}")
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            bt.logging.debug(f"Container {container_name} started, waiting for RPC on port {host_port}...")
+            
+            max_retries = 30 if has_requirements else 15
+            connected = False
+            
+            for retry in range(max_retries):
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.5)
+                    conn_result = sock.connect_ex(('localhost', host_port))
+                    sock.close()
+                    if conn_result == 0:
+                        connected = True
+                        bt.logging.debug(f"Port {host_port} open after {retry + 1} retries")
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+            
+            if connected:
+                bt.logging.debug(f"Waiting 10s for RPC server to stabilize...")
+                await asyncio.sleep(10)
+            
+            if not connected:
+                try:
+                    logs = subprocess.run(
+                        ["docker", "logs", container_name],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    bt.logging.debug(f"Container logs for UID {uid}: {logs.stdout[:500] if logs.stdout else 'empty'}")
+                    bt.logging.debug(f"Container stderr for UID {uid}: {logs.stderr[:500] if logs.stderr else 'empty'}")
+                except Exception:
+                    pass
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                bt.logging.warning(f"RPC server failed to start for UID {uid}")
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            try:
+                result = await asyncio.wait_for(
+                    self._evaluate_with_rpc_host(task, uid, host_port),
+                    timeout=EVAL_TIMEOUT_SEC
                 )
                 
-                if result.returncode != 0:
-                    bt.logging.debug(f"Container start failed for UID {uid}: {result.stderr[:300]}")
+                score = float(result.score)
+                if not (0.0 <= score <= 1.0):
+                    bt.logging.error(f"🚫 Invalid score {score} for UID {uid} - blacklisting model")
+                    model_hash = sha256sum(model_path)
+                    add_to_blacklist(model_hash)
                     return ValidationResult(uid, False, 0.0, 0.0)
                 
-                max_retries = 10
-                connected = False
+                if result.success and score == 0.0:
+                    result.score = 0.01
                 
-                for retry in range(max_retries):
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(0.5)
-                        result = sock.connect_ex(('localhost', host_port))
-                        sock.close()
-                        if result == 0:
-                            connected = True
-                            break
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success={result.success}, time={result.time_sec:.2f}, score={result.score:.4f}")
                 
-                if not connected:
+                bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation completed successfully")
+                
+                return result
+                
+            except asyncio.TimeoutError:
+                bt.logging.warning(f"Evaluation timeout for UID {uid}")
+                return ValidationResult(uid, False, 0.0, 0.0)
+            finally:
+                try:
                     subprocess.run(["docker", "kill", container_name], capture_output=True)
                     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-                    bt.logging.warning(f"RPC server failed to start for UID {uid}")
-                    return ValidationResult(uid, False, 0.0, 0.0)
-                
-                try:
-                    result = await asyncio.wait_for(
-                        self._evaluate_with_rpc_host(task, uid, host_port),
-                        timeout=EVAL_TIMEOUT_SEC
-                    )
-                    
-                    score = float(result.score)
-                    if not (0.0 <= score <= 1.0):
-                        bt.logging.error(f"🚫 Invalid score {score} for UID {uid} - blacklisting model")
-                        model_hash = sha256sum(model_path)
-                        add_to_blacklist(model_hash)
-                        return ValidationResult(uid, False, 0.0, 0.0)
-                    
-                    if result.success and score == 0.0:
-                        result.score = 0.01
-                    
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success={result.success}, time={result.time_sec:.2f}, score={result.score:.4f}")
-                    
-                    bt.logging.info(f"🏁 Ending Docker container for UID {uid} - evaluation completed successfully")
-                    
-                    return result
-                    
-                except asyncio.TimeoutError:
-                    bt.logging.warning(f"Evaluation timeout for UID {uid}")
-                    return ValidationResult(uid, False, 0.0, 0.0)
-                finally:
-                    try:
-                        subprocess.run(["docker", "kill", container_name], capture_output=True)
-                        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
         
         except Exception as e:
             bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
@@ -379,6 +470,11 @@ class DockerSecureEvaluator:
                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
             except Exception:
                 pass
+            if tmpdir:
+                try:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+                except Exception:
+                    pass
             try:
                 subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
                 subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)

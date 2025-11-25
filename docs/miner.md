@@ -203,8 +203,9 @@ zip -r agent_submission.zip drone_agent.py [your_model_files]
 # Optional: include requirements.txt if needed
 zip -r agent_submission.zip requirements.txt
 
-# Place in model directory
-cp agent_submission.zip model/ppo_policy.zip
+# Place in Submission directory
+mkdir -p Submission
+cp agent_submission.zip Submission/submission.zip
 ```
 
 ## ✈️ How the Miner Works
@@ -235,8 +236,8 @@ Miners never see the evaluation maps; only their RPC agent is tested.
 
 ```
 swarm/
-└── model/
-    └── ppo_policy.zip     ← your RPC agent submission
+└── Submission/
+    └── submission.zip     ← your RPC agent submission
         ├── drone_agent.py       ← Your controller (REQUIRED)
         ├── requirements.txt     ← Optional: additional dependencies
         └── [your model files]   ← Optional: SB3, PyTorch, etc.
@@ -275,7 +276,8 @@ zip -r agent_submission.zip drone_agent.py [your_model_files]
 # Optional: include requirements.txt
 zip -r agent_submission.zip requirements.txt
 
-cp agent_submission.zip model/ppo_policy.zip
+mkdir -p Submission
+cp agent_submission.zip Submission/submission.zip
 
 # Restart miner to serve new hash
 pm2 restart swarm_miner
@@ -286,7 +288,11 @@ The miner computes SHA‑256 at startup. Validators fetch new agents automatical
 ## 🧪 Test Before Submitting
 
 ```bash
+# Test your agent locally
 python tests/test_rpc.py swarm/submission_template/ --seed 42
+
+# Test and create submission.zip automatically
+python tests/test_rpc.py swarm/submission_template/ --zip
 ```
 
 Test your agent locally using the same evaluation logic as validators.
