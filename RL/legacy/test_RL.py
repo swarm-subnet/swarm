@@ -20,7 +20,7 @@ from stable_baselines3 import PPO
 
 from swarm.constants              import SIM_DT, HORIZON_SEC
 from swarm.validator.task_gen     import random_task
-from ..test_secure_RL             import _run_episode          # public helper
+from ..test_RL                    import _run_episode          # public helper
 from swarm.utils.gui_isolation    import run_isolated
 
 
