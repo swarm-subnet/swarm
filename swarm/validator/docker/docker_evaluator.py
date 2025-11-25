@@ -250,8 +250,8 @@ class DockerSecureEvaluator:
         
         try:
             with zipfile.ZipFile(model_path, 'r') as zf:
-                if "main.py" not in zf.namelist():
-                    bt.logging.warning(f"Model {uid} missing main.py - RPC agent required")
+                if "drone_agent.py" not in zf.namelist():
+                    bt.logging.warning(f"Model {uid} missing drone_agent.py - RPC agent required")
                     return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
             bt.logging.warning(f"Failed to validate model {uid}: {e}")
