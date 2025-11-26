@@ -6,6 +6,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import traceback
 import zipfile
 from dataclasses import asdict
 from datetime import datetime
@@ -120,6 +121,46 @@ class DockerSecureEvaluator:
             bt.logging.error(f"Failed to setup Docker environment: {e}")
             self.base_ready = False
             DockerSecureEvaluator._base_ready = False
+    
+    def _log_container_failure(self, container_name: str, uid: int, failure_type: str):
+        """Log detailed container information when evaluation fails"""
+        try:
+            logs = subprocess.run(
+                ["docker", "logs", "--tail", "100", container_name],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            bt.logging.warning(f"═══════════════════════════════════════════════════════════")
+            bt.logging.warning(f"📋 CONTAINER FAILURE REPORT - UID {uid}")
+            bt.logging.warning(f"═══════════════════════════════════════════════════════════")
+            bt.logging.warning(f"🔴 Failure Type: {failure_type}")
+            bt.logging.warning(f"🐳 Container: {container_name}")
+            
+            if logs.stdout:
+                bt.logging.warning(f"📤 STDOUT (last 100 lines):")
+                for line in logs.stdout.strip().split('\n')[-30:]:
+                    bt.logging.warning(f"   {line}")
+            else:
+                bt.logging.warning(f"📤 STDOUT: (empty)")
+            
+            if logs.stderr:
+                bt.logging.warning(f"📥 STDERR (last 100 lines):")
+                for line in logs.stderr.strip().split('\n')[-30:]:
+                    bt.logging.warning(f"   {line}")
+            else:
+                bt.logging.warning(f"📥 STDERR: (empty)")
+            
+            inspect = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Status}} | ExitCode: {{.State.ExitCode}} | Error: {{.State.Error}}", container_name],
+                capture_output=True, text=True, timeout=5
+            )
+            if inspect.stdout.strip():
+                bt.logging.warning(f"📊 Container State: {inspect.stdout.strip()}")
+            
+            bt.logging.warning(f"═══════════════════════════════════════════════════════════")
+            
+        except Exception as e:
+            bt.logging.warning(f"⚠️ Could not retrieve container logs for UID {uid}: {e}")
     
     def _evaluate_with_rpc_sync(
         self,
@@ -398,13 +439,15 @@ class DockerSecureEvaluator:
                         capture_output=True, text=True
                     )
                     if check.returncode != 0 or check.stdout.strip() != "true":
-                        bt.logging.warning(f"Container stopped unexpectedly during pip install")
+                        bt.logging.warning(f"❌ Container stopped unexpectedly during pip install for UID {uid}")
+                        self._log_container_failure(container_name, uid, "container_stopped_during_pip")
                         break
                     
                     await asyncio.sleep(2)
                 
                 if not pip_done:
-                    bt.logging.warning(f"pip install failed for UID {uid}, skipping evaluation")
+                    bt.logging.warning(f"❌ pip install failed for UID {uid}, skipping evaluation")
+                    self._log_container_failure(container_name, uid, "pip_install_failed")
                     subprocess.run(["docker", "kill", container_name], capture_output=True)
                     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
                     return ValidationResult(uid, False, 0.0, 0.0)
@@ -432,18 +475,10 @@ class DockerSecureEvaluator:
                 await asyncio.sleep(3)
             
             if not connected:
-                try:
-                    logs = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    bt.logging.debug(f"Container logs for UID {uid}: {logs.stdout[:500] if logs.stdout else 'empty'}")
-                    bt.logging.debug(f"Container stderr for UID {uid}: {logs.stderr[:500] if logs.stderr else 'empty'}")
-                except Exception:
-                    pass
+                bt.logging.warning(f"❌ RPC server failed to start for UID {uid}")
+                self._log_container_failure(container_name, uid, "rpc_connection_failed")
                 subprocess.run(["docker", "kill", container_name], capture_output=True)
                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-                bt.logging.warning(f"RPC server failed to start for UID {uid}")
                 return ValidationResult(uid, False, 0.0, 0.0)
             
             try:
@@ -470,7 +505,8 @@ class DockerSecureEvaluator:
                 return result
                 
             except asyncio.TimeoutError:
-                bt.logging.warning(f"Evaluation timeout for UID {uid}")
+                bt.logging.warning(f"⏱️ Evaluation timeout for UID {uid} (exceeded {EVAL_TIMEOUT_SEC}s)")
+                self._log_container_failure(container_name, uid, "evaluation_timeout")
                 return ValidationResult(uid, False, 0.0, 0.0)
             finally:
                 try:
@@ -480,7 +516,9 @@ class DockerSecureEvaluator:
                     pass
         
         except Exception as e:
-            bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
+            bt.logging.warning(f"❌ Docker evaluation failed for UID {uid}: {e}")
+            bt.logging.warning(f"📋 Traceback: {traceback.format_exc()}")
+            self._log_container_failure(container_name, uid, "exception")
             try:
                 subprocess.run(["docker", "kill", container_name], capture_output=True)
                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
