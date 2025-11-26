@@ -74,8 +74,8 @@ def main():
         if verify_only_mode:
             if model_status == "legitimate":
                 status = "LEGITIMATE"
-            elif model_status == "missing_metadata":
-                status = "MISSING METADATA"
+            elif model_status == "missing_drone_agent":
+                status = "MISSING DRONE_AGENT"
             else:  # fake
                 status = "FAKE"
             print(f"📋 Model inspection: {status}" + (f" - {model_reason}" if model_status != "legitimate" else ""))
@@ -88,7 +88,7 @@ def main():
                 time_sec=0.0,
                 score=0.0
             )
-        elif model_status == "missing_metadata":
+        elif model_status == "missing_drone_agent":
             # Return rejection result (zero score but no blacklist)
             result = ValidationResult(
                 uid=uid,
@@ -115,9 +115,9 @@ def main():
             result_dict['is_fake_model'] = True
             result_dict['fake_reason'] = model_reason
             result_dict['inspection_results'] = inspection_results
-        elif model_status == "missing_metadata":
+        elif model_status == "missing_drone_agent":
             result_dict['is_fake_model'] = False
-            result_dict['missing_metadata'] = True
+            result_dict['missing_drone_agent'] = True
             result_dict['rejection_reason'] = model_reason
             result_dict['inspection_results'] = inspection_results
         else:
