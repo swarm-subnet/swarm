@@ -328,9 +328,15 @@ class DockerSecureEvaluator:
             if has_requirements:
                 bt.logging.info(f"📦 Miner has requirements.txt for UID {uid}")
                 startup_script = submission_dir / "startup.sh"
+                ready_flag = submission_dir / ".pip_done"
                 with open(startup_script, 'w') as f:
                     f.write("#!/bin/bash\n")
-                    f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt 2>/dev/null\n")
+                    f.write("echo '[STARTUP] Installing requirements...'\n")
+                    f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
+                    f.write("PIP_EXIT=$?\n")
+                    f.write("echo \"[STARTUP] pip exit code: $PIP_EXIT\"\n")
+                    f.write("touch /workspace/submission/.pip_done\n")
+                    f.write("echo '[STARTUP] Starting RPC server...'\n")
                     f.write("exec python /workspace/submission/main.py\n")
                 os.chmod(startup_script, 0o755)
                 os.chown(startup_script, 1000, 1000)
@@ -388,10 +394,48 @@ class DockerSecureEvaluator:
             
             bt.logging.debug(f"Container {container_name} started, waiting for RPC on port {host_port}...")
             
-            max_retries = 30 if has_requirements else 15
+            pip_timeout = 120 if has_requirements else 0
+            rpc_timeout = 30
             connected = False
+            pip_done = False
             
-            for retry in range(max_retries):
+            if has_requirements:
+                bt.logging.info(f"⏳ Waiting for pip install to complete (max {pip_timeout}s)...")
+                pip_start = time.time()
+                pip_done_flag = submission_dir / ".pip_done"
+                
+                while time.time() - pip_start < pip_timeout:
+                    if pip_done_flag.exists():
+                        pip_done = True
+                        elapsed = time.time() - pip_start
+                        bt.logging.info(f"✅ pip install completed in {elapsed:.1f}s")
+                        break
+                    
+                    check = subprocess.run(
+                        ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                        capture_output=True, text=True
+                    )
+                    if check.returncode != 0 or check.stdout.strip() != "true":
+                        bt.logging.warning(f"Container stopped unexpectedly during pip install")
+                        break
+                    
+                    await asyncio.sleep(2)
+                
+                if not pip_done:
+                    bt.logging.warning(f"pip install timeout or failed for UID {uid}")
+                    try:
+                        logs = subprocess.run(
+                            ["docker", "logs", "--tail", "50", container_name],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        bt.logging.debug(f"Container logs: {logs.stdout[-1000:] if logs.stdout else 'empty'}")
+                    except Exception:
+                        pass
+            
+            bt.logging.debug(f"Waiting for RPC server on port {host_port} (max {rpc_timeout}s)...")
+            rpc_start = time.time()
+            
+            while time.time() - rpc_start < rpc_timeout:
                 try:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(0.5)
@@ -399,15 +443,16 @@ class DockerSecureEvaluator:
                     sock.close()
                     if conn_result == 0:
                         connected = True
-                        bt.logging.debug(f"Port {host_port} open after {retry + 1} retries")
+                        elapsed = time.time() - rpc_start
+                        bt.logging.debug(f"Port {host_port} open after {elapsed:.1f}s")
                         break
                 except Exception:
                     pass
                 await asyncio.sleep(1)
             
             if connected:
-                bt.logging.debug(f"Waiting 10s for RPC server to stabilize...")
-                await asyncio.sleep(10)
+                bt.logging.debug(f"Waiting 3s for RPC server to fully initialize...")
+                await asyncio.sleep(3)
             
             if not connected:
                 try:
