@@ -117,13 +117,13 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
     """
     Classify RPC agent validity:
     - "legitimate": RPC agent passes all checks
-    - "missing_metadata": Missing drone_agent.py (reject but don't blacklist)
+    - "missing_drone_agent": Missing drone_agent.py (reject but don't blacklist)
     - "fake": Dangerous files detected (reject and blacklist)
     
     Returns (status, reason)
     """
     if inspection_results.get("missing_drone_agent", False):
-        return "missing_metadata", "Missing drone_agent.py - RPC agent submission required"
+        return "missing_drone_agent", "Missing drone_agent.py - RPC agent submission required"
     
     if "malicious_findings" in inspection_results:
         return "fake", "Security violation: Malicious code detected"
@@ -132,7 +132,7 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
         if "Security violation" in inspection_results["error"]:
             return "fake", inspection_results["error"]
         if "Missing drone_agent.py" in inspection_results["error"]:
-            return "missing_metadata", inspection_results["error"]
+            return "missing_drone_agent", inspection_results["error"]
         if "Dangerous executable" in inspection_results["error"]:
             return "fake", inspection_results["error"]
         return "fake", f"Inspection error: {inspection_results['error']}"
@@ -146,7 +146,7 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
 def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
     """
     Legacy compatibility wrapper for classify_model_validity().
-    Returns True for both fake and missing_metadata cases.
+    Returns True for both fake and missing_drone_agent cases.
     """
     status, reason = classify_model_validity(inspection_results)
     return status != "legitimate", reason
