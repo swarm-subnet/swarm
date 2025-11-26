@@ -292,16 +292,16 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                         model_path.unlink(missing_ok=True)
                         bt.logging.info(f"🗑️ Removed fake model {model_hash[:16]}... from cache and blacklisted")
                         
-                    elif verification_data.get('missing_metadata', False):
-                        # Missing metadata → reject but don't blacklist
-                        rejection_reason = verification_data.get('rejection_reason', 'Missing secure metadata')
+                    elif verification_data.get('missing_drone_agent', False):
+                        # Missing drone_agent.py → reject but don't blacklist
+                        rejection_reason = verification_data.get('rejection_reason', 'Missing drone_agent.py')
                         
-                        bt.logging.warning(f"⚠️ MISSING METADATA during verification: {rejection_reason}")
+                        bt.logging.warning(f"⚠️ MISSING drone_agent.py during verification: {rejection_reason}")
                         bt.logging.info(f"Model hash: {model_hash}")
                         
                         # Remove model but don't blacklist (allows resubmission)
                         model_path.unlink(missing_ok=True)
-                        bt.logging.info(f"🗑️ Removed model {model_hash[:16]}... from cache (missing metadata - can resubmit)")
+                        bt.logging.info(f"🗑️ Removed model {model_hash[:16]}... from cache (missing drone_agent.py - can resubmit)")
                         
                     else:
                         # Legitimate model

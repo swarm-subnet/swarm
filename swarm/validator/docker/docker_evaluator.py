@@ -86,6 +86,8 @@ class DockerSecureEvaluator:
             except Exception:
                 pass
             
+            bt.logging.info(f"🐳 Building base Docker image {self.base_image}...")
+            
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             # Build context should be the parent of swarm package
             build_context = Path(__file__).parent.parent.parent.parent
@@ -266,22 +268,6 @@ class DockerSecureEvaluator:
             bt.logging.warning(f"Docker not ready for UID {uid}")
             return ValidationResult(uid, False, 0.0, 0.0)
         
-        try:
-            check_result = subprocess.run(
-                ["docker", "images", "-q", self.base_image],
-                capture_output=True,
-                text=True
-            )
-            if not check_result.stdout.strip():
-                bt.logging.error(f"Base image {self.base_image} not found - rebuilding...")
-                self._setup_base_container()
-                if not DockerSecureEvaluator._base_ready:
-                    bt.logging.error(f"Failed to rebuild base image for UID {uid}")
-                    return ValidationResult(uid, False, 0.0, 0.0)
-        except Exception as e:
-            bt.logging.warning(f"Failed to check for base image: {e}")
-            return ValidationResult(uid, False, 0.0, 0.0)
-        
         self.last_fake_model_info = None
         
         try:
@@ -328,15 +314,11 @@ class DockerSecureEvaluator:
             if has_requirements:
                 bt.logging.info(f"📦 Miner has requirements.txt for UID {uid}")
                 startup_script = submission_dir / "startup.sh"
-                ready_flag = submission_dir / ".pip_done"
                 with open(startup_script, 'w') as f:
                     f.write("#!/bin/bash\n")
-                    f.write("echo '[STARTUP] Installing requirements...'\n")
                     f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
-                    f.write("PIP_EXIT=$?\n")
-                    f.write("echo \"[STARTUP] pip exit code: $PIP_EXIT\"\n")
+                    f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
                     f.write("touch /workspace/submission/.pip_done\n")
-                    f.write("echo '[STARTUP] Starting RPC server...'\n")
                     f.write("exec python /workspace/submission/main.py\n")
                 os.chmod(startup_script, 0o755)
                 os.chown(startup_script, 1000, 1000)
@@ -422,15 +404,10 @@ class DockerSecureEvaluator:
                     await asyncio.sleep(2)
                 
                 if not pip_done:
-                    bt.logging.warning(f"pip install timeout or failed for UID {uid}")
-                    try:
-                        logs = subprocess.run(
-                            ["docker", "logs", "--tail", "50", container_name],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        bt.logging.debug(f"Container logs: {logs.stdout[-1000:] if logs.stdout else 'empty'}")
-                    except Exception:
-                        pass
+                    bt.logging.warning(f"pip install failed for UID {uid}, skipping evaluation")
+                    subprocess.run(["docker", "kill", container_name], capture_output=True)
+                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                    return ValidationResult(uid, False, 0.0, 0.0)
             
             bt.logging.debug(f"Waiting for RPC server on port {host_port} (max {rpc_timeout}s)...")
             rpc_start = time.time()

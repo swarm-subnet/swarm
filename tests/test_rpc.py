@@ -7,7 +7,7 @@ like the validator does before you submit.
 
 Usage:
     python tests/test_rpc.py swarm/submission_template/ --seed 42 --gui
-    python tests/test_rpc.py swarm/submission_template/ --zip  # Create submission.zip
+    python tests/test_rpc.py swarm/submission_template/ --zip
 """
 
 import argparse
@@ -290,7 +290,6 @@ def main():
     else:
         print("\n⚠️  Mission failed. Debug and try again.")
     
-    # Create submission.zip if requested
     if args.zip:
         _create_submission_zip(args.folder)
     
@@ -298,7 +297,6 @@ def main():
 
 
 def _create_submission_zip(folder: Path):
-    """Create submission.zip from the tested folder"""
     submission_dir = Path(__file__).parent.parent / "Submission"
     submission_dir.mkdir(parents=True, exist_ok=True)
     
@@ -328,4 +326,3 @@ def _create_submission_zip(folder: Path):
 
 if __name__ == "__main__":
     main()
-
