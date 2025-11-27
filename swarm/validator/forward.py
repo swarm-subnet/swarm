@@ -31,7 +31,6 @@ from ..core.model_verify import (
 )
 from .task_gen import random_task
 from .docker.docker_evaluator import DockerSecureEvaluator
-from .rewards_system import compute_tiered_weights
 from .seed_manager import SynchronizedSeedManager
 from swarm.constants import (
     SIM_DT,
@@ -756,7 +755,7 @@ def compute_winner_take_all_weights(score_metrics: List[tuple]) -> Tuple[np.ndar
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 4.  Tiered reward system (see rewards_system.py)
+# 4.  Winner-Take-All reward system (only system used)
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -948,8 +947,6 @@ async def forward(self) -> None:
                         "winner_uid": None,
                         "winner_score": 0.0,
                     }
-
-                reward_system = "Winner-Take-All (Per-Type Normalized)"
             else:
                 score_metrics = calculate_score_metrics(history, uids_np)
 
@@ -1007,11 +1004,6 @@ async def forward(self) -> None:
                             "winner_uid": None,
                             "winner_score": 0.0,
                         }
-
-                reward_system = "Winner-Take-All (Avg Score-Based)"
-        else:
-            uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
-            reward_system = "Tiered"
 
         uid_to_score = dict(zip(uids_np, raw_scores))
         uids_np = uids_out
