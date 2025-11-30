@@ -11,7 +11,8 @@ from gym_pybullet_drones.utils.enums import (
 )
 
 # ── project‑level utilities ────────────────────────────────────────────────
-from swarm.validator.reward import flight_reward          # 3-term scorer
+from swarm.validator.reward import flight_reward
+from swarm.constants import DRONE_HULL_RADIUS, MAX_RAY_DISTANCE
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -83,7 +84,7 @@ class MovingDroneAviary(BaseRLAviary):
 
         img_shape = (enhanced_height, enhanced_width, 4)
         action_dim = self.action_space.shape[-1]
-        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim
+        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1
         self._state_dim = state_dim
 
         self.observation_space = spaces.Dict({
@@ -162,6 +163,24 @@ class MovingDroneAviary(BaseRLAviary):
         dep = np.reshape(dep, (h, w))
         seg = np.reshape(seg, (h, w))
         return rgb, dep, seg
+
+    def _get_altitude_distance(self) -> float:
+        """Cast single ray downward for ground/altitude detection."""
+        cli = getattr(self, "CLIENT", 0)
+        uid = self.DRONE_IDS[0]
+        pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
+        pos = np.asarray(pos, dtype=float)
+
+        start = [pos[0], pos[1], pos[2] - DRONE_HULL_RADIUS]
+        end = [pos[0], pos[1], pos[2] - MAX_RAY_DISTANCE]
+
+        result = p.rayTest(start, end, physicsClientId=cli)
+        hit_uid, _, hit_frac, _, _ = result[0]
+
+        if hit_uid != -1:
+            seg_len = MAX_RAY_DISTANCE - DRONE_HULL_RADIUS
+            return min(MAX_RAY_DISTANCE, DRONE_HULL_RADIUS + hit_frac * seg_len)
+        return MAX_RAY_DISTANCE
 
     def _check_collision(self) -> bool:
         """
@@ -371,6 +390,9 @@ class MovingDroneAviary(BaseRLAviary):
         for i in range(self.ACTION_BUFFER_SIZE):
             state_full = np.hstack([state_full, np.array([self.action_buffer[i][0, :]])])
         state_full = state_full.flatten().astype(np.float32)
+
+        altitude = self._get_altitude_distance() / MAX_RAY_DISTANCE
+        state_full = np.append(state_full, altitude).astype(np.float32)
         
         actual_state_dim = state_full.shape[0]
         if actual_state_dim != self._state_dim:

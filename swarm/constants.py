@@ -59,6 +59,7 @@ SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess
 # Drone physical specifications
 DRONE_MASS = 0.027                          # Drone mass (kg) - CF2X Crazyflie
 DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to edge (meters)
+MAX_RAY_DISTANCE = 20.0                     # Downward LiDAR maximum detection range (meters)
 
 # Landing and positioning parameters
 LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
