@@ -156,6 +156,13 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> N
             bt.logging.warning(f"Replacing directory with file: {dest}")
             shutil.rmtree(dest)
         tmp.replace(dest)
+        
+        downloaded_hash = sha256sum(dest)
+        if downloaded_hash != ref.sha256:
+            bt.logging.error(f"SHA256 mismatch for {axon.hotkey}: expected {ref.sha256[:16]}..., got {downloaded_hash[:16]}...")
+            dest.unlink(missing_ok=True)
+            return
+        
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
         
         # 7 – FIRST-TIME VERIFICATION: Run fake model detection in Docker container
@@ -419,10 +426,9 @@ async def send_with_fresh_uuid(
 
     bt.logging.warning(
         f"➡️  sending: nonce={synapse.dendrite.nonce} "
-        f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid}"
-        f"comcomputed_body_hash={synapse.computed_body_hash}"
-        f"axon={axon}"
-        f"dendrite"
+        f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid} "
+        f"computed_body_hash={synapse.computed_body_hash} "
+        f"axon={axon} dendrite"
     )
     return responses
 
@@ -500,6 +506,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
             await _download_model(self, axon, ref, model_fp, uid)
             if (
                 model_fp.is_file()
+                and sha256sum(model_fp) == ref.sha256
                 and model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
