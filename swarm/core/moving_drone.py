@@ -152,7 +152,7 @@ class MovingDroneAviary(BaseRLAviary):
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
             shadow=1,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+            renderer=p.ER_TINY_RENDERER,
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
             flags=SEG_FLAG,
