@@ -14,7 +14,8 @@ from gym_pybullet_drones.utils.enums import (
 from swarm.validator.reward import flight_reward
 from swarm.constants import (
     DRONE_HULL_RADIUS, MAX_RAY_DISTANCE,
-    DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M
+    DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
+    APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_Z
 )
 
 
@@ -60,6 +61,15 @@ class MovingDroneAviary(BaseRLAviary):
         self._collision    = False
         self._t_to_goal    = None
         self._prev_score   = 0.0
+        
+        seed = getattr(task, 'map_seed', 0)
+        rng = np.random.RandomState(seed)
+        noise_xy = rng.uniform(-APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_XY, size=2)
+        noise_z = rng.uniform(-APPROX_GOAL_NOISE_Z, APPROX_GOAL_NOISE_Z)
+        self._approx_goal = self.GOAL_POS.copy()
+        self._approx_goal[0] += noise_xy[0]
+        self._approx_goal[1] += noise_xy[1]
+        self._approx_goal[2] += noise_z
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -87,7 +97,7 @@ class MovingDroneAviary(BaseRLAviary):
 
         img_shape = (enhanced_height, enhanced_width, 4)
         action_dim = self.action_space.shape[-1]
-        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1
+        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + 3
         self._state_dim = state_dim
 
         depth_shape = (enhanced_height, enhanced_width, 1)
@@ -204,6 +214,20 @@ class MovingDroneAviary(BaseRLAviary):
         depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
         return depth_normalized.astype(np.float32)[..., np.newaxis]
 
+    def _generate_approx_goal(self, seed: int = None) -> np.ndarray:
+        """Generate approximate goal position with noise for GPS simulation."""
+        if seed is not None:
+            rng = np.random.RandomState(seed)
+        else:
+            rng = self.np_random
+        noise_xy = rng.uniform(-APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_XY, size=2)
+        noise_z = rng.uniform(-APPROX_GOAL_NOISE_Z, APPROX_GOAL_NOISE_Z)
+        approx = self.GOAL_POS.copy()
+        approx[0] += noise_xy[0]
+        approx[1] += noise_xy[1]
+        approx[2] += noise_z
+        return approx
+
     def _check_collision(self) -> bool:
         """
         Inspect contact points and update success/collision flags.
@@ -260,6 +284,11 @@ class MovingDroneAviary(BaseRLAviary):
         Resets the underlying simulator and internal counters,
         returns initial observation and info as usual.
         """
+        seed = kwargs.get('seed', None)
+        if seed is None:
+            seed = getattr(self.task, 'map_seed', None)
+        self._approx_goal = self._generate_approx_goal(seed=seed)
+        
         obs, info = super().reset(**kwargs)
 
         self._time_alive = 0.0
@@ -395,7 +424,7 @@ class MovingDroneAviary(BaseRLAviary):
         rgb_obs = super()._computeObs()
         if rgb_obs is None:
             h, w = (self.IMG_RES[1], self.IMG_RES[0]) if self.IMG_RES is not None else (48, 64)
-            state_dim = getattr(self, "_state_dim", 112)
+            state_dim = getattr(self, "_state_dim", 115)
             return {
                 "rgb": np.zeros((h, w, 4), dtype=np.uint8),
                 "depth": np.zeros((h, w, 1), dtype=np.float32),
@@ -421,6 +450,10 @@ class MovingDroneAviary(BaseRLAviary):
 
         altitude = self._get_altitude_distance() / MAX_RAY_DISTANCE
         state_full = np.append(state_full, altitude).astype(np.float32)
+        
+        drone_pos = state_vec[0:3]
+        goal_vector = (self._approx_goal - drone_pos).astype(np.float32)
+        state_full = np.append(state_full, goal_vector).astype(np.float32)
         
         actual_state_dim = state_full.shape[0]
         if actual_state_dim != self._state_dim:

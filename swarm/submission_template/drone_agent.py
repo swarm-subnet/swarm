@@ -12,10 +12,12 @@ class DroneFlightController:
         - "depth": numpy array (96, 96, 1) - Normalized depth map [0,1] for 0.5-20m range
         - "state": numpy array (N,) - flight state vector containing:
             * Position (x, y, z) in meters
-            * Orientation quaternion (w, x, y, z)
+            * Orientation (roll, pitch, yaw)
             * Linear velocities (vx, vy, vz) in m/s
             * Angular velocities (roll_rate, pitch_rate, yaw_rate) in rad/s
             * Action history (previous actions)
+            * Altitude (normalized)
+            * Approximate goal vector (relative x, y, z) - ±10m accuracy in X/Y
     
     Action Space:
         numpy array (5,) containing [vx, vy, vz, speed, yaw]
