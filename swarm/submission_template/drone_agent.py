@@ -7,8 +7,9 @@ class DroneFlightController:
     navigate from start to goal while avoiding obstacles.
     
     Observation Space:
-        Dictionary with two keys:
+        Dictionary with three keys:
         - "rgb": numpy array (96, 96, 4) - RGBA camera feed
+        - "depth": numpy array (96, 96, 1) - Normalized depth map [0,1] for 0.5-20m range
         - "state": numpy array (N,) - flight state vector containing:
             * Position (x, y, z) in meters
             * Orientation quaternion (w, x, y, z)
@@ -56,7 +57,7 @@ class DroneFlightController:
         Compute flight action for current observation.
         
         Args:
-            observation: dict with "rgb" (96,96,4) and "state" (N,) arrays
+            observation: dict with "rgb" (96,96,4), "depth" (96,96,1), and "state" (N,) arrays
         
         Returns:
             numpy array (5,) containing [vx, vy, vz, speed, yaw]

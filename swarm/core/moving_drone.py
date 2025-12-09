@@ -12,7 +12,10 @@ from gym_pybullet_drones.utils.enums import (
 
 # ── project‑level utilities ────────────────────────────────────────────────
 from swarm.validator.reward import flight_reward
-from swarm.constants import DRONE_HULL_RADIUS, MAX_RAY_DISTANCE
+from swarm.constants import (
+    DRONE_HULL_RADIUS, MAX_RAY_DISTANCE,
+    DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M
+)
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -87,12 +90,19 @@ class MovingDroneAviary(BaseRLAviary):
         state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1
         self._state_dim = state_dim
 
+        depth_shape = (enhanced_height, enhanced_width, 1)
         self.observation_space = spaces.Dict({
             "rgb": spaces.Box(
                 low=0,
                 high=255,
                 shape=img_shape,
                 dtype=np.uint8
+            ),
+            "depth": spaces.Box(
+                low=0.0,
+                high=1.0,
+                shape=depth_shape,
+                dtype=np.float32
             ),
             "state": spaces.Box(
                 low=-np.inf,
@@ -182,6 +192,18 @@ class MovingDroneAviary(BaseRLAviary):
             return min(MAX_RAY_DISTANCE, DRONE_HULL_RADIUS + hit_frac * seg_len)
         return MAX_RAY_DISTANCE
 
+    def _process_depth(self, depth_buffer: np.ndarray) -> np.ndarray:
+        """Convert PyBullet depth buffer to normalized depth map [0,1] for 0.5-20m range."""
+        depth_buffer = np.clip(depth_buffer, 0.0, 1.0)
+        
+        denominator = DEPTH_FAR - (DEPTH_FAR - DEPTH_NEAR) * depth_buffer
+        denominator = np.maximum(denominator, DEPTH_NEAR * 1e-6)
+        
+        depth_meters = DEPTH_FAR * DEPTH_NEAR / denominator
+        depth_clipped = np.clip(depth_meters, DEPTH_MIN_M, DEPTH_MAX_M)
+        depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
+        return depth_normalized.astype(np.float32)[..., np.newaxis]
+
     def _check_collision(self) -> bool:
         """
         Inspect contact points and update success/collision flags.
@@ -261,6 +283,7 @@ class MovingDroneAviary(BaseRLAviary):
                 self._state_dim = actual_state_dim
                 self.observation_space = spaces.Dict({
                     "rgb": self.observation_space["rgb"],
+                    "depth": self.observation_space["depth"],
                     "state": spaces.Box(
                         low=-np.inf,
                         high=np.inf,
@@ -268,8 +291,10 @@ class MovingDroneAviary(BaseRLAviary):
                         dtype=np.float32
                     ),
                 })
+        else:
+            obs_after = obs
 
-        return obs, info
+        return obs_after, info
 
     def _spawn_task_world(self):
         """Rebuild the procedural world defined by self.task."""
@@ -373,10 +398,13 @@ class MovingDroneAviary(BaseRLAviary):
             state_dim = getattr(self, "_state_dim", 112)
             return {
                 "rgb": np.zeros((h, w, 4), dtype=np.uint8),
+                "depth": np.zeros((h, w, 1), dtype=np.float32),
                 "state": np.zeros((state_dim,), dtype=np.float32),
             }
 
         img = rgb_obs[0].astype(np.uint8)
+        _, depth_raw, _ = self._getDroneImages(0, segmentation=False)
+        depth = self._process_depth(depth_raw)
 
         state_vec = self._getDroneStateVector(0)
         obs_12 = np.hstack([
@@ -399,6 +427,7 @@ class MovingDroneAviary(BaseRLAviary):
             self._state_dim = actual_state_dim
             self.observation_space = spaces.Dict({
                 "rgb": self.observation_space["rgb"],
+                "depth": self.observation_space["depth"],
                 "state": spaces.Box(
                     low=-np.inf,
                     high=np.inf,
@@ -409,5 +438,6 @@ class MovingDroneAviary(BaseRLAviary):
 
         return {
             "rgb": img,
+            "depth": depth,
             "state": state_full,
         }
