@@ -72,6 +72,7 @@ class Miner(BaseMinerNeuron):
         "5CUwbDbxCm3A4uk3rC69gQuphyG1CZaWBZRjFQTnvvMMPGun": "Yuma",
         "5EhiBKjj56jE1a6rLPP14TtrzxiwgfG8qk7nuZprkbYKH87C": "OTF",
         "5FCvTkZK44fcs1iHsyUce8ZgJQD8351QJiVA8YvvuA6YcP2v": "New vali",
+        "5FBqnTwnCq6yeVeXTnVGHbiRR6zh6ZGbKVRBusu4zSCu4WUw": "New vali2",
         "5EbgPJdzg1daqm9DcXJ98hGUQUKU84uffumUJzEt6Cva835H": "TestValidator"  # Keep existing test validator
     }
 
