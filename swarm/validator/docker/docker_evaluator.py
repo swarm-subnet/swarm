@@ -248,6 +248,7 @@ class DockerSecureEvaluator:
                         t=t_sim,
                         horizon=task.horizon,
                         task=task,
+                        legitimate_model=True,
                     )
                     
                     return ValidationResult(uid, success, t_sim, score)
@@ -493,9 +494,6 @@ class DockerSecureEvaluator:
                     model_hash = sha256sum(model_path)
                     add_to_blacklist(model_hash)
                     return ValidationResult(uid, False, 0.0, 0.0)
-                
-                if result.success and score == 0.0:
-                    result.score = 0.01
                 
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success={result.success}, time={result.time_sec:.2f}, score={result.score:.4f}")

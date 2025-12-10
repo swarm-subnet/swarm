@@ -51,6 +51,7 @@ def flight_reward(
     *,
     w_success: float = 0.5,
     w_t: float = 0.5,
+    legitimate_model: bool = True,
 ) -> float:
     """Compute the reward for a single flight mission.
 
@@ -66,6 +67,9 @@ def flight_reward(
         MapTask object containing start and goal positions for distance calculation.
     w_success, w_t
         Weights for the success and time terms. They should sum to ``1``.
+    legitimate_model
+        ``True`` if the model passed verification and is legitimate. Legitimate models
+        that fail missions receive a base reward of 0.01.
 
     Returns
     -------
@@ -79,6 +83,8 @@ def flight_reward(
     success_term = 1.0 if success else 0.0
     
     if success_term == 0.0:
+        if legitimate_model and t > 0.0:
+            return 0.01
         return 0.0
 
     if task is not None:
