@@ -31,7 +31,6 @@ from ..core.model_verify import (
 )
 from .task_gen import random_task
 from .docker.docker_evaluator import DockerSecureEvaluator
-from .rewards_system import compute_tiered_weights
 from .seed_manager import SynchronizedSeedManager
 from swarm.constants import (
     SIM_DT,
@@ -157,6 +156,13 @@ async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> N
             bt.logging.warning(f"Replacing directory with file: {dest}")
             shutil.rmtree(dest)
         tmp.replace(dest)
+        
+        downloaded_hash = sha256sum(dest)
+        if downloaded_hash != ref.sha256:
+            bt.logging.error(f"SHA256 mismatch for {axon.hotkey}: expected {ref.sha256[:16]}..., got {downloaded_hash[:16]}...")
+            dest.unlink(missing_ok=True)
+            return
+        
         bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
         
         # 7 – FIRST-TIME VERIFICATION: Run fake model detection in Docker container
@@ -202,7 +208,7 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
             # Create minimal task for verification (not used for actual evaluation)
             dummy_task = {
                 "start": [0, 0, 1], "goal": [5, 5, 2], "obstacles": [],
-                "horizon": 30.0, "seed": 12345
+                "horizon": HORIZON_SEC, "seed": 12345
             }
             
             task_file = Path(tmpdir) / "task.json"
@@ -217,21 +223,21 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                 "--rm",
                 "--name", container_name,
                 "--user", "1000:1000",
-                "--memory=4g",  # Less memory needed for verification
-                "--cpus=1",     # Single CPU for verification
+                "--memory=4g",
+                "--cpus=1",
                 "--pids-limit=10",
                 "--ulimit", "nofile=32:32",
-                "--ulimit", "fsize=262144000:262144000",  # 250MB file size limit
+                "--ulimit", "fsize=262144000:262144000",
                 "--security-opt", "no-new-privileges",
                 "--network", "none",
                 "-v", f"{tmpdir}:/workspace/shared",
                 "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
                 docker_evaluator.base_image,
-                # Use special verification mode
-                "VERIFY_ONLY",  # Special flag to run only verification
-                str(uid),  # Real UID for verification
-                "/workspace/model.zip",  # Model path
-                "/workspace/shared/verification_result.json"  # Result file
+                "python", "/app/swarm/core/evaluator.py",
+                "VERIFY_ONLY",
+                str(uid),
+                "/workspace/model.zip",
+                "/workspace/shared/verification_result.json"
             ]
             
             # Execute verification with timeout
@@ -292,16 +298,16 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                         model_path.unlink(missing_ok=True)
                         bt.logging.info(f"🗑️ Removed fake model {model_hash[:16]}... from cache and blacklisted")
                         
-                    elif verification_data.get('missing_metadata', False):
-                        # Missing metadata → reject but don't blacklist
-                        rejection_reason = verification_data.get('rejection_reason', 'Missing secure metadata')
+                    elif verification_data.get('missing_drone_agent', False):
+                        # Missing drone_agent.py → reject but don't blacklist
+                        rejection_reason = verification_data.get('rejection_reason', 'Missing drone_agent.py')
                         
-                        bt.logging.warning(f"⚠️ MISSING METADATA during verification: {rejection_reason}")
+                        bt.logging.warning(f"⚠️ MISSING drone_agent.py during verification: {rejection_reason}")
                         bt.logging.info(f"Model hash: {model_hash}")
                         
                         # Remove model but don't blacklist (allows resubmission)
                         model_path.unlink(missing_ok=True)
-                        bt.logging.info(f"🗑️ Removed model {model_hash[:16]}... from cache (missing metadata - can resubmit)")
+                        bt.logging.info(f"🗑️ Removed model {model_hash[:16]}... from cache (missing drone_agent.py - can resubmit)")
                         
                     else:
                         # Legitimate model
@@ -420,10 +426,9 @@ async def send_with_fresh_uuid(
 
     bt.logging.warning(
         f"➡️  sending: nonce={synapse.dendrite.nonce} "
-        f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid}"
-        f"comcomputed_body_hash={synapse.computed_body_hash}"
-        f"axon={axon}"
-        f"dendrite"
+        f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid} "
+        f"computed_body_hash={synapse.computed_body_hash} "
+        f"axon={axon} dendrite"
     )
     return responses
 
@@ -501,6 +506,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
             await _download_model(self, axon, ref, model_fp, uid)
             if (
                 model_fp.is_file()
+                and sha256sum(model_fp) == ref.sha256
                 and model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
@@ -530,8 +536,10 @@ def _log_normalized_score(uid: int) -> None:
 
     if ENABLE_PER_TYPE_NORMALIZATION:
         type_info = []
-        for type_id in [1, 2, 3]:
+        for type_id in [1, 2, 3, 4]:
             type_str = str(type_id)
+            if type_str not in history["runs_by_type"]:
+                continue
             type_data = history["runs_by_type"][type_str]
             weight = CHALLENGE_TYPE_DISTRIBUTION[type_id]
             type_info.append(
@@ -610,7 +618,8 @@ def load_uid_history(uid: int) -> dict:
         "runs_by_type": {
             "1": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
             "2": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
-            "3": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0}
+            "3": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
+            "4": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0}
         },
         "normalized_score": 0.0
     }
@@ -677,6 +686,8 @@ def calculate_normalized_score(history: dict) -> float:
 
     for type_id, weight in CHALLENGE_TYPE_DISTRIBUTION.items():
         type_str = str(type_id)
+        if type_str not in runs_by_type:
+            continue
         type_data = runs_by_type[type_str]
 
         if type_data["count"] > 0:
@@ -751,7 +762,7 @@ def compute_winner_take_all_weights(score_metrics: List[tuple]) -> Tuple[np.ndar
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 4.  Tiered reward system (see rewards_system.py)
+# 4.  Winner-Take-All reward system (only system used)
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -830,7 +841,8 @@ async def forward(self) -> None:
         challenge_type_names = {
             1: "Type 1 (Standard)",
             2: "Type 2 (higher obstacles)",
-            3: "Type 3 (Easy)"
+            3: "Type 3 (Easy)",
+            4: "Type 4 (No obstacles)"
         }
         type_name = challenge_type_names.get(task.challenge_type, f"Type {task.challenge_type}")
 
@@ -985,8 +997,6 @@ async def forward(self) -> None:
                         "winner_uid": None,
                         "winner_score": 0.0,
                     }
-
-                reward_system = "Winner-Take-All (Per-Type Normalized)"
             else:
                 score_metrics = calculate_score_metrics(history, uids_np)
 
@@ -1044,11 +1054,6 @@ async def forward(self) -> None:
                             "winner_uid": None,
                             "winner_score": 0.0,
                         }
-
-                reward_system = "Winner-Take-All (Avg Score-Based)"
-        else:
-            uids_out, boosted, debug_info = compute_tiered_weights(uids_np, raw_scores)
-            reward_system = "Tiered"
 
         uid_to_score = dict(zip(uids_np, raw_scores))
         uids_np = uids_out

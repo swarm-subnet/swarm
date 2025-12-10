@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
-Standalone evaluator script for subprocess execution.
-Now supports a two-process design (within the same container) to isolate the
-model from the environment. In regular evaluation mode, the parent process runs
-the environment loop and spawns a child "MODEL_WORKER" process that only loads
-the model and returns actions. The two processes exchange strictly numerical
-data (observations and actions) via stdio JSON lines.
+Standalone evaluator script for RPC agent evaluation.
+All submissions must be RPC agents with main.py entry point.
 """
 
 import sys
@@ -15,106 +11,16 @@ import gc
 import resource
 from pathlib import Path
 import subprocess
-import json as _json
-import select
+import zipfile
 
-# Add swarm to path BEFORE importing swarm modules
 swarm_path = str(Path(__file__).resolve().parent.parent.parent)
 if swarm_path not in sys.path:
     sys.path.insert(0, swarm_path)
 
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
-from swarm.core.secure_loader import secure_load_ppo
-from swarm.constants import SPEED_LIMIT
-from gym_pybullet_drones.utils.enums import ActionType
 
 
-def _spawn_model_worker(model_path: str) -> subprocess.Popen:
-    """Start a model-only worker process that returns actions for given obs.
-
-    The worker is invoked as: this_script MODEL_WORKER <model_path>
-    Communication protocol: parent writes one JSON line {"obs": [...]} per step;
-    worker replies with one JSON line {"act": [...]}.
-    """
-    cmd = [sys.executable, str(Path(__file__).resolve()), "MODEL_WORKER", model_path]
-    # Use unbuffered I/O to minimize latency
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-    return proc
-
-
-def _model_predict_via_io(proc: subprocess.Popen, obs_array, timeout_s: float = 1.0):
-    """Send observation to the model worker and get an action back as list.
-
-    Returns a Python list representing the action on success; raises RuntimeError
-    on timeout or protocol errors.
-    """
-    if proc.poll() is not None:
-        raise RuntimeError("model worker terminated")
-
-    # Ensure 1-D list of floats
-    try:
-        obs_list = obs_array.tolist() if hasattr(obs_array, "tolist") else list(obs_array)
-    except Exception:
-        raise RuntimeError("invalid observation format")
-
-    line = _json.dumps({"obs": obs_list}) + "\n"
-    try:
-        proc.stdin.write(line)
-        proc.stdin.flush()
-    except Exception as e:
-        raise RuntimeError(f"failed to write to model worker: {e}")
-
-    # Wait for one line with timeout - increased timeout and retry logic
-    for retry in range(2):  # Retry once if first attempt times out
-        rlist, _, _ = select.select([proc.stdout], [], [], timeout_s)
-        if rlist:
-            reply = proc.stdout.readline()
-            if reply:
-                try:
-                    payload = _json.loads(reply)
-                    act = payload.get("act", None)
-                    if isinstance(act, list) and len(act) > 0:
-                        return act
-                except Exception:
-                    pass
-        # If first attempt failed, wait a bit shorter for retry
-        timeout_s = timeout_s / 2
-    
-    # Both attempts failed
-    raise RuntimeError("model worker timeout after retries")
-
-
-def _wait_model_ready(proc: subprocess.Popen, timeout_s: float = 60.0) -> None:
-    """Block until the model worker prints a readiness line {"ready": true}."""
-    elapsed = 0.0
-    step = 0.1
-    while elapsed < timeout_s:
-        if proc.poll() is not None:
-            raise RuntimeError("model worker terminated prematurely")
-        rlist, _, _ = select.select([proc.stdout], [], [], step)
-        if rlist:
-            line = proc.stdout.readline()
-            if not line:
-                continue
-            try:
-                msg = _json.loads(line)
-                if msg.get("ready", False) is True:
-                    return
-            except Exception:
-                # ignore non-ready lines
-                pass
-        elapsed += step
-    raise RuntimeError("model worker ready timeout")
 
 
 def main():
@@ -130,64 +36,6 @@ def main():
         sys.stderr = open(os.devnull, 'w')
     
     try:
-        # Parse command line arguments - handle both regular evaluation and verification-only
-        # Special worker mode: MODEL_WORKER <model_path>
-        if len(sys.argv) >= 2 and sys.argv[1] == "MODEL_WORKER":
-            # Child process that only loads the model and returns actions via stdio
-            # Import here to keep parent process free from model code
-            from stable_baselines3 import PPO
-            from swarm.core.secure_loader import secure_load_ppo
-            from swarm.utils.env_factory import make_env
-            from swarm.validator.task_gen import random_task
-            from swarm.constants import SIM_DT, HORIZON_SEC
-
-            model_path = sys.argv[2]
-            try:
-                # Create minimal environment for policy initialization
-                task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=1)
-                init_env = make_env(task, gui=False)
-                try:
-                    model = secure_load_ppo(Path(model_path), env=init_env, device="cpu")
-                finally:
-                    init_env.close()
-            except Exception as e:
-                sys.stderr.write(f"MODEL_WORKER_LOAD_ERROR: {e}\n")
-                sys.stderr.flush()
-                sys.exit(1)
-
-            # Signal readiness
-            sys.stdout.write(_json.dumps({"ready": True}) + "\n")
-            sys.stdout.flush()
-
-            # Serve an infinite loop over stdin
-            for line in sys.stdin:
-                line = line.strip()
-                
-                if not line:
-                    continue
-                try:
-                    msg = _json.loads(line)
-                    obs = msg.get("obs", None)
-                    if not isinstance(obs, list) or len(obs) == 0:
-                        raise ValueError("invalid obs")
-                    import numpy as _np
-                    obs_arr = _np.asarray(obs, dtype=_np.float32)
-                    # SB3 can accept 1-D obs; ensure proper shape is handled inside predict
-                    act, _ = model.predict(obs_arr, deterministic=True)
-                    act_list = act.squeeze().tolist() if hasattr(act, "tolist") else list(act)
-                    sys.stdout.write(_json.dumps({"act": act_list}) + "\n")
-                    sys.stdout.flush()
-                except Exception as e:
-                    # Log error to stderr for debugging, then respond with empty action
-                    import traceback
-                    sys.stderr.write(f"MODEL_WORKER_PREDICT_ERROR: {e}\n")
-                    sys.stderr.write(traceback.format_exc())
-                    sys.stderr.flush()
-                    sys.stdout.write(_json.dumps({"act": []}) + "\n")
-                    sys.stdout.flush()
-            sys.exit(0)
-
-        # Normal modes
         if len(sys.argv) != 5:
             raise ValueError("Usage: evaluator.py <task_json|VERIFY_ONLY> <uid> <model_path> <result_file>")
 
@@ -215,11 +63,6 @@ def main():
         except Exception:
             pass
         
-        # Parse task from JSON (only for regular evaluation)
-        if not verify_only_mode:
-            with open(task_json, 'r') as f:
-                task_data = json.load(f)
-            task = MapTask(**task_data)
         
         # First inspect model for fake indicators (safe within container)
         from swarm.core.model_verify import inspect_model_structure, classify_model_validity
@@ -231,8 +74,8 @@ def main():
         if verify_only_mode:
             if model_status == "legitimate":
                 status = "LEGITIMATE"
-            elif model_status == "missing_metadata":
-                status = "MISSING METADATA"
+            elif model_status == "missing_drone_agent":
+                status = "MISSING DRONE_AGENT"
             else:  # fake
                 status = "FAKE"
             print(f"📋 Model inspection: {status}" + (f" - {model_reason}" if model_status != "legitimate" else ""))
@@ -245,7 +88,7 @@ def main():
                 time_sec=0.0,
                 score=0.0
             )
-        elif model_status == "missing_metadata":
+        elif model_status == "missing_drone_agent":
             # Return rejection result (zero score but no blacklist)
             result = ValidationResult(
                 uid=uid,
@@ -254,102 +97,14 @@ def main():
                 score=0.0
             )
         elif verify_only_mode:
-            # VERIFICATION-ONLY MODE: Model is legitimate, return success without evaluation
             result = ValidationResult(
                 uid=uid,
                 success=True,
                 time_sec=0.0,
-                score=0.0  # Not applicable for verification-only
+                score=0.0
             )
         else:
-            # REGULAR EVALUATION MODE: Model is legitimate, evaluate via two-process IPC
-            # Spawn untrusted model worker
-            worker = _spawn_model_worker(model_path)
-            # Wait up to 90s for worker to be ready (covers initial model load)
-            _wait_model_ready(worker, timeout_s=90.0)
-
-            # Build environment and roll out
-            # Import here to avoid bringing SB3 into the parent
-            import numpy as _np
-            from swarm.utils.env_factory import make_env
-            from swarm.constants import SIM_DT
-
-            class _PilotIPC:
-                def __init__(self, proc):
-                    self.proc = proc
-                def reset(self, task):
-                    pass
-                def act(self, obs, t):
-                    try:
-                        act_list = _model_predict_via_io(self.proc, obs, timeout_s=10.0)
-                        if act_list and len(act_list) > 0:
-                            return _np.asarray(act_list, dtype=_np.float32)
-                    except Exception:
-                        pass
-                    # Fallback to zeros only after all retries failed
-                    return _np.zeros(4, dtype=_np.float32)
-
-            pilot = _PilotIPC(worker)
-            env = make_env(task, gui=False)
-
-            try:
-                obs = env._computeObs()
-                if isinstance(obs, dict):
-                    obs = obs[next(iter(obs))]
-
-                pos0 = _np.asarray(task.start, dtype=float)
-                t_sim = 0.0
-                success = False
-                step_count = 0
-                
-                lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
-                last_pos = pos0
-                
-                while t_sim < task.horizon:
-                    act = _np.clip(_np.asarray(pilot.act(obs, t_sim), dtype=_np.float32).reshape(-1), lo, hi)
-                    
-                    # Apply speed scaling every step in VEL mode
-                    if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
-                        if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
-                            n = max(_np.linalg.norm(act[:3]), 1e-6)
-                            scale = min(1.0, SPEED_LIMIT / n)
-                            act[:3] *= scale
-                            act = _np.clip(act, lo, hi)
-                    
-                    prev = last_pos
-                    obs, _r, terminated, truncated, info = env.step(act[None, :])
-                    last_pos = env._getDroneStateVector(0)[0:3]
-                    
-                    # Monitor speed ratio for telemetry
-                    if hasattr(env, 'SPEED_LIMIT') and env.SPEED_LIMIT:
-                        ratio = float(_np.linalg.norm(last_pos - prev) / SIM_DT) / env.SPEED_LIMIT
-                    
-                    t_sim += SIM_DT
-                    if terminated or truncated:
-                        success = info.get("success", False)
-                        break
-                    step_count += 1
-
-                # Compute score using reward function
-                from swarm.validator.reward import flight_reward
-                score = flight_reward(
-                    success=success,
-                    t=t_sim,
-                    horizon=task.horizon,
-                    task=task,
-                )
-
-                result = ValidationResult(uid, success, t_sim, score)
-            finally:
-                try:
-                    env.close()
-                except Exception:
-                    pass
-                try:
-                    # Terminate worker process
-                    worker.terminate()
-                except Exception:
-                    pass
+            raise ValueError("Regular evaluation mode not supported in Docker container. Use HostRPCEvaluator instead.")
         
         # Write result to file
         tmp_file = result_file + ".tmp"
@@ -360,9 +115,9 @@ def main():
             result_dict['is_fake_model'] = True
             result_dict['fake_reason'] = model_reason
             result_dict['inspection_results'] = inspection_results
-        elif model_status == "missing_metadata":
+        elif model_status == "missing_drone_agent":
             result_dict['is_fake_model'] = False
-            result_dict['missing_metadata'] = True
+            result_dict['missing_drone_agent'] = True
             result_dict['rejection_reason'] = model_reason
             result_dict['inspection_results'] = inspection_results
         else:

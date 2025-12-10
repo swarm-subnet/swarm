@@ -1,9 +1,7 @@
 # swarm/envs/moving_drone.py
 from __future__ import annotations
 
-from typing import cast
 import numpy as np
-from numpy.typing import NDArray
 import gymnasium.spaces as spaces
 import pybullet as p
 
@@ -13,8 +11,12 @@ from gym_pybullet_drones.utils.enums import (
 )
 
 # ── project‑level utilities ────────────────────────────────────────────────
-from swarm.validator.reward import flight_reward          # 3‑term scorer
-from swarm.constants        import GOAL_TOL, HOVER_SEC, DRONE_HULL_RADIUS, MAX_RAY_DISTANCE
+from swarm.validator.reward import flight_reward
+from swarm.constants import (
+    DRONE_HULL_RADIUS, MAX_RAY_DISTANCE,
+    DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
+    APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_Z
+)
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -39,7 +41,7 @@ class MovingDroneAviary(BaseRLAviary):
         ctrl_freq   : int          = 30,
         gui         : bool         = False,
         record      : bool         = False,
-        obs         : ObservationType = ObservationType.KIN,
+        obs         : ObservationType = ObservationType.RGB,
         act         : ActionType      = ActionType.RPM,
     ):
         """
@@ -55,14 +57,19 @@ class MovingDroneAviary(BaseRLAviary):
 
         # internal book‑keeping
         self._time_alive   = 0.0
-        self._hover_sec    = 0.0
         self._success      = False
         self._collision    = False
         self._t_to_goal    = None
         self._prev_score   = 0.0
-
-        # ‑‑‑ define 16 ray directions for obstacle detection ‑‑‑
-        self._init_ray_directions()
+        
+        seed = getattr(task, 'map_seed', 0)
+        rng = np.random.RandomState(seed)
+        noise_xy = rng.uniform(-APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_XY, size=2)
+        noise_z = rng.uniform(-APPROX_GOAL_NOISE_Z, APPROX_GOAL_NOISE_Z)
+        self._approx_goal = self.GOAL_POS.copy()
+        self._approx_goal[0] += noise_xy[0]
+        self._approx_goal[1] += noise_xy[1]
+        self._approx_goal[2] += noise_z
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -79,23 +86,41 @@ class MovingDroneAviary(BaseRLAviary):
             act          = act,
         )
 
-        # ‑‑‑ extend observation with obstacle distances (16-D) + goal vector (3-D) ‑‑‑
-        obs_space = cast(spaces.Box, self.observation_space)
-        old_low,  old_high  = obs_space.low, obs_space.high
+        if self.OBS_TYPE != ObservationType.RGB:
+            raise ValueError("MovingDroneAviary only supports ObservationType.RGB observations.")
 
-        # Distance sensors: 16 dimensions, range [0.0, 1.0] (scaled from meters)
-        dist_low = np.zeros((old_low.shape[0], 16), dtype=np.float32)
-        dist_high = np.ones((old_high.shape[0], 16), dtype=np.float32)  # scaled to [0.0, 1.0]
+        enhanced_width, enhanced_height = 96, 96
+        self.IMG_RES = np.array([enhanced_width, enhanced_height])
+        self.rgb = np.zeros((self.NUM_DRONES, enhanced_height, enhanced_width, 4), dtype=np.uint8)
+        self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
+        self.seg = np.zeros((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.uint8)
 
-        # Goal vector: 3 dimensions, unlimited range
-        goal_low = -np.ones((old_low.shape[0], 3), dtype=np.float32) * np.inf
-        goal_high = +np.ones((old_high.shape[0], 3), dtype=np.float32) * np.inf
+        img_shape = (enhanced_height, enhanced_width, 4)
+        action_dim = self.action_space.shape[-1]
+        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + 3
+        self._state_dim = state_dim
 
-        self.observation_space = spaces.Box(
-            low   = np.concatenate([old_low, dist_low, goal_low], axis=1),
-            high  = np.concatenate([old_high, dist_high, goal_high], axis=1),
-            dtype = np.float32,
-        )
+        depth_shape = (enhanced_height, enhanced_width, 1)
+        self.observation_space = spaces.Dict({
+            "rgb": spaces.Box(
+                low=0,
+                high=255,
+                shape=img_shape,
+                dtype=np.uint8
+            ),
+            "depth": spaces.Box(
+                low=0.0,
+                high=1.0,
+                shape=depth_shape,
+                dtype=np.float32
+            ),
+            "state": spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(state_dim,),
+                dtype=np.float32
+            ),
+        })
 
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
@@ -105,150 +130,151 @@ class MovingDroneAviary(BaseRLAviary):
         """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
 
-    def _init_ray_directions(self):
-        """Initialize 16 ray directions for obstacle detection - balanced with side coverage."""
-        # Mathematical constants
-        cos_45 = np.cos(np.radians(45))      # √2/2 ≈ 0.707107
-        sin_45 = np.sin(np.radians(45))      # √2/2 ≈ 0.707107
-        cos_30 = np.cos(np.radians(30))      # √3/2 ≈ 0.866025
-        sin_30 = np.sin(np.radians(30))      # 1/2 = 0.500000
-
-        self.ray_directions = np.array([
-            # ═══ 2 PURE VERTICAL (essential for landing/overhead) ═══
-            [0, 0, 1],                       # 1: Pure Up
-            [0, 0, -1],                      # 2: Pure Down
-
-            # ═══ 8 HORIZONTAL - BALANCED COVERAGE ═══
-            [1, 0, 0],                       # 3: Forward (0°)
-            [cos_45, sin_45, 0],             # 4: Forward-Right (45°)
-            [0, 1, 0],                       # 5: Right (90°)
-            [-cos_45, sin_45, 0],            # 6: Back-Right (135°)
-            [-1, 0, 0],                      # 7: Back (180°)
-            [-cos_45, -sin_45, 0],           # 8: Back-Left (225°)
-            [0, -1, 0],                      # 9: Left (270°)
-            [cos_45, -sin_45, 0],            # 10: Forward-Left (315°)
-
-            # ═══ 6 DIAGONAL RAYS (3D coverage at ±30° elevation) ═══
-            [cos_30, 0, sin_30],             # 11: Forward-Up (30°)
-            [cos_30, 0, -sin_30],            # 12: Forward-Down (-30°)
-            [-cos_30, 0, sin_30],            # 13: Back-Up (30°)
-            [-cos_30, 0, -sin_30],           # 14: Back-Down (-30°)
-            [0, cos_30, sin_30],             # 15: Right-Up (30°)
-            [0, -cos_30, sin_30],            # 16: Left-Up (30°)
-        ], dtype=np.float32)
-
-        # Detection range and small origin offset to avoid self-hits
-        self.max_ray_distance: float = MAX_RAY_DISTANCE
-        self._ray_origin_offset: float = DRONE_HULL_RADIUS
-
-    def _get_obstacle_distances(self, drone_position: np.ndarray, drone_orientation: np.ndarray) -> np.ndarray:
-        """
-        Perform 16-ray casting for obstacle detection using batch processing.
-
-        Parameters
-        ----------
-        drone_position : np.ndarray
-            Current drone position [x, y, z] in world frame
-        drone_orientation : np.ndarray
-            Current drone orientation as 3x3 rotation matrix (body->world)
-
-        Returns
-        -------
-        np.ndarray
-            Array of 16 distances in meters [0.0 - MAX_RAY_DISTANCE].
-            Distances are measured from the drone COM and clamped to max range.
-        """
-        rot_matrix = drone_orientation
-
-        start_positions = []
-        end_positions = []
-
-        # Length of the ray segment when starting offset outside the hull
-        seg_len = self.max_ray_distance - self._ray_origin_offset
-        if seg_len <= 0:
-            seg_len = 1e-6
-
-        for direction in self.ray_directions:
-            # Transform direction from body frame to world frame and normalize
-            world_dir = rot_matrix @ direction
-            n = float(np.linalg.norm(world_dir))
-            if n < 1e-9:
-                world_dir = np.array([0.0, 0.0, 1.0], dtype=float)  # fallback
-            else:
-                world_dir = world_dir / n
-
-            # Start just outside the drone to avoid self-hit, end at max range from COM
-            start_pos = drone_position + world_dir * self._ray_origin_offset
-            end_pos   = drone_position + world_dir * self.max_ray_distance
-
-            start_positions.append(start_pos.tolist())
-            end_positions.append(end_pos.tolist())
-
-        # Batch ray test - pass the correct physics client
-        results = p.rayTestBatch(
-            start_positions, end_positions,
-            physicsClientId=getattr(self, "CLIENT", 0)
+    def _getDroneImages(self, nth_drone, segmentation: bool = True):
+        if self.OBS_TYPE != ObservationType.RGB:
+            return super()._getDroneImages(nth_drone, segmentation)
+        
+        if self.IMG_RES is None:
+            print("[ERROR] in MovingDroneAviary._getDroneImages(), IMG_RES not set")
+            exit()
+        
+        cli = getattr(self, "CLIENT", 0)
+        drone_pos = self.pos[nth_drone, :]
+        rot_mat = np.array(p.getMatrixFromQuaternion(self.quat[nth_drone, :])).reshape(3, 3)
+        
+        forward = rot_mat @ np.array([1.0, 0.0, 0.0])
+        forward = forward / np.linalg.norm(forward)
+        up = rot_mat @ np.array([0.0, 0.0, 1.0])
+        
+        camera_offset = 0.35
+        camera_pos = drone_pos + forward * camera_offset + up * 0.05
+        
+        target = camera_pos + forward * 20.0
+        
+        DRONE_CAM_VIEW = p.computeViewMatrix(
+            cameraEyePosition=camera_pos,
+            cameraTargetPosition=target,
+            cameraUpVector=[0, 0, 1],
+            physicsClientId=cli
         )
+        
+        aspect = self.IMG_RES[0] / self.IMG_RES[1]
+        DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
+            fov=90.0,
+            aspect=aspect,
+            nearVal=0.05,
+            farVal=1000.0,
+            physicsClientId=cli
+        )
+        
+        SEG_FLAG = p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX if segmentation else p.ER_NO_SEGMENTATION_MASK
+        [w, h, rgb, dep, seg] = p.getCameraImage(
+            width=self.IMG_RES[0],
+            height=self.IMG_RES[1],
+            shadow=1,
+            renderer=p.ER_TINY_RENDERER,
+            viewMatrix=DRONE_CAM_VIEW,
+            projectionMatrix=DRONE_CAM_PRO,
+            flags=SEG_FLAG,
+            physicsClientId=cli
+        )
+        
+        rgb = np.reshape(rgb, (h, w, 4))
+        dep = np.reshape(dep, (h, w))
+        seg = np.reshape(seg, (h, w))
+        return rgb, dep, seg
 
-        # Extract distances from results, converting "from start" to "from COM"
-        distances = []
-        for r in results:
-            hit_uid = r[0]          # -1 means no hit
-            hit_frac = float(r[2])  # [0,1] along the segment (start->end)
-            if hit_uid != -1:
-                # distance from COM = offset + fraction*segment_length, clamped
-                d = self._ray_origin_offset + hit_frac * seg_len
-                distances.append(float(min(self.max_ray_distance, max(0.0, d))))
-            else:
-                distances.append(self.max_ray_distance)
+    def _get_altitude_distance(self) -> float:
+        """Cast single ray downward for ground/altitude detection."""
+        cli = getattr(self, "CLIENT", 0)
+        uid = self.DRONE_IDS[0]
+        pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
+        pos = np.asarray(pos, dtype=float)
 
-        return np.array(distances, dtype=np.float32)
+        start = [pos[0], pos[1], pos[2] - DRONE_HULL_RADIUS]
+        end = [pos[0], pos[1], pos[2] - MAX_RAY_DISTANCE]
 
-    def _euler_to_rotation_matrix(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
-        """
-        Convert Euler angles directly to rotation matrix (body->world).
-        """
-        cr, sr = np.cos(roll), np.sin(roll)
-        cp, sp = np.cos(pitch), np.sin(pitch)
-        cy, sy = np.cos(yaw), np.sin(yaw)
-        return np.array([
-            [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr],
-            [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr],
-            [-sp,   cp*sr,            cp*cr           ]
-        ])
+        result = p.rayTest(start, end, physicsClientId=cli)
+        hit_uid, _, hit_frac, _, _ = result[0]
+
+        if hit_uid != -1:
+            seg_len = MAX_RAY_DISTANCE - DRONE_HULL_RADIUS
+            return min(MAX_RAY_DISTANCE, DRONE_HULL_RADIUS + hit_frac * seg_len)
+        return MAX_RAY_DISTANCE
+
+    def _process_depth(self, depth_buffer: np.ndarray) -> np.ndarray:
+        """Convert PyBullet depth buffer to normalized depth map [0,1] for 0.5-20m range."""
+        depth_buffer = np.clip(depth_buffer, 0.0, 1.0)
+        
+        denominator = DEPTH_FAR - (DEPTH_FAR - DEPTH_NEAR) * depth_buffer
+        denominator = np.maximum(denominator, DEPTH_NEAR * 1e-6)
+        
+        depth_meters = DEPTH_FAR * DEPTH_NEAR / denominator
+        depth_clipped = np.clip(depth_meters, DEPTH_MIN_M, DEPTH_MAX_M)
+        depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
+        return depth_normalized.astype(np.float32)[..., np.newaxis]
+
+    def _generate_approx_goal(self, seed: int = None) -> np.ndarray:
+        """Generate approximate goal position with noise for GPS simulation."""
+        if seed is not None:
+            rng = np.random.RandomState(seed)
+        else:
+            rng = self.np_random
+        noise_xy = rng.uniform(-APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_XY, size=2)
+        noise_z = rng.uniform(-APPROX_GOAL_NOISE_Z, APPROX_GOAL_NOISE_Z)
+        approx = self.GOAL_POS.copy()
+        approx[0] += noise_xy[0]
+        approx[1] += noise_xy[1]
+        approx[2] += noise_z
+        return approx
 
     def _check_collision(self) -> bool:
         """
-        Check if drone has collided with any obstacle using PyBullet contact points.
-        Returns True if collision detected, False otherwise.
-        
-        Allowed contacts: landing surface and platform support cylinder.
-        Collision contacts: obstacles, walls, ground plane.
+        Inspect contact points and update success/collision flags.
+        Returns True only when an obstacle collision occurred.
         """
         drone_id = self.DRONE_IDS[0]
         contact_points = p.getContactPoints(
             bodyA=drone_id,
             physicsClientId=getattr(self, "CLIENT", 0)
         )
-        
+
         if not contact_points:
             return False
-        
-        landing_surface_uid = getattr(self, '_landing_surface_uid', None)
-        platform_support_uid = getattr(self, '_platform_support_uid', None)
-        
+
+        end_platform_uids = getattr(self, '_end_platform_uids', [])
+        start_platform_uids = getattr(self, '_start_platform_uids', [])
+
+        platform_hit = False
+        obstacle_hit = False
+
         for contact in contact_points:
             body_b = contact[2]
-            if body_b != -1:
-                normal_force = contact[9]
-                if normal_force > 0.01:
-                    if landing_surface_uid is not None and body_b == landing_surface_uid:
-                        continue
-                    if platform_support_uid is not None and body_b == platform_support_uid:
-                        continue
-                    return True
-        
-        return False
+            if body_b == -1:
+                continue
+
+            normal_force = contact[9]
+            if normal_force <= 0.01:
+                continue
+
+            if body_b in end_platform_uids:
+                platform_hit = True
+                continue
+
+            if body_b in start_platform_uids:
+                continue
+
+            obstacle_hit = True
+            break
+
+        if platform_hit and not self._success:
+            self._success = True
+            self._t_to_goal = self._time_alive
+
+        if obstacle_hit:
+            self._collision = True
+
+        return obstacle_hit
 
     # --------------------------------------------------------------------- #
     # 3. OpenAI‑Gym API overrides
@@ -258,15 +284,18 @@ class MovingDroneAviary(BaseRLAviary):
         Resets the underlying simulator and internal counters,
         returns initial observation and info as usual.
         """
+        seed = kwargs.get('seed', None)
+        if seed is None:
+            seed = getattr(self.task, 'map_seed', None)
+        self._approx_goal = self._generate_approx_goal(seed=seed)
+        
         obs, info = super().reset(**kwargs)
 
         self._time_alive = 0.0
-        self._hover_sec  = 0.0
         self._success    = False
         self._collision  = False
         self._t_to_goal  = None
 
-        # baseline score (t = 0, e = 0)
         self._prev_score = flight_reward(
             success = False,
             t       = 0.0,
@@ -274,33 +303,61 @@ class MovingDroneAviary(BaseRLAviary):
             task    = None,
         )
 
-        return obs, info
+        self._spawn_task_world()
+        
+        obs_after = self._computeObs()
+        if obs_after is not None and "state" in obs_after:
+            actual_state_dim = obs_after["state"].shape[0]
+            if actual_state_dim != self._state_dim:
+                self._state_dim = actual_state_dim
+                self.observation_space = spaces.Dict({
+                    "rgb": self.observation_space["rgb"],
+                    "depth": self.observation_space["depth"],
+                    "state": spaces.Box(
+                        low=-np.inf,
+                        high=np.inf,
+                        shape=(actual_state_dim,),
+                        dtype=np.float32
+                    ),
+                })
+        else:
+            obs_after = obs
+
+        return obs_after, info
+
+    def _spawn_task_world(self):
+        """Rebuild the procedural world defined by self.task."""
+        from swarm.core.env_builder import build_world
+        
+        cli = getattr(self, "CLIENT", 0)
+        end_platform_uids, start_platform_uids = build_world(
+            seed=self.task.map_seed,
+            cli=cli,
+            start=self.task.start,
+            goal=self.task.goal,
+            challenge_type=self.task.challenge_type,
+        )
+        
+        self._end_platform_uids = end_platform_uids if end_platform_uids else []
+        self._start_platform_uids = start_platform_uids if start_platform_uids else []
+        
+        start_xyz = np.asarray(self.task.start, dtype=float)
+        start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
+        
+        p.resetBasePositionAndOrientation(
+            self.DRONE_IDS[0],
+            start_xyz,
+            start_quat,
+            physicsClientId=cli,
+        )
 
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """
-        **Incremental** reward based on the three‑term `flight_reward`.
+        **Incremental** reward based on the three-term `flight_reward`.
         """
-        # current distance to goal
-        state = self._getDroneStateVector(0)
-        dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
-
-        # ── success detection: remain inside TAO badge with proper height constraints ──
-        # Use 2D horizontal distance + vertical constraints
-        horizontal_distance = float(np.linalg.norm(state[0:2] - self.GOAL_POS[0:2]))  # X,Y only
-        vertical_distance = abs(state[2] - self.GOAL_POS[2])                          # Z only
-        
-        # Success requires: within TAO badge horizontally + proper height + above platform
-        reached = (horizontal_distance < GOAL_TOL and       # Within TAO badge radius
-                  vertical_distance < 0.3 and              # Within 30cm of surface  
-                  state[2] >= self.GOAL_POS[2] - 0.1)      # Above platform (not below)
-        if reached:
-            self._hover_sec += self._sim_dt
-            if self._hover_sec >= HOVER_SEC and not self._success:
-                self._success   = True
-                self._t_to_goal = self._time_alive
-        else:
-            self._hover_sec = 0.0
+        # Update contact flags before awarding reward
+        self._check_collision()
 
         # ── clock update ────────────────────────────────────────────────────
         self._time_alive += self._sim_dt
@@ -328,7 +385,6 @@ class MovingDroneAviary(BaseRLAviary):
         """
         # Check for collision first
         if self._check_collision():
-            self._collision = True
             return True
             
         # Check for success
@@ -361,30 +417,60 @@ class MovingDroneAviary(BaseRLAviary):
         }
 
     # -------- observation extension -------------------------------------- #
-    def _computeObs(self) -> np.ndarray:
+    def _computeObs(self):
         """
-        Full base observation (112-D) + obstacle distances (16-D) + goal vector (3-D) → 131-D.
-
-        Distances are computed from the **current PyBullet pose** and
-        then scaled to [0,1] by dividing by `max_ray_distance` (10 m).
+        Build RGB + state observation for the single-drone task.
         """
-        base_obs: NDArray[np.float32] | None = super()._computeObs()  # shape (1, 112) in your setup
-        if base_obs is None:
-            return np.zeros((1, 131), dtype=np.float32)
+        rgb_obs = super()._computeObs()
+        if rgb_obs is None:
+            h, w = (self.IMG_RES[1], self.IMG_RES[0]) if self.IMG_RES is not None else (48, 64)
+            state_dim = getattr(self, "_state_dim", 115)
+            return {
+                "rgb": np.zeros((h, w, 4), dtype=np.uint8),
+                "depth": np.zeros((h, w, 1), dtype=np.float32),
+                "state": np.zeros((state_dim,), dtype=np.float32),
+            }
 
-        # --- Get exact pose from PyBullet to stay in sync with physics ---
-        uid = self.DRONE_IDS[0]
-        pos_w, orn_w = p.getBasePositionAndOrientation(uid, physicsClientId=getattr(self, "CLIENT", 0))
-        pos_w = np.asarray(pos_w, dtype=float)
-        rot_m = np.asarray(p.getMatrixFromQuaternion(orn_w), dtype=float).reshape(3, 3)
+        img = rgb_obs[0].astype(np.uint8)
+        _, depth_raw, _ = self._getDroneImages(0, segmentation=False)
+        depth = self._process_depth(depth_raw)
 
-        # --- Cast rays from that pose ---
-        distances_m = self._get_obstacle_distances(pos_w, rot_m).reshape(1, 16)
+        state_vec = self._getDroneStateVector(0)
+        obs_12 = np.hstack([
+            state_vec[0:3],
+            state_vec[7:10],
+            state_vec[10:13],
+            state_vec[13:16]
+        ]).astype(np.float32)
 
-        # Scale to [0,1] for the observation
-        distances_scaled = distances_m / self.max_ray_distance
+        state_full = np.array([obs_12], dtype=np.float32)
+        for i in range(self.ACTION_BUFFER_SIZE):
+            state_full = np.hstack([state_full, np.array([self.action_buffer[i][0, :]])])
+        state_full = state_full.flatten().astype(np.float32)
 
-        # Goal vector relative to current position (scaled by ray distance)
-        rel = ((self.GOAL_POS - pos_w) / self.max_ray_distance).reshape(1, 3)
+        altitude = self._get_altitude_distance() / MAX_RAY_DISTANCE
+        state_full = np.append(state_full, altitude).astype(np.float32)
+        
+        drone_pos = state_vec[0:3]
+        goal_vector = (self._approx_goal - drone_pos).astype(np.float32)
+        state_full = np.append(state_full, goal_vector).astype(np.float32)
+        
+        actual_state_dim = state_full.shape[0]
+        if actual_state_dim != self._state_dim:
+            self._state_dim = actual_state_dim
+            self.observation_space = spaces.Dict({
+                "rgb": self.observation_space["rgb"],
+                "depth": self.observation_space["depth"],
+                "state": spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(actual_state_dim,),
+                    dtype=np.float32
+                ),
+            })
 
-        return np.concatenate([base_obs, distances_scaled, rel], axis=1).astype(np.float32)
+        return {
+            "rgb": img,
+            "depth": depth,
+            "state": state_full,
+        }

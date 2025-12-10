@@ -37,7 +37,7 @@ COPY --chown=evaluator:evaluator swarm/ /app/swarm/
 # Switch to non-root user
 USER evaluator
 
-# Set working directory for evaluation
+# Set working directory
 WORKDIR /workspace
 
 # Environment variables for stable execution
@@ -47,5 +47,5 @@ ENV MKL_NUM_THREADS=1
 ENV NUMEXPR_NUM_THREADS=1
 ENV OMP_NUM_THREADS=1
 
-# Entry point
-ENTRYPOINT ["python", "/app/swarm/core/evaluator.py"]
+# Default command (can be overridden)
+CMD ["python", "/workspace/submission/main.py"]
