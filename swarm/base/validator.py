@@ -52,7 +52,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
-        self.dendrite = bt.dendrite(wallet=self.wallet)
+        self.dendrite = bt.Dendrite(wallet=self.wallet)
 
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
@@ -83,7 +83,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         bt.logging.info("serving ip to chain...")
         try:
-            self.axon = bt.axon(wallet=self.wallet, config=self.config)
+            self.axon = bt.Axon(wallet=self.wallet, config=self.config)
 
             try:
                 self.subtensor.serve_axon(

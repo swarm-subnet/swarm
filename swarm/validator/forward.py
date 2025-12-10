@@ -416,7 +416,7 @@ async def send_with_fresh_uuid(
     an endpoint_key they have never stored before ⇒ no nonce collisions.
     """
     
-    async with bt.dendrite(wallet=wallet) as dend:
+    async with bt.Dendrite(wallet=wallet) as dend:
         responses = await dend(
             axons=[axon],
             synapse=synapse,
