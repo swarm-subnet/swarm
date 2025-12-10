@@ -791,6 +791,37 @@ async def forward(self) -> None:
 
         if not model_paths:
             bt.logging.warning("No models available this cycle")
+            if BURN_EMISSIONS:
+                history = load_victory_history()
+                all_uids = np.array(list(range(self.metagraph.n)), dtype=np.int64)
+                score_metrics = calculate_score_metrics(history, all_uids)
+                
+                if score_metrics:
+                    sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0]))
+                    winner_uid = sorted_metrics[0][0]
+                    winner_avg_score = sorted_metrics[0][1]
+                    
+                    uids_np = np.array([UID_ZERO, winner_uid], dtype=np.int64)
+                    boosted = np.array([BURN_FRACTION, KEEP_FRACTION], dtype=np.float32)
+                    
+                    bt.logging.info(
+                        f"No models: {BURN_FRACTION:.0%} to UID 0, "
+                        f"{KEEP_FRACTION:.0%} to top miner UID {winner_uid} (avg_score: {winner_avg_score:.4f})"
+                    )
+                else:
+                    uids_np = np.array([UID_ZERO], dtype=np.int64)
+                    boosted = np.array([1.0], dtype=np.float32)
+                    bt.logging.info("No models and no history: 100% to UID 0")
+                
+                self.update_scores(boosted, uids_np)
+                if hasattr(self, 'wandb_helper') and self.wandb_helper:
+                    try:
+                        self.wandb_helper.log_weight_update(
+                            uids=[int(uid) for uid in uids_np],
+                            scores=[float(score) for score in boosted]
+                        )
+                    except Exception:
+                        pass
             if USE_SYNCHRONIZED_SEEDS and hasattr(self, 'seed_manager'):
                 self.seed_manager.wait_for_next_window()
             else:
@@ -880,6 +911,18 @@ async def forward(self) -> None:
         print(f"✅ DEBUG: Docker evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
+            if BURN_EMISSIONS:
+                uids_np = np.array([UID_ZERO], dtype=np.int64)
+                boosted = np.array([1.0], dtype=np.float32)
+                self.update_scores(boosted, uids_np)
+                if hasattr(self, 'wandb_helper') and self.wandb_helper:
+                    try:
+                        self.wandb_helper.log_weight_update(
+                            uids=[int(UID_ZERO)],
+                            scores=[1.0]
+                        )
+                    except Exception:
+                        pass
             if hasattr(self, 'wandb_helper') and self.wandb_helper:
                 try:
                     self.wandb_helper.log_forward_results(
