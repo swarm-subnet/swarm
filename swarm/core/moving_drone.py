@@ -432,7 +432,7 @@ class MovingDroneAviary(BaseRLAviary):
             }
 
         img = rgb_obs[0].astype(np.uint8)
-        _, depth_raw, _ = self._getDroneImages(0, segmentation=False)
+        depth_raw = self.dep[0]
         depth = self._process_depth(depth_raw)
 
         state_vec = self._getDroneStateVector(0)
