@@ -17,7 +17,7 @@ class DroneFlightController:
             * Angular velocities (roll_rate, pitch_rate, yaw_rate) in rad/s
             * Action history (previous actions)
             * Altitude (normalized)
-            * Approximate goal vector (relative x, y, z) - ±10m accuracy in X/Y
+            * Search area vector (relative x, y, z) - ±10m accuracy in X/Y
     
     Action Space:
         numpy array (5,) containing [vx, vy, vz, speed, yaw]

@@ -15,7 +15,7 @@ from swarm.validator.reward import flight_reward
 from swarm.constants import (
     DRONE_HULL_RADIUS, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
-    APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_Z
+    SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_Z
 )
 
 
@@ -64,12 +64,12 @@ class MovingDroneAviary(BaseRLAviary):
         
         seed = getattr(task, 'map_seed', 0)
         rng = np.random.RandomState(seed)
-        noise_xy = rng.uniform(-APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_XY, size=2)
-        noise_z = rng.uniform(-APPROX_GOAL_NOISE_Z, APPROX_GOAL_NOISE_Z)
-        self._approx_goal = self.GOAL_POS.copy()
-        self._approx_goal[0] += noise_xy[0]
-        self._approx_goal[1] += noise_xy[1]
-        self._approx_goal[2] += noise_z
+        noise_xy = rng.uniform(-SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_XY, size=2)
+        noise_z = rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
+        self._search_area_center = self.GOAL_POS.copy()
+        self._search_area_center[0] += noise_xy[0]
+        self._search_area_center[1] += noise_xy[1]
+        self._search_area_center[2] += noise_z
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -214,19 +214,19 @@ class MovingDroneAviary(BaseRLAviary):
         depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
         return depth_normalized.astype(np.float32)[..., np.newaxis]
 
-    def _generate_approx_goal(self, seed: int = None) -> np.ndarray:
-        """Generate approximate goal position with noise for GPS simulation."""
+    def _generate_search_area_center(self, seed: int = None) -> np.ndarray:
+        """Generate search area center position with noise for GPS simulation."""
         if seed is not None:
             rng = np.random.RandomState(seed)
         else:
             rng = self.np_random
-        noise_xy = rng.uniform(-APPROX_GOAL_NOISE_XY, APPROX_GOAL_NOISE_XY, size=2)
-        noise_z = rng.uniform(-APPROX_GOAL_NOISE_Z, APPROX_GOAL_NOISE_Z)
-        approx = self.GOAL_POS.copy()
-        approx[0] += noise_xy[0]
-        approx[1] += noise_xy[1]
-        approx[2] += noise_z
-        return approx
+        noise_xy = rng.uniform(-SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_XY, size=2)
+        noise_z = rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
+        center = self.GOAL_POS.copy()
+        center[0] += noise_xy[0]
+        center[1] += noise_xy[1]
+        center[2] += noise_z
+        return center
 
     def _check_collision(self) -> bool:
         """
@@ -287,7 +287,7 @@ class MovingDroneAviary(BaseRLAviary):
         seed = kwargs.get('seed', None)
         if seed is None:
             seed = getattr(self.task, 'map_seed', None)
-        self._approx_goal = self._generate_approx_goal(seed=seed)
+        self._search_area_center = self._generate_search_area_center(seed=seed)
         
         obs, info = super().reset(**kwargs)
 
@@ -452,8 +452,8 @@ class MovingDroneAviary(BaseRLAviary):
         state_full = np.append(state_full, altitude).astype(np.float32)
         
         drone_pos = state_vec[0:3]
-        goal_vector = (self._approx_goal - drone_pos).astype(np.float32)
-        state_full = np.append(state_full, goal_vector).astype(np.float32)
+        search_area_vector = (self._search_area_center - drone_pos).astype(np.float32)
+        state_full = np.append(state_full, search_area_vector).astype(np.float32)
         
         actual_state_dim = state_full.shape[0]
         if actual_state_dim != self._state_dim:
