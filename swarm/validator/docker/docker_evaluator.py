@@ -189,6 +189,7 @@ class DockerSecureEvaluator:
                 
                 try:
                     obs, _ = env.reset()
+                    await agent.reset()
                     
                     pos0 = np.asarray(task.start, dtype=float)
                     t_sim = 0.0
