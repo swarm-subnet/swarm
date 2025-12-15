@@ -78,6 +78,16 @@ def start_server(agent, port=8000):
 
 
 if __name__ == "__main__":
-    agent = DroneFlightController()
-    start_server(agent, port=8000)
+    try:
+        sys.stderr.write("Initializing DroneFlightController...\n")
+        sys.stderr.flush()
+        agent = DroneFlightController()
+        sys.stderr.write("Starting RPC server on port 8000...\n")
+        sys.stderr.flush()
+        start_server(agent, port=8000)
+    except Exception as e:
+        sys.stderr.write(f"Fatal error: {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
 
