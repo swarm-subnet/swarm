@@ -189,6 +189,7 @@ class DockerSecureEvaluator:
                 
                 try:
                     obs, _ = env.reset()
+                    await agent.reset()
                     
                     pos0 = np.asarray(task.start, dtype=float)
                     t_sim = 0.0
@@ -328,13 +329,16 @@ class DockerSecureEvaluator:
         
         tmpdir = None
         try:
+            current_uid = os.getuid()
+            current_gid = os.getgid()
+            
             tmpdir = tempfile.mkdtemp()
-            os.chown(tmpdir, 1000, 1000)
+            os.chown(tmpdir, current_uid, current_gid)
             os.chmod(tmpdir, 0o755)
             
             submission_dir = Path(tmpdir) / "submission"
             submission_dir.mkdir(exist_ok=True)
-            os.chown(submission_dir, 1000, 1000)
+            os.chown(submission_dir, current_uid, current_gid)
             os.chmod(submission_dir, 0o755)
             
             template_dir = Path(__file__).parent.parent.parent / "submission_template"
@@ -347,7 +351,7 @@ class DockerSecureEvaluator:
             shutil.copy(template_dir / "main.py", submission_dir)
             
             for f in submission_dir.iterdir():
-                os.chown(f, 1000, 1000)
+                os.chown(f, current_uid, current_gid)
                 os.chmod(f, 0o644)
             
             miner_requirements = submission_dir / "requirements.txt"
@@ -363,14 +367,14 @@ class DockerSecureEvaluator:
                     f.write("touch /workspace/submission/.pip_done\n")
                     f.write("exec python /workspace/submission/main.py\n")
                 os.chmod(startup_script, 0o755)
-                os.chown(startup_script, 1000, 1000)
+                os.chown(startup_script, current_uid, current_gid)
                 
                 cmd = [
                     "docker", "run",
                     "--rm",
                     "-d",
                     "--name", container_name,
-                    "--user", "1000:1000",
+                    "--user", f"{current_uid}:{current_gid}",
                     "--memory=6g",
                     "--cpus=2",
                     "--pids-limit=50",
@@ -389,7 +393,7 @@ class DockerSecureEvaluator:
                     "--rm",
                     "-d",
                     "--name", container_name,
-                    "--user", "1000:1000",
+                    "--user", f"{current_uid}:{current_gid}",
                     "--memory=6g",
                     "--cpus=2",
                     "--pids-limit=20",

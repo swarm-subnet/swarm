@@ -41,9 +41,9 @@ DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
 DEPTH_FAR = 1000.0                      # PyBullet camera far plane (meters)
 DEPTH_MIN_M = 0.5                       # Minimum useful depth range (meters)
 DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
-# Approximate goal parameters
-APPROX_GOAL_NOISE_XY = 10.0             # ±10m horizontal noise = 20m total search zone
-APPROX_GOAL_NOISE_Z = 2.0               # ±2m vertical noise
+# Search area parameters
+SEARCH_AREA_NOISE_XY = 10.0             # ±10m horizontal noise = 20m total search zone
+SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
 # Propulsion efficiency
 PROP_EFF = 0.60                         # Propeller efficiency coefficient
 

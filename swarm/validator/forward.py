@@ -199,8 +199,9 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
     try:
         # Create temp directory for verification
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Set ownership and permissions for container user (UID 1000)
-            os.chown(tmpdir, 1000, 1000)
+            current_uid = os.getuid()
+            current_gid = os.getgid()
+            os.chown(tmpdir, current_uid, current_gid)
             os.chmod(tmpdir, 0o755)
             
             verification_result_file = Path(tmpdir) / "verification_result.json"
@@ -222,7 +223,7 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                 "docker", "run",
                 "--rm",
                 "--name", container_name,
-                "--user", "1000:1000",
+                "--user", f"{current_uid}:{current_gid}",
                 "--memory=4g",
                 "--cpus=1",
                 "--pids-limit=10",
