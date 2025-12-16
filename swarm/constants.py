@@ -36,6 +36,8 @@ N_OBSTACLES = 40                        # Number of random obstacles in simulati
 RANDOM_START = True                    # Toggle random starting point generation
 # Camera and rendering settings
 CAM_HZ = 60                             # Camera update frequency (Hz)
+CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
+CAMERA_FOV_VARIANCE = 2.0               # FOV randomization range (±degrees)
 # Depth sensor parameters
 DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
 DEPTH_FAR = 1000.0                      # PyBullet camera far plane (meters)
@@ -44,6 +46,13 @@ DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
 # Search area parameters
 SEARCH_AREA_NOISE_XY = 10.0             # ±10m horizontal noise = 20m total search zone
 SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
+# Sensor noise parameters
+SENSOR_NOISE_ENABLED = True             # Enable camera sensor noise
+SENSOR_NOISE_STD = 5.0                  # Gaussian noise standard deviation
+SENSOR_EXPOSURE_MIN = 0.95              # Minimum exposure multiplier
+SENSOR_EXPOSURE_MAX = 1.05              # Maximum exposure multiplier
+# Light randomization parameters
+LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
 # Propulsion efficiency
 PROP_EFF = 0.60                         # Propeller efficiency coefficient
 
@@ -92,6 +101,21 @@ START_H_MIN, START_H_MAX = 0.05, 10     # Random start height range (meters)
 # Environment building limits
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
 MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles
+# Goal platform colors
+GOAL_COLOR_PALETTE = [
+    [0.0, 0.8, 0.0, 1.0],               # Green (original)
+    [0.0, 0.0, 0.9, 1.0],               # Blue
+    [0.9, 0.0, 0.0, 1.0],               # Red
+    [0.9, 0.9, 0.0, 1.0],               # Yellow
+    [0.6, 0.0, 0.8, 1.0],               # Purple
+    [0.0, 0.8, 0.8, 1.0],               # Cyan
+    [0.9, 0.5, 0.0, 1.0],               # Orange
+]
+# Distant scenery parameters
+DISTANT_SCENERY_ENABLED = True          # Enable distant visual objects
+DISTANT_SCENERY_MIN_RANGE = 75.0        # Minimum distance from origin (meters)
+DISTANT_SCENERY_MAX_RANGE = 100.0        # Maximum distance from origin (meters)
+DISTANT_SCENERY_COUNT = 18              # Number of distant objects
 
 # =============================================================================
 # SCORING & REWARDS
