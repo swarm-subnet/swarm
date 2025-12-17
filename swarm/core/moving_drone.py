@@ -1,6 +1,7 @@
 # swarm/envs/moving_drone.py
 from __future__ import annotations
 
+import math
 import numpy as np
 import gymnasium.spaces as spaces
 import pybullet as p
@@ -20,6 +21,9 @@ from swarm.constants import (
     SENSOR_NOISE_ENABLED, SENSOR_NOISE_STD,
     SENSOR_EXPOSURE_MIN, SENSOR_EXPOSURE_MAX,
     LIGHT_RANDOMIZATION_ENABLED,
+    TYPE_5_PLATFORM_SPEED,
+    TYPE_5_ORBIT_RADIUS,
+    TYPE_5_MOVEMENT_PATTERNS,
 )
 
 
@@ -68,6 +72,11 @@ class MovingDroneAviary(BaseRLAviary):
         self._prev_score   = 0.0
         
         seed = getattr(task, 'map_seed', 0)
+        
+        self._platform_orbit_center = self.GOAL_POS.copy()
+        self._current_platform_pos = self.GOAL_POS.copy()
+        self._movement_pattern = self._get_movement_pattern_from_seed(seed)
+        self._platform_offsets = []
         rng = np.random.RandomState(seed)
         noise_xy = rng.uniform(-SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_XY, size=2)
         noise_z = rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
@@ -152,6 +161,73 @@ class MovingDroneAviary(BaseRLAviary):
     def _sim_dt(self) -> float:
         """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
+    
+    def _get_movement_pattern_from_seed(self, seed: int) -> str:
+        """Deterministically select movement pattern based on seed."""
+        if self.task.challenge_type != 5:
+            return "static"
+        rng = np.random.RandomState(seed)
+        rng.rand()
+        rng.rand()
+        rng.rand()
+        rng.rand()
+        pattern_idx = rng.randint(0, len(TYPE_5_MOVEMENT_PATTERNS))
+        return TYPE_5_MOVEMENT_PATTERNS[pattern_idx]
+    
+    def _calculate_platform_position(self, t: float) -> np.ndarray:
+        """Calculate platform position at time t based on movement pattern."""
+        if self.task.challenge_type != 5:
+            return self._platform_orbit_center.copy()
+        
+        center = self._platform_orbit_center
+        speed = TYPE_5_PLATFORM_SPEED
+        radius = TYPE_5_ORBIT_RADIUS
+        pattern = self._movement_pattern
+        
+        if pattern == "circular":
+            angle = t * speed * 0.3
+            x = center[0] + radius * math.cos(angle)
+            y = center[1] + radius * math.sin(angle)
+            return np.array([x, y, center[2]], dtype=np.float32)
+        elif pattern == "linear":
+            offset = radius * math.sin(t * speed * 0.5)
+            return np.array([center[0] + offset, center[1], center[2]], dtype=np.float32)
+        elif pattern == "figure8":
+            angle = t * speed * 0.3
+            x = center[0] + radius * math.sin(angle)
+            y = center[1] + radius * math.sin(2 * angle) / 2
+            return np.array([x, y, center[2]], dtype=np.float32)
+        else:
+            return center.copy()
+    
+    def _update_moving_platform(self):
+        """Update platform position for moving platform challenge."""
+        if self.task.challenge_type != 5:
+            return
+        
+        if not hasattr(self, '_end_platform_uids') or not self._end_platform_uids:
+            return
+        
+        new_pos = self._calculate_platform_position(self._time_alive)
+        self._current_platform_pos = new_pos
+        cli = getattr(self, "CLIENT", 0)
+        
+        if not self._platform_offsets and self._end_platform_uids:
+            initial_pos = self._platform_orbit_center
+            for uid in self._end_platform_uids:
+                pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
+                offset = np.array(pos, dtype=np.float32) - initial_pos
+                self._platform_offsets.append(offset)
+        
+        for i, uid in enumerate(self._end_platform_uids):
+            offset = self._platform_offsets[i] if i < len(self._platform_offsets) else np.zeros(3)
+            final_pos = new_pos + offset
+            p.resetBasePositionAndOrientation(
+                uid,
+                final_pos.tolist(),
+                [0, 0, 0, 1],
+                physicsClientId=cli
+            )
 
     def _getDroneImages(self, nth_drone, segmentation: bool = True):
         if self.OBS_TYPE != ObservationType.RGB:
@@ -389,10 +465,10 @@ class MovingDroneAviary(BaseRLAviary):
         """
         **Incremental** reward based on the three-term `flight_reward`.
         """
-        # Update contact flags before awarding reward
+        self._update_moving_platform()
+        
         self._check_collision()
 
-        # ── clock update ────────────────────────────────────────────────────
         self._time_alive += self._sim_dt
 
         # ── call new reward function ───────────────────────────────────────

@@ -47,6 +47,10 @@ from swarm.constants import (
     TYPE_4_N_OBSTACLES,
     TYPE_4_HEIGHT_SCALE,
     TYPE_4_SAFE_ZONE,
+    TYPE_5_N_OBSTACLES,
+    TYPE_5_HEIGHT_SCALE,
+    TYPE_5_SAFE_ZONE,
+    TYPE_5_ORBIT_RADIUS,
     GOAL_COLOR_PALETTE,
     DISTANT_SCENERY_ENABLED,
     DISTANT_SCENERY_MIN_RANGE,
@@ -197,8 +201,11 @@ def build_world(
         n_obstacles = TYPE_4_N_OBSTACLES
         height_scale = TYPE_4_HEIGHT_SCALE
         safe_zone = TYPE_4_SAFE_ZONE
+    elif challenge_type == 5:
+        n_obstacles = TYPE_5_N_OBSTACLES
+        height_scale = TYPE_5_HEIGHT_SCALE
+        safe_zone = TYPE_5_SAFE_ZONE
     else:
-        # Default to type 1
         n_obstacles = TYPE_1_N_OBSTACLES
         height_scale = TYPE_1_HEIGHT_SCALE
         safe_zone = TYPE_1_SAFE_ZONE
@@ -244,14 +251,21 @@ def build_world(
                 obj_r = r
 
             # — safe‑zone checks (improved) ---------------------------
-            def _violates(cx, cy):
+            def _violates_start(cx, cy):
                 if cx is None:
                     return False
-                # More conservative safe zone calculation
-                required_clearance = obj_r + safe_zone + 0.5  # Extra 0.5m margin
+                required_clearance = obj_r + safe_zone + 0.5
                 return math.hypot(x - cx, y - cy) < required_clearance
 
-            if _violates(sx, sy) or _violates(gx, gy):
+            def _violates_goal(cx, cy):
+                if cx is None:
+                    return False
+                required_clearance = obj_r + safe_zone + 0.5
+                if challenge_type == 5:
+                    required_clearance += TYPE_5_ORBIT_RADIUS + LANDING_PLATFORM_RADIUS
+                return math.hypot(x - cx, y - cy) < required_clearance
+
+            if _violates_start(sx, sy) or _violates_goal(gx, gy):
                 continue  # too close to start/goal – try another location
 
             # — obstacle overlap prevention (improved) ----------------

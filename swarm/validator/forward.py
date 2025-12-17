@@ -537,7 +537,7 @@ def _log_normalized_score(uid: int) -> None:
 
     if ENABLE_PER_TYPE_NORMALIZATION:
         type_info = []
-        for type_id in [1, 2, 3, 4]:
+        for type_id in sorted(CHALLENGE_TYPE_DISTRIBUTION.keys()):
             type_str = str(type_id)
             if type_str not in history["runs_by_type"]:
                 continue
@@ -612,16 +612,20 @@ def load_uid_history(uid: int) -> dict:
         except (FileNotFoundError, json.JSONDecodeError) as e:
             bt.logging.warning(f"Failed to load history for UID {uid}: {e}")
 
+    runs_by_type = {}
+    for type_id in CHALLENGE_TYPE_DISTRIBUTION.keys():
+        runs_by_type[str(type_id)] = {
+            "runs": [],
+            "count": 0,
+            "avg_score": 0.0,
+            "success_rate": 0.0
+        }
+    
     return {
         "uid": uid,
         "total_runs": 0,
         "last_updated": 0.0,
-        "runs_by_type": {
-            "1": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
-            "2": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
-            "3": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0},
-            "4": {"runs": [], "count": 0, "avg_score": 0.0, "success_rate": 0.0}
-        },
+        "runs_by_type": runs_by_type,
         "normalized_score": 0.0
     }
 

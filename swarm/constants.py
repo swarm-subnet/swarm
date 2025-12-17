@@ -148,10 +148,11 @@ EVALUATION_WINDOW = 20                 # Number of recent runs to evaluate for l
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.30,  # Standard navigation
-    2: 0.25,  # higher obstacles challenge
-    3: 0.25,  # Easy navigation
-    4: 0.20,  # No obstacles (open flight)
+    1: 0.25,  # Standard navigation
+    2: 0.20,  # higher obstacles challenge
+    3: 0.20,  # Easy navigation
+    4: 0.15,  # No obstacles (open flight)
+    5: 0.20,  # Moving platform challenge
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
@@ -175,6 +176,13 @@ TYPE_3_SAFE_ZONE = 2.0
 TYPE_4_N_OBSTACLES = 0
 TYPE_4_HEIGHT_SCALE = 1.0
 TYPE_4_SAFE_ZONE = 0.0
+
+TYPE_5_N_OBSTACLES = 15
+TYPE_5_HEIGHT_SCALE = 1.0
+TYPE_5_SAFE_ZONE = 3.0
+TYPE_5_PLATFORM_SPEED = 0.6
+TYPE_5_ORBIT_RADIUS = 2.0
+TYPE_5_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 
 # =============================================================================
 # PER-TYPE NORMALIZATION SYSTEM

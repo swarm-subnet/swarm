@@ -32,6 +32,12 @@ from swarm.constants import (
     TYPE_4_N_OBSTACLES,
     TYPE_4_HEIGHT_SCALE,
     TYPE_4_SAFE_ZONE,
+    TYPE_5_N_OBSTACLES,
+    TYPE_5_HEIGHT_SCALE,
+    TYPE_5_SAFE_ZONE,
+    TYPE_5_PLATFORM_SPEED,
+    TYPE_5_ORBIT_RADIUS,
+    TYPE_5_MOVEMENT_PATTERNS,
 )
 from typing import Optional   
 
