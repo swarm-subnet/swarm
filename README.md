@@ -1,6 +1,6 @@
 <div align="center">
   <h1>🐝 <strong>Swarm</strong> – Bittensor Drone autopilot Subnet 🐝</h1>
-  <img src="swarm/assets/Swarm2.png" alt="Swarm"  width="300">
+  <img src="swarm/assets/Swarm_2.png" alt="Swarm"  width="300">
   <p>
     <a href="docs/miner.md">🚀 Miner guide</a> &bull;
     <a href="docs/validator.md">🔐 Validator guide</a> &bull;
