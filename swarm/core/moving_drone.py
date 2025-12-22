@@ -15,7 +15,11 @@ from swarm.validator.reward import flight_reward
 from swarm.constants import (
     DRONE_HULL_RADIUS, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
-    SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_Z
+    SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_Z,
+    CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
+    SENSOR_NOISE_ENABLED, SENSOR_NOISE_STD,
+    SENSOR_EXPOSURE_MIN, SENSOR_EXPOSURE_MAX,
+    LIGHT_RANDOMIZATION_ENABLED,
 )
 
 
@@ -28,6 +32,7 @@ class MovingDroneAviary(BaseRLAviary):
     fed directly to PPO/TD3/etc. without extra shaping.
     """
     MAX_TILT_RAD: float = 1.047         # safety cut‑off for roll / pitch (rad)
+    _fov: float = 90.0
 
     # --------------------------------------------------------------------- #
     # 1. constructor
@@ -70,6 +75,24 @@ class MovingDroneAviary(BaseRLAviary):
         self._search_area_center[0] += noise_xy[0]
         self._search_area_center[1] += noise_xy[1]
         self._search_area_center[2] += noise_z
+        
+        fov_rng = np.random.RandomState(seed)
+        fov_rng.rand()
+        self._fov = CAMERA_FOV_BASE + fov_rng.uniform(-CAMERA_FOV_VARIANCE, CAMERA_FOV_VARIANCE)
+
+        if LIGHT_RANDOMIZATION_ENABLED:
+            light_rng = np.random.RandomState(seed)
+            light_rng.rand()
+            light_rng.rand()
+            light_rng.rand()
+            angle = light_rng.uniform(0, 2 * np.pi)
+            self._light_direction = [
+                -np.cos(angle),
+                0.1 * np.sin(angle * 3),
+                np.sin(angle)
+            ]
+        else:
+            self._light_direction = [0, 0, 1]
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -154,13 +177,13 @@ class MovingDroneAviary(BaseRLAviary):
         DRONE_CAM_VIEW = p.computeViewMatrix(
             cameraEyePosition=camera_pos,
             cameraTargetPosition=target,
-            cameraUpVector=[0, 0, 1],
+            cameraUpVector=up.tolist(),
             physicsClientId=cli
         )
         
         aspect = self.IMG_RES[0] / self.IMG_RES[1]
         DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
-            fov=90.0,
+            fov=self._fov,
             aspect=aspect,
             nearVal=0.05,
             farVal=1000.0,
@@ -175,6 +198,7 @@ class MovingDroneAviary(BaseRLAviary):
             renderer=p.ER_TINY_RENDERER,
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
+            lightDirection=self._light_direction,
             flags=SEG_FLAG,
             physicsClientId=cli
         )
@@ -213,6 +237,15 @@ class MovingDroneAviary(BaseRLAviary):
         depth_clipped = np.clip(depth_meters, DEPTH_MIN_M, DEPTH_MAX_M)
         depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
         return depth_normalized.astype(np.float32)[..., np.newaxis]
+    
+    def _add_sensor_noise(self, rgb: np.ndarray, frame_seed: int) -> np.ndarray:
+        """Apply realistic sensor noise to RGB image."""
+        rng = np.random.RandomState(frame_seed)
+        noise = rng.normal(0, SENSOR_NOISE_STD, rgb.shape)
+        rgb = np.clip(rgb.astype(np.float32) + noise, 0, 255)
+        exposure = rng.uniform(SENSOR_EXPOSURE_MIN, SENSOR_EXPOSURE_MAX)
+        rgb = np.clip(rgb * exposure, 0, 255)
+        return rgb.astype(np.uint8)
 
     def _generate_search_area_center(self, seed: int = None) -> np.ndarray:
         """Generate search area center position with noise for GPS simulation."""
@@ -432,6 +465,9 @@ class MovingDroneAviary(BaseRLAviary):
             }
 
         img = rgb_obs[0].astype(np.uint8)
+        if SENSOR_NOISE_ENABLED:
+            frame_seed = getattr(self.task, 'map_seed', 0) + int(self._time_alive * 1000)
+            img = self._add_sensor_noise(img, frame_seed)
         depth_raw = self.dep[0]
         depth = self._process_depth(depth_raw)
 

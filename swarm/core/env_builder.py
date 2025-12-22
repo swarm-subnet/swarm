@@ -47,6 +47,11 @@ from swarm.constants import (
     TYPE_4_N_OBSTACLES,
     TYPE_4_HEIGHT_SCALE,
     TYPE_4_SAFE_ZONE,
+    GOAL_COLOR_PALETTE,
+    DISTANT_SCENERY_ENABLED,
+    DISTANT_SCENERY_MIN_RANGE,
+    DISTANT_SCENERY_MAX_RANGE,
+    DISTANT_SCENERY_COUNT,
 )
 
 # --------------------------------------------------------------------------
@@ -72,6 +77,72 @@ def _add_box(cli: int, pos, size, yaw) -> None:
         baseOrientation=quat,
         physicsClientId=cli,
     )
+
+def _add_distant_scenery(cli: int, rng) -> None:
+    """Add visual-only distant buildings and mountains outside playable world."""
+    if not DISTANT_SCENERY_ENABLED:
+        return
+    
+    scenery_colors = [
+        [0.3, 0.3, 0.35, 1.0],
+        [0.25, 0.28, 0.32, 1.0],
+        [0.35, 0.32, 0.30, 1.0],
+        [0.22, 0.25, 0.30, 1.0],
+        [0.2, 0.5, 0.65, 1.0],
+        [0.7, 0.6, 0.1, 1.0],
+        [0.6, 0.2, 0.2, 1.0],
+        [0.15, 0.45, 0.6, 1.0],
+    ]
+    
+    sector_size = (2 * math.pi) / DISTANT_SCENERY_COUNT
+    for i in range(DISTANT_SCENERY_COUNT):
+        base_angle = i * sector_size
+        angle = base_angle + rng.uniform(0.1, sector_size - 0.1)
+        distance = rng.uniform(DISTANT_SCENERY_MIN_RANGE, DISTANT_SCENERY_MAX_RANGE)
+        x = distance * math.cos(angle)
+        y = distance * math.sin(angle)
+        
+        obj_type = rng.choice(["building", "building", "mountain"])
+        color = rng.choice(scenery_colors)
+        
+        if obj_type == "building":
+            width = rng.uniform(5, 12)
+            depth = rng.uniform(5, 12)
+            height = rng.uniform(20, 50)
+            
+            vis = p.createVisualShape(
+                p.GEOM_BOX,
+                halfExtents=[width / 2, depth / 2, height / 2],
+                rgbaColor=color,
+                physicsClientId=cli,
+            )
+            
+            p.createMultiBody(
+                0,
+                -1,
+                vis,
+                basePosition=[x, y, height / 2],
+                physicsClientId=cli,
+            )
+        else:
+            base_radius = rng.uniform(6, 14)
+            height = rng.uniform(25, 55)
+            
+            vis = p.createVisualShape(
+                p.GEOM_CYLINDER,
+                radius=base_radius,
+                length=height,
+                rgbaColor=color,
+                physicsClientId=cli,
+            )
+            
+            p.createMultiBody(
+                0,
+                -1,
+                vis,
+                basePosition=[x, y, height / 2],
+                physicsClientId=cli,
+            )
 
 # --------------------------------------------------------------------------
 # Texture loader (cache per client)
@@ -269,7 +340,10 @@ def build_world(
     # ------------------------------------------------------------------
     if placed < n_obstacles:
         if placed < n_obstacles * 0.8:
-            pass  
+            pass
+    
+    if challenge_type != 4:
+        _add_distant_scenery(cli, rng)
 
     start_platform_uids: List[int] = []
     end_platform_uids: List[int] = []
@@ -377,6 +451,8 @@ def build_world(
 
         # Platform mode: solid if PLATFORM else visual-only
         if PLATFORM:
+            goal_color = rng.choice(GOAL_COLOR_PALETTE)
+            
             # 1) Physical landing platform - SOLID AND PRECISE -----------
             platform_radius = LANDING_PLATFORM_RADIUS  # Consistent radius
             platform_height = 0.2         # Thicker for better physics stability
@@ -394,8 +470,8 @@ def build_world(
                 shapeType=p.GEOM_CYLINDER,
                 radius=platform_radius,
                 length=platform_height,
-                rgbaColor=[0.0, 0.8, 0.0, 1.0],  # green platform (matches goal)
-                specularColor=[0.5, 1.0, 0.5],   # Green specular for consistency
+                rgbaColor=goal_color,
+                specularColor=[goal_color[0] * 0.6 + 0.4, goal_color[1] * 0.6 + 0.4, goal_color[2] * 0.6 + 0.4],
                 physicsClientId=cli,
             )
             
@@ -424,13 +500,15 @@ def build_world(
             surface_radius = platform_radius * 0.8  # Slightly smaller than platform
             surface_height = 0.008                  # Slightly thicker for better visibility
             
-            # Main green landing surface with glow effect
+            bright_goal_color = [min(1.0, goal_color[0] * 1.25), min(1.0, goal_color[1] * 1.25), min(1.0, goal_color[2] * 1.25), 1.0]
+            
+            # Main landing surface with glow effect
             surface_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=surface_radius,
                 length=surface_height,
-                rgbaColor=[0.0, 1.0, 0.0, 1.0],  # Bright neon green (fully saturated)
-                specularColor=[0.8, 1.0, 0.8],   # Bright green specular highlight
+                rgbaColor=bright_goal_color,
+                specularColor=[bright_goal_color[0] * 0.8, bright_goal_color[1] * 0.8, bright_goal_color[2] * 0.8],
                 physicsClientId=cli,
             )
             
@@ -470,17 +548,17 @@ def build_world(
                 physicsClientId=cli
             )
 
-            # TAO logo as MASSIVE CIRCULAR badge covering the ENTIRE green surface  
-            # Make it BIG and OBVIOUS - covering all the green area
-            tao_logo_radius = surface_radius * 1.06  # Cover all of green circle
+            # TAO logo as MASSIVE CIRCULAR badge covering the ENTIRE surface
+            # Make it BIG and OBVIOUS - covering all the area
+            tao_logo_radius = surface_radius * 1.06  # Cover all of circle
             badge_height = 0.005       # Thicker for visibility
             
-            # Create LARGE bright green circular background first
+            # Create LARGE circular background first
             tao_background_visual = p.createVisualShape(
                 shapeType=p.GEOM_CYLINDER,
                 radius=tao_logo_radius,
                 length=badge_height,
-                rgbaColor=[0.0, 1.0, 0.0, 1.0],  # Bright neon green background
+                rgbaColor=bright_goal_color,
                 physicsClientId=cli,
             )
 
@@ -499,7 +577,7 @@ def build_world(
                 shapeType=p.GEOM_CYLINDER,
                 radius=tao_logo_radius * 0.95,
                 length=badge_height * 0.5,
-                rgbaColor=[0.0, 1.0, 0.0, 1.0],
+                rgbaColor=bright_goal_color,
                 physicsClientId=cli,
             )
 
