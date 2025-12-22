@@ -1,3 +1,6 @@
+import os
+os.chdir(os.path.dirname(__file__))
+
 from drone_agent import DroneFlightController
 from agent_server import start_server
 

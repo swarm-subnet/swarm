@@ -44,16 +44,16 @@ def is_low_performer(uid: int) -> bool:
         uid_data = history[uid_str]
         runs = uid_data.get("runs", [])
 
-        if uid_data.get("is_low_performer", False):
-            return True
-
         total_runs = len(runs)
-
         grace_period_start = uid_data.get("grace_period_start", None)
-        if grace_period_start is not None:
+        if grace_period_start is not None and grace_period_start <= total_runs:
             runs_since_update = total_runs - grace_period_start
             if runs_since_update < EVALUATION_WINDOW:
                 return False
+
+        # Check if explicitly marked as low performer
+        if uid_data.get("is_low_performer", False):
+            return True
 
         if total_runs < MIN_EVALUATION_RUNS:
             return False
