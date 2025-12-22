@@ -58,9 +58,6 @@ def is_low_performer(uid: int) -> bool:
         if total_runs < MIN_EVALUATION_RUNS:
             return False
 
-        if total_runs % MIN_EVALUATION_RUNS != 0:
-            return False
-
         recent_runs = runs[-EVALUATION_WINDOW:]
         scores = [run.get("score", 0.0) for run in recent_runs]
         avg_score = sum(scores) / len(scores) if scores else 0.0

@@ -397,7 +397,7 @@ class DockerSecureEvaluator:
                     "--memory=6g",
                     "--cpus=2",
                     "--pids-limit=20",
-                    "--ulimit", "nofile=64:64",
+                    "--ulimit", "nofile=256:256",
                     "--ulimit", "fsize=524288000:524288000",
                     "--security-opt", "no-new-privileges",
                     "--network", "bridge",
