@@ -19,7 +19,7 @@ import numpy as np
 from zipfile import ZipFile, BadZipFile
 
 from swarm.protocol import PolicySynapse, PolicyRef, ValidationResult
-from swarm.utils.uids import get_random_uids
+from swarm.utils.uids import get_random_uids, get_low_performer_uids
 from swarm.utils.hash import sha256sum
 import base64
 
@@ -770,6 +770,41 @@ def compute_winner_take_all_weights(score_metrics: List[tuple]) -> Tuple[np.ndar
 # ──────────────────────────────────────────────────────────────────────────
 # 4.  Public coroutine – called by neurons/validator.py
 # ──────────────────────────────────────────────────────────────────────────
+async def _check_low_performer_model_updates(self) -> None:
+    """Check if low performer miners have updated their models.
+    
+    Queries each low performer for their current model hash. If the hash
+    differs from the stored hash, clears their low performer status and
+    grants a grace period, allowing them back into the evaluation pool.
+    """
+    low_performer_uids = get_low_performer_uids()
+    if not low_performer_uids:
+        return
+
+    bt.logging.info(f"Checking {len(low_performer_uids)} low performers for model updates")
+
+    for uid in low_performer_uids:
+        try:
+            axon = self.metagraph.axons[uid]
+            if not axon.is_serving:
+                continue
+
+            synapse = PolicySynapse()
+            resp = await send_with_fresh_uuid(
+                wallet=self.wallet,
+                synapse=synapse,
+                axon=axon,
+                timeout=QUERY_REF_TIMEOUT,
+            )
+
+            if resp and len(resp) > 0 and resp[0].ref and resp[0].ref.sha256:
+                updated = check_and_update_model_hash(uid, resp[0].ref.sha256)
+                if updated:
+                    bt.logging.info(f"Low performer UID {uid} submitted new model, grace period granted")
+        except Exception as e:
+            bt.logging.debug(f"Failed to check model update for low performer UID {uid}: {e}")
+
+
 async def forward(self) -> None:
     """Full validator tick with boosted weighting + optional burn."""
     try:
@@ -783,6 +818,8 @@ async def forward(self) -> None:
                     bt.logging.error("VALIDATOR_SECRET_KEY not set in environment")
                     raise ValueError("VALIDATOR_SECRET_KEY required for synchronized seeds")
                 self.seed_manager = SynchronizedSeedManager(secret_key, SEED_WINDOW_MINUTES)
+
+        await _check_low_performer_model_updates(self)
 
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
