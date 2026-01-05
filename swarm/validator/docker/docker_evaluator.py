@@ -362,15 +362,15 @@ class DockerSecureEvaluator:
                 startup_script = submission_dir / "startup.sh"
                 with open(startup_script, 'w') as f:
                     f.write("#!/bin/bash\n")
+                    f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
+                    f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
+                    f.write("touch /workspace/submission/.pip_done\n")
                     f.write("iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT\n")
                     f.write("iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT\n")
                     f.write("iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT\n")
                     f.write("iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT\n")
                     f.write("iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT\n")
                     f.write("iptables -A OUTPUT -j DROP\n")
-                    f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
-                    f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
-                    f.write("touch /workspace/submission/.pip_done\n")
                     f.write("exec python /workspace/submission/main.py\n")
                 os.chmod(startup_script, 0o755)
                 os.chown(startup_script, current_uid, current_gid)
