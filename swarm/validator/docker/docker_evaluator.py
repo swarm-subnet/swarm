@@ -362,6 +362,12 @@ class DockerSecureEvaluator:
                 startup_script = submission_dir / "startup.sh"
                 with open(startup_script, 'w') as f:
                     f.write("#!/bin/bash\n")
+                    f.write("iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT\n")
+                    f.write("iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT\n")
+                    f.write("iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT\n")
+                    f.write("iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT\n")
+                    f.write("iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT\n")
+                    f.write("iptables -A OUTPUT -j DROP\n")
                     f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
                     f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
                     f.write("touch /workspace/submission/.pip_done\n")
@@ -381,6 +387,7 @@ class DockerSecureEvaluator:
                     "--ulimit", "nofile=256:256",
                     "--ulimit", "fsize=524288000:524288000",
                     "--security-opt", "no-new-privileges",
+                    "--cap-add", "NET_ADMIN",
                     "--network", "bridge",
                     "-p", f"{host_port}:8000",
                     "-v", f"{submission_dir}:/workspace/submission:rw",
@@ -400,11 +407,12 @@ class DockerSecureEvaluator:
                     "--ulimit", "nofile=256:256",
                     "--ulimit", "fsize=524288000:524288000",
                     "--security-opt", "no-new-privileges",
+                    "--cap-add", "NET_ADMIN",
                     "--network", "bridge",
                     "-p", f"{host_port}:8000",
                     "-v", f"{submission_dir}:/workspace/submission:ro",
                     self.base_image,
-                    "python", "/workspace/submission/main.py"
+                    "bash", "-c", "iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT && iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT && iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT && iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT && iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT && iptables -A OUTPUT -j DROP && exec python /workspace/submission/main.py"
                 ]
             
             bt.logging.debug(f"Docker command for UID {uid}: {' '.join(cmd[:10])}...")
