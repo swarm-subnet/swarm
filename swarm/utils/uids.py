@@ -76,6 +76,27 @@ def is_low_performer(uid: int) -> bool:
         return False
 
 
+def get_low_performer_uids() -> List[int]:
+    """Get list of UIDs currently marked as low performers."""
+    from swarm.constants import LOW_PERFORMER_FILTER_ENABLED
+
+    if not LOW_PERFORMER_FILTER_ENABLED:
+        return []
+
+    history_file = Path("/tmp/victory_history.json")
+    if not history_file.exists():
+        return []
+
+    try:
+        with open(history_file, 'r') as f:
+            history = json.load(f)
+
+        return [int(uid) for uid, data in history.items()
+                if data.get("is_low_performer", False)]
+    except Exception:
+        return []
+
+
 def check_uid_availability(
     metagraph: "bt.metagraph.Metagraph", uid: int, vpermit_tao_limit: int
 ) -> bool:
