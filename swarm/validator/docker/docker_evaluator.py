@@ -588,6 +588,8 @@ class DockerSecureEvaluator:
             except asyncio.TimeoutError:
                 bt.logging.warning(f"⏱️ Evaluation timeout for UID {uid} (exceeded {EVAL_TIMEOUT_SEC}s)")
                 self._log_container_failure(container_name, uid, "evaluation_timeout")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success=False, time=0.00, score=0.0000 (TIMEOUT)")
                 return ValidationResult(uid, False, 0.0, 0.0)
             finally:
                 try:
