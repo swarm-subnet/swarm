@@ -95,8 +95,8 @@ GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precisio
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 MAX_YAW_RATE = 3.141                    # Maximum yaw rotation rate (rad/s) - 180 degrees per second
 # Goal generation ranges
-R_MIN, R_MAX = 5, 15                    # Radial goal distance range (meters)
-H_MIN, H_MAX = 1, 5                     # Height variation range for goals (meters)
+R_MIN, R_MAX = 10, 25                   # Radial goal distance range (meters)
+H_MIN, H_MAX = 3, 10                    # Height variation range for goals (meters)
 START_H_MIN, START_H_MAX = 0.05, 10     # Random start height range (meters)
 # Environment building limits
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
@@ -161,15 +161,15 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 # CHALLENGE TYPE PARAMETERS
 # =============================================================================
 
-TYPE_1_N_OBSTACLES = 40
+TYPE_1_N_OBSTACLES = 55
 TYPE_1_HEIGHT_SCALE = 1.5
 TYPE_1_SAFE_ZONE = 2.0
 
-TYPE_2_N_OBSTACLES = 50
+TYPE_2_N_OBSTACLES = 70
 TYPE_2_HEIGHT_SCALE = 3
 TYPE_2_SAFE_ZONE = 2.0
 
-TYPE_3_N_OBSTACLES = 25
+TYPE_3_N_OBSTACLES = 40
 TYPE_3_HEIGHT_SCALE = 0.8
 TYPE_3_SAFE_ZONE = 2.0
 
@@ -177,7 +177,7 @@ TYPE_4_N_OBSTACLES = 0
 TYPE_4_HEIGHT_SCALE = 1.0
 TYPE_4_SAFE_ZONE = 0.0
 
-TYPE_5_N_OBSTACLES = 15
+TYPE_5_N_OBSTACLES = 25
 TYPE_5_HEIGHT_SCALE = 1.0
 TYPE_5_SAFE_ZONE = 3.0
 TYPE_5_PLATFORM_SPEED = 0.6
