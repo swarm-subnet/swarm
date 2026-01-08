@@ -476,8 +476,8 @@ class DockerSecureEvaluator:
                 await asyncio.sleep(1)
             
             if connected:
-                bt.logging.debug(f"Waiting 10s for RPC server to fully initialize (model loading)...")
-                await asyncio.sleep(10)
+                bt.logging.debug(f"Waiting 15s for RPC server to fully initialize (model loading)...")
+                await asyncio.sleep(15)
             
             if not connected:
                 bt.logging.warning(f"❌ RPC server failed to start for UID {uid}")

@@ -64,12 +64,12 @@ class MovingDroneAviary(BaseRLAviary):
         self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
 
-        # internal book‑keeping
-        self._time_alive   = 0.0
-        self._success      = False
-        self._collision    = False
-        self._t_to_goal    = None
-        self._prev_score   = 0.0
+        self._time_alive = 0.0
+        self._success = False
+        self._collision = False
+        self._t_to_goal = None
+        self._prev_score = 0.0
+        self._step_processed = False
         
         seed = getattr(task, 'map_seed', 0)
         
@@ -389,10 +389,7 @@ class MovingDroneAviary(BaseRLAviary):
     # 3. OpenAI‑Gym API overrides
     # --------------------------------------------------------------------- #
     def reset(self, **kwargs):
-        """
-        Resets the underlying simulator and internal counters,
-        returns initial observation and info as usual.
-        """
+        """Reset environment and internal state for a new episode."""
         seed = kwargs.get('seed', None)
         if seed is None:
             seed = getattr(self.task, 'map_seed', None)
@@ -401,15 +398,16 @@ class MovingDroneAviary(BaseRLAviary):
         obs, info = super().reset(**kwargs)
 
         self._time_alive = 0.0
-        self._success    = False
-        self._collision  = False
-        self._t_to_goal  = None
+        self._success = False
+        self._collision = False
+        self._t_to_goal = None
+        self._step_processed = False
 
         self._prev_score = flight_reward(
-            success = False,
-            t       = 0.0,
-            horizon = self.EP_LEN_SEC,
-            task    = None,
+            success=False,
+            t=0.0,
+            horizon=self.EP_LEN_SEC,
+            task=None,
         )
 
         self._spawn_task_world()
@@ -433,6 +431,21 @@ class MovingDroneAviary(BaseRLAviary):
             obs_after = obs
 
         return obs_after, info
+
+    def step(self, action):
+        """Execute one step. Per-step updates run exactly once here."""
+        self._step_processed = False
+        self._process_step_updates()
+        return super().step(action)
+
+    def _process_step_updates(self):
+        """Handle platform movement, time increment, and collision check once per step."""
+        if self._step_processed:
+            return
+        self._step_processed = True
+        self._update_moving_platform()
+        self._time_alive += self._sim_dt
+        self._check_collision()
 
     def _spawn_task_world(self):
         """Rebuild the procedural world defined by self.task."""
@@ -462,42 +475,25 @@ class MovingDroneAviary(BaseRLAviary):
 
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
-        """
-        **Incremental** reward based on the three-term `flight_reward`.
-        """
-        self._update_moving_platform()
-        
-        self._check_collision()
-
-        self._time_alive += self._sim_dt
-
-        # ── call new reward function ───────────────────────────────────────
-        # If collision detected, force score to 0
+        """Compute incremental reward based on current state."""
         if self._collision:
             score = 0.0
         else:
             score = flight_reward(
-                success = self._success,
-                t       = (self._t_to_goal if self._success else self._time_alive),
-                horizon = self.EP_LEN_SEC,
-                task    = None,
+                success=self._success,
+                t=(self._t_to_goal if self._success else self._time_alive),
+                horizon=self.EP_LEN_SEC,
+                task=None,
             )
 
-        r_t              = score - self._prev_score
+        r_t = score - self._prev_score
         self._prev_score = score
         return float(r_t)
 
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
-        """
-        Episode ends when success condition is met OR collision detected.
-        """
-        # Check for collision first
-        if self._check_collision():
-            return True
-            
-        # Check for success
-        return bool(self._success)
+        """Return True if episode ended via collision or goal reached."""
+        return self._collision or self._success
 
     # -------- truncation (timeout / safety) ------------------------------ #
     def _computeTruncated(self) -> bool:
