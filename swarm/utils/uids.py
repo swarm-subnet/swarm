@@ -44,21 +44,18 @@ def is_low_performer(uid: int) -> bool:
         uid_data = history[uid_str]
         runs = uid_data.get("runs", [])
 
-        if uid_data.get("is_low_performer", False):
-            return True
-
         total_runs = len(runs)
-
         grace_period_start = uid_data.get("grace_period_start", None)
-        if grace_period_start is not None:
+        if grace_period_start is not None and grace_period_start <= total_runs:
             runs_since_update = total_runs - grace_period_start
             if runs_since_update < EVALUATION_WINDOW:
                 return False
 
-        if total_runs < MIN_EVALUATION_RUNS:
-            return False
+        # Check if explicitly marked as low performer
+        if uid_data.get("is_low_performer", False):
+            return True
 
-        if total_runs % MIN_EVALUATION_RUNS != 0:
+        if total_runs < MIN_EVALUATION_RUNS:
             return False
 
         recent_runs = runs[-EVALUATION_WINDOW:]
@@ -77,6 +74,27 @@ def is_low_performer(uid: int) -> bool:
     except Exception as e:
         bt.logging.debug(f"Error checking low performer status for UID {uid}: {e}")
         return False
+
+
+def get_low_performer_uids() -> List[int]:
+    """Get list of UIDs currently marked as low performers."""
+    from swarm.constants import LOW_PERFORMER_FILTER_ENABLED
+
+    if not LOW_PERFORMER_FILTER_ENABLED:
+        return []
+
+    history_file = Path("/tmp/victory_history.json")
+    if not history_file.exists():
+        return []
+
+    try:
+        with open(history_file, 'r') as f:
+            history = json.load(f)
+
+        return [int(uid) for uid, data in history.items()
+                if data.get("is_low_performer", False)]
+    except Exception:
+        return []
 
 
 def check_uid_availability(

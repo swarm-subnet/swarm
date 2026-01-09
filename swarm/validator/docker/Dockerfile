@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     gcc \
     g++ \
+    iptables \
     libgl1-mesa-dri \
     libglib2.0-0 \
     libsm6 \

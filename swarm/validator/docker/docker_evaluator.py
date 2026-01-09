@@ -166,7 +166,8 @@ class DockerSecureEvaluator:
         self,
         task: MapTask,
         uid: int,
-        rpc_port: int
+        rpc_port: int,
+        skip_ping: bool = False
     ) -> ValidationResult:
         """Synchronous RPC evaluation - runs in separate thread to avoid kj_loop conflicts"""
         import capnp
@@ -179,9 +180,10 @@ class DockerSecureEvaluator:
                 client = capnp.TwoPartyClient(stream)
                 agent = client.bootstrap().cast_as(agent_capnp.Agent)
                 
-                ping_response = await agent.ping("test")
-                if ping_response.response != "pong":
-                    raise RuntimeError("RPC ping failed")
+                if not skip_ping:
+                    ping_response = await agent.ping("test")
+                    if ping_response.response != "pong":
+                        raise RuntimeError("RPC ping failed")
                 
                 from swarm.utils.env_factory import make_env
                 
@@ -271,17 +273,15 @@ class DockerSecureEvaluator:
         self,
         task: MapTask,
         uid: int,
-        rpc_port: int
+        rpc_port: int,
+        skip_ping: bool = True
     ) -> ValidationResult:
         """Async wrapper that runs RPC evaluation in thread pool"""
         try:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                self._evaluate_with_rpc_sync,
-                task,
-                uid,
-                rpc_port
+                lambda: self._evaluate_with_rpc_sync(task, uid, rpc_port, skip_ping)
             )
             return result
         except (BrokenPipeError, ConnectionResetError, ConnectionRefusedError, OSError) as e:
@@ -296,6 +296,77 @@ class DockerSecureEvaluator:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(('', 0))
             return s.getsockname()[1]
+
+    def _check_rpc_ready(self, port: int, timeout: float = 3.0) -> bool:
+        """Check if RPC server is ready by testing TCP connection and basic handshake"""
+        import socket
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect(("localhost", port))
+            sock.send(b'\x00')
+            sock.settimeout(0.5)
+            try:
+                sock.recv(1)
+            except socket.timeout:
+                pass
+            return True
+        except Exception:
+            return False
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except:
+                    pass
+
+    def _get_docker_host_ip(self) -> str:
+        """Get the Docker bridge gateway IP (host IP as seen from containers)"""
+        try:
+            result = subprocess.run(
+                ["docker", "network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return "172.17.0.1"
+
+    def _get_container_pid(self, container_name: str) -> Optional[int]:
+        """Get the PID of a running container"""
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Pid}}", container_name],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                pid = int(result.stdout.strip())
+                if pid > 0:
+                    return pid
+        except Exception:
+            pass
+        return None
+
+    def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool:
+        """Apply iptables rules in container's network namespace from HOST using nsenter"""
+        try:
+            rules = [
+                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-d", validator_ip, "-j", "ACCEPT"],
+                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-d", "127.0.0.1", "-j", "ACCEPT"],
+                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-j", "DROP"],
+            ]
+            for rule in rules:
+                result = subprocess.run(rule, capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    bt.logging.warning(f"Failed to apply iptables rule: {' '.join(rule)}")
+                    return False
+            return True
+        except Exception as e:
+            bt.logging.warning(f"Network lockdown failed: {e}")
+            return False
 
     async def evaluate_model(
         self, 
@@ -357,6 +428,8 @@ class DockerSecureEvaluator:
             miner_requirements = submission_dir / "requirements.txt"
             has_requirements = miner_requirements.exists()
             
+            validator_ip = self._get_docker_host_ip()
+            
             if has_requirements:
                 bt.logging.info(f"📦 Miner has requirements.txt for UID {uid}")
                 startup_script = submission_dir / "startup.sh"
@@ -365,7 +438,7 @@ class DockerSecureEvaluator:
                     f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
                     f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
                     f.write("touch /workspace/submission/.pip_done\n")
-                    f.write("exec python /workspace/submission/main.py\n")
+                    f.write("sleep infinity\n")
                 os.chmod(startup_script, 0o755)
                 os.chown(startup_script, current_uid, current_gid)
                 
@@ -381,6 +454,7 @@ class DockerSecureEvaluator:
                     "--ulimit", "nofile=256:256",
                     "--ulimit", "fsize=524288000:524288000",
                     "--security-opt", "no-new-privileges",
+                    "--cap-drop", "ALL",
                     "--network", "bridge",
                     "-p", f"{host_port}:8000",
                     "-v", f"{submission_dir}:/workspace/submission:rw",
@@ -397,14 +471,15 @@ class DockerSecureEvaluator:
                     "--memory=6g",
                     "--cpus=2",
                     "--pids-limit=20",
-                    "--ulimit", "nofile=64:64",
+                    "--ulimit", "nofile=256:256",
                     "--ulimit", "fsize=524288000:524288000",
                     "--security-opt", "no-new-privileges",
+                    "--cap-drop", "ALL",
                     "--network", "bridge",
                     "-p", f"{host_port}:8000",
                     "-v", f"{submission_dir}:/workspace/submission:ro",
                     self.base_image,
-                    "python", "/workspace/submission/main.py"
+                    "bash", "-c", "sleep infinity"
                 ]
             
             bt.logging.debug(f"Docker command for UID {uid}: {' '.join(cmd[:10])}...")
@@ -456,6 +531,34 @@ class DockerSecureEvaluator:
                     subprocess.run(["docker", "kill", container_name], capture_output=True)
                     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
                     return ValidationResult(uid, False, 0.0, 0.0)
+            else:
+                pip_done = True
+            
+            container_pid = self._get_container_pid(container_name)
+            if not container_pid:
+                bt.logging.warning(f"❌ Failed to get container PID for UID {uid}")
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            bt.logging.info(f"🔒 Applying network lockdown from HOST for UID {uid}...")
+            if not self._apply_network_lockdown(container_pid, validator_ip):
+                bt.logging.warning(f"❌ Failed to apply network lockdown for UID {uid}")
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                return ValidationResult(uid, False, 0.0, 0.0)
+            bt.logging.info(f"✅ Network lockdown applied for UID {uid}")
+            
+            bt.logging.info(f"Starting untrusted code for UID {uid}...")
+            exec_result = subprocess.run(
+                ["docker", "exec", "-d", container_name, "python", "/workspace/submission/main.py"],
+                capture_output=True, text=True, timeout=10
+            )
+            if exec_result.returncode != 0:
+                bt.logging.warning(f"❌ Failed to start main.py for UID {uid}: {exec_result.stderr[:200]}")
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                return ValidationResult(uid, False, 0.0, 0.0)
             
             bt.logging.debug(f"Waiting for RPC server on port {host_port} (max {rpc_timeout}s)...")
             rpc_start = time.time()
@@ -476,8 +579,31 @@ class DockerSecureEvaluator:
                 await asyncio.sleep(1)
             
             if connected:
-                bt.logging.debug(f"Waiting 15s for RPC server to fully initialize (model loading)...")
-                await asyncio.sleep(15)
+                rpc_ready = False
+                max_rpc_wait = 20
+                min_rpc_wait = 4
+                rpc_check_interval = 2
+                rpc_wait_start = time.time()
+                
+                await asyncio.sleep(min_rpc_wait)
+                
+                while time.time() - rpc_wait_start < max_rpc_wait:
+                    try:
+                        if self._check_rpc_ready(host_port, timeout=3.0):
+                            rpc_ready = True
+                            elapsed = time.time() - rpc_wait_start
+                            bt.logging.debug(f"RPC ready for UID {uid} after {elapsed:.1f}s")
+                            break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(rpc_check_interval)
+                
+                if not rpc_ready:
+                    bt.logging.warning(f"RPC server not responding for UID {uid} after {max_rpc_wait}s")
+                    self._log_container_failure(container_name, uid, "rpc_not_ready")
+                    subprocess.run(["docker", "kill", container_name], capture_output=True)
+                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                    return ValidationResult(uid, False, 0.0, 0.0)
             
             if not connected:
                 bt.logging.warning(f"❌ RPC server failed to start for UID {uid}")
@@ -509,6 +635,8 @@ class DockerSecureEvaluator:
             except asyncio.TimeoutError:
                 bt.logging.warning(f"⏱️ Evaluation timeout for UID {uid} (exceeded {EVAL_TIMEOUT_SEC}s)")
                 self._log_container_failure(container_name, uid, "evaluation_timeout")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success=False, time=0.00, score=0.0000 (TIMEOUT)")
                 return ValidationResult(uid, False, 0.0, 0.0)
             finally:
                 try:

@@ -12,14 +12,14 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 import bittensor as bt
 import numpy as np
 from zipfile import ZipFile, BadZipFile
 
 from swarm.protocol import PolicySynapse, PolicyRef, ValidationResult
-from swarm.utils.uids import get_random_uids
+from swarm.utils.uids import get_random_uids, get_low_performer_uids
 from swarm.utils.hash import sha256sum
 import base64
 
@@ -53,6 +53,7 @@ from swarm.constants import (
     CHALLENGE_TYPE_DISTRIBUTION,
     USE_SYNCHRONIZED_SEEDS,
     SEED_WINDOW_MINUTES,
+    PARALLEL_BATCH_SIZE,
 )
 
 
@@ -227,8 +228,8 @@ async def _verify_new_model_with_docker(model_path: Path, model_hash: str, miner
                 "--memory=4g",
                 "--cpus=1",
                 "--pids-limit=10",
-                "--ulimit", "nofile=32:32",
-                "--ulimit", "fsize=262144000:262144000",
+                "--ulimit", "nofile=256:256",
+                "--ulimit", "fsize=524288000:524288000",
                 "--security-opt", "no-new-privileges",
                 "--network", "none",
                 "-v", f"{tmpdir}:/workspace/shared",
@@ -433,93 +434,97 @@ async def send_with_fresh_uuid(
     )
     return responses
 
+async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
+    """Process a single UID for model retrieval"""
+    try:
+        axon = self.metagraph.axons[uid]
+
+        try:
+            responses = await send_with_fresh_uuid(
+                wallet=self.wallet,
+                synapse=PolicySynapse.request_ref(),
+                axon=axon,
+                timeout=QUERY_REF_TIMEOUT,
+            )
+
+            if not responses:
+                return (uid, None)
+
+            syn = responses[0]
+
+            if not syn.ref:
+                return (uid, None)
+
+            ref = PolicyRef(**syn.ref)
+        except Exception:
+            return (uid, None)
+
+        blacklist = load_blacklist()
+        if ref.sha256 in blacklist:
+            bt.logging.warning(f"Skipping blacklisted model {ref.sha256[:16]}... from UID {uid}")
+            return (uid, None)
+
+        model_fp = MODEL_DIR / f"UID_{uid}.zip"
+        if model_fp.exists() and model_fp.is_dir():
+            shutil.rmtree(model_fp)
+
+        up_to_date = False
+        if model_fp.is_file():
+            try:
+                up_to_date = sha256sum(model_fp) == ref.sha256
+            except Exception:
+                up_to_date = False
+
+        if up_to_date:
+            if (
+                model_fp.stat().st_size <= MAX_MODEL_BYTES
+                and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
+            ):
+                check_and_update_model_hash(uid, ref.sha256)
+                return (uid, model_fp)
+            else:
+                model_fp.unlink(missing_ok=True)
+
+        await _download_model(self, axon, ref, model_fp, uid)
+        if (
+            model_fp.is_file()
+            and sha256sum(model_fp) == ref.sha256
+            and model_fp.stat().st_size <= MAX_MODEL_BYTES
+            and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
+        ):
+            check_and_update_model_hash(uid, ref.sha256)
+            return (uid, model_fp)
+        else:
+            model_fp.unlink(missing_ok=True)
+            return (uid, None)
+
+    except Exception:
+        return (uid, None)
+
+
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
     For every UID return the local Path to its latest .zip.
     Downloads if the cached SHA differs from the miner's PolicyRef.
+    Uses parallel batching for improved performance.
     """
     MODEL_DIR.mkdir(exist_ok=True)
     paths: Dict[int, Path] = {}
 
-    for uid in uids:
-        try:
-            axon = self.metagraph.axons[uid]
-
-            # 1 – ask for current PolicyRef
-            try:
-                responses = await send_with_fresh_uuid(
-                    wallet=self.wallet,
-                    synapse=PolicySynapse.request_ref(),
-                    axon=axon,
-                    timeout=QUERY_REF_TIMEOUT,
-                    )
-
-                if not responses:
-                    bt.logging.warning(f"Miner {uid} returned no response.")
-                    continue
-                print(f"Miner {uid} returned {len(responses)} responses {responses}")
-
-                syn = responses[0]
-
-                if not syn.ref:
-                    bt.logging.warning(f"Miner {uid} returned no PolicyRef.")
-                    continue
-
-                ref = PolicyRef(**syn.ref)
-            except Exception as e:
-                bt.logging.warning(f"Handshake with miner {uid} failed: {e}")
+    for batch_start in range(0, len(uids), PARALLEL_BATCH_SIZE):
+        batch = uids[batch_start:batch_start + PARALLEL_BATCH_SIZE]
+        
+        results = await asyncio.gather(
+            *[_process_single_uid(self, uid) for uid in batch],
+            return_exceptions=True
+        )
+        
+        for result in results:
+            if isinstance(result, Exception):
                 continue
-
-            # 2 – FIRST CHECK: Is this hash blacklisted?
-            blacklist = load_blacklist()
-            if ref.sha256 in blacklist:
-                bt.logging.warning(f"Skipping blacklisted fake model {ref.sha256[:16]}... from miner {uid}")
-                continue
-
-            # 3 – compare with cache (directory-safe)
-            model_fp = MODEL_DIR / f"UID_{uid}.zip"
-            if model_fp.exists() and model_fp.is_dir():
-                bt.logging.warning(f"Cache path is a directory (fixing): {model_fp}")
-                shutil.rmtree(model_fp)
-
-            up_to_date = False
-            if model_fp.is_file():
-                try:
-                    up_to_date = sha256sum(model_fp) == ref.sha256
-                except Exception as e:
-                    bt.logging.warning(f"Hash check failed for {model_fp}: {e}")
-                    up_to_date = False
-
-            if up_to_date:
-                # confirm cached file is still within limits
-                if (
-                    model_fp.stat().st_size <= MAX_MODEL_BYTES
-                    and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
-                ):
-                    check_and_update_model_hash(uid, ref.sha256)
-                    paths[uid] = model_fp
-                    continue
-                else:
-                    bt.logging.warning(f"Cached model for {uid} violates limits; redownloading.")
-                    model_fp.unlink(missing_ok=True)
-
-            # 4 – request payload
-            await _download_model(self, axon, ref, model_fp, uid)
-            if (
-                model_fp.is_file()
-                and sha256sum(model_fp) == ref.sha256
-                and model_fp.stat().st_size <= MAX_MODEL_BYTES
-                and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
-            ):
-                check_and_update_model_hash(uid, ref.sha256)
-                paths[uid] = model_fp
-            else:
-                bt.logging.warning(f"Failed to obtain valid model for miner {uid}.")
-                model_fp.unlink(missing_ok=True)
-
-        except Exception as e:
-            bt.logging.warning(f"UID {uid}: model preparation failed: {e}")
-            continue
+            uid, path = result
+            if path is not None:
+                paths[uid] = path
 
     return paths
 
@@ -774,6 +779,59 @@ def compute_winner_take_all_weights(score_metrics: List[tuple]) -> Tuple[np.ndar
 # ──────────────────────────────────────────────────────────────────────────
 # 4.  Public coroutine – called by neurons/validator.py
 # ──────────────────────────────────────────────────────────────────────────
+async def _check_single_low_performer(self, uid: int) -> None:
+    """Check if a single low performer has updated their model"""
+    try:
+        axon = self.metagraph.axons[uid]
+        if not axon.is_serving:
+            return
+
+        synapse = PolicySynapse()
+        resp = await send_with_fresh_uuid(
+            wallet=self.wallet,
+            synapse=synapse,
+            axon=axon,
+            timeout=QUERY_REF_TIMEOUT,
+        )
+
+        if resp and len(resp) > 0 and resp[0].ref:
+            ref_data = resp[0].ref
+            sha256_hash = None
+            
+            if isinstance(ref_data, dict):
+                sha256_hash = ref_data.get('sha256')
+            else:
+                sha256_hash = getattr(ref_data, 'sha256', None)
+            
+            if sha256_hash:
+                updated = check_and_update_model_hash(uid, sha256_hash)
+                if updated:
+                    bt.logging.info(f"Low performer UID {uid} submitted new model, grace period granted")
+    except Exception as e:
+        bt.logging.debug(f"Failed to check model update for low performer UID {uid}: {e}")
+
+
+async def _check_low_performer_model_updates(self) -> None:
+    """Check if low performer miners have updated their models.
+    
+    Queries low performers in parallel batches. If hash differs from stored,
+    clears low performer status and grants grace period.
+    """
+    low_performer_uids = get_low_performer_uids()
+    if not low_performer_uids:
+        return
+
+    bt.logging.info(f"Checking {len(low_performer_uids)} low performers for model updates")
+
+    for batch_start in range(0, len(low_performer_uids), PARALLEL_BATCH_SIZE):
+        batch = low_performer_uids[batch_start:batch_start + PARALLEL_BATCH_SIZE]
+        
+        await asyncio.gather(
+            *[_check_single_low_performer(self, uid) for uid in batch],
+            return_exceptions=True
+        )
+
+
 async def forward(self) -> None:
     """Full validator tick with boosted weighting + optional burn."""
     try:
@@ -787,6 +845,8 @@ async def forward(self) -> None:
                     bt.logging.error("VALIDATOR_SECRET_KEY not set in environment")
                     raise ValueError("VALIDATOR_SECRET_KEY required for synchronized seeds")
                 self.seed_manager = SynchronizedSeedManager(secret_key, SEED_WINDOW_MINUTES)
+
+        await _check_low_performer_model_updates(self)
 
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
