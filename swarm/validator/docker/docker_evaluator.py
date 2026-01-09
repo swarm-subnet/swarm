@@ -166,7 +166,8 @@ class DockerSecureEvaluator:
         self,
         task: MapTask,
         uid: int,
-        rpc_port: int
+        rpc_port: int,
+        skip_ping: bool = False
     ) -> ValidationResult:
         """Synchronous RPC evaluation - runs in separate thread to avoid kj_loop conflicts"""
         import capnp
@@ -179,9 +180,10 @@ class DockerSecureEvaluator:
                 client = capnp.TwoPartyClient(stream)
                 agent = client.bootstrap().cast_as(agent_capnp.Agent)
                 
-                ping_response = await agent.ping("test")
-                if ping_response.response != "pong":
-                    raise RuntimeError("RPC ping failed")
+                if not skip_ping:
+                    ping_response = await agent.ping("test")
+                    if ping_response.response != "pong":
+                        raise RuntimeError("RPC ping failed")
                 
                 from swarm.utils.env_factory import make_env
                 
@@ -271,17 +273,15 @@ class DockerSecureEvaluator:
         self,
         task: MapTask,
         uid: int,
-        rpc_port: int
+        rpc_port: int,
+        skip_ping: bool = True
     ) -> ValidationResult:
         """Async wrapper that runs RPC evaluation in thread pool"""
         try:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                self._evaluate_with_rpc_sync,
-                task,
-                uid,
-                rpc_port
+                lambda: self._evaluate_with_rpc_sync(task, uid, rpc_port, skip_ping)
             )
             return result
         except (BrokenPipeError, ConnectionResetError, ConnectionRefusedError, OSError) as e:
@@ -296,6 +296,31 @@ class DockerSecureEvaluator:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(('', 0))
             return s.getsockname()[1]
+
+    def _check_rpc_ready(self, port: int, timeout: float = 5.0) -> bool:
+        """Check if RPC server is ready by attempting a ping"""
+        import capnp
+        schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
+        agent_capnp = capnp.load(str(schema_file))
+        
+        async def try_ping():
+            async with capnp.kj_loop():
+                stream = await asyncio.wait_for(
+                    capnp.AsyncIoStream.create_connection(host="localhost", port=port),
+                    timeout=timeout
+                )
+                client = capnp.TwoPartyClient(stream)
+                agent = client.bootstrap().cast_as(agent_capnp.Agent)
+                response = await asyncio.wait_for(agent.ping("test"), timeout=timeout)
+                return response.response == "pong"
+        
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(try_ping())
+        except Exception:
+            return False
+        finally:
+            loop.close()
 
     def _get_docker_host_ip(self) -> str:
         """Get the Docker bridge gateway IP (host IP as seen from containers)"""
@@ -555,8 +580,28 @@ class DockerSecureEvaluator:
                 await asyncio.sleep(1)
             
             if connected:
-                bt.logging.debug(f"Waiting 10s for RPC server to fully initialize (model loading)...")
-                await asyncio.sleep(10)
+                rpc_ready = False
+                max_rpc_wait = 20
+                rpc_check_interval = 2
+                rpc_wait_start = time.time()
+                
+                while time.time() - rpc_wait_start < max_rpc_wait:
+                    try:
+                        if self._check_rpc_ready(host_port, timeout=3.0):
+                            rpc_ready = True
+                            elapsed = time.time() - rpc_wait_start
+                            bt.logging.debug(f"RPC ready for UID {uid} after {elapsed:.1f}s")
+                            break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(rpc_check_interval)
+                
+                if not rpc_ready:
+                    bt.logging.warning(f"RPC server not responding for UID {uid} after {max_rpc_wait}s")
+                    self._log_container_failure(container_name, uid, "rpc_not_ready")
+                    subprocess.run(["docker", "kill", container_name], capture_output=True)
+                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                    return ValidationResult(uid, False, 0.0, 0.0)
             
             if not connected:
                 bt.logging.warning(f"❌ RPC server failed to start for UID {uid}")
