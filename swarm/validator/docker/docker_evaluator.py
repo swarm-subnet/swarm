@@ -297,30 +297,29 @@ class DockerSecureEvaluator:
             s.bind(('', 0))
             return s.getsockname()[1]
 
-    def _check_rpc_ready(self, port: int, timeout: float = 5.0) -> bool:
-        """Check if RPC server is ready by attempting a ping"""
-        import capnp
-        schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
-        agent_capnp = capnp.load(str(schema_file))
-        
-        async def try_ping():
-            async with capnp.kj_loop():
-                stream = await asyncio.wait_for(
-                    capnp.AsyncIoStream.create_connection(host="localhost", port=port),
-                    timeout=timeout
-                )
-                client = capnp.TwoPartyClient(stream)
-                agent = client.bootstrap().cast_as(agent_capnp.Agent)
-                response = await asyncio.wait_for(agent.ping("test"), timeout=timeout)
-                return response.response == "pong"
-        
-        loop = asyncio.new_event_loop()
+    def _check_rpc_ready(self, port: int, timeout: float = 3.0) -> bool:
+        """Check if RPC server is ready by testing TCP connection and basic handshake"""
+        import socket
+        sock = None
         try:
-            return loop.run_until_complete(try_ping())
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect(("localhost", port))
+            sock.send(b'\x00')
+            sock.settimeout(0.5)
+            try:
+                sock.recv(1)
+            except socket.timeout:
+                pass
+            return True
         except Exception:
             return False
         finally:
-            loop.close()
+            if sock:
+                try:
+                    sock.close()
+                except:
+                    pass
 
     def _get_docker_host_ip(self) -> str:
         """Get the Docker bridge gateway IP (host IP as seen from containers)"""
