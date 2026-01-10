@@ -133,7 +133,7 @@ UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
-N_RUNS_HISTORY = 100                     # Number of runs to track for victory average
+N_RUNS_HISTORY = 300                     # Number of runs to track (shared across all challenge types)
 MIN_RUNS_FOR_WEIGHTS = 100              # Minimum runs required before miner is eligible for weights
 
 # =============================================================================

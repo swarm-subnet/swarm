@@ -536,21 +536,28 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 # ──────────────────────────────────────────────────────────────────────────
 
 def _log_normalized_score(uid: int) -> None:
-    """Log normalized score with per-type breakdown after evaluation"""
     history = load_uid_history(uid)
     normalized_score = calculate_normalized_score(history)
 
     if ENABLE_PER_TYPE_NORMALIZATION:
+        all_runs = history.get("all_runs", [])
+
+        type_runs = {}
+        for run in all_runs:
+            t = str(run.get("challenge_type", 1))
+            if t not in type_runs:
+                type_runs[t] = []
+            type_runs[t].append(run["score"])
+
         type_info = []
         for type_id in sorted(CHALLENGE_TYPE_DISTRIBUTION.keys()):
             type_str = str(type_id)
-            if type_str not in history["runs_by_type"]:
+            if type_str not in type_runs:
                 continue
-            type_data = history["runs_by_type"][type_str]
+            scores = type_runs[type_str]
             weight = CHALLENGE_TYPE_DISTRIBUTION[type_id]
-            type_info.append(
-                f"T{type_id}({weight:.0%}):{type_data['count']}runs/{type_data['avg_score']:.3f}avg"
-            )
+            avg = sum(scores) / len(scores)
+            type_info.append(f"T{type_id}({weight:.0%}):{len(scores)}runs/{avg:.3f}avg")
 
         bt.logging.info(
             f"UID {uid:3d} | normalized: {normalized_score:.4f} | {' | '.join(type_info)}"
@@ -605,6 +612,27 @@ def calculate_score_metrics(history: dict, uids: np.ndarray) -> List[tuple]:
 def ensure_avgs_directory():
     AVGS_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _migrate_to_shared_pool(old_history: dict) -> dict:
+    all_runs = []
+    for type_id, type_data in old_history.get("runs_by_type", {}).items():
+        for run in type_data.get("runs", []):
+            run_copy = run.copy()
+            run_copy["challenge_type"] = int(type_id)
+            all_runs.append(run_copy)
+
+    all_runs.sort(key=lambda x: x.get("timestamp", 0))
+    all_runs = all_runs[-N_RUNS_HISTORY:]
+
+    return {
+        "uid": old_history.get("uid", 0),
+        "total_runs": old_history.get("total_runs", 0),
+        "last_updated": time.time(),
+        "all_runs": all_runs,
+        "normalized_score": 0.0
+    }
+
+
 def load_uid_history(uid: int) -> dict:
     ensure_avgs_directory()
     uid = int(uid)
@@ -613,101 +641,87 @@ def load_uid_history(uid: int) -> dict:
     if file_path.exists():
         try:
             with open(file_path, 'r') as f:
-                return json.load(f)
+                history = json.load(f)
+
+            if "all_runs" not in history and "runs_by_type" in history:
+                bt.logging.info(f"Migrating UID {uid} history to shared pool format")
+                history = _migrate_to_shared_pool(history)
+                save_uid_history(uid, history)
+
+            return history
         except (FileNotFoundError, json.JSONDecodeError) as e:
             bt.logging.warning(f"Failed to load history for UID {uid}: {e}")
 
-    runs_by_type = {}
-    for type_id in CHALLENGE_TYPE_DISTRIBUTION.keys():
-        runs_by_type[str(type_id)] = {
-            "runs": [],
-            "count": 0,
-            "avg_score": 0.0,
-            "success_rate": 0.0
-        }
-    
     return {
         "uid": uid,
         "total_runs": 0,
         "last_updated": 0.0,
-        "runs_by_type": runs_by_type,
+        "all_runs": [],
         "normalized_score": 0.0
     }
 
 def save_uid_history(uid: int, history: dict):
     ensure_avgs_directory()
     file_path = AVGS_DIR / f"uid_{uid}.json"
+    temp_path = file_path.with_suffix(".tmp")
     history["last_updated"] = time.time()
 
     try:
-        with open(file_path, 'w') as f:
+        with open(temp_path, 'w') as f:
             json.dump(history, f, indent=2)
+        temp_path.replace(file_path)
     except Exception as e:
         bt.logging.error(f"Failed to save history for UID {uid}: {e}")
+        temp_path.unlink(missing_ok=True)
 
 def update_per_type_history(uid: int, challenge_type: int, score: float, success: bool, time_sec: float):
     history = load_uid_history(uid)
-    type_str = str(challenge_type)
-
-    if type_str not in history["runs_by_type"]:
-        bt.logging.error(f"Invalid challenge type {challenge_type} for UID {uid}")
-        return
 
     run_data = {
+        "challenge_type": int(challenge_type),
         "score": float(score),
         "success": success,
         "time_sec": float(time_sec),
         "timestamp": time.time()
     }
 
-    type_data = history["runs_by_type"][type_str]
-    type_data["runs"].append(run_data)
-    type_data["count"] += 1
-
-    if len(type_data["runs"]) > N_RUNS_HISTORY:
-        type_data["runs"] = type_data["runs"][-N_RUNS_HISTORY:]
-        type_data["count"] = len(type_data["runs"])
-
-    scores = [r["score"] for r in type_data["runs"]]
-    successes = [r["success"] for r in type_data["runs"]]
-
-    type_data["avg_score"] = sum(scores) / len(scores) if scores else 0.0
-    type_data["success_rate"] = sum(successes) / len(successes) if successes else 0.0
-
+    history["all_runs"].append(run_data)
     history["total_runs"] += 1
-    history["normalized_score"] = calculate_normalized_score(history)
 
+    if len(history["all_runs"]) > N_RUNS_HISTORY:
+        history["all_runs"] = history["all_runs"][-N_RUNS_HISTORY:]
+
+    history["normalized_score"] = calculate_normalized_score(history)
     save_uid_history(uid, history)
 
 def calculate_normalized_score(history: dict) -> float:
-    if not ENABLE_PER_TYPE_NORMALIZATION:
-        all_runs = []
-        for type_data in history["runs_by_type"].values():
-            all_runs.extend(type_data["runs"])
+    all_runs = history.get("all_runs", [])
 
-        if not all_runs:
-            return 0.0
+    if not all_runs:
+        return 0.0
+
+    if not ENABLE_PER_TYPE_NORMALIZATION:
         scores = [r["score"] for r in all_runs]
         return sum(scores) / len(scores)
 
-    runs_by_type = history["runs_by_type"]
+    type_scores = {}
+    for run in all_runs:
+        t = str(run.get("challenge_type", 1))
+        if t not in type_scores:
+            type_scores[t] = []
+        type_scores[t].append(run["score"])
+
     normalized = 0.0
     total_weight = 0.0
 
     for type_id, weight in CHALLENGE_TYPE_DISTRIBUTION.items():
         type_str = str(type_id)
-        if type_str not in runs_by_type:
-            continue
-        type_data = runs_by_type[type_str]
-
-        if type_data["count"] > 0:
-            normalized += weight * type_data["avg_score"]
+        if type_str in type_scores and type_scores[type_str]:
+            avg = sum(type_scores[type_str]) / len(type_scores[type_str])
+            normalized += weight * avg
             total_weight += weight
 
-    if total_weight > 0:
-        normalized = normalized / total_weight
-
-    return normalized
+    return normalized / total_weight if total_weight > 0 else 0.0
 
 def calculate_all_normalized_scores(uids: List[int]) -> Dict[int, float]:
     scores = {}
