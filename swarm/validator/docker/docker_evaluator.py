@@ -58,56 +58,92 @@ class DockerSecureEvaluator:
             bt.logging.error("🐳 Docker not found! Please install Docker manually.")
             bt.logging.error("📖 See installation instructions in swarm/requirements.txt")
             return False
-    
+
+    def _calculate_docker_hash(self) -> str:
+        import hashlib
+
+        dockerfile = Path(__file__).parent / "Dockerfile"
+        requirements = Path(__file__).parent / "docker-requirements.txt"
+        swarm_pkg = Path(__file__).parent.parent.parent
+
+        hasher = hashlib.sha256()
+
+        if dockerfile.exists():
+            hasher.update(dockerfile.read_bytes())
+        if requirements.exists():
+            hasher.update(requirements.read_bytes())
+        if swarm_pkg.exists():
+            for f in sorted(swarm_pkg.rglob("*.py")):
+                try:
+                    hasher.update(str(f.stat().st_mtime).encode())
+                except Exception:
+                    pass
+
+        return hasher.hexdigest()[:16]
+
+    def _should_rebuild_base_image(self) -> bool:
+        current_hash = self._calculate_docker_hash()
+        cache_file = Path("/tmp/swarm_docker_hash.txt")
+
+        if cache_file.exists():
+            cached_hash = cache_file.read_text().strip()
+            if cached_hash == current_hash:
+                result = subprocess.run(
+                    ["docker", "images", "-q", self.base_image],
+                    capture_output=True, text=True
+                )
+                if result.stdout.strip():
+                    bt.logging.info(f"✅ Docker image unchanged (hash: {current_hash})")
+                    return False
+
+        cache_file.write_text(current_hash)
+        return True
+
     def _setup_base_container(self):
-        """Build base Docker image with all dependencies"""
         try:
-            # Check if Docker is installed
             if not self._check_docker_available():
                 bt.logging.error("❌ Docker is required but not installed")
                 self.base_ready = False
                 DockerSecureEvaluator._base_ready = False
                 return
-            
-            # Aggressive cleanup to prevent disk bloat from dangling images/containers
+
             try:
-                # Remove stopped containers and any leftover eval/verify containers
                 subprocess.run(["docker", "container", "prune", "-f"], capture_output=True)
                 subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_eval_)", shell=True, capture_output=True)
                 subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_verify_)", shell=True, capture_output=True)
             except Exception:
                 pass
+
             try:
-                # Remove only dangling images (not all unused images)
-                # This prevents accidentally removing the base image
                 subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-                # Remove builder cache to reclaim space
-                subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
                 subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
             except Exception:
                 pass
-            
+
+            if not self._should_rebuild_base_image():
+                self.base_ready = True
+                DockerSecureEvaluator._base_ready = True
+                return
+
             bt.logging.info(f"🐳 Building base Docker image {self.base_image}...")
-            
+
             dockerfile_path = Path(__file__).parent / "Dockerfile"
-            # Build context should be the parent of swarm package
             build_context = Path(__file__).parent.parent.parent.parent
-            
-            # Build base image (always fresh to get latest swarm scripts)
+
             cmd = [
                 "docker", "build",
-                "--no-cache",
                 "-t", self.base_image,
                 "-f", str(dockerfile_path),
                 str(build_context)
             ]
-            
+
             bt.logging.info("Building base Docker image (this may take a few minutes)...")
             bt.logging.debug(f"Docker build command: {' '.join(cmd)}")
-            
-            # Run with real-time output so user can see progress
-            result = subprocess.run(cmd, text=True)
-            
+
+            env = os.environ.copy()
+            env["DOCKER_BUILDKIT"] = "1"
+            result = subprocess.run(cmd, text=True, env=env)
+
             if result.returncode == 0:
                 self.base_ready = True
                 DockerSecureEvaluator._base_ready = True
@@ -116,7 +152,7 @@ class DockerSecureEvaluator:
                 bt.logging.error(f"❌ Docker build failed with return code: {result.returncode}")
                 self.base_ready = False
                 DockerSecureEvaluator._base_ready = False
-                
+
         except Exception as e:
             bt.logging.error(f"Failed to setup Docker environment: {e}")
             self.base_ready = False
@@ -667,10 +703,9 @@ class DockerSecureEvaluator:
                     pass
             try:
                 subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-                subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
             except Exception:
                 pass
-        
+
         bt.logging.info(f"🏁 Ending Docker container for UID {uid} - returning default result")
         return ValidationResult(uid, False, 0.0, 0.0)
     
@@ -705,11 +740,7 @@ class DockerSecureEvaluator:
                         subprocess.run(["docker", "rm", "-f", container], capture_output=True)
                         bt.logging.debug(f"Cleaned up orphaned verify container: {container}")
 
-            # Prune only dangling images and builder cache to reclaim disk space
-            # IMPORTANT: Only prune dangling images, NOT all unused images (removed -a flag)
-            # This preserves the base image
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-            subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
         
         except Exception as e:
