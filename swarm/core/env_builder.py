@@ -39,7 +39,7 @@ from swarm.constants import (
     TYPE_3_N_OBSTACLES, TYPE_3_HEIGHT_SCALE, TYPE_3_SAFE_ZONE, TYPE_3_WORLD_RANGE,
     TYPE_4_N_OBSTACLES, TYPE_4_HEIGHT_SCALE, TYPE_4_SAFE_ZONE, TYPE_4_WORLD_RANGE,
     TYPE_5_N_OBSTACLES, TYPE_5_HEIGHT_SCALE, TYPE_5_SAFE_ZONE, TYPE_5_WORLD_RANGE,
-    TYPE_5_ORBIT_RADIUS,
+    TYPE_5_RADIUS_MAX,
     GOAL_COLOR_PALETTE,
     DISTANT_SCENERY_ENABLED,
     DISTANT_SCENERY_MIN_RANGE,
@@ -256,7 +256,7 @@ def build_world(
                     return False
                 required_clearance = obj_r + safe_zone + 0.5
                 if challenge_type == 5:
-                    required_clearance += TYPE_5_ORBIT_RADIUS + LANDING_PLATFORM_RADIUS
+                    required_clearance += TYPE_5_RADIUS_MAX + LANDING_PLATFORM_RADIUS
                 return math.hypot(x - cx, y - cy) < required_clearance
 
             if _violates_start(sx, sy) or _violates_goal(gx, gy):

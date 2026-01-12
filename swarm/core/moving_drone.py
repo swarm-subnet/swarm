@@ -21,9 +21,11 @@ from swarm.constants import (
     SENSOR_NOISE_ENABLED, SENSOR_NOISE_STD,
     SENSOR_EXPOSURE_MIN, SENSOR_EXPOSURE_MAX,
     LIGHT_RANDOMIZATION_ENABLED,
-    TYPE_5_PLATFORM_SPEED,
-    TYPE_5_ORBIT_RADIUS,
     TYPE_5_MOVEMENT_PATTERNS,
+    TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX,
+    TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX,
+    TYPE_5_DELAY_MIN, TYPE_5_DELAY_MAX,
+    TYPE_5_LINEAR_DIRECTIONS,
 )
 
 
@@ -77,6 +79,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._current_platform_pos = self.GOAL_POS.copy()
         self._movement_pattern = self._get_movement_pattern_from_seed(seed)
         self._platform_offsets = []
+
+        self._init_platform_randomization(seed)
         rng = np.random.RandomState(seed)
         noise_xy = rng.uniform(-SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_XY, size=2)
         noise_z = rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
@@ -173,32 +177,68 @@ class MovingDroneAviary(BaseRLAviary):
         rng.rand()
         pattern_idx = rng.randint(0, len(TYPE_5_MOVEMENT_PATTERNS))
         return TYPE_5_MOVEMENT_PATTERNS[pattern_idx]
-    
+
+    def _init_platform_randomization(self, seed: int) -> None:
+        """Initialize randomized platform movement parameters for Type 5."""
+        if self.task.challenge_type != 5:
+            self._platform_speed = 0.0
+            self._platform_radius = 0.0
+            self._platform_delay = 0.0
+            self._platform_phase = 0.0
+            self._platform_linear_dir = "x"
+            self._platform_linear_angle = 0.0
+            return
+
+        rng = np.random.RandomState(seed + 77777)
+        self._platform_speed = rng.uniform(TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX)
+        self._platform_radius = rng.uniform(TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX)
+        self._platform_delay = rng.uniform(TYPE_5_DELAY_MIN, TYPE_5_DELAY_MAX)
+        self._platform_phase = rng.uniform(0, 2 * np.pi)
+        dir_idx = rng.randint(0, len(TYPE_5_LINEAR_DIRECTIONS))
+        self._platform_linear_dir = TYPE_5_LINEAR_DIRECTIONS[dir_idx]
+        self._platform_linear_angle = rng.uniform(0, 2 * np.pi)
+
     def _calculate_platform_position(self, t: float) -> np.ndarray:
         """Calculate platform position at time t based on movement pattern."""
         if self.task.challenge_type != 5:
             return self._platform_orbit_center.copy()
-        
+
+        t_eff = max(0.0, t - self._platform_delay)
+        if t_eff == 0.0:
+            return self._platform_orbit_center.copy()
+
         center = self._platform_orbit_center
-        speed = TYPE_5_PLATFORM_SPEED
-        radius = TYPE_5_ORBIT_RADIUS
+        speed = self._platform_speed
+        radius = self._platform_radius
+        phase = self._platform_phase
         pattern = self._movement_pattern
-        
+
         if pattern == "circular":
-            angle = t * speed * 0.3
+            angle = t_eff * speed * 0.3 + phase
             x = center[0] + radius * math.cos(angle)
             y = center[1] + radius * math.sin(angle)
             return np.array([x, y, center[2]], dtype=np.float32)
+
         elif pattern == "linear":
-            offset = radius * math.sin(t * speed * 0.5)
-            return np.array([center[0] + offset, center[1], center[2]], dtype=np.float32)
+            offset = radius * math.sin(t_eff * speed * 0.5 + phase)
+            if self._platform_linear_dir == "x":
+                x = center[0] + offset
+                y = center[1]
+            elif self._platform_linear_dir == "y":
+                x = center[0]
+                y = center[1] + offset
+            else:
+                x = center[0] + offset * math.cos(self._platform_linear_angle)
+                y = center[1] + offset * math.sin(self._platform_linear_angle)
+            return np.array([x, y, center[2]], dtype=np.float32)
+
         elif pattern == "figure8":
-            angle = t * speed * 0.3
+            angle = t_eff * speed * 0.3 + phase
             x = center[0] + radius * math.sin(angle)
             y = center[1] + radius * math.sin(2 * angle) / 2
             return np.array([x, y, center[2]], dtype=np.float32)
-        else:
-            return center.copy()
+
+        return center.copy()
     
     def _update_moving_platform(self):
         """Update platform position for moving platform challenge."""
