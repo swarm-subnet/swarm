@@ -24,7 +24,6 @@ from typing import Optional, Tuple, List
 import pybullet as p
 
 from swarm.constants import (
-    WORLD_RANGE,
     LANDING_PLATFORM_RADIUS,
     PLATFORM,
     SAFE_ZONE_RADIUS,
@@ -35,21 +34,11 @@ from swarm.constants import (
     START_PLATFORM_SURFACE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
     START_PLATFORM_RANDOMIZE,
-    TYPE_1_N_OBSTACLES,
-    TYPE_1_HEIGHT_SCALE,
-    TYPE_1_SAFE_ZONE,
-    TYPE_2_N_OBSTACLES,
-    TYPE_2_HEIGHT_SCALE,
-    TYPE_2_SAFE_ZONE,
-    TYPE_3_N_OBSTACLES,
-    TYPE_3_HEIGHT_SCALE,
-    TYPE_3_SAFE_ZONE,
-    TYPE_4_N_OBSTACLES,
-    TYPE_4_HEIGHT_SCALE,
-    TYPE_4_SAFE_ZONE,
-    TYPE_5_N_OBSTACLES,
-    TYPE_5_HEIGHT_SCALE,
-    TYPE_5_SAFE_ZONE,
+    TYPE_1_N_OBSTACLES, TYPE_1_HEIGHT_SCALE, TYPE_1_SAFE_ZONE, TYPE_1_WORLD_RANGE,
+    TYPE_2_N_OBSTACLES, TYPE_2_HEIGHT_SCALE, TYPE_2_SAFE_ZONE, TYPE_2_WORLD_RANGE,
+    TYPE_3_N_OBSTACLES, TYPE_3_HEIGHT_SCALE, TYPE_3_SAFE_ZONE, TYPE_3_WORLD_RANGE,
+    TYPE_4_N_OBSTACLES, TYPE_4_HEIGHT_SCALE, TYPE_4_SAFE_ZONE, TYPE_4_WORLD_RANGE,
+    TYPE_5_N_OBSTACLES, TYPE_5_HEIGHT_SCALE, TYPE_5_SAFE_ZONE, TYPE_5_WORLD_RANGE,
     TYPE_5_ORBIT_RADIUS,
     GOAL_COLOR_PALETTE,
     DISTANT_SCENERY_ENABLED,
@@ -184,31 +173,36 @@ def build_world(
     """
     rng = random.Random(seed)
 
-    # Set challenge-specific parameters
     if challenge_type == 1:
         n_obstacles = TYPE_1_N_OBSTACLES
         height_scale = TYPE_1_HEIGHT_SCALE
         safe_zone = TYPE_1_SAFE_ZONE
+        world_range = TYPE_1_WORLD_RANGE
     elif challenge_type == 2:
         n_obstacles = TYPE_2_N_OBSTACLES
         height_scale = TYPE_2_HEIGHT_SCALE
         safe_zone = TYPE_2_SAFE_ZONE
+        world_range = TYPE_2_WORLD_RANGE
     elif challenge_type == 3:
         n_obstacles = TYPE_3_N_OBSTACLES
         height_scale = TYPE_3_HEIGHT_SCALE
         safe_zone = TYPE_3_SAFE_ZONE
+        world_range = TYPE_3_WORLD_RANGE
     elif challenge_type == 4:
         n_obstacles = TYPE_4_N_OBSTACLES
         height_scale = TYPE_4_HEIGHT_SCALE
         safe_zone = TYPE_4_SAFE_ZONE
+        world_range = TYPE_4_WORLD_RANGE
     elif challenge_type == 5:
         n_obstacles = TYPE_5_N_OBSTACLES
         height_scale = TYPE_5_HEIGHT_SCALE
         safe_zone = TYPE_5_SAFE_ZONE
+        world_range = TYPE_5_WORLD_RANGE
     else:
         n_obstacles = TYPE_1_N_OBSTACLES
         height_scale = TYPE_1_HEIGHT_SCALE
         safe_zone = TYPE_1_SAFE_ZONE
+        world_range = TYPE_1_WORLD_RANGE
 
     if start is not None:
         sx, sy, sz = start
@@ -226,8 +220,8 @@ def build_world(
     while placed < n_obstacles:
         for _ in range(MAX_ATTEMPTS_PER_OBS):
             kind = rng.choice(["wall", "pillar", "box"])
-            x = rng.uniform(-WORLD_RANGE, WORLD_RANGE)
-            y = rng.uniform(-WORLD_RANGE, WORLD_RANGE)
+            x = rng.uniform(-world_range, world_range)
+            y = rng.uniform(-world_range, world_range)
             yaw = rng.uniform(0, math.pi)
 
             # — determine random size & bounding radius ---------------
@@ -372,7 +366,7 @@ def build_world(
         # Calculate platform surface height (random or fixed)
         if START_PLATFORM_RANDOMIZE:
             from swarm.validator.task_gen import get_platform_height_for_seed
-            surface_z = get_platform_height_for_seed(seed, start)
+            surface_z = get_platform_height_for_seed(seed, challenge_type)
         else:
             surface_z = START_PLATFORM_SURFACE_Z
 

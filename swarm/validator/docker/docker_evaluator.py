@@ -107,25 +107,21 @@ class DockerSecureEvaluator:
                 DockerSecureEvaluator._base_ready = False
                 return
 
-            try:
-                subprocess.run(["docker", "container", "prune", "-f"], capture_output=True)
-                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_eval_)", shell=True, capture_output=True)
-                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_verify_)", shell=True, capture_output=True)
-            except Exception:
-                pass
-
-            try:
-                subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-                subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-            except Exception:
-                pass
-
             if not self._should_rebuild_base_image():
                 self.base_ready = True
                 DockerSecureEvaluator._base_ready = True
                 return
 
             bt.logging.info(f"🐳 Building base Docker image {self.base_image}...")
+
+            try:
+                subprocess.run(["docker", "container", "prune", "-f"], capture_output=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_eval_)", shell=True, capture_output=True)
+                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_verify_)", shell=True, capture_output=True)
+                subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
+                subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
+            except Exception:
+                pass
 
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             build_context = Path(__file__).parent.parent.parent.parent

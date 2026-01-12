@@ -31,10 +31,8 @@ SEED_WINDOW_MINUTES = 10                # Time window duration for seed synchron
 SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
 HORIZON_SEC = 60                        # Maximum simulated flight duration (seconds)
 # World generation parameters
-WORLD_RANGE = 20                        # Random scenery placement range (±meters)
 HEIGHT_SCALE = 1.5                      # Obstacle height scale factor
-N_OBSTACLES = 40                        # Number of random obstacles in simulation world
-RANDOM_START = True                    # Toggle random starting point generation
+RANDOM_START = True                     # Toggle random starting point generation
 # Camera and rendering settings
 CAM_HZ = 60                             # Camera update frequency (Hz)
 CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
@@ -95,11 +93,7 @@ SAFE_Z = 3                              # Default cruise altitude (meters)
 GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 MAX_YAW_RATE = 3.141                    # Maximum yaw rotation rate (rad/s) - 180 degrees per second
-# Goal generation ranges
-R_MIN, R_MAX = 10, 25                   # Radial goal distance range (meters)
-H_MIN, H_MAX = 3, 10                    # Height variation range for goals (meters)
-START_H_MIN, START_H_MAX = 0.05, 10     # Random start height range (meters)
-# Environment building limits
+# Goal generation ranges (legacy defaults)
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
 MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles
 # Goal platform colors
@@ -162,25 +156,50 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 # CHALLENGE TYPE PARAMETERS
 # =============================================================================
 
+# Type 1: Standard Navigation
+TYPE_1_WORLD_RANGE = 20
 TYPE_1_N_OBSTACLES = 55
 TYPE_1_HEIGHT_SCALE = 1.5
 TYPE_1_SAFE_ZONE = 2.0
+TYPE_1_R_MIN, TYPE_1_R_MAX = 10, 25
+TYPE_1_H_MIN, TYPE_1_H_MAX = 3, 10
+TYPE_1_START_H_MIN, TYPE_1_START_H_MAX = 0.05, 10
 
+# Type 2: Higher Obstacles
+TYPE_2_WORLD_RANGE = 20
 TYPE_2_N_OBSTACLES = 70
 TYPE_2_HEIGHT_SCALE = 3
 TYPE_2_SAFE_ZONE = 2.0
+TYPE_2_R_MIN, TYPE_2_R_MAX = 10, 25
+TYPE_2_H_MIN, TYPE_2_H_MAX = 3, 10
+TYPE_2_START_H_MIN, TYPE_2_START_H_MAX = 0.05, 10
 
+# Type 3: Easy Navigation
+TYPE_3_WORLD_RANGE = 20
 TYPE_3_N_OBSTACLES = 40
 TYPE_3_HEIGHT_SCALE = 0.8
 TYPE_3_SAFE_ZONE = 2.0
+TYPE_3_R_MIN, TYPE_3_R_MAX = 10, 25
+TYPE_3_H_MIN, TYPE_3_H_MAX = 3, 10
+TYPE_3_START_H_MIN, TYPE_3_START_H_MAX = 0.05, 10
 
+# Type 4: Open Flight (No Obstacles)
+TYPE_4_WORLD_RANGE = 25
 TYPE_4_N_OBSTACLES = 0
 TYPE_4_HEIGHT_SCALE = 1.0
 TYPE_4_SAFE_ZONE = 0.0
+TYPE_4_R_MIN, TYPE_4_R_MAX = 10, 25
+TYPE_4_H_MIN, TYPE_4_H_MAX = 3, 10
+TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.05, 10
 
+# Type 5: Moving Platform
+TYPE_5_WORLD_RANGE = 20
 TYPE_5_N_OBSTACLES = 25
 TYPE_5_HEIGHT_SCALE = 1.0
 TYPE_5_SAFE_ZONE = 3.0
+TYPE_5_R_MIN, TYPE_5_R_MAX = 10, 25
+TYPE_5_H_MIN, TYPE_5_H_MAX = 3, 10
+TYPE_5_START_H_MIN, TYPE_5_START_H_MAX = 0.05, 10
 TYPE_5_PLATFORM_SPEED = 0.6
 TYPE_5_ORBIT_RADIUS = 2.0
 TYPE_5_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]

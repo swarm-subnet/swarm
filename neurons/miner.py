@@ -57,7 +57,7 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     #  **Adjust these constants for your own model**
     # ------------------------------------------------------------------
-    POLICY_PATH = Path("Submission/submission.zip")
+    POLICY_PATH = Path(__file__).parent.parent / "Submission" / "submission.zip"
     ENTRYPOINT  = ""
     FRAMEWORK   = "sb3-ppo"
     
