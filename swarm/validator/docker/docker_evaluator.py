@@ -60,6 +60,7 @@ class DockerSecureEvaluator:
             return False
 
     def _calculate_docker_hash(self) -> str:
+        """Calculate hash of all source files that go into the Docker image."""
         import hashlib
 
         dockerfile = Path(__file__).parent / "Dockerfile"
@@ -81,22 +82,44 @@ class DockerSecureEvaluator:
 
         return hasher.hexdigest()[:16]
 
+    def _get_image_hash_label(self) -> str:
+        """Get the code hash label from the existing Docker image."""
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "--format", "{{index .Config.Labels \"swarm.code_hash\"}}", self.base_image],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return ""
+
     def _should_rebuild_base_image(self) -> bool:
+        """Check if Docker image needs rebuild by comparing code hash with image label."""
         current_hash = self._calculate_docker_hash()
-        cache_file = Path("/tmp/swarm_docker_hash.txt")
 
-        if cache_file.exists():
-            cached_hash = cache_file.read_text().strip()
-            if cached_hash == current_hash:
-                result = subprocess.run(
-                    ["docker", "images", "-q", self.base_image],
-                    capture_output=True, text=True
-                )
-                if result.stdout.strip():
-                    bt.logging.info(f"✅ Docker image unchanged (hash: {current_hash})")
-                    return False
+        # Check if image exists
+        result = subprocess.run(
+            ["docker", "images", "-q", self.base_image],
+            capture_output=True, text=True
+        )
+        if not result.stdout.strip():
+            bt.logging.info(f"🐳 Docker image not found, will build (hash: {current_hash})")
+            return True
 
-        cache_file.write_text(current_hash)
+        # Get hash from the image label (not from cache file)
+        image_hash = self._get_image_hash_label()
+
+        if image_hash == current_hash:
+            bt.logging.info(f"✅ Docker image up-to-date (hash: {current_hash})")
+            return False
+
+        if image_hash:
+            bt.logging.info(f"🔄 Code changed: image={image_hash}, current={current_hash} - rebuilding")
+        else:
+            bt.logging.info(f"🔄 Image missing hash label - rebuilding (hash: {current_hash})")
+
         return True
 
     def _setup_base_container(self):
@@ -136,15 +159,17 @@ class DockerSecureEvaluator:
 
             dockerfile_path = Path(__file__).parent / "Dockerfile"
             build_context = Path(__file__).parent.parent.parent.parent
+            current_hash = self._calculate_docker_hash()
 
             cmd = [
                 "docker", "build",
+                "--label", f"swarm.code_hash={current_hash}",
                 "-t", self.base_image,
                 "-f", str(dockerfile_path),
                 str(build_context)
             ]
 
-            bt.logging.info("Building base Docker image (this may take a few minutes)...")
+            bt.logging.info(f"Building base Docker image (hash: {current_hash})...")
             bt.logging.debug(f"Docker build command: {' '.join(cmd)}")
 
             env = os.environ.copy()
