@@ -73,8 +73,6 @@ def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
     world_range = params['world_range']
 
     rng = random.Random(seed)
-    rng.choices(list(CHALLENGE_TYPE_DISTRIBUTION.keys()),
-                weights=list(CHALLENGE_TYPE_DISTRIBUTION.values()), k=1)
     rng.uniform(-world_range, world_range)
     rng.uniform(-world_range, world_range)
     return rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
@@ -167,7 +165,8 @@ def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> Ma
 
     challenge_types = list(CHALLENGE_TYPE_DISTRIBUTION.keys())
     probabilities = list(CHALLENGE_TYPE_DISTRIBUTION.values())
-    chosen_type = rng.choices(challenge_types, weights=probabilities, k=1)[0]
+    type_rng = random.Random(seed + 999999)
+    chosen_type = type_rng.choices(challenge_types, weights=probabilities, k=1)[0]
 
     params = get_type_params(chosen_type)
 

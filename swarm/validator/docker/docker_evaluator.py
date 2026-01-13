@@ -75,7 +75,7 @@ class DockerSecureEvaluator:
         if swarm_pkg.exists():
             for f in sorted(swarm_pkg.rglob("*.py")):
                 try:
-                    hasher.update(str(f.stat().st_mtime).encode())
+                    hasher.update(f.read_bytes())
                 except Exception:
                     pass
 
@@ -114,12 +114,23 @@ class DockerSecureEvaluator:
 
             bt.logging.info(f"🐳 Building base Docker image {self.base_image}...")
 
+            old_image_id = None
+            try:
+                result = subprocess.run(
+                    ["docker", "images", "-q", self.base_image],
+                    capture_output=True, text=True
+                )
+                old_image_id = result.stdout.strip() if result.returncode == 0 else None
+            except Exception:
+                pass
+
             try:
                 subprocess.run(["docker", "container", "prune", "-f"], capture_output=True)
                 subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_eval_)", shell=True, capture_output=True)
                 subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_verify_)", shell=True, capture_output=True)
                 subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
                 subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
+                subprocess.run(["docker", "builder", "prune", "-f", "--keep-storage", "5GB"], capture_output=True)
             except Exception:
                 pass
 
@@ -144,6 +155,19 @@ class DockerSecureEvaluator:
                 self.base_ready = True
                 DockerSecureEvaluator._base_ready = True
                 bt.logging.info("✅ Base Docker image ready")
+
+                if old_image_id:
+                    try:
+                        new_result = subprocess.run(
+                            ["docker", "images", "-q", self.base_image],
+                            capture_output=True, text=True
+                        )
+                        new_image_id = new_result.stdout.strip() if new_result.returncode == 0 else None
+                        if new_image_id and old_image_id != new_image_id:
+                            subprocess.run(["docker", "rmi", old_image_id], capture_output=True)
+                            bt.logging.debug(f"Removed old image: {old_image_id[:12]}")
+                    except Exception:
+                        pass
             else:
                 bt.logging.error(f"❌ Docker build failed with return code: {result.returncode}")
                 self.base_ready = False
@@ -738,7 +762,8 @@ class DockerSecureEvaluator:
 
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-        
+            subprocess.run(["docker", "builder", "prune", "-f", "--keep-storage", "5GB"], capture_output=True)
+
         except Exception as e:
             bt.logging.warning(f"Container cleanup failed: {e}")
 
