@@ -121,8 +121,8 @@ SAMPLE_K = 256                          # Number of miners sampled per forward p
 EMA_ALPHA = 0.20                        # Exponential moving average coefficient for weights
 # Emission burning mechanism
 BURN_EMISSIONS = True                   # Enable emission burning to UID 0
-BURN_FRACTION = 0.90                    # Fraction of emissions to burn 
-KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute 
+BURN_FRACTION = 0.90                    # Fraction of emissions to burn
+KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute
 UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
@@ -143,8 +143,8 @@ EVALUATION_WINDOW = 20                 # Number of recent runs to evaluate for l
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.25,  # Standard navigation
-    2: 0.20,  # higher obstacles challenge
+    1: 0.25,  # City navigation (procedural roads)
+    2: 0.20,  # Higher obstacles challenge
     3: 0.20,  # Easy navigation
     4: 0.15,  # No obstacles (open flight)
     5: 0.20,  # Moving platform challenge
@@ -156,14 +156,15 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 # CHALLENGE TYPE PARAMETERS
 # =============================================================================
 
-# Type 1: Standard Navigation
-TYPE_1_WORLD_RANGE = 20
-TYPE_1_N_OBSTACLES = 55
-TYPE_1_HEIGHT_SCALE = 1.5
-TYPE_1_SAFE_ZONE = 2.0
-TYPE_1_R_MIN, TYPE_1_R_MAX = 10, 25
+# Type 1: City Navigation (Procedural Roads)
+TYPE_1_WORLD_RANGE = 50
+TYPE_1_N_BUILDINGS = 350
+TYPE_1_HEIGHT_SCALE = 1.0
+TYPE_1_SAFE_ZONE = 1.0
+TYPE_1_R_MIN, TYPE_1_R_MAX = 25, 45
 TYPE_1_H_MIN, TYPE_1_H_MAX = 3, 10
 TYPE_1_START_H_MIN, TYPE_1_START_H_MAX = 0.05, 10
+TYPE_1_HORIZON = 90
 
 # Type 2: Higher Obstacles
 TYPE_2_WORLD_RANGE = 20
@@ -173,6 +174,7 @@ TYPE_2_SAFE_ZONE = 2.0
 TYPE_2_R_MIN, TYPE_2_R_MAX = 10, 25
 TYPE_2_H_MIN, TYPE_2_H_MAX = 3, 10
 TYPE_2_START_H_MIN, TYPE_2_START_H_MAX = 0.05, 10
+TYPE_2_HORIZON = 60
 
 # Type 3: Easy Navigation
 TYPE_3_WORLD_RANGE = 20
@@ -182,6 +184,7 @@ TYPE_3_SAFE_ZONE = 2.0
 TYPE_3_R_MIN, TYPE_3_R_MAX = 10, 25
 TYPE_3_H_MIN, TYPE_3_H_MAX = 3, 10
 TYPE_3_START_H_MIN, TYPE_3_START_H_MAX = 0.05, 10
+TYPE_3_HORIZON = 60
 
 # Type 4: Open Flight (No Obstacles)
 TYPE_4_WORLD_RANGE = 20
@@ -191,6 +194,7 @@ TYPE_4_SAFE_ZONE = 0.0
 TYPE_4_R_MIN, TYPE_4_R_MAX = 10, 25
 TYPE_4_H_MIN, TYPE_4_H_MAX = 3, 10
 TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.05, 10
+TYPE_4_HORIZON = 60
 
 # Type 5: Moving Platform
 TYPE_5_WORLD_RANGE = 20
@@ -200,6 +204,7 @@ TYPE_5_SAFE_ZONE = 3.0
 TYPE_5_R_MIN, TYPE_5_R_MAX = 10, 25
 TYPE_5_H_MIN, TYPE_5_H_MAX = 3, 10
 TYPE_5_START_H_MIN, TYPE_5_START_H_MAX = 0.05, 10
+TYPE_5_HORIZON = 60
 TYPE_5_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX = 0.4, 0.8
 TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX = 1.5, 2.5

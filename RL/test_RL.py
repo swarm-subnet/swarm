@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from stable_baselines3 import PPO
 
-from swarm.constants import SIM_DT, HORIZON_SEC, SPEED_LIMIT
+from swarm.constants import SIM_DT, SPEED_LIMIT
 from swarm.core.drone import track_drone
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env
@@ -105,7 +105,7 @@ def main():
     if not args.model.exists():
         raise FileNotFoundError(f"Policy file not found: {args.model}")
 
-    task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=args.seed)
+    task = random_task(sim_dt=SIM_DT, seed=args.seed)
 
     print(f"Evaluating policy at {args.model} …")
     _init_env = make_env(task, gui=False)

@@ -17,7 +17,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import random_task
-from swarm.constants import SIM_DT, HORIZON_SEC
+from swarm.constants import SIM_DT
 
 
 def main():
@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--timesteps", type=int, default=10000, help="Training timesteps")
     args = parser.parse_args()
 
-    task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=1)
+    task = random_task(sim_dt=SIM_DT, seed=1)
 
     def make_training_env():
         return make_env(task, gui=False)
