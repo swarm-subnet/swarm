@@ -209,6 +209,7 @@ TYPE_5_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX = 0.4, 0.8
 TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX = 1.5, 2.5
 TYPE_5_DELAY_MIN, TYPE_5_DELAY_MAX = 0.0, 2.0
+TYPE_5_TRANSITION_MIN, TYPE_5_TRANSITION_MAX = 2.5, 3.5
 TYPE_5_LINEAR_DIRECTIONS = ["x", "y", "xy"]
 
 # =============================================================================
