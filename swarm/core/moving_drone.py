@@ -25,6 +25,7 @@ from swarm.constants import (
     TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX,
     TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX,
     TYPE_5_DELAY_MIN, TYPE_5_DELAY_MAX,
+    TYPE_5_TRANSITION_MIN, TYPE_5_TRANSITION_MAX,
     TYPE_5_LINEAR_DIRECTIONS,
 )
 
@@ -184,6 +185,7 @@ class MovingDroneAviary(BaseRLAviary):
             self._platform_speed = 0.0
             self._platform_radius = 0.0
             self._platform_delay = 0.0
+            self._platform_transition_time = 0.0
             self._platform_phase = 0.0
             self._platform_linear_dir = "x"
             self._platform_linear_angle = 0.0
@@ -193,20 +195,14 @@ class MovingDroneAviary(BaseRLAviary):
         self._platform_speed = rng.uniform(TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX)
         self._platform_radius = rng.uniform(TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX)
         self._platform_delay = rng.uniform(TYPE_5_DELAY_MIN, TYPE_5_DELAY_MAX)
+        self._platform_transition_time = rng.uniform(TYPE_5_TRANSITION_MIN, TYPE_5_TRANSITION_MAX)
         self._platform_phase = rng.uniform(0, 2 * np.pi)
         dir_idx = rng.randint(0, len(TYPE_5_LINEAR_DIRECTIONS))
         self._platform_linear_dir = TYPE_5_LINEAR_DIRECTIONS[dir_idx]
         self._platform_linear_angle = rng.uniform(0, 2 * np.pi)
 
-    def _calculate_platform_position(self, t: float) -> np.ndarray:
-        """Calculate platform position at time t based on movement pattern."""
-        if self.task.challenge_type != 5:
-            return self._platform_orbit_center.copy()
-
-        t_eff = max(0.0, t - self._platform_delay)
-        if t_eff == 0.0:
-            return self._platform_orbit_center.copy()
-
+    def _get_orbit_position(self, t_eff: float) -> np.ndarray:
+        """Calculate orbit position for a given effective time."""
         center = self._platform_orbit_center
         speed = self._platform_speed
         radius = self._platform_radius
@@ -238,7 +234,29 @@ class MovingDroneAviary(BaseRLAviary):
             y = center[1] + radius * math.sin(2 * angle) / 2
             return np.array([x, y, center[2]], dtype=np.float32)
 
-        return center.copy()
+        return np.array(center, dtype=np.float32)
+
+    def _calculate_platform_position(self, t: float) -> np.ndarray:
+        """Calculate platform position at time t with smooth transition."""
+        if self.task.challenge_type != 5:
+            return self._platform_orbit_center.copy()
+
+        delay = self._platform_delay
+        transition = self._platform_transition_time
+        center = self._platform_orbit_center
+
+        if t < delay:
+            return np.array(center, dtype=np.float32)
+
+        orbit_start = self._get_orbit_position(0.0)
+
+        if t < delay + transition:
+            t_ratio = (t - delay) / transition
+            t_smooth = t_ratio * t_ratio * (3.0 - 2.0 * t_ratio)
+            return center + t_smooth * (orbit_start - center)
+
+        t_eff = t - delay - transition
+        return self._get_orbit_position(t_eff)
     
     def _update_moving_platform(self):
         """Update platform position for moving platform challenge."""

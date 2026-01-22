@@ -14,8 +14,7 @@ where
 Both weights sum to one. The final score is clamped to ``[0, 1]``.
 """
 from __future__ import annotations
-import math
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from swarm.protocol import MapTask
@@ -33,11 +32,11 @@ def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
 def _calculate_target_time(task: "MapTask") -> float:
     """Calculate target time based on distance and 6% buffer."""
     import numpy as np
-    
+
     start_pos = np.array(task.start)
     goal_pos = np.array(task.goal)
     distance = np.linalg.norm(goal_pos - start_pos)
-    
+
     # Minimum achievable duration includes the mandatory hover window for success.
     min_time = (distance / SPEED_LIMIT) + HOVER_SEC
     return min_time * 1.06
@@ -81,7 +80,7 @@ def flight_reward(
         raise ValueError("'horizon' must be positive")
 
     success_term = 1.0 if success else 0.0
-    
+
     if success_term == 0.0:
         if legitimate_model and t > 0.0:
             return 0.01
@@ -89,7 +88,7 @@ def flight_reward(
 
     if task is not None:
         target_time = _calculate_target_time(task)
-        
+
         if t <= target_time:
             time_term = 1.0
         else:

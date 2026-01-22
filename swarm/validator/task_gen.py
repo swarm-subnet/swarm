@@ -15,15 +15,15 @@ from swarm.constants import (
     START_PLATFORM_MAX_Z,
     CHALLENGE_TYPE_DISTRIBUTION,
     TYPE_1_WORLD_RANGE, TYPE_1_R_MIN, TYPE_1_R_MAX, TYPE_1_H_MIN, TYPE_1_H_MAX,
-    TYPE_1_START_H_MIN, TYPE_1_START_H_MAX,
+    TYPE_1_START_H_MIN, TYPE_1_START_H_MAX, TYPE_1_HORIZON,
     TYPE_2_WORLD_RANGE, TYPE_2_R_MIN, TYPE_2_R_MAX, TYPE_2_H_MIN, TYPE_2_H_MAX,
-    TYPE_2_START_H_MIN, TYPE_2_START_H_MAX,
+    TYPE_2_START_H_MIN, TYPE_2_START_H_MAX, TYPE_2_HORIZON,
     TYPE_3_WORLD_RANGE, TYPE_3_R_MIN, TYPE_3_R_MAX, TYPE_3_H_MIN, TYPE_3_H_MAX,
-    TYPE_3_START_H_MIN, TYPE_3_START_H_MAX,
+    TYPE_3_START_H_MIN, TYPE_3_START_H_MAX, TYPE_3_HORIZON,
     TYPE_4_WORLD_RANGE, TYPE_4_R_MIN, TYPE_4_R_MAX, TYPE_4_H_MIN, TYPE_4_H_MAX,
-    TYPE_4_START_H_MIN, TYPE_4_START_H_MAX,
+    TYPE_4_START_H_MIN, TYPE_4_START_H_MAX, TYPE_4_HORIZON,
     TYPE_5_WORLD_RANGE, TYPE_5_R_MIN, TYPE_5_R_MAX, TYPE_5_H_MIN, TYPE_5_H_MAX,
-    TYPE_5_START_H_MIN, TYPE_5_START_H_MAX,
+    TYPE_5_START_H_MIN, TYPE_5_START_H_MAX, TYPE_5_HORIZON,
 )
 
 
@@ -33,30 +33,35 @@ TYPE_PARAMS = {
         'r_min': TYPE_1_R_MIN, 'r_max': TYPE_1_R_MAX,
         'h_min': TYPE_1_H_MIN, 'h_max': TYPE_1_H_MAX,
         'start_h_min': TYPE_1_START_H_MIN, 'start_h_max': TYPE_1_START_H_MAX,
+        'horizon': TYPE_1_HORIZON,
     },
     2: {
         'world_range': TYPE_2_WORLD_RANGE,
         'r_min': TYPE_2_R_MIN, 'r_max': TYPE_2_R_MAX,
         'h_min': TYPE_2_H_MIN, 'h_max': TYPE_2_H_MAX,
         'start_h_min': TYPE_2_START_H_MIN, 'start_h_max': TYPE_2_START_H_MAX,
+        'horizon': TYPE_2_HORIZON,
     },
     3: {
         'world_range': TYPE_3_WORLD_RANGE,
         'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
         'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
         'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
+        'horizon': TYPE_3_HORIZON,
     },
     4: {
         'world_range': TYPE_4_WORLD_RANGE,
         'r_min': TYPE_4_R_MIN, 'r_max': TYPE_4_R_MAX,
         'h_min': TYPE_4_H_MIN, 'h_max': TYPE_4_H_MAX,
         'start_h_min': TYPE_4_START_H_MIN, 'start_h_max': TYPE_4_START_H_MAX,
+        'horizon': TYPE_4_HORIZON,
     },
     5: {
         'world_range': TYPE_5_WORLD_RANGE,
         'r_min': TYPE_5_R_MIN, 'r_max': TYPE_5_R_MAX,
         'h_min': TYPE_5_H_MIN, 'h_max': TYPE_5_H_MAX,
         'start_h_min': TYPE_5_START_H_MIN, 'start_h_max': TYPE_5_START_H_MAX,
+        'horizon': TYPE_5_HORIZON,
     },
 }
 
@@ -158,7 +163,7 @@ def _goal_from_origin(seed_rng: random.Random, params: dict) -> Tuple[float, flo
     return x, y, z
 
 
-def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> MapTask:
+def random_task(sim_dt: float, seed: Optional[int] = None) -> MapTask:
     if seed is None:
         seed = random.randrange(2**32)
     rng = random.Random(seed)
@@ -186,7 +191,7 @@ def random_task(sim_dt: float, horizon: float, seed: Optional[int] = None) -> Ma
         start=start,
         goal=goal,
         sim_dt=sim_dt,
-        horizon=horizon,
+        horizon=params['horizon'],
         challenge_type=chosen_type,
         version="1",
     )

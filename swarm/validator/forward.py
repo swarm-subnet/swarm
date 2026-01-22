@@ -909,19 +909,20 @@ async def forward(self) -> None:
 
         if USE_SYNCHRONIZED_SEEDS:
             seed, window_start, window_end = self.seed_manager.generate_seed()
-            task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=seed)
+            task = random_task(sim_dt=SIM_DT, seed=seed)
         else:
-            task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC)
+            task = random_task(sim_dt=SIM_DT)
 
         start_pos = np.array(task.start)
         goal_pos = np.array(task.goal)
         distance = np.linalg.norm(goal_pos - start_pos)
 
         challenge_type_names = {
-            1: "Type 1 (Standard)",
-            2: "Type 2 (higher obstacles)",
+            1: "Type 1 (City navigation)",
+            2: "Type 2 (Higher obstacles)",
             3: "Type 3 (Easy)",
-            4: "Type 4 (No obstacles)"
+            4: "Type 4 (No obstacles)",
+            5: "Type 5 (Moving platform)",
         }
         type_name = challenge_type_names.get(task.challenge_type, f"Type {task.challenge_type}")
 

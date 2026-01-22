@@ -33,7 +33,7 @@ swarm_path = str(Path(__file__).resolve().parent.parent)
 if swarm_path not in sys.path:
     sys.path.insert(0, swarm_path)
 
-from swarm.constants import SIM_DT, HORIZON_SEC, SPEED_LIMIT
+from swarm.constants import SIM_DT, SPEED_LIMIT
 from swarm.core.drone import track_drone
 from swarm.protocol import ValidationResult, MapTask
 from swarm.utils.env_factory import make_env
@@ -261,7 +261,7 @@ def main():
     if not _check_folder_structure(args.folder):
         sys.exit(1)
     
-    task = random_task(sim_dt=SIM_DT, horizon=HORIZON_SEC, seed=args.seed)
+    task = random_task(sim_dt=SIM_DT, seed=args.seed)
     
     print(f"\n📋 Task Details:")
     print(f"   Start: {task.start}")
