@@ -54,6 +54,8 @@ from swarm.constants import (
     USE_SYNCHRONIZED_SEEDS,
     SEED_WINDOW_MINUTES,
     PARALLEL_BATCH_SIZE,
+    MAX_CONCURRENT_CONNECTIONS,
+    BATCH_DELAY_SEC,
 )
 
 
@@ -506,25 +508,33 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     """
     For every UID return the local Path to its latest .zip.
     Downloads if the cached SHA differs from the miner's PolicyRef.
-    Uses parallel batching for improved performance.
+    Uses parallel batching with connection limiting for reliability.
     """
     MODEL_DIR.mkdir(exist_ok=True)
     paths: Dict[int, Path] = {}
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONNECTIONS)
+
+    async def _limited_process(uid: int) -> Tuple[int, Optional[Path]]:
+        async with semaphore:
+            return await _process_single_uid(self, uid)
 
     for batch_start in range(0, len(uids), PARALLEL_BATCH_SIZE):
         batch = uids[batch_start:batch_start + PARALLEL_BATCH_SIZE]
-        
+
         results = await asyncio.gather(
-            *[_process_single_uid(self, uid) for uid in batch],
+            *[_limited_process(uid) for uid in batch],
             return_exceptions=True
         )
-        
+
         for result in results:
             if isinstance(result, Exception):
                 continue
             uid, path = result
             if path is not None:
                 paths[uid] = path
+
+        if batch_start + PARALLEL_BATCH_SIZE < len(uids):
+            await asyncio.sleep(BATCH_DELAY_SEC)
 
     return paths
 
@@ -827,23 +837,31 @@ async def _check_single_low_performer(self, uid: int) -> None:
 
 async def _check_low_performer_model_updates(self) -> None:
     """Check if low performer miners have updated their models.
-    
-    Queries low performers in parallel batches. If hash differs from stored,
-    clears low performer status and grants grace period.
+
+    Queries low performers in parallel batches with connection limiting.
+    If hash differs from stored, clears low performer status and grants grace period.
     """
     low_performer_uids = get_low_performer_uids()
     if not low_performer_uids:
         return
 
     bt.logging.info(f"Checking {len(low_performer_uids)} low performers for model updates")
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONNECTIONS)
+
+    async def _limited_check(uid: int) -> None:
+        async with semaphore:
+            await _check_single_low_performer(self, uid)
 
     for batch_start in range(0, len(low_performer_uids), PARALLEL_BATCH_SIZE):
         batch = low_performer_uids[batch_start:batch_start + PARALLEL_BATCH_SIZE]
-        
+
         await asyncio.gather(
-            *[_check_single_low_performer(self, uid) for uid in batch],
+            *[_limited_check(uid) for uid in batch],
             return_exceptions=True
         )
+
+        if batch_start + PARALLEL_BATCH_SIZE < len(low_performer_uids):
+            await asyncio.sleep(BATCH_DELAY_SEC)
 
 
 async def forward(self) -> None:
