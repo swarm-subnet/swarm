@@ -11,14 +11,14 @@ from pathlib import Path
 # NETWORK & COMMUNICATION
 # =============================================================================
 
-QUERY_REF_TIMEOUT = 6.0                 # PolicyRef request timeout (seconds)
+QUERY_REF_TIMEOUT = 5.0                 # PolicyRef request timeout (seconds)
 QUERY_BLOB_TIMEOUT = 30.0               # Model blob download timeout (seconds)
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
 PARALLEL_BATCH_SIZE = 8                 # Number of parallel requests per batch for miner queries
 MAX_CONCURRENT_CONNECTIONS = 6          # Maximum concurrent dendrite connections
 BATCH_DELAY_SEC = 0.15                  # Delay between batches to prevent resource exhaustion
 
-PRIORITY_RETRY_TIMEOUT = 8.0            # Extended timeout for priority UID retry (seconds)
+PRIORITY_RETRY_TIMEOUT = 7.0            # Extended timeout for priority UID retry (seconds)
 MIN_RESPONSE_STREAK = 2                 # Minimum consecutive responses to qualify as priority
 MAX_FAILED_CYCLES = 3                   # Consecutive failures before resetting streak
 
