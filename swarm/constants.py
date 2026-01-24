@@ -18,6 +18,10 @@ PARALLEL_BATCH_SIZE = 8                 # Number of parallel requests per batch 
 MAX_CONCURRENT_CONNECTIONS = 6          # Maximum concurrent dendrite connections
 BATCH_DELAY_SEC = 0.15                  # Delay between batches to prevent resource exhaustion
 
+PRIORITY_RETRY_TIMEOUT = 8.0            # Extended timeout for priority UID retry (seconds)
+MIN_RESPONSE_STREAK = 2                 # Minimum consecutive responses to qualify as priority
+MAX_FAILED_CYCLES = 3                   # Consecutive failures before resetting streak
+
 # =============================================================================
 # SEED SYNCHRONIZATION
 # =============================================================================

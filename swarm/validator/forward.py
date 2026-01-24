@@ -56,6 +56,9 @@ from swarm.constants import (
     PARALLEL_BATCH_SIZE,
     MAX_CONCURRENT_CONNECTIONS,
     BATCH_DELAY_SEC,
+    PRIORITY_RETRY_TIMEOUT,
+    MIN_RESPONSE_STREAK,
+    MAX_FAILED_CYCLES,
 )
 
 
@@ -94,6 +97,61 @@ def _zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
     except Exception as e:
         bt.logging.error(f"ZIP inspection error: {e}")
         return False
+
+
+def _update_response_tracking(uid: int, responded: bool) -> None:
+    ensure_avgs_directory()
+    file_path = AVGS_DIR / f"uid_{uid}.json"
+    
+    if file_path.exists():
+        try:
+            with open(file_path, 'r') as f:
+                history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = {"uid": uid}
+    else:
+        history = {"uid": uid}
+    
+    history["uid"] = uid
+    streak = history.get("response_streak", 0)
+    failed = history.get("failed_cycles", 0)
+    
+    if responded:
+        history["response_streak"] = streak + 1
+        history["failed_cycles"] = 0
+    else:
+        history["failed_cycles"] = failed + 1
+        if failed + 1 >= MAX_FAILED_CYCLES:
+            history["response_streak"] = 0
+    
+    temp_path = file_path.with_suffix(".tmp")
+    try:
+        with open(temp_path, 'w') as f:
+            json.dump(history, f, indent=2)
+        temp_path.replace(file_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+
+
+def _get_priority_uids() -> set:
+    ensure_avgs_directory()
+    priority = set()
+    
+    for file_path in AVGS_DIR.glob("uid_*.json"):
+        try:
+            uid_str = file_path.stem.replace("uid_", "")
+            uid = int(uid_str)
+            
+            with open(file_path, 'r') as f:
+                history = json.load(f)
+            streak = history.get("response_streak", 0)
+            if streak >= MIN_RESPONSE_STREAK:
+                priority.add(uid)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError):
+            continue
+    
+    return priority
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # 2.  Secure, cached model download
@@ -505,11 +563,6 @@ async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
 
 
 async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
-    """
-    For every UID return the local Path to its latest .zip.
-    Downloads if the cached SHA differs from the miner's PolicyRef.
-    Uses parallel batching with connection limiting for reliability.
-    """
     MODEL_DIR.mkdir(exist_ok=True)
     paths: Dict[int, Path] = {}
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONNECTIONS)
@@ -521,6 +574,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
         async with semaphore:
             return await _process_single_uid(self, uid)
 
+    queried_uids = set()
     for batch_start in range(0, len(uids), PARALLEL_BATCH_SIZE):
         batch = uids[batch_start:batch_start + PARALLEL_BATCH_SIZE]
         batch_num = batch_start // PARALLEL_BATCH_SIZE + 1
@@ -535,6 +589,7 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
             if isinstance(result, Exception):
                 continue
             uid, path = result
+            queried_uids.add(uid)
             if path is not None:
                 paths[uid] = path
                 batch_found += 1
@@ -545,8 +600,92 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
         if batch_start + PARALLEL_BATCH_SIZE < len(uids):
             await asyncio.sleep(BATCH_DELAY_SEC)
 
+    priority_uids = _get_priority_uids()
+    failed_priority = [u for u in priority_uids if u in queried_uids and u not in paths]
+    
+    if failed_priority:
+        bt.logging.info(f"Retrying {len(failed_priority)} priority UIDs: {failed_priority}")
+        
+        for uid in failed_priority:
+            try:
+                result = await _process_single_uid_retry(self, uid)
+                if result[1] is not None:
+                    paths[uid] = result[1]
+                    bt.logging.info(f"Priority retry success for UID {uid}")
+            except Exception:
+                pass
+
+    for uid in queried_uids:
+        _update_response_tracking(uid, uid in paths)
+
     bt.logging.info(f"Model fetch complete: found {len(paths)} models from {len(uids)} UIDs")
     return paths
+
+
+async def _process_single_uid_retry(self, uid: int) -> Tuple[int, Optional[Path]]:
+    try:
+        axon = self.metagraph.axons[uid]
+
+        try:
+            responses = await send_with_fresh_uuid(
+                wallet=self.wallet,
+                synapse=PolicySynapse.request_ref(),
+                axon=axon,
+                timeout=PRIORITY_RETRY_TIMEOUT,
+            )
+
+            if not responses:
+                return (uid, None)
+
+            syn = responses[0]
+
+            if not syn.ref:
+                return (uid, None)
+
+            ref = PolicyRef(**syn.ref)
+        except Exception:
+            return (uid, None)
+
+        blacklist = load_blacklist()
+        if ref.sha256 in blacklist:
+            return (uid, None)
+
+        model_fp = MODEL_DIR / f"UID_{uid}.zip"
+        if model_fp.exists() and model_fp.is_dir():
+            shutil.rmtree(model_fp)
+
+        up_to_date = False
+        if model_fp.is_file():
+            try:
+                up_to_date = sha256sum(model_fp) == ref.sha256
+            except Exception:
+                up_to_date = False
+
+        if up_to_date:
+            if (
+                model_fp.stat().st_size <= MAX_MODEL_BYTES
+                and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
+            ):
+                check_and_update_model_hash(uid, ref.sha256)
+                return (uid, model_fp)
+            else:
+                model_fp.unlink(missing_ok=True)
+
+        await _download_model(self, axon, ref, model_fp, uid)
+        if (
+            model_fp.is_file()
+            and sha256sum(model_fp) == ref.sha256
+            and model_fp.stat().st_size <= MAX_MODEL_BYTES
+            and _zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
+        ):
+            check_and_update_model_hash(uid, ref.sha256)
+            return (uid, model_fp)
+        else:
+            model_fp.unlink(missing_ok=True)
+            return (uid, None)
+
+    except Exception:
+        return (uid, None)
 
 
 
@@ -677,7 +816,9 @@ def load_uid_history(uid: int) -> dict:
         "total_runs": 0,
         "last_updated": 0.0,
         "all_runs": [],
-        "normalized_score": 0.0
+        "normalized_score": 0.0,
+        "response_streak": 0,
+        "failed_cycles": 0
     }
 
 def save_uid_history(uid: int, history: dict):
