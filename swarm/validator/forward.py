@@ -513,6 +513,9 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
     MODEL_DIR.mkdir(exist_ok=True)
     paths: Dict[int, Path] = {}
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONNECTIONS)
+    total_batches = (len(uids) + PARALLEL_BATCH_SIZE - 1) // PARALLEL_BATCH_SIZE
+    
+    bt.logging.info(f"Starting model fetch for {len(uids)} UIDs in {total_batches} batches")
 
     async def _limited_process(uid: int) -> Tuple[int, Optional[Path]]:
         async with semaphore:
@@ -520,22 +523,29 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
 
     for batch_start in range(0, len(uids), PARALLEL_BATCH_SIZE):
         batch = uids[batch_start:batch_start + PARALLEL_BATCH_SIZE]
+        batch_num = batch_start // PARALLEL_BATCH_SIZE + 1
 
         results = await asyncio.gather(
             *[_limited_process(uid) for uid in batch],
             return_exceptions=True
         )
 
+        batch_found = 0
         for result in results:
             if isinstance(result, Exception):
                 continue
             uid, path = result
             if path is not None:
                 paths[uid] = path
+                batch_found += 1
+        
+        if batch_num % 5 == 0 or batch_found > 0:
+            bt.logging.debug(f"Batch {batch_num}/{total_batches}: found {batch_found} models, total so far: {len(paths)}")
 
         if batch_start + PARALLEL_BATCH_SIZE < len(uids):
             await asyncio.sleep(BATCH_DELAY_SEC)
 
+    bt.logging.info(f"Model fetch complete: found {len(paths)} models from {len(uids)} UIDs")
     return paths
 
 

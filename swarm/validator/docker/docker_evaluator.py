@@ -257,7 +257,11 @@ class DockerSecureEvaluator:
         
         async def run_evaluation():
             async with capnp.kj_loop():
-                stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=rpc_port)
+                try:
+                    stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=rpc_port)
+                except Exception as e:
+                    bt.logging.warning(f"Cap'n Proto connection failed for UID {uid} on port {rpc_port}: {e}")
+                    raise
                 client = capnp.TwoPartyClient(stream)
                 agent = client.bootstrap().cast_as(agent_capnp.Agent)
                 
@@ -366,11 +370,11 @@ class DockerSecureEvaluator:
             )
             return result
         except (BrokenPipeError, ConnectionResetError, ConnectionRefusedError, OSError) as e:
-            bt.logging.debug(f"RPC connection error for UID {uid}: {e}")
+            bt.logging.warning(f"RPC connection error for UID {uid}: {e}")
             return ValidationResult(uid, False, 0.0, 0.0)
         except Exception as e:
             import traceback
-            bt.logging.debug(f"RPC evaluation failed for UID {uid}: {e}\n{traceback.format_exc()}")
+            bt.logging.warning(f"RPC evaluation failed for UID {uid}: {e}\n{traceback.format_exc()}")
             return ValidationResult(uid, False, 0.0, 0.0)
     
     def _find_free_port(self) -> int:
@@ -690,6 +694,16 @@ class DockerSecureEvaluator:
                 bt.logging.warning(f"❌ RPC server failed to start for UID {uid}")
                 self._log_container_failure(container_name, uid, "rpc_connection_failed")
                 subprocess.run(["docker", "kill", container_name], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                return ValidationResult(uid, False, 0.0, 0.0)
+            
+            container_check = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                capture_output=True, text=True, timeout=5
+            )
+            if container_check.returncode != 0 or "true" not in container_check.stdout.lower():
+                bt.logging.warning(f"❌ Container stopped before evaluation for UID {uid}")
+                self._log_container_failure(container_name, uid, "container_stopped_before_eval")
                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
                 return ValidationResult(uid, False, 0.0, 0.0)
             
