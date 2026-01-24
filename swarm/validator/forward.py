@@ -100,37 +100,38 @@ def _zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
 
 
 def _update_response_tracking(uid: int, responded: bool) -> None:
-    ensure_avgs_directory()
-    file_path = AVGS_DIR / f"uid_{uid}.json"
-    
-    if file_path.exists():
-        try:
-            with open(file_path, 'r') as f:
-                history = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            history = {"uid": uid}
-    else:
-        history = {"uid": uid}
-    
-    history["uid"] = uid
-    streak = history.get("response_streak", 0)
-    failed = history.get("failed_cycles", 0)
-    
-    if responded:
-        history["response_streak"] = streak + 1
-        history["failed_cycles"] = 0
-    else:
-        history["failed_cycles"] = failed + 1
-        if failed + 1 >= MAX_FAILED_CYCLES:
-            history["response_streak"] = 0
-    
-    temp_path = file_path.with_suffix(".tmp")
     try:
+        uid = int(uid)
+        ensure_avgs_directory()
+        file_path = AVGS_DIR / f"uid_{uid}.json"
+        
+        if file_path.exists():
+            try:
+                with open(file_path, 'r') as f:
+                    history = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                history = {"uid": uid}
+        else:
+            history = {"uid": uid}
+        
+        history["uid"] = uid
+        streak = history.get("response_streak", 0)
+        failed = history.get("failed_cycles", 0)
+        
+        if responded:
+            history["response_streak"] = streak + 1
+            history["failed_cycles"] = 0
+        else:
+            history["failed_cycles"] = failed + 1
+            if failed + 1 >= MAX_FAILED_CYCLES:
+                history["response_streak"] = 0
+        
+        temp_path = file_path.with_suffix(".tmp")
         with open(temp_path, 'w') as f:
             json.dump(history, f, indent=2)
         temp_path.replace(file_path)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
+    except Exception as e:
+        bt.logging.warning(f"Failed to update response tracking for UID {uid}: {e}")
 
 
 def _get_priority_uids() -> set:
