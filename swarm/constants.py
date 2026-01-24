@@ -11,7 +11,7 @@ from pathlib import Path
 # NETWORK & COMMUNICATION
 # =============================================================================
 
-QUERY_REF_TIMEOUT = 5.0                 # PolicyRef request timeout (seconds) - increased for reliability
+QUERY_REF_TIMEOUT = 6.0                 # PolicyRef request timeout (seconds)
 QUERY_BLOB_TIMEOUT = 30.0               # Model blob download timeout (seconds)
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
 PARALLEL_BATCH_SIZE = 8                 # Number of parallel requests per batch for miner queries
