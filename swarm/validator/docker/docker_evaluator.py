@@ -501,7 +501,21 @@ class DockerSecureEvaluator:
             
             with zipfile.ZipFile(model_path, 'r') as zf:
                 zf.extractall(submission_dir)
-            
+
+            contents = list(submission_dir.iterdir())
+            if len(contents) == 1 and contents[0].is_dir():
+                nested_dir = contents[0]
+                for item in nested_dir.iterdir():
+                    target = submission_dir / item.name
+                    if target.exists():
+                        if target.is_dir():
+                            shutil.rmtree(target)
+                        else:
+                            target.unlink()
+                    shutil.move(str(item), str(target))
+                nested_dir.rmdir()
+                bt.logging.debug(f"Flattened nested directory structure for UID {uid}")
+
             shutil.copy(template_dir / "agent.capnp", submission_dir)
             shutil.copy(template_dir / "agent_server.py", submission_dir)
             shutil.copy(template_dir / "main.py", submission_dir)
