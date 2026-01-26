@@ -679,7 +679,7 @@ class DockerSecureEvaluator:
             
             if connected:
                 rpc_ready = False
-                max_rpc_wait = 20
+                max_rpc_wait = 35
                 min_rpc_wait = 4
                 rpc_check_interval = 2
                 rpc_wait_start = time.time()
