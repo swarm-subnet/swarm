@@ -14,7 +14,7 @@ from gym_pybullet_drones.utils.enums import (
 # ── project‑level utilities ────────────────────────────────────────────────
 from swarm.validator.reward import flight_reward
 from swarm.constants import (
-    DRONE_HULL_RADIUS, MAX_RAY_DISTANCE,
+    DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
     SEARCH_AREA_NOISE_XY, SEARCH_AREA_NOISE_Z,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
@@ -349,15 +349,16 @@ class MovingDroneAviary(BaseRLAviary):
         pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
         pos = np.asarray(pos, dtype=float)
 
-        start = [pos[0], pos[1], pos[2] - DRONE_HULL_RADIUS]
+        ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
+        start = [pos[0], pos[1], pos[2] - ray_origin_offset]
         end = [pos[0], pos[1], pos[2] - MAX_RAY_DISTANCE]
 
         result = p.rayTest(start, end, physicsClientId=cli)
         hit_uid, _, hit_frac, _, _ = result[0]
 
         if hit_uid != -1:
-            seg_len = MAX_RAY_DISTANCE - DRONE_HULL_RADIUS
-            return min(MAX_RAY_DISTANCE, DRONE_HULL_RADIUS + hit_frac * seg_len)
+            seg_len = MAX_RAY_DISTANCE - ray_origin_offset
+            return min(MAX_RAY_DISTANCE, ray_origin_offset + hit_frac * seg_len)
         return MAX_RAY_DISTANCE
 
     def _process_depth(self, depth_buffer: np.ndarray) -> np.ndarray:
