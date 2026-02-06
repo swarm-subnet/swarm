@@ -32,6 +32,7 @@ from swarm.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
 )
 from swarm.utils.config import add_validator_args
+from swarm.constants import AVGS_DIR
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -302,6 +303,17 @@ class BaseValidatorNeuron(BaseNeuron):
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scores[uid] = 0  # hotkey has been replaced
+
+                # Clear UID history to prevent score inheritance exploit
+                # When a new miner registers on a UID, they should not inherit
+                # the previous miner's high scores from easier challenge times
+                history_file = AVGS_DIR / f"uid_{uid}.json"
+                if history_file.exists():
+                    try:
+                        history_file.unlink()
+                        bt.logging.info(f"Cleared history for UID {uid} (hotkey changed)")
+                    except Exception as e:
+                        bt.logging.warning(f"Failed to clear history for UID {uid}: {e}")
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.

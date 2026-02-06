@@ -191,7 +191,7 @@ class MovingDroneAviary(BaseRLAviary):
             self._platform_linear_angle = 0.0
             return
 
-        rng = np.random.RandomState(seed + 77777)
+        rng = np.random.RandomState((seed + 77777) & 0xFFFFFFFF)
         self._platform_speed = rng.uniform(TYPE_5_SPEED_MIN, TYPE_5_SPEED_MAX)
         self._platform_radius = rng.uniform(TYPE_5_RADIUS_MIN, TYPE_5_RADIUS_MAX)
         self._platform_delay = rng.uniform(TYPE_5_DELAY_MIN, TYPE_5_DELAY_MAX)
@@ -597,7 +597,7 @@ class MovingDroneAviary(BaseRLAviary):
 
         img = rgb_obs[0].astype(np.uint8)
         if SENSOR_NOISE_ENABLED:
-            frame_seed = getattr(self.task, 'map_seed', 0) + int(self._time_alive * 1000)
+            frame_seed = (int(getattr(self.task, 'map_seed', 0) or 0) + int(self._time_alive * 1000)) & 0xFFFFFFFF
             img = self._add_sensor_noise(img, frame_seed)
         depth_raw = self.dep[0]
         depth = self._process_depth(depth_raw)
