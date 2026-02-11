@@ -143,8 +143,8 @@ UID_ZERO = 0                            # Special UID for burning emissions
 
 # Reward distribution mechanism
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
-N_RUNS_HISTORY = 300                     # Number of runs to track (shared across all challenge types)
-MIN_RUNS_FOR_WEIGHTS = 100              # Minimum runs required before miner is eligible for weights
+N_RUNS_HISTORY = 100                     # Number of runs to track (shared across all challenge types)
+MIN_RUNS_FOR_WEIGHTS = 40               # Minimum runs required before miner is eligible for weights
 
 # =============================================================================
 # LOW-PERFORMER FILTERING
@@ -152,8 +152,8 @@ MIN_RUNS_FOR_WEIGHTS = 100              # Minimum runs required before miner is 
 
 LOW_PERFORMER_FILTER_ENABLED = True     # Enable filtering of consistently low-scoring models
 MIN_AVG_SCORE_THRESHOLD = 0.2          # Minimum average score to remain in active evaluation pool
-MIN_EVALUATION_RUNS = 20                # Check interval and minimum runs before filtering
-EVALUATION_WINDOW = 20                 # Number of recent runs to evaluate for low-performer detection
+MIN_EVALUATION_RUNS = 10                # Check interval and minimum runs before filtering
+EVALUATION_WINDOW = 10                  # Number of recent runs to evaluate for low-performer detection
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
 # =============================================================================
