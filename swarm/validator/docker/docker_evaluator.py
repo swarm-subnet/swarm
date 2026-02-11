@@ -328,23 +328,27 @@ class DockerSecureEvaluator:
                             entry.tensor.dtype = str(arr.dtype)
 
                         try:
+                            t_act_start = time.time()
                             action_response = await asyncio.wait_for(
                                 agent.act(observation), timeout=step_timeout
                             )
+                            act_ms = (time.time() - t_act_start) * 1000
                             action = np.frombuffer(
                                 action_response.action.data,
                                 dtype=np.dtype(action_response.action.dtype)
                             ).reshape(tuple(action_response.action.shape))
                         except asyncio.TimeoutError:
+                            act_ms = (time.time() - t_act_start) * 1000
                             strikes += 1
                             if is_first_step:
                                 bt.logging.warning(
-                                    f"UID {uid}: first-step timeout ({step_timeout}s), "
+                                    f"UID {uid}: first-step timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
                                     f"strike {strikes}/{RPC_MAX_STRIKES}"
                                 )
                             else:
                                 bt.logging.debug(
-                                    f"UID {uid}: act() timeout, strike {strikes}/{RPC_MAX_STRIKES}"
+                                    f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
+                                    f"strike {strikes}/{RPC_MAX_STRIKES}"
                                 )
                             if strikes >= RPC_MAX_STRIKES:
                                 bt.logging.warning(
