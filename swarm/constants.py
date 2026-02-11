@@ -14,7 +14,7 @@ from pathlib import Path
 QUERY_REF_TIMEOUT = 5.0                 # PolicyRef request timeout (seconds)
 QUERY_BLOB_TIMEOUT = 30.0               # Model blob download timeout (seconds)
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
-PARALLEL_BATCH_SIZE = 8                 # Number of parallel requests per batch for miner queries
+PARALLEL_BATCH_SIZE = 10                # Number of parallel requests per batch for miner queries
 MAX_CONCURRENT_CONNECTIONS = 6          # Maximum concurrent dendrite connections
 BATCH_DELAY_SEC = 0.15                  # Delay between batches to prevent resource exhaustion
 
@@ -27,7 +27,7 @@ MAX_FAILED_CYCLES = 3                   # Consecutive failures before resetting 
 # =============================================================================
 
 USE_SYNCHRONIZED_SEEDS = True           # Enable synchronized seed generation across validators
-SEED_WINDOW_MINUTES = 10                # Time window duration for seed synchronization (minutes)
+SEED_WINDOW_MINUTES = 30                # Time window duration for seed synchronization (minutes)
 
 # =============================================================================
 # SIMULATION & PHYSICS
@@ -67,7 +67,16 @@ PROP_EFF = 0.60                         # Propeller efficiency coefficient
 
 # Model size and validation limits
 MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
-EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
+EVAL_TIMEOUT_SEC = 120.0                # Legacy global timeout (seconds)
+
+# Per-step RPC timeouts (miner inference fairness)
+RPC_STEP_TIMEOUT_SEC = 0.200            # Per agent.act() call (seconds)
+RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for JIT/model warmup (seconds)
+RPC_RESET_TIMEOUT_SEC = 5.0             # agent.reset() timeout (seconds)
+RPC_PING_TIMEOUT_SEC = 2.0              # agent.ping() timeout (seconds)
+RPC_MAX_STRIKES = 5                     # Timeouts before failing evaluation
+GLOBAL_EVAL_CAP_SEC = 590.0             # Hard wall-clock cap for entire evaluation (seconds)
+
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
 BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file

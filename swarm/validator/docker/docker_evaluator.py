@@ -17,7 +17,16 @@ import bittensor as bt
 import numpy as np
 
 from swarm.protocol import MapTask, ValidationResult
-from swarm.constants import EVAL_TIMEOUT_SEC, SIM_DT, SPEED_LIMIT
+from swarm.constants import (
+    SIM_DT,
+    SPEED_LIMIT,
+    GLOBAL_EVAL_CAP_SEC,
+    RPC_STEP_TIMEOUT_SEC,
+    RPC_FIRST_STEP_TIMEOUT_SEC,
+    RPC_RESET_TIMEOUT_SEC,
+    RPC_PING_TIMEOUT_SEC,
+    RPC_MAX_STRIKES,
+)
 from swarm.utils.hash import sha256sum
 from swarm.core.model_verify import add_to_blacklist
 from swarm.validator.reward import flight_reward
@@ -250,11 +259,11 @@ class DockerSecureEvaluator:
         rpc_port: int,
         skip_ping: bool = False
     ) -> ValidationResult:
-        """Synchronous RPC evaluation - runs in separate thread to avoid kj_loop conflicts"""
+        """Synchronous RPC evaluation with per-step miner timeouts."""
         import capnp
         schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
         agent_capnp = capnp.load(str(schema_file))
-        
+
         async def run_evaluation():
             async with capnp.kj_loop():
                 try:
@@ -264,73 +273,107 @@ class DockerSecureEvaluator:
                     raise
                 client = capnp.TwoPartyClient(stream)
                 agent = client.bootstrap().cast_as(agent_capnp.Agent)
-                
+
                 if not skip_ping:
-                    ping_response = await agent.ping("test")
+                    try:
+                        ping_response = await asyncio.wait_for(
+                            agent.ping("test"), timeout=RPC_PING_TIMEOUT_SEC
+                        )
+                    except asyncio.TimeoutError:
+                        raise RuntimeError(f"RPC ping timeout ({RPC_PING_TIMEOUT_SEC}s)")
                     if ping_response.response != "pong":
                         raise RuntimeError("RPC ping failed")
-                
+
                 from swarm.utils.env_factory import make_env
-                
+
                 env = make_env(task, gui=False)
-                
+
                 try:
                     obs, _ = env.reset()
-                    await agent.reset()
-                    
+                    try:
+                        await asyncio.wait_for(
+                            agent.reset(), timeout=RPC_RESET_TIMEOUT_SEC
+                        )
+                    except asyncio.TimeoutError:
+                        bt.logging.warning(f"UID {uid}: agent.reset() timeout ({RPC_RESET_TIMEOUT_SEC}s)")
+                        return ValidationResult(uid, False, 0.0, 0.0)
+
                     pos0 = np.asarray(task.start, dtype=float)
                     t_sim = 0.0
                     success = False
-                    
+                    strikes = 0
+                    is_first_step = True
+
                     lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
                     last_pos = pos0
-                    
+
                     while t_sim < task.horizon:
+                        step_timeout = RPC_FIRST_STEP_TIMEOUT_SEC if is_first_step else RPC_STEP_TIMEOUT_SEC
+
+                        observation = agent_capnp.Observation.new_message()
+                        if isinstance(obs, dict):
+                            entries = observation.init("entries", len(obs))
+                            for i, (key, value) in enumerate(obs.items()):
+                                arr = np.asarray(value, dtype=np.float32)
+                                entries[i].key = key
+                                entries[i].tensor.data = arr.tobytes()
+                                entries[i].tensor.shape = list(arr.shape)
+                                entries[i].tensor.dtype = str(arr.dtype)
+                        else:
+                            arr = np.asarray(obs, dtype=np.float32)
+                            entry = observation.init("entries", 1)[0]
+                            entry.key = "__value__"
+                            entry.tensor.data = arr.tobytes()
+                            entry.tensor.shape = list(arr.shape)
+                            entry.tensor.dtype = str(arr.dtype)
+
                         try:
-                            observation = agent_capnp.Observation.new_message()
-                            
-                            if isinstance(obs, dict):
-                                entries = observation.init("entries", len(obs))
-                                for i, (key, value) in enumerate(obs.items()):
-                                    arr = np.asarray(value, dtype=np.float32)
-                                    entries[i].key = key
-                                    entries[i].tensor.data = arr.tobytes()
-                                    entries[i].tensor.shape = list(arr.shape)
-                                    entries[i].tensor.dtype = str(arr.dtype)
-                            else:
-                                arr = np.asarray(obs, dtype=np.float32)
-                                entry = observation.init("entries", 1)[0]
-                                entry.key = "__value__"
-                                entry.tensor.data = arr.tobytes()
-                                entry.tensor.shape = list(arr.shape)
-                                entry.tensor.dtype = str(arr.dtype)
-                            
-                            action_response = await agent.act(observation)
+                            action_response = await asyncio.wait_for(
+                                agent.act(observation), timeout=step_timeout
+                            )
                             action = np.frombuffer(
                                 action_response.action.data,
                                 dtype=np.dtype(action_response.action.dtype)
                             ).reshape(tuple(action_response.action.shape))
+                        except asyncio.TimeoutError:
+                            strikes += 1
+                            if is_first_step:
+                                bt.logging.warning(
+                                    f"UID {uid}: first-step timeout ({step_timeout}s), "
+                                    f"strike {strikes}/{RPC_MAX_STRIKES}"
+                                )
+                            else:
+                                bt.logging.debug(
+                                    f"UID {uid}: act() timeout, strike {strikes}/{RPC_MAX_STRIKES}"
+                                )
+                            if strikes >= RPC_MAX_STRIKES:
+                                bt.logging.warning(
+                                    f"UID {uid}: max strikes reached ({RPC_MAX_STRIKES}), failing evaluation"
+                                )
+                                return ValidationResult(uid, False, t_sim, 0.0)
+                            action = np.zeros_like(lo)
                         except Exception:
-                            action = np.zeros(5, dtype=np.float32)
-                        
+                            action = np.zeros_like(lo)
+
+                        is_first_step = False
                         act = np.clip(np.asarray(action, dtype=np.float32).reshape(-1), lo, hi)
-                        
+
                         if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
                             if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
                                 n = max(np.linalg.norm(act[:3]), 1e-6)
                                 scale = min(1.0, SPEED_LIMIT / n)
                                 act[:3] *= scale
                                 act = np.clip(act, lo, hi)
-                        
+
                         prev = last_pos
                         obs, _r, terminated, truncated, info = env.step(act[None, :])
                         last_pos = env._getDroneStateVector(0)[0:3]
-                        
+
                         t_sim += SIM_DT
                         if terminated or truncated:
                             success = info.get("success", False)
                             break
-                    
+
                     score = flight_reward(
                         success=success,
                         t=t_sim,
@@ -338,15 +381,14 @@ class DockerSecureEvaluator:
                         task=task,
                         legitimate_model=True,
                     )
-                    
+
                     return ValidationResult(uid, success, t_sim, score)
                 finally:
                     try:
                         env.close()
                     except Exception:
                         pass
-        
-        # Run in fresh event loop to avoid kj_loop conflicts
+
         import asyncio
         loop = asyncio.new_event_loop()
         try:
@@ -724,7 +766,7 @@ class DockerSecureEvaluator:
             try:
                 result = await asyncio.wait_for(
                     self._evaluate_with_rpc_host(task, uid, host_port),
-                    timeout=EVAL_TIMEOUT_SEC
+                    timeout=GLOBAL_EVAL_CAP_SEC
                 )
                 
                 score = float(result.score)
@@ -742,7 +784,7 @@ class DockerSecureEvaluator:
                 return result
                 
             except asyncio.TimeoutError:
-                bt.logging.warning(f"⏱️ Evaluation timeout for UID {uid} (exceeded {EVAL_TIMEOUT_SEC}s)")
+                bt.logging.warning(f"⏱️ Evaluation timeout for UID {uid} (exceeded {GLOBAL_EVAL_CAP_SEC}s)")
                 self._log_container_failure(container_name, uid, "evaluation_timeout")
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success=False, time=0.00, score=0.0000 (TIMEOUT)")

@@ -102,34 +102,18 @@ def _zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
 def _update_response_tracking(uid: int, responded: bool) -> None:
     try:
         uid = int(uid)
-        ensure_avgs_directory()
-        file_path = AVGS_DIR / f"uid_{uid}.json"
-        
-        if file_path.exists():
-            try:
-                with open(file_path, 'r') as f:
-                    history = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError):
-                history = {"uid": uid}
-        else:
-            history = {"uid": uid}
-        
-        history["uid"] = uid
-        streak = history.get("response_streak", 0)
-        failed = history.get("failed_cycles", 0)
-        
+        history = load_uid_history(uid)
+
         if responded:
-            history["response_streak"] = streak + 1
+            history["response_streak"] = history.get("response_streak", 0) + 1
             history["failed_cycles"] = 0
         else:
-            history["failed_cycles"] = failed + 1
-            if failed + 1 >= MAX_FAILED_CYCLES:
+            failed = history.get("failed_cycles", 0) + 1
+            history["failed_cycles"] = failed
+            if failed >= MAX_FAILED_CYCLES:
                 history["response_streak"] = 0
-        
-        temp_path = file_path.with_suffix(".tmp")
-        with open(temp_path, 'w') as f:
-            json.dump(history, f, indent=2)
-        temp_path.replace(file_path)
+
+        save_uid_history(uid, history)
     except Exception as e:
         bt.logging.warning(f"Failed to update response tracking for UID {uid}: {e}")
 
@@ -793,10 +777,24 @@ def _migrate_to_shared_pool(old_history: dict) -> dict:
     }
 
 
+def _default_uid_history(uid: int) -> dict:
+    return {
+        "uid": uid,
+        "total_runs": 0,
+        "last_updated": 0.0,
+        "all_runs": [],
+        "normalized_score": 0.0,
+        "response_streak": 0,
+        "failed_cycles": 0,
+    }
+
+
 def load_uid_history(uid: int) -> dict:
     ensure_avgs_directory()
     uid = int(uid)
     file_path = AVGS_DIR / f"uid_{uid}.json"
+
+    defaults = _default_uid_history(uid)
 
     if file_path.exists():
         try:
@@ -808,19 +806,15 @@ def load_uid_history(uid: int) -> dict:
                 history = _migrate_to_shared_pool(history)
                 save_uid_history(uid, history)
 
+            for key, value in defaults.items():
+                if key not in history:
+                    history[key] = value
+
             return history
         except (FileNotFoundError, json.JSONDecodeError) as e:
             bt.logging.warning(f"Failed to load history for UID {uid}: {e}")
 
-    return {
-        "uid": uid,
-        "total_runs": 0,
-        "last_updated": 0.0,
-        "all_runs": [],
-        "normalized_score": 0.0,
-        "response_streak": 0,
-        "failed_cycles": 0
-    }
+    return defaults
 
 def save_uid_history(uid: int, history: dict):
     ensure_avgs_directory()
