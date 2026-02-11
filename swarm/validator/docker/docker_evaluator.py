@@ -266,23 +266,42 @@ class DockerSecureEvaluator:
 
         async def run_evaluation():
             async with capnp.kj_loop():
-                try:
-                    stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=rpc_port)
-                except Exception as e:
-                    bt.logging.warning(f"Cap'n Proto connection failed for UID {uid} on port {rpc_port}: {e}")
-                    raise
-                client = capnp.TwoPartyClient(stream)
-                agent = client.bootstrap().cast_as(agent_capnp.Agent)
+                stream = None
+                agent = None
+                max_ping_attempts = 6
 
-                if not skip_ping:
+                for attempt in range(1, max_ping_attempts + 1):
                     try:
-                        ping_response = await asyncio.wait_for(
-                            agent.ping("test"), timeout=RPC_PING_TIMEOUT_SEC
-                        )
+                        stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=rpc_port)
+                        client = capnp.TwoPartyClient(stream)
+                        agent = client.bootstrap().cast_as(agent_capnp.Agent)
+
+                        if not skip_ping:
+                            ping_response = await asyncio.wait_for(
+                                agent.ping("test"), timeout=RPC_PING_TIMEOUT_SEC
+                            )
+                            if ping_response.response != "pong":
+                                raise RuntimeError(f"RPC ping failed (attempt {attempt}/{max_ping_attempts})")
+
+                        break
                     except asyncio.TimeoutError:
-                        raise RuntimeError(f"RPC ping timeout ({RPC_PING_TIMEOUT_SEC}s)")
-                    if ping_response.response != "pong":
-                        raise RuntimeError("RPC ping failed")
+                        if attempt >= max_ping_attempts:
+                            raise RuntimeError(
+                                f"RPC ping timeout after {max_ping_attempts} attempts "
+                                f"({RPC_PING_TIMEOUT_SEC}s each)"
+                            )
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        if attempt >= max_ping_attempts:
+                            bt.logging.warning(
+                                f"Cap'n Proto connection/ping failed for UID {uid} on port {rpc_port} "
+                                f"after {max_ping_attempts} attempts: {e}"
+                            )
+                            raise
+                        await asyncio.sleep(0.5)
+
+                if agent is None:
+                    raise RuntimeError("RPC agent not initialized after handshake retries")
 
                 from swarm.utils.env_factory import make_env
 
@@ -740,7 +759,7 @@ class DockerSecureEvaluator:
                     model_hash = sha256sum(model_path)
                     add_to_blacklist(model_hash)
                     return ValidationResult(uid, False, 0.0, 0.0)
-                
+
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f"{timestamp} 🔍 DEBUG: UID {uid} result: success={result.success}, time={result.time_sec:.2f}, score={result.score:.4f}")
                 
