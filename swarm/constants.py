@@ -70,7 +70,7 @@ MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
 EVAL_TIMEOUT_SEC = 120.0                # Legacy global timeout (seconds)
 
 # Per-step RPC timeouts (miner inference fairness)
-RPC_STEP_TIMEOUT_SEC = 0.200            # Per agent.act() call (seconds)
+RPC_STEP_TIMEOUT_SEC = 0.220            # Per agent.act() call (seconds)
 RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for JIT/model warmup (seconds)
 RPC_RESET_TIMEOUT_SEC = 5.0             # agent.reset() timeout (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # agent.ping() timeout (seconds)
