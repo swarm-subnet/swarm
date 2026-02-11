@@ -405,7 +405,7 @@ class DockerSecureEvaluator:
         task: MapTask,
         uid: int,
         rpc_port: int,
-        skip_ping: bool = True
+        skip_ping: bool = False
     ) -> ValidationResult:
         """Async wrapper that runs RPC evaluation in thread pool"""
         try:
@@ -428,29 +428,16 @@ class DockerSecureEvaluator:
             s.bind(('', 0))
             return s.getsockname()[1]
 
-    def _check_rpc_ready(self, port: int, timeout: float = 3.0) -> bool:
-        """Check if RPC server is ready by testing TCP connection and basic handshake"""
-        import socket
-        sock = None
+    def _check_rpc_ready(self, container_name: str, timeout: float = 5.0) -> bool:
+        """Check if RPC server process is running inside the container (without connecting to it)"""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            sock.connect(("localhost", port))
-            sock.send(b'\x00')
-            sock.settimeout(0.5)
-            try:
-                sock.recv(1)
-            except socket.timeout:
-                pass
-            return True
+            result = subprocess.run(
+                ["docker", "top", container_name],
+                capture_output=True, text=True, timeout=timeout
+            )
+            return result.returncode == 0 and "main.py" in result.stdout
         except Exception:
             return False
-        finally:
-            if sock:
-                try:
-                    sock.close()
-                except:
-                    pass
 
     def _get_docker_host_ip(self) -> str:
         """Get the Docker bridge gateway IP (host IP as seen from containers)"""
@@ -705,51 +692,25 @@ class DockerSecureEvaluator:
                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
                 return ValidationResult(uid, False, 0.0, 0.0)
             
-            bt.logging.debug(f"Waiting for RPC server on port {host_port} (max {rpc_timeout}s)...")
+            bt.logging.debug(f"Waiting for RPC server for UID {uid} (max {rpc_timeout}s)...")
             rpc_start = time.time()
-            
-            while time.time() - rpc_start < rpc_timeout:
+            max_rpc_wait = 30
+            rpc_check_interval = 2
+            connected = False
+
+            await asyncio.sleep(4)
+
+            while time.time() - rpc_start < max_rpc_wait:
                 try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(0.5)
-                    conn_result = sock.connect_ex(('localhost', host_port))
-                    sock.close()
-                    if conn_result == 0:
+                    if self._check_rpc_ready(container_name, timeout=5.0):
                         connected = True
                         elapsed = time.time() - rpc_start
-                        bt.logging.debug(f"Port {host_port} open after {elapsed:.1f}s")
+                        bt.logging.debug(f"RPC ready for UID {uid} after {elapsed:.1f}s")
                         break
                 except Exception:
                     pass
-                await asyncio.sleep(1)
-            
-            if connected:
-                rpc_ready = False
-                max_rpc_wait = 35
-                min_rpc_wait = 4
-                rpc_check_interval = 2
-                rpc_wait_start = time.time()
-                
-                await asyncio.sleep(min_rpc_wait)
-                
-                while time.time() - rpc_wait_start < max_rpc_wait:
-                    try:
-                        if self._check_rpc_ready(host_port, timeout=3.0):
-                            rpc_ready = True
-                            elapsed = time.time() - rpc_wait_start
-                            bt.logging.debug(f"RPC ready for UID {uid} after {elapsed:.1f}s")
-                            break
-                    except Exception:
-                        pass
-                    await asyncio.sleep(rpc_check_interval)
-                
-                if not rpc_ready:
-                    bt.logging.warning(f"RPC server not responding for UID {uid} after {max_rpc_wait}s")
-                    self._log_container_failure(container_name, uid, "rpc_not_ready")
-                    subprocess.run(["docker", "kill", container_name], capture_output=True)
-                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-                    return ValidationResult(uid, False, 0.0, 0.0)
-            
+                await asyncio.sleep(rpc_check_interval)
+
             if not connected:
                 bt.logging.warning(f"❌ RPC server failed to start for UID {uid}")
                 self._log_container_failure(container_name, uid, "rpc_connection_failed")
