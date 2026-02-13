@@ -70,12 +70,21 @@ MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
 EVAL_TIMEOUT_SEC = 120.0                # Legacy global timeout (seconds)
 
 # Per-step RPC timeouts (miner inference fairness)
-RPC_STEP_TIMEOUT_SEC = 0.220            # Per agent.act() call (seconds)
+RPC_STEP_TIMEOUT_SEC = 0.220            # Per agent.act() call fallback (seconds)
 RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for JIT/model warmup (seconds)
 RPC_RESET_TIMEOUT_SEC = 5.0             # agent.reset() timeout (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # agent.ping() timeout (seconds)
 RPC_MAX_STRIKES = 5                     # Timeouts before failing evaluation
 GLOBAL_EVAL_CAP_SEC = 590.0             # Hard wall-clock cap for entire evaluation (seconds)
+
+# Hardware-fair calibrated timing
+MINER_COMPUTE_BUDGET_SEC = 0.350        # Guaranteed pure-compute budget per step (seconds)
+CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
+CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
+CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
+CALIBRATION_BENCHMARK_REF_NS = 6_000_000  # Reference CPU benchmark time (ns) for a standard VPS
+CALIBRATION_CPU_FACTOR_CAP = 2.0        # Max CPU scaling factor (prevents abuse on very slow HW)
+CALIBRATION_MARGIN_SEC = 0.015          # Safety margin for response deserialization jitter (seconds)
 
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files

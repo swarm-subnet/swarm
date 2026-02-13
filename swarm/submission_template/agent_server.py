@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+import time
 from pathlib import Path
 
 try:
@@ -48,6 +49,27 @@ class AgentServer(agent_capnp.Agent.Server):
         response.dtype = str(action_np.dtype)
         
         return response
+    
+    async def calibrate(self, obs, **kwargs):
+        entries = list(obs.entries)
+        for entry in entries:
+            _ = np.frombuffer(
+                entry.tensor.data, dtype=np.dtype(entry.tensor.dtype)
+            ).reshape(tuple(entry.tensor.shape))
+
+        t0 = time.perf_counter_ns()
+        a = np.random.randn(256, 256).astype(np.float32)
+        b = np.random.randn(256, 256).astype(np.float32)
+        for _ in range(3):
+            np.dot(a, b)
+        benchmark_ns = time.perf_counter_ns() - t0
+
+        action_np = np.zeros(5, dtype=np.float32)
+        response = agent_capnp.Tensor.new_message()
+        response.data = action_np.tobytes()
+        response.shape = list(action_np.shape)
+        response.dtype = str(action_np.dtype)
+        return response, benchmark_ns
     
     async def reset(self, **kwargs):
         self.agent.reset()

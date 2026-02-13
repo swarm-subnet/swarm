@@ -26,6 +26,13 @@ from swarm.constants import (
     RPC_RESET_TIMEOUT_SEC,
     RPC_PING_TIMEOUT_SEC,
     RPC_MAX_STRIKES,
+    MINER_COMPUTE_BUDGET_SEC,
+    CALIBRATION_ROUNDS,
+    CALIBRATION_OVERHEAD_CAP_SEC,
+    CALIBRATION_TIMEOUT_SEC,
+    CALIBRATION_BENCHMARK_REF_NS,
+    CALIBRATION_CPU_FACTOR_CAP,
+    CALIBRATION_MARGIN_SEC,
 )
 from swarm.utils.hash import sha256sum
 from swarm.core.model_verify import add_to_blacklist
@@ -252,6 +259,27 @@ class DockerSecureEvaluator:
         except Exception as e:
             bt.logging.warning(f"⚠️ Could not retrieve container logs for UID {uid}: {e}")
     
+    @staticmethod
+    def _serialize_observation(agent_capnp, obs):
+        """Serialize a numpy observation dict into a Cap'n Proto Observation message."""
+        message = agent_capnp.Observation.new_message()
+        if isinstance(obs, dict):
+            entries = message.init("entries", len(obs))
+            for i, (key, value) in enumerate(obs.items()):
+                arr = np.asarray(value, dtype=np.float32)
+                entries[i].key = key
+                entries[i].tensor.data = arr.tobytes()
+                entries[i].tensor.shape = list(arr.shape)
+                entries[i].tensor.dtype = str(arr.dtype)
+        else:
+            arr = np.asarray(obs, dtype=np.float32)
+            entry = message.init("entries", 1)[0]
+            entry.key = "__value__"
+            entry.tensor.data = arr.tobytes()
+            entry.tensor.shape = list(arr.shape)
+            entry.tensor.dtype = str(arr.dtype)
+        return message
+
     def _evaluate_with_rpc_sync(
         self,
         task: MapTask,
@@ -259,7 +287,7 @@ class DockerSecureEvaluator:
         rpc_port: int,
         skip_ping: bool = False
     ) -> ValidationResult:
-        """Synchronous RPC evaluation with per-step miner timeouts."""
+        """Synchronous RPC evaluation with hardware-fair calibrated timeouts."""
         import capnp
         schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
         agent_capnp = capnp.load(str(schema_file))
@@ -290,7 +318,7 @@ class DockerSecureEvaluator:
                                 f"RPC ping timeout after {max_ping_attempts} attempts "
                                 f"({RPC_PING_TIMEOUT_SEC}s each)"
                             )
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(2)
                     except Exception as e:
                         if attempt >= max_ping_attempts:
                             bt.logging.warning(
@@ -298,7 +326,7 @@ class DockerSecureEvaluator:
                                 f"after {max_ping_attempts} attempts: {e}"
                             )
                             raise
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(2)
 
                 if agent is None:
                     raise RuntimeError("RPC agent not initialized after handshake retries")
@@ -317,6 +345,15 @@ class DockerSecureEvaluator:
                         bt.logging.warning(f"UID {uid}: agent.reset() timeout ({RPC_RESET_TIMEOUT_SEC}s)")
                         return ValidationResult(uid, False, 0.0, 0.0)
 
+                    rpc_overhead_sec, cpu_factor = await self._calibrate_rpc_overhead_async(
+                        agent, agent_capnp, obs, uid
+                    )
+                    calibrated_timeout = (MINER_COMPUTE_BUDGET_SEC * cpu_factor) + rpc_overhead_sec + CALIBRATION_MARGIN_SEC
+                    bt.logging.info(
+                        f"UID {uid}: calibrated timeout = {calibrated_timeout*1000:.1f}ms "
+                        f"(budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms x {cpu_factor:.2f} + overhead={rpc_overhead_sec*1000:.1f}ms + margin={CALIBRATION_MARGIN_SEC*1000:.0f}ms)"
+                    )
+
                     pos0 = np.asarray(task.start, dtype=float)
                     t_sim = 0.0
                     success = False
@@ -327,24 +364,9 @@ class DockerSecureEvaluator:
                     last_pos = pos0
 
                     while t_sim < task.horizon:
-                        step_timeout = RPC_FIRST_STEP_TIMEOUT_SEC if is_first_step else RPC_STEP_TIMEOUT_SEC
+                        step_timeout = RPC_FIRST_STEP_TIMEOUT_SEC if is_first_step else calibrated_timeout
 
-                        observation = agent_capnp.Observation.new_message()
-                        if isinstance(obs, dict):
-                            entries = observation.init("entries", len(obs))
-                            for i, (key, value) in enumerate(obs.items()):
-                                arr = np.asarray(value, dtype=np.float32)
-                                entries[i].key = key
-                                entries[i].tensor.data = arr.tobytes()
-                                entries[i].tensor.shape = list(arr.shape)
-                                entries[i].tensor.dtype = str(arr.dtype)
-                        else:
-                            arr = np.asarray(obs, dtype=np.float32)
-                            entry = observation.init("entries", 1)[0]
-                            entry.key = "__value__"
-                            entry.tensor.data = arr.tobytes()
-                            entry.tensor.shape = list(arr.shape)
-                            entry.tensor.dtype = str(arr.dtype)
+                        observation = self._serialize_observation(agent_capnp, obs)
 
                         try:
                             t_act_start = time.time()
@@ -365,8 +387,9 @@ class DockerSecureEvaluator:
                                     f"strike {strikes}/{RPC_MAX_STRIKES}"
                                 )
                             else:
-                                bt.logging.debug(
-                                    f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
+                                bt.logging.warning(
+                                    f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
+                                    f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
                                     f"strike {strikes}/{RPC_MAX_STRIKES}"
                                 )
                             if strikes >= RPC_MAX_STRIKES:
@@ -418,6 +441,70 @@ class DockerSecureEvaluator:
             return loop.run_until_complete(run_evaluation())
         finally:
             loop.close()
+
+    async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
+        """Measure RPC pipeline overhead and CPU speed factor."""
+        import statistics
+
+        round_trips = []
+        benchmark_times_ns = []
+
+        for r in range(CALIBRATION_ROUNDS):
+            cal_obs = self._serialize_observation(agent_capnp, obs)
+
+            try:
+                t0 = time.time()
+                cal_response = await asyncio.wait_for(
+                    agent.calibrate(cal_obs),
+                    timeout=CALIBRATION_TIMEOUT_SEC
+                )
+                dt = time.time() - t0
+                bench_ns = cal_response.benchmarkNs
+                round_trips.append(dt)
+                if bench_ns > 0:
+                    benchmark_times_ns.append(bench_ns)
+            except (asyncio.TimeoutError, Exception) as e:
+                bt.logging.warning(
+                    f"UID {uid}: calibration round {r+1}/{CALIBRATION_ROUNDS} failed: {e}"
+                )
+
+        if len(round_trips) < 3:
+            fallback = max(RPC_STEP_TIMEOUT_SEC - MINER_COMPUTE_BUDGET_SEC, 0.010)
+            bt.logging.warning(
+                f"UID {uid}: calibration mostly failed ({len(round_trips)}/{CALIBRATION_ROUNDS} ok), "
+                f"using fallback overhead={fallback*1000:.0f}ms, cpu_factor=1.0"
+            )
+            return fallback, 1.0
+
+        round_trips.sort()
+        trimmed_rt = round_trips[1:-1] if len(round_trips) > 4 else round_trips
+        median_overhead = statistics.median(trimmed_rt)
+
+        if median_overhead > CALIBRATION_OVERHEAD_CAP_SEC:
+            bt.logging.warning(
+                f"UID {uid}: measured RPC overhead {median_overhead*1000:.1f}ms exceeds cap "
+                f"{CALIBRATION_OVERHEAD_CAP_SEC*1000:.0f}ms — capping."
+            )
+            median_overhead = CALIBRATION_OVERHEAD_CAP_SEC
+
+        cpu_factor = 1.0
+        if len(benchmark_times_ns) >= 3:
+            benchmark_times_ns.sort()
+            trimmed_bench = benchmark_times_ns[1:-1] if len(benchmark_times_ns) > 4 else benchmark_times_ns
+            median_bench_ns = statistics.median(trimmed_bench)
+            cpu_factor = median_bench_ns / CALIBRATION_BENCHMARK_REF_NS
+            cpu_factor = max(1.0, min(cpu_factor, CALIBRATION_CPU_FACTOR_CAP))
+
+        bench_median_ms = statistics.median(benchmark_times_ns) / 1e6 if benchmark_times_ns else 0.0
+        bt.logging.info(
+            f"UID {uid}: calibration results — "
+            f"overhead={median_overhead*1000:.1f}ms, "
+            f"cpu_factor={cpu_factor:.2f}x, "
+            f"benchmark_median={bench_median_ms:.1f}ms, "
+            f"rtt=[{', '.join(f'{t*1000:.1f}' for t in round_trips)}]ms"
+        )
+
+        return median_overhead, cpu_factor
     
     async def _evaluate_with_rpc_host(
         self,
@@ -807,8 +894,7 @@ class DockerSecureEvaluator:
 
         bt.logging.info(f"🏁 Ending Docker container for UID {uid} - returning default result")
         return ValidationResult(uid, False, 0.0, 0.0)
-    
-    
+
     def cleanup(self):
         """Clean up any orphaned containers and prune unused images/cache"""
         try:
