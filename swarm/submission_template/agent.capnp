@@ -4,6 +4,7 @@ interface Agent {
   ping @0 (message :Text) -> (response :Text);
   act  @1 (obs :Observation) -> (action :Tensor);
   reset @2 ();
+  calibrate @3 (obs :Observation) -> (action :Tensor, benchmarkNs :Int64);
 }
 
 struct Tensor {
