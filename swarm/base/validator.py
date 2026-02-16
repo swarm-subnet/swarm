@@ -34,7 +34,7 @@ from swarm.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
 )
 from swarm.utils.config import add_validator_args
-from swarm.constants import AVGS_DIR
+from swarm.constants import AVGS_DIR, MODEL_DIR
 
 VICTORY_HISTORY_FILE = Path("/tmp/victory_history.json")
 MODEL_HASH_TRACKER_FILE = Path("/tmp/uid_model_hashes.json")
@@ -352,6 +352,18 @@ class BaseValidatorNeuron(BaseNeuron):
                 bt.logging.info(f"Cleared avgs history for UID {uid} ({reason})")
             except Exception as e:
                 bt.logging.warning(f"Failed to clear avgs history for UID {uid}: {e}")
+
+        model_cache_file = MODEL_DIR / f"UID_{uid}.zip"
+        if model_cache_file.exists():
+            try:
+                if model_cache_file.is_dir():
+                    import shutil
+                    shutil.rmtree(model_cache_file)
+                else:
+                    model_cache_file.unlink()
+                bt.logging.info(f"Cleared model cache for UID {uid} ({reason})")
+            except Exception as e:
+                bt.logging.warning(f"Failed to clear model cache for UID {uid}: {e}")
 
         self._remove_uid_from_json_index(VICTORY_HISTORY_FILE, uid)
         self._remove_uid_from_json_index(MODEL_HASH_TRACKER_FILE, uid)

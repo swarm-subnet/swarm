@@ -1112,23 +1112,39 @@ async def forward(self) -> None:
             if BURN_EMISSIONS:
                 all_uids = np.array(list(range(self.metagraph.n)), dtype=np.int64)
                 score_metrics = calculate_score_metrics(history, all_uids)
-                
-                if score_metrics:
-                    sorted_metrics = sorted(score_metrics, key=lambda x: (-x[1], -x[2], x[0]))
+
+                eligible_metrics = []
+                for uid, avg_score, victory_rate in score_metrics:
+                    uid = int(uid)
+                    if uid >= len(self.metagraph.axons) or not self.metagraph.axons[uid].is_serving:
+                        continue
+
+                    uid_history = load_uid_history(uid)
+                    is_eligible, _reason = _uid_weight_eligibility(uid_history)
+                    if is_eligible:
+                        eligible_metrics.append((uid, avg_score, victory_rate))
+
+                if eligible_metrics:
+                    sorted_metrics = sorted(eligible_metrics, key=lambda x: (-x[1], -x[2], x[0]))
                     winner_uid = sorted_metrics[0][0]
                     winner_avg_score = sorted_metrics[0][1]
-                    
-                    uids_np = np.array([UID_ZERO, winner_uid], dtype=np.int64)
-                    boosted = np.array([BURN_FRACTION, KEEP_FRACTION], dtype=np.float32)
-                    
-                    bt.logging.info(
-                        f"No models: {BURN_FRACTION:.0%} to UID 0, "
-                        f"{KEEP_FRACTION:.0%} to top miner UID {winner_uid} (avg_score: {winner_avg_score:.4f})"
-                    )
+
+                    if winner_avg_score > 0.0:
+                        uids_np = np.array([UID_ZERO, winner_uid], dtype=np.int64)
+                        boosted = np.array([BURN_FRACTION, KEEP_FRACTION], dtype=np.float32)
+                        bt.logging.info(
+                            f"No models: {BURN_FRACTION:.0%} to UID 0, "
+                            f"{KEEP_FRACTION:.0%} to top eligible/serving miner UID {winner_uid} "
+                            f"(avg_score: {winner_avg_score:.4f})"
+                        )
+                    else:
+                        uids_np = np.array([UID_ZERO], dtype=np.int64)
+                        boosted = np.array([1.0], dtype=np.float32)
+                        bt.logging.info("No models: no eligible serving miner with positive score, 100% to UID 0")
                 else:
                     uids_np = np.array([UID_ZERO], dtype=np.int64)
                     boosted = np.array([1.0], dtype=np.float32)
-                    bt.logging.info("No models and no history: 100% to UID 0")
+                    bt.logging.info("No models and no eligible serving history: 100% to UID 0")
                 
                 self.update_scores(boosted, uids_np)
                 if hasattr(self, 'wandb_helper') and self.wandb_helper:
