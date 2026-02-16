@@ -48,6 +48,9 @@ from swarm.constants import (
     WINNER_TAKE_ALL,
     N_RUNS_HISTORY,
     MIN_RUNS_FOR_WEIGHTS,
+    MIN_RECENT_RUNS_FOR_WEIGHTS,
+    RECENT_RUN_WINDOW_SEC,
+    UID_HISTORY_STALE_RESET_SEC,
     AVGS_DIR,
     ENABLE_PER_TYPE_NORMALIZATION,
     CHALLENGE_TYPE_DISTRIBUTION,
@@ -789,6 +792,51 @@ def _default_uid_history(uid: int) -> dict:
     }
 
 
+def _apply_inactivity_reset(uid: int, history: dict) -> Tuple[dict, bool]:
+    last_updated = float(history.get("last_updated", 0.0) or 0.0)
+    all_runs = history.get("all_runs", [])
+
+    if not all_runs or last_updated <= 0.0:
+        return history, False
+
+    idle_seconds = time.time() - last_updated
+    if idle_seconds < UID_HISTORY_STALE_RESET_SEC:
+        return history, False
+
+    bt.logging.info(
+        f"Resetting stale history for UID {uid} after {idle_seconds:.0f}s of inactivity"
+    )
+    history["total_runs"] = 0
+    history["all_runs"] = []
+    history["normalized_score"] = 0.0
+    history["response_streak"] = 0
+    history["failed_cycles"] = 0
+    return history, True
+
+
+def _count_recent_runs(history: dict) -> int:
+    cutoff = time.time() - RECENT_RUN_WINDOW_SEC
+    return sum(
+        1 for run in history.get("all_runs", [])
+        if float(run.get("timestamp", 0.0) or 0.0) >= cutoff
+    )
+
+
+def _uid_weight_eligibility(history: dict) -> Tuple[bool, str]:
+    total_runs = int(history.get("total_runs", 0))
+    if total_runs < MIN_RUNS_FOR_WEIGHTS:
+        return False, f"{total_runs}/{MIN_RUNS_FOR_WEIGHTS} total runs"
+
+    recent_runs = _count_recent_runs(history)
+    if recent_runs < MIN_RECENT_RUNS_FOR_WEIGHTS:
+        return (
+            False,
+            f"{recent_runs}/{MIN_RECENT_RUNS_FOR_WEIGHTS} recent runs in {RECENT_RUN_WINDOW_SEC}s",
+        )
+
+    return True, "eligible"
+
+
 def load_uid_history(uid: int) -> dict:
     ensure_avgs_directory()
     uid = int(uid)
@@ -809,6 +857,10 @@ def load_uid_history(uid: int) -> dict:
             for key, value in defaults.items():
                 if key not in history:
                     history[key] = value
+
+            history, was_reset = _apply_inactivity_reset(uid, history)
+            if was_reset:
+                save_uid_history(uid, history)
 
             return history
         except (FileNotFoundError, json.JSONDecodeError) as e:
@@ -849,6 +901,11 @@ def update_per_type_history(uid: int, challenge_type: int, score: float, success
 
     history["normalized_score"] = calculate_normalized_score(history)
     save_uid_history(uid, history)
+
+
+def _record_zero_run(uid: int, challenge_type: int) -> None:
+    update_per_type_history(uid, challenge_type, 0.0, False, 0.0)
+    _log_normalized_score(uid)
 
 def calculate_normalized_score(history: dict) -> float:
     all_runs = history.get("all_runs", [])
@@ -1016,6 +1073,9 @@ async def forward(self) -> None:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
+        if hasattr(self, "reconcile_hotkeys_with_metagraph"):
+            self.reconcile_hotkeys_with_metagraph(reason="pre-forward guard")
+
         if USE_SYNCHRONIZED_SEEDS:
             if not hasattr(self, 'seed_manager'):
                 secret_key = os.getenv("VALIDATOR_SECRET_KEY")
@@ -1028,14 +1088,28 @@ async def forward(self) -> None:
 
         uids = get_random_uids(self, k=SAMPLE_K)
         bt.logging.info(f"Sampled miners: {uids}")
+        sampled_uids = [int(uid) for uid in np.asarray(uids, dtype=np.int64).tolist()]
 
         model_paths = await _ensure_models(self, uids)
         bt.logging.info(f"Verified models: {list(model_paths)}")
 
+        if USE_SYNCHRONIZED_SEEDS:
+            seed, window_start, window_end = self.seed_manager.generate_seed()
+            task = random_task(sim_dt=SIM_DT, seed=seed)
+        else:
+            task = random_task(sim_dt=SIM_DT)
+
         if not model_paths:
             bt.logging.warning("No models available this cycle")
+            history = load_victory_history()
+
+            # Penalize sampled non-responders even if they never reached evaluation.
+            for uid in sampled_uids:
+                _record_zero_run(uid, task.challenge_type)
+                update_victory_history(history, uid, False, 0.0)
+            save_victory_history(history)
+
             if BURN_EMISSIONS:
-                history = load_victory_history()
                 all_uids = np.array(list(range(self.metagraph.n)), dtype=np.int64)
                 score_metrics = calculate_score_metrics(history, all_uids)
                 
@@ -1071,12 +1145,6 @@ async def forward(self) -> None:
                 await asyncio.sleep(FORWARD_SLEEP_SEC)
             return
 
-        if USE_SYNCHRONIZED_SEEDS:
-            seed, window_start, window_end = self.seed_manager.generate_seed()
-            task = random_task(sim_dt=SIM_DT, seed=seed)
-        else:
-            task = random_task(sim_dt=SIM_DT)
-
         start_pos = np.array(task.start)
         goal_pos = np.array(task.goal)
         distance = np.linalg.norm(goal_pos - start_pos)
@@ -1096,10 +1164,21 @@ async def forward(self) -> None:
 
         # Use pre-initialized Docker evaluator
         history = load_victory_history()
+        evaluated_uids = set()
 
         if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
             bt.logging.error("Docker evaluator not ready - falling back to no evaluation")
             results = [ValidationResult(uid, False, 0.0, 0.0) for uid in model_paths.keys()]
+            for result in results:
+                evaluated_uids.add(int(result.uid))
+                update_per_type_history(
+                    result.uid,
+                    task.challenge_type,
+                    result.score,
+                    result.success,
+                    result.time_sec,
+                )
+                _log_normalized_score(result.uid)
         else:
             
             # Evaluate models sequentially in Docker containers
@@ -1131,15 +1210,15 @@ async def forward(self) -> None:
                             )
                         except Exception as e:
                             bt.logging.warning(f"Failed to save fake model for analysis: {e}")
-                    
-                    results.append(result)
-
-                    update_per_type_history(uid, task.challenge_type, result.score, result.success, result.time_sec)
-                    _log_normalized_score(uid)
 
                 except Exception as e:
                     bt.logging.warning(f"Docker evaluation failed for UID {uid}: {e}")
-                    results.append(ValidationResult(uid, False, 0.0, 0.0))
+                    result = ValidationResult(uid, False, 0.0, 0.0)
+
+                results.append(result)
+                evaluated_uids.add(int(uid))
+                update_per_type_history(uid, task.challenge_type, result.score, result.success, result.time_sec)
+                _log_normalized_score(uid)
             
             # Add detected fake models to blacklist
             if fake_models_detected:
@@ -1152,9 +1231,22 @@ async def forward(self) -> None:
             # Cleanup orphaned containers
             self.docker_evaluator.cleanup()
 
+        missing_sampled_uids = [
+            uid for uid in sampled_uids if uid not in evaluated_uids
+        ]
+        if missing_sampled_uids:
+            bt.logging.info(
+                f"Applying explicit zero-score penalties to {len(missing_sampled_uids)} sampled non-responders"
+            )
+            for uid in missing_sampled_uids:
+                _record_zero_run(uid, task.challenge_type)
+
         print(f"✅ DEBUG: Docker evaluation completed, got {len(results)} results")
         if not results:
             bt.logging.warning("No valid results this round.")
+            for uid in sampled_uids:
+                update_victory_history(history, uid, False, 0.0)
+            save_victory_history(history)
             if BURN_EMISSIONS:
                 uids_np = np.array([UID_ZERO], dtype=np.int64)
                 boosted = np.array([1.0], dtype=np.float32)
@@ -1189,15 +1281,16 @@ async def forward(self) -> None:
         # ------------------------------------------------------------------
         # 4. performance history tracking and reward weight allocation
 
-        if len(raw_scores) > 0:
-            max_score = raw_scores.max()
-            current_winners = uids_np[raw_scores == max_score]
+        max_score = float(raw_scores.max()) if len(raw_scores) > 0 else 0.0
+        round_scores = {uid: 0.0 for uid in sampled_uids}
+        for i, uid in enumerate(uids_np):
+            round_scores[int(uid)] = float(raw_scores[i])
 
-            for i, uid in enumerate(uids_np):
-                won = uid in current_winners
-                score = raw_scores[i]
+        if round_scores:
+            max_score = max(round_scores.values())
+            for uid, score in round_scores.items():
+                won = score > 0.0 and score == max_score
                 update_victory_history(history, uid, won, score)
-
             save_victory_history(history)
 
         normalized_scores_dict = calculate_all_normalized_scores(uids_np.tolist())
@@ -1209,11 +1302,12 @@ async def forward(self) -> None:
 
                 for uid, score in normalized_scores_dict.items():
                     uid_history = load_uid_history(uid)
-                    if uid_history["total_runs"] >= MIN_RUNS_FOR_WEIGHTS:
+                    is_eligible, reason = _uid_weight_eligibility(uid_history)
+                    if is_eligible:
                         eligible_scores[uid] = score
                     else:
                         ineligible_uids.append(uid)
-                        bt.logging.info(f"UID {uid} ineligible: {uid_history['total_runs']}/{MIN_RUNS_FOR_WEIGHTS} runs")
+                        bt.logging.info(f"UID {uid} ineligible: {reason}")
 
                 if eligible_scores:
                     sorted_items = sorted(eligible_scores.items(), key=lambda x: (-x[1], x[0]))
@@ -1234,7 +1328,10 @@ async def forward(self) -> None:
                         "winner_score": sorted_items[0][1] if sorted_items else 0.0,
                     }
                 else:
-                    bt.logging.warning(f"No miners meet {MIN_RUNS_FOR_WEIGHTS} run requirement")
+                    bt.logging.warning(
+                        f"No miners meet eligibility requirements (min_total={MIN_RUNS_FOR_WEIGHTS}, "
+                        f"min_recent={MIN_RECENT_RUNS_FOR_WEIGHTS} in {RECENT_RUN_WINDOW_SEC}s)"
+                    )
                     uids_out = np.array(list(normalized_scores_dict.keys()), dtype=np.int64)
                     boosted = np.zeros(len(uids_out), dtype=np.float32)
                     debug_info = {
@@ -1250,11 +1347,12 @@ async def forward(self) -> None:
 
                     for uid, avg_score, victory_rate in score_metrics:
                         uid_history = load_uid_history(uid)
-                        if uid_history["total_runs"] >= MIN_RUNS_FOR_WEIGHTS:
+                        is_eligible, reason = _uid_weight_eligibility(uid_history)
+                        if is_eligible:
                             eligible_metrics.append((uid, avg_score, victory_rate))
                         else:
                             ineligible_uids.append(uid)
-                            bt.logging.info(f"UID {uid} ineligible: {uid_history['total_runs']}/{MIN_RUNS_FOR_WEIGHTS} runs")
+                            bt.logging.info(f"UID {uid} ineligible: {reason}")
 
                     if eligible_metrics:
                         uids_out, boosted, debug_info = compute_winner_take_all_weights(eligible_metrics)
@@ -1263,7 +1361,10 @@ async def forward(self) -> None:
                             uids_out = np.concatenate([uids_out, np.array(ineligible_uids, dtype=np.int64)])
                             boosted = np.concatenate([boosted, np.zeros(len(ineligible_uids), dtype=np.float32)])
                     else:
-                        bt.logging.warning(f"No miners meet {MIN_RUNS_FOR_WEIGHTS} run requirement")
+                        bt.logging.warning(
+                            f"No miners meet eligibility requirements (min_total={MIN_RUNS_FOR_WEIGHTS}, "
+                            f"min_recent={MIN_RECENT_RUNS_FOR_WEIGHTS} in {RECENT_RUN_WINDOW_SEC}s)"
+                        )
                         all_uids = [uid for uid, _, _ in score_metrics]
                         uids_out = np.array(all_uids, dtype=np.int64)
                         boosted = np.zeros(len(uids_out), dtype=np.float32)
@@ -1278,11 +1379,12 @@ async def forward(self) -> None:
                     for i, uid in enumerate(uids_np):
                         if raw_scores[i] > 0:
                             uid_history = load_uid_history(uid)
-                            if uid_history["total_runs"] >= MIN_RUNS_FOR_WEIGHTS:
+                            is_eligible, reason = _uid_weight_eligibility(uid_history)
+                            if is_eligible:
                                 eligible_metrics.append((uid, raw_scores[i], 1.0 if raw_scores[i] == max_score else 0.0))
                             else:
                                 ineligible_uids.append(uid)
-                                bt.logging.info(f"UID {uid} ineligible: {uid_history['total_runs']}/{MIN_RUNS_FOR_WEIGHTS} runs")
+                                bt.logging.info(f"UID {uid} ineligible: {reason}")
 
                     if eligible_metrics:
                         uids_out, boosted, debug_info = compute_winner_take_all_weights(eligible_metrics)
@@ -1291,7 +1393,10 @@ async def forward(self) -> None:
                             uids_out = np.concatenate([uids_out, np.array(ineligible_uids, dtype=np.int64)])
                             boosted = np.concatenate([boosted, np.zeros(len(ineligible_uids), dtype=np.float32)])
                     else:
-                        bt.logging.warning(f"No miners meet {MIN_RUNS_FOR_WEIGHTS} run requirement")
+                        bt.logging.warning(
+                            f"No miners meet eligibility requirements (min_total={MIN_RUNS_FOR_WEIGHTS}, "
+                            f"min_recent={MIN_RECENT_RUNS_FOR_WEIGHTS} in {RECENT_RUN_WINDOW_SEC}s)"
+                        )
                         uids_out = np.array([uid for i, uid in enumerate(uids_np) if raw_scores[i] > 0], dtype=np.int64)
                         boosted = np.zeros(len(uids_out), dtype=np.float32)
                         debug_info = {

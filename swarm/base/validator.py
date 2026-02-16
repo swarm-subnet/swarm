@@ -18,13 +18,15 @@
 # DEALINGS IN THE SOFTWARE.
 
 
+import json
 import copy
 import numpy as np
 import asyncio
 import argparse
 import threading
 import bittensor as bt
-from typing import List, Union
+from pathlib import Path
+from typing import List, Union, Optional
 from traceback import print_exception
 from swarm.base.neuron import BaseNeuron
 from swarm.base.utils.weight_utils import (
@@ -33,6 +35,9 @@ from swarm.base.utils.weight_utils import (
 )
 from swarm.utils.config import add_validator_args
 from swarm.constants import AVGS_DIR
+
+VICTORY_HISTORY_FILE = Path("/tmp/victory_history.json")
+MODEL_HASH_TRACKER_FILE = Path("/tmp/uid_model_hashes.json")
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -53,6 +58,9 @@ class BaseValidatorNeuron(BaseNeuron):
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
+        # Capture previous state before sync() overwrites state.npz.
+        self._startup_hotkeys_snapshot = self._load_hotkeys_from_saved_state()
+
         self.dendrite = bt.Dendrite(wallet=self.wallet)
 
         bt.logging.info(f"Dendrite: {self.dendrite}")
@@ -63,6 +71,11 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Init sync with the network. Updates the metagraph.
         self.sync()
+        self._reconcile_hotkeys(
+            self._startup_hotkeys_snapshot,
+            self.metagraph.hotkeys,
+            reason="startup snapshot",
+        )
 
         # Serve axon to enable external connections.
         if not self.config.neuron.axon_off:
@@ -145,15 +158,19 @@ class BaseValidatorNeuron(BaseNeuron):
                 if hasattr(self, 'wandb_helper') and self.wandb_helper:
                     self.wandb_helper.restart()
 
+                # Always refresh the metagraph before scoring to prevent stale
+                # UID ownership from leaking into history updates.
+                self.resync_metagraph(force=True)
+
+                # Sync lifecycle state before forward processing.
+                self.sync()
+
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
 
                 # Check if we should exit.
                 if self.should_exit:
                     break
-
-                # Sync metagraph and potentially set weights.
-                self.sync()
 
                 self.step += 1
 
@@ -282,50 +299,121 @@ class BaseValidatorNeuron(BaseNeuron):
         else:
             bt.logging.error("set_weights failed", msg)
 
-    def resync_metagraph(self):
+    @staticmethod
+    def _normalize_hotkeys(hotkeys) -> List[str]:
+        if hotkeys is None:
+            return []
+        if isinstance(hotkeys, np.ndarray):
+            return [str(h) for h in hotkeys.tolist()]
+        return [str(h) for h in list(hotkeys)]
+
+    def _state_file_path(self) -> Path:
+        return Path(self.config.neuron.full_path) / "state.npz"
+
+    def _load_hotkeys_from_saved_state(self) -> Optional[List[str]]:
+        state_file = self._state_file_path()
+        if not state_file.exists():
+            return None
+
+        try:
+            with np.load(state_file, allow_pickle=True) as state:
+                if "hotkeys" not in state:
+                    return None
+                return self._normalize_hotkeys(state["hotkeys"])
+        except Exception as e:
+            bt.logging.warning(f"Failed to load startup hotkeys snapshot: {e}")
+            return None
+
+    def _remove_uid_from_json_index(self, file_path: Path, uid: int):
+        if not file_path.exists():
+            return
+
+        uid_str = str(uid)
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or uid_str not in data:
+                return
+
+            del data[uid_str]
+            tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(data, f)
+            tmp_path.replace(file_path)
+            bt.logging.info(f"Cleared UID {uid} from {file_path}")
+        except Exception as e:
+            bt.logging.warning(f"Failed to clear UID {uid} from {file_path}: {e}")
+
+    def _clear_uid_persistent_state(self, uid: int, reason: str):
+        history_file = AVGS_DIR / f"uid_{uid}.json"
+        if history_file.exists():
+            try:
+                history_file.unlink()
+                bt.logging.info(f"Cleared avgs history for UID {uid} ({reason})")
+            except Exception as e:
+                bt.logging.warning(f"Failed to clear avgs history for UID {uid}: {e}")
+
+        self._remove_uid_from_json_index(VICTORY_HISTORY_FILE, uid)
+        self._remove_uid_from_json_index(MODEL_HASH_TRACKER_FILE, uid)
+
+    def _reconcile_hotkeys(self, old_hotkeys, new_hotkeys, *, reason: str) -> List[int]:
+        previous = self._normalize_hotkeys(old_hotkeys)
+        current = self._normalize_hotkeys(new_hotkeys)
+
+        compare_len = min(len(previous), len(current))
+        changed_uids = [
+            uid for uid in range(compare_len) if previous[uid] != current[uid]
+        ]
+        removed_uids = list(range(len(current), len(previous)))
+        if removed_uids:
+            changed_uids.extend(removed_uids)
+
+        if changed_uids:
+            preview = changed_uids[:10]
+            suffix = "..." if len(changed_uids) > 10 else ""
+            bt.logging.info(
+                f"Detected {len(changed_uids)} hotkey change(s) ({reason}): {preview}{suffix}"
+            )
+
+        for uid in changed_uids:
+            if uid < len(self.scores):
+                self.scores[uid] = 0.0
+            self._clear_uid_persistent_state(uid, reason)
+
+        if len(self.scores) != len(current):
+            resized = np.zeros(len(current), dtype=np.float32)
+            min_len = min(len(self.scores), len(resized))
+            resized[:min_len] = self.scores[:min_len]
+            self.scores = resized
+
+        self.hotkeys = copy.deepcopy(current)
+        return changed_uids
+
+    def reconcile_hotkeys_with_metagraph(self, *, reason: str = "manual") -> List[int]:
+        return self._reconcile_hotkeys(self.hotkeys, self.metagraph.hotkeys, reason=reason)
+
+    def resync_metagraph(self, force: bool = False):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
         bt.logging.info("resync_metagraph()")
 
         # Copies state of metagraph before syncing.
         previous_metagraph = copy.deepcopy(self.metagraph)
+        previous_hotkeys = copy.deepcopy(self.hotkeys)
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
 
-        # Check if the metagraph axon info has changed.
-        if previous_metagraph.axons == self.metagraph.axons:
+        no_chain_change = previous_metagraph.axons == self.metagraph.axons
+        no_hotkey_change = self._normalize_hotkeys(previous_hotkeys) == self._normalize_hotkeys(self.metagraph.hotkeys)
+        no_size_change = len(self.scores) == len(self.metagraph.hotkeys)
+
+        if not force and no_chain_change and no_hotkey_change and no_size_change:
             return
 
         bt.logging.info(
             "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
         )
-        # Zero out all hotkeys that have been replaced.
-        for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid]:
-                self.scores[uid] = 0  # hotkey has been replaced
-
-                # Clear UID history to prevent score inheritance exploit
-                # When a new miner registers on a UID, they should not inherit
-                # the previous miner's high scores from easier challenge times
-                history_file = AVGS_DIR / f"uid_{uid}.json"
-                if history_file.exists():
-                    try:
-                        history_file.unlink()
-                        bt.logging.info(f"Cleared history for UID {uid} (hotkey changed)")
-                    except Exception as e:
-                        bt.logging.warning(f"Failed to clear history for UID {uid}: {e}")
-
-        # Check to see if the metagraph has changed size.
-        # If so, we need to add new hotkeys and moving averages.
-        if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            # Update the size of the moving average scores.
-            new_moving_average = np.zeros((self.metagraph.n))
-            min_len = min(len(self.hotkeys), len(self.scores))
-            new_moving_average[:min_len] = self.scores[:min_len]
-            self.scores = new_moving_average
-
-        # Update the hotkeys.
-        self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+        self._reconcile_hotkeys(previous_hotkeys, self.metagraph.hotkeys, reason="metagraph sync")
 
     def update_scores(self, rewards: np.ndarray, uids: List[int]):
         """Performs exponential moving average on the scores based on the rewards received from the miners."""
@@ -379,8 +467,9 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Saving validator state.")
 
         # Save the state of the validator to file.
+        state_file = self._state_file_path()
         np.savez(
-            self.config.neuron.full_path + "/state.npz",
+            state_file,
             step=self.step,
             scores=self.scores,
             hotkeys=self.hotkeys,
@@ -390,8 +479,20 @@ class BaseValidatorNeuron(BaseNeuron):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
+        state_file = self._state_file_path()
+        if not state_file.exists():
+            bt.logging.warning(f"No state file found at {state_file}, starting fresh.")
+            return
+
         # Load the state of the validator from file.
-        state = np.load(self.config.neuron.full_path + "/state.npz")
-        self.step = state["step"]
-        self.scores = state["scores"]
-        self.hotkeys = state["hotkeys"]
+        with np.load(state_file, allow_pickle=True) as state:
+            self.step = int(state["step"]) if "step" in state else 0
+            if "scores" in state:
+                self.scores = np.asarray(state["scores"], dtype=np.float32)
+            loaded_hotkeys = state["hotkeys"] if "hotkeys" in state else self.hotkeys
+
+        self._reconcile_hotkeys(
+            loaded_hotkeys,
+            self.metagraph.hotkeys,
+            reason="state reload",
+        )

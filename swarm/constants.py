@@ -154,6 +154,9 @@ UID_ZERO = 0                            # Special UID for burning emissions
 WINNER_TAKE_ALL = True                  # Enable winner-take-all rewards (winner gets all available emissions)
 N_RUNS_HISTORY = 100                     # Number of runs to track (shared across all challenge types)
 MIN_RUNS_FOR_WEIGHTS = 40               # Minimum runs required before miner is eligible for weights
+MIN_RECENT_RUNS_FOR_WEIGHTS = 5         # Minimum runs in recent activity window required for eligibility
+RECENT_RUN_WINDOW_SEC = 60 * 60         # Recent activity window for eligibility checks (seconds)
+UID_HISTORY_STALE_RESET_SEC = 6 * 60 * 60  # Inactive history older than this is reset (seconds)
 
 # =============================================================================
 # LOW-PERFORMER FILTERING
