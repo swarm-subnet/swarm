@@ -156,7 +156,7 @@ N_RUNS_HISTORY = 100                     # Number of runs to track (shared acros
 MIN_RUNS_FOR_WEIGHTS = 40               # Minimum runs required before miner is eligible for weights
 MIN_RECENT_RUNS_FOR_WEIGHTS = 5         # Minimum runs in recent activity window required for eligibility
 RECENT_RUN_WINDOW_SEC = 18000         # Recent activity window for eligibility checks (seconds)
-UID_HISTORY_STALE_RESET_SEC = 6 * 60 * 60  # Inactive history older than this is reset (seconds)
+UID_HISTORY_STALE_RESET_SEC = 24 * 60 * 60  # Inactive history older than this is reset (seconds)
 
 # =============================================================================
 # LOW-PERFORMER FILTERING
