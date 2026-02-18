@@ -29,6 +29,9 @@ from ..core.model_verify import (
     add_to_blacklist,
     save_fake_model_for_analysis,
 )
+
+# Track when validator was last active
+_validator_last_active_time = None
 from .task_gen import random_task
 from .docker.docker_evaluator import DockerSecureEvaluator
 from .seed_manager import SynchronizedSeedManager
@@ -792,6 +795,12 @@ def _default_uid_history(uid: int) -> dict:
     }
 
 
+def update_validator_active_time():
+    """Update the validator's last active timestamp. Call this on each forward cycle."""
+    global _validator_last_active_time
+    _validator_last_active_time = time.time()
+
+
 def _apply_inactivity_reset(uid: int, history: dict) -> Tuple[dict, bool]:
     last_updated = float(history.get("last_updated", 0.0) or 0.0)
     all_runs = history.get("all_runs", [])
@@ -799,12 +808,15 @@ def _apply_inactivity_reset(uid: int, history: dict) -> Tuple[dict, bool]:
     if not all_runs or last_updated <= 0.0:
         return history, False
 
-    idle_seconds = time.time() - last_updated
+    # Use validator's last active time
+    current_time = _validator_last_active_time if _validator_last_active_time else time.time()
+    idle_seconds = current_time - last_updated
+
     if idle_seconds < UID_HISTORY_STALE_RESET_SEC:
         return history, False
 
     bt.logging.info(
-        f"Resetting stale history for UID {uid} after {idle_seconds:.0f}s of inactivity"
+        f"Resetting stale history for UID {uid} after {idle_seconds:.0f}s of validator inactivity"
     )
     history["total_runs"] = 0
     history["all_runs"] = []
@@ -1070,6 +1082,9 @@ async def _check_low_performer_model_updates(self) -> None:
 async def forward(self) -> None:
     """Full validator tick with boosted weighting + optional burn."""
     try:
+        # Update validator active time
+        update_validator_active_time()
+
         self.forward_count = getattr(self, "forward_count", 0) + 1
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
