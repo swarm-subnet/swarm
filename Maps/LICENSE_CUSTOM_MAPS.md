@@ -1,29 +1,59 @@
-Bittensor & Swarm Training License (Light) - v1.0
+# Bittensor & Swarm Training License (Open Use) – v1.1
 
 Copyright (c) 2026 Abdulla Alnasser
 
-Free to use and share within the Bittensor ecosystem (including Swarm) for training/testing/research.
+Permission is granted to use, copy, modify, distribute, and share this project for any lawful purpose, including commercial use, research, training, and competition participation.
 
-Scope:
-- Project maps
+---
+
+## Scope
+
+This license applies to:
+
+- Project maps  
 - Custom assets created or modified by Abdulla Alnasser under `assets/custom/*`
 
-Ownership:
-- The custom assets listed above remain the rights of Abdulla Alnasser.
-- These custom assets are covered by this same license together with the maps.
+---
 
-Third-party/open-source assets:
-- Assets under `assets/other_sources/*` are from open-source sources and remain under their original licenses/terms.
-- They are not claimed as authored by Abdulla Alnasser.
+## Ownership
 
-Please keep credit:
-"Created by Abdulla Alnasser".
+All custom assets listed above remain the intellectual property of Abdulla Alnasser.
 
-Competition or prize-based use (including preparation/training) requires my written permission in advance.
+You are granted broad usage rights under this license, but ownership is not transferred.
 
-Please do not remove this license text.
+---
 
-Contact:
+## Third-Party / Open-Source Assets
+
+- Assets under `assets/other_sources/*` remain under their original respective licenses.
+- These assets are not claimed as authored by Abdulla Alnasser.
+- Users are responsible for complying with the original terms of those assets.
+
+---
+
+## Attribution
+
+Attribution is appreciated in any public, redistributed, or commercial use:
+
+> "Created by Abdulla Alnasser"
+
+Attribution may be included in documentation, credits, or project description.
+
+---
+
+## License Preservation
+
+If redistributing the project or substantial portions of it, please include this license text.
+
+---
+
+## Disclaimer
+
+This project is provided "as is", without warranty of any kind. The creator shall not be liable for any damages arising from its use.
+
+
+
+-If you need permissions beyond this license (including changes to attribution), you may reach out via:
 GitHub: https://github.com/Wald-Alnasser
 Email: abdullaalnasserayim@gmail.com
 Discord: abdullaalnasser
