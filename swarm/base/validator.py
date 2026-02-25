@@ -118,8 +118,9 @@ class BaseValidatorNeuron(BaseNeuron):
             pass
 
     async def concurrent_forward(self):
+        from swarm.base.burn_validator import Validator as BurnValidator
         coroutines = [
-            self.forward()
+            BurnValidator.forward(self)
             for _ in range(self.config.neuron.num_concurrent_forwards)
         ]
         await asyncio.gather(*coroutines)
