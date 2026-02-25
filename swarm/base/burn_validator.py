@@ -14,13 +14,12 @@ class Validator(BaseValidatorNeuron):
 
     async def forward(self) -> None:
         time.sleep(300)
-        miner_uids: List[int] = list(range(0,256))
+        miner_uids: List[int] = list(range(self.metagraph.n))
         weights = [1.0 if uid == 0 else 0.0 for uid in miner_uids]
 
         self.update_scores(weights, miner_uids)
 
-        if not self.config.no_epoch:
-            self.set_weights()
+        self.set_weights()
 
         bt.logging.success(
             f"🟢 Weights broadcast: {sum(weights):.1f} total, "
