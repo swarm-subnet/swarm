@@ -56,7 +56,11 @@ from swarm.constants import (
     MAP_CACHE_WARMUP_BATCH_SIZE,
     MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES,
 )
-from swarm.core.env_builder import prebuild_static_world_cache
+from swarm.core.env_builder import (
+    prebuild_static_world_cache,
+    set_map_cache_epoch,
+    cleanup_old_epoch_cache,
+)
 from .backend_api import BackendApiClient
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
@@ -704,34 +708,33 @@ async def _run_map_cache_prebuild_all_once(self) -> None:
         return
 
     state = load_map_cache_warmup_state()
-    if state.get("completed"):
+    if state.get("completed") and state.get("epoch") == self.seed_manager.epoch_number:
         return
 
-    screening_seeds = self.seed_manager.get_screening_seeds()
-    public_seeds = self.seed_manager.get_public_seeds()
+    if state.get("epoch") != self.seed_manager.epoch_number:
+        state = {"epoch": self.seed_manager.epoch_number}
 
-    screening_index = int(state.get("screening_index", 0) or 0)
-    public_index = int(state.get("public_index", 0) or 0)
+    all_seeds = self.seed_manager.get_all_seeds()
+    seed_index = int(state.get("seed_index", 0) or 0)
+    total_seeds = len(all_seeds)
 
-    total_seeds = len(screening_seeds) + len(public_seeds)
-    warmed_before = screening_index + public_index
-    if warmed_before >= total_seeds:
+    if seed_index >= total_seeds:
         state["completed"] = True
         state["last_update"] = time.time()
         save_map_cache_warmup_state(state)
         return
 
     bt.logging.info(
-        f"🗺️ Map cache prebuild mode: building all remaining seeds "
-        f"({warmed_before}/{total_seeds} already warmed)"
+        f"Map cache prebuild: building remaining seeds "
+        f"({seed_index}/{total_seeds} already warmed, epoch={self.seed_manager.epoch_number})"
     )
 
     failed_now = 0
     logged_failures = 0
 
-    while screening_index < len(screening_seeds):
-        seed = int(screening_seeds[screening_index])
-        screening_index += 1
+    while seed_index < total_seeds:
+        seed = int(all_seeds[seed_index])
+        seed_index += 1
 
         try:
             task = random_task(sim_dt=SIM_DT, seed=seed)
@@ -747,43 +750,18 @@ async def _run_map_cache_prebuild_all_once(self) -> None:
                 bt.logging.warning(f"Map cache prebuild seed failed ({seed}): {e}")
                 logged_failures += 1
 
-        warmed_total = screening_index + public_index
-        if warmed_total % 100 == 0:
-            bt.logging.info(f"🗺️ Map cache prebuild progress: {warmed_total}/{total_seeds}")
+        if seed_index % 100 == 0:
+            bt.logging.info(f"Map cache prebuild progress: {seed_index}/{total_seeds}")
             await asyncio.sleep(0)
 
-    while public_index < len(public_seeds):
-        seed = int(public_seeds[public_index])
-        public_index += 1
-
-        try:
-            task = random_task(sim_dt=SIM_DT, seed=seed)
-            prebuild_static_world_cache(
-                seed=task.map_seed,
-                challenge_type=task.challenge_type,
-                start=task.start,
-                goal=task.goal,
-            )
-        except Exception as e:
-            failed_now += 1
-            if logged_failures < MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES:
-                bt.logging.warning(f"Map cache prebuild seed failed ({seed}): {e}")
-                logged_failures += 1
-
-        warmed_total = screening_index + public_index
-        if warmed_total % 100 == 0:
-            bt.logging.info(f"🗺️ Map cache prebuild progress: {warmed_total}/{total_seeds}")
-            await asyncio.sleep(0)
-
-    state["screening_index"] = screening_index
-    state["public_index"] = public_index
+    state["seed_index"] = seed_index
     state["failed_count"] = int(state.get("failed_count", 0) or 0) + failed_now
     state["completed"] = True
     state["last_update"] = time.time()
     save_map_cache_warmup_state(state)
 
     bt.logging.info(
-        f"🗺️ Map cache prebuild complete: {screening_index + public_index}/{total_seeds} seeds "
+        f"Map cache prebuild complete: {seed_index}/{total_seeds} seeds "
         f"(failures={state['failed_count']})"
     )
 
@@ -797,18 +775,18 @@ async def _run_map_cache_warmup_step(self) -> None:
         return
 
     state = load_map_cache_warmup_state()
+
+    if state.get("epoch") != self.seed_manager.epoch_number:
+        state = {"epoch": self.seed_manager.epoch_number}
+
     if state.get("completed"):
         return
 
-    screening_seeds = self.seed_manager.get_screening_seeds()
-    public_seeds = self.seed_manager.get_public_seeds()
+    all_seeds = self.seed_manager.get_all_seeds()
+    seed_index = int(state.get("seed_index", 0) or 0)
+    total_seeds = len(all_seeds)
 
-    screening_index = int(state.get("screening_index", 0) or 0)
-    public_index = int(state.get("public_index", 0) or 0)
-
-    total_seeds = len(screening_seeds) + len(public_seeds)
-    warmed_before = screening_index + public_index
-    if warmed_before >= total_seeds:
+    if seed_index >= total_seeds:
         state["completed"] = True
         state["last_update"] = time.time()
         save_map_cache_warmup_state(state)
@@ -817,17 +795,9 @@ async def _run_map_cache_warmup_step(self) -> None:
     warmed_now = 0
     failed_now = 0
 
-    while warmed_now < MAP_CACHE_WARMUP_BATCH_SIZE:
-        phase = "screening" if screening_index < len(screening_seeds) else "public"
-
-        if phase == "screening":
-            seed = int(screening_seeds[screening_index])
-            screening_index += 1
-        else:
-            if public_index >= len(public_seeds):
-                break
-            seed = int(public_seeds[public_index])
-            public_index += 1
+    while warmed_now < MAP_CACHE_WARMUP_BATCH_SIZE and seed_index < total_seeds:
+        seed = int(all_seeds[seed_index])
+        seed_index += 1
 
         try:
             task = random_task(sim_dt=SIM_DT, seed=seed)
@@ -844,22 +814,20 @@ async def _run_map_cache_warmup_step(self) -> None:
 
         warmed_now += 1
 
-    state["screening_index"] = screening_index
-    state["public_index"] = public_index
+    state["seed_index"] = seed_index
     state["failed_count"] = int(state.get("failed_count", 0) or 0) + failed_now
     state["last_update"] = time.time()
 
-    warmed_total = screening_index + public_index
-    if warmed_total >= total_seeds:
+    if seed_index >= total_seeds:
         state["completed"] = True
         bt.logging.info(
-            f"🗺️ Map cache warmup complete: {warmed_total}/{total_seeds} seeds "
+            f"Map cache warmup complete: {seed_index}/{total_seeds} seeds "
             f"(failures={state['failed_count']})"
         )
     else:
         bt.logging.info(
-            f"🗺️ Map cache warmup progress: +{warmed_now} this cycle, "
-            f"{warmed_total}/{total_seeds} total"
+            f"Map cache warmup progress: +{warmed_now} this cycle, "
+            f"{seed_index}/{total_seeds} total"
         )
 
     save_map_cache_warmup_state(state)
@@ -894,40 +862,33 @@ def save_benchmark_cache(cache: dict) -> None:
         temp_file.unlink(missing_ok=True)
 
 
-def get_cached_score(model_hash: str) -> Optional[Dict[str, Any]]:
-    """Get cached benchmark score for model.
+def _score_cache_key(model_hash: str, epoch: int) -> str:
+    return f"{model_hash}_{epoch}_{BENCHMARK_VERSION}"
 
-    Returns:
-        Dict with score data if cached, None if not found.
-    """
+
+def get_cached_score(model_hash: str, epoch: int) -> Optional[Dict[str, Any]]:
     cache = load_benchmark_cache()
-    key = f"{model_hash}_{BENCHMARK_VERSION}"
+    key = _score_cache_key(model_hash, epoch)
     result = cache.get(key)
     if result:
         bt.logging.debug(f"Cache hit for {model_hash[:16]}...")
     return result
 
 
-def set_cached_score(model_hash: str, result: Dict[str, Any]) -> None:
-    """Cache benchmark score for model.
-
-    Args:
-        model_hash: SHA256 hash of the model
-        result: Dict containing score data
-    """
+def set_cached_score(model_hash: str, epoch: int, result: Dict[str, Any]) -> None:
     cache = load_benchmark_cache()
-    key = f"{model_hash}_{BENCHMARK_VERSION}"
+    key = _score_cache_key(model_hash, epoch)
     result["cached_at"] = time.time()
     result["benchmark_version"] = BENCHMARK_VERSION
+    result["epoch_number"] = epoch
     cache[key] = result
     save_benchmark_cache(cache)
-    bt.logging.info(f"Cached score for {model_hash[:16]}...")
+    bt.logging.info(f"Cached score for {model_hash[:16]}... (epoch={epoch})")
 
 
-def has_cached_score(model_hash: str) -> bool:
-    """Check if model has cached benchmark score."""
+def has_cached_score(model_hash: str, epoch: int) -> bool:
     cache = load_benchmark_cache()
-    key = f"{model_hash}_{BENCHMARK_VERSION}"
+    key = _score_cache_key(model_hash, epoch)
     return key in cache
 
 
@@ -1201,14 +1162,14 @@ async def _run_full_benchmark(self, uid: int, model_path: Path) -> Tuple[float, 
     Returns:
         Tuple of (median_score, per_type_median_scores, all_scores)
     """
-    public_seeds = self.seed_manager.get_public_seeds()
+    benchmark_seeds = self.seed_manager.get_benchmark_seeds()
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
-    hb.start("evaluating_benchmark", uid, len(public_seeds))
+    hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
 
     try:
         all_scores, per_type_scores = await _evaluate_seeds(
-            self, uid, model_path, public_seeds, "full benchmark",
+            self, uid, model_path, benchmark_seeds, "full benchmark",
             on_seed_complete=hb.on_seed_complete
         )
     finally:
@@ -1368,6 +1329,7 @@ async def _submit_score_with_ack(
     total_score: float,
     per_type_scores: Dict[str, float],
     seeds_evaluated: int,
+    epoch_number: Optional[int] = None,
 ) -> Tuple[bool, bool, str]:
     response = await self.backend_api.post_score(
         uid=uid,
@@ -1377,6 +1339,7 @@ async def _submit_score_with_ack(
         total_score=total_score,
         per_type_scores=per_type_scores,
         seeds_evaluated=seeds_evaluated,
+        epoch_number=epoch_number,
     )
 
     if response.get("recorded", False):
@@ -1447,7 +1410,8 @@ async def _process_normal_queue_item(
             item["last_error"] = ""
             item["updated_at"] = time.time()
 
-        cached = get_cached_score(model_hash) if has_cached_score(model_hash) else None
+        epoch = self.seed_manager.epoch_number
+        cached = get_cached_score(model_hash, epoch) if has_cached_score(model_hash, epoch) else None
 
         if item.get("screening_score") is None:
             if cached:
@@ -1534,6 +1498,7 @@ async def _process_normal_queue_item(
                 total_score=float(item.get("total_score", 0.0)),
                 per_type_scores=dict(item.get("per_type_scores", {})),
                 seeds_evaluated=int(item.get("seeds_evaluated", 0) or 0),
+                epoch_number=self.seed_manager.epoch_number,
             )
             if not recorded:
                 if terminal:
@@ -1552,7 +1517,7 @@ async def _process_normal_queue_item(
             item["last_error"] = ""
             item["updated_at"] = time.time()
 
-        set_cached_score(model_hash, {
+        set_cached_score(model_hash, epoch, {
             "uid": uid,
             "total_score": float(item.get("total_score", 0.0)),
             "screening_score": float(item.get("screening_score", 0.0)),
@@ -1632,6 +1597,7 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         if not hasattr(self, 'seed_manager'):
             self.seed_manager = BenchmarkSeedManager()
+            set_map_cache_epoch(self.seed_manager.epoch_number)
 
         if not hasattr(self, 'backend_api'):
             try:
@@ -1651,8 +1617,48 @@ async def forward(self) -> None:
         validator_stake = _get_validator_stake(self)
 
         # ──────────────────────────────────────────────────────────────
-        # STEP 0.5: Map-cache warmup (prebuild-all or incremental)
+        # STEP 0.25: Publish any unpublished old epoch seeds
         # ──────────────────────────────────────────────────────────────
+        for pub in self.seed_manager.get_pending_publications():
+            ep = pub.get("epoch_number")
+            try:
+                await self.backend_api.publish_epoch_seeds(
+                    epoch_number=ep,
+                    seeds=pub.get("seeds", []),
+                    started_at=pub.get("started_at", ""),
+                    ended_at=pub.get("ended_at", ""),
+                )
+                self.seed_manager.mark_epoch_published(ep)
+                bt.logging.info(f"Published epoch {ep} seeds to backend")
+            except Exception as e:
+                bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+
+        # ──────────────────────────────────────────────────────────────
+        # STEP 0.5: Epoch transition detection + map-cache warmup
+        # ──────────────────────────────────────────────────────────────
+        if self.seed_manager.check_epoch_transition():
+            old_epoch = self.seed_manager.advance_to_new_epoch()
+            set_map_cache_epoch(self.seed_manager.epoch_number)
+            bt.logging.info(
+                f"Epoch transition: {old_epoch} -> {self.seed_manager.epoch_number}"
+            )
+
+            for pub in self.seed_manager.get_pending_publications():
+                ep = pub.get("epoch_number")
+                try:
+                    await self.backend_api.publish_epoch_seeds(
+                        epoch_number=ep,
+                        seeds=pub.get("seeds", []),
+                        started_at=pub.get("started_at", ""),
+                        ended_at=pub.get("ended_at", ""),
+                    )
+                    self.seed_manager.mark_epoch_published(ep)
+                    bt.logging.info(f"Published epoch {ep} seeds to backend")
+                except Exception as e:
+                    bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+
+            cleanup_old_epoch_cache(keep_epoch=self.seed_manager.epoch_number)
+
         if MAP_CACHE_PREBUILD_ALL_AT_START:
             await _run_map_cache_prebuild_all_once(self)
         else:
@@ -1714,6 +1720,7 @@ async def forward(self) -> None:
                     total_score=total_score,
                     per_type_scores=per_type_scores,
                     seeds_evaluated=all_seeds_count,
+                    epoch_number=self.seed_manager.epoch_number,
                 )
 
                 if not recorded:
@@ -1727,7 +1734,7 @@ async def forward(self) -> None:
                         )
                     continue
 
-                set_cached_score(model_hash, {
+                set_cached_score(model_hash, self.seed_manager.epoch_number, {
                     "uid": uid,
                     "total_score": total_score,
                     "screening_score": screening_score,
@@ -1736,7 +1743,7 @@ async def forward(self) -> None:
                     "seeds_evaluated": all_seeds_count
                 })
 
-                bt.logging.info(f"✅ Re-eval complete for UID {uid}: score={total_score:.4f}")
+                bt.logging.info(f"Re-eval complete for UID {uid}: score={total_score:.4f}")
 
         # ──────────────────────────────────────────────────────────────
         # STEP 4: Discovery refresh (normal-model queue producer)

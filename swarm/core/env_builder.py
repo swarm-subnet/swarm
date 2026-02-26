@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import random
+import shutil
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -50,6 +51,31 @@ from swarm.core.mountain_generator import build_mountains, get_mountain_subtype
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 MAP_CACHE_DIR = STATE_DIR / "map_cache"
+
+_current_epoch_number: int | None = None
+
+
+def set_map_cache_epoch(epoch: int) -> None:
+    global _current_epoch_number
+    _current_epoch_number = epoch
+
+
+def get_map_cache_epoch() -> int | None:
+    return _current_epoch_number
+
+
+def cleanup_old_epoch_cache(keep_epoch: int) -> None:
+    base = MAP_CACHE_DIR / BENCHMARK_VERSION
+    if not base.exists():
+        return
+    for child in base.iterdir():
+        if child.is_dir() and child.name.startswith("epoch_"):
+            try:
+                ep = int(child.name.split("_", 1)[1])
+                if ep < keep_epoch:
+                    shutil.rmtree(child, ignore_errors=True)
+            except (ValueError, IndexError):
+                continue
 
 
 # --------------------------------------------------------------------------
@@ -125,7 +151,8 @@ def _static_world_cache_file(
     }
     key_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     key_hash = hashlib.sha256(key_json.encode("utf-8")).hexdigest()
-    return MAP_CACHE_DIR / BENCHMARK_VERSION / f"type{challenge_type}" / f"{key_hash}.bullet"
+    epoch_dir = f"epoch_{_current_epoch_number}" if _current_epoch_number is not None else "no_epoch"
+    return MAP_CACHE_DIR / BENCHMARK_VERSION / epoch_dir / f"type{challenge_type}" / f"{key_hash}.bullet"
 
 
 def _static_world_cache_meta_file(

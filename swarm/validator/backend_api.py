@@ -266,31 +266,18 @@ class BackendApiClient:
         model_hash: str,
         total_score: float,
         per_type_scores: Dict[str, float],
-        seeds_evaluated: int
+        seeds_evaluated: int,
+        epoch_number: Optional[int] = None
     ) -> Dict[str, Any]:
-        """Submit full benchmark score.
-
-        Args:
-            uid: Miner UID
-            validator_hotkey: This validator's hotkey (sent in auth headers)
-            validator_stake: This validator's stake (not used, backend gets from chain)
-            model_hash: SHA256 hash of model (not sent, backend already has it)
-            total_score: Overall benchmark score
-            per_type_scores: {"city": 0.85, "open": 0.91, "moving_platform": 0.78}
-            seeds_evaluated: Number of seeds evaluated
-
-        Returns:
-            Backend response or error dict.
-        """
-        return await self._post_signed(
-            f"/validators/models/{uid}/score",
-            {
-                "score": total_score,
-                "per_type_scores": per_type_scores,
-                "seeds_evaluated": seeds_evaluated,
-                "benchmark_version": BENCHMARK_VERSION,
-            }
-        )
+        data = {
+            "score": total_score,
+            "per_type_scores": per_type_scores,
+            "seeds_evaluated": seeds_evaluated,
+            "benchmark_version": BENCHMARK_VERSION,
+        }
+        if epoch_number is not None:
+            data["epoch_number"] = epoch_number
+        return await self._post_signed(f"/validators/models/{uid}/score", data)
 
     # ──────────────────────────────────────────────────────────────────────
     # GET /validators/sync
@@ -388,3 +375,23 @@ class BackendApiClient:
             data["total_seeds"] = total_seeds
 
         return await self._post_signed("/validators/heartbeat", data)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # POST /validators/epoch/publish
+    # ──────────────────────────────────────────────────────────────────────
+    async def publish_epoch_seeds(
+        self,
+        epoch_number: int,
+        seeds: list[int],
+        started_at: str,
+        ended_at: str,
+    ) -> Dict[str, Any]:
+        return await self._post_signed(
+            "/validators/epoch/publish",
+            {
+                "epoch_number": epoch_number,
+                "seeds": seeds,
+                "started_at": started_at,
+                "ended_at": ended_at,
+            }
+        )
