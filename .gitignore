@@ -189,3 +189,7 @@ cython_debug/
 testing/
 data/mongodb_data/
 swarm_venv/
+
+# Runtime state (auto-created by validator)
+/state/
+/stats/

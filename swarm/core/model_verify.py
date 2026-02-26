@@ -143,15 +143,6 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
     return "legitimate", "RPC agent appears legitimate"
 
 
-def is_fake_model(inspection_results: Dict) -> Tuple[bool, str]:
-    """
-    Legacy compatibility wrapper for classify_model_validity().
-    Returns True for both fake and missing_drone_agent cases.
-    """
-    status, reason = classify_model_validity(inspection_results)
-    return status != "legitimate", reason
-
-
 # ──────────────────────────────────────────────────────────────────────────
 # Forensic Storage
 # ──────────────────────────────────────────────────────────────────────────

@@ -49,7 +49,7 @@ class AgentServer(agent_capnp.Agent.Server):
         response.dtype = str(action_np.dtype)
         
         return response
-    
+
     async def calibrate(self, obs, **kwargs):
         entries = list(obs.entries)
         for entry in entries:
@@ -70,7 +70,7 @@ class AgentServer(agent_capnp.Agent.Server):
         response.shape = list(action_np.shape)
         response.dtype = str(action_np.dtype)
         return response, benchmark_ns
-    
+
     async def reset(self, **kwargs):
         self.agent.reset()
 

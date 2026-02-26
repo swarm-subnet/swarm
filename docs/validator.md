@@ -119,15 +119,18 @@ python -c "import subprocess; print('Docker status:', subprocess.run(['docker', 
 Create `.env` file in repository root:
 
 ```bash
-# REQUIRED for synchronized seeds (Contact the team)
-VALIDATOR_SECRET_KEY=your_secret_key_here 
+# REQUIRED for V4 benchmark system
+SWARM_BACKEND_API_URL=https://api.swarm.example.com
+
+# REQUIRED for private benchmark seeds (Contact the team)
+SWARM_PRIVATE_BENCHMARK_SECRET=your_private_secret_here
 
 # Optional: WandB logging
 WANDB_API_KEY=your_wandb_key_here
 VALIDATOR_NAME=my_validator_name
 ```
 
-**Note:** `VALIDATOR_SECRET_KEY` is used for synchronized seed generation across validators. Contact the team to obtain it.
+**Note:** Both `SWARM_BACKEND_API_URL` and `SWARM_PRIVATE_BENCHMARK_SECRET` are required for V4 benchmark. Contact the team to obtain values.
 
 ## 🔑 Wallet & Registration Setup
 
@@ -208,34 +211,35 @@ pm2 start --name auto_update_validator \
 
 ## 🧩 What the validator actually does
 
-1. **Generate synchronized seed**  
-   All validators generate identical seeds based on 10-minute time windows using `VALIDATOR_SECRET_KEY`.  
-   This ensures all validators evaluate miners on identical maps.
+1. **Sync with backend**
+   Validators poll the central backend for current weights and re-evaluation queue.
 
-2. **Sample miners**  
-   Sample up to 256 miners from metagraph, filtering out low performers (avg score < 0.2) and validators.
+2. **Detect new models**
+   For each miner UID:
+   - Compare SHA256 hash to cache at `miner_models_v2/UID_<uid>.zip`
+   - If hash differs, download new model
 
-3. **Discover miners' models**  
-   For each sampled UID:
-   - Send empty `PolicySynapse` → miner replies with `PolicyRef`
-   - Compare SHA256 to cache at `miner_models_v2/UID_<uid>.zip`
-   - If hash differs, request `need_blob=True` and stream via `PolicyChunk` messages
+3. **Screening (200 private seeds)**
+   New models are first evaluated on 200 private seeds (derived via HMAC-SHA256).
+   Must score within 80% of top model (or >10% during bootstrap) to proceed.
 
-4. **Multi-layer fake detection**  
-   Models are validated for security and authenticity before evaluation.
+4. **Full benchmark (1000 public seeds)**
+   Models that pass screening are evaluated on 1000 public benchmark seeds.
+   Uses 4 parallel Docker containers for faster evaluation.
 
-5. **Docker evaluation**  
-   Miner code runs in isolated Docker container serving RPC endpoint. PyBullet simulation and scoring execute on validator host for security.
+5. **Submit scores to backend**
+   Final score (median of all 1200 seeds) is submitted to central backend.
 
-6. **Score normalization**  
-   Compute normalized score as weighted average across all challenge types.  
-   Minimum 25 runs required before miner is eligible for rewards.
+6. **Backend aggregation**
+   Backend aggregates scores from all validators (51% stake, median).
+   Calculates final weights for winner-take-all distribution.
 
-7. **Winner-take-all rewards**  
-   Winner take all
+7. **Apply weights**
+   Validators fetch weights from backend and apply to chain with 95% burn.
 
-8. **Update weights and repeat**  
-   Write weights to chain, sleep until next seed window, cleanup Docker resources.
+8. **Caching**
+   Results are cached by model hash + benchmark version.
+   Same model won't be re-evaluated unless benchmark version changes.
 
 Everything is orchestrated by the coroutine
 `swarm/validator/forward.py::forward`.

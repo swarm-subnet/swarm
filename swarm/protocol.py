@@ -33,6 +33,8 @@ class MapTask:
     sim_dt: float
     horizon: float
     challenge_type: int
+    search_radius: float = 10.0
+    moving_platform: bool = False
     version: str = "1"
 
     def pack(self) -> bytes:

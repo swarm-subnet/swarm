@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class DroneFlightController:
     """
     Swarm Subnet 124 - Autonomous Drone Flight Controller
@@ -7,9 +10,8 @@ class DroneFlightController:
     navigate from start to goal while avoiding obstacles.
     
     Observation Space:
-        Dictionary with three keys:
-        - "rgb": numpy array (96, 96, 4) - RGBA camera feed
-        - "depth": numpy array (96, 96, 1) - Normalized depth map [0,1] for 0.5-20m range
+        Dictionary with two keys:
+        - "depth": numpy array (128, 128, 1) - Normalized depth map [0,1] for 0.5-20m range
         - "state": numpy array (N,) - flight state vector containing:
             * Position (x, y, z) in meters
             * Orientation (roll, pitch, yaw)
@@ -59,12 +61,11 @@ class DroneFlightController:
         Compute flight action for current observation.
         
         Args:
-            observation: dict with "rgb" (96,96,4), "depth" (96,96,1), and "state" (N,) arrays
+            observation: dict with "depth" (128,128,1) and "state" (N,) arrays
         
         Returns:
             numpy array (5,) containing [vx, vy, vz, speed, yaw]
         """
-        import numpy as np
         action = np.random.uniform(-1, 1, size=5)
         action[3] = np.clip(action[3], 0, 1)
         return action
@@ -77,4 +78,3 @@ class DroneFlightController:
         state like hidden states, observation buffers, or counters.
         """
         pass
-

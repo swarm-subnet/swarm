@@ -1,55 +1,87 @@
-from datetime import datetime, timezone, timedelta
 import hashlib
-import time
-from typing import Tuple
+import hmac
+import json
+import os
+from pathlib import Path
+from typing import List
+
 import bittensor as bt
 
+from swarm.constants import (
+    BENCHMARK_VERSION,
+    BENCHMARK_PUBLIC_SEED_COUNT,
+    BENCHMARK_PRIVATE_SEED_COUNT,
+)
 
-class SynchronizedSeedManager:
 
-    def __init__(self, secret_key: str, window_minutes: int = 10):
-        self.secret_key = secret_key
-        self.window_minutes = window_minutes
-        self._last_window_start = None
+class BenchmarkSeedManager:
+    """Manages benchmark seeds: 1000 public (from file) + 200 private (derived from secret)."""
 
-    def get_current_window(self) -> Tuple[datetime, datetime]:
-        now = datetime.now(timezone.utc)
-        minutes_floored = (now.minute // self.window_minutes) * self.window_minutes
-        window_start = now.replace(minute=minutes_floored, second=0, microsecond=0)
-        window_end = window_start + timedelta(minutes=self.window_minutes)
-        return window_start, window_end
+    def __init__(self, private_secret: str = None):
+        """Initialize seed manager.
 
-    def generate_seed(self) -> Tuple[int, datetime, datetime]:
-        window_start, window_end = self.get_current_window()
-
-        time_string = window_start.strftime("%Y-%m-%d-%H:%M")
-        seed_input = f"{self.secret_key}{time_string}"
-        hash_object = hashlib.sha256(seed_input.encode('utf-8'))
-        hash_hex = hash_object.hexdigest()
-        seed = int(hash_hex[:8], 16)
-
-        if self._last_window_start != window_start:
-            self._last_window_start = window_start
-            bt.logging.info(
-                f"New seed window: {window_start.strftime('%H:%M')}-{window_end.strftime('%H:%M')} UTC | "
-                f"Seed: {seed}"
+        Args:
+            private_secret: Secret for deriving private seeds. If None, reads from
+                           SWARM_PRIVATE_BENCHMARK_SECRET env var.
+        """
+        self.private_secret = private_secret or os.getenv("SWARM_PRIVATE_BENCHMARK_SECRET")
+        if not self.private_secret:
+            raise ValueError(
+                "SWARM_PRIVATE_BENCHMARK_SECRET env var required for benchmark seeds"
             )
 
-        return seed, window_start, window_end
+        self.public_seeds = self._load_public_seeds()
+        self.private_seeds = self._derive_private_seeds()
 
-    def should_wait(self) -> bool:
-        _, window_end = self.get_current_window()
-        now = datetime.now(timezone.utc)
-        return now < window_end
+        bt.logging.info(
+            f"BenchmarkSeedManager initialized: {len(self.public_seeds)} public + "
+            f"{len(self.private_seeds)} private seeds"
+        )
 
-    def wait_for_next_window(self) -> None:
-        _, window_end = self.get_current_window()
-        now = datetime.now(timezone.utc)
+    def _load_public_seeds(self) -> List[int]:
+        """Load public seeds from committed artifact."""
+        path = Path(__file__).parent.parent / "benchmark" / "public_seeds_v1.json"
 
-        if now < window_end:
-            sleep_seconds = (window_end - now).total_seconds()
-            bt.logging.info(
-                f"Cycle complete. Waiting {sleep_seconds:.1f}s until "
-                f"{window_end.strftime('%H:%M:%S')} UTC"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Public seeds artifact not found: {path}. "
+                "This file must be committed to the repository."
             )
-            time.sleep(sleep_seconds + 0.5)
+
+        with open(path) as f:
+            data = json.load(f)
+
+        if data.get("version") != BENCHMARK_VERSION:
+            bt.logging.warning(
+                f"Public seeds version mismatch: file has {data.get('version')}, "
+                f"expected {BENCHMARK_VERSION}"
+            )
+
+        seeds = data.get("seeds", [])
+        if len(seeds) != BENCHMARK_PUBLIC_SEED_COUNT:
+            bt.logging.warning(
+                f"Public seed count mismatch: {len(seeds)} != {BENCHMARK_PUBLIC_SEED_COUNT}"
+            )
+
+        return seeds
+
+    def _derive_private_seeds(self) -> List[int]:
+        """Derive private seeds using HMAC-SHA256.
+
+        Private seeds are deterministic: same secret = same seeds across all validators.
+        """
+        seeds = []
+        for i in range(BENCHMARK_PRIVATE_SEED_COUNT):
+            msg = f"private_seed_{i}".encode()
+            h = hmac.new(self.private_secret.encode(), msg, hashlib.sha256)
+            seed = int.from_bytes(h.digest()[:4], 'big')
+            seeds.append(seed)
+        return seeds
+
+    def get_screening_seeds(self) -> List[int]:
+        """Return 200 private seeds for screening phase."""
+        return self.private_seeds.copy()
+
+    def get_public_seeds(self) -> List[int]:
+        """Return 1000 public seeds for full benchmark."""
+        return self.public_seeds.copy()

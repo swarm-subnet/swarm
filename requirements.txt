@@ -9,7 +9,7 @@ setuptools
 loguru
 xmldiff
 filelock
-pybullet
+git+https://github.com/swarm-subnet/bullet3-swarmfork.git
 bittensor
 msgpack
 importlib-metadata

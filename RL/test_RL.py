@@ -78,7 +78,16 @@ def _run_episode_speed_limit(task, uid, model, *, gui=False):
     if not gui:
         env.close()
 
-    score = flight_reward(success=success, t=t_sim, horizon=task.horizon, task=task)
+    min_clearance = info.get("min_clearance", None)
+    collision = info.get("collision", False)
+    score = flight_reward(
+        success=success,
+        t=t_sim,
+        horizon=task.horizon,
+        task=task,
+        min_clearance=min_clearance,
+        collision=collision,
+    )
     avg_speed = np.mean(speeds) if speeds else 0.0
     result = ValidationResult(uid, success, t_sim, score)
     return result, avg_speed

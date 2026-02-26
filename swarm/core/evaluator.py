@@ -8,7 +8,9 @@ import sys
 import os
 import json
 import gc
+import logging
 import resource
+import traceback
 from pathlib import Path
 import subprocess
 import zipfile
@@ -19,6 +21,7 @@ if swarm_path not in sys.path:
 
 from dataclasses import asdict
 from swarm.protocol import MapTask, ValidationResult
+from swarm.core.model_verify import inspect_model_structure, classify_model_validity
 
 
 
@@ -27,7 +30,6 @@ def main():
     """Main evaluator entry point"""
     
     # Disable all logging to prevent any logging threads in parent or worker
-    import logging
     logging.disable(logging.CRITICAL)
     
     # Redirect stderr to suppress output (but keep for debugging in verify mode)
@@ -65,8 +67,6 @@ def main():
         
         
         # First inspect model for fake indicators (safe within container)
-        from swarm.core.model_verify import inspect_model_structure, classify_model_validity
-        
         inspection_results = inspect_model_structure(Path(model_path))
         model_status, model_reason = classify_model_validity(inspection_results)
         
@@ -153,7 +153,6 @@ def main():
         
     except Exception as e:
         # Write error result with full traceback
-        import traceback
         error_msg = f"{str(e)}\n{traceback.format_exc()}"
         error_result = {
             'uid': uid if 'uid' in locals() else 0,

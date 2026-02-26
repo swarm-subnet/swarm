@@ -253,10 +253,31 @@ Update the path or filename in `neurons/miner.py` if you organize files differen
 
 | Term            | Weight | Description                                      |
 |-----------------|--------|--------------------------------------------------|
-| Mission success | 0.50   | 1.0 if goal reached, else 0      |
-| Time factor     | 0.50   | 1.0 if time ≤ target, linear decay otherwise    |
+| Mission success | 0.45   | 1.0 if valid landing, else 0      |
+| Time factor     | 0.45   | 1.0 if time ≤ target, linear decay otherwise    |
+| Safety          | 0.10   | Minimum clearance from obstacles (1.0m = full, 0.2m = zero) |
 
 Target time is computed as `(distance / 3.0 m/s) × 1.06` to allow a 6% buffer for optimal flight.
+
+### Landing Requirements
+
+Touching the platform is not enough. Drones must achieve a **stable landing**:
+
+| Requirement | Threshold | Description |
+|-------------|-----------|-------------|
+| Vertical Velocity | ≤ 0.5 m/s | Must descend slowly |
+| Horizontal Velocity | ≤ 0.6 m/s | Relative to platform (handles moving platforms) |
+| Orientation | ≤ 15° tilt | Roll and pitch must be low |
+| Stable Duration | 0.5 seconds | All conditions must hold continuously |
+
+### Observation Contract
+
+| Field | Shape | Description |
+|-------|-------|-------------|
+| depth | (128, 128, 1) | Normalized depth map (0.0 = near, 1.0 = far) |
+| state | (21,) | Drone state vector (position, velocity, orientation, etc.) |
+
+**Note:** RGB images are not provided. Miners must use depth-only observations.
 
 *Full logic: `swarm/validator/reward.py`.*
 

@@ -11,6 +11,7 @@ import io
 import time
 import contextlib
 
+import gymnasium.spaces as spaces
 import numpy as np
 import pybullet as p
 import pybullet_data
@@ -71,14 +72,13 @@ def make_env(
 
     with contextlib.redirect_stdout(io.StringIO()):
         obs, _ = env.reset(seed=task.map_seed)
-        
+
         if obs is not None and "state" in obs:
             actual_state_dim = obs["state"].shape[0]
             if actual_state_dim != env._state_dim:
-                import gymnasium.spaces as spaces
                 env._state_dim = actual_state_dim
                 env.observation_space = spaces.Dict({
-                    "rgb": env.observation_space["rgb"],
+                    "depth": env.observation_space["depth"],
                     "state": spaces.Box(
                         low=-np.inf,
                         high=np.inf,
