@@ -1,0 +1,251 @@
+{
+"version": 1,
+"model_sig": {
+"size": 1136963,
+"mtime_ns": 1770907486414815400
+},
+"parts": [
+{
+"path": "BlackDull.obj",
+"material": "BlackDull",
+"rgba": [
+0.012286,
+0.012286,
+0.012286,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "DullSteel.obj",
+"material": "DullSteel",
+"rgba": [
+0.099067,
+0.099067,
+0.099067,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Chrome.obj",
+"material": "Chrome",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Mesh_alpha.obj",
+"material": "Mesh_alpha",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Mesh.obj",
+"material": "Mesh",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Light_Amber.obj",
+"material": "Light_Amber",
+"rgba": [
+0.799103,
+0.171441,
+0.051269,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Glass_Headlights.obj",
+"material": "Glass_Headlights",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "ChromeReflector.obj",
+"material": "ChromeReflector",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Painted_Metal_Blue.obj",
+"material": "Painted_Metal_Blue",
+"rgba": [
+0.017861,
+0.002093,
+0.5,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Glass.obj",
+"material": "Glass",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Rubber.obj",
+"material": "Rubber",
+"rgba": [
+0.069978,
+0.069978,
+0.069978,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "BrushedMetal.obj",
+"material": "BrushedMetal",
+"rgba": [
+0.401972,
+0.401972,
+0.401972,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "FloorPlate.obj",
+"material": "FloorPlate",
+"rgba": [
+0.146608,
+0.146608,
+0.146608,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Painted_Metal_White.obj",
+"material": "Painted_Metal_White",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Glass_Tinted.obj",
+"material": "Glass_Tinted",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "LeatherBlack.obj",
+"material": "LeatherBlack",
+"rgba": [
+0.093535,
+0.093535,
+0.093535,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Mirror.obj",
+"material": "Mirror",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Aluminium_z.obj",
+"material": "Aluminium_z",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Aluminium_x.obj",
+"material": "Aluminium_x",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Glass_Red.obj",
+"material": "Glass_Red",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "TireSidewall.obj",
+"material": "TireSidewall",
+"rgba": [
+0.204145,
+0.204145,
+0.204145,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "TireTread.obj",
+"material": "TireTread",
+"rgba": [
+0.012286,
+0.012286,
+0.012286,
+1.0
+],
+"texture_path": ""
+}
+]
+}
