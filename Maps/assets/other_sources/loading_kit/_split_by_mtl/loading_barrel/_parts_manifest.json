@@ -1,0 +1,42 @@
+{
+"version": 1,
+"model_sig": {
+"size": 57824,
+"mtime_ns": 1771200070075792300
+},
+"parts": [
+{
+"path": "barrel.obj",
+"material": "barrel",
+"rgba": [
+0.03132,
+0.119276,
+0.073184,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "barrel_metal.001.obj",
+"material": "barrel_metal.001",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "barrel_caps.obj",
+"material": "barrel_caps",
+"rgba": [
+1.0,
+1.0,
+1.0,
+1.0
+],
+"texture_path": ""
+}
+]
+}

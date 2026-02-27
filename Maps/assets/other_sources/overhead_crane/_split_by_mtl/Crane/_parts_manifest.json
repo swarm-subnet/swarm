@@ -1,0 +1,42 @@
+{
+"version": 1,
+"model_sig": {
+"size": 46962,
+"mtime_ns": 1771461290737173800
+},
+"parts": [
+{
+"path": "Material.002.obj",
+"material": "Material.002",
+"rgba": [
+0.003095,
+0.003095,
+0.003095,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Material.003.obj",
+"material": "Material.003",
+"rgba": [
+0.93,
+0.78,
+0.12,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "Material.001.obj",
+"material": "Material.001",
+"rgba": [
+0.0,
+0.0,
+0.0,
+1.0
+],
+"texture_path": ""
+}
+]
+}

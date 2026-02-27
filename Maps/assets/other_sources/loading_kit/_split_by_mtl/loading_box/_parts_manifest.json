@@ -1,0 +1,53 @@
+{
+"version": 1,
+"model_sig": {
+"size": 3580,
+"mtime_ns": 1771200037818258800
+},
+"parts": [
+{
+"path": "cardboard_box.obj",
+"material": "cardboard_box",
+"rgba": [
+0.8,
+0.519258,
+0.322644,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "cardboard_box_tape.obj",
+"material": "cardboard_box_tape",
+"rgba": [
+0.882923,
+0.66767,
+0.521109,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "cardboard_box_labels.001.obj",
+"material": "cardboard_box_labels.001",
+"rgba": [
+0.787399,
+0.504643,
+0.309451,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "cardboard_box_labels.obj",
+"material": "cardboard_box_labels",
+"rgba": [
+0.787399,
+0.504643,
+0.309451,
+1.0
+],
+"texture_path": ""
+}
+]
+}

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "generated_files": {
+    "roof": "roof_curved_104x72.obj",
+    "fillers": "roof_fillers_104x72.obj",
+    "truss": "roof_truss_104x72.obj"
+  },
+  "config": {
+    "warehouse_size_x": 104.0,
+    "warehouse_size_y": 72.0,
+    "wall_top_z": 0.0,
+    "curved_roof_rise": 3.2,
+    "roof_thickness": 0.32,
+    "roof_underside_drop": -0.06,
+    "roof_seg_x": 52,
+    "roof_seg_y": 36,
+    "roof_overhang_x": 0.0,
+    "roof_overhang_y": 0.0,
+    "roof_gap_filler_thickness": 0.28,
+    "truss_rib_count": 5,
+    "truss_end_margin_x": 6.0,
+    "truss_side_margin_y": 0.0,
+    "truss_clearance_to_roof": 0.05,
+    "truss_beam_thickness": 0.31,
+    "truss_beam_depth": 0.31,
+    "truss_top_profile_segments": 96,
+    "truss_node_count": 9,
+    "truss_node_end_trim": 1.6,
+    "truss_lower_chord_wall_offset": 0.0,
+    "truss_web_thickness": 0.2,
+    "truss_member_end_trim": 0.0
+  }
+}

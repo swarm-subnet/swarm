@@ -1,10 +1,16 @@
 # Assets
 
-Assets are organized in one shared location for both maps:
+Assets are organized in one shared location for all map prototypes:
 
 - `assets/kenney`
 - `assets/custom`
 - `assets/other_sources`
+
+Current maps using this shared asset layout:
+
+- `City_Generator_Prototype`
+- `ski-resort based map prototype`
+- `Warehouse_Prototype`
 
 ## What Each Folder Means
 

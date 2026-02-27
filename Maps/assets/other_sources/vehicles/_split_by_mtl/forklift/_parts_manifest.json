@@ -1,0 +1,64 @@
+{
+"version": 1,
+"model_sig": {
+"size": 169984,
+"mtime_ns": 1770899581739054600
+},
+"parts": [
+{
+"path": "forklight_black.obj",
+"material": "forklight_black",
+"rgba": [
+0.132863,
+0.132863,
+0.132863,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "forklight_yellow.obj",
+"material": "forklight_yellow",
+"rgba": [
+0.841201,
+0.667897,
+0.246282,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "forklift_white.obj",
+"material": "forklift_white",
+"rgba": [
+1.0,
+1.0,
+1.0,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "forklight_tire.obj",
+"material": "forklight_tire",
+"rgba": [
+0.132863,
+0.132863,
+0.132863,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "barrel_metal.obj",
+"material": "barrel_metal",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+}
+]
+}
