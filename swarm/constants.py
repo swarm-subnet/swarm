@@ -33,7 +33,7 @@ CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
 CAMERA_FOV_VARIANCE = 2.0               # FOV randomization range (±degrees)
 # Depth sensor parameters
 DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
-DEPTH_FAR = 1000.0                      # PyBullet camera far plane (meters)
+DEPTH_FAR = 20.0                        # PyBullet camera far plane (meters)
 DEPTH_MIN_M = 0.5                       # Minimum useful depth range (meters)
 DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
 # Search area parameters

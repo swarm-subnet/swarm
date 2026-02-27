@@ -417,8 +417,8 @@ class MovingDroneAviary(BaseRLAviary):
         DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
             fov=self._fov,
             aspect=aspect,
-            nearVal=0.05,
-            farVal=1000.0,
+            nearVal=DEPTH_NEAR,
+            farVal=DEPTH_FAR,
             physicsClientId=cli
         )
         
