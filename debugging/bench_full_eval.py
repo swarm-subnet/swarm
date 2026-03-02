@@ -20,6 +20,7 @@ import random
 import sys
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -521,50 +522,23 @@ async def _run_benchmark(
         f"[{_ts()}] Running evaluation ({effective_workers} workers, {len(all_tasks)} seeds, "
         f"dynamic dispatch)..."
     )
-    terrain_guard_enabled = (not run_opts.serialize_pybullet) and (effective_workers > 1)
-    if terrain_guard_enabled:
-        print(
-            f"[{_ts()}] Terrain concurrency guard enabled "
-            f"(at most 1 mountain/village seed at a time in no-serialize mode)."
-        )
     heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
     heartbeat_thread.start()
     try:
         with _temporary_env(env_overrides):
             results: List[Optional[Any]] = [None] * len(all_tasks)
-            pending_indices = list(range(len(all_tasks)))
-            scheduler_cond = asyncio.Condition()
-            active_terrain = 0
+            pending_indices = deque(range(len(all_tasks)))
+            pending_lock = asyncio.Lock()
 
-            async def _claim_next_index() -> Tuple[Optional[int], bool]:
-                nonlocal active_terrain
-                async with scheduler_cond:
-                    while True:
-                        if not pending_indices:
-                            return None, False
-
-                        selected_pos = None
-                        selected_is_terrain = False
-                        for pos, candidate_idx in enumerate(pending_indices):
-                            is_terrain = int(task_meta[candidate_idx]["challenge_type"]) in (3, 4)
-                            if not terrain_guard_enabled or not is_terrain or active_terrain == 0:
-                                selected_pos = pos
-                                selected_is_terrain = is_terrain
-                                break
-
-                        if selected_pos is not None:
-                            idx = pending_indices.pop(selected_pos)
-                            if selected_is_terrain and terrain_guard_enabled:
-                                active_terrain += 1
-                            return idx, selected_is_terrain
-
-                        # Only blocked by terrain concurrency guard; wait for running terrain seed to finish.
-                        await scheduler_cond.wait()
+            async def _claim_next_index() -> Optional[int]:
+                async with pending_lock:
+                    if not pending_indices:
+                        return None
+                    return pending_indices.popleft()
 
             async def _worker_loop(worker_slot: int) -> None:
-                nonlocal active_terrain
                 while True:
-                    idx, claimed_terrain = await _claim_next_index()
+                    idx = await _claim_next_index()
                     if idx is None:
                         return
 
@@ -576,32 +550,26 @@ async def _run_benchmark(
                         flush=True,
                     )
                     seed_start = time.time()
-                    try:
-                        seed_results = await evaluator.evaluate_seeds_batch(
-                            tasks=[task],
-                            uid=uid,
-                            model_path=model_path,
-                            worker_id=worker_slot,
-                            on_seed_complete=_on_seed_done,
-                            task_offset=idx,
-                            task_total=len(all_tasks),
+                    seed_results = await evaluator.evaluate_seeds_batch(
+                        tasks=[task],
+                        uid=uid,
+                        model_path=model_path,
+                        worker_id=worker_slot,
+                        on_seed_complete=_on_seed_done,
+                        task_offset=idx,
+                        task_total=len(all_tasks),
+                    )
+                    if len(seed_results) != 1:
+                        raise RuntimeError(
+                            f"Worker {worker_slot}: unexpected result count "
+                            f"{len(seed_results)} for single-task dispatch (seed {meta['seed']})."
                         )
-                        if len(seed_results) != 1:
-                            raise RuntimeError(
-                                f"Worker {worker_slot}: unexpected result count "
-                                f"{len(seed_results)} for single-task dispatch (seed {meta['seed']})."
-                            )
-                        results[idx] = seed_results[0]
-                        print(
-                            f"[{_ts()}] Worker {worker_slot} complete | seed={meta['seed']} "
-                            f"in {time.time() - seed_start:.1f}s",
-                            flush=True,
-                        )
-                    finally:
-                        if claimed_terrain and terrain_guard_enabled:
-                            async with scheduler_cond:
-                                active_terrain = max(0, active_terrain - 1)
-                                scheduler_cond.notify_all()
+                    results[idx] = seed_results[0]
+                    print(
+                        f"[{_ts()}] Worker {worker_slot} complete | seed={meta['seed']} "
+                        f"in {time.time() - seed_start:.1f}s",
+                        flush=True,
+                    )
 
             worker_count = min(effective_workers, len(all_tasks))
             await asyncio.gather(*(_worker_loop(i) for i in range(worker_count)))
