@@ -1,144 +1,187 @@
 <div align="center">
-  <h1>🐝 <strong>Swarm</strong> – Bittensor Drone autopilot Subnet 🐝</h1>
-  <img src="swarm/assets/Swarm_2.png" alt="Swarm"  width="500">
+  <h1>🐝 <strong>Swarm</strong> – Bittensor Drone Autopilot Subnet 🐝</h1>
+  <img src="swarm/assets/Swarm_2.png" alt="Swarm" width="500">
   <p>
-    <a href="docs/miner.md">🚀 Miner guide</a> &bull;
-    <a href="docs/validator.md">🔐 Validator guide</a> &bull;
+    <a href="docs/miner.md">🚀 Miner Guide</a> &bull;
+    <a href="docs/validator.md">🔐 Validator Guide</a> &bull;
     <a href="docs/roadmap.md">🗺️ Roadmap</a> &bull;
     <a href="https://x.com/SwarmSubnet">🐦 Follow us on X</a> &bull;
-    <a href="https://swarm124.com/">🌐 Web & Leaderboard </a>
+    <a href="https://swarm124.com/">🌐 Web & Leaderboard</a>
     <br>
     <a href="https://discord.com/channels/799672011265015819/1385341501130801172">💬 Join us on Discord</a>
   </p>
 </div>
 
-## 🔍 Overview
-Swarm is a **Bittensor subnet engineered to enable decentralized autonomous drone flight**.
+## Overview
 
-Validators create synthetic map tasks and evaluate miner-supplied **pre-trained RL policies** inside secure Docker containers using PyBullet physics simulation.
+Swarm is a **Bittensor subnet** for autonomous drone navigation. Miners train RL policies that are benchmarked across procedurally generated 3D environments — navigating cities, mountains, warehouses, forests, and open terrain.
 
-Miners that produce fast and *successful* policies earn the highest rewards
-
-**Why OS drone flying?**
-
-- Open-sourcing flight algorithms isn't just idealism – it is a practical route to safer, cheaper and more accountable drones, and it prevents the future of aerial autonomy from being locked behind half a dozen NDAs
-
-- Our ambition is to establish Swarm miners as the **go‑to control intelligence for micro‑drone navigation** in research and industry.
-
----
-## ⚙️ Subnet Mechanics
-
-### 🧑‍🏫 Validator
-
-- Generates unique MapTasks  
-- Evaluates policies head‑less and validates them
-- Assigns weights proportional to the final reward score
-
-### ⛏️ Miner
-
-- Provides RPC agents that are evaluated on secret tasks
-- Any framework is allowed – Stable Baselines 3, PyTorch, JAX, or custom implementations
-- Must submit RPC agent with main.py entry point
+The top-performing model earns the subnet rewards and is **published on our [website](https://swarm124.com/)** — available for other miners to download, build on top of, or improve. Every champion raises the bar for the next one.
 
 ---
 
-## Swarm Core components
+## 🗺️ Maps
 
-| Component             | Purpose                           | Key points (code refs)                                                      |
-|-----------------------|-----------------------------------|------------------------------------------------------------------------------|
-| **MapTask**           | Internal validator task         | Random start→goal pair, simulation time‑step `sim_dt`, hard time limit `horizon` (`swarm.protocol.MapTask`) |
-| **PolicyRef**         | Model metadata                    | SHA256, framework, size (`swarm.protocol.PolicyRef`) |
-| **Policy Evaluation** | RL model testing                 | Evaluates RPC agents on secret tasks in Docker (`swarm.core.evaluator`) |
-| **Reward**            | Maps outcome → [0,1] score        | 0.45 × success + 0.45 × time + 0.10 × safety (`swarm.validator.reward.flight_reward`) |
+Every benchmark seed produces a unique environment. Five map types test different navigation skills — from obstacle-free flight to dense indoor navigation.
 
-### Observation Contract
+### City (40% of seeds)
+
+Procedural OBJ-mesh city with roads, intersections, streetlights, and trees. Four sub-variants scale from low-density residential neighborhoods to maximum-density urban cores with skyscrapers.
+
+<table>
+  <tr>
+    <td align="center"><img src="swarm/assets/map_images/Type1_sub1.png" width="400"><br><b>Residential</b></td>
+    <td align="center"><img src="swarm/assets/map_images/Type1_sub2.png" width="400"><br><b>Mixed</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="swarm/assets/map_images/Type1_sub3.png" width="400"><br><b>Urban</b></td>
+    <td align="center"><img src="swarm/assets/map_images/Type1_sub4.png" width="400"><br><b>Hard Mode</b></td>
+  </tr>
+</table>
+
+### Open (15% of seeds)
+
+No obstacles. Tests raw navigation, altitude control, and precision landing.
+
+<div align="center">
+  <img src="swarm/assets/map_images/Type2.png" width="500">
+</div>
+
+### Mountain (25% of seeds)
+
+Two subtypes: procedural snow terrain with scattered peaks and valleys, or a ski village with road grids, snow-roofed buildings, and surrounding mountain ranges.
+
+<table>
+  <tr>
+    <td align="center"><img src="swarm/assets/map_images/Type3.png" width="400"><br><b>Mountains Only</b></td>
+    <td align="center"><img src="swarm/assets/map_images/Type3_sub2.png" width="400"><br><b>Ski Village</b></td>
+  </tr>
+</table>
+
+### Warehouse (20% of seeds)
+
+Indoor 80m × 50m warehouse with storage racks, forklifts, loading docks, conveyors, overhead cranes, an embedded office, factory equipment, and a full roof/truss structure. Start and goal platforms are placed collision-free with a minimum 10m separation.
+
+<div align="center">
+  <img src="swarm/assets/map_images/Type4.png" width="500">
+</div>
+
+### Forest (Coming Soon)
+
+Dense forest environment with trees, vegetation, and uneven terrain. Designed to test low-altitude navigation through natural obstacles.
+
+### Moving Platform
+
+On City, Open, and Mountain maps, the goal platform may move in **circular**, **linear**, or **figure-8** patterns. The drone must track and reach the moving target.
+
+---
+
+## ⚙️ Benchmark System
+
+### Epoch-Based Seed Rotation
+
+Benchmark seeds rotate every **7 days**. Each epoch, validators derive 1,000 fresh seeds from a shared secret using HMAC-SHA256 — all validators compute identical seeds independently.
+
+```
+Epoch starts (every Monday 16:00 UTC)
+  │
+  ├── 1,000 new seeds derived from HMAC(secret, epoch + index)
+  ├── All models evaluated on the same seeds (fair comparison)
+  │
+Epoch ends (7 days later)
+  │
+  ├── Seeds published on our website (full transparency)
+  ├── Champion re-evaluated on new epoch seeds
+  │     └── Score updated — champion keeps title with the new score
+  └── Old cache cleaned up, new worlds prebuilt
+```
+
+### Evaluation Pipeline
+
+1. **Miner** submits an RPC agent (`drone_agent.py` + trained model)
+2. **Validator** downloads the agent and runs it in a sandboxed Docker container:
+   - **Screening** (200 seeds) — quick filter for low-quality models
+   - **Full benchmark** (800 seeds) — scored across all five map types
+3. **Final score** = median of all 1,000 seed results
+4. **Backend** aggregates scores from multiple validators (51% stake consensus)
+5. **Winner-take-all** — #1 scorer receives emissions
+
+Models are identified by SHA-256 hash — same model is never re-evaluated within the same epoch.
+
+---
+
+## 🎯 Scoring
+
+```
+score = 0.45 × success + 0.45 × time + 0.10 × safety
+```
+
+| Term | Weight | Description |
+|------|--------|-------------|
+| **Success** | 0.45 | 1.0 if the drone achieves a valid landing, 0.0 otherwise |
+| **Time** | 0.45 | 1.0 if within target time, decays linearly to 0.0 at horizon |
+| **Safety** | 0.10 | Based on minimum clearance from obstacles during flight |
+
+### Landing
+
+For **static platforms**, touching is not enough — the drone must hold a **stable landing** for 0.5 seconds:
+
+| Condition | Threshold |
+|-----------|-----------|
+| Vertical velocity | ≤ 0.5 m/s |
+| Horizontal velocity | ≤ 0.6 m/s (relative to platform) |
+| Tilt (roll / pitch) | ≤ 15° |
+
+For **moving platforms**, contact with the platform is enough to count as success.
+
+Collision with any obstacle sets the score to **0.01**.
+
+### Safety
+
+Throughout the entire flight, the simulator tracks the **minimum distance** between the drone and any obstacle. This worst-case clearance determines the safety score:
+
+| Minimum Clearance | Safety Score |
+|-------------------|-------------|
+| ≥ 1.0m | 1.0 (full) |
+| ≤ 0.2m | 0.0 (none) |
+| Between 0.2m – 1.0m | Linear interpolation |
+
+A drone that completes the mission but flies 0.1m from a wall gets zero safety score. A drone that keeps 1m+ clearance at all times gets the full 10%.
+
+This pushes models to fly safely and predictably — the kind of behavior you actually want from a real drone.
+
+---
+
+## 🔍 Observations
+
+Miners receive depth and state observations.
 
 | Field | Shape | Description |
 |-------|-------|-------------|
-| depth | (128, 128, 1) | Normalized depth map (0.0 = near, 1.0 = far) |
-| state | (21,) | Drone state vector (position, velocity, orientation, etc.) |
+| `depth` | (128, 128, 1) | Normalized depth map (0.5m – 20m range) |
+| `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
-**Note:** RGB images are not provided. Miners must use depth-only observations.
-
-### Task generation
-
-Tasks use fixed benchmark seed pools (1000 public + 200 private). Goals are placed 5-45 meters away at random altitude with procedural obstacles based on challenge types (1-3).
-
-```python
-# swarm/validator/task_gen.py
-distance = rng.uniform(5.0, 45.0)   # meters
-challenge_type = rng.choice([1, 2, 3])  # City, Open, Moving Platform
-```
-
-### Challenge Types
-
-| Type | Name | Description |
-|------|------|-------------|
-| 1 | City Navigation | Dense procedural buildings, requires obstacle avoidance |
-| 2 | Open Flight | No obstacles, tests pure navigation efficiency |
-| 3 | Moving Platform | Goal platform moves in patterns (circular, linear, figure8) |
-
-### Benchmark Flow
-The validator:
-
-1. Detects new/changed models via SHA256 hash comparison
-2. Runs screening (200 private seeds) to filter low-quality models
-3. Runs full benchmark (1000 public seeds) for passing models
-4. Submits scores to central backend for aggregation
-5. Backend calculates final weights (51% stake median)
-6. Applies winner-take-all rewards with 95% burn
-
-Here is an example image of our GUI!
-
-<div align="center">
-<img src="swarm/assets/drone_image.png" alt="Drone"  width="300">
-</div>
+The search area gives a direction toward the goal with up to ±10m noise — sometimes close, sometimes off. The drone must use its depth sensor to find the actual landing platform.
 
 ---
 
-## 🎯 Reward Mechanism
+## 🚀 Getting Started
 
-### Performance Scoring
-| Term        | Weight | Rationale                               |
-|-------------|--------|-----------------------------------------|
-| Success     | 0.45   | Goal reached with valid landing         |
-| Time        | 0.45   | Speed optimization with target time     |
-| Safety      | 0.10   | Minimum clearance from obstacles        |
-
-### Landing Requirements
-
-Touching the platform is not enough. Drones must achieve a **stable landing**:
-
-| Requirement | Threshold | Description |
-|-------------|-----------|-------------|
-| Vertical Velocity | ≤ 0.5 m/s | Must descend slowly |
-| Horizontal Velocity | ≤ 0.6 m/s | Relative to platform (handles moving platforms) |
-| Orientation | ≤ 15° tilt | Roll and pitch must be low |
-| Stable Duration | 0.5 seconds | All conditions must hold continuously |
-
-### Safety Scoring
-
-| Condition | Safety Score |
-|-----------|--------------|
-| min_clearance ≥ 1.0m | 1.0 (full) |
-| min_clearance ≤ 0.2m | 0.0 (none) |
-| Between 0.2m - 1.0m | Linear interpolation |
-| Collision | 0.0 (entire score = 0.01) |
-
-### Reward Distribution
-
-**Winner-Take-All**: Top performer gets 5% of emissions (95% burned), all others get 0%.
-
-Models are evaluated once with 1200 benchmark seeds. Scores are cached to avoid re-evaluation.
+| Role | Guide |
+|------|-------|
+| **Miner** | [Miner Guide](docs/miner.md) — submission format, local testing, deployment |
+| **Validator** | [Validator Guide](docs/validator.md) — installation, Docker setup, operation |
 
 ---
 
 ## 🤝 Contributing
-PRs, issues and benchmark ideas are welcome!  
+
+PRs, issues, and benchmark ideas are welcome.
 
 ---
 
 ## 📜 License
-Licensed under the MIT License – see LICENSE.
+
+Licensed under the MIT License — see [LICENSE](LICENSE).
 
 Built with ❤️ by the Swarm team.

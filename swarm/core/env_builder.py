@@ -43,10 +43,18 @@ from swarm.constants import (
     TYPE_1_SAFE_ZONE, TYPE_1_WORLD_RANGE,
     TYPE_2_N_OBSTACLES, TYPE_2_HEIGHT_SCALE, TYPE_2_SAFE_ZONE, TYPE_2_WORLD_RANGE,
     TYPE_3_SAFE_ZONE,
+    TYPE_4_PLATFORM_CLEARANCE,
+    TYPE_4_PLATFORM_MAX_ATTEMPTS,
+    TYPE_4_MIN_PLATFORM_DISTANCE,
+    TYPE_4_WORLD_RANGE_X,
+    TYPE_4_WORLD_RANGE_Y,
+    TYPE_4_H_MIN, TYPE_4_H_MAX,
+    TYPE_4_START_H_MIN, TYPE_4_START_H_MAX,
     GOAL_COLOR_PALETTE,
 )
 from swarm.core.city_generator import build_city as build_city_map
 from swarm.core.mountain_generator import build_mountains, get_mountain_subtype
+from swarm.core.warehouse import build_warehouse_map
 
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
@@ -243,6 +251,10 @@ def _build_static_world(
         n_obstacles = 0
         safe_zone = TYPE_3_SAFE_ZONE
         world_range = 0
+    elif challenge_type == 4:
+        n_obstacles = 0
+        safe_zone = 0.0
+        world_range = 0
     else:
         n_obstacles = TYPE_2_N_OBSTACLES
         height_scale = TYPE_2_HEIGHT_SCALE
@@ -386,6 +398,9 @@ def _build_static_world(
         if gx is not None and gy is not None:
             safe_zones.append((gx, gy))
         build_mountains(cli, seed, safe_zones, safe_zone)
+
+    elif challenge_type == 4:
+        build_warehouse_map(seed=seed, cli=cli, start=start, goal=goal)
 
 
 def prebuild_static_world_cache(
@@ -562,6 +577,69 @@ def _try_load_static_world_cache(
 
 
 # --------------------------------------------------------------------------
+# Type 4 warehouse collision-free platform placement
+# --------------------------------------------------------------------------
+def _find_clear_position_type4(
+    cli: int,
+    candidate_x: float,
+    candidate_y: float,
+    candidate_z: float,
+    rng: random.Random,
+    body_count_before: int,
+    avoid_pos: Optional[Tuple[float, float, float]] = None,
+    min_distance: float = 0.0,
+) -> Tuple[float, float, float]:
+    clearance = TYPE_4_PLATFORM_CLEARANCE
+    platform_r = START_PLATFORM_RADIUS
+    check_r = platform_r + clearance
+    wx, wy = TYPE_4_WORLD_RANGE_X, TYPE_4_WORLD_RANGE_Y
+    h_min, h_max = TYPE_4_H_MIN, TYPE_4_H_MAX
+
+    def _overlaps(x: float, y: float, z: float) -> bool:
+        probe_col = p.createCollisionShape(
+            p.GEOM_SPHERE, radius=check_r, physicsClientId=cli,
+        )
+        probe_uid = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=probe_col,
+            basePosition=[x, y, z],
+            physicsClientId=cli,
+        )
+        overlapping = False
+        for body_id in range(body_count_before, p.getNumBodies(physicsClientId=cli)):
+            if body_id == probe_uid:
+                continue
+            contacts = p.getClosestPoints(
+                probe_uid, body_id, distance=0.0, physicsClientId=cli,
+            )
+            if contacts:
+                overlapping = True
+                break
+        p.removeBody(probe_uid, physicsClientId=cli)
+        return overlapping
+
+    def _too_close(x: float, y: float, z: float) -> bool:
+        if avoid_pos is None or min_distance <= 0:
+            return False
+        dx = x - avoid_pos[0]
+        dy = y - avoid_pos[1]
+        dz = z - avoid_pos[2]
+        return math.sqrt(dx * dx + dy * dy + dz * dz) < min_distance
+
+    if not _overlaps(candidate_x, candidate_y, candidate_z) and not _too_close(candidate_x, candidate_y, candidate_z):
+        return candidate_x, candidate_y, candidate_z
+
+    for _ in range(TYPE_4_PLATFORM_MAX_ATTEMPTS):
+        x = rng.uniform(-wx, wx)
+        y = rng.uniform(-wy, wy)
+        z = rng.uniform(h_min, h_max)
+        if not _overlaps(x, y, z) and not _too_close(x, y, z):
+            return x, y, z
+
+    return candidate_x, candidate_y, candidate_z
+
+
+# --------------------------------------------------------------------------
 # Main world builder
 # --------------------------------------------------------------------------
 def build_world(
@@ -571,7 +649,7 @@ def build_world(
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
     challenge_type: int = 1,
-) -> Tuple[List[int], List[int], Optional[float], Optional[float]]:
+) -> Tuple[List[int], List[int], Optional[float], Optional[float], Optional[Tuple[float, float, float]], Optional[Tuple[float, float, float]]]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
     is provided—place a visual TAO badge at that position.
@@ -626,9 +704,35 @@ def build_world(
 
     start_platform_surface_z = None
     goal_platform_surface_z = None
+    adjusted_start = None
+    adjusted_goal = None
 
     start_platform_uids: List[int] = []
     end_platform_uids: List[int] = []
+
+    # ------------------------------------------------------------------
+    # Type 4: collision-free platform placement
+    # ------------------------------------------------------------------
+    if challenge_type == 4 and sx is not None and sy is not None and sz is not None:
+        placement_rng = random.Random(seed + 777777)
+
+        start_surface = sz - START_PLATFORM_TAKEOFF_BUFFER
+        new_sx, new_sy, new_s_surface = _find_clear_position_type4(
+            cli, sx, sy, start_surface, placement_rng, static_world_body_base,
+        )
+        sx, sy = new_sx, new_sy
+        sz = new_s_surface + START_PLATFORM_TAKEOFF_BUFFER
+        start_platform_surface_z = new_s_surface
+        adjusted_start = (sx, sy, sz)
+
+        if gx is not None and gy is not None and gz is not None:
+            new_gx, new_gy, new_gz = _find_clear_position_type4(
+                cli, gx, gy, gz, placement_rng, static_world_body_base,
+                avoid_pos=(sx, sy, start_platform_surface_z),
+                min_distance=TYPE_4_MIN_PLATFORM_DISTANCE,
+            )
+            gx, gy, gz = new_gx, new_gy, new_gz
+            adjusted_goal = (gx, gy, gz)
 
     # ------------------------------------------------------------------
     # Optional solid start platform
@@ -638,7 +742,9 @@ def build_world(
         platform_height = START_PLATFORM_HEIGHT
 
         # Calculate platform surface height (random or fixed)
-        if START_PLATFORM_RANDOMIZE:
+        if challenge_type == 4 and start_platform_surface_z is not None:
+            surface_z = start_platform_surface_z
+        elif START_PLATFORM_RANDOMIZE:
             if challenge_type == 3:
                 inferred_surface = sz - START_PLATFORM_TAKEOFF_BUFFER
                 terrain_surface = _raycast_surface_z(cli, sx, sy)
@@ -738,7 +844,8 @@ def build_world(
     # Physical landing platform with visual goal marker
     # ------------------------------------------------------------------
     if goal is not None:
-        gx, gy, gz = goal
+        if challenge_type != 4 or adjusted_goal is None:
+            gx, gy, gz = goal
 
         if challenge_type == 3:
             subtype = get_mountain_subtype(seed)
@@ -947,6 +1054,6 @@ def build_world(
             )
             end_platform_uids.append(cap_uid)
 
-            return (end_platform_uids, start_platform_uids, start_platform_surface_z, goal_platform_surface_z)
+            return (end_platform_uids, start_platform_uids, start_platform_surface_z, goal_platform_surface_z, adjusted_start, adjusted_goal)
 
-    return (end_platform_uids, start_platform_uids, start_platform_surface_z, goal_platform_surface_z)
+    return (end_platform_uids, start_platform_uids, start_platform_surface_z, goal_platform_surface_z, adjusted_start, adjusted_goal)

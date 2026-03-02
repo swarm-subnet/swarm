@@ -680,15 +680,24 @@ class MovingDroneAviary(BaseRLAviary):
             challenge_type=self.task.challenge_type,
         )
 
-        if len(result) == 4:
+        if len(result) >= 6:
+            end_platform_uids, start_platform_uids, start_surface_z, goal_surface_z, adj_start, adj_goal = result
+        elif len(result) == 4:
             end_platform_uids, start_platform_uids, start_surface_z, goal_surface_z = result
+            adj_start = adj_goal = None
         else:
             end_platform_uids, start_platform_uids = result
             start_surface_z = None
             goal_surface_z = None
+            adj_start = adj_goal = None
 
         self._end_platform_uids = end_platform_uids if end_platform_uids else []
         self._start_platform_uids = start_platform_uids if start_platform_uids else []
+
+        if adj_start is not None:
+            self.task.start = adj_start
+        if adj_goal is not None:
+            self.task.goal = adj_goal
 
         start_xyz = np.array(self.task.start, dtype=float)
 

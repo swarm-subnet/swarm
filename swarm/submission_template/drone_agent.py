@@ -28,18 +28,17 @@ class DroneFlightController:
         - yaw: target yaw angle normalized, range [-1, 1] maps to [-π, π]
     
     Mission Objectives:
-        - Navigate to goal landing platform within time limit (30s)
+        - Navigate to goal landing platform within time limit
         - Avoid all obstacles (collision = mission failure)
-        - Land precisely within platform radius (0.5088m)
+        - Land precisely within platform radius
         - Maximize speed while maintaining safety
-    
+
     Scoring:
-        score = 0.5 × success + 0.5 × (1 - time/horizon)
-        
+        score = 0.45 × success + 0.45 × time + 0.10 × safety
+
     Constraints:
         - Max velocity: 3.0 m/s (enforced by validator)
-        - Max yaw rate: 1.57 rad/s
-        - World altitude limit: 11m
+        - Max yaw rate: 3.141 rad/s (180°/s)
         - Simulation rate: 50 Hz
     """
     

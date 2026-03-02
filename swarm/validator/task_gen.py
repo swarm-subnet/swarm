@@ -23,6 +23,9 @@ from swarm.constants import (
     TYPE_3_R_MIN, TYPE_3_R_MAX, TYPE_3_H_MIN, TYPE_3_H_MAX,
     TYPE_3_START_H_MIN, TYPE_3_START_H_MAX, TYPE_3_HORIZON,
     TYPE_3_WORLD_RANGE_RATIO, TYPE_3_VILLAGE_RANGE,
+    TYPE_4_WORLD_RANGE_X, TYPE_4_WORLD_RANGE_Y,
+    TYPE_4_R_MIN, TYPE_4_R_MAX, TYPE_4_H_MIN, TYPE_4_H_MAX,
+    TYPE_4_START_H_MIN, TYPE_4_START_H_MAX, TYPE_4_HORIZON,
 )
 from swarm.core.mountain_generator import get_terrain_z, get_global_scale, get_mountain_subtype
 
@@ -42,6 +45,14 @@ TYPE_PARAMS = {
         'start_h_min': TYPE_2_START_H_MIN, 'start_h_max': TYPE_2_START_H_MAX,
         'horizon': TYPE_2_HORIZON,
     },
+    4: {
+        'world_range_x': TYPE_4_WORLD_RANGE_X,
+        'world_range_y': TYPE_4_WORLD_RANGE_Y,
+        'r_min': TYPE_4_R_MIN, 'r_max': TYPE_4_R_MAX,
+        'h_min': TYPE_4_H_MIN, 'h_max': TYPE_4_H_MAX,
+        'start_h_min': TYPE_4_START_H_MIN, 'start_h_max': TYPE_4_START_H_MAX,
+        'horizon': TYPE_4_HORIZON,
+    },
 }
 
 
@@ -56,9 +67,14 @@ def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
         return START_PLATFORM_SURFACE_Z
 
     params = get_type_params(challenge_type)
-    world_range = params['world_range']
-
     rng = random.Random(seed)
+
+    if challenge_type == 4:
+        rng.uniform(-params['world_range_x'], params['world_range_x'])
+        rng.uniform(-params['world_range_y'], params['world_range_y'])
+        return rng.uniform(params['start_h_min'], params['start_h_max'])
+
+    world_range = params['world_range']
     rng.uniform(-world_range, world_range)
     rng.uniform(-world_range, world_range)
     return rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
@@ -83,6 +99,12 @@ def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
 
 def _random_start(seed_rng: random.Random, params: dict,
                   challenge_type: int = 1, seed: int = 0) -> Tuple[float, float, float]:
+    if challenge_type == 4:
+        x = seed_rng.uniform(-params['world_range_x'], params['world_range_x'])
+        y = seed_rng.uniform(-params['world_range_y'], params['world_range_y'])
+        platform_z = seed_rng.uniform(params['start_h_min'], params['start_h_max'])
+        return x, y, platform_z + START_PLATFORM_TAKEOFF_BUFFER
+
     world_range = params['world_range']
     x = seed_rng.uniform(-world_range, world_range)
     y = seed_rng.uniform(-world_range, world_range)
@@ -103,6 +125,76 @@ def _random_start(seed_rng: random.Random, params: dict,
     return x, y, z
 
 
+def _goal_from_start_type4(
+    seed_rng: random.Random,
+    start: Tuple[float, float, float],
+    params: dict,
+) -> Tuple[float, float, float]:
+    start_x, start_y, _ = start
+    wx, wy = params['world_range_x'], params['world_range_y']
+    r_min, r_max = params['r_min'], params['r_max']
+    h_min, h_max = params['h_min'], params['h_max']
+
+    for _ in range(100):
+        angle = seed_rng.uniform(0, 2 * math.pi)
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+
+        max_rx = float('inf')
+        max_ry = float('inf')
+        if abs(cos_a) > 1e-8:
+            max_rx = ((wx if cos_a > 0 else -wx) - start_x) / cos_a
+        if abs(sin_a) > 1e-8:
+            max_ry = ((wy if sin_a > 0 else -wy) - start_y) / sin_a
+
+        max_radius = min(max_rx, max_ry, r_max)
+        if max_radius < r_min:
+            continue
+
+        radius = seed_rng.uniform(r_min, min(max_radius * 0.999, r_max))
+        x = start_x + radius * cos_a
+        y = start_y + radius * sin_a
+        z = seed_rng.uniform(h_min, h_max)
+
+        if -wx <= x <= wx and -wy <= y <= wy:
+            d2 = math.hypot(x - start_x, y - start_y)
+            if d2 < r_min:
+                scale = r_min / max(d2, 1e-8)
+                x = start_x + (x - start_x) * scale
+                y = start_y + (y - start_y) * scale
+                x = max(-wx, min(wx, x))
+                y = max(-wy, min(wy, y))
+                if math.hypot(x - start_x, y - start_y) < r_min:
+                    continue
+            return x, y, z
+
+    angle = seed_rng.uniform(0, 2 * math.pi)
+    radius = seed_rng.uniform(r_min, r_max)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    x = max(-wx, min(wx, start_x + radius * cos_a))
+    y = max(-wy, min(wy, start_y + radius * sin_a))
+    z = seed_rng.uniform(h_min, h_max)
+
+    dist_2d = math.hypot(x - start_x, y - start_y)
+    if dist_2d < r_min:
+        dir_x = cos_a if dist_2d <= 1e-8 else (x - start_x) / dist_2d
+        dir_y = sin_a if dist_2d <= 1e-8 else (y - start_y) / dist_2d
+        x = max(-wx, min(wx, start_x + r_min * dir_x))
+        y = max(-wy, min(wy, start_y + r_min * dir_y))
+
+        if math.hypot(x - start_x, y - start_y) < r_min:
+            for cx, cy in [
+                (start_x + r_min, start_y), (start_x - r_min, start_y),
+                (start_x, start_y + r_min), (start_x, start_y - r_min),
+            ]:
+                cx = max(-wx, min(wx, cx))
+                cy = max(-wy, min(wy, cy))
+                if math.hypot(cx - start_x, cy - start_y) >= r_min:
+                    x, y = cx, cy
+                    break
+
+    return x, y, z
+
+
 def _goal_from_start(
     seed_rng: random.Random,
     start: Tuple[float, float, float],
@@ -110,6 +202,9 @@ def _goal_from_start(
     challenge_type: int = 1,
     seed: int = 0,
 ) -> Tuple[float, float, float]:
+    if challenge_type == 4:
+        return _goal_from_start_type4(seed_rng, start, params)
+
     start_x, start_y, start_z = start
     world_range = params['world_range']
     r_min, r_max = params['r_min'], params['r_max']

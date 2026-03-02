@@ -1,102 +1,67 @@
 # ⛏️ Swarm Miner Guide
-*(Swarm subnet)*
 
-The Swarm subnet tasks your miner with developing pre‑trained flight‑control policies which dynamically generate safe flight paths for a simulated drone across a procedurally generated world. 
-This guide shows how to install, configure and run a Swarm miner
+The Swarm subnet tasks your miner with developing pre-trained flight-control policies for a simulated drone. Your model is benchmarked across procedurally generated 3D environments — cities, mountains, warehouses, forests, and open terrain.
 
-## 🔒 RPC Submission Requirements
+This guide shows how to install, configure, and run a Swarm miner.
 
-**CRITICAL**: All submissions must be RPC agents. Miner code runs in isolated Docker containers while evaluation executes on the validator host.
+## 🔒 RPC Submission
 
-### Required RPC Agent Structure
-Your submission ZIP **must contain**:
-```
-agent_submission.zip
-├── drone_agent.py       ← Your flight controller (REQUIRED)
-├── requirements.txt     ← Optional: additional dependencies
-└── [your model files]   ← SB3, PyTorch, etc.
-```
-
-**Template files (`main.py`, `agent.capnp`, `agent_server.py`) are automatically provided by validators** - you don't need to include them in your submission.
-
-### Template Files (Auto-Injected)
-
-The following files are automatically injected from official templates during evaluation:
-- `main.py` - Entry point (provided automatically)
-- `agent.capnp` - RPC schema (provided automatically)
-- `agent_server.py` - Cap'n Proto RPC server (provided automatically)
-
-**You only need to submit `drone_agent.py`** - this is where you implement your controller and load your model.
-
-All customization belongs in `drone_agent.py` where you have complete freedom to:
-- Load any ML framework (SB3, PyTorch, TensorFlow, JAX)
-- Implement custom preprocessing/postprocessing
-- Use any model architecture
-
-### Optional: requirements.txt
-
-If your agent needs additional Python packages, include a `requirements.txt` file:
-```
-numpy>=1.20.0
-torch>=1.9.0
-stable-baselines3>=2.0.0
-```
-
-Dependencies will be installed automatically before evaluation.
-
-
+All submissions must be RPC agents. Miner code runs in isolated Docker containers while evaluation executes on the validator host. See [Creating Your Agent](#️-creating-your-agent) for full details on structure, templates, and examples.
 
 ## 💻 System Requirements
 
-| Component | Minimal | Recommended | Notes                                         |
-|-----------|---------|-------------|-----------------------------------------------|
-| CPU       | 3 cores  | 6 cores      | Model training and inference                   |
-| RAM       | 8 GB     | 16 GB        | Larger for training, 8GB sufficient for mining |
-| Disk      | 20 GB     | 100 GB       | Repository + virtual‑env + model storage      |
-| GPU       | none     | Optional     | Depends on your training setup                |
-| PyTorch   | 1.9.0+   | Latest       | **REQUIRED**: Must support `weights_only=True` |
-| Python    | 3.8+     | 3.10+        | SB3 and PyTorch compatibility                 |
-| OS        | Linux / macOS / WSL2 | Ubuntu 22.04+ | Scripts optimized for Ubuntu                |
+Mining (serving your model) requires minimal resources. Training is up to you — use whatever hardware fits your approach.
+
+| Component | Mining (Minimal) | Training | Notes |
+|-----------|-----------------|----------|-------|
+| CPU | 2 cores | 4+ cores | Mining is lightweight |
+| RAM | 4 GB | 16 GB+ | Training depends on your setup |
+| Disk | 20 GB | 100 GB+ | Repository + venv + models |
+| GPU | None | Optional | Training only, depends on your approach |
+| Python | 3.8+ | 3.10+ | SB3 and PyTorch compatibility |
+| OS | Linux / macOS / WSL2 | Ubuntu 22.04+ | Scripts optimized for Ubuntu |
 
 ## 🚀 Installation
 
 ```bash
-# 1) clone the repo
+# 1. Clone the repo
 git clone https://github.com/swarm-subnet/swarm
 cd swarm
 
-# 2) install dependencies
+# 2. Install dependencies
 chmod +x scripts/miner/install_dependencies.sh
 ./scripts/miner/install_dependencies.sh
 
-# 3) Miner setup
+# 3. Miner setup
 chmod +x scripts/miner/setup.sh
 ./scripts/miner/setup.sh
 
-# 4) Activate virtual env
+# 4. Activate virtual env
 source miner_env/bin/activate
 ```
 
 ## 🔧 Configuration
 
-All runtime parameters are passed via CLI flags; nothing needs editing inside the repo.
+All runtime parameters are passed via CLI flags.
 
-| Flag                   | Description                     | Example                   |
-|------------------------|---------------------------------|---------------------------|
-| `--netuid`             | Subnet netuid on-chain          | `--netuid 124`            |
-| `--wallet.name`        | Your coldkey name               | `--wallet.name my_cold`   |
-| `--wallet.hotkey`      | Hotkey used for mining          | `--wallet.hotkey my_hot`  |
-| `--subtensor.network`  | Network (finney, test)          | `--subtensor.network finney` |
-| `--axon.port`          | TCP port your miner listens on  | `--axon.port 8091`        |
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--netuid` | Subnet netuid | `--netuid 124` |
+| `--wallet.name` | Your coldkey name | `--wallet.name my_cold` |
+| `--wallet.hotkey` | Hotkey used for mining | `--wallet.hotkey my_hot` |
+| `--subtensor.network` | Network (finney, test) | `--subtensor.network finney` |
+| `--axon.port` | TCP port your miner listens on | `--axon.port 8091` |
 
-Create the keys first if you have not:
+Create keys if you haven't:
 
 ```bash
 btcli wallet new_coldkey --wallet.name my_cold
 btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
-## 🏃‍♂️ Running the miner (PM2 example)
+## 🏃‍♂️ Running the Miner
+
+### PM2 Launch
 
 ```bash
 source miner_env/bin/activate
@@ -109,77 +74,61 @@ pm2 start neurons/miner.py --name swarm_miner -- \
      --axon.port 8091
 ```
 
-Check logs:
+### Logs
 
 ```bash
 pm2 logs swarm_miner
 ```
 
-Stop / restart:
+### Stop / Restart
 
 ```bash
 pm2 restart swarm_miner
-pm2 stop     swarm_miner
+pm2 stop    swarm_miner
 ```
 
+## 🛠️ Creating Your Agent
 
-## 🛠️ Creating RPC Agents
-
-### Using Submission Template
-Swarm provides a submission template in `swarm/submission_template/`:
+### Using the Submission Template
 
 ```bash
-# Copy only drone_agent.py (template files are auto-injected)
 cp swarm/submission_template/drone_agent.py your_agent/
 cd your_agent
-
 # Customize drone_agent.py with your controller
 ```
 
 **What you need:**
-- `drone_agent.py` - Customize this file with your controller (REQUIRED)
-- `requirements.txt` - Optional: additional dependencies
-- Your model files - SB3, PyTorch, etc.
+- `drone_agent.py` — Customize this file with your controller (REQUIRED)
+- `requirements.txt` — Optional: additional dependencies
+- Your model files — SB3, PyTorch, etc.
 
 **Template files (auto-provided, no need to include):**
-- `agent.capnp` - Automatically injected during evaluation
-- `agent_server.py` - Automatically injected during evaluation
-- `main.py` - Automatically injected during evaluation
+- `main.py` — Automatically injected during evaluation
+- `agent.capnp` — Automatically injected during evaluation
+- `agent_server.py` — Automatically injected during evaluation
 
-### Basic RPC Agent Structure
+### Basic Agent Structure
 
-**main.py** (entry point):
-```python
-from drone_agent import DroneFlightController
-from agent_server import start_server
-
-if __name__ == "__main__":
-    agent = DroneFlightController()
-    start_server(agent, port=8000)
-```
-
-**drone_agent.py** (your controller):
 ```python
 class DroneFlightController:
     def __init__(self):
         # Load your model here (SB3, PyTorch, JAX, etc.)
         from stable_baselines3 import PPO
         self.model = PPO.load("./my_model.zip")
-    
+
     def act(self, observation):
+        # observation: dict with "depth" (128,128,1) and "state" (N,)
         # Return action array [vx, vy, vz, speed, yaw]
         action, _ = self.model.predict(observation, deterministic=True)
         return action
-    
+
     def reset(self):
         # Reset state between missions
         pass
 ```
 
-### Using SB3 Models
-You can use any SB3 model inside your RPC agent. Just load it in `__init__` and use it in `act()`.
+### Custom PyTorch Example
 
-### Using Custom PyTorch Models
 ```python
 import torch
 
@@ -187,7 +136,7 @@ class DroneFlightController:
     def __init__(self):
         self.model = torch.load("my_model.pt")
         self.model.eval()
-    
+
     def act(self, observation):
         with torch.no_grad():
             obs_tensor = torch.FloatTensor(observation)
@@ -196,11 +145,12 @@ class DroneFlightController:
 ```
 
 ### Deploy Your Agent
+
 ```bash
 # Create ZIP with only drone_agent.py + model files
 zip -r agent_submission.zip drone_agent.py [your_model_files]
 
-# Optional: include requirements.txt if needed
+# Optional: include requirements.txt
 zip -r agent_submission.zip requirements.txt
 
 # Place in Submission directory
@@ -208,95 +158,89 @@ mkdir -p Submission
 cp agent_submission.zip Submission/submission.zip
 ```
 
+## 🔍 Observations
+
+| Field | Shape | Description |
+|-------|-------|-------------|
+| `depth` | (128, 128, 1) | Normalized depth map (0.5m – 20m range) |
+| `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
+
+The search area gives a direction toward the goal with up to ±10m noise — sometimes close, sometimes off. The drone must use its depth sensor to find the actual landing platform.
+
+### Action Space
+
+| Index | Name | Range | Description |
+|-------|------|-------|-------------|
+| 0 | vx | [-1, 1] | Velocity X direction |
+| 1 | vy | [-1, 1] | Velocity Y direction |
+| 2 | vz | [-1, 1] | Velocity Z direction |
+| 3 | speed | [0, 1] | Thrust multiplier |
+| 4 | yaw | [-1, 1] | Target yaw angle (maps to [-π, π]) |
+
+**Constraints:**
+- Max velocity: 3.0 m/s
+- Max yaw rate: 3.141 rad/s (180°/s)
+- Simulation rate: 50 Hz
+
+## 🏆 Scoring
+
+```
+score = 0.45 × success + 0.45 × time + 0.10 × safety
+```
+
+| Term | Weight | Description |
+|------|--------|-------------|
+| **Success** | 0.45 | 1.0 if valid landing, 0.0 otherwise |
+| **Time** | 0.45 | 1.0 if within target time, decays linearly to 0.0 at horizon |
+| **Safety** | 0.10 | Based on minimum clearance from obstacles during flight |
+
+Collision with any obstacle sets the score to **0.01**.
+
+### Landing
+
+For **static platforms**, touching is not enough — the drone must hold a **stable landing** for 0.5 seconds:
+
+| Condition | Threshold |
+|-----------|-----------|
+| Vertical velocity | ≤ 0.5 m/s |
+| Horizontal velocity | ≤ 0.6 m/s (relative to platform) |
+| Tilt (roll / pitch) | ≤ 15° |
+
+For **moving platforms**, contact with the platform is enough to count as success.
+
 ## ✈️ How the Miner Works
 
-1. **Validator sends an empty `PolicySynapse`** to request your agent manifest.
-2. **Your miner responds with a `PolicyRef`** containing the SHA256 hash, file size, and framework tag (`rpc-agent`) of your RPC agent.
-3. **Validator compares the SHA‑256 to its cache.**
-   - If identical → **done** (uses cached agent).
-   - If different → **proceed** to download.
-4. **Validator requests the agent** by sending `need_blob=True`.
-5. **Your miner streams the agent** as a series of `PolicyChunk` messages until EOF.
-6. **Validator stores the agent** as `miner_models_v2/UID_<uid>.zip`, extracts it, runs `main.py`, connects via RPC, and evaluates on secret tasks. Score ∈ [0, 1] is written on‑chain.
+| Step | Direction | What happens |
+|------|-----------|--------------|
+| 1 | Validator → Miner | Empty `PolicySynapse` — "Send me your manifest." |
+| 2 | Miner → Validator | `PolicyRef` with SHA-256 hash, file size, framework tag (`rpc-agent`). |
+| 3 | Validator | Compares hash to cache. If identical → done. If different → proceed. |
+| 4 | Validator → Miner | `need_blob=True` — "Stream me the new zip." |
+| 5 | Miner → Validator | Series of `PolicyChunk` messages until EOF. |
+| 6 | Validator | Stores agent, runs in Docker, evaluates on benchmark seeds. |
 
-
-| Step | Direction | Payload | What happens |
-|------|-----------|---------|--------------|
-| 1 | **Validator ➜ Miner** | empty `PolicySynapse` | “Send me your manifest.” |
-| 2 | **Miner ➜ Validator** | `ref` (`PolicyRef`) | Contains **sha256**, file size & framework tag (`rpc-agent`). |
-| 3 | **Validator** compares the SHA‑256 to its cache. | — | If identical → **done**. If different → **proceed**. |
-| 4 | **Validator ➜ Miner** | `need_blob=True` | “Stream me the new zip.” |
-| 5 | **Miner ➜ Validator** | series of `chunk` messages (`PolicyChunk`) | Raw bytes until EOF. |
-| 6 | **Validator** stores `miner_models_v2/UID_<uid>.zip`, loads it with SB3 and evaluates it on secret tasks. | — | Score ∈ [0 … 1] is written on‑chain. |
-
-There is **no MapTask in the handshake**.  
-Miners never see the evaluation maps; only their RPC agent is tested.
+Miners never see the evaluation maps — only the RPC agent is tested.
 
 ### Required Folder Layout
 
 ```
 swarm/
 └── Submission/
-    └── submission.zip     ← your RPC agent submission
+    └── submission.zip
         ├── drone_agent.py       ← Your controller (REQUIRED)
-        ├── requirements.txt     ← Optional: additional dependencies
-        └── [your model files]   ← Optional: SB3, PyTorch, etc.
+        ├── requirements.txt     ← Optional
+        └── [your model files]   ← Optional
 ```
 
-**drone_agent.py is mandatory** - missing it results in automatic rejection.
+**`drone_agent.py` is mandatory** — missing it results in automatic rejection. Submissions must be ≤ **50 MiB** compressed.
 
-Template files (`main.py`, `agent.capnp`, `agent_server.py`) are automatically injected during evaluation.
+## 🔄 Updating Your Agent
 
-Update the path or filename in `neurons/miner.py` if you organize files differently.
-
-## 🏆 Reward formula
-
-| Term            | Weight | Description                                      |
-|-----------------|--------|--------------------------------------------------|
-| Mission success | 0.45   | 1.0 if valid landing, else 0      |
-| Time factor     | 0.45   | 1.0 if time ≤ target, linear decay otherwise    |
-| Safety          | 0.10   | Minimum clearance from obstacles (1.0m = full, 0.2m = zero) |
-
-Target time is computed as `(distance / 3.0 m/s) × 1.06` to allow a 6% buffer for optimal flight.
-
-### Landing Requirements
-
-Touching the platform is not enough. Drones must achieve a **stable landing**:
-
-| Requirement | Threshold | Description |
-|-------------|-----------|-------------|
-| Vertical Velocity | ≤ 0.5 m/s | Must descend slowly |
-| Horizontal Velocity | ≤ 0.6 m/s | Relative to platform (handles moving platforms) |
-| Orientation | ≤ 15° tilt | Roll and pitch must be low |
-| Stable Duration | 0.5 seconds | All conditions must hold continuously |
-
-### Observation Contract
-
-| Field | Shape | Description |
-|-------|-------|-------------|
-| depth | (128, 128, 1) | Normalized depth map (0.0 = near, 1.0 = far) |
-| state | (21,) | Drone state vector (position, velocity, orientation, etc.) |
-
-**Note:** RGB images are not provided. Miners must use depth-only observations.
-
-*Full logic: `swarm/validator/reward.py`.*
-
-
-## 🔄 Updating your agent  
-
-**ALWAYS test your agent locally before deployment:**
 ```bash
-# Test your RPC agent locally (copy template files for local testing)
-cp swarm/submission_template/* your_agent_directory/
-cd your_agent_directory
-python main.py
-# In another terminal, test RPC connection
-
-# If test passes, create ZIP with only your files
+# Create ZIP with your files
 zip -r agent_submission.zip drone_agent.py [your_model_files]
-# Optional: include requirements.txt
-zip -r agent_submission.zip requirements.txt
 
+# Place in Submission directory
 mkdir -p Submission
 cp agent_submission.zip Submission/submission.zip
 
@@ -304,9 +248,9 @@ cp agent_submission.zip Submission/submission.zip
 pm2 restart swarm_miner
 ```
 
-The miner computes SHA‑256 at startup. Validators fetch new agents automatically at the next handshake.
+The miner computes SHA-256 at startup. Validators fetch new agents automatically at the next handshake.
 
-## 🧪 Test Before Submitting
+## 🧪 Local Testing
 
 ```bash
 # Test your agent locally
@@ -316,41 +260,19 @@ python tests/test_rpc.py swarm/submission_template/ --seed 42
 python tests/test_rpc.py swarm/submission_template/ --zip
 ```
 
-Test your agent locally using the same evaluation logic as validators.
-
----
-
 ## 🔧 Troubleshooting
 
-### Agent Rejection Issues
+**"Missing drone_agent.py"** — Ensure your ZIP contains `drone_agent.py`. Template files are auto-injected.
 
-**❌ "Missing drone_agent.py"**
-```
-Error: Missing drone_agent.py - RPC agent submission required
-```
-**Solution:** Ensure your ZIP contains `drone_agent.py`. Template files (`main.py`, `agent.capnp`, `agent_server.py`) are automatically provided - you don't need to include them.
+**"Dangerous executable files detected"** — Remove `.exe`, `.so`, `.dll` files. Only Python code and model files allowed.
 
-**❌ "Dangerous executable files detected"**
-```
-Error: Dangerous executable files detected: [.exe, .so, .dll]
-```
-**Solution:** Remove executable files from your submission. Only Python code and model files allowed.
+**"Agent too large"** — Submissions must be ≤ 50 MiB compressed.
 
-**❌ "Agent too large"**
-```
-Error: Agent exceeds size limit
-```
-**Solution:** Submissions must be ≤ **50 MiB** compressed. Reduce model size or remove unnecessary files.
+**"RPC connection failed"** — Ensure your agent starts correctly and responds to ping requests.
 
-**❌ "RPC connection failed"**
-```
-Error: RPC ping failed
-```
-**Solution:** Ensure your `main.py` starts RPC server on port 8000 and responds to ping requests
+## 🆘 Support
 
-## 🆘 Need help?
+- Discord — ping @Miguelikk or @AliSaaf
+- GitHub issues — open a ticket with logs & error trace
 
-- Discord – ping @Miguelikk or @AliSaaf
-- GitHub issues – open a ticket with logs & error trace
-
-Happy mining, and may your drones fly far 🚀!
+Happy mining, and may your drones fly far 🚀

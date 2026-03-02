@@ -204,9 +204,10 @@ MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES = 2 # Maximum warmup seed failures logged p
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.50,  # City navigation (procedural roads)
-    2: 0.20,  # Open flight (no obstacles)
-    3: 0.30,  # Mountain navigation
+    1: 0.40,  # City navigation (procedural roads)
+    2: 0.15,  # Open flight (no obstacles)
+    3: 0.25,  # Mountain navigation
+    4: 0.20,  # Warehouse navigation
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
@@ -249,6 +250,17 @@ MOUNTAIN_SUBTYPE_DISTRIBUTION = {
     1: 0.75,  # Mountains Only
     2: 0.25,  # Ski Village
 }
+
+# Type 4: Warehouse Navigation (rectangular: 80.2m × 50.6m floor, 12m ceiling)
+TYPE_4_WORLD_RANGE_X = 38                           # ±38m X (floor_spawn_half_x=40.1m, 2m wall margin)
+TYPE_4_WORLD_RANGE_Y = 23                           # ±23m Y (floor_spawn_half_y=25.3m, 2m wall margin)
+TYPE_4_R_MIN, TYPE_4_R_MAX = 5, 35
+TYPE_4_H_MIN, TYPE_4_H_MAX = 0.2, 10.0             # Floor to roof(12m) minus 2m ceiling clearance
+TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.2, 10.0
+TYPE_4_HORIZON = 120
+TYPE_4_PLATFORM_CLEARANCE = 1.0                     # Minimum clearance from warehouse structures (meters)
+TYPE_4_PLATFORM_MAX_ATTEMPTS = 200                  # Max attempts to find collision-free platform position
+TYPE_4_MIN_PLATFORM_DISTANCE = 10.0                 # Minimum 3D distance between start and goal platforms (meters)
 
 # =============================================================================
 # MOVING PLATFORM (challenge variant, applies to any map type)
