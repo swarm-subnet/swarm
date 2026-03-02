@@ -63,8 +63,15 @@ Two subtypes: procedural snow terrain with scattered peaks and valleys, or a ski
 Indoor 80m × 50m warehouse with storage racks, forklifts, loading docks, conveyors, overhead cranes, an embedded office, factory equipment, and a full roof/truss structure. Start and goal platforms are placed collision-free with a minimum 10m separation.
 
 <div align="center">
-  <img src="swarm/assets/map_images/Type4.png" width="500">
+  <img src="swarm/assets/map_images/Type4.png" width="700"><br>
 </div>
+
+<table>
+  <tr>
+    <td align="center"><img src="swarm/assets/map_images/Type4_2.png" width="400"><br><b>Loading Docks & Storage</b></td>
+    <td align="center"><img src="swarm/assets/map_images/Type4_3.png" width="400"><br><b>Factory & Overhead Cranes</b></td>
+  </tr>
+</table>
 
 ### Forest (Coming Soon)
 
