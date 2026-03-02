@@ -25,7 +25,7 @@ BATCH_DELAY_SEC = 0.15                  # Delay between batches to prevent resou
 
 # Core simulation parameters
 SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
-HORIZON_SEC = 60                        # Maximum simulated flight duration (seconds)
+HORIZON_SEC = 60                       # Maximum simulated flight duration (seconds)
 # World generation parameters
 HEIGHT_SCALE = 1.5                      # Obstacle height scale factor
 RANDOM_START = True                     # Toggle random starting point generation
@@ -222,7 +222,7 @@ TYPE_1_SAFE_ZONE = 1.0
 TYPE_1_R_MIN, TYPE_1_R_MAX = 5, 45
 TYPE_1_H_MIN, TYPE_1_H_MAX = 0.2, 1
 TYPE_1_START_H_MIN, TYPE_1_START_H_MAX = 0.2, 5
-TYPE_1_HORIZON = 90
+TYPE_1_HORIZON = HORIZON_SEC
 
 # Type 2: Open Flight (No Obstacles)
 TYPE_2_WORLD_RANGE = 20
@@ -232,14 +232,14 @@ TYPE_2_SAFE_ZONE = 0.0
 TYPE_2_R_MIN, TYPE_2_R_MAX = 10, 25
 TYPE_2_H_MIN, TYPE_2_H_MAX = 3, 10
 TYPE_2_START_H_MIN, TYPE_2_START_H_MAX = 0.05, 10
-TYPE_2_HORIZON = 60
+TYPE_2_HORIZON = HORIZON_SEC
 
 # Type 3: Mountain Navigation
 TYPE_3_SAFE_ZONE = 1.0
 TYPE_3_R_MIN, TYPE_3_R_MAX = 20, 100
 TYPE_3_H_MIN, TYPE_3_H_MAX = 0, 0
 TYPE_3_START_H_MIN, TYPE_3_START_H_MAX = 0, 0
-TYPE_3_HORIZON = 120
+TYPE_3_HORIZON = HORIZON_SEC
 TYPE_3_SCALE_MIN = 0.6
 TYPE_3_SCALE_MAX = 0.8
 TYPE_3_SCALE_SEED_OFFSET = 777777
@@ -257,7 +257,7 @@ TYPE_4_WORLD_RANGE_Y = 23                           # ±23m Y (floor_spawn_half_
 TYPE_4_R_MIN, TYPE_4_R_MAX = 5, 35
 TYPE_4_H_MIN, TYPE_4_H_MAX = 0.2, 10.0             # Floor to roof(12m) minus 2m ceiling clearance
 TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.2, 10.0
-TYPE_4_HORIZON = 120
+TYPE_4_HORIZON = HORIZON_SEC
 TYPE_4_PLATFORM_CLEARANCE = 1.0                     # Minimum clearance from warehouse structures (meters)
 TYPE_4_PLATFORM_MAX_ATTEMPTS = 200                  # Max attempts to find collision-free platform position
 TYPE_4_MIN_PLATFORM_DISTANCE = 10.0                 # Minimum 3D distance between start and goal platforms (meters)

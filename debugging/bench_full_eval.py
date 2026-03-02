@@ -20,14 +20,75 @@ import json
 import os
 import random
 import sys
+import threading
 import time
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
+
+_HIDDEN = argparse.SUPPRESS
+
+
+@dataclass
+class _RunOptions:
+    progress_every: int = 1
+    heartbeat_sec: float = 30.0
+    rpc_trace: bool = False
+    rpc_trace_every: int = 25
+    rpc_heartbeat_sec: float = 15.0
+    serialize_pybullet: bool = True
+    max_batch_timeout_sec: float = 900.0
+    timeout_multiplier: float = 1.0
+    extend_timeout_on_progress: bool = True
+    timeout_extend_sec: float = 30.0
+    timeout_progress_stale_sec: float = 3.0
+    timeout_progress_min_sim_advance: float = 0.02
+    max_seed_walltime_sec: float = 0.0
+    default_log_out: Optional[str] = None
+
+
+_RUN_PROFILES: Dict[str, _RunOptions] = {
+    "standard": _RunOptions(),
+    "debug": _RunOptions(
+        heartbeat_sec=15.0,
+        rpc_trace=True,
+        rpc_trace_every=10,
+        rpc_heartbeat_sec=10.0,
+        serialize_pybullet=False,
+        max_batch_timeout_sec=300.0,
+        timeout_multiplier=1.0,
+        extend_timeout_on_progress=True,
+        timeout_extend_sec=30.0,
+        timeout_progress_stale_sec=3.0,
+        timeout_progress_min_sim_advance=0.02,
+        max_seed_walltime_sec=1800.0,
+        default_log_out="/tmp/bench_full_eval.log",
+    ),
+}
+
+
+@contextmanager
+def _temporary_env(overrides: Dict[str, Optional[str]]):
+    previous = {k: os.environ.get(k) for k in overrides}
+    try:
+        for key, value in overrides.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _parse_args() -> argparse.Namespace:
@@ -51,17 +112,55 @@ def _parse_args() -> argparse.Namespace:
         help="Number of parallel Docker workers (default: 2).",
     )
     parser.add_argument(
+        "--profile",
+        choices=sorted(_RUN_PROFILES.keys()),
+        default="standard",
+        help="Aggregated run profile for advanced settings (default: standard).",
+    )
+    parser.add_argument(
         "--json-out", type=Path, default=None,
         help="Path to write JSON results (default: <cwd>/bench_full_eval_results.json).",
     )
     parser.add_argument(
         "--log-out", type=Path, default=None,
-        help="Path to write log file (default: no file logging).",
+        help="Path to write log file (default depends on profile).",
     )
     parser.add_argument(
         "--relax-timeouts", action="store_true", default=False,
         help="Override timing constants for slow machines (longer timeouts, more strikes).",
     )
+    parser.add_argument(
+        "--progress-every", type=int, default=1,
+        help="Print progress every N completed seeds (default: 1).",
+    )
+    # Advanced overrides (kept for compatibility, hidden from normal help output).
+    parser.add_argument("--heartbeat-sec", type=float, default=None, help=_HIDDEN)
+    parser.add_argument(
+        "--rpc-trace",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_HIDDEN,
+    )
+    parser.add_argument("--rpc-trace-every", type=int, default=None, help=_HIDDEN)
+    parser.add_argument("--rpc-heartbeat-sec", type=float, default=None, help=_HIDDEN)
+    parser.add_argument(
+        "--serialize-pybullet",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_HIDDEN,
+    )
+    parser.add_argument("--max-batch-timeout-sec", type=float, default=None, help=_HIDDEN)
+    parser.add_argument("--timeout-multiplier", type=float, default=None, help=_HIDDEN)
+    parser.add_argument(
+        "--extend-timeout-on-progress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_HIDDEN,
+    )
+    parser.add_argument("--timeout-extend-sec", type=float, default=None, help=_HIDDEN)
+    parser.add_argument("--timeout-progress-stale-sec", type=float, default=None, help=_HIDDEN)
+    parser.add_argument("--timeout-progress-min-sim-advance", type=float, default=None, help=_HIDDEN)
+    parser.add_argument("--max-seed-walltime-sec", type=float, default=None, help=_HIDDEN)
     return parser.parse_args()
 
 
@@ -82,6 +181,38 @@ class _Tee:
 
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
+
+
+def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
+    opts = replace(_RUN_PROFILES[args.profile])
+    opts.progress_every = max(1, int(args.progress_every))
+
+    if args.heartbeat_sec is not None:
+        opts.heartbeat_sec = max(0.0, float(args.heartbeat_sec))
+    if args.rpc_trace is not None:
+        opts.rpc_trace = bool(args.rpc_trace)
+    if args.rpc_trace_every is not None:
+        opts.rpc_trace_every = max(1, int(args.rpc_trace_every))
+    if args.rpc_heartbeat_sec is not None:
+        opts.rpc_heartbeat_sec = max(0.0, float(args.rpc_heartbeat_sec))
+    if args.serialize_pybullet is not None:
+        opts.serialize_pybullet = bool(args.serialize_pybullet)
+    if args.max_batch_timeout_sec is not None:
+        opts.max_batch_timeout_sec = float(args.max_batch_timeout_sec)
+    if args.timeout_multiplier is not None:
+        opts.timeout_multiplier = max(1.0, float(args.timeout_multiplier))
+    if args.extend_timeout_on_progress is not None:
+        opts.extend_timeout_on_progress = bool(args.extend_timeout_on_progress)
+    if args.timeout_extend_sec is not None:
+        opts.timeout_extend_sec = max(1.0, float(args.timeout_extend_sec))
+    if args.timeout_progress_stale_sec is not None:
+        opts.timeout_progress_stale_sec = max(0.5, float(args.timeout_progress_stale_sec))
+    if args.timeout_progress_min_sim_advance is not None:
+        opts.timeout_progress_min_sim_advance = max(0.0, float(args.timeout_progress_min_sim_advance))
+    if args.max_seed_walltime_sec is not None:
+        opts.max_seed_walltime_sec = max(0.0, float(args.max_seed_walltime_sec))
+
+    return opts
 
 
 def _apply_relaxed_overrides() -> Dict[str, Any]:
@@ -146,6 +277,7 @@ async def _run_benchmark(
     uid: int,
     type_seeds: Dict[str, List[int]],
     num_workers: int,
+    run_opts: _RunOptions,
 ) -> tuple:
     """Run Docker evaluation and return (task_meta, results, seed_times, total_elapsed)."""
     from swarm.constants import SIM_DT
@@ -172,28 +304,239 @@ async def _run_benchmark(
         raise RuntimeError("Docker evaluator base image is not ready.")
 
     seed_times: List[float] = []
+    seed_wall_by_key: Dict[Tuple[int, int], float] = {}
+    total_seeds = len(all_tasks)
+    progress_every = run_opts.progress_every
+    heartbeat_sec = run_opts.heartbeat_sec
+
     eval_start = time.time()
+    progress_lock = threading.Lock()
+    done_count = 0
+    last_done_at = eval_start
+    stop_heartbeat = threading.Event()
 
-    def _on_seed_done():
-        seed_times.append(time.time())
+    def _eta_minutes(elapsed_sec: float, done: int) -> float:
+        if done <= 0:
+            return float("inf")
+        remaining = max(0, total_seeds - done)
+        return (elapsed_sec / done) * remaining / 60.0
 
-    print(f"[{_ts()}] Running evaluation ({num_workers} workers, {len(all_tasks)} seeds)...")
-    results = await evaluator.evaluate_seeds_parallel(
-        tasks=all_tasks,
-        uid=uid,
-        model_path=model_path,
-        num_workers=num_workers,
-        on_seed_complete=_on_seed_done,
+    def _on_seed_done(seed_meta: Optional[Dict[str, Any]] = None):
+        nonlocal done_count, last_done_at
+        now = time.time()
+        with progress_lock:
+            seed_times.append(now)
+            if seed_meta is not None:
+                try:
+                    seed_key = (
+                        int(seed_meta.get("map_seed")),
+                        int(seed_meta.get("challenge_type")),
+                    )
+                    # Keep first completion record for a given seed key.
+                    if seed_key not in seed_wall_by_key:
+                        seed_wall_by_key[seed_key] = float(seed_meta.get("seed_wall_sec", 0.0))
+                except Exception:
+                    pass
+            done_count += 1
+            last_done_at = now
+            done_snapshot = done_count
+
+        if done_snapshot % progress_every == 0 or done_snapshot >= total_seeds:
+            elapsed = now - eval_start
+            eta_min = _eta_minutes(elapsed, done_snapshot)
+            eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
+            print(
+                f"[{_ts()}] Progress: {done_snapshot}/{total_seeds} seeds complete | "
+                f"elapsed {elapsed/60.0:.1f}m | ETA {eta_txt}",
+                flush=True,
+            )
+
+    def _heartbeat() -> None:
+        try:
+            if heartbeat_sec <= 0:
+                return
+            while not stop_heartbeat.wait(timeout=heartbeat_sec):
+                now = time.time()
+                with progress_lock:
+                    done_snapshot = done_count
+                    last_done_snapshot = last_done_at
+
+                elapsed = now - eval_start
+                idle_for = now - last_done_snapshot
+                eta_min = _eta_minutes(elapsed, done_snapshot)
+                eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
+                print(
+                    f"[{_ts()}] Heartbeat: {done_snapshot}/{total_seeds} done | "
+                    f"elapsed {elapsed/60.0:.1f}m | last completion {idle_for:.0f}s ago | ETA {eta_txt}",
+                    flush=True,
+                )
+        except Exception as e:
+            print(f"[{_ts()}] Heartbeat thread error: {type(e).__name__}: {e}", flush=True)
+
+    timeout_mult = run_opts.timeout_multiplier
+    extend_sec = run_opts.timeout_extend_sec
+    stale_sec = run_opts.timeout_progress_stale_sec
+    min_sim_advance = run_opts.timeout_progress_min_sim_advance
+    max_total = run_opts.max_seed_walltime_sec
+
+    env_overrides: Dict[str, Optional[str]] = {
+        "SWARM_LOG_RPC_TRACE": "1" if run_opts.rpc_trace else None,
+        "SWARM_LOG_RPC_TRACE_EVERY": str(max(1, int(run_opts.rpc_trace_every))) if run_opts.rpc_trace else None,
+        "SWARM_LOG_RPC_HEARTBEAT_SEC": (
+            f"{float(run_opts.rpc_heartbeat_sec):.3f}"
+            if run_opts.rpc_trace and run_opts.rpc_heartbeat_sec > 0
+            else None
+        ),
+        "SWARM_SERIALIZE_PYB": "1" if run_opts.serialize_pybullet else "0",
+        "SWARM_BATCH_TIMEOUT_HARD_CAP_SEC": (
+            f"{float(run_opts.max_batch_timeout_sec):.3f}"
+            if run_opts.max_batch_timeout_sec > 0
+            else None
+        ),
+        "SWARM_BATCH_TIMEOUT_MULT": f"{timeout_mult:.6f}",
+        "SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS": "1" if run_opts.extend_timeout_on_progress else None,
+        "SWARM_BATCH_TIMEOUT_EXTEND_SEC": (
+            f"{extend_sec:.6f}" if run_opts.extend_timeout_on_progress else None
+        ),
+        "SWARM_BATCH_TIMEOUT_PROGRESS_STALE_SEC": (
+            f"{stale_sec:.6f}" if run_opts.extend_timeout_on_progress else None
+        ),
+        "SWARM_BATCH_TIMEOUT_PROGRESS_MIN_SIM_ADVANCE": (
+            f"{min_sim_advance:.6f}" if run_opts.extend_timeout_on_progress else None
+        ),
+        "SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC": (
+            f"{max_total:.6f}" if run_opts.extend_timeout_on_progress else None
+        ),
+    }
+
+    if run_opts.rpc_trace:
+        print(
+            f"[{_ts()}] RPC trace enabled (logging ping/reset plus every "
+            f"{max(1, int(run_opts.rpc_trace_every))} act() steps; "
+            f"phase heartbeat every {max(0.0, float(run_opts.rpc_heartbeat_sec)):.1f}s)"
+        )
+    if run_opts.serialize_pybullet:
+        print(f"[{_ts()}] PyBullet serialization enabled (stable mode).")
+    else:
+        print(f"[{_ts()}] PyBullet serialization disabled (parallel env mode).")
+    if run_opts.max_batch_timeout_sec > 0:
+        print(f"[{_ts()}] Worker batch timeout hard cap: {float(run_opts.max_batch_timeout_sec):.1f}s")
+    else:
+        print(f"[{_ts()}] Worker batch timeout hard cap: disabled")
+    if timeout_mult > 1.0:
+        print(f"[{_ts()}] Worker timeout multiplier: x{timeout_mult:.2f}")
+    if run_opts.extend_timeout_on_progress:
+        print(
+            f"[{_ts()}] Progress timeout extension: +{extend_sec:.1f}s "
+            f"(stale<={stale_sec:.1f}s, min_sim_advance={min_sim_advance:.3f}s, "
+            f"max_total={'unbounded' if max_total <= 0 else f'{max_total:.1f}s'})"
+        )
+    else:
+        print(f"[{_ts()}] Progress timeout extension: disabled")
+
+    effective_workers = max(1, int(num_workers))
+    print(
+        f"[{_ts()}] Running evaluation ({effective_workers} workers, {len(all_tasks)} seeds, "
+        f"dynamic dispatch)..."
     )
+    type3_guard_enabled = (not run_opts.serialize_pybullet) and (effective_workers > 1)
+    if type3_guard_enabled:
+        print(
+            f"[{_ts()}] Type-3 concurrency guard enabled "
+            f"(at most 1 challenge_type=3 seed at a time in no-serialize mode)."
+        )
+    heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        with _temporary_env(env_overrides):
+            results: List[Optional[Any]] = [None] * len(all_tasks)
+            pending_indices = list(range(len(all_tasks)))
+            scheduler_cond = asyncio.Condition()
+            active_type3 = 0
+
+            async def _claim_next_index() -> Tuple[Optional[int], bool]:
+                nonlocal active_type3
+                async with scheduler_cond:
+                    while True:
+                        if not pending_indices:
+                            return None, False
+
+                        selected_pos = None
+                        selected_is_type3 = False
+                        for pos, candidate_idx in enumerate(pending_indices):
+                            is_type3 = int(task_meta[candidate_idx]["challenge_type"]) == 3
+                            if not type3_guard_enabled or not is_type3 or active_type3 == 0:
+                                selected_pos = pos
+                                selected_is_type3 = is_type3
+                                break
+
+                        if selected_pos is not None:
+                            idx = pending_indices.pop(selected_pos)
+                            if selected_is_type3 and type3_guard_enabled:
+                                active_type3 += 1
+                            return idx, selected_is_type3
+
+                        # Only blocked by type-3 concurrency guard; wait for running type-3 to finish.
+                        await scheduler_cond.wait()
+
+            async def _worker_loop(worker_slot: int) -> None:
+                nonlocal active_type3
+                while True:
+                    idx, claimed_type3 = await _claim_next_index()
+                    if idx is None:
+                        return
+
+                    meta = task_meta[idx]
+                    task = all_tasks[idx]
+                    print(
+                        f"[{_ts()}] Dispatch {idx + 1}/{len(all_tasks)} | "
+                        f"worker={worker_slot} | seed={meta['seed']} | group={meta['group']}",
+                        flush=True,
+                    )
+                    seed_start = time.time()
+                    try:
+                        seed_results = await evaluator.evaluate_seeds_batch(
+                            tasks=[task],
+                            uid=uid,
+                            model_path=model_path,
+                            worker_id=worker_slot,
+                            on_seed_complete=_on_seed_done,
+                        )
+                        if len(seed_results) != 1:
+                            raise RuntimeError(
+                                f"Worker {worker_slot}: unexpected result count "
+                                f"{len(seed_results)} for single-task dispatch (seed {meta['seed']})."
+                            )
+                        results[idx] = seed_results[0]
+                        print(
+                            f"[{_ts()}] Worker {worker_slot} complete | seed={meta['seed']} "
+                            f"in {time.time() - seed_start:.1f}s",
+                            flush=True,
+                        )
+                    finally:
+                        if claimed_type3 and type3_guard_enabled:
+                            async with scheduler_cond:
+                                active_type3 = max(0, active_type3 - 1)
+                                scheduler_cond.notify_all()
+
+            worker_count = min(effective_workers, len(all_tasks))
+            await asyncio.gather(*(_worker_loop(i) for i in range(worker_count)))
+
+            if any(r is None for r in results):
+                raise RuntimeError("Dynamic dispatch ended with missing seed result(s).")
+    finally:
+        stop_heartbeat.set()
+        heartbeat_thread.join(timeout=2.0)
 
     elapsed = time.time() - eval_start
-    return task_meta, results, seed_times, elapsed, eval_start
+    return task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start
 
 
 def _print_results(
     task_meta: List[Dict[str, Any]],
     results: list,
     seed_times: List[float],
+    seed_wall_by_key: Dict[Tuple[int, int], float],
     elapsed: float,
     eval_start: float,
     num_workers: int,
@@ -212,7 +555,11 @@ def _print_results(
         success = bool(result.success) if result else False
         sim_time = float(result.time_sec) if result else 0.0
 
-        if i < len(seed_times):
+        seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
+        if seed_key in seed_wall_by_key:
+            wall = float(seed_wall_by_key[seed_key])
+        elif i < len(seed_times):
+            # Fallback for compatibility if callback metadata was not provided.
             wall = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
         else:
             wall = 0.0
@@ -255,7 +602,7 @@ def _print_results(
             real_deltas.append(dt)
 
     startup_overhead = 0.0
-    if real_deltas:
+    if real_deltas and num_workers == 1:
         first_wall = real_deltas[0]
         steady = real_deltas[1:] if len(real_deltas) > 1 else []
         avg_steady = sum(steady) / len(steady) if steady else 0
@@ -263,6 +610,11 @@ def _print_results(
         print(f"  Container startup overhead: ~{startup_overhead:.0f}s")
         if steady:
             print(f"  Steady-state per seed:      ~{avg_steady:.1f}s")
+    elif num_workers > 1:
+        all_seed_walls = [r["wall_time"] for rs in group_results.values() for r in rs if r["wall_time"] > 0]
+        avg_wall = (sum(all_seed_walls) / len(all_seed_walls)) if all_seed_walls else 0.0
+        print("  Container startup overhead: n/a (parallel completion order)")
+        print(f"  Mean per-seed wall time:    ~{avg_wall:.1f}s")
     print(f"  Total wall-clock:           {elapsed:.1f}s ({elapsed / 60:.1f} min)")
     print()
 
@@ -299,14 +651,19 @@ def _print_results(
 
 def main() -> None:
     args = _parse_args()
+    run_opts = _resolve_run_options(args)
 
     model_path = args.model.resolve()
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
 
+    effective_log_out = args.log_out
+    if effective_log_out is None and run_opts.default_log_out:
+        effective_log_out = Path(run_opts.default_log_out)
+
     log_fh = None
-    if args.log_out:
-        log_fh = open(args.log_out, "w")
+    if effective_log_out:
+        log_fh = open(effective_log_out, "w")
         sys.stdout = _Tee(sys.__stdout__, log_fh)
         sys.stderr = _Tee(sys.__stderr__, log_fh)
 
@@ -317,8 +674,11 @@ def main() -> None:
     print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
     print(f"[{_ts()}] Model: {model_path}")
     print(f"[{_ts()}] Workers: {args.workers}")
+    print(f"[{_ts()}] Profile: {args.profile}")
     if overrides:
         print(f"[{_ts()}] Relaxed timeouts: {overrides}")
+    if effective_log_out:
+        print(f"[{_ts()}] Log file: {effective_log_out}")
     print()
 
     print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
@@ -329,12 +689,26 @@ def main() -> None:
     print(f"  Total: {total_seeds}")
     print()
 
-    task_meta, results, seed_times, elapsed, eval_start = asyncio.run(
-        _run_benchmark(model_path, args.uid, type_seeds, args.workers)
+    task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start = asyncio.run(
+        _run_benchmark(
+            model_path,
+            args.uid,
+            type_seeds,
+            args.workers,
+            run_opts=run_opts,
+        )
     )
 
     print(f"\n[{_ts()}] === RESULTS ===")
-    summary = _print_results(task_meta, results, seed_times, elapsed, eval_start, args.workers)
+    summary = _print_results(
+        task_meta,
+        results,
+        seed_times,
+        seed_wall_by_key,
+        elapsed,
+        eval_start,
+        args.workers,
+    )
     summary["model"] = str(model_path)
 
     json_out = args.json_out or Path.cwd() / "bench_full_eval_results.json"
@@ -342,10 +716,15 @@ def main() -> None:
         json.dump(summary, f, indent=2)
     print(f"[{_ts()}] JSON saved: {json_out}")
 
-    if log_fh:
-        log_fh.close()
-
     print(f"[{_ts()}] === BENCHMARK COMPLETE ===")
+    if log_fh:
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
+            log_fh.close()
 
 
 if __name__ == "__main__":
