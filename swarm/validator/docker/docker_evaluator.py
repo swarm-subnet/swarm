@@ -761,7 +761,7 @@ class DockerSecureEvaluator:
                             if seed_cancelled:
                                 _set_phase("seed_cancelled", task=task_label, step=step_idx, sim_t=t_sim)
                                 _trace(f"{task_label} cancelled due to stop request at t_sim={t_sim:.2f}s")
-                                results.append(ValidationResult(uid, False, 0.0, 0.0))
+                                results.append(ValidationResult(uid, False, t_sim, 0.0))
                                 _emit_seed_complete(
                                     task,
                                     status="seed_cancelled",
@@ -773,7 +773,7 @@ class DockerSecureEvaluator:
                             elif rpc_disconnected:
                                 _set_phase("seed_failed_rpc_disconnect", task=task_label, step=step_idx, sim_t=t_sim)
                                 _trace(f"{task_label} failed due to rpc disconnect")
-                                results.append(ValidationResult(uid, False, 0.0, 0.0))
+                                results.append(ValidationResult(uid, False, t_sim, 0.0))
                                 _emit_seed_complete(
                                     task,
                                     status="seed_rpc_disconnected",
@@ -785,7 +785,7 @@ class DockerSecureEvaluator:
                             elif strikes >= RPC_MAX_STRIKES_PER_SEED:
                                 _set_phase("seed_failed_timeout_strikes", task=task_label, step=step_idx, sim_t=t_sim)
                                 _trace(f"{task_label} failed due to strike limit; returning zero result")
-                                results.append(ValidationResult(uid, False, 0.0, 0.0))
+                                results.append(ValidationResult(uid, False, t_sim, 0.0))
                                 _emit_seed_complete(
                                     task,
                                     status="seed_timeout_strikes",
@@ -828,17 +828,21 @@ class DockerSecureEvaluator:
                                 pass
 
                     except Exception as e:
+                        try:
+                            exc_t_sim = t_sim
+                        except NameError:
+                            exc_t_sim = 0.0
                         bt.logging.warning(
                             f"UID {uid} {task_label} failed: {type(e).__name__}: {e}"
                         )
-                        _set_phase("seed_exception", task=task_label, step=0, sim_t=0.0)
+                        _set_phase("seed_exception", task=task_label, step=0, sim_t=exc_t_sim)
                         _trace(f"{task_label} failed with exception: {type(e).__name__}: {e}")
-                        results.append(ValidationResult(uid, False, 0.0, 0.0))
+                        results.append(ValidationResult(uid, False, exc_t_sim, 0.0))
                         _emit_seed_complete(
                             task,
                             status="seed_exception",
                             success=False,
-                            sim_t=0.0,
+                            sim_t=exc_t_sim,
                             seed_wall_sec=time.time() - seed_wall_start,
                             step_idx=0,
                             error=f"{type(e).__name__}: {e}",

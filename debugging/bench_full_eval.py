@@ -627,8 +627,8 @@ def _print_results(
         })
 
     print()
-    print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>6} {'WallT':>7}")
-    print(f"  {'-'*18} {'-'*8} {'-'*7} {'-'*5} {'-'*6} {'-'*7}")
+    print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}")
+    print(f"  {'-'*18} {'-'*8} {'-'*7} {'-'*5} {'-'*7} {'-'*7}")
 
     for group in GROUP_ORDER:
         if group not in group_results:
@@ -637,7 +637,7 @@ def _print_results(
             ok = "Y" if r["success"] else "N"
             print(
                 f"  {group:<18} {r['seed']:>8} {r['score']:>7.4f} {ok:>5} "
-                f"{r['sim_time']:>5.1f}s {r['wall_time']:>6.1f}s"
+                f"{r['sim_time']:>6.2f}s {r['wall_time']:>6.1f}s"
             )
         walls = [r["wall_time"] for r in group_results[group]]
         scores = [r["score"] for r in group_results[group]]

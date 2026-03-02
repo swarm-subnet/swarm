@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Benchmark: _update_min_clearance() cost vs full env.step()
-==========================================================
-Measures each isolated component of env.step() across all three
+Benchmark: env.step() component cost breakdown
+===============================================
+Measures each isolated component of env.step() across all five
 challenge types: rendering, physics, clearance, and overhead.
 
 Usage:
@@ -22,15 +22,17 @@ os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
 import numpy as np
 import pybullet as p
 
-from swarm.constants import SIM_DT, DEPTH_NEAR, SAFETY_DISTANCE_SAFE
+from swarm.constants import SIM_DT, DEPTH_NEAR, DEPTH_FAR, SAFETY_DISTANCE_SAFE
 from swarm.validator.task_gen import random_task
 from swarm.utils.env_factory import make_env
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SEEDS = {
-    "Mountain": 442894,  # challenge_type=3
-    "City":     442893,  # challenge_type=1
-    "Open":     442884,  # challenge_type=2
+    "City":      2,   # challenge_type=1
+    "Open":      4,   # challenge_type=2
+    "Mountain": 13,   # challenge_type=3
+    "Village":   8,   # challenge_type=4
+    "Warehouse": 1,   # challenge_type=5
 }
 N_STEPS  = 40
 WARMUP   = 5
@@ -51,7 +53,7 @@ def benchmark_scene(label, seed):
     dummy  = np.zeros_like(env.action_space.low.flatten())[None, :]
     light  = getattr(env, "_light_direction", [1, 1, 1])
     proj   = p.computeProjectionMatrixFOV(
-        fov=fov, aspect=aspect, nearVal=DEPTH_NEAR, farVal=1000.0, physicsClientId=cli
+        fov=fov, aspect=aspect, nearVal=DEPTH_NEAR, farVal=DEPTH_FAR, physicsClientId=cli
     )
 
     # Pre-build body list (same exclusion logic as _update_min_clearance)
@@ -183,11 +185,13 @@ def print_results(results):
               f"{r['physics']:>6.1f}ms  {r['clearance']:>8.2f}ms  "
               f"{r['clearance']/max(r['step'], 0.001)*100:>6.1f}%")
 
-    avg_pct = float(np.mean([r["clearance"] / max(r["step"], 0.001) * 100 for r in results]))
+    avg_clear_pct = float(np.mean([r["clearance"] / max(r["step"], 0.001) * 100 for r in results]))
+    avg_render_pct = float(np.mean([r["render"] / max(r["step"], 0.001) * 100 for r in results]))
     print()
-    print(f"  Average clearance share: {avg_pct:.1f}%")
-    print(f"  → _update_min_clearance is NOT the bottleneck.")
-    print(f"  → Depth rendering (>90%) is the only target worth optimizing.")
+    print(f"  Average clearance share: {avg_clear_pct:.1f}%")
+    print(f"  Average render share:    {avg_render_pct:.1f}%")
+    bottleneck = "Render" if avg_render_pct > avg_clear_pct else "Clearance"
+    print(f"  → Primary bottleneck: {bottleneck}")
     print("=" * 65)
     print()
 

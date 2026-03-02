@@ -418,7 +418,7 @@ class MovingDroneAviary(BaseRLAviary):
             fov=self._fov,
             aspect=aspect,
             nearVal=0.05,
-            farVal=1000.0,
+            farVal=DEPTH_FAR,
             physicsClientId=cli
         )
         
