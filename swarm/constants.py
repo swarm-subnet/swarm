@@ -206,8 +206,9 @@ MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES = 2 # Maximum warmup seed failures logged p
 CHALLENGE_TYPE_DISTRIBUTION = {
     1: 0.40,  # City navigation (procedural roads)
     2: 0.15,  # Open flight (no obstacles)
-    3: 0.25,  # Mountain navigation
-    4: 0.20,  # Warehouse navigation
+    3: 0.1875,  # Mountain navigation
+    4: 0.0625,  # Village navigation
+    5: 0.20,    # Warehouse navigation
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
@@ -246,12 +247,15 @@ TYPE_3_SCALE_SEED_OFFSET = 777777
 TYPE_3_WORLD_RANGE_RATIO = 0.60
 TYPE_3_VILLAGE_RANGE = 40.0
 
+# Legacy split kept for compatibility utilities. Internal task schema now uses:
+# type=3 mountain, type=4 village.
 MOUNTAIN_SUBTYPE_DISTRIBUTION = {
     1: 0.75,  # Mountains Only
     2: 0.25,  # Ski Village
 }
 
-# Type 4: Warehouse Navigation (rectangular: 80.2m × 50.6m floor, 12m ceiling)
+# Type 5: Warehouse Navigation (rectangular: 80.2m × 50.6m floor, 12m ceiling)
+# Constants retain the TYPE_4_* prefix for backward import compatibility.
 TYPE_4_WORLD_RANGE_X = 38                           # ±38m X (floor_spawn_half_x=40.1m, 2m wall margin)
 TYPE_4_WORLD_RANGE_Y = 23                           # ±23m Y (floor_spawn_half_y=25.3m, 2m wall margin)
 TYPE_4_R_MIN, TYPE_4_R_MAX = 5, 35
@@ -270,6 +274,8 @@ MOVING_PLATFORM_PROB = {
     1: 0.25,
     2: 0.30,
     3: 0.25,
+    4: 0.25,
+    5: 0.00,
 }
 MOVING_PLATFORM_SEED_OFFSET = 555555
 

@@ -1060,13 +1060,14 @@ async def _evaluate_seeds(
         - per_type_scores: Dict mapping challenge type name to list of scores
     """
     all_scores = []
-    per_type_scores = {"city": [], "open": [], "mountain": [], "warehouse": [], "moving_platform": []}
+    per_type_scores = {"city": [], "open": [], "mountain": [], "village": [], "warehouse": [], "moving_platform": []}
 
     challenge_type_to_name = {
         1: "city",
         2: "open",
         3: "mountain",
-        4: "warehouse",
+        4: "village",
+        5: "warehouse",
     }
 
     bt.logging.info(f"🔬 Starting {description} for UID {uid}: {len(seeds)} seeds (parallel)")

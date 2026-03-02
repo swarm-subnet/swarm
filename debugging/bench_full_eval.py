@@ -10,13 +10,11 @@ Reports per-type timing, success rates, and extrapolates to 1,000 seeds.
 Usage:
     python3 bench_full_eval.py --model path/to/model.zip
     python3 bench_full_eval.py --model path/to/model.zip --workers 4 --seeds-per-group 5
-    python3 bench_full_eval.py --model path/to/model.zip --json-out results.json
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import random
 import sys
@@ -33,6 +31,43 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
 
 _HIDDEN = argparse.SUPPRESS
+BENCH_GROUP_ORDER = [
+    "type1_city",
+    "type2_open",
+    "type3_mountain",
+    "type4_village",
+    "type5_warehouse",
+]
+BENCH_GROUP_TO_TYPE = {
+    "type1_city": 1,
+    "type2_open": 2,
+    "type3_mountain": 3,
+    "type4_village": 4,
+    "type5_warehouse": 5,
+}
+TYPE_TO_BENCH_GROUP = {v: k for k, v in BENCH_GROUP_TO_TYPE.items()}
+MAP_TYPE_ALIASES = {
+    "1": 1,
+    "type1": 1,
+    "type1_city": 1,
+    "city": 1,
+    "2": 2,
+    "type2": 2,
+    "type2_open": 2,
+    "open": 2,
+    "3": 3,
+    "type3": 3,
+    "type3_mountain": 3,
+    "mountain": 3,
+    "4": 4,
+    "type4": 4,
+    "type4_village": 4,
+    "village": 4,
+    "5": 5,
+    "type5": 5,
+    "type5_warehouse": 5,
+    "warehouse": 5,
+}
 
 
 @dataclass
@@ -40,8 +75,8 @@ class _RunOptions:
     progress_every: int = 1
     heartbeat_sec: float = 30.0
     rpc_trace: bool = False
-    rpc_trace_every: int = 25
-    rpc_heartbeat_sec: float = 15.0
+    rpc_trace_every: int = 250
+    rpc_heartbeat_sec: float = 150.0
     serialize_pybullet: bool = True
     max_batch_timeout_sec: float = 900.0
     timeout_multiplier: float = 1.0
@@ -58,8 +93,8 @@ _RUN_PROFILES: Dict[str, _RunOptions] = {
     "debug": _RunOptions(
         heartbeat_sec=15.0,
         rpc_trace=True,
-        rpc_trace_every=10,
-        rpc_heartbeat_sec=10.0,
+        rpc_trace_every=100,
+        rpc_heartbeat_sec=100.0,
         serialize_pybullet=False,
         max_batch_timeout_sec=300.0,
         timeout_multiplier=1.0,
@@ -105,7 +140,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--seeds-per-group", type=int, default=3,
-        help="Number of seeds per challenge type/subtype (default: 3).",
+        help="Number of seeds per benchmark map group (default: 3).",
     )
     parser.add_argument(
         "--workers", type=int, default=2,
@@ -118,10 +153,6 @@ def _parse_args() -> argparse.Namespace:
         help="Aggregated run profile for advanced settings (default: standard).",
     )
     parser.add_argument(
-        "--json-out", type=Path, default=None,
-        help="Path to write JSON results (default: <cwd>/bench_full_eval_results.json).",
-    )
-    parser.add_argument(
         "--log-out", type=Path, default=None,
         help="Path to write log file (default depends on profile).",
     )
@@ -132,6 +163,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--progress-every", type=int, default=1,
         help="Print progress every N completed seeds (default: 1).",
+    )
+    parser.add_argument(
+        "--include-map-types",
+        type=str,
+        default=None,
+        help="Comma-separated map types to include (ids or names): e.g. 3,5 or mountain,warehouse.",
+    )
+    parser.add_argument(
+        "--exclude-map-types",
+        type=str,
+        default=None,
+        help="Comma-separated map types to exclude (ids or names).",
     )
     # Advanced overrides (kept for compatibility, hidden from normal help output).
     parser.add_argument("--heartbeat-sec", type=float, default=None, help=_HIDDEN)
@@ -181,6 +224,35 @@ class _Tee:
 
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
+
+
+def _parse_map_type_list(spec: Optional[str]) -> Optional[set[int]]:
+    if spec is None:
+        return None
+    values: set[int] = set()
+    for raw in spec.split(","):
+        token = raw.strip().lower()
+        if not token:
+            continue
+        if token not in MAP_TYPE_ALIASES:
+            valid = ", ".join(["1", "2", "3", "4", "5", "city", "open", "mountain", "village", "warehouse"])
+            raise ValueError(f"Invalid map type '{raw}'. Valid values: {valid}")
+        values.add(MAP_TYPE_ALIASES[token])
+    if not values:
+        return None
+    return values
+
+
+def _resolve_selected_groups(
+    include_types: Optional[set[int]],
+    exclude_types: Optional[set[int]],
+) -> List[str]:
+    active = set(BENCH_GROUP_TO_TYPE.values()) if include_types is None else set(include_types)
+    if exclude_types:
+        active -= set(exclude_types)
+    if not active:
+        raise ValueError("Map-type filter removed all groups. Adjust include/exclude filters.")
+    return [TYPE_TO_BENCH_GROUP[t] for t in sorted(active) if t in TYPE_TO_BENCH_GROUP]
 
 
 def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
@@ -235,39 +307,47 @@ def _apply_relaxed_overrides() -> Dict[str, Any]:
     return overrides
 
 
-def _find_seeds(seeds_per_group: int) -> Dict[str, List[int]]:
-    """Find seeds covering all 4 type/subtype groups."""
+def _infer_bench_group(challenge_type: int, seed: int) -> Optional[str]:
+    """Map internal task challenge IDs to benchmark map groups (5-way)."""
+    if challenge_type == 1:
+        return "type1_city"
+    if challenge_type == 2:
+        return "type2_open"
+    if challenge_type == 3:
+        return "type3_mountain"
+    if challenge_type == 4:
+        return "type4_village"
+    if challenge_type == 5:
+        return "type5_warehouse"
+    return None
+
+
+def _find_seeds(seeds_per_group: int, selected_groups: Optional[List[str]] = None) -> Dict[str, List[int]]:
+    """Find seeds covering selected benchmark map groups."""
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
-    from swarm.core.mountain_generator import get_mountain_subtype
 
-    groups: Dict[str, List[int]] = {
-        "type1_city": [],
-        "type2_open": [],
-        "type3_mountain": [],
-        "type3_village": [],
-    }
+    group_order = selected_groups if selected_groups is not None else BENCH_GROUP_ORDER
+    groups: Dict[str, List[int]] = {g: [] for g in group_order}
 
     seed = random.randint(100000, 900000)
     max_search = seed + 500000
     while seed < max_search:
         task = random_task(sim_dt=SIM_DT, seed=seed)
-        ct = task.challenge_type
-
-        if ct == 1 and len(groups["type1_city"]) < seeds_per_group:
-            groups["type1_city"].append(seed)
-        elif ct == 2 and len(groups["type2_open"]) < seeds_per_group:
-            groups["type2_open"].append(seed)
-        elif ct == 3:
-            sub = get_mountain_subtype(seed)
-            if sub == 1 and len(groups["type3_mountain"]) < seeds_per_group:
-                groups["type3_mountain"].append(seed)
-            elif sub == 2 and len(groups["type3_village"]) < seeds_per_group:
-                groups["type3_village"].append(seed)
+        group = _infer_bench_group(int(task.challenge_type), seed)
+        if group is not None and group in groups and len(groups[group]) < seeds_per_group:
+            groups[group].append(seed)
 
         if all(len(v) >= seeds_per_group for v in groups.values()):
             break
         seed += 1
+
+    missing = [g for g, seeds in groups.items() if len(seeds) < seeds_per_group]
+    if missing:
+        raise RuntimeError(
+            "Could not find enough seeds for groups: "
+            + ", ".join(f"{g} ({len(groups[g])}/{seeds_per_group})" for g in missing)
+        )
 
     return groups
 
@@ -290,8 +370,10 @@ async def _run_benchmark(
         for s in seeds:
             task = random_task(sim_dt=SIM_DT, seed=s)
             all_tasks.append(task)
+            bench_type = BENCH_GROUP_TO_TYPE.get(group_name, int(task.challenge_type))
             task_meta.append({
                 "group": group_name,
+                "bench_type": bench_type,
                 "seed": s,
                 "challenge_type": task.challenge_type,
                 "horizon": task.horizon,
@@ -439,11 +521,11 @@ async def _run_benchmark(
         f"[{_ts()}] Running evaluation ({effective_workers} workers, {len(all_tasks)} seeds, "
         f"dynamic dispatch)..."
     )
-    type3_guard_enabled = (not run_opts.serialize_pybullet) and (effective_workers > 1)
-    if type3_guard_enabled:
+    terrain_guard_enabled = (not run_opts.serialize_pybullet) and (effective_workers > 1)
+    if terrain_guard_enabled:
         print(
-            f"[{_ts()}] Type-3 concurrency guard enabled "
-            f"(at most 1 challenge_type=3 seed at a time in no-serialize mode)."
+            f"[{_ts()}] Terrain concurrency guard enabled "
+            f"(at most 1 mountain/village seed at a time in no-serialize mode)."
         )
     heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
     heartbeat_thread.start()
@@ -452,37 +534,37 @@ async def _run_benchmark(
             results: List[Optional[Any]] = [None] * len(all_tasks)
             pending_indices = list(range(len(all_tasks)))
             scheduler_cond = asyncio.Condition()
-            active_type3 = 0
+            active_terrain = 0
 
             async def _claim_next_index() -> Tuple[Optional[int], bool]:
-                nonlocal active_type3
+                nonlocal active_terrain
                 async with scheduler_cond:
                     while True:
                         if not pending_indices:
                             return None, False
 
                         selected_pos = None
-                        selected_is_type3 = False
+                        selected_is_terrain = False
                         for pos, candidate_idx in enumerate(pending_indices):
-                            is_type3 = int(task_meta[candidate_idx]["challenge_type"]) == 3
-                            if not type3_guard_enabled or not is_type3 or active_type3 == 0:
+                            is_terrain = int(task_meta[candidate_idx]["challenge_type"]) in (3, 4)
+                            if not terrain_guard_enabled or not is_terrain or active_terrain == 0:
                                 selected_pos = pos
-                                selected_is_type3 = is_type3
+                                selected_is_terrain = is_terrain
                                 break
 
                         if selected_pos is not None:
                             idx = pending_indices.pop(selected_pos)
-                            if selected_is_type3 and type3_guard_enabled:
-                                active_type3 += 1
-                            return idx, selected_is_type3
+                            if selected_is_terrain and terrain_guard_enabled:
+                                active_terrain += 1
+                            return idx, selected_is_terrain
 
-                        # Only blocked by type-3 concurrency guard; wait for running type-3 to finish.
+                        # Only blocked by terrain concurrency guard; wait for running terrain seed to finish.
                         await scheduler_cond.wait()
 
             async def _worker_loop(worker_slot: int) -> None:
-                nonlocal active_type3
+                nonlocal active_terrain
                 while True:
-                    idx, claimed_type3 = await _claim_next_index()
+                    idx, claimed_terrain = await _claim_next_index()
                     if idx is None:
                         return
 
@@ -501,6 +583,8 @@ async def _run_benchmark(
                             model_path=model_path,
                             worker_id=worker_slot,
                             on_seed_complete=_on_seed_done,
+                            task_offset=idx,
+                            task_total=len(all_tasks),
                         )
                         if len(seed_results) != 1:
                             raise RuntimeError(
@@ -514,9 +598,9 @@ async def _run_benchmark(
                             flush=True,
                         )
                     finally:
-                        if claimed_type3 and type3_guard_enabled:
+                        if claimed_terrain and terrain_guard_enabled:
                             async with scheduler_cond:
-                                active_type3 = max(0, active_type3 - 1)
+                                active_terrain = max(0, active_terrain - 1)
                                 scheduler_cond.notify_all()
 
             worker_count = min(effective_workers, len(all_tasks))
@@ -542,7 +626,7 @@ def _print_results(
     num_workers: int,
 ) -> Dict[str, Any]:
     """Print results table and return JSON-serializable summary."""
-    GROUP_ORDER = ["type1_city", "type2_open", "type3_mountain", "type3_village"]
+    GROUP_ORDER = BENCH_GROUP_ORDER
 
     group_results: Dict[str, List[Dict[str, Any]]] = {}
     for i, meta in enumerate(task_meta):
@@ -618,8 +702,27 @@ def _print_results(
     print(f"  Total wall-clock:           {elapsed:.1f}s ({elapsed / 60:.1f} min)")
     print()
 
-    # Extrapolation
-    DIST = {"type1_city": 500, "type2_open": 200, "type3_mountain": 225, "type3_village": 75}
+    # Extrapolation (derived from challenge type distribution).
+    from math import floor
+    from swarm.constants import CHALLENGE_TYPE_DISTRIBUTION
+
+    def _allocate(total: int, weights: Dict[Any, float], keys: List[Any]) -> Dict[Any, int]:
+        raw = {k: max(0.0, float(weights.get(k, 0.0))) * total for k in keys}
+        base = {k: int(floor(v)) for k, v in raw.items()}
+        rem = max(0, total - sum(base.values()))
+        order = sorted(keys, key=lambda k: (raw[k] - base[k]), reverse=True)
+        for i in range(rem):
+            base[order[i % len(order)]] += 1
+        return base
+
+    type_counts = _allocate(1000, CHALLENGE_TYPE_DISTRIBUTION, [1, 2, 3, 4, 5])
+    DIST = {
+        "type1_city": type_counts[1],
+        "type2_open": type_counts[2],
+        "type3_mountain": type_counts[3],
+        "type4_village": type_counts[4],
+        "type5_warehouse": type_counts[5],
+    }
 
     total_extrap = 0.0
     print(f"  Extrapolation to 1,000 seeds:")
@@ -652,6 +755,16 @@ def _print_results(
 def main() -> None:
     args = _parse_args()
     run_opts = _resolve_run_options(args)
+    include_types = _parse_map_type_list(args.include_map_types)
+    exclude_types = _parse_map_type_list(args.exclude_map_types)
+    selected_groups = _resolve_selected_groups(include_types, exclude_types)
+
+    requested_workers = max(1, int(args.workers))
+    effective_workers = requested_workers
+    # In no-serialize mode, high worker counts are unstable in practice and can hard-freeze
+    # inside PyBullet env calls. Cap to a safer concurrency level for benchmark reliability.
+    if not run_opts.serialize_pybullet and requested_workers > 2:
+        effective_workers = 2
 
     model_path = args.model.resolve()
     if not model_path.exists():
@@ -673,16 +786,24 @@ def main() -> None:
 
     print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
     print(f"[{_ts()}] Model: {model_path}")
-    print(f"[{_ts()}] Workers: {args.workers}")
+    print(f"[{_ts()}] Workers requested: {requested_workers}")
+    if effective_workers != requested_workers:
+        print(
+            f"[{_ts()}] Workers effective:  {effective_workers} "
+            f"(capped for no-serialize stability)"
+        )
+    else:
+        print(f"[{_ts()}] Workers effective:  {effective_workers}")
     print(f"[{_ts()}] Profile: {args.profile}")
     if overrides:
         print(f"[{_ts()}] Relaxed timeouts: {overrides}")
+    print(f"[{_ts()}] Map types selected: {', '.join(selected_groups)}")
     if effective_log_out:
         print(f"[{_ts()}] Log file: {effective_log_out}")
     print()
 
     print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
-    type_seeds = _find_seeds(args.seeds_per_group)
+    type_seeds = _find_seeds(args.seeds_per_group, selected_groups=selected_groups)
     total_seeds = sum(len(v) for v in type_seeds.values())
     for group, seeds in type_seeds.items():
         print(f"  {group}: {seeds}")
@@ -694,27 +815,21 @@ def main() -> None:
             model_path,
             args.uid,
             type_seeds,
-            args.workers,
+            effective_workers,
             run_opts=run_opts,
         )
     )
 
     print(f"\n[{_ts()}] === RESULTS ===")
-    summary = _print_results(
+    _print_results(
         task_meta,
         results,
         seed_times,
         seed_wall_by_key,
         elapsed,
         eval_start,
-        args.workers,
+        effective_workers,
     )
-    summary["model"] = str(model_path)
-
-    json_out = args.json_out or Path.cwd() / "bench_full_eval_results.json"
-    with open(json_out, "w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"[{_ts()}] JSON saved: {json_out}")
 
     print(f"[{_ts()}] === BENCHMARK COMPLETE ===")
     if log_fh:

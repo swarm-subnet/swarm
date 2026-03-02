@@ -1,5 +1,5 @@
 """
-Type 4 warehouse map for Swarm subnet challenge environments.
+Type 5 warehouse map for Swarm subnet challenge environments.
 
 Entry point: ``build_warehouse_map(seed, cli, start, goal)``
 """
@@ -297,7 +297,7 @@ def _reset_runtime_context(ctx):
 # Public entry point
 # ---------------------------------------------------------------------------
 def build_warehouse_map(seed, cli=0, start=None, goal=None):
-    """Build a full Type 4 warehouse map inside an existing PyBullet world.
+    """Build a full Type 5 warehouse map inside an existing PyBullet world.
 
     Parameters
     ----------

@@ -56,6 +56,8 @@ def _run_multi_seed_rpc_sync_isolated_payload(tasks: list, uid: int, rpc_port: i
         None,
         None,
         None,
+        0,
+        None,
     )
     return [
         (int(r.uid), bool(r.success), float(r.time_sec), float(r.score))
@@ -382,6 +384,8 @@ class DockerSecureEvaluator:
         on_seed_complete: Optional[Callable[..., None]] = None,
         stop_event: Optional[threading.Event] = None,
         progress_state: Optional[dict] = None,
+        task_offset: int = 0,
+        task_total: Optional[int] = None,
     ) -> list:
         """Run multiple seeds through the same RPC connection.
 
@@ -444,6 +448,13 @@ class DockerSecureEvaluator:
                 line = f"[{time.strftime('%H:%M:%S')}] [RPC TRACE][UID {uid}][port {rpc_port}] {msg}"
                 print(line, flush=True)
                 bt.logging.info(line)
+
+        def _task_type_label(task_obj) -> str:
+            raw_type = int(getattr(task_obj, "challenge_type", -1))
+            # With schema v2 challenge_type is already explicit:
+            # 1=city, 2=open, 3=mountain, 4=village, 5=warehouse.
+            # Keep this hook to avoid changing trace call sites.
+            return str(raw_type)
 
         phase_lock = threading.Lock()
         phase_state: dict[str, object] = {
@@ -588,10 +599,12 @@ class DockerSecureEvaluator:
                                     sim_t=0.0,
                                 )
                         break
+                    display_idx = task_offset + task_idx + 1
+                    display_total = task_total if task_total is not None else len(tasks)
                     task_label = (
-                        f"seed {task_idx + 1}/{len(tasks)} "
+                        f"seed {display_idx}/{display_total} "
                         f"map_seed={getattr(task, 'map_seed', 'n/a')} "
-                        f"type={getattr(task, 'challenge_type', 'n/a')}"
+                        f"type={_task_type_label(task)}"
                     )
                     seed_wall_start = time.time()
                     lock_acquired = False
@@ -928,6 +941,8 @@ class DockerSecureEvaluator:
         on_seed_complete: Optional[Callable[..., None]] = None,
         stop_event: Optional[threading.Event] = None,
         progress_state: Optional[dict] = None,
+        task_offset: int = 0,
+        task_total: Optional[int] = None,
     ) -> list:
         """Async wrapper that runs multi-seed RPC evaluation in thread pool."""
         try:
@@ -935,7 +950,14 @@ class DockerSecureEvaluator:
             results = await loop.run_in_executor(
                 None,
                 lambda: self._run_multi_seed_rpc_sync(
-                    tasks, uid, rpc_port, on_seed_complete, stop_event, progress_state
+                    tasks,
+                    uid,
+                    rpc_port,
+                    on_seed_complete,
+                    stop_event,
+                    progress_state,
+                    task_offset,
+                    task_total,
                 )
             )
             return results
@@ -956,6 +978,8 @@ class DockerSecureEvaluator:
         model_path: Path,
         worker_id: int = 0,
         on_seed_complete: Optional[Callable[..., None]] = None,
+        task_offset: int = 0,
+        task_total: Optional[int] = None,
     ) -> list:
         """Evaluate multiple seeds in a single container.
 
@@ -1357,6 +1381,8 @@ class DockerSecureEvaluator:
                             _on_seed_complete_guarded,
                             stop_event,
                             progress_state,
+                            task_offset,
+                            task_total,
                         )
                     except Exception as e:
                         rpc_payload["error"] = e

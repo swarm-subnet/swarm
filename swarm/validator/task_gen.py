@@ -27,7 +27,7 @@ from swarm.constants import (
     TYPE_4_R_MIN, TYPE_4_R_MAX, TYPE_4_H_MIN, TYPE_4_H_MAX,
     TYPE_4_START_H_MIN, TYPE_4_START_H_MAX, TYPE_4_HORIZON,
 )
-from swarm.core.mountain_generator import get_terrain_z, get_global_scale, get_mountain_subtype
+from swarm.core.mountain_generator import get_terrain_z, get_global_scale
 
 
 TYPE_PARAMS = {
@@ -45,7 +45,7 @@ TYPE_PARAMS = {
         'start_h_min': TYPE_2_START_H_MIN, 'start_h_max': TYPE_2_START_H_MAX,
         'horizon': TYPE_2_HORIZON,
     },
-    4: {
+    5: {
         'world_range_x': TYPE_4_WORLD_RANGE_X,
         'world_range_y': TYPE_4_WORLD_RANGE_Y,
         'r_min': TYPE_4_R_MIN, 'r_max': TYPE_4_R_MAX,
@@ -61,7 +61,7 @@ def get_type_params(challenge_type: int) -> dict:
 
 
 def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
-    if challenge_type == 3:
+    if challenge_type in (3, 4):
         return 0.0
     if not START_PLATFORM or not START_PLATFORM_RANDOMIZE:
         return START_PLATFORM_SURFACE_Z
@@ -69,7 +69,7 @@ def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
     params = get_type_params(challenge_type)
     rng = random.Random(seed)
 
-    if challenge_type == 4:
+    if challenge_type == 5:
         rng.uniform(-params['world_range_x'], params['world_range_x'])
         rng.uniform(-params['world_range_y'], params['world_range_y'])
         return rng.uniform(params['start_h_min'], params['start_h_max'])
@@ -81,25 +81,19 @@ def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
 
 
 def _get_type3_world_range(seed: int) -> float:
-    subtype = get_mountain_subtype(seed)
-    if subtype == 2:
-        return TYPE_3_VILLAGE_RANGE
     gs = get_global_scale(seed)
     half = 250.0 * gs
     return half * TYPE_3_WORLD_RANGE_RATIO
 
 
 def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
-    subtype = get_mountain_subtype(seed)
-    if subtype == 2:
-        return 0.0
     gs = get_global_scale(seed)
     return get_terrain_z(x, y, seed, gs)
 
 
 def _random_start(seed_rng: random.Random, params: dict,
                   challenge_type: int = 1, seed: int = 0) -> Tuple[float, float, float]:
-    if challenge_type == 4:
+    if challenge_type == 5:
         x = seed_rng.uniform(-params['world_range_x'], params['world_range_x'])
         y = seed_rng.uniform(-params['world_range_y'], params['world_range_y'])
         platform_z = seed_rng.uniform(params['start_h_min'], params['start_h_max'])
@@ -113,6 +107,8 @@ def _random_start(seed_rng: random.Random, params: dict,
         seed_rng.uniform(0, 1)
         terrain_z = _get_type3_surface_z(x, y, seed)
         z = terrain_z + START_PLATFORM_TAKEOFF_BUFFER
+    elif challenge_type == 4:
+        z = START_PLATFORM_TAKEOFF_BUFFER
     elif START_PLATFORM:
         if START_PLATFORM_RANDOMIZE:
             platform_z = seed_rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
@@ -125,7 +121,7 @@ def _random_start(seed_rng: random.Random, params: dict,
     return x, y, z
 
 
-def _goal_from_start_type4(
+def _goal_from_start_warehouse(
     seed_rng: random.Random,
     start: Tuple[float, float, float],
     params: dict,
@@ -202,15 +198,15 @@ def _goal_from_start(
     challenge_type: int = 1,
     seed: int = 0,
 ) -> Tuple[float, float, float]:
-    if challenge_type == 4:
-        return _goal_from_start_type4(seed_rng, start, params)
+    if challenge_type == 5:
+        return _goal_from_start_warehouse(seed_rng, start, params)
 
     start_x, start_y, start_z = start
     world_range = params['world_range']
     r_min, r_max = params['r_min'], params['r_max']
     h_min, h_max = params['h_min'], params['h_max']
     start_surface_z = (
-        start_z - START_PLATFORM_TAKEOFF_BUFFER if challenge_type == 3 else start_z
+        start_z - START_PLATFORM_TAKEOFF_BUFFER if challenge_type in (3, 4) else start_z
     )
 
     for _ in range(100):
@@ -239,9 +235,12 @@ def _goal_from_start(
             x = start_x + radius * cos_a
             y = start_y + radius * sin_a
 
-            if challenge_type == 3:
-                seed_rng.uniform(0, 1)
-                surface_z = _get_type3_surface_z(x, y, seed)
+            if challenge_type in (3, 4):
+                if challenge_type == 3:
+                    seed_rng.uniform(0, 1)
+                    surface_z = _get_type3_surface_z(x, y, seed)
+                else:
+                    surface_z = 0.0
                 z = surface_z
                 dist_3d = math.sqrt((x - start_x)**2 + (y - start_y)**2 + (surface_z - start_surface_z)**2)
                 if r_min <= dist_3d <= r_max and -world_range <= x <= world_range and -world_range <= y <= world_range:
@@ -255,7 +254,7 @@ def _goal_from_start(
                         d2_after = math.hypot(x - start_x, y - start_y)
                         if d2_after < r_min:
                             continue
-                        z = _get_type3_surface_z(x, y, seed)
+                        z = _get_type3_surface_z(x, y, seed) if challenge_type == 3 else 0.0
                     return x, y, z
             else:
                 z = seed_rng.uniform(h_min, h_max)
@@ -307,9 +306,12 @@ def _goal_from_start(
                     x, y = cx, cy
                     break
 
-    if challenge_type == 3:
-        seed_rng.uniform(0, 1)
-        z = _get_type3_surface_z(x, y, seed)
+    if challenge_type in (3, 4):
+        if challenge_type == 3:
+            seed_rng.uniform(0, 1)
+            z = _get_type3_surface_z(x, y, seed)
+        else:
+            z = 0.0
     else:
         z = seed_rng.uniform(h_min, h_max)
 
@@ -340,6 +342,14 @@ def random_task(sim_dt: float, seed: Optional[int] = None) -> MapTask:
     if chosen_type == 3:
         params = {
             'world_range': _get_type3_world_range(seed),
+            'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
+            'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
+            'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
+            'horizon': TYPE_3_HORIZON,
+        }
+    elif chosen_type == 4:
+        params = {
+            'world_range': TYPE_3_VILLAGE_RANGE,
             'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
             'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
             'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,

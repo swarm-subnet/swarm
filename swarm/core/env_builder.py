@@ -53,7 +53,7 @@ from swarm.constants import (
     GOAL_COLOR_PALETTE,
 )
 from swarm.core.city_generator import build_city as build_city_map
-from swarm.core.mountain_generator import build_mountains, get_mountain_subtype
+from swarm.core.mountain_generator import build_mountains
 from swarm.core.warehouse import build_warehouse_map
 
 
@@ -187,7 +187,7 @@ def _build_static_world_cache_meta(
         "map_body_count": map_body_count,
     }
 
-    if challenge_type == 3:
+    if challenge_type in (3, 4):
         if start is not None:
             meta["start_surface_z"] = float(
                 _raycast_surface_z(cli, float(start[0]), float(start[1]))
@@ -247,11 +247,11 @@ def _build_static_world(
         n_obstacles = 0
         safe_zone = TYPE_1_SAFE_ZONE
         world_range = TYPE_1_WORLD_RANGE
-    elif challenge_type == 3:
+    elif challenge_type in (3, 4):
         n_obstacles = 0
         safe_zone = TYPE_3_SAFE_ZONE
         world_range = 0
-    elif challenge_type == 4:
+    elif challenge_type == 5:
         n_obstacles = 0
         safe_zone = 0.0
         world_range = 0
@@ -397,9 +397,17 @@ def _build_static_world(
             safe_zones.append((sx, sy))
         if gx is not None and gy is not None:
             safe_zones.append((gx, gy))
-        build_mountains(cli, seed, safe_zones, safe_zone)
+        build_mountains(cli, seed, safe_zones, safe_zone, forced_subtype=1)
 
     elif challenge_type == 4:
+        safe_zones = []
+        if sx is not None and sy is not None:
+            safe_zones.append((sx, sy))
+        if gx is not None and gy is not None:
+            safe_zones.append((gx, gy))
+        build_mountains(cli, seed, safe_zones, safe_zone, forced_subtype=2)
+
+    elif challenge_type == 5:
         build_warehouse_map(seed=seed, cli=cli, start=start, goal=goal)
 
 
@@ -541,7 +549,7 @@ def _try_load_static_world_cache(
             )
         )
 
-        if challenge_type in (1, 3) and loaded_map_bodies <= 0:
+        if challenge_type in (1, 3, 4) and loaded_map_bodies <= 0:
             _invalidate_static_world_cache(cache_file, meta_file)
             return False
 
@@ -549,7 +557,7 @@ def _try_load_static_world_cache(
             _invalidate_static_world_cache(cache_file, meta_file)
             return False
 
-        if challenge_type == 3:
+        if challenge_type in (3, 4):
             tolerance = 1.0
 
             expected_start_surface = expected_meta.get("start_surface_z")
@@ -577,7 +585,7 @@ def _try_load_static_world_cache(
 
 
 # --------------------------------------------------------------------------
-# Type 4 warehouse collision-free platform placement
+# Type 5 warehouse collision-free platform placement
 # --------------------------------------------------------------------------
 def _find_clear_position_type4(
     cli: int,
@@ -711,9 +719,9 @@ def build_world(
     end_platform_uids: List[int] = []
 
     # ------------------------------------------------------------------
-    # Type 4: collision-free platform placement
+    # Type 5: collision-free platform placement
     # ------------------------------------------------------------------
-    if challenge_type == 4 and sx is not None and sy is not None and sz is not None:
+    if challenge_type == 5 and sx is not None and sy is not None and sz is not None:
         placement_rng = random.Random(seed + 777777)
 
         start_surface = sz - START_PLATFORM_TAKEOFF_BUFFER
@@ -742,10 +750,10 @@ def build_world(
         platform_height = START_PLATFORM_HEIGHT
 
         # Calculate platform surface height (random or fixed)
-        if challenge_type == 4 and start_platform_surface_z is not None:
+        if challenge_type == 5 and start_platform_surface_z is not None:
             surface_z = start_platform_surface_z
         elif START_PLATFORM_RANDOMIZE:
-            if challenge_type == 3:
+            if challenge_type in (3, 4):
                 inferred_surface = sz - START_PLATFORM_TAKEOFF_BUFFER
                 terrain_surface = _raycast_surface_z(cli, sx, sy)
                 if abs(float(inferred_surface) - float(terrain_surface)) <= 0.5:
@@ -844,19 +852,17 @@ def build_world(
     # Physical landing platform with visual goal marker
     # ------------------------------------------------------------------
     if goal is not None:
-        if challenge_type != 4 or adjusted_goal is None:
+        if challenge_type != 5 or adjusted_goal is None:
             gx, gy, gz = goal
 
         if challenge_type == 3:
-            subtype = get_mountain_subtype(seed)
-            if subtype == 2:
-                surface_z = 0.0
+            terrain_surface = _raycast_surface_z(cli, gx, gy)
+            if abs(float(terrain_surface) - float(gz)) <= 0.5:
+                surface_z = float(terrain_surface)
             else:
-                terrain_surface = _raycast_surface_z(cli, gx, gy)
-                if abs(float(terrain_surface) - float(gz)) <= 0.5:
-                    surface_z = float(terrain_surface)
-                else:
-                    surface_z = float(gz)
+                surface_z = float(gz)
+        elif challenge_type == 4:
+            surface_z = 0.0
         else:
             surface_z = gz
 

@@ -1,5 +1,5 @@
 """
-Embedded factory conveyor belt network for Type 4 warehouse maps.
+Embedded factory conveyor belt network for Type 5 warehouse maps.
 Generates a seeded conveyor path with belt segments, supports, drones,
 workers, cartons, and an optional barrier fence ring.
 """
