@@ -86,7 +86,7 @@ def build_floor(loader, cli):
         baseMass=0.0,
         baseCollisionShapeIndex=cid,
         baseVisualShapeIndex=vid,
-        basePosition=[0.0, 0.0, -floor_half_z],
+        basePosition=[0.0, 0.0, -floor_half_z + 0.02],
         useMaximalCoordinates=True,
         physicsClientId=cli,
     )
@@ -97,7 +97,7 @@ def build_floor(loader, cli):
         specularColor=list(UNIFORM_SPECULAR_COLOR),
         physicsClientId=cli,
     )
-    return 0.0
+    return 0.02
 
 
 def build_personnel_floor_lane(loader, floor_top_z, wall_info, cli):

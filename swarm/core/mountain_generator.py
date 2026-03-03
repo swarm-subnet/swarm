@@ -273,10 +273,10 @@ def _spawn_terrain(cli: int, seed: int, obj_dir: str, gs: float):
 
     min_h = min(heights.values())
     gv = p.createVisualShape(
-        p.GEOM_BOX, halfExtents=[2000 * gs, 2000 * gs, 0.1],
+        p.GEOM_BOX, halfExtents=[2000 * gs, 2000 * gs, 0.5],
         rgbaColor=SNOW, specularColor=[0, 0, 0], physicsClientId=cli,
     )
-    p.createMultiBody(0, -1, gv, [0, 0, min_h - 2.0], physicsClientId=cli)
+    p.createMultiBody(0, -1, gv, [0, 0, -0.45], physicsClientId=cli)
 
     res = TERRAIN_RESOLUTION
     half = mesh_size / 2.0
@@ -307,32 +307,6 @@ def _too_close(x: float, y: float, radius: float, placed: List[_Placed],
             return True
     return False
 
-
-def _in_safe_zone(x: float, y: float, safe_zones: List[Tuple[float, float]],
-                  safe_zone_radius: float) -> bool:
-    for sx, sy in safe_zones:
-        if math.hypot(x - sx, y - sy) < safe_zone_radius:
-            return True
-    return False
-
-
-def _body_intersects_safe_zone(cli: int, body_id: int,
-                               safe_zones: Optional[List[Tuple[float, float]]],
-                               safe_zone_radius: float) -> bool:
-    if body_id is None or not safe_zones:
-        return False
-    mn, mx = p.getAABB(body_id, physicsClientId=cli)
-    x1, y1 = mn[0], mn[1]
-    x2, y2 = mx[0], mx[1]
-    rr = safe_zone_radius * safe_zone_radius
-    for sx, sy in safe_zones:
-        nx = max(x1, min(sx, x2))
-        ny = max(y1, min(sy, y2))
-        dx = sx - nx
-        dy = sy - ny
-        if dx * dx + dy * dy < rr:
-            return True
-    return False
 
 
 def _estimate_radius_peak(gs: float, scale_var: float) -> float:
@@ -422,18 +396,6 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
     placed: List[_Placed] = []
     peak_heights: List[Tuple[float, float, float]] = []
 
-    def _violates_safe_zone(x: float, y: float, radius: float) -> bool:
-        if not safe_zones:
-            return False
-        required = safe_zone_radius + radius
-        required_sq = required * required
-        for sx, sy in safe_zones:
-            dx = x - sx
-            dy = y - sy
-            if dx * dx + dy * dy < required_sq:
-                return True
-        return False
-
     def spawn_peak(x, y, is_edge=False, scale_var=None):
         if not os.path.exists(PEAK_OBJ):
             return
@@ -442,27 +404,22 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
         base = [95.0 * gs, 95.0 * gs, 145.0 * gs]
         sv = [round(v * scale_var, 2) for v in base]
         sink = (18.0 if is_edge else 14.0) * gs
-        bid, h = _spawn_mesh_snapped(
+        _, h = _spawn_mesh_snapped(
             cli, _cache, PEAK_OBJ, x, y,
             rot_deg=rng.uniform(0, 360), scale_vec=sv, rgba=SNOW,
             sink_z=sink, tex_id=tex_id, get_z=get_z,
         )
-        if _body_intersects_safe_zone(cli, bid, safe_zones, safe_zone_radius):
-            p.removeBody(bid, physicsClientId=cli)
-            return
         peak_heights.append((x, y, h))
 
     def spawn_hill(x, y, scale):
         path = rng.choice(hills)
         s = round(scale * 2) / 2
         sz = round(s * 0.55 * 2) / 2
-        bid, _ = _spawn_mesh_snapped(
+        _spawn_mesh_snapped(
             cli, _cache, path, x, y,
             rot_deg=rng.uniform(0, 360), scale_vec=[s, s, sz],
             rgba=SNOW, get_z=get_z,
         )
-        if _body_intersects_safe_zone(cli, bid, safe_zones, safe_zone_radius):
-            p.removeBody(bid, physicsClientId=cli)
 
     # Edge walls
     for _ in range(edge_n):
@@ -479,8 +436,6 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
             else:
                 x, y = -half - pad, t
             edge_radius = _estimate_radius_peak(gs, rng.uniform(0.85, 1.25))
-            if _violates_safe_zone(x, y, edge_radius):
-                continue
             if not _too_close(x, y, edge_radius, placed, max_overlap=0.40):
                 placed.append(_Placed(x, y, edge_radius))
                 break
@@ -491,8 +446,6 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
             x, y = _sample_point_square(rng, half)
             s = rng.uniform(10.0, 18.0) * gs
             r = _estimate_radius_hill(gs, s)
-            if _violates_safe_zone(x, y, r):
-                continue
             if not _too_close(x, y, r, placed, max_overlap=0.60):
                 placed.append(_Placed(x, y, r))
                 break
@@ -507,8 +460,6 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
                 x, y = _sample_point_square(rng, half)
             var = rng.uniform(0.85, 1.25)
             r = _estimate_radius_peak(gs, var)
-            if _violates_safe_zone(x, y, r):
-                continue
             if not _too_close(x, y, r, placed, max_overlap=0.45):
                 placed.append(_Placed(x, y, r))
                 large_points.append((x, y, var))
@@ -521,8 +472,6 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
             x, y = _sample_point_square(rng, half)
             s = rng.uniform(14.0, 22.0) * gs
             r = _estimate_radius_hill(gs, s)
-            if _violates_safe_zone(x, y, r):
-                continue
             if not _too_close(x, y, r, placed, max_overlap=0.60):
                 placed.append(_Placed(x, y, r))
                 med_points.append((x, y, s))
@@ -535,8 +484,6 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
             x, y = _sample_point_square(rng, half)
             s = rng.uniform(7.0, 13.0) * gs
             r = _estimate_radius_hill(gs, s)
-            if _violates_safe_zone(x, y, r):
-                continue
             if not _too_close(x, y, r, placed):
                 placed.append(_Placed(x, y, r))
                 small_points.append((x, y, s))
@@ -580,19 +527,15 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
                 continue
             s = rng.uniform(10.0, 22.0) * gs
             r = _estimate_radius_hill(gs, s)
-            if _violates_safe_zone(x, y, r):
-                continue
             if not _too_close(x, y, r, placed, max_overlap=0.50):
                 placed.append(_Placed(x, y, r))
                 path = rng.choice(hills)
                 s_q = round(s * 2) / 2
-                bid, _ = _spawn_mesh_snapped(
+                _spawn_mesh_snapped(
                     cli, _cache, path, x, y,
                     rot_deg=rng.uniform(0, 360), scale_vec=[s_q, s_q, s_q],
                     rgba=SNOW, get_z=get_z,
                 )
-                if _body_intersects_safe_zone(cli, bid, safe_zones, safe_zone_radius):
-                    p.removeBody(bid, physicsClientId=cli)
                 break
 
     return get_z, peak_heights
@@ -1057,10 +1000,6 @@ def _spawn_village_buildings(cli: int, cache: _ShapeCache,
                 hw = raw_w * HOUSE_SCALE / 5.0 / 2
                 hd = raw_d * HOUSE_SCALE / 5.0 / 2
                 break
-        if safe_zones:
-            safe_clearance = safe_zone_radius + math.hypot(hw, hd)
-            if _in_safe_zone(x, y, safe_zones, safe_clearance):
-                return
         if rotation in (0, 180):
             bx1, by1, bx2, by2 = x - hw, y - hd, x + hw, y + hd
         else:
@@ -1077,21 +1016,14 @@ def _spawn_village_buildings(cli: int, cache: _ShapeCache,
         if os.path.exists(winter_path):
             final_rot = rotation + 180 if rotation % 180 == 0 else rotation
             house_id = _spawn_village_asset(cli, cache, winter_path, x, y, 0, final_rot, HOUSE_SCALE)
-            if _body_intersects_safe_zone(cli, house_id, safe_zones, safe_zone_radius):
-                p.removeBody(house_id, physicsClientId=cli)
-                return
             roof_name = filename.replace(".obj", "_roof.obj")
             roof_path = os.path.join(BUILDING_DIR, "SnowRoofs", roof_name)
             if os.path.exists(roof_path):
-                roof_id = _spawn_village_asset(cli, cache, roof_path, x, y, 0.01, final_rot, HOUSE_SCALE)
-                if _body_intersects_safe_zone(cli, roof_id, safe_zones, safe_zone_radius):
-                    p.removeBody(roof_id, physicsClientId=cli)
+                _spawn_village_asset(cli, cache, roof_path, x, y, 0.01, final_rot, HOUSE_SCALE)
         else:
             sub_path = os.path.join(SUBURBAN_DIR, filename)
             final_rot = rotation + 180 if rotation % 180 == 0 else rotation
-            house_id = _spawn_village_asset(cli, cache, sub_path, x, y, 0, final_rot, HOUSE_SCALE)
-            if _body_intersects_safe_zone(cli, house_id, safe_zones, safe_zone_radius):
-                p.removeBody(house_id, physicsClientId=cli)
+            _spawn_village_asset(cli, cache, sub_path, x, y, 0, final_rot, HOUSE_SCALE)
 
     def fill_row(start, end, fixed_pos, rotation, is_vertical=False):
         available = end - start
@@ -1161,28 +1093,14 @@ def _spawn_village_lanterns(cli: int, cache: _ShapeCache,
         cy = tile.y - offset + half_tile
         if tile.type == "straight_v":
             for lx, rot in [(cx - lamp_offset_val, 180), (cx + lamp_offset_val, 0)]:
-                if safe_zones and _in_safe_zone(lx, cy, safe_zones, safe_zone_radius):
-                    continue
-                lantern_id = _spawn_village_asset(cli, cache, LANTERN_PATH, lx, cy, lantern_z, rot, lantern_scale)
-                if _body_intersects_safe_zone(cli, lantern_id, safe_zones, safe_zone_radius):
-                    p.removeBody(lantern_id, physicsClientId=cli)
-                    continue
+                _spawn_village_asset(cli, cache, LANTERN_PATH, lx, cy, lantern_z, rot, lantern_scale)
                 if os.path.exists(LANTERN_ROOF_PATH):
-                    roof_id = _spawn_village_asset(cli, cache, LANTERN_ROOF_PATH, lx, cy, lantern_z + 0.01, rot, lantern_scale)
-                    if _body_intersects_safe_zone(cli, roof_id, safe_zones, safe_zone_radius):
-                        p.removeBody(roof_id, physicsClientId=cli)
+                    _spawn_village_asset(cli, cache, LANTERN_ROOF_PATH, lx, cy, lantern_z + 0.01, rot, lantern_scale)
         elif tile.type == "straight_h":
             for ly, rot in [(cy - lamp_offset_val, 270), (cy + lamp_offset_val, 90)]:
-                if safe_zones and _in_safe_zone(cx, ly, safe_zones, safe_zone_radius):
-                    continue
-                lantern_id = _spawn_village_asset(cli, cache, LANTERN_PATH, cx, ly, lantern_z, rot, lantern_scale)
-                if _body_intersects_safe_zone(cli, lantern_id, safe_zones, safe_zone_radius):
-                    p.removeBody(lantern_id, physicsClientId=cli)
-                    continue
+                _spawn_village_asset(cli, cache, LANTERN_PATH, cx, ly, lantern_z, rot, lantern_scale)
                 if os.path.exists(LANTERN_ROOF_PATH):
-                    roof_id = _spawn_village_asset(cli, cache, LANTERN_ROOF_PATH, cx, ly, lantern_z + 0.01, rot, lantern_scale)
-                    if _body_intersects_safe_zone(cli, roof_id, safe_zones, safe_zone_radius):
-                        p.removeBody(roof_id, physicsClientId=cli)
+                    _spawn_village_asset(cli, cache, LANTERN_ROOF_PATH, cx, ly, lantern_z + 0.01, rot, lantern_scale)
 
 
 def _spawn_village_cars(cli: int, cache: _ShapeCache,
@@ -1204,19 +1122,11 @@ def _spawn_village_cars(cli: int, cache: _ShapeCache,
         if tile.type == "straight_v":
             car_x = cx + lane_off * direction
             car_rot = 180 if direction == 1 else 0
-            if safe_zones and _in_safe_zone(car_x, cy, safe_zones, safe_zone_radius):
-                continue
-            car_id = _spawn_village_asset(cli, cache, car_path, car_x, cy, 0.1, car_rot, 0.58)
-            if _body_intersects_safe_zone(cli, car_id, safe_zones, safe_zone_radius):
-                p.removeBody(car_id, physicsClientId=cli)
+            _spawn_village_asset(cli, cache, car_path, car_x, cy, 0.1, car_rot, 0.58)
         else:
             car_y = cy + lane_off * (-direction)
             car_rot = 90 if direction == 1 else 270
-            if safe_zones and _in_safe_zone(cx, car_y, safe_zones, safe_zone_radius):
-                continue
-            car_id = _spawn_village_asset(cli, cache, car_path, cx, car_y, 0.1, car_rot, 0.58)
-            if _body_intersects_safe_zone(cli, car_id, safe_zones, safe_zone_radius):
-                p.removeBody(car_id, physicsClientId=cli)
+            _spawn_village_asset(cli, cache, car_path, cx, car_y, 0.1, car_rot, 0.58)
 
 
 def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache,
