@@ -575,25 +575,31 @@ class MovingDroneAviary(BaseRLAviary):
         ground_id = getattr(self, 'PLANE_ID', 0)
         excluded = {drone_id, -1, ground_id} | set(end_platform_uids) | set(start_platform_uids)
 
-        num_bodies = p.getNumBodies(physicsClientId=cli)
         min_dist = SAFETY_DISTANCE_SAFE
 
-        for body_idx in range(num_bodies):
-            body_uid = p.getBodyUniqueId(body_idx, physicsClientId=cli)
-            if body_uid in excluded:
-                continue
+        d_min, d_max = p.getAABB(drone_id, physicsClientId=cli)
+        search_min = [d_min[0] - SAFETY_DISTANCE_SAFE, d_min[1] - SAFETY_DISTANCE_SAFE, d_min[2] - SAFETY_DISTANCE_SAFE]
+        search_max = [d_max[0] + SAFETY_DISTANCE_SAFE, d_max[1] + SAFETY_DISTANCE_SAFE, d_max[2] + SAFETY_DISTANCE_SAFE]
+        overlapping = p.getOverlappingObjects(search_min, search_max, physicsClientId=cli)
 
-            closest = p.getClosestPoints(
-                bodyA=drone_id,
-                bodyB=body_uid,
-                distance=SAFETY_DISTANCE_SAFE,
-                physicsClientId=cli
-            )
+        if overlapping:
+            checked = set()
+            for body_uid, _link_idx in overlapping:
+                if body_uid in excluded or body_uid in checked:
+                    continue
+                checked.add(body_uid)
 
-            for point in closest:
-                dist = point[8]
-                if dist < min_dist:
-                    min_dist = dist
+                closest = p.getClosestPoints(
+                    bodyA=drone_id,
+                    bodyB=body_uid,
+                    distance=SAFETY_DISTANCE_SAFE,
+                    physicsClientId=cli
+                )
+
+                for point in closest:
+                    dist = point[8]
+                    if dist < min_dist:
+                        min_dist = dist
 
         if min_dist < self._min_clearance_episode:
             self._min_clearance_episode = min_dist
