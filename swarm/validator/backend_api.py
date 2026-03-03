@@ -385,13 +385,14 @@ class BackendApiClient:
         seeds: list[int],
         started_at: str,
         ended_at: str,
+        benchmark_version: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return await self._post_signed(
-            "/validators/epoch/publish",
-            {
-                "epoch_number": epoch_number,
-                "seeds": seeds,
-                "started_at": started_at,
-                "ended_at": ended_at,
-            }
-        )
+        data: Dict[str, Any] = {
+            "epoch_number": epoch_number,
+            "seeds": seeds,
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+        if benchmark_version is not None:
+            data["benchmark_version"] = benchmark_version
+        return await self._post_signed("/validators/epoch/publish", data)

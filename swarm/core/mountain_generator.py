@@ -46,6 +46,7 @@ ROAD_COLOR = [0.35, 0.35, 0.38, 1]
 
 TERRAIN_RESOLUTION = 193
 TERRAIN_N_OCTAVES = 4
+TERRAIN_TILES = 4
 
 VILLAGE_SIZE = 100.0
 ROAD_WIDTH = 6.0
@@ -184,29 +185,51 @@ _cache = _ShapeCache()
 # ---------------------------------------------------------------------------
 # SECTION 4: Terrain OBJ generation & spawning
 # ---------------------------------------------------------------------------
-def _generate_terrain_obj(filepath: str, size: float, res: int,
-                          noise_params: List[dict], amplitude: float) -> Tuple[Dict, float]:
+def _generate_terrain_tiles(obj_dir: str, size: float, res: int,
+                            noise_params: List[dict], amplitude: float,
+                            tiles: int) -> Tuple[Dict, float, List[str]]:
     half = size / 2.0
     step = size / (res - 1)
     heights: Dict[Tuple[int, int], float] = {}
-    with open(filepath, "w") as f:
-        f.write(f"# Procedural snow terrain (amp={amplitude:.1f}m)\n")
-        for r in range(res):
-            for c in range(res):
-                x = -half + c * step
-                y = -half + r * step
-                z = _sample_terrain_height(x, y, noise_params, amplitude)
-                heights[(r, c)] = z
-                f.write(f"v {x:.4f} {y:.4f} {z:.4f}\n")
-        for r in range(res - 1):
-            for c in range(res - 1):
-                v00 = r * res + c + 1
-                v10 = v00 + 1
-                v01 = v00 + res
-                v11 = v01 + 1
-                f.write(f"f {v00} {v10} {v11}\n")
-                f.write(f"f {v00} {v11} {v01}\n")
-    return heights, step
+
+    for r in range(res):
+        for c in range(res):
+            x = -half + c * step
+            y = -half + r * step
+            heights[(r, c)] = _sample_terrain_height(x, y, noise_params, amplitude)
+
+    cells_per_tile = (res - 1) // tiles
+    tile_paths: List[str] = []
+
+    for tr in range(tiles):
+        for tc in range(tiles):
+            r_start = tr * cells_per_tile
+            c_start = tc * cells_per_tile
+            r_end = (tr + 1) * cells_per_tile if tr < tiles - 1 else res - 1
+            c_end = (tc + 1) * cells_per_tile if tc < tiles - 1 else res - 1
+
+            path = os.path.join(obj_dir, f"terrain_tile_{tr}_{tc}.obj")
+            with open(path, "w") as f:
+                vert_map: Dict[Tuple[int, int], int] = {}
+                vi = 1
+                for r in range(r_start, r_end + 1):
+                    for c in range(c_start, c_end + 1):
+                        x = -half + c * step
+                        y = -half + r * step
+                        f.write(f"v {x:.4f} {y:.4f} {heights[(r, c)]:.4f}\n")
+                        vert_map[(r, c)] = vi
+                        vi += 1
+                for r in range(r_start, r_end):
+                    for c in range(c_start, c_end):
+                        v00 = vert_map[(r, c)]
+                        v10 = vert_map[(r, c + 1)]
+                        v01 = vert_map[(r + 1, c)]
+                        v11 = vert_map[(r + 1, c + 1)]
+                        f.write(f"f {v00} {v10} {v11}\n")
+                        f.write(f"f {v00} {v11} {v01}\n")
+            tile_paths.append(path)
+
+    return heights, step, tile_paths
 
 
 def _terrain_z_at(x: float, y: float, heights: Dict, res: int,
@@ -231,19 +254,22 @@ def _spawn_terrain(cli: int, seed: int, obj_dir: str, gs: float):
     amplitude = amp_rng.uniform(2.0 * gs, 5.0 * gs)
 
     mesh_size = 1500.0 * gs
-    os.makedirs(obj_dir, exist_ok=True)
-    obj_path = os.path.join(obj_dir, f"terrain_seed_{seed}.obj")
-    heights, step = _generate_terrain_obj(obj_path, mesh_size, TERRAIN_RESOLUTION, noise_params, amplitude)
+    tile_dir = os.path.join(obj_dir, f"terrain_seed_{seed}")
+    os.makedirs(tile_dir, exist_ok=True)
+    heights, step, tile_paths = _generate_terrain_tiles(
+        tile_dir, mesh_size, TERRAIN_RESOLUTION, noise_params, amplitude, TERRAIN_TILES,
+    )
 
-    vi = p.createVisualShape(
-        p.GEOM_MESH, fileName=obj_path, meshScale=[1, 1, 1],
-        rgbaColor=SNOW, specularColor=[0, 0, 0], physicsClientId=cli,
-    )
-    ci = p.createCollisionShape(
-        p.GEOM_MESH, fileName=obj_path, meshScale=[1, 1, 1],
-        flags=p.GEOM_FORCE_CONCAVE_TRIMESH, physicsClientId=cli,
-    )
-    p.createMultiBody(0, ci, vi, [0, 0, 0], physicsClientId=cli)
+    for tile_path in tile_paths:
+        vi = p.createVisualShape(
+            p.GEOM_MESH, fileName=tile_path, meshScale=[1, 1, 1],
+            rgbaColor=SNOW, specularColor=[0, 0, 0], physicsClientId=cli,
+        )
+        ci = p.createCollisionShape(
+            p.GEOM_MESH, fileName=tile_path, meshScale=[1, 1, 1],
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH, physicsClientId=cli,
+        )
+        p.createMultiBody(0, ci, vi, [0, 0, 0], physicsClientId=cli)
 
     min_h = min(heights.values())
     gv = p.createVisualShape(

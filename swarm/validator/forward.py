@@ -1629,6 +1629,7 @@ async def forward(self) -> None:
                     seeds=pub.get("seeds", []),
                     started_at=pub.get("started_at", ""),
                     ended_at=pub.get("ended_at", ""),
+                    benchmark_version=pub.get("benchmark_version"),
                 )
                 self.seed_manager.mark_epoch_published(ep)
                 bt.logging.info(f"Published epoch {ep} seeds to backend")
@@ -1653,6 +1654,7 @@ async def forward(self) -> None:
                         seeds=pub.get("seeds", []),
                         started_at=pub.get("started_at", ""),
                         ended_at=pub.get("ended_at", ""),
+                        benchmark_version=pub.get("benchmark_version"),
                     )
                     self.seed_manager.mark_epoch_published(ep)
                     bt.logging.info(f"Published epoch {ep} seeds to backend")
