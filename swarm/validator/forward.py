@@ -1293,6 +1293,13 @@ async def _register_new_model_with_ack(
     )
 
     if response.get("accepted", False):
+        model_path = MODEL_DIR / f"UID_{uid}.zip"
+        if model_path.is_file():
+            try:
+                upload_resp = await self.backend_api.upload_model_file(uid, model_path)
+                bt.logging.info(f"Model upload for UID {uid}: {upload_resp}")
+            except Exception as e:
+                bt.logging.warning(f"Model upload failed for UID {uid} (non-fatal): {e}")
         return True, False, ""
 
     terminal, reason = _classify_backend_failure(response, "new_model")
@@ -1675,7 +1682,7 @@ async def forward(self) -> None:
         sync_data = await self.backend_api.sync()
 
         if sync_data.get("fallback"):
-            bt.logging.warning("Using freeze-last weights (backend unavailable)")
+            bt.logging.warning("Backend unavailable — burning 100% emissions")
 
         self._current_top = sync_data.get("current_top", {})
         reeval_queue = sync_data.get("reeval_queue", [])
@@ -1683,7 +1690,7 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         # STEP 2: Apply weights from backend
         # ──────────────────────────────────────────────────────────────
-        backend_weights = sync_data.get("weights", {})
+        backend_weights = {} if sync_data.get("fallback") else sync_data.get("weights", {})
         _apply_backend_weights_to_scores(self, backend_weights)
         nonzero_uids = int(np.count_nonzero(self.scores))
         bt.logging.info(f"⚖️ Applied backend weights to local scores: {nonzero_uids} non-zero UID(s)")
@@ -1693,7 +1700,7 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         if sync_data.get("fallback") and reeval_queue:
             bt.logging.warning(
-                f"Freeze-last active: skipping {len(reeval_queue)} cached re-eval item(s) this cycle"
+                f"Backend unavailable: skipping {len(reeval_queue)} cached re-eval item(s)"
             )
         else:
             for reeval_item in reeval_queue:

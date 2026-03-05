@@ -293,7 +293,8 @@ class BackendApiClient:
                 "leaderboard_version": 15
             }
 
-            If backend is down, returns last known weights (freeze-last behavior).
+            If backend is down, returns cached data with fallback=True.
+            The forward loop burns 100% when fallback is active.
         """
         try:
             data = await self._get_signed("/validators/sync")
@@ -334,7 +335,7 @@ class BackendApiClient:
             raise Exception(data.get("error", "Unknown error"))
 
         except Exception as e:
-            bt.logging.warning(f"Backend API error (sync): {e} - using freeze-last weights")
+            bt.logging.warning(f"Backend API error (sync): {e} — fallback active, emissions will burn")
 
             return {
                 "current_top": self._runtime_state.get("current_top", {}),
@@ -344,6 +345,64 @@ class BackendApiClient:
                 "fallback": True,
                 "error": str(e)
             }
+
+    # ──────────────────────────────────────────────────────────────────────
+    # POST /validators/models/{uid}/upload
+    # ──────────────────────────────────────────────────────────────────────
+    async def upload_model_file(self, uid: int, model_path: Path) -> Dict[str, Any]:
+        """Upload model .zip file to backend.
+
+        Args:
+            uid: Miner UID
+            model_path: Local path to the model .zip file
+
+        Returns:
+            {"stored": True, "released": bool, ...} or error dict
+        """
+        if not model_path.is_file():
+            return {"error": f"Model file not found: {model_path}"}
+
+        file_bytes = model_path.read_bytes()
+        model_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        endpoint = f"/validators/models/{uid}/upload"
+        if not self.wallet:
+            bt.logging.warning("No wallet configured - upload will not be signed")
+            return {"error": "no wallet"}
+
+        nonce = str(uuid.uuid4())
+        timestamp = str(int(time.time()))
+        path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+        message = f"{timestamp}:{nonce}:POST:{path}:{model_hash}"
+
+        signature = self.wallet.hotkey.sign(message.encode()).hex()
+
+        headers = {
+            "X-Validator-Hotkey": self.wallet.hotkey.ss58_address,
+            "X-Validator-Signature": signature,
+            "X-Validator-Nonce": nonce,
+            "X-Validator-Timestamp": timestamp,
+            "X-Model-Hash": model_hash,
+        }
+
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}{endpoint}",
+                files={"file": (model_path.name, file_bytes, "application/zip")},
+                headers=headers,
+                timeout=120.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            bt.logging.warning(f"Backend rejected upload for UID {uid}: {e.response.status_code}")
+            try:
+                return e.response.json()
+            except (ValueError, RuntimeError):
+                return {"error": str(e), "status_code": e.response.status_code}
+        except Exception as e:
+            bt.logging.warning(f"Model upload failed for UID {uid}: {e}")
+            return {"error": str(e)}
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/heartbeat
