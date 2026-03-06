@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import os
 import random
 import statistics
 import sys
 import threading
 import time
+import traceback
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -209,30 +211,68 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-class _Tee:
+class _Tee(io.TextIOBase):
     """Write to multiple file objects simultaneously."""
     def __init__(self, *files):
         self.files = files
+        self._primary = files[0] if files else sys.__stdout__
+        self._lock = threading.Lock()
 
     def write(self, data):
-        for f in self.files:
-            try:
-                if getattr(f, "closed", False):
+        with self._lock:
+            for f in self.files:
+                try:
+                    if getattr(f, "closed", False):
+                        continue
+                    f.write(data)
+                    f.flush()
+                except Exception:
+                    # Best-effort tee: ignore late writes during shutdown races.
                     continue
-                f.write(data)
-                f.flush()
-            except Exception:
-                # Best-effort tee: ignore late writes during shutdown races.
-                continue
+        return len(data)
 
     def flush(self):
+        with self._lock:
+            for f in self.files:
+                try:
+                    if getattr(f, "closed", False):
+                        continue
+                    f.flush()
+                except Exception:
+                    continue
+
+    @property
+    def buffer(self):
+        return getattr(self._primary, "buffer", None)
+
+    @property
+    def encoding(self):
+        return getattr(self._primary, "encoding", "utf-8")
+
+    @property
+    def errors(self):
+        return getattr(self._primary, "errors", "strict")
+
+    def reconfigure(self, *args, **kwargs):
         for f in self.files:
             try:
-                if getattr(f, "closed", False):
-                    continue
-                f.flush()
+                reconfigure = getattr(f, "reconfigure", None)
+                if callable(reconfigure):
+                    reconfigure(*args, **kwargs)
             except Exception:
                 continue
+
+    def fileno(self):
+        return self._primary.fileno()
+
+    def isatty(self):
+        return self._primary.isatty()
+
+    def writable(self):
+        return True
+
+    def __getattr__(self, name: str):
+        return getattr(self._primary, name)
 
 
 def _ts() -> str:
@@ -825,71 +865,129 @@ def main() -> None:
         effective_log_out = Path(run_opts.default_log_out)
 
     log_fh = None
-    if effective_log_out:
-        log_fh = open(effective_log_out, "w")
-        sys.stdout = _Tee(sys.__stdout__, log_fh)
-        sys.stderr = _Tee(sys.__stderr__, log_fh)
+    run_error: Optional[BaseException] = None
+    report_error: Optional[BaseException] = None
+    task_meta: List[Dict[str, Any]] = []
+    results: list = []
+    seed_times: List[float] = []
+    seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
+    elapsed = 0.0
+    eval_start = time.time()
+    overrides: Dict[str, Any] = {}
 
-    overrides = {}
-    if args.relax_timeouts:
-        overrides = _apply_relaxed_overrides()
+    try:
+        if effective_log_out:
+            log_fh = open(effective_log_out, "w")
+            sys.stdout = _Tee(sys.__stdout__, log_fh)
+            sys.stderr = _Tee(sys.__stderr__, log_fh)
 
-    print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
-    print(f"[{_ts()}] Model: {model_path}")
-    print(f"[{_ts()}] Workers requested: {requested_workers}")
-    if effective_workers != requested_workers:
-        print(
-            f"[{_ts()}] Workers effective:  {effective_workers} "
-            f"(capped for no-serialize stability)"
+        if args.relax_timeouts:
+            overrides = _apply_relaxed_overrides()
+
+        print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
+        print(f"[{_ts()}] Model: {model_path}")
+        print(f"[{_ts()}] Workers requested: {requested_workers}")
+        if effective_workers != requested_workers:
+            print(
+                f"[{_ts()}] Workers effective:  {effective_workers} "
+                f"(capped for no-serialize stability)"
+            )
+        else:
+            print(f"[{_ts()}] Workers effective:  {effective_workers}")
+        print(f"[{_ts()}] Profile: {args.profile}")
+        if overrides:
+            print(f"[{_ts()}] Relaxed timeouts: {overrides}")
+        print(f"[{_ts()}] Map types selected: {', '.join(selected_groups)}")
+        if effective_log_out:
+            print(f"[{_ts()}] Log file: {effective_log_out}")
+        print()
+
+        print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
+        type_seeds = _find_seeds(args.seeds_per_group, selected_groups=selected_groups)
+        total_seeds = sum(len(v) for v in type_seeds.values())
+        for group, seeds in type_seeds.items():
+            print(f"  {group}: {seeds}")
+        print(f"  Total: {total_seeds}")
+        print()
+
+        task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start = asyncio.run(
+            _run_benchmark(
+                model_path,
+                args.uid,
+                type_seeds,
+                effective_workers,
+                run_opts=run_opts,
+            )
         )
-    else:
-        print(f"[{_ts()}] Workers effective:  {effective_workers}")
-    print(f"[{_ts()}] Profile: {args.profile}")
-    if overrides:
-        print(f"[{_ts()}] Relaxed timeouts: {overrides}")
-    print(f"[{_ts()}] Map types selected: {', '.join(selected_groups)}")
-    if effective_log_out:
-        print(f"[{_ts()}] Log file: {effective_log_out}")
-    print()
-
-    print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
-    type_seeds = _find_seeds(args.seeds_per_group, selected_groups=selected_groups)
-    total_seeds = sum(len(v) for v in type_seeds.values())
-    for group, seeds in type_seeds.items():
-        print(f"  {group}: {seeds}")
-    print(f"  Total: {total_seeds}")
-    print()
-
-    task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start = asyncio.run(
-        _run_benchmark(
-            model_path,
-            args.uid,
-            type_seeds,
-            effective_workers,
-            run_opts=run_opts,
-        )
-    )
-
-    print(f"\n[{_ts()}] === RESULTS ===")
-    _print_results(
-        task_meta,
-        results,
-        seed_times,
-        seed_wall_by_key,
-        elapsed,
-        eval_start,
-        effective_workers,
-    )
-
-    print(f"[{_ts()}] === BENCHMARK COMPLETE ===")
-    if log_fh:
+    except BaseException as exc:
+        run_error = exc
+    finally:
+        # Always restore real stdio before final report to avoid wrapper edge-cases.
         try:
             sys.stdout.flush()
             sys.stderr.flush()
+        except Exception:
+            pass
+        out_stream = sys.__stdout__
+        err_stream = sys.__stderr__
+        if out_stream is None or getattr(out_stream, "closed", False):
+            out_stream = err_stream if err_stream is not None else sys.stdout
+        if err_stream is None or getattr(err_stream, "closed", False):
+            err_stream = out_stream if out_stream is not None else sys.stderr
+        sys.stdout = out_stream
+        sys.stderr = err_stream
+
+    print(f"\n[{_ts()}] === RESULTS ===", flush=True)
+    if task_meta and results:
+        if run_error is not None:
+            print(f"[{_ts()}] Printing partial results collected before failure.", flush=True)
+        try:
+            _print_results(
+                task_meta,
+                results,
+                seed_times,
+                seed_wall_by_key,
+                elapsed,
+                eval_start,
+                effective_workers,
+            )
+        except BaseException as exc:
+            report_error = exc
+            print(f"[{_ts()}] Report generation failed: {type(exc).__name__}: {exc}", flush=True)
+
+    if run_error is not None:
+        print(
+            f"[{_ts()}] Benchmark failed before report generation: {type(run_error).__name__}: {run_error}",
+            flush=True,
+        )
+        traceback.print_exception(type(run_error), run_error, run_error.__traceback__)
+        if report_error is not None:
+            traceback.print_exception(type(report_error), report_error, report_error.__traceback__)
+        print(f"[{_ts()}] === BENCHMARK FAILED ===", flush=True)
+    elif report_error is not None:
+        traceback.print_exception(type(report_error), report_error, report_error.__traceback__)
+        print(f"[{_ts()}] === BENCHMARK FAILED ===", flush=True)
+    else:
+        print(f"[{_ts()}] === BENCHMARK COMPLETE ===", flush=True)
+
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+    if log_fh:
+        try:
+            log_fh.flush()
+        except Exception:
+            pass
         finally:
-            sys.stdout = sys.__stdout__
-            sys.stderr = sys.__stderr__
             log_fh.close()
+
+    if run_error is not None:
+        raise run_error
+    if report_error is not None:
+        raise report_error
 
 
 if __name__ == "__main__":

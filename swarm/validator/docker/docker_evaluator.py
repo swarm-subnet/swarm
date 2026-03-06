@@ -1060,6 +1060,29 @@ class DockerSecureEvaluator:
             except Exception:
                 pass
 
+        def _cleanup_tmpdir_quiet(path: Optional[str], timeout_sec: float = 8.0) -> None:
+            """Best-effort tmpdir cleanup without blocking benchmark completion."""
+            if not path:
+                return
+            done = threading.Event()
+
+            def _rm() -> None:
+                try:
+                    shutil.rmtree(path, ignore_errors=True)
+                finally:
+                    done.set()
+
+            t = threading.Thread(
+                target=_rm,
+                name=f"tmp_cleanup_uid{uid}_w{worker_id}",
+                daemon=True,
+            )
+            t.start()
+            if not done.wait(timeout=timeout_sec):
+                bt.logging.warning(
+                    f"[Worker {worker_id}] tmpdir cleanup still running in background: {path}"
+                )
+
         if not model_path.is_file():
             bt.logging.warning(f"[Worker {worker_id}] Model path missing: {model_path}")
             _notify_all_failed()
@@ -1569,15 +1592,7 @@ class DockerSecureEvaluator:
             except Exception:
                 pass
         finally:
-            try:
-                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-            except Exception:
-                pass
-            if tmpdir:
-                try:
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-                except Exception:
-                    pass
+            _cleanup_tmpdir_quiet(tmpdir)
 
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
