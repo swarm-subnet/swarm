@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import os
 import random
+import statistics
 import sys
 import threading
 import time
@@ -387,7 +388,7 @@ async def _run_benchmark(
         raise RuntimeError("Docker evaluator base image is not ready.")
 
     seed_times: List[float] = []
-    seed_wall_by_key: Dict[Tuple[int, int], float] = {}
+    seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
     total_seeds = len(all_tasks)
     progress_every = run_opts.progress_every
     heartbeat_sec = run_opts.heartbeat_sec
@@ -415,9 +416,8 @@ async def _run_benchmark(
                         int(seed_meta.get("map_seed")),
                         int(seed_meta.get("challenge_type")),
                     )
-                    # Keep first completion record for a given seed key.
-                    if seed_key not in seed_wall_by_key:
-                        seed_wall_by_key[seed_key] = float(seed_meta.get("seed_wall_sec", 0.0))
+                    seed_wall = max(0.0, float(seed_meta.get("seed_wall_sec", 0.0)))
+                    seed_wall_by_key.setdefault(seed_key, deque()).append(seed_wall)
                 except Exception:
                     pass
             done_count += 1
@@ -588,13 +588,16 @@ def _print_results(
     task_meta: List[Dict[str, Any]],
     results: list,
     seed_times: List[float],
-    seed_wall_by_key: Dict[Tuple[int, int], float],
+    seed_wall_by_key: Dict[Tuple[int, int], deque[float]],
     elapsed: float,
     eval_start: float,
     num_workers: int,
 ) -> Dict[str, Any]:
     """Print results table and return JSON-serializable summary."""
     GROUP_ORDER = BENCH_GROUP_ORDER
+    seed_wall_queues: Dict[Tuple[int, int], deque[float]] = {
+        key: deque(values) for key, values in seed_wall_by_key.items()
+    }
 
     group_results: Dict[str, List[Dict[str, Any]]] = {}
     for i, meta in enumerate(task_meta):
@@ -608,8 +611,9 @@ def _print_results(
         sim_time = float(result.time_sec) if result else 0.0
 
         seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
-        if seed_key in seed_wall_by_key:
-            wall = float(seed_wall_by_key[seed_key])
+        wall_q = seed_wall_queues.get(seed_key)
+        if wall_q and len(wall_q) > 0:
+            wall = float(wall_q.popleft())
         elif i < len(seed_times):
             # Fallback for compatibility if callback metadata was not provided.
             wall = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
@@ -646,15 +650,58 @@ def _print_results(
         print(f"  {'  -> AVG':<18} {'':>8} {avg_s:>7.4f} {'':>5} {'':>6} {avg_w:>6.1f}s")
         print()
 
-    # Overhead analysis
-    real_deltas = []
-    for i in range(len(seed_times)):
-        dt = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
-        if dt >= 0.5:
-            real_deltas.append(dt)
+    all_rows = [row for group in GROUP_ORDER if group in group_results for row in group_results[group]]
+    all_seed_walls = [float(r["wall_time"]) for r in all_rows if float(r["wall_time"]) > 0.0]
+    all_sim_times = [float(r["sim_time"]) for r in all_rows]
+    success_count = sum(1 for r in all_rows if bool(r["success"]))
+    total_seeds = len(all_rows)
+    workers_used = max(1, int(num_workers))
 
+    avg_wall_per_seed = (sum(all_seed_walls) / len(all_seed_walls)) if all_seed_walls else 0.0
+    med_wall_per_seed = statistics.median(all_seed_walls) if all_seed_walls else 0.0
+    if all_seed_walls:
+        sorted_walls = sorted(all_seed_walls)
+        p90_idx = max(0, int(round(0.9 * len(sorted_walls) + 0.5)) - 1)
+        p90_wall_per_seed = sorted_walls[min(p90_idx, len(sorted_walls) - 1)]
+    else:
+        p90_wall_per_seed = 0.0
+    avg_sim_per_seed = (sum(all_sim_times) / len(all_sim_times)) if all_sim_times else 0.0
+
+    throughput_seeds_per_min = (total_seeds / elapsed * 60.0) if elapsed > 0 else 0.0
+    throughput_per_worker = throughput_seeds_per_min / workers_used
+    total_seed_worker_sec = sum(all_seed_walls)
+    effective_parallelism = (total_seed_worker_sec / elapsed) if elapsed > 0 else 0.0
+    worker_utilization = min(1.0, effective_parallelism / workers_used) if workers_used > 0 else 0.0
+
+    print("  Run summary:")
+    print(f"    Seeds evaluated:           {total_seeds}")
+    print(
+        f"    Success rate:              {success_count}/{total_seeds} "
+        f"({(100.0 * success_count / total_seeds) if total_seeds else 0.0:.1f}%)"
+    )
+    print(f"    Total wall-clock:          {elapsed:.1f}s ({elapsed / 60:.1f} min)")
+    print(f"    Avg wall / seed:           {avg_wall_per_seed:.2f}s")
+    print(f"    Median wall / seed:        {med_wall_per_seed:.2f}s")
+    print(f"    P90 wall / seed:           {p90_wall_per_seed:.2f}s")
+    print(f"    Avg sim time / seed:       {avg_sim_per_seed:.2f}s")
+    print(f"    Total seed-worker time:    {total_seed_worker_sec:.1f}s")
+    print(f"    Throughput:                {throughput_seeds_per_min:.2f} seeds/min")
+    print(f"    Throughput per worker:     {throughput_per_worker:.2f} seeds/min/worker")
+    print(
+        f"    Effective parallelism:     {effective_parallelism:.2f}x "
+        f"(utilization {worker_utilization * 100.0:.1f}% of {workers_used} workers)"
+    )
+    print()
+
+    # Optional startup overhead estimate for single-worker runs.
     startup_overhead = 0.0
-    if real_deltas and num_workers == 1:
+    real_deltas: List[float] = []
+    if workers_used == 1:
+        for i in range(len(seed_times)):
+            dt = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
+            if dt >= 0.5:
+                real_deltas.append(dt)
+    if real_deltas:
         first_wall = real_deltas[0]
         steady = real_deltas[1:] if len(real_deltas) > 1 else []
         avg_steady = sum(steady) / len(steady) if steady else 0
@@ -662,13 +709,7 @@ def _print_results(
         print(f"  Container startup overhead: ~{startup_overhead:.0f}s")
         if steady:
             print(f"  Steady-state per seed:      ~{avg_steady:.1f}s")
-    elif num_workers > 1:
-        all_seed_walls = [r["wall_time"] for rs in group_results.values() for r in rs if r["wall_time"] > 0]
-        avg_wall = (sum(all_seed_walls) / len(all_seed_walls)) if all_seed_walls else 0.0
-        print("  Container startup overhead: n/a (parallel completion order)")
-        print(f"  Mean per-seed wall time:    ~{avg_wall:.1f}s")
-    print(f"  Total wall-clock:           {elapsed:.1f}s ({elapsed / 60:.1f} min)")
-    print()
+        print()
 
     # Extrapolation (derived from challenge type distribution).
     from math import floor
@@ -692,30 +733,60 @@ def _print_results(
         "type5_warehouse": type_counts[5],
     }
 
-    total_extrap = 0.0
-    print(f"  Extrapolation to 1,000 seeds:")
+    total_extrap_worker_sec = 0.0
+    print("  Extrapolation to 1,000 seeds (using measured per-seed worker time):")
     for group, count in DIST.items():
-        if group in group_results and group_results[group]:
-            real_walls = [r["wall_time"] for r in group_results[group] if not r.get("timeout_zero")]
-            avg = sum(real_walls) / len(real_walls) if real_walls else 0
-            group_total = count * avg
-            total_extrap += group_total
-            print(f"    {group:<18} {count:>4} seeds x {avg:.1f}s = {group_total:.0f}s")
+        rows = group_results.get(group, [])
+        if rows:
+            real_walls = [float(r["wall_time"]) for r in rows if float(r["wall_time"]) > 0.0]
+            avg = sum(real_walls) / len(real_walls) if real_walls else avg_wall_per_seed
+            source = "observed"
+        else:
+            avg = avg_wall_per_seed
+            source = "fallback-global"
+        group_worker_sec = count * avg
+        total_extrap_worker_sec += group_worker_sec
+        print(
+            f"    {group:<18} {count:>4} seeds x {avg:.2f}s = {group_worker_sec:.0f}s "
+            f"({source})"
+        )
 
     print()
-    for w in [1, 2, 4]:
-        print(f"    {w} worker(s): {total_extrap / w:.0f}s ({total_extrap / w / 60:.1f} min)")
+    est_wall_1000 = total_extrap_worker_sec / workers_used
+    est_avg_seed_1000 = est_wall_1000 / 1000.0
+    est_tput_1000 = (1000.0 / est_wall_1000 * 60.0) if est_wall_1000 > 0 else 0.0
+    print(f"    Workers used:              {workers_used}")
+    print(f"    Estimated worker-time:     {total_extrap_worker_sec:.0f}s")
+    print(f"    Estimated wall-clock:      {est_wall_1000:.0f}s ({est_wall_1000 / 60.0:.1f} min)")
+    print(f"    Estimated avg wall / seed: {est_avg_seed_1000:.2f}s")
+    print(f"    Estimated throughput:      {est_tput_1000:.2f} seeds/min")
     print()
 
     return {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "num_workers": num_workers,
+        "num_workers": workers_used,
         "total_seeds": len(task_meta),
         "wall_clock_sec": elapsed,
         "startup_overhead_sec": startup_overhead,
+        "run_metrics": {
+            "success_count": success_count,
+            "avg_wall_per_seed_sec": avg_wall_per_seed,
+            "median_wall_per_seed_sec": med_wall_per_seed,
+            "p90_wall_per_seed_sec": p90_wall_per_seed,
+            "avg_sim_per_seed_sec": avg_sim_per_seed,
+            "total_seed_worker_sec": total_seed_worker_sec,
+            "throughput_seeds_per_min": throughput_seeds_per_min,
+            "throughput_per_worker_seeds_per_min": throughput_per_worker,
+            "effective_parallelism": effective_parallelism,
+            "worker_utilization": worker_utilization,
+        },
         "group_results": {g: rs for g, rs in group_results.items()},
         "extrapolation_1000_seeds": {
-            f"{w}_workers_sec": total_extrap / w for w in [1, 2, 4]
+            "workers_used": workers_used,
+            "total_seed_worker_sec": total_extrap_worker_sec,
+            "estimated_wall_clock_sec": est_wall_1000,
+            "estimated_avg_wall_per_seed_sec": est_avg_seed_1000,
+            "estimated_throughput_seeds_per_min": est_tput_1000,
         },
     }
 
