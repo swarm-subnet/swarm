@@ -216,12 +216,23 @@ class _Tee:
 
     def write(self, data):
         for f in self.files:
-            f.write(data)
-            f.flush()
+            try:
+                if getattr(f, "closed", False):
+                    continue
+                f.write(data)
+                f.flush()
+            except Exception:
+                # Best-effort tee: ignore late writes during shutdown races.
+                continue
 
     def flush(self):
         for f in self.files:
-            f.flush()
+            try:
+                if getattr(f, "closed", False):
+                    continue
+                f.flush()
+            except Exception:
+                continue
 
 
 def _ts() -> str:
