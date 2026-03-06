@@ -1053,6 +1053,13 @@ class DockerSecureEvaluator:
             for _ in range(remaining):
                 _on_seed_complete_guarded()
 
+        def _run_docker_cmd_quiet(cmd: list[str], timeout_sec: float = 15.0) -> None:
+            """Run cleanup docker command without letting hangs block benchmark completion."""
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=timeout_sec)
+            except Exception:
+                pass
+
         if not model_path.is_file():
             bt.logging.warning(f"[Worker {worker_id}] Model path missing: {model_path}")
             _notify_all_failed()
@@ -1222,8 +1229,8 @@ class DockerSecureEvaluator:
                 if not pip_done:
                     bt.logging.warning(f"[Worker {worker_id}] pip install failed for UID {uid}")
                     _phase("pip install failed")
-                    subprocess.run(["docker", "kill", container_name], capture_output=True)
-                    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                    _run_docker_cmd_quiet(["docker", "kill", container_name])
+                    _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                     _notify_all_failed()
                     return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             else:
@@ -1234,8 +1241,8 @@ class DockerSecureEvaluator:
             if not container_pid:
                 bt.logging.warning(f"[Worker {worker_id}] Failed to get container PID")
                 _phase("failed to resolve container pid")
-                subprocess.run(["docker", "kill", container_name], capture_output=True)
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "kill", container_name])
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
@@ -1244,8 +1251,8 @@ class DockerSecureEvaluator:
             if not self._apply_network_lockdown(container_pid, validator_ip):
                 bt.logging.warning(f"[Worker {worker_id}] Network lockdown failed")
                 _phase("network lockdown failed")
-                subprocess.run(["docker", "kill", container_name], capture_output=True)
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "kill", container_name])
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("network lockdown applied")
@@ -1257,8 +1264,8 @@ class DockerSecureEvaluator:
             if exec_result.returncode != 0:
                 bt.logging.warning(f"[Worker {worker_id}] Failed to start main.py: {exec_result.stderr[:200]}")
                 _phase("failed to launch submission main.py")
-                subprocess.run(["docker", "kill", container_name], capture_output=True)
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "kill", container_name])
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("submission main.py launched")
@@ -1292,8 +1299,8 @@ class DockerSecureEvaluator:
             if not connected:
                 bt.logging.warning(f"[Worker {worker_id}] RPC connection failed")
                 _phase("rpc readiness failed")
-                subprocess.run(["docker", "kill", container_name], capture_output=True)
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "kill", container_name])
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
@@ -1304,7 +1311,7 @@ class DockerSecureEvaluator:
             if container_check.returncode != 0 or "true" not in container_check.stdout.lower():
                 bt.logging.warning(f"[Worker {worker_id}] Container stopped before evaluation")
                 _phase("container not running before rpc batch")
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
@@ -1548,8 +1555,8 @@ class DockerSecureEvaluator:
                 return valid_results
             finally:
                 stop_event.set()
-                subprocess.run(["docker", "kill", container_name], capture_output=True)
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "kill", container_name])
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _phase("container cleaned up")
 
         except Exception as e:
@@ -1557,13 +1564,13 @@ class DockerSecureEvaluator:
             _phase(f"batch evaluation exception: {type(e).__name__}: {e}")
             _notify_all_failed()
             try:
-                subprocess.run(["docker", "kill", container_name], capture_output=True)
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "kill", container_name])
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
             except Exception:
                 pass
         finally:
             try:
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
             except Exception:
                 pass
             if tmpdir:
@@ -1654,7 +1661,7 @@ class DockerSecureEvaluator:
                 containers = result.stdout.strip().split('\n')
                 for container in containers:
                     if container:
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=15)
                         bt.logging.debug(f"Cleaned up orphaned container: {container}")
 
             # Also clean up verification containers
@@ -1667,7 +1674,7 @@ class DockerSecureEvaluator:
                 containers_v = result_verify.stdout.strip().split('\n')
                 for container in containers_v:
                     if container:
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=15)
                         bt.logging.debug(f"Cleaned up orphaned verify container: {container}")
 
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
