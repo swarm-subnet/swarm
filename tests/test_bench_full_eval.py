@@ -68,6 +68,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
             {(seed, 5): deque([60.0])},
             61.0,
             eval_start,
+            1,
         )
 
     monkeypatch.setattr(
@@ -115,6 +116,51 @@ def test_main_prints_failed_footer_when_benchmark_raises(monkeypatch, tmp_path):
     assert "=== RESULTS ===" in combined
     assert "Benchmark failed before report generation: RuntimeError: simulated benchmark failure" in combined
     assert "=== BENCHMARK FAILED ===" in combined
+
+
+def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+    out = io.StringIO()
+    err = io.StringIO()
+
+    seed = 200662
+    task_meta = [{
+        "group": "type5_warehouse",
+        "bench_type": 5,
+        "seed": seed,
+        "challenge_type": 5,
+        "horizon": 60.0,
+        "moving_platform": False,
+    }]
+    fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
+
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+        _ = model_path, uid, type_seeds, num_workers, run_opts
+        eval_start = 1000.0
+        return (
+            task_meta,
+            [fake_result],
+            [1060.0],
+            {(seed, 5): deque([60.0])},
+            61.0,
+            eval_start,
+            3,
+        )
+
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_find_seeds",
+        lambda seeds_per_group, selected_groups=None: {"type5_warehouse": [seed]},
+    )
+    monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
+    monkeypatch.setattr(sys, "__stdout__", out)
+    monkeypatch.setattr(sys, "__stderr__", err)
+    monkeypatch.setattr(sys, "argv", _argv_for_model(model_path, "--workers", "2"))
+
+    bench_full_eval.main()
+    combined = out.getvalue() + err.getvalue()
+    assert "Workers used:              3" in combined
 
 
 def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_path):

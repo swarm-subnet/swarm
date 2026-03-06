@@ -412,7 +412,7 @@ async def _run_benchmark(
     num_workers: int,
     run_opts: _RunOptions,
 ) -> tuple:
-    """Run Docker evaluation and return (task_meta, results, seed_times, total_elapsed)."""
+    """Run Docker evaluation and return benchmark artifacts plus launched worker count."""
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
@@ -632,7 +632,7 @@ async def _run_benchmark(
         heartbeat_thread.join(timeout=2.0)
 
     elapsed = time.time() - eval_start
-    return task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start
+    return task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start, worker_count
 
 
 def _print_results(
@@ -873,6 +873,7 @@ def main() -> None:
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
     elapsed = 0.0
     eval_start = time.time()
+    launched_workers = effective_workers
     overrides: Dict[str, Any] = {}
 
     try:
@@ -910,7 +911,7 @@ def main() -> None:
         print(f"  Total: {total_seeds}")
         print()
 
-        task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start = asyncio.run(
+        task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start, launched_workers = asyncio.run(
             _run_benchmark(
                 model_path,
                 args.uid,
@@ -949,7 +950,7 @@ def main() -> None:
                 seed_wall_by_key,
                 elapsed,
                 eval_start,
-                effective_workers,
+                launched_workers,
             )
         except BaseException as exc:
             report_error = exc
