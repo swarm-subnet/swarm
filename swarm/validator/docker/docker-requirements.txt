@@ -18,4 +18,5 @@ tqdm
 torch
 gymnasium
 requests
+httpx
 pycapnp

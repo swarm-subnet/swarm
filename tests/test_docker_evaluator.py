@@ -1,0 +1,404 @@
+from __future__ import annotations
+
+import asyncio
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from swarm.protocol import ValidationResult
+from swarm.validator.docker import docker_evaluator as de
+
+
+class _ProcResult:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _new_evaluator() -> de.DockerSecureEvaluator:
+    ev = de.DockerSecureEvaluator.__new__(de.DockerSecureEvaluator)
+    ev.base_image = "swarm_evaluator_base:latest"
+    ev.base_ready = True
+    return ev
+
+
+def test_normalize_package_name():
+    assert de.DockerSecureEvaluator._normalize_package_name("NumPy_Pkg.Name") == "numpy-pkg-name"
+
+
+def test_validate_requirements_accepts_whitelisted_packages(tmp_path):
+    ev = _new_evaluator()
+    req = tmp_path / "requirements.txt"
+    req.write_text(
+        "\n".join(
+            [
+                "# comment",
+                "numpy>=1.24",
+                "torch==2.0.0",
+            ]
+        )
+    )
+    assert ev._validate_requirements(req, uid=1) is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "-r other.txt",
+        "git+https://example.com/repo.git",
+        "mypkg @ https://example.com/pkg.whl",
+        "httpx==0.27.0",  # not in DOCKER_PIP_WHITELIST
+    ],
+)
+def test_validate_requirements_rejects_disallowed_lines(tmp_path, line):
+    ev = _new_evaluator()
+    req = tmp_path / "requirements.txt"
+    req.write_text(line + "\n")
+    assert ev._validate_requirements(req, uid=2) is False
+
+
+def test_serialize_observation_dict():
+    class _ObsMessage:
+        def init(self, field, n):
+            assert field == "entries"
+            self.entries = [
+                SimpleNamespace(
+                    key="",
+                    tensor=SimpleNamespace(data=b"", shape=[], dtype=""),
+                )
+                for _ in range(n)
+            ]
+            return self.entries
+
+    class _Observation:
+        @staticmethod
+        def new_message():
+            return _ObsMessage()
+
+    schema = SimpleNamespace(Observation=_Observation)
+    msg = de.DockerSecureEvaluator._serialize_observation(
+        schema,
+        {"state": np.array([1.0, 2.0], dtype=np.float32)},
+    )
+    assert len(msg.entries) == 1
+    assert msg.entries[0].key == "state"
+    assert msg.entries[0].tensor.shape == [2]
+    assert msg.entries[0].tensor.dtype == "float32"
+
+
+def test_serialize_observation_array_sets_value_key():
+    class _ObsMessage:
+        def init(self, field, n):
+            assert field == "entries"
+            self.entries = [
+                SimpleNamespace(
+                    key="",
+                    tensor=SimpleNamespace(data=b"", shape=[], dtype=""),
+                )
+                for _ in range(n)
+            ]
+            return self.entries
+
+    class _Observation:
+        @staticmethod
+        def new_message():
+            return _ObsMessage()
+
+    schema = SimpleNamespace(Observation=_Observation)
+    msg = de.DockerSecureEvaluator._serialize_observation(schema, np.array([5, 6], dtype=np.float32))
+    assert msg.entries[0].key == "__value__"
+    assert msg.entries[0].tensor.shape == [2]
+
+
+def test_check_docker_available_true(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="Docker version 26"),
+    )
+    assert ev._check_docker_available() is True
+
+
+def test_check_docker_available_false_on_missing_binary(monkeypatch):
+    ev = _new_evaluator()
+
+    def _raise(*args, **kwargs):
+        _ = args, kwargs
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(de.subprocess, "run", _raise)
+    assert ev._check_docker_available() is False
+
+
+def test_get_image_hash_label(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="abc123\n"),
+    )
+    assert ev._get_image_hash_label() == "abc123"
+
+
+def test_should_rebuild_base_image_when_image_missing(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(ev, "_calculate_docker_hash", lambda: "hash1")
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda cmd, **k: _ProcResult(returncode=0, stdout=""),
+    )
+    assert ev._should_rebuild_base_image() is True
+
+
+def test_should_rebuild_base_image_false_when_hash_matches(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(ev, "_calculate_docker_hash", lambda: "hash1")
+    monkeypatch.setattr(ev, "_get_image_hash_label", lambda: "hash1")
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda cmd, **k: _ProcResult(returncode=0, stdout="imageid\n"),
+    )
+    assert ev._should_rebuild_base_image() is False
+
+
+def test_should_rebuild_base_image_true_when_hash_differs(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(ev, "_calculate_docker_hash", lambda: "hash-new")
+    monkeypatch.setattr(ev, "_get_image_hash_label", lambda: "hash-old")
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda cmd, **k: _ProcResult(returncode=0, stdout="imageid\n"),
+    )
+    assert ev._should_rebuild_base_image() is True
+
+
+def test_check_rpc_ready(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="PID CMD\n1 python main.py\n"),
+    )
+    assert ev._check_rpc_ready("container") is True
+
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="PID CMD\n1 sleep infinity\n"),
+    )
+    assert ev._check_rpc_ready("container") is False
+
+
+def test_get_docker_host_ip_and_fallback(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="172.18.0.1\n"),
+    )
+    assert ev._get_docker_host_ip() == "172.18.0.1"
+
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=1, stdout=""),
+    )
+    assert ev._get_docker_host_ip() == "172.17.0.1"
+
+
+def test_get_container_pid(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="123\n"),
+    )
+    assert ev._get_container_pid("c1") == 123
+
+    monkeypatch.setattr(
+        de.subprocess,
+        "run",
+        lambda *a, **k: _ProcResult(returncode=0, stdout="0\n"),
+    )
+    assert ev._get_container_pid("c1") is None
+
+
+def test_apply_network_lockdown_success(monkeypatch):
+    ev = _new_evaluator()
+    calls = {"count": 0}
+
+    def _run(*args, **kwargs):
+        _ = args, kwargs
+        calls["count"] += 1
+        return _ProcResult(returncode=0)
+
+    monkeypatch.setattr(de.subprocess, "run", _run)
+    assert ev._apply_network_lockdown(9999, "10.0.0.1") is True
+    assert calls["count"] == 4
+
+
+def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
+    ev = _new_evaluator()
+    calls = {"count": 0}
+
+    def _run(*args, **kwargs):
+        _ = args, kwargs
+        calls["count"] += 1
+        if calls["count"] == 2:
+            return _ProcResult(returncode=1, stderr="iptables failed")
+        return _ProcResult(returncode=0)
+
+    monkeypatch.setattr(de.subprocess, "run", _run)
+    assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+
+
+def test_calibrate_rpc_overhead_fallback_on_failures(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(ev, "_serialize_observation", lambda *a, **k: object())
+    monkeypatch.setattr(de, "CALIBRATION_ROUNDS", 4)
+
+    class _Agent:
+        async def calibrate(self, obs):
+            _ = obs
+            raise asyncio.TimeoutError()
+
+    overhead, cpu_factor = asyncio.run(
+        ev._calibrate_rpc_overhead_async(_Agent(), object(), {"state": np.zeros(2)}, uid=5)
+    )
+    fallback = max(de.RPC_STEP_TIMEOUT_SEC - de.MINER_COMPUTE_BUDGET_SEC, 0.010)
+    assert overhead == fallback
+    assert cpu_factor == 1.0
+
+
+def test_calibrate_rpc_overhead_success(monkeypatch):
+    ev = _new_evaluator()
+    monkeypatch.setattr(ev, "_serialize_observation", lambda *a, **k: object())
+    monkeypatch.setattr(de, "CALIBRATION_ROUNDS", 4)
+
+    timeline = iter([0.0, 0.05, 1.0, 1.06, 2.0, 2.07, 3.0, 3.08])
+    last = {"t": 3.08}
+
+    def _fake_time():
+        try:
+            last["t"] = next(timeline)
+            return last["t"]
+        except StopIteration:
+            return last["t"]
+
+    monkeypatch.setattr(de.time, "time", _fake_time)
+
+    class _Resp:
+        def __init__(self, benchmark_ns):
+            self.benchmarkNs = benchmark_ns
+
+    class _Agent:
+        async def calibrate(self, obs):
+            _ = obs
+            return _Resp(12_000_000)
+
+    overhead, cpu_factor = asyncio.run(
+        ev._calibrate_rpc_overhead_async(_Agent(), object(), {"state": np.zeros(2)}, uid=6)
+    )
+    assert overhead == pytest.approx(0.065, abs=1e-9)
+    assert cpu_factor == pytest.approx(2.0, abs=1e-9)
+
+
+def test_evaluate_seeds_parallel_splits_and_aggregates(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [1, 2, 3, 4, 5]
+
+    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
+        _ = model_path, on_seed_complete
+        return [ValidationResult(uid, True, float(t), 0.5 + worker_id * 0.1) for t in chunk]
+
+    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
+    results = asyncio.run(ev.evaluate_seeds_parallel(tasks, uid=11, model_path=model_path, num_workers=2))
+    assert len(results) == 5
+    assert [r.time_sec for r in results] == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_evaluate_seeds_parallel_handles_worker_exception(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [1, 2, 3, 4]
+    callback_calls = {"n": 0}
+
+    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
+        _ = chunk, uid, model_path, on_seed_complete
+        if worker_id == 1:
+            raise RuntimeError("worker boom")
+        return [ValidationResult(uid, True, 1.0, 0.9) for _ in chunk]
+
+    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
+    results = asyncio.run(
+        ev.evaluate_seeds_parallel(
+            tasks,
+            uid=9,
+            model_path=model_path,
+            num_workers=2,
+            on_seed_complete=lambda *_: callback_calls.__setitem__("n", callback_calls["n"] + 1),
+        )
+    )
+    assert len(results) == 4
+    assert sum(1 for r in results if r.score == 0.0) == 2
+    assert callback_calls["n"] == 2
+
+
+def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):
+    ev = _new_evaluator()
+    de.DockerSecureEvaluator._base_ready = True
+    calls = {"n": 0}
+    tasks = [SimpleNamespace(map_seed=1), SimpleNamespace(map_seed=2)]
+    results = asyncio.run(
+        ev.evaluate_seeds_batch(
+            tasks,
+            uid=1,
+            model_path=tmp_path / "missing.zip",
+            on_seed_complete=lambda *_: calls.__setitem__("n", calls["n"] + 1),
+        )
+    )
+    assert len(results) == 2
+    assert all(r.score == 0.0 for r in results)
+    assert calls["n"] == 2
+
+
+def test_evaluate_seeds_batch_returns_failures_when_docker_not_ready(tmp_path):
+    ev = _new_evaluator()
+    de.DockerSecureEvaluator._base_ready = False
+    model = tmp_path / "model.zip"
+    with zipfile.ZipFile(model, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("drone_agent.py", "class Agent: pass")
+    calls = {"n": 0}
+    tasks = [SimpleNamespace(map_seed=3)]
+    results = asyncio.run(
+        ev.evaluate_seeds_batch(
+            tasks,
+            uid=2,
+            model_path=model,
+            on_seed_complete=lambda *_: calls.__setitem__("n", calls["n"] + 1),
+        )
+    )
+    assert len(results) == 1
+    assert results[0].score == 0.0
+    assert calls["n"] == 1
+
+
+def test_run_multi_seed_rpc_sync_isolated_payload_transforms_results(monkeypatch):
+    sample = [
+        ValidationResult(uid=1, success=True, time_sec=2.5, score=0.7),
+        ValidationResult(uid=1, success=False, time_sec=1.0, score=0.0),
+    ]
+    monkeypatch.setattr(de.DockerSecureEvaluator, "_run_multi_seed_rpc_sync", lambda *a, **k: sample)
+    payload = de._run_multi_seed_rpc_sync_isolated_payload(tasks=[1, 2], uid=1, rpc_port=9000)
+    assert payload == [(1, True, 2.5, 0.7), (1, False, 1.0, 0.0)]
