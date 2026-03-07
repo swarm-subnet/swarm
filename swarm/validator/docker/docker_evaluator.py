@@ -42,8 +42,6 @@ from swarm.core.model_verify import add_to_blacklist
 from swarm.validator.reward import flight_reward
 from gym_pybullet_drones.utils.enums import ActionType
 
-_PYB_EVAL_LOCK = threading.Lock()
-
 
 def _run_multi_seed_rpc_sync_isolated_payload(tasks: list, uid: int, rpc_port: int) -> list[tuple[int, bool, float, float]]:
     """Run RPC sync in an isolated subprocess and return primitive tuples."""
@@ -403,7 +401,6 @@ class DockerSecureEvaluator:
             trace_heartbeat_sec = float(os.getenv("SWARM_LOG_RPC_HEARTBEAT_SEC", "15"))
         except ValueError:
             trace_heartbeat_sec = 15.0
-        serialize_pyb = os.getenv("SWARM_SERIALIZE_PYB", "0").strip().lower() in {"1", "true", "yes", "on"}
 
         def _emit_seed_complete(
             task_obj=None,
@@ -582,9 +579,6 @@ class DockerSecureEvaluator:
                 rpc_overhead_sec = max(RPC_STEP_TIMEOUT_SEC - MINER_COMPUTE_BUDGET_SEC, 0.010)
                 cpu_factor = 1.0
                 calibrated = False
-                if serialize_pyb:
-                    _trace("pybullet serialization lock enabled")
-
                 for task_idx, task in enumerate(tasks):
                     if stop_event is not None and stop_event.is_set():
                         remaining = len(tasks) - task_idx
@@ -607,16 +601,7 @@ class DockerSecureEvaluator:
                         f"type={_task_type_label(task)}"
                     )
                     seed_wall_start = time.time()
-                    lock_acquired = False
                     try:
-                        if serialize_pyb:
-                            _trace(f"{task_label} waiting for pybullet lock")
-                            _PYB_EVAL_LOCK.acquire()
-                            lock_acquired = True
-                            _trace(f"{task_label} pybullet lock acquired")
-                            if stop_event is not None and stop_event.is_set():
-                                _trace(f"{task_label} stop requested after lock acquire")
-                                raise RuntimeError("stopped")
                         _set_phase("seed_start", task=task_label, step=0, sim_t=0.0)
                         _trace(f"{task_label} start horizon={getattr(task, 'horizon', 0.0):.1f}s")
                         t_env_start = time.time()
@@ -847,13 +832,6 @@ class DockerSecureEvaluator:
                             step_idx=0,
                             error=f"{type(e).__name__}: {e}",
                         )
-                    finally:
-                        if lock_acquired:
-                            try:
-                                _PYB_EVAL_LOCK.release()
-                                _trace(f"{task_label} pybullet lock released")
-                            except Exception:
-                                pass
 
             return results
 

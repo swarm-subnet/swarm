@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 from collections import deque
@@ -185,3 +186,63 @@ def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_p
     assert "=== RESULTS ===" in combined
     assert "Benchmark failed before report generation: ValueError: simulated seed selection failure" in combined
     assert "=== BENCHMARK FAILED ===" in combined
+
+
+def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+
+    class _FakeEvaluator:
+        _base_ready = True
+
+        async def evaluate_seeds_batch(
+            self,
+            tasks,
+            uid,
+            model_path,
+            worker_id=0,
+            on_seed_complete=None,
+            task_offset=0,
+            task_total=None,
+        ):
+            _ = uid, model_path, worker_id, task_offset, task_total
+            task = tasks[0]
+            if on_seed_complete is not None:
+                on_seed_complete(
+                    {
+                        "map_seed": task.map_seed,
+                        "challenge_type": task.challenge_type,
+                        "seed_wall_sec": 0.1,
+                    }
+                )
+            await asyncio.sleep(0)
+            return [SimpleNamespace(success=False, score=0.0, time_sec=0.0)]
+
+    def _fake_random_task(sim_dt, seed):
+        _ = sim_dt
+        return SimpleNamespace(
+            map_seed=seed,
+            challenge_type=5,
+            horizon=60.0,
+            moving_platform=False,
+            start=(0.0, 0.0, 0.0),
+        )
+
+    import swarm.validator.task_gen as task_gen
+    import swarm.validator.docker.docker_evaluator as docker_eval_mod
+
+    monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
+    monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)
+
+    out = asyncio.run(
+        bench_full_eval._run_benchmark(
+            model_path=model_path,
+            uid=0,
+            type_seeds={"type5_warehouse": [123456]},
+            num_workers=30,
+            run_opts=bench_full_eval._RunOptions(),
+        )
+    )
+
+    launched_workers = out[-1]
+    assert launched_workers == 30

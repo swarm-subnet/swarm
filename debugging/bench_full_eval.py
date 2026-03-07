@@ -81,7 +81,6 @@ class _RunOptions:
     rpc_trace: bool = False
     rpc_trace_every: int = 250
     rpc_heartbeat_sec: float = 150.0
-    serialize_pybullet: bool = True
     max_batch_timeout_sec: float = 900.0
     timeout_multiplier: float = 1.0
     extend_timeout_on_progress: bool = True
@@ -99,7 +98,6 @@ _RUN_PROFILES: Dict[str, _RunOptions] = {
         rpc_trace=True,
         rpc_trace_every=100,
         rpc_heartbeat_sec=100.0,
-        serialize_pybullet=False,
         max_batch_timeout_sec=300.0,
         timeout_multiplier=1.0,
         extend_timeout_on_progress=True,
@@ -190,12 +188,6 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--rpc-trace-every", type=int, default=None, help=_HIDDEN)
     parser.add_argument("--rpc-heartbeat-sec", type=float, default=None, help=_HIDDEN)
-    parser.add_argument(
-        "--serialize-pybullet",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=_HIDDEN,
-    )
     parser.add_argument("--max-batch-timeout-sec", type=float, default=None, help=_HIDDEN)
     parser.add_argument("--timeout-multiplier", type=float, default=None, help=_HIDDEN)
     parser.add_argument(
@@ -320,8 +312,6 @@ def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
         opts.rpc_trace_every = max(1, int(args.rpc_trace_every))
     if args.rpc_heartbeat_sec is not None:
         opts.rpc_heartbeat_sec = max(0.0, float(args.rpc_heartbeat_sec))
-    if args.serialize_pybullet is not None:
-        opts.serialize_pybullet = bool(args.serialize_pybullet)
     if args.max_batch_timeout_sec is not None:
         opts.max_batch_timeout_sec = float(args.max_batch_timeout_sec)
     if args.timeout_multiplier is not None:
@@ -521,7 +511,6 @@ async def _run_benchmark(
             if run_opts.rpc_trace and run_opts.rpc_heartbeat_sec > 0
             else None
         ),
-        "SWARM_SERIALIZE_PYB": "1" if run_opts.serialize_pybullet else "0",
         "SWARM_BATCH_TIMEOUT_HARD_CAP_SEC": (
             f"{float(run_opts.max_batch_timeout_sec):.3f}"
             if run_opts.max_batch_timeout_sec > 0
@@ -549,10 +538,6 @@ async def _run_benchmark(
             f"{max(1, int(run_opts.rpc_trace_every))} act() steps; "
             f"phase heartbeat every {max(0.0, float(run_opts.rpc_heartbeat_sec)):.1f}s)"
         )
-    if run_opts.serialize_pybullet:
-        print(f"[{_ts()}] PyBullet serialization enabled (stable mode).")
-    else:
-        print(f"[{_ts()}] PyBullet serialization disabled (parallel env mode).")
     if run_opts.max_batch_timeout_sec > 0:
         print(f"[{_ts()}] Worker batch timeout hard cap: {float(run_opts.max_batch_timeout_sec):.1f}s")
     else:
@@ -622,7 +607,7 @@ async def _run_benchmark(
                         flush=True,
                     )
 
-            worker_count = min(effective_workers, len(all_tasks))
+            worker_count = effective_workers
             await asyncio.gather(*(_worker_loop(i) for i in range(worker_count)))
 
             if any(r is None for r in results):
@@ -851,10 +836,6 @@ def main() -> None:
 
     requested_workers = max(1, int(args.workers))
     effective_workers = requested_workers
-    # In no-serialize mode, high worker counts are unstable in practice and can hard-freeze
-    # inside PyBullet env calls. Cap to a safer concurrency level for benchmark reliability.
-    if not run_opts.serialize_pybullet and requested_workers > 2:
-        effective_workers = 2
 
     model_path = args.model.resolve()
     if not model_path.exists():
@@ -888,13 +869,7 @@ def main() -> None:
         print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
         print(f"[{_ts()}] Model: {model_path}")
         print(f"[{_ts()}] Workers requested: {requested_workers}")
-        if effective_workers != requested_workers:
-            print(
-                f"[{_ts()}] Workers effective:  {effective_workers} "
-                f"(capped for no-serialize stability)"
-            )
-        else:
-            print(f"[{_ts()}] Workers effective:  {effective_workers}")
+        print(f"[{_ts()}] Workers effective:  {effective_workers}")
         print(f"[{_ts()}] Profile: {args.profile}")
         if overrides:
             print(f"[{_ts()}] Relaxed timeouts: {overrides}")
