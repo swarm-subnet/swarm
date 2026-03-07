@@ -122,14 +122,8 @@ def _parse_args() -> argparse.Namespace:
         help="Number of parallel Docker workers (default: 2).",
     )
     parser.add_argument(
-        "--profile",
-        choices=["debug"],
-        default="debug",
-        help="Run profile (only 'debug' is supported).",
-    )
-    parser.add_argument(
         "--log-out", type=Path, default=None,
-        help="Path to write log file (default depends on profile).",
+        help="Path to write log file (default: /tmp/bench_full_eval.log).",
     )
     parser.add_argument(
         "--relax-timeouts", action="store_true", default=False,
@@ -764,7 +758,7 @@ def main() -> None:
         print(f"[{_ts()}] Model: {model_path}")
         print(f"[{_ts()}] Workers requested: {requested_workers}")
         print(f"[{_ts()}] Workers effective:  {effective_workers}")
-        print(f"[{_ts()}] Profile: {args.profile}")
+        print(f"[{_ts()}] Profile: debug")
         print(f"[{_ts()}] RPC verbosity: {args.rpc_verbosity}")
         if overrides:
             print(f"[{_ts()}] Relaxed timeouts: {overrides}")

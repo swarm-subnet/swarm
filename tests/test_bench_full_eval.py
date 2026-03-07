@@ -16,8 +16,6 @@ def _argv_for_model(model_path, *extra: str) -> list[str]:
         "bench_full_eval.py",
         "--model",
         str(model_path),
-        "--profile",
-        "debug",
         "--workers",
         "1",
         "--seeds-per-group",
