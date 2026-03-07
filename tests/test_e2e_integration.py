@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import shutil
 import socket
@@ -33,24 +34,44 @@ SUBMISSION_TEMPLATE = REPO_ROOT / "swarm" / "submission_template"
 
 
 def _require_docker() -> None:
-    assert shutil.which("docker") is not None, "Docker binary not found in PATH."
-    info = subprocess.run(["docker", "info"], capture_output=True, text=True)
-    assert info.returncode == 0, f"Docker daemon unavailable: {info.stderr.strip()}"
+    strict = os.getenv("SWARM_E2E_REQUIRE_DOCKER", "0") == "1"
+
+    def _skip_or_fail(msg: str) -> None:
+        if strict:
+            pytest.fail(msg)
+        pytest.skip(msg)
+
+    if shutil.which("docker") is None:
+        _skip_or_fail("Docker binary not found in PATH.")
+
+    try:
+        info = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=20)
+    except Exception as exc:
+        _skip_or_fail(f"Docker daemon check failed: {exc}")
+        return
+
+    if info.returncode != 0:
+        stderr = info.stderr.strip() or info.stdout.strip() or "unknown docker error"
+        _skip_or_fail(f"Docker daemon unavailable: {stderr}")
 
 
 def _require_real_capnp() -> Any:
     try:
         import capnp  # type: ignore
     except Exception as exc:
-        raise AssertionError(f"pycapnp not available: {exc}") from exc
-    assert getattr(capnp, "__file__", None), "pycapnp not available (capnp stub active)."
+        pytest.skip(f"pycapnp not available: {exc}")
+    if not getattr(capnp, "__file__", None):
+        pytest.skip("pycapnp not available (capnp stub active).")
     return capnp
 
 
 def _get_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+    except OSError as exc:
+        pytest.skip(f"Local socket binding unavailable in this environment: {exc}")
 
 
 def _ensure_evaluator_ready() -> DockerSecureEvaluator:
@@ -61,7 +82,8 @@ def _ensure_evaluator_ready() -> DockerSecureEvaluator:
 
 def _seed_from_bench(group: str) -> int:
     random.seed(2026)
-    seeds = _find_seeds(1, selected_groups=[group])
+    seeds = _find_seeds(1)
+    assert group in seeds, f"Benchmark group not found: {group}"
     return int(seeds[group][0])
 
 
@@ -208,7 +230,7 @@ def test_e2e_simulator_workload_all_bench_groups():
     )
     selected = ["type1_city", "type2_open", "type3_mountain", "type4_village", "type5_warehouse"]
     random.seed(2026)
-    seeds = _find_seeds(1, selected_groups=selected)
+    seeds = _find_seeds(1)
 
     total_steps = 0
     for group in selected:

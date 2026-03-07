@@ -25,7 +25,7 @@ import time
 import traceback
 from collections import deque
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,7 +34,6 @@ REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
 
-_HIDDEN = argparse.SUPPRESS
 BENCH_GROUP_ORDER = [
     "type1_city",
     "type2_open",
@@ -49,34 +48,10 @@ BENCH_GROUP_TO_TYPE = {
     "type4_village": 4,
     "type5_warehouse": 5,
 }
-TYPE_TO_BENCH_GROUP = {v: k for k, v in BENCH_GROUP_TO_TYPE.items()}
-MAP_TYPE_ALIASES = {
-    "1": 1,
-    "type1": 1,
-    "type1_city": 1,
-    "city": 1,
-    "2": 2,
-    "type2": 2,
-    "type2_open": 2,
-    "open": 2,
-    "3": 3,
-    "type3": 3,
-    "type3_mountain": 3,
-    "mountain": 3,
-    "4": 4,
-    "type4": 4,
-    "type4_village": 4,
-    "village": 4,
-    "5": 5,
-    "type5": 5,
-    "type5_warehouse": 5,
-    "warehouse": 5,
-}
 
 
 @dataclass
 class _RunOptions:
-    progress_every: int = 1
     heartbeat_sec: float = 30.0
     rpc_trace: bool = False
     rpc_trace_every: int = 250
@@ -91,13 +66,12 @@ class _RunOptions:
     default_log_out: Optional[str] = None
 
 
-_RUN_PROFILES: Dict[str, _RunOptions] = {
-    "standard": _RunOptions(),
-    "debug": _RunOptions(
+def _debug_profile_options() -> _RunOptions:
+    return _RunOptions(
         heartbeat_sec=15.0,
         rpc_trace=True,
-        rpc_trace_every=100,
-        rpc_heartbeat_sec=100.0,
+        rpc_trace_every=250,
+        rpc_heartbeat_sec=120.0,
         max_batch_timeout_sec=300.0,
         timeout_multiplier=1.0,
         extend_timeout_on_progress=True,
@@ -106,8 +80,7 @@ _RUN_PROFILES: Dict[str, _RunOptions] = {
         timeout_progress_min_sim_advance=0.02,
         max_seed_walltime_sec=1800.0,
         default_log_out="/tmp/bench_full_eval.log",
-    ),
-}
+    )
 
 
 @contextmanager
@@ -150,9 +123,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--profile",
-        choices=sorted(_RUN_PROFILES.keys()),
-        default="standard",
-        help="Aggregated run profile for advanced settings (default: standard).",
+        choices=["debug"],
+        default="debug",
+        help="Run profile (only 'debug' is supported).",
     )
     parser.add_argument(
         "--log-out", type=Path, default=None,
@@ -163,43 +136,11 @@ def _parse_args() -> argparse.Namespace:
         help="Override timing constants for slow machines (longer timeouts, more strikes).",
     )
     parser.add_argument(
-        "--progress-every", type=int, default=1,
-        help="Print progress every N completed seeds (default: 1).",
+        "--rpc-verbosity",
+        choices=["low", "mid", "high"],
+        default="mid",
+        help="RPC log verbosity level (default: mid).",
     )
-    parser.add_argument(
-        "--include-map-types",
-        type=str,
-        default=None,
-        help="Comma-separated map types to include (ids or names): e.g. 3,5 or mountain,warehouse.",
-    )
-    parser.add_argument(
-        "--exclude-map-types",
-        type=str,
-        default=None,
-        help="Comma-separated map types to exclude (ids or names).",
-    )
-    # Advanced overrides (kept for compatibility, hidden from normal help output).
-    parser.add_argument("--heartbeat-sec", type=float, default=None, help=_HIDDEN)
-    parser.add_argument(
-        "--rpc-trace",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=_HIDDEN,
-    )
-    parser.add_argument("--rpc-trace-every", type=int, default=None, help=_HIDDEN)
-    parser.add_argument("--rpc-heartbeat-sec", type=float, default=None, help=_HIDDEN)
-    parser.add_argument("--max-batch-timeout-sec", type=float, default=None, help=_HIDDEN)
-    parser.add_argument("--timeout-multiplier", type=float, default=None, help=_HIDDEN)
-    parser.add_argument(
-        "--extend-timeout-on-progress",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=_HIDDEN,
-    )
-    parser.add_argument("--timeout-extend-sec", type=float, default=None, help=_HIDDEN)
-    parser.add_argument("--timeout-progress-stale-sec", type=float, default=None, help=_HIDDEN)
-    parser.add_argument("--timeout-progress-min-sim-advance", type=float, default=None, help=_HIDDEN)
-    parser.add_argument("--max-seed-walltime-sec", type=float, default=None, help=_HIDDEN)
     return parser.parse_args()
 
 
@@ -271,62 +212,20 @@ def _ts() -> str:
     return time.strftime("%H:%M:%S")
 
 
-def _parse_map_type_list(spec: Optional[str]) -> Optional[set[int]]:
-    if spec is None:
-        return None
-    values: set[int] = set()
-    for raw in spec.split(","):
-        token = raw.strip().lower()
-        if not token:
-            continue
-        if token not in MAP_TYPE_ALIASES:
-            valid = ", ".join(["1", "2", "3", "4", "5", "city", "open", "mountain", "village", "warehouse"])
-            raise ValueError(f"Invalid map type '{raw}'. Valid values: {valid}")
-        values.add(MAP_TYPE_ALIASES[token])
-    if not values:
-        return None
-    return values
-
-
-def _resolve_selected_groups(
-    include_types: Optional[set[int]],
-    exclude_types: Optional[set[int]],
-) -> List[str]:
-    active = set(BENCH_GROUP_TO_TYPE.values()) if include_types is None else set(include_types)
-    if exclude_types:
-        active -= set(exclude_types)
-    if not active:
-        raise ValueError("Map-type filter removed all groups. Adjust include/exclude filters.")
-    return [TYPE_TO_BENCH_GROUP[t] for t in sorted(active) if t in TYPE_TO_BENCH_GROUP]
-
-
 def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
-    opts = replace(_RUN_PROFILES[args.profile])
-    opts.progress_every = max(1, int(args.progress_every))
-
-    if args.heartbeat_sec is not None:
-        opts.heartbeat_sec = max(0.0, float(args.heartbeat_sec))
-    if args.rpc_trace is not None:
-        opts.rpc_trace = bool(args.rpc_trace)
-    if args.rpc_trace_every is not None:
-        opts.rpc_trace_every = max(1, int(args.rpc_trace_every))
-    if args.rpc_heartbeat_sec is not None:
-        opts.rpc_heartbeat_sec = max(0.0, float(args.rpc_heartbeat_sec))
-    if args.max_batch_timeout_sec is not None:
-        opts.max_batch_timeout_sec = float(args.max_batch_timeout_sec)
-    if args.timeout_multiplier is not None:
-        opts.timeout_multiplier = max(1.0, float(args.timeout_multiplier))
-    if args.extend_timeout_on_progress is not None:
-        opts.extend_timeout_on_progress = bool(args.extend_timeout_on_progress)
-    if args.timeout_extend_sec is not None:
-        opts.timeout_extend_sec = max(1.0, float(args.timeout_extend_sec))
-    if args.timeout_progress_stale_sec is not None:
-        opts.timeout_progress_stale_sec = max(0.5, float(args.timeout_progress_stale_sec))
-    if args.timeout_progress_min_sim_advance is not None:
-        opts.timeout_progress_min_sim_advance = max(0.0, float(args.timeout_progress_min_sim_advance))
-    if args.max_seed_walltime_sec is not None:
-        opts.max_seed_walltime_sec = max(0.0, float(args.max_seed_walltime_sec))
-
+    opts = _debug_profile_options()
+    if args.rpc_verbosity == "low":
+        opts.rpc_trace = False
+        opts.rpc_trace_every = 1000
+        opts.rpc_heartbeat_sec = 0.0
+    elif args.rpc_verbosity == "mid":
+        opts.rpc_trace = True
+        opts.rpc_trace_every = 250
+        opts.rpc_heartbeat_sec = 120.0
+    else:
+        opts.rpc_trace = True
+        opts.rpc_trace_every = 25
+        opts.rpc_heartbeat_sec = 30.0
     return opts
 
 
@@ -365,13 +264,12 @@ def _infer_bench_group(challenge_type: int, seed: int) -> Optional[str]:
     return None
 
 
-def _find_seeds(seeds_per_group: int, selected_groups: Optional[List[str]] = None) -> Dict[str, List[int]]:
-    """Find seeds covering selected benchmark map groups."""
+def _find_seeds(seeds_per_group: int) -> Dict[str, List[int]]:
+    """Find seeds covering all benchmark map groups."""
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
 
-    group_order = selected_groups if selected_groups is not None else BENCH_GROUP_ORDER
-    groups: Dict[str, List[int]] = {g: [] for g in group_order}
+    groups: Dict[str, List[int]] = {g: [] for g in BENCH_GROUP_ORDER}
 
     seed = random.randint(100000, 900000)
     max_search = seed + 500000
@@ -431,7 +329,6 @@ async def _run_benchmark(
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
     total_seeds = len(all_tasks)
-    progress_every = run_opts.progress_every
     heartbeat_sec = run_opts.heartbeat_sec
 
     eval_start = time.time()
@@ -465,15 +362,14 @@ async def _run_benchmark(
             last_done_at = now
             done_snapshot = done_count
 
-        if done_snapshot % progress_every == 0 or done_snapshot >= total_seeds:
-            elapsed = now - eval_start
-            eta_min = _eta_minutes(elapsed, done_snapshot)
-            eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
-            print(
-                f"[{_ts()}] Progress: {done_snapshot}/{total_seeds} seeds complete | "
-                f"elapsed {elapsed/60.0:.1f}m | ETA {eta_txt}",
-                flush=True,
-            )
+        elapsed = now - eval_start
+        eta_min = _eta_minutes(elapsed, done_snapshot)
+        eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
+        print(
+            f"[{_ts()}] Progress: {done_snapshot}/{total_seeds} seeds complete | "
+            f"elapsed {elapsed/60.0:.1f}m | ETA {eta_txt}",
+            flush=True,
+        )
 
     def _heartbeat() -> None:
         try:
@@ -830,9 +726,7 @@ def _print_results(
 def main() -> None:
     args = _parse_args()
     run_opts = _resolve_run_options(args)
-    include_types = _parse_map_type_list(args.include_map_types)
-    exclude_types = _parse_map_type_list(args.exclude_map_types)
-    selected_groups = _resolve_selected_groups(include_types, exclude_types)
+    selected_groups = BENCH_GROUP_ORDER
 
     requested_workers = max(1, int(args.workers))
     effective_workers = requested_workers
@@ -871,6 +765,7 @@ def main() -> None:
         print(f"[{_ts()}] Workers requested: {requested_workers}")
         print(f"[{_ts()}] Workers effective:  {effective_workers}")
         print(f"[{_ts()}] Profile: {args.profile}")
+        print(f"[{_ts()}] RPC verbosity: {args.rpc_verbosity}")
         if overrides:
             print(f"[{_ts()}] Relaxed timeouts: {overrides}")
         print(f"[{_ts()}] Map types selected: {', '.join(selected_groups)}")
@@ -879,7 +774,7 @@ def main() -> None:
         print()
 
         print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
-        type_seeds = _find_seeds(args.seeds_per_group, selected_groups=selected_groups)
+        type_seeds = _find_seeds(args.seeds_per_group)
         total_seeds = sum(len(v) for v in type_seeds.values())
         for group, seeds in type_seeds.items():
             print(f"  {group}: {seeds}")

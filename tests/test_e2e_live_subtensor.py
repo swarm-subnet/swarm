@@ -9,6 +9,9 @@ import pytest
 @pytest.mark.integration
 @pytest.mark.slow
 def test_e2e_live_subtensor_metagraph_query():
+    if os.getenv("SWARM_RUN_LIVE_SUBTENSOR_TEST", "0") != "1":
+        pytest.skip("Set SWARM_RUN_LIVE_SUBTENSOR_TEST=1 to run live subtensor integration.")
+
     import bittensor as bt  # type: ignore
 
     network = os.getenv("SWARM_LIVE_BT_NETWORK", "finney")

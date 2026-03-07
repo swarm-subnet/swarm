@@ -17,13 +17,11 @@ def _argv_for_model(model_path, *extra: str) -> list[str]:
         "--model",
         str(model_path),
         "--profile",
-        "standard",
+        "debug",
         "--workers",
         "1",
         "--seeds-per-group",
         "1",
-        "--include-map-types",
-        "5",
         *extra,
     ]
 
@@ -75,7 +73,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group, selected_groups=None: {"type5_warehouse": [seed]},
+        lambda seeds_per_group: {"type5_warehouse": [seed]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -103,7 +101,7 @@ def test_main_prints_failed_footer_when_benchmark_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group, selected_groups=None: {"type5_warehouse": [200662]},
+        lambda seeds_per_group: {"type5_warehouse": [200662]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -152,7 +150,7 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group, selected_groups=None: {"type5_warehouse": [seed]},
+        lambda seeds_per_group: {"type5_warehouse": [seed]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -170,8 +168,8 @@ def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_p
     out = io.StringIO()
     err = io.StringIO()
 
-    def _fake_find_seeds(seeds_per_group, selected_groups=None):
-        _ = seeds_per_group, selected_groups
+    def _fake_find_seeds(seeds_per_group):
+        _ = seeds_per_group
         raise ValueError("simulated seed selection failure")
 
     monkeypatch.setattr(bench_full_eval, "_find_seeds", _fake_find_seeds)
