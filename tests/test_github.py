@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from swarm.utils.github import (
@@ -104,8 +105,6 @@ def test_check_readme_matches_fallback_to_master():
 
 
 def test_required_readme_hash_matches_template():
-    from pathlib import Path
-
     template = Path(__file__).parent.parent / "swarm" / "templates" / "README.md"
     assert template.exists(), "Template README.md not found"
     digest = hashlib.sha256(template.read_bytes()).hexdigest()
