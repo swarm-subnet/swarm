@@ -24,6 +24,7 @@ from swarm.constants import SIM_DT
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env
 from swarm.validator import forward as forward_mod
+from swarm.validator import utils as validator_utils
 from swarm.validator.backend_api import BackendApiClient
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.task_gen import random_task
@@ -397,22 +398,24 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     cache_file = tmp_path / "benchmark_cache.json"
 
     monkeypatch.setattr(forward_mod, "MODEL_DIR", model_dir)
-    monkeypatch.setattr(forward_mod, "STATE_DIR", tmp_path)
-    monkeypatch.setattr(forward_mod, "NORMAL_MODEL_QUEUE_FILE", queue_file)
-    monkeypatch.setattr(forward_mod, "MAP_CACHE_WARMUP_STATE_FILE", warmup_file)
-    monkeypatch.setattr(forward_mod, "CACHE_FILE", cache_file)
+    monkeypatch.setattr(validator_utils, "MODEL_DIR", model_dir)
+    monkeypatch.setattr(validator_utils, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(validator_utils, "NORMAL_MODEL_QUEUE_FILE", queue_file)
+    monkeypatch.setattr(validator_utils, "MAP_CACHE_WARMUP_STATE_FILE", warmup_file)
+    monkeypatch.setattr(validator_utils, "CACHE_FILE", cache_file)
     monkeypatch.setattr(forward_mod, "FORWARD_SLEEP_SEC", 0.0)
     monkeypatch.setattr(forward_mod, "SAMPLE_K", 1)
     monkeypatch.setattr(forward_mod, "NORMAL_MODEL_QUEUE_PROCESS_LIMIT", 1)
     monkeypatch.setattr(forward_mod, "MAP_CACHE_PREBUILD_ALL_AT_START", False)
-    monkeypatch.setattr(forward_mod, "MAP_CACHE_ENABLED", False)
+    monkeypatch.setattr(validator_utils, "MAP_CACHE_ENABLED", False)
 
     monkeypatch.setattr(forward_mod, "get_random_uids", lambda self_obj, k: np.array([1], dtype=np.int64))
     monkeypatch.setattr(forward_mod, "_ensure_models", lambda self_obj, uids: asyncio.sleep(0, result={1: model_path}))
-    monkeypatch.setattr(forward_mod, "_evaluate_seeds", _fake_evaluate_seeds)
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fake_evaluate_seeds)
     monkeypatch.setattr(forward_mod, "set_map_cache_epoch", lambda epoch: None)
     monkeypatch.setattr(forward_mod, "cleanup_old_epoch_cache", lambda keep_epoch: None)
     monkeypatch.setattr(forward_mod, "_run_map_cache_warmup_step", lambda self_obj: asyncio.sleep(0))
+    monkeypatch.setattr(DockerSecureEvaluator, "_base_ready", True)
 
     async def _run_forward_once():
         backend = BackendApiClient(wallet=validator.wallet, base_url=f"http://{host}:{port}", timeout=10.0)
@@ -563,4 +566,5 @@ def test_e2e_forward_single_cycle_local_backend_no_mocks():
 
     called_paths = [c[1] for c in server_state["calls"] if c[0] in ("GET", "POST")]
     assert "/validators/sync" in called_paths
-    assert np.count_nonzero(validator.scores) >= 0
+    assert not any(p.endswith("/screening") for p in called_paths)
+    assert not any(p.endswith("/score") for p in called_paths)
