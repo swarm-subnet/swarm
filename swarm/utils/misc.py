@@ -17,7 +17,6 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
-import math
 from math import floor
 from typing import Callable, Any
 from functools import lru_cache, update_wrapper
@@ -57,7 +56,7 @@ def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
 
     def wrapper(func: Callable) -> Callable:
         @lru_cache(maxsize, typed)
-        def ttl_func(ttl_hash, *args, **kwargs):
+        def ttl_func(_ttl_hash, *args, **kwargs):
             return func(*args, **kwargs)
 
         def wrapped(*args, **kwargs) -> Any:

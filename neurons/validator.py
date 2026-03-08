@@ -48,7 +48,7 @@ class WandbHelper:
     Silent wandb integration for validator logging.
     Logs validator activities without affecting terminal output.
     """
-    
+
     def __init__(self, validator_uid: int, hotkey: str, version: str = "1.0.0"):
         """Initialize wandb logging silently."""
         self.validator_uid = validator_uid
@@ -57,37 +57,40 @@ class WandbHelper:
         self.wandb_run = None
         self.enabled = False
         self.cycle_count = 0
-        
-        
+
         self._init_wandb()
 
     def _init_wandb(self) -> None:
         """Initialize wandb run silently."""
         try:
             # Load environment variables for API key
-            
-            load_dotenv(dotenv_path=os.path.join(os.getcwd(), '.env'))
+
+            load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
             bt.logging.debug("Environment variables loaded from .env file")
-            
+
             # Check if API key is available
-            api_key = os.getenv('WANDB_API_KEY')
+            api_key = os.getenv("WANDB_API_KEY")
             if not api_key:
-                bt.logging.debug("No WANDB_API_KEY found in environment - wandb disabled")
+                bt.logging.debug(
+                    "No WANDB_API_KEY found in environment - wandb disabled"
+                )
                 self.enabled = False
                 return
-            
-            # Configure wandb to run silently  
+
+            # Configure wandb to run silently
             os.environ["WANDB_SILENT"] = "true"
             os.environ["WANDB_QUIET"] = "true"
             os.environ["WANDB_API_KEY"] = api_key
-            
+
             # Use the specified project and entity
             project_name = "validator-logs"
             entity_name = "swarm-subnet-swarm"
-            validator_name = os.getenv('VALIDATOR_NAME', f"validator-{self.validator_uid}")
+            validator_name = os.getenv(
+                "VALIDATOR_NAME", f"validator-{self.validator_uid}"
+            )
             ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
             run_name = f"{validator_name}-cycle{self.cycle_count}-{ts}"
-            
+
             wandb_config = {
                 "project": project_name,
                 "name": run_name,
@@ -97,47 +100,53 @@ class WandbHelper:
                     "version": self.version,
                     "subnet": 124,
                     "neuron_type": "validator",
-                    "cycle_number": self.cycle_count
+                    "cycle_number": self.cycle_count,
                 },
-                "tags": ["validator", "swarm", "subnet-124", f"cycle-{self.cycle_count}"],
+                "tags": [
+                    "validator",
+                    "swarm",
+                    "subnet-124",
+                    f"cycle-{self.cycle_count}",
+                ],
                 "reinit": True,
                 "settings": wandb.Settings(
-                    quiet=True,
-                    show_emoji=False,
-                    show_info=False,
-                    show_warnings=False
-                )
+                    quiet=True, show_emoji=False, show_info=False, show_warnings=False
+                ),
             }
-            
+
             # Add entity (always included)
             wandb_config["entity"] = entity_name
-                
+
             bt.logging.debug(f"Initializing wandb with config: {wandb_config}")
             self.wandb_run = wandb.init(**wandb_config)
             self.enabled = True
-            bt.logging.info(f"✅ Wandb run created: {self.wandb_run.name} (project={project_name}, entity={entity_name})")
-            
+            bt.logging.info(
+                f"✅ Wandb run created: {self.wandb_run.name} (project={project_name}, entity={entity_name})"
+            )
+
         except Exception as e:
             bt.logging.warning(f"Wandb initialization failed: {e}")
             bt.logging.debug("Validator will continue without wandb logging")
             self.enabled = False
 
-    def log_forward_results(self, 
-                          forward_count: int,
-                          task: MapTask, 
-                          results: List[ValidationResult],
-                          timestamp: float) -> None:
+    def log_forward_results(
+        self,
+        forward_count: int,
+        task: MapTask,
+        results: List[ValidationResult],
+        timestamp: float,
+    ) -> None:
         """Log forward pass results silently."""
         if not self.enabled or not self.wandb_run:
             return
-            
+
         try:
             # Calculate aggregate statistics - ensure all values are JSON serializable
             if results:
                 # Convert numpy types to native Python types
                 scores = [float(r.score) for r in results]
                 success_count = sum(1 for r in results if r.success)
-                
+
                 aggregate_stats = {
                     "forward_count": int(forward_count),
                     "timestamp": float(timestamp),
@@ -152,9 +161,9 @@ class WandbHelper:
                     "task_goal_y": float(task.goal[1]),
                     "task_goal_z": float(task.goal[2]),
                     "task_challenge_type": int(task.challenge_type),
-                    "obstacles_count": len(getattr(task, 'obstacles', []))
+                    "obstacles_count": len(getattr(task, "obstacles", [])),
                 }
-                
+
                 # Add raw validator arrays - ensure all values are JSON serializable
                 uids = [int(r.uid) for r in results]
                 raw_data = {
@@ -163,30 +172,32 @@ class WandbHelper:
                     "raw_success": [1 if r.success else 0 for r in results],
                     "raw_time_sec": [float(r.time_sec) for r in results],
                 }
-                
+
                 # Combine aggregate stats with raw data
                 all_data = {**aggregate_stats, **raw_data}
                 self.wandb_run.log(all_data)
-                
-                # Log individual miner data  
+
+                # Log individual miner data
                 for result in results:
                     miner_data = {
                         f"miner_{int(result.uid)}/score": result.score,
                         f"miner_{int(result.uid)}/success": 1 if result.success else 0,
                         f"miner_{int(result.uid)}/time_sec": result.time_sec,
-                        f"miner_{int(result.uid)}/forward_count": forward_count
+                        f"miner_{int(result.uid)}/forward_count": forward_count,
                     }
                     self.wandb_run.log(miner_data)
-            
+
             else:
                 # Log empty forward
-                self.wandb_run.log({
-                    "forward_count": forward_count,
-                    "timestamp": timestamp,
-                    "total_miners": 0,
-                    "message": "No valid responses from miners"
-                })
-                
+                self.wandb_run.log(
+                    {
+                        "forward_count": forward_count,
+                        "timestamp": timestamp,
+                        "total_miners": 0,
+                        "message": "No valid responses from miners",
+                    }
+                )
+
         except Exception:
             # Silent failure
             pass
@@ -195,7 +206,7 @@ class WandbHelper:
         """Log weight updates silently."""
         if not self.enabled or not self.wandb_run:
             return
-            
+
         try:
             weight_data = {
                 "weight_update": True,
@@ -203,15 +214,15 @@ class WandbHelper:
                 "total_score": sum(scores) if scores else 0,
                 # Raw weight arrays
                 "raw_weights": scores,
-                "raw_weight_uids": uids
+                "raw_weight_uids": uids,
             }
-            
+
             # Individual weight data
             for uid, score in zip(uids, scores):
                 weight_data[f"weight_{int(uid)}"] = score
-                
+
             self.wandb_run.log(weight_data)
-            
+
         except Exception:
             # Silent failure
             pass
@@ -220,13 +231,15 @@ class WandbHelper:
         """Log errors silently."""
         if not self.enabled or not self.wandb_run:
             return
-            
+
         try:
-            self.wandb_run.log({
-                "error": True,
-                "error_type": error_type,
-                "error_message": error_message
-            })
+            self.wandb_run.log(
+                {
+                    "error": True,
+                    "error_type": error_type,
+                    "error_message": error_message,
+                }
+            )
         except Exception:
             # Silent failure
             pass
@@ -235,21 +248,21 @@ class WandbHelper:
         """Restart wandb run after each cycle for cleaner tracking."""
         if not self.enabled:
             return
-            
+
         try:
             # Finish current run
             if self.wandb_run:
                 self.wandb_run.finish(quiet=True)
                 bt.logging.debug("Previous wandb run finished")
-            
+
             # Increment cycle count for next run
             self.cycle_count += 1
-            
+
             # Start new run
             self._init_wandb()
             if self.enabled and self.wandb_run:
                 bt.logging.debug(f"New wandb run started: {self.wandb_run.name}")
-                
+
         except Exception as e:
             bt.logging.debug(f"Wandb restart failed: {e}")
             self.enabled = False
@@ -278,7 +291,7 @@ class Validator(BaseValidatorNeuron):
 
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
-        
+
         # Log validator version info
         bt.logging.info(f"🚀 Swarm Validator v{swarm.__version__} started")
 
@@ -286,7 +299,7 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("load_state()")
         self.load_state()
-        
+
         # Initialize wandb logging
         self.wandb_helper: Optional[WandbHelper] = None
         try:
@@ -294,7 +307,7 @@ class Validator(BaseValidatorNeuron):
             self.wandb_helper = WandbHelper(
                 validator_uid=self.uid,
                 hotkey=self.wallet.hotkey.ss58_address,
-                version=swarm.__version__
+                version=swarm.__version__,
             )
             if self.wandb_helper.enabled:
                 bt.logging.info("✅ Wandb logging enabled")
@@ -305,16 +318,31 @@ class Validator(BaseValidatorNeuron):
             self.wandb_helper = None
         else:
             bt.logging.debug("Wandb not available")
-            
+
         # Initialize Docker evaluator at startup
         bt.logging.info("Initializing Docker secure evaluator...")
         try:
-            docker_ok = subprocess.run(["docker", "--version"], capture_output=True).returncode == 0
+            docker_ok = (
+                subprocess.run(["docker", "--version"], capture_output=True).returncode
+                == 0
+            )
             if docker_ok:
-                subprocess.run("docker kill $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true", shell=True)
-                subprocess.run("docker kill $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true", shell=True)
-                subprocess.run("docker rm -f $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true", shell=True)
-                subprocess.run("docker rm -f $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true", shell=True)
+                subprocess.run(
+                    "docker kill $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true",
+                    shell=True,
+                )
+                subprocess.run(
+                    "docker kill $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true",
+                    shell=True,
+                )
+                subprocess.run(
+                    "docker rm -f $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true",
+                    shell=True,
+                )
+                subprocess.run(
+                    "docker rm -f $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true",
+                    shell=True,
+                )
         except Exception:
             pass
         self.docker_evaluator = DockerSecureEvaluator()
@@ -336,21 +364,21 @@ class Validator(BaseValidatorNeuron):
 
     def __del__(self):
         """Cleanup wandb helper and docker evaluator when validator is destroyed."""
-        if hasattr(self, 'docker_evaluator'):
+        if hasattr(self, "docker_evaluator"):
             try:
                 self.docker_evaluator.cleanup()
-            except:
+            except Exception:
                 pass
-        if hasattr(self, 'wandb_helper') and self.wandb_helper:
+        if hasattr(self, "wandb_helper") and self.wandb_helper:
             self.wandb_helper.finish()
 
 
 if __name__ == "__main__":
     # This is Validator Entrypoint
-    
-    logger.remove()  
-    logger.add("logfile.log", level="INFO")  
-    logger.add(lambda msg: print(msg, end=""), level="WARNING") 
+
+    logger.remove()
+    logger.add("logfile.log", level="INFO")
+    logger.add(lambda msg: print(msg, end=""), level="WARNING")
 
     with Validator() as validator:
         while True:

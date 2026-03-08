@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import zipfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -27,7 +26,10 @@ def _new_evaluator() -> de.DockerSecureEvaluator:
 
 
 def test_normalize_package_name():
-    assert de.DockerSecureEvaluator._normalize_package_name("NumPy_Pkg.Name") == "numpy-pkg-name"
+    assert (
+        de.DockerSecureEvaluator._normalize_package_name("NumPy_Pkg.Name")
+        == "numpy-pkg-name"
+    )
 
 
 def test_validate_requirements_accepts_whitelisted_packages(tmp_path):
@@ -109,7 +111,9 @@ def test_serialize_observation_array_sets_value_key():
             return _ObsMessage()
 
     schema = SimpleNamespace(Observation=_Observation)
-    msg = de.DockerSecureEvaluator._serialize_observation(schema, np.array([5, 6], dtype=np.float32))
+    msg = de.DockerSecureEvaluator._serialize_observation(
+        schema, np.array([5, 6], dtype=np.float32)
+    )
     assert msg.entries[0].key == "__value__"
     assert msg.entries[0].tensor.shape == [2]
 
@@ -271,7 +275,9 @@ def test_calibrate_rpc_overhead_fallback_on_failures(monkeypatch):
             raise asyncio.TimeoutError()
 
     overhead, cpu_factor = asyncio.run(
-        ev._calibrate_rpc_overhead_async(_Agent(), object(), {"state": np.zeros(2)}, uid=5)
+        ev._calibrate_rpc_overhead_async(
+            _Agent(), object(), {"state": np.zeros(2)}, uid=5
+        )
     )
     fallback = max(de.RPC_STEP_TIMEOUT_SEC - de.MINER_COMPUTE_BUDGET_SEC, 0.010)
     assert overhead == fallback
@@ -305,7 +311,9 @@ def test_calibrate_rpc_overhead_success(monkeypatch):
             return _Resp(12_000_000)
 
     overhead, cpu_factor = asyncio.run(
-        ev._calibrate_rpc_overhead_async(_Agent(), object(), {"state": np.zeros(2)}, uid=6)
+        ev._calibrate_rpc_overhead_async(
+            _Agent(), object(), {"state": np.zeros(2)}, uid=6
+        )
     )
     assert overhead == pytest.approx(0.065, abs=1e-9)
     assert cpu_factor == pytest.approx(2.0, abs=1e-9)
@@ -319,10 +327,14 @@ def test_evaluate_seeds_parallel_splits_and_aggregates(monkeypatch, tmp_path):
 
     async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
         _ = model_path, on_seed_complete
-        return [ValidationResult(uid, True, float(t), 0.5 + worker_id * 0.1) for t in chunk]
+        return [
+            ValidationResult(uid, True, float(t), 0.5 + worker_id * 0.1) for t in chunk
+        ]
 
     monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
-    results = asyncio.run(ev.evaluate_seeds_parallel(tasks, uid=11, model_path=model_path, num_workers=2))
+    results = asyncio.run(
+        ev.evaluate_seeds_parallel(tasks, uid=11, model_path=model_path, num_workers=2)
+    )
     assert len(results) == 5
     assert [r.time_sec for r in results] == [1.0, 2.0, 3.0, 4.0, 5.0]
 
@@ -347,7 +359,9 @@ def test_evaluate_seeds_parallel_handles_worker_exception(monkeypatch, tmp_path)
             uid=9,
             model_path=model_path,
             num_workers=2,
-            on_seed_complete=lambda *_: callback_calls.__setitem__("n", callback_calls["n"] + 1),
+            on_seed_complete=lambda *_: callback_calls.__setitem__(
+                "n", callback_calls["n"] + 1
+            ),
         )
     )
     assert len(results) == 4
@@ -399,6 +413,10 @@ def test_run_multi_seed_rpc_sync_isolated_payload_transforms_results(monkeypatch
         ValidationResult(uid=1, success=True, time_sec=2.5, score=0.7),
         ValidationResult(uid=1, success=False, time_sec=1.0, score=0.0),
     ]
-    monkeypatch.setattr(de.DockerSecureEvaluator, "_run_multi_seed_rpc_sync", lambda *a, **k: sample)
-    payload = de._run_multi_seed_rpc_sync_isolated_payload(tasks=[1, 2], uid=1, rpc_port=9000)
+    monkeypatch.setattr(
+        de.DockerSecureEvaluator, "_run_multi_seed_rpc_sync", lambda *a, **k: sample
+    )
+    payload = de._run_multi_seed_rpc_sync_isolated_payload(
+        tasks=[1, 2], uid=1, rpc_port=9000
+    )
     assert payload == [(1, True, 2.5, 0.7), (1, False, 1.0, 0.0)]

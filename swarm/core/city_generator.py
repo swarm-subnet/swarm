@@ -677,7 +677,7 @@ TEMPLATES = {
 }
 
 
-def generate_buildings(blocks, rng, city_type=2, b_margin=4, difficulty=1):
+def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
     buildings = []
     occupied_rects = []
     min_gap = 1.0 if difficulty == 3 else 1.5
@@ -712,7 +712,7 @@ def generate_buildings(blocks, rng, city_type=2, b_margin=4, difficulty=1):
                 return False
         return True
 
-    def get_category_for_block(block_h, rng_inst, c_type, diff=1, block_tier=None):
+    def get_category_for_block(_block_h, rng_inst, c_type, diff=1, block_tier=None):
         if diff == 3:
             return "tower"
         if block_tier in ["house", "apt", "tower"]:

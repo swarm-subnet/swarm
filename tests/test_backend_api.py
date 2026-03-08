@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 
@@ -28,7 +26,12 @@ class _DummyWallet:
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict, status_code: int = 200, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        payload: dict,
+        status_code: int = 200,
+        raise_error: Exception | None = None,
+    ):
         self._payload = payload
         self.status_code = status_code
         self._raise_error = raise_error
@@ -68,8 +71,12 @@ class _FakeAsyncClient:
 
 def _build_client(monkeypatch, tmp_path, wallet=None):
     monkeypatch.setattr(backend_api, "STATE_DIR", tmp_path)
-    monkeypatch.setattr(backend_api, "RUNTIME_STATE_FILE", tmp_path / "runtime_state.json")
-    client = backend_api.BackendApiClient(wallet=wallet, base_url="http://backend.local")
+    monkeypatch.setattr(
+        backend_api, "RUNTIME_STATE_FILE", tmp_path / "runtime_state.json"
+    )
+    client = backend_api.BackendApiClient(
+        wallet=wallet, base_url="http://backend.local"
+    )
     return client
 
 
@@ -131,7 +138,9 @@ def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
         json={"detail": "bad"},
         request=httpx.Request("POST", "http://backend.local/x"),
     )
-    fake_http.post_error = httpx.HTTPStatusError("boom", request=response.request, response=response)
+    fake_http.post_error = httpx.HTTPStatusError(
+        "boom", request=response.request, response=response
+    )
     client.client = fake_http
 
     try:
@@ -171,10 +180,15 @@ def test_post_new_model_handles_missing_hotkey(monkeypatch, tmp_path):
 def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
+
         async def _fake_get(endpoint):
             assert endpoint == "/validators/sync"
             return {
-                "current_champion": {"uid": 2, "benchmark_score": 0.91, "model_hash": "abc"},
+                "current_champion": {
+                    "uid": 2,
+                    "benchmark_score": 0.91,
+                    "model_hash": "abc",
+                },
                 "weights": {"2": 1.0},
                 "reeval_queue": [{"uid": 2, "reason": "reeval"}],
                 "leaderboard_version": 9,
@@ -198,6 +212,7 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         "last_sync": 1,
     }
     try:
+
         async def _fake_get(endpoint):
             _ = endpoint
             return {"error": "backend down"}

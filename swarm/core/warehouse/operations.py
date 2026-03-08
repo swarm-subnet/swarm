@@ -7,11 +7,8 @@ import os
 import random
 import shutil
 
-import pybullet as p
 
 from .constants import (
-    WAREHOUSE_SIZE_X,
-    WAREHOUSE_SIZE_Y,
     WALL_SLOTS,
     ENABLE_LOADING_OPERATION_FORKLIFTS,
     FORKLIFT_MODEL_NAME,
@@ -63,7 +60,6 @@ from .constants import (
     MACHINING_PENDING_RGBA,
     MACHINING_TABLE_SIZE,
     MACHINING_TABLE_RGBA,
-    SHOW_AREA_LAYOUT_MARKERS,
 )
 from .helpers import (
     _spawn_mesh_with_anchor,
@@ -122,9 +118,14 @@ def _purge_generated_model_artifacts(model_path):
         shutil.rmtree(double_sided_root, ignore_errors=True)
 
 
-def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout, wall_info, cli, seed=0):
+def build_loading_operation_forklifts(
+    forklift_loader, floor_top_z, area_layout, wall_info, cli, seed=0
+):
     if not ENABLE_LOADING_OPERATION_FORKLIFTS:
-        return {"loading_operation_forklift_count": 0, "loading_operation_forklifts": []}
+        return {
+            "loading_operation_forklift_count": 0,
+            "loading_operation_forklifts": [],
+        }
     if forklift_loader is None:
         return {
             "loading_operation_forklift_count": 0,
@@ -219,8 +220,12 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
         }
 
     staging_items = wall_info.get("loading_staging_items", [])
-    loaded_pallet_items = [it for it in staging_items if str(it.get("type", "")).lower() == "pallet"]
-    empty_items = [it for it in staging_items if str(it.get("type", "")).lower() == "empty_pallet"]
+    loaded_pallet_items = [
+        it for it in staging_items if str(it.get("type", "")).lower() == "pallet"
+    ]
+    empty_items = [
+        it for it in staging_items if str(it.get("type", "")).lower() == "empty_pallet"
+    ]
     goods_along_s = []
     for it in loaded_pallet_items:
         if "x" in it and "y" in it:
@@ -232,7 +237,6 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
         key = (round(float(it["x"]), 3), round(float(it["y"]), 3))
         if key not in empty_xy_unique:
             empty_xy_unique[key] = (float(it["x"]), float(it["y"]))
-    empty_along_s = [_along_s_from_xy(x, y) for x, y in empty_xy_unique.values()]
 
     trucks = wall_info.get("loading_trucks", [])
     truck_alongs = sorted(float(t.get("along", 0.0)) for t in trucks)
@@ -249,10 +253,7 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
             _ta, ts = _along_s_from_xy(t["x"], t["y"])
             truck_s_vals.append(ts)
 
-    goods_alongs = [a for a, _s in goods_along_s]
     goods_s_vals = [s for _a, s in goods_along_s]
-    empty_alongs = [a for a, _s in empty_along_s]
-    empty_s_vals = [s for _a, s in empty_along_s]
     forklift_radius = 0.5 * math.hypot(ex, ey)
     forklift_half_along = along_size * 0.5
     forklift_half_cross = cross_size * 0.5
@@ -260,8 +261,12 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
     hard_obstacle_discs = []
     soft_obstacle_discs = []
     truck_keepout_rects = []
-    truck_keepout_pad_along = max(0.30, float(LOADING_OPERATION_TRUCK_KEEPOUT_ALONG_PAD_M))
-    truck_keepout_pad_cross = max(0.45, float(LOADING_OPERATION_TRUCK_KEEPOUT_CROSS_PAD_M))
+    truck_keepout_pad_along = max(
+        0.30, float(LOADING_OPERATION_TRUCK_KEEPOUT_ALONG_PAD_M)
+    )
+    truck_keepout_pad_cross = max(
+        0.45, float(LOADING_OPERATION_TRUCK_KEEPOUT_CROSS_PAD_M)
+    )
     for t in trucks:
         tx = t.get("x")
         ty = t.get("y")
@@ -270,7 +275,9 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
             t_inward = t.get("inward")
             if t_along is not None and t_inward is not None:
                 try:
-                    tx, ty = slot_point(loading_side, float(t_along), inward=float(t_inward))
+                    tx, ty = slot_point(
+                        loading_side, float(t_along), inward=float(t_inward)
+                    )
                 except Exception:
                     tx, ty = None, None
         if tx is None or ty is None:
@@ -320,9 +327,14 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
             continue
         hard_obstacle_discs.append((float(fx), float(fy), forklift_radius + 0.15))
 
-    zone_mid = 0.5 * (along_lo + along_hi)
-    truck_s_ref = sum(truck_s_vals) / float(len(truck_s_vals)) if truck_s_vals else (s_hi - 0.8)
-    goods_s_ref = sum(goods_s_vals) / float(len(goods_s_vals)) if goods_s_vals else (s_lo + (0.46 * (s_hi - s_lo)))
+    truck_s_ref = (
+        sum(truck_s_vals) / float(len(truck_s_vals)) if truck_s_vals else (s_hi - 0.8)
+    )
+    goods_s_ref = (
+        sum(goods_s_vals) / float(len(goods_s_vals))
+        if goods_s_vals
+        else (s_lo + (0.46 * (s_hi - s_lo)))
+    )
     if goods_s_ref > truck_s_ref:
         goods_s_ref, truck_s_ref = truck_s_ref, goods_s_ref
 
@@ -382,30 +394,29 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
                 x, y = _xy_from_along_s(along, s_from_interior)
                 ok = True
                 for ox, oy in occupied_xy:
-                    if ((x - ox) ** 2 + (y - oy) ** 2) < (min_center_dist ** 2):
+                    if ((x - ox) ** 2 + (y - oy) ** 2) < (min_center_dist**2):
                         ok = False
                         break
                 if not ok:
                     continue
                 for ta, ts, half_a, half_s in truck_keepout_rects:
-                    if (
-                        abs(along - ta) <= (half_a + forklift_half_along)
-                        and abs(s_from_interior - ts) <= (half_s + forklift_half_cross)
-                    ):
+                    if abs(along - ta) <= (half_a + forklift_half_along) and abs(
+                        s_from_interior - ts
+                    ) <= (half_s + forklift_half_cross):
                         ok = False
                         break
                 if not ok:
                     continue
                 for ox, oy, orad in hard_obstacle_discs:
                     lim = orad + forklift_radius + hard_obstacle_clearance
-                    if ((x - ox) ** 2 + (y - oy) ** 2) < (lim ** 2):
+                    if ((x - ox) ** 2 + (y - oy) ** 2) < (lim**2):
                         ok = False
                         break
                 if not ok:
                     continue
                 for ox, oy, orad in soft_obstacle_discs:
                     lim = orad + forklift_radius + soft_obstacle_clearance
-                    if ((x - ox) ** 2 + (y - oy) ** 2) < (lim ** 2):
+                    if ((x - ox) ** 2 + (y - oy) ** 2) < (lim**2):
                         ok = False
                         break
                 if ok:
@@ -500,7 +511,9 @@ def build_loading_operation_forklifts(forklift_loader, floor_top_z, area_layout,
     }
 
 
-def build_worker_crew(worker_loader, worker_model_name, floor_top_z, area_layout, wall_info, cli, seed=0):
+def build_worker_crew(
+    worker_loader, worker_model_name, floor_top_z, area_layout, wall_info, cli, seed=0
+):
     if not ENABLE_WORKER_CREW:
         return {"worker_count": 0, "workers": []}
     if worker_loader is None or not worker_model_name:
@@ -511,7 +524,9 @@ def build_worker_crew(worker_loader, worker_model_name, floor_top_z, area_layout
         }
 
     try:
-        raw_min_v, raw_max_v = model_bounds_xyz(worker_loader, worker_model_name, (1.0, 1.0, 1.0))
+        raw_min_v, raw_max_v = model_bounds_xyz(
+            worker_loader, worker_model_name, (1.0, 1.0, 1.0)
+        )
     except (FileNotFoundError, ValueError) as exc:
         return {
             "worker_count": 0,
@@ -542,20 +557,30 @@ def build_worker_crew(worker_loader, worker_model_name, floor_top_z, area_layout
 
     for t in wall_info.get("loading_trucks", []):
         fx, fy = t.get("footprint_xy_m", (0.0, 0.0))
-        _add_obstacle_xy(t.get("x"), t.get("y"), 0.5 * math.hypot(float(fx), float(fy)) + 0.2)
+        _add_obstacle_xy(
+            t.get("x"), t.get("y"), 0.5 * math.hypot(float(fx), float(fy)) + 0.2
+        )
     for fk in wall_info.get("forklifts", []):
         ffx, ffy = fk.get("footprint_xy_m", (size_x, size_y))
-        _add_obstacle_xy(fk.get("x"), fk.get("y"), 0.5 * math.hypot(float(ffx), float(ffy)) + 0.2)
+        _add_obstacle_xy(
+            fk.get("x"), fk.get("y"), 0.5 * math.hypot(float(ffx), float(ffy)) + 0.2
+        )
     for fk in wall_info.get("loading_operation_forklifts", []):
         ffx, ffy = fk.get("footprint_xy_m", (size_x, size_y))
-        _add_obstacle_xy(fk.get("x"), fk.get("y"), 0.5 * math.hypot(float(ffx), float(ffy)) + 0.2)
+        _add_obstacle_xy(
+            fk.get("x"), fk.get("y"), 0.5 * math.hypot(float(ffx), float(ffy)) + 0.2
+        )
     for sr in wall_info.get("storage_racks", []):
         rfx, rfy = sr.get("footprint_xy_m", (0.0, 0.0))
-        _add_obstacle_xy(sr.get("x"), sr.get("y"), 0.5 * math.hypot(float(rfx), float(rfy)) + 0.25)
+        _add_obstacle_xy(
+            sr.get("x"), sr.get("y"), 0.5 * math.hypot(float(rfx), float(rfy)) + 0.25
+        )
     for it in wall_info.get("loading_staging_items", []):
         itype = str(it.get("type", "")).lower()
         if itype in ("pallet", "empty_pallet", "barrel", "box"):
-            _add_obstacle_xy(it.get("x"), it.get("y"), 0.85 if "pallet" in itype else 0.55)
+            _add_obstacle_xy(
+                it.get("x"), it.get("y"), 0.85 if "pallet" in itype else 0.55
+            )
     for ce in wall_info.get("loading_container_entries", []):
         _add_obstacle_xy(ce.get("x"), ce.get("y"), 2.2)
 
@@ -641,11 +666,11 @@ def build_worker_crew(worker_loader, worker_model_name, floor_top_z, area_layout
     def _valid_xy(x, y, obstacle_pad=0.25, spacing_rule=None):
         spacing = float(spacing_min if spacing_rule is None else spacing_rule)
         for px, py in picked_xy:
-            if ((x - px) ** 2 + (y - py) ** 2) < (spacing ** 2):
+            if ((x - px) ** 2 + (y - py) ** 2) < (spacing**2):
                 return False
         for ox, oy, orad in obstacle_discs:
             lim = orad + worker_radius + float(obstacle_pad)
-            if ((x - ox) ** 2 + (y - oy) ** 2) < (lim ** 2):
+            if ((x - ox) ** 2 + (y - oy) ** 2) < (lim**2):
                 return False
         return True
 
@@ -664,7 +689,9 @@ def build_worker_crew(worker_loader, worker_model_name, floor_top_z, area_layout
                 continue
             x = float(cand["x"])
             y = float(cand["y"])
-            if not _valid_xy(x, y, obstacle_pad=obstacle_pad, spacing_rule=spacing_rule):
+            if not _valid_xy(
+                x, y, obstacle_pad=obstacle_pad, spacing_rule=spacing_rule
+            ):
                 continue
             yaw_deg = rng.uniform(0.0, 360.0)
             picked_workers.append({"x": x, "y": y, "yaw_deg": yaw_deg, "zone": zname})
@@ -680,10 +707,14 @@ def build_worker_crew(worker_loader, worker_model_name, floor_top_z, area_layout
                     break
                 x = float(cand["x"])
                 y = float(cand["y"])
-                if not _valid_xy(x, y, obstacle_pad=obstacle_pad, spacing_rule=spacing_rule):
+                if not _valid_xy(
+                    x, y, obstacle_pad=obstacle_pad, spacing_rule=spacing_rule
+                ):
                     continue
                 yaw_deg = rng.uniform(0.0, 360.0)
-                picked_workers.append({"x": x, "y": y, "yaw_deg": yaw_deg, "zone": cand["zone"]})
+                picked_workers.append(
+                    {"x": x, "y": y, "yaw_deg": yaw_deg, "zone": cand["zone"]}
+                )
                 picked_xy.append((x, y))
             if len(picked_workers) >= target_count:
                 break
@@ -762,7 +793,9 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
     area_cy = float(area["cy"])
     attached_wall = _attached_wall_from_area_bounds(area_sx, area_sy, area_cx, area_cy)
     row_axis = "x" if attached_wall in ("north", "south") else "y"
-    yaw_deg = (_forklift_yaw_back_to_wall(attached_wall) + float(FORKLIFT_PARK_YAW_EXTRA_DEG)) % 360.0
+    yaw_deg = (
+        _forklift_yaw_back_to_wall(attached_wall) + float(FORKLIFT_PARK_YAW_EXTRA_DEG)
+    ) % 360.0
 
     yaw = math.radians(yaw_deg)
     c = abs(math.cos(yaw))
@@ -779,7 +812,9 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
     area_cross = area_sy if row_axis == "x" else area_sx
     max_along = area_along - (2.0 * margin)
     interior_margin = margin
-    max_cross_vehicle = area_cross - (float(FORKLIFT_WALL_BACK_CLEARANCE) + interior_margin)
+    max_cross_vehicle = area_cross - (
+        float(FORKLIFT_WALL_BACK_CLEARANCE) + interior_margin
+    )
     if max_cross_vehicle <= (cross_size + 1e-6):
         return {
             "forklift_scale": FORKLIFT_SCALE_UNIFORM,
@@ -827,7 +862,9 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
     if spawn_max < spawn_min:
         spawn_min = spawn_max
     spawn_count = rng.randint(spawn_min, spawn_max) if slot_count > 0 else 0
-    occupied_indices = sorted(rng.sample(range(slot_count), spawn_count)) if spawn_count > 0 else []
+    occupied_indices = (
+        sorted(rng.sample(range(slot_count), spawn_count)) if spawn_count > 0 else []
+    )
     occupied_set = set(occupied_indices)
 
     forklifts = []
@@ -850,8 +887,12 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
         line_z = floor_top_z + float(FORKLIFT_PARK_LINE_CENTER_Z)
         along_extra_max = max(0.0, max_along - row_span)
         cross_extra_max = max(0.0, area_cross - cross_size)
-        slot_along = along_size + min(float(FORKLIFT_PARK_SLOT_ALONG_PAD_M), along_extra_max)
-        slot_cross = cross_size + min(float(FORKLIFT_PARK_SLOT_CROSS_PAD_M), cross_extra_max)
+        slot_along = along_size + min(
+            float(FORKLIFT_PARK_SLOT_ALONG_PAD_M), along_extra_max
+        )
+        slot_cross = cross_size + min(
+            float(FORKLIFT_PARK_SLOT_CROSS_PAD_M), cross_extra_max
+        )
         slot_cross = min(slot_cross, max(0.1, area_cross - line_w))
         if slot_count >= 1:
             join_cross = slot_cross + line_w
@@ -868,10 +909,14 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
                     cli=cli,
                     with_collision=False,
                 )
-                boundary_x = [x_min] + [
-                    0.5 * (slot_centers[i][0] + slot_centers[i + 1][0])
-                    for i in range(slot_count - 1)
-                ] + [x_max]
+                boundary_x = (
+                    [x_min]
+                    + [
+                        0.5 * (slot_centers[i][0] + slot_centers[i + 1][0])
+                        for i in range(slot_count - 1)
+                    ]
+                    + [x_max]
+                )
                 for bx in boundary_x:
                     _spawn_box_primitive(
                         center_xyz=(bx, divider_center_y, line_z),
@@ -893,10 +938,14 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
                     cli=cli,
                     with_collision=False,
                 )
-                boundary_y = [y_min] + [
-                    0.5 * (slot_centers[i][1] + slot_centers[i + 1][1])
-                    for i in range(slot_count - 1)
-                ] + [y_max]
+                boundary_y = (
+                    [y_min]
+                    + [
+                        0.5 * (slot_centers[i][1] + slot_centers[i + 1][1])
+                        for i in range(slot_count - 1)
+                    ]
+                    + [y_max]
+                )
                 for by in boundary_y:
                     _spawn_box_primitive(
                         center_xyz=(divider_center_x, by, line_z),
@@ -985,7 +1034,11 @@ def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=
 
 def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
     if not ENABLE_MACHINING_CELL_LAYOUT:
-        return {"machining_mills": [], "machining_lathes": [], "machining_pending_slots": []}
+        return {
+            "machining_mills": [],
+            "machining_lathes": [],
+            "machining_pending_slots": [],
+        }
     if industry_loader is None:
         return {
             "machining_mills": [],
@@ -1143,20 +1196,32 @@ def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
                 cli=cli,
                 model_path_override=spec.get("collision_path", ""),
             )
-        if (not MACHINING_FORCE_SIMPLE_VISUALS) and (not MACHINING_USE_NATIVE_MTL_VISUALS) and spec["material_parts"]:
+        if (
+            (not MACHINING_FORCE_SIMPLE_VISUALS)
+            and (not MACHINING_USE_NATIVE_MTL_VISUALS)
+            and spec["material_parts"]
+        ):
             for part in spec["material_parts"]:
                 part_tex = part.get("texture_path", "")
                 use_part_tex = bool(
-                    MACHINING_USE_PART_TEXTURES and part_tex and os.path.exists(part_tex)
+                    MACHINING_USE_PART_TEXTURES
+                    and part_tex
+                    and os.path.exists(part_tex)
                 )
-                part_rgba = [1.0, 1.0, 1.0, part["rgba"][3]] if use_part_tex else part["rgba"]
+                part_rgba = (
+                    [1.0, 1.0, 1.0, part["rgba"][3]] if use_part_tex else part["rgba"]
+                )
                 _spawn_mesh_with_anchor(
                     loader=industry_loader,
                     model_name=part["path"],
                     world_anchor_xyz=(x, y, floor_top_z),
                     yaw_deg=yaw_deg,
                     mesh_scale_xyz=spec["scale_xyz"],
-                    local_anchor_xyz=(spec["anchor_x"], spec["anchor_y"], spec["anchor_z"]),
+                    local_anchor_xyz=(
+                        spec["anchor_x"],
+                        spec["anchor_y"],
+                        spec["anchor_z"],
+                    ),
                     cli=cli,
                     with_collision=False,
                     use_texture=use_part_tex,
@@ -1164,7 +1229,9 @@ def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
                     rgba=part_rgba,
                     double_sided=MACHINING_VISUAL_DOUBLE_SIDED,
                 )
-        elif (not MACHINING_FORCE_SIMPLE_VISUALS) and (not MACHINING_USE_NATIVE_MTL_VISUALS):
+        elif (not MACHINING_FORCE_SIMPLE_VISUALS) and (
+            not MACHINING_USE_NATIVE_MTL_VISUALS
+        ):
             _spawn_mesh_with_anchor(
                 loader=industry_loader,
                 model_name=spec["model_name"],
@@ -1207,7 +1274,9 @@ def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
                 elif slot_type == "LATHE":
                     lathes.append(payload)
             else:
-                pending_slots.append({"slot_type": slot_type, "x": x, "y": y, "yaw_deg": yaw_deg})
+                pending_slots.append(
+                    {"slot_type": slot_type, "x": x, "y": y, "yaw_deg": yaw_deg}
+                )
                 if MACHINING_SHOW_PENDING_MARKERS:
                     px, py, pz = MACHINING_PENDING_SLOT_SIZE
                     _spawn_box_primitive(

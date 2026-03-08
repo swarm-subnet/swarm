@@ -14,7 +14,7 @@ import tempfile
 import time
 import shutil
 from pathlib import Path
-from typing import Dict, Tuple, Set, Optional
+from typing import Dict, Tuple, Set
 from zipfile import ZipFile, BadZipFile
 
 import bittensor as bt
@@ -26,12 +26,13 @@ from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
 # Blacklist Management
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def load_blacklist(file_path: Path = None) -> Set[str]:
     """Load blacklisted fake model hashes from file."""
     try:
         target_file = file_path if file_path is not None else BLACKLIST_FILE
         if target_file.exists():
-            with open(target_file, 'r') as f:
+            with open(target_file, "r") as f:
                 return {line.strip() for line in f if line.strip()}
         return set()
     except Exception as e:
@@ -45,7 +46,7 @@ def save_blacklist(blacklist: Set[str], file_path: Path = None) -> None:
         # Ensure the directory exists
         target_file = file_path if file_path is not None else BLACKLIST_FILE
         target_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_file, 'w') as f:
+        with open(target_file, "w") as f:
             for hash_val in sorted(blacklist):
                 f.write(f"{hash_val}\n")
     except Exception as e:
@@ -67,6 +68,7 @@ def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
 # Model Structure Analysis
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def inspect_model_structure(zip_path: Path) -> Dict:
     """
     Inspect RPC agent submission structure.
@@ -74,27 +76,32 @@ def inspect_model_structure(zip_path: Path) -> Dict:
     Template files (main.py, agent.capnp, agent_server.py) are injected automatically.
     """
     try:
-        with ZipFile(zip_path, 'r') as zf:
+        with ZipFile(zip_path, "r") as zf:
             file_list = zf.namelist()
-            
+
             if "drone_agent.py" not in file_list:
                 return {
                     "error": "Missing drone_agent.py - RPC agent submission required",
-                    "missing_drone_agent": True
+                    "missing_drone_agent": True,
                 }
-            
-            dangerous_files = [f for f in file_list 
-                              if f.endswith(('.exe', '.so', '.dll', '.sh', '.bat'))]
+
+            dangerous_files = [
+                f
+                for f in file_list
+                if f.endswith((".exe", ".so", ".dll", ".sh", ".bat"))
+            ]
             if dangerous_files:
-                return {"error": f"Dangerous executable files detected: {dangerous_files}"}
-            
+                return {
+                    "error": f"Dangerous executable files detected: {dangerous_files}"
+                }
+
             return {
                 "submission_type": "rpc",
                 "has_mlp_extractor": True,
                 "suspicious_patterns": [],
-                "class_names": ["RPC Custom Agent"]
+                "class_names": ["RPC Custom Agent"],
             }
-            
+
     except Exception as e:
         return {"error": f"ZIP inspection failed: {e}"}
 
@@ -105,15 +112,18 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
     - "legitimate": RPC agent passes all checks
     - "missing_drone_agent": Missing drone_agent.py (reject but don't blacklist)
     - "fake": Dangerous files detected (reject and blacklist)
-    
+
     Returns (status, reason)
     """
     if inspection_results.get("missing_drone_agent", False):
-        return "missing_drone_agent", "Missing drone_agent.py - RPC agent submission required"
-    
+        return (
+            "missing_drone_agent",
+            "Missing drone_agent.py - RPC agent submission required",
+        )
+
     if "malicious_findings" in inspection_results:
         return "fake", "Security violation: Malicious code detected"
-    
+
     if "error" in inspection_results:
         if "Security violation" in inspection_results["error"]:
             return "fake", inspection_results["error"]
@@ -122,10 +132,10 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
         if "Dangerous executable" in inspection_results["error"]:
             return "fake", inspection_results["error"]
         return "fake", f"Inspection error: {inspection_results['error']}"
-    
+
     if inspection_results.get("submission_type") == "rpc":
         return "legitimate", "RPC submission validated"
-    
+
     return "legitimate", "RPC agent appears legitimate"
 
 
@@ -133,7 +143,10 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
 # Forensic Storage
 # ──────────────────────────────────────────────────────────────────────────
 
-def save_fake_model_for_analysis(model_path: Path, uid: int, model_hash: str, reason: str, inspection_results: Dict) -> None:
+
+def save_fake_model_for_analysis(
+    model_path: Path, uid: int, model_hash: str, reason: str, inspection_results: Dict
+) -> None:
     """
     Save fake model for forensic analysis. Keep max 3 fake models per UID.
     Creates: miner_models_v2/UID_X_fake_Y/
@@ -142,13 +155,15 @@ def save_fake_model_for_analysis(model_path: Path, uid: int, model_hash: str, re
         # Create base directory for this UID's fake models
         uid_fake_dir = MODEL_DIR / f"UID_{uid}_fake"
         uid_fake_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Find existing fake models for this UID
         existing_fakes = []
         if uid_fake_dir.exists():
-            existing_fakes = [d for d in uid_fake_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+            existing_fakes = [
+                d for d in uid_fake_dir.iterdir() if d.is_dir() and d.name.isdigit()
+            ]
             existing_fakes.sort(key=lambda x: int(x.name))
-        
+
         # Determine next fake number
         if len(existing_fakes) >= 3:
             # Remove oldest fake model (fake_1) and shift others
@@ -161,15 +176,15 @@ def save_fake_model_for_analysis(model_path: Path, uid: int, model_hash: str, re
             next_fake_num = 3
         else:
             next_fake_num = len(existing_fakes) + 1
-        
+
         # Create directory for this fake model
         fake_model_dir = uid_fake_dir / str(next_fake_num)
         fake_model_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Copy the fake model
         fake_model_file = fake_model_dir / "model.zip"
         shutil.copy2(model_path, fake_model_file)
-        
+
         # Save analysis report
         report_file = fake_model_dir / "analysis_report.json"
         report_data = {
@@ -178,16 +193,18 @@ def save_fake_model_for_analysis(model_path: Path, uid: int, model_hash: str, re
             "model_hash": model_hash,
             "detection_reason": reason,
             "file_size_bytes": model_path.stat().st_size,
-            "inspection_results": inspection_results
+            "inspection_results": inspection_results,
         }
-        
-        with open(report_file, 'w') as f:
+
+        with open(report_file, "w") as f:
             json.dump(report_data, f, indent=2, default=str)
-        
-        bt.logging.info(f"📁 Saved fake model UID_{uid}_fake/{next_fake_num}/ for analysis")
+
+        bt.logging.info(
+            f"📁 Saved fake model UID_{uid}_fake/{next_fake_num}/ for analysis"
+        )
         bt.logging.info(f"   Size: {model_path.stat().st_size} bytes")
         bt.logging.info(f"   Hash: {model_hash[:16]}...")
-        
+
     except Exception as e:
         bt.logging.error(f"Failed to save fake model for analysis: {e}")
 
@@ -195,6 +212,7 @@ def save_fake_model_for_analysis(model_path: Path, uid: int, model_hash: str, re
 # ──────────────────────────────────────────────────────────────────────────
 # ZIP Safety Inspection
 # ──────────────────────────────────────────────────────────────────────────
+
 
 def zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
     """Reject dangerous ZIP files without extracting them.
@@ -230,6 +248,7 @@ def zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
 # Docker-based First-Time Model Verification
 # ──────────────────────────────────────────────────────────────────────────
 
+
 async def verify_new_model_with_docker(
     model_path: Path, model_hash: str, miner_hotkey: str, uid: int
 ) -> None:
@@ -262,12 +281,15 @@ async def verify_new_model_with_docker(
             verification_result_file = Path(tmpdir) / "verification_result.json"
 
             dummy_task = {
-                "start": [0, 0, 1], "goal": [5, 5, 2], "obstacles": [],
-                "horizon": HORIZON_SEC, "seed": 12345
+                "start": [0, 0, 1],
+                "goal": [5, 5, 2],
+                "obstacles": [],
+                "horizon": HORIZON_SEC,
+                "seed": 12345,
             }
 
             task_file = Path(tmpdir) / "task.json"
-            with open(task_file, 'w') as f:
+            with open(task_file, "w") as f:
                 json.dump(dummy_task, f)
 
             bt.logging.info(
@@ -275,37 +297,43 @@ async def verify_new_model_with_docker(
             )
 
             cmd = [
-                "docker", "run",
+                "docker",
+                "run",
                 "--rm",
-                "--name", container_name,
-                "--user", f"{current_uid}:{current_gid}",
+                "--name",
+                container_name,
+                "--user",
+                f"{current_uid}:{current_gid}",
                 "--memory=4g",
                 "--cpus=1",
                 "--pids-limit=10",
-                "--ulimit", "nofile=256:256",
-                "--ulimit", "fsize=524288000:524288000",
-                "--security-opt", "no-new-privileges",
-                "--network", "none",
-                "-v", f"{tmpdir}:/workspace/shared",
-                "-v", f"{model_path.absolute()}:/workspace/model.zip:ro",
+                "--ulimit",
+                "nofile=256:256",
+                "--ulimit",
+                "fsize=524288000:524288000",
+                "--security-opt",
+                "no-new-privileges",
+                "--network",
+                "none",
+                "-v",
+                f"{tmpdir}:/workspace/shared",
+                "-v",
+                f"{model_path.absolute()}:/workspace/model.zip:ro",
                 docker_evaluator.base_image,
-                "python", "/app/swarm/core/evaluator.py",
+                "python",
+                "/app/swarm/core/evaluator.py",
                 "VERIFY_ONLY",
                 str(uid),
                 "/workspace/model.zip",
-                "/workspace/shared/verification_result.json"
+                "/workspace/shared/verification_result.json",
             ]
 
             proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=60
-                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
 
                 stdout_str = stdout.decode() if stdout else ""
                 stderr_str = stderr.decode() if stderr else ""
@@ -324,7 +352,9 @@ async def verify_new_model_with_docker(
 
             except asyncio.TimeoutError:
                 subprocess.run(["docker", "kill", container_name], capture_output=True)
-                bt.logging.warning(f"⏰ Verification timeout for model {model_hash[:16]}...")
+                bt.logging.warning(
+                    f"⏰ Verification timeout for model {model_hash[:16]}..."
+                )
                 return
 
             bt.logging.info(
@@ -333,12 +363,14 @@ async def verify_new_model_with_docker(
 
             if verification_result_file.exists():
                 try:
-                    with open(verification_result_file, 'r') as f:
+                    with open(verification_result_file, "r") as f:
                         verification_data = json.load(f)
 
-                    if verification_data.get('is_fake_model', False):
-                        fake_reason = verification_data.get('fake_reason', 'Unknown')
-                        inspection_results = verification_data.get('inspection_results', {})
+                    if verification_data.get("is_fake_model", False):
+                        fake_reason = verification_data.get("fake_reason", "Unknown")
+                        inspection_results = verification_data.get(
+                            "inspection_results", {}
+                        )
 
                         bt.logging.warning(
                             f"🚫 FAKE MODEL DETECTED during verification: {fake_reason}"
@@ -355,9 +387,9 @@ async def verify_new_model_with_docker(
                             f"🗑️ Removed fake model {model_hash[:16]}... from cache and blacklisted"
                         )
 
-                    elif verification_data.get('missing_drone_agent', False):
+                    elif verification_data.get("missing_drone_agent", False):
                         rejection_reason = verification_data.get(
-                            'rejection_reason', 'Missing drone_agent.py'
+                            "rejection_reason", "Missing drone_agent.py"
                         )
                         bt.logging.warning(
                             f"⚠️ MISSING drone_agent.py during verification: {rejection_reason}"
@@ -394,5 +426,7 @@ async def verify_new_model_with_docker(
                     bt.logging.debug(f"Error checking temp directory: {e}")
 
     except Exception as e:
-        bt.logging.warning(f"Docker verification failed for model {model_hash[:16]}: {e}")
+        bt.logging.warning(
+            f"Docker verification failed for model {model_hash[:16]}: {e}"
+        )
         subprocess.run(["docker", "kill", container_name], capture_output=True)

@@ -14,7 +14,7 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pytest
@@ -46,7 +46,9 @@ def _require_docker() -> None:
         _skip_or_fail("Docker binary not found in PATH.")
 
     try:
-        info = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=20)
+        info = subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=20
+        )
     except Exception as exc:
         _skip_or_fail(f"Docker daemon check failed: {exc}")
         return
@@ -106,10 +108,16 @@ def test_e2e_docker_run_exec_lifecycle():
     try:
         run_res = subprocess.run(
             [
-                "docker", "run", "--rm", "-d",
-                "--name", container_name,
+                "docker",
+                "run",
+                "--rm",
+                "-d",
+                "--name",
+                container_name,
                 evaluator.base_image,
-                "bash", "-lc", "sleep infinity",
+                "bash",
+                "-lc",
+                "sleep infinity",
             ],
             capture_output=True,
             text=True,
@@ -126,7 +134,9 @@ def test_e2e_docker_run_exec_lifecycle():
         assert exec_res.returncode == 0, exec_res.stderr
         assert "swarm-e2e-ok" in exec_res.stdout
     finally:
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, text=True)
+        subprocess.run(
+            ["docker", "rm", "-f", container_name], capture_output=True, text=True
+        )
 
 
 @pytest.mark.e2e
@@ -147,25 +157,36 @@ def test_e2e_rpc_capnp_container_ping_and_act(tmp_path: Path):
         container_name = f"swarm_e2e_rpc_{int(time.time() * 1000)}"
         run_res = subprocess.run(
             [
-                "docker", "run", "--rm", "-d",
-                "--name", container_name,
-                "-p", f"{host_port}:8000",
-                "-v", f"{submission_dir}:/workspace/submission:ro",
+                "docker",
+                "run",
+                "--rm",
+                "-d",
+                "--name",
+                container_name,
+                "-p",
+                f"{host_port}:8000",
+                "-v",
+                f"{submission_dir}:/workspace/submission:ro",
                 evaluator.base_image,
-                "python", "/workspace/submission/main.py",
+                "python",
+                "/workspace/submission/main.py",
             ],
             capture_output=True,
             text=True,
             timeout=60,
         )
-        assert run_res.returncode == 0, f"Failed to start RPC container: {run_res.stderr}"
+        assert (
+            run_res.returncode == 0
+        ), f"Failed to start RPC container: {run_res.stderr}"
 
         async def _run_rpc_check():
             schema = capnp.load(str(SUBMISSION_TEMPLATE / "agent.capnp"))
             for _ in range(30):
                 try:
                     async with capnp.kj_loop():
-                        stream = await capnp.AsyncIoStream.create_connection(host="127.0.0.1", port=host_port)
+                        stream = await capnp.AsyncIoStream.create_connection(
+                            host="127.0.0.1", port=host_port
+                        )
                         client = capnp.TwoPartyClient(stream)
                         agent = client.bootstrap().cast_as(schema.Agent)
                         pong = await agent.ping("test")
@@ -189,7 +210,9 @@ def test_e2e_rpc_capnp_container_ping_and_act(tmp_path: Path):
         try:
             asyncio.run(_run_rpc_check())
         finally:
-            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, text=True)
+            subprocess.run(
+                ["docker", "rm", "-f", container_name], capture_output=True, text=True
+            )
 
 
 @pytest.mark.e2e
@@ -225,11 +248,18 @@ def test_e2e_docker_evaluator_single_bench_seed(tmp_path: Path):
 @pytest.mark.slow
 def test_e2e_simulator_workload_all_bench_groups():
     import pybullet as p  # type: ignore
+
     assert hasattr(p, "ER_DEPTH_ONLY"), (
         "Current pybullet build missing ER_DEPTH_ONLY "
         "(required for MovingDrone RGB depth mode)."
     )
-    selected = ["type1_city", "type2_open", "type3_mountain", "type4_village", "type5_warehouse"]
+    selected = [
+        "type1_city",
+        "type2_open",
+        "type3_mountain",
+        "type4_village",
+        "type5_warehouse",
+    ]
     random.seed(2026)
     seeds = _find_seeds(1)
 
@@ -321,7 +351,11 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
             if self.path == "/validators/sync":
                 self._send_json(
                     {
-                        "current_champion": {"uid": 0, "benchmark_score": 0.0, "model_hash": ""},
+                        "current_champion": {
+                            "uid": 0,
+                            "benchmark_score": 0.0,
+                            "model_hash": "",
+                        },
                         "weights": {"0": 1.0},
                         "reeval_queue": [],
                         "leaderboard_version": 1,
@@ -333,7 +367,9 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
         def do_POST(self):
             length = int(self.headers.get("Content-Length", "0") or 0)
             body = self.rfile.read(length) if length > 0 else b""
-            server_state["calls"].append(("POST", self.path, body.decode("utf-8", errors="ignore")))
+            server_state["calls"].append(
+                ("POST", self.path, body.decode("utf-8", errors="ignore"))
+            )
 
             if self.path == "/validators/models/new":
                 self._send_json({"model_id": 1})
@@ -373,11 +409,20 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     with zipfile.ZipFile(model_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(SUBMISSION_TEMPLATE / "drone_agent.py", "drone_agent.py")
 
-    async def _fake_evaluate_seeds(self_obj, uid, model_path, seeds, description="benchmark", on_seed_complete=None):
+    async def _fake_evaluate_seeds(
+        self_obj, uid, model_path, seeds, description="benchmark", on_seed_complete=None
+    ):
         _ = self_obj, uid, model_path, seeds, description
         if on_seed_complete:
             on_seed_complete()
-        per_type = {"city": [], "open": [0.8], "mountain": [], "village": [], "warehouse": [], "moving_platform": []}
+        per_type = {
+            "city": [],
+            "open": [0.8],
+            "mountain": [],
+            "village": [],
+            "warehouse": [],
+            "moving_platform": [],
+        }
         return [0.8], per_type
 
     validator = SimpleNamespace(
@@ -409,16 +454,28 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(forward_mod, "MAP_CACHE_PREBUILD_ALL_AT_START", False)
     monkeypatch.setattr(validator_utils, "MAP_CACHE_ENABLED", False)
 
-    monkeypatch.setattr(forward_mod, "get_random_uids", lambda self_obj, k: np.array([1], dtype=np.int64))
-    monkeypatch.setattr(forward_mod, "_ensure_models", lambda self_obj, uids: asyncio.sleep(0, result={1: model_path}))
+    monkeypatch.setattr(
+        forward_mod,
+        "get_random_uids",
+        lambda self_obj, k: np.array([1], dtype=np.int64),
+    )
+    monkeypatch.setattr(
+        forward_mod,
+        "_ensure_models",
+        lambda self_obj, uids: asyncio.sleep(0, result={1: model_path}),
+    )
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fake_evaluate_seeds)
     monkeypatch.setattr(forward_mod, "set_map_cache_epoch", lambda epoch: None)
     monkeypatch.setattr(forward_mod, "cleanup_old_epoch_cache", lambda keep_epoch: None)
-    monkeypatch.setattr(forward_mod, "_run_map_cache_warmup_step", lambda self_obj: asyncio.sleep(0))
+    monkeypatch.setattr(
+        forward_mod, "_run_map_cache_warmup_step", lambda self_obj: asyncio.sleep(0)
+    )
     monkeypatch.setattr(DockerSecureEvaluator, "_base_ready", True)
 
     async def _run_forward_once():
-        backend = BackendApiClient(wallet=validator.wallet, base_url=f"http://{host}:{port}", timeout=10.0)
+        backend = BackendApiClient(
+            wallet=validator.wallet, base_url=f"http://{host}:{port}", timeout=10.0
+        )
         monkeypatch.setattr(backend, "_get_miner_hotkey", lambda uid: "miner_hotkey")
         validator.backend_api = backend
         try:
@@ -496,7 +553,11 @@ def test_e2e_forward_single_cycle_local_backend_no_mocks():
             if self.path == "/validators/sync":
                 self._send_json(
                     {
-                        "current_champion": {"uid": 0, "benchmark_score": 0.0, "model_hash": ""},
+                        "current_champion": {
+                            "uid": 0,
+                            "benchmark_score": 0.0,
+                            "model_hash": "",
+                        },
                         "weights": {"0": 1.0},
                         "reeval_queue": [],
                         "leaderboard_version": 1,
@@ -508,7 +569,9 @@ def test_e2e_forward_single_cycle_local_backend_no_mocks():
         def do_POST(self):
             length = int(self.headers.get("Content-Length", "0") or 0)
             body = self.rfile.read(length) if length > 0 else b""
-            server_state["calls"].append(("POST", self.path, body.decode("utf-8", errors="ignore")))
+            server_state["calls"].append(
+                ("POST", self.path, body.decode("utf-8", errors="ignore"))
+            )
             if self.path == "/validators/heartbeat":
                 self._send_json({"recorded": True})
                 return
@@ -546,7 +609,9 @@ def test_e2e_forward_single_cycle_local_backend_no_mocks():
     )
 
     async def _run_once():
-        backend = BackendApiClient(wallet=validator.wallet, base_url=f"http://{host}:{port}", timeout=10.0)
+        backend = BackendApiClient(
+            wallet=validator.wallet, base_url=f"http://{host}:{port}", timeout=10.0
+        )
         validator.backend_api = backend
         try:
             original_base_ready = DockerSecureEvaluator._base_ready

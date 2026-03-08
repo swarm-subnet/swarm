@@ -22,23 +22,14 @@ from __future__ import annotations
 import argparse
 import math
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
-from PIL import Image
 import pybullet as p
 import pybullet_data
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-sys.path.insert(0, str(REPO_ROOT))
-os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
-
-from swarm.core.env_builder import build_world
-from swarm.validator.task_gen import random_task
+from PIL import Image
 
 
 CHALLENGE_NAMES = {1: "city", 2: "open", 3: "mountain"}
@@ -97,6 +88,8 @@ def _pick_seeds(
     If explicit_seeds is given, classify those directly.
     Otherwise scan sequentially until per_type seeds per type are found.
     """
+    from swarm.validator.task_gen import random_task
+
     picked: Dict[int, List[int]] = {1: [], 2: [], 3: []}
 
     if explicit_seeds:
@@ -126,6 +119,9 @@ def _save_images_for_seed(
     sim_dt: float,
 ) -> int:
     """Build world for one seed and save all camera views. Returns images saved."""
+    from swarm.core.env_builder import build_world
+    from swarm.validator.task_gen import random_task
+
     task = random_task(sim_dt=sim_dt, seed=seed_task.seed)
     sx, sy, sz = task.start
     gx, gy, gz = task.goal
@@ -166,7 +162,9 @@ def _save_images_for_seed(
         ("top", [mid_x, mid_y, mid_z], max(25.0, dist_2d * 0.9), 0.0, -89.0),
     ]
 
-    type_name = CHALLENGE_NAMES.get(seed_task.challenge_type, f"type_{seed_task.challenge_type}")
+    type_name = CHALLENGE_NAMES.get(
+        seed_task.challenge_type, f"type_{seed_task.challenge_type}"
+    )
     type_dir = out_root / type_name
     type_dir.mkdir(parents=True, exist_ok=True)
 
@@ -186,37 +184,53 @@ def _parse_args() -> argparse.Namespace:
         description="Generate multi-angle platform images for each challenge type.",
     )
     parser.add_argument(
-        "--per-type", type=int, default=1,
+        "--per-type",
+        type=int,
+        default=1,
         help="Number of seeds to render per challenge type (default: 1).",
     )
     parser.add_argument(
-        "--max-scan", type=int, default=50000,
+        "--max-scan",
+        type=int,
+        default=50000,
         help="Max seeds to scan when auto-selecting (default: 50000).",
     )
     parser.add_argument(
-        "--seeds", type=int, nargs="+", default=None,
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
         help="Explicit seed list (auto-classified by type). Overrides --per-type.",
     )
     parser.add_argument(
-        "--sim-dt", type=float, default=1 / 240.0,
+        "--sim-dt",
+        type=float,
+        default=1 / 240.0,
         help="Simulation timestep for task generation (default: 1/240).",
     )
     parser.add_argument(
-        "--width", type=int, default=960,
+        "--width",
+        type=int,
+        default=960,
         help="Output image width in pixels (default: 960).",
     )
     parser.add_argument(
-        "--height", type=int, default=720,
+        "--height",
+        type=int,
+        default=720,
         help="Output image height in pixels (default: 720).",
     )
     parser.add_argument(
-        "--out-dir", type=Path, default=None,
+        "--out-dir",
+        type=Path,
+        default=None,
         help="Output directory (default: <cwd>/platform_images).",
     )
     return parser.parse_args()
 
 
 def main() -> None:
+    os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
     args = _parse_args()
     out_dir = args.out_dir or Path.cwd() / "platform_images"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -224,11 +238,19 @@ def main() -> None:
     picked = _pick_seeds(args.per_type, args.max_scan, args.sim_dt, args.seeds)
 
     if not args.seeds and any(len(v) < args.per_type for v in picked.values()):
-        missing = {k: args.per_type - len(v) for k, v in picked.items() if len(v) < args.per_type}
-        raise RuntimeError(f"Could not find enough seeds (missing: {missing}). Try --max-scan larger.")
+        missing = {
+            k: args.per_type - len(v)
+            for k, v in picked.items()
+            if len(v) < args.per_type
+        }
+        raise RuntimeError(
+            f"Could not find enough seeds (missing: {missing}). Try --max-scan larger."
+        )
 
     total_seeds = sum(len(v) for v in picked.values())
-    print(f"Seeds selected: {total_seeds} across {sum(1 for v in picked.values() if v)} types")
+    print(
+        f"Seeds selected: {total_seeds} across {sum(1 for v in picked.values() if v)} types"
+    )
     for ct in sorted(picked):
         if picked[ct]:
             print(f"  {CHALLENGE_NAMES.get(ct, ct)}: {picked[ct]}")

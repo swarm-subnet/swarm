@@ -15,6 +15,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import sys
+from pathlib import Path
+
 __version__ = "4.0.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
@@ -24,9 +27,6 @@ __spec_version__ = (
     + (10 * int(version_split[1]))
     + (1 * int(version_split[2]))
 )
-
-import sys
-from pathlib import Path
 
 src_path = Path(__file__).resolve().parent / "src"
 

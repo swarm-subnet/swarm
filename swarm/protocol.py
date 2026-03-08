@@ -15,7 +15,7 @@ No MapTask data is exchanged; miners never know the evaluation map.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any
 
 import msgpack
 import bittensor as bt
@@ -79,7 +79,7 @@ class PolicyChunk:
 # --------------------------------------------------------------------------- #
 # 3.  Bidirectional Synapse                                                   #
 # --------------------------------------------------------------------------- #
-Synapse = bt.Synapse     # alias
+Synapse = bt.Synapse  # alias
 
 
 class PolicySynapse(Synapse):
@@ -92,15 +92,16 @@ class PolicySynapse(Synapse):
     chunk        : PolicyChunk dict    M → V   streamed binary data
     result       : ValidationResult    V → M   evaluation score
     """
-    need_blob: Optional[bool] = None           # validator ➜ miner
 
-    ref:   Optional[Dict[str, Any]] = None     # miner ➜ validator
-    chunk: Optional[Dict[str, Any]] = None     # miner ➜ validator
+    need_blob: Optional[bool] = None  # validator ➜ miner
 
-    result: Optional[Dict[str, Any]] = None    # validator ➜ miner
+    ref: Optional[Dict[str, Any]] = None  # miner ➜ validator
+    chunk: Optional[Dict[str, Any]] = None  # miner ➜ validator
+
+    result: Optional[Dict[str, Any]] = None  # validator ➜ miner
 
     version: str = "1"
-    timeout: float = 5.0                      # custom timeout in seconds
+    timeout: float = 5.0  # custom timeout in seconds
 
     # Bittensor hook
     def deserialize(self) -> "PolicySynapse":
@@ -109,7 +110,7 @@ class PolicySynapse(Synapse):
     # -------- convenience accessors ---------------------------------
     @property
     def policy_ref(self) -> Optional[PolicyRef]:
-        return PolicyRef(**self.ref) if self.ref else None   # type: ignore[arg-type]
+        return PolicyRef(**self.ref) if self.ref else None  # type: ignore[arg-type]
 
     @property
     def policy_chunk(self) -> Optional[PolicyChunk]:

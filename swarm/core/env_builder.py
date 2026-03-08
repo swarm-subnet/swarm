@@ -40,16 +40,21 @@ from swarm.constants import (
     START_PLATFORM_SURFACE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
     START_PLATFORM_RANDOMIZE,
-    TYPE_1_WORLD_RANGE, TYPE_1_H_MIN, TYPE_1_H_MAX,
-    TYPE_2_N_OBSTACLES, TYPE_2_HEIGHT_SCALE, TYPE_2_SAFE_ZONE, TYPE_2_WORLD_RANGE,
+    TYPE_1_WORLD_RANGE,
+    TYPE_1_H_MIN,
+    TYPE_1_H_MAX,
+    TYPE_2_N_OBSTACLES,
+    TYPE_2_HEIGHT_SCALE,
+    TYPE_2_SAFE_ZONE,
+    TYPE_2_WORLD_RANGE,
     TYPE_3_VILLAGE_RANGE,
     TYPE_4_PLATFORM_CLEARANCE,
     TYPE_4_PLATFORM_MAX_ATTEMPTS,
     TYPE_4_MIN_PLATFORM_DISTANCE,
     TYPE_4_WORLD_RANGE_X,
     TYPE_4_WORLD_RANGE_Y,
-    TYPE_4_H_MIN, TYPE_4_H_MAX,
-    TYPE_4_START_H_MIN, TYPE_4_START_H_MAX,
+    TYPE_4_H_MIN,
+    TYPE_4_H_MAX,
     GOAL_COLOR_PALETTE,
 )
 from swarm.core.city_generator import build_city as build_city_map
@@ -134,7 +139,9 @@ def _get_tao_tex(cli: int) -> int:
     return _TAO_TEX_ID[cli]
 
 
-def _normalize_xy(point: Optional[Tuple[float, float, float]]) -> Optional[Tuple[float, float]]:
+def _normalize_xy(
+    point: Optional[Tuple[float, float, float]]
+) -> Optional[Tuple[float, float]]:
     if point is None:
         return None
     return (round(float(point[0]), 6), round(float(point[1]), 6))
@@ -155,8 +162,18 @@ def _static_world_cache_file(
     }
     key_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     key_hash = hashlib.sha256(key_json.encode("utf-8")).hexdigest()
-    epoch_dir = f"epoch_{_current_epoch_number}" if _current_epoch_number is not None else "no_epoch"
-    return MAP_CACHE_DIR / BENCHMARK_VERSION / epoch_dir / f"type{challenge_type}" / f"{key_hash}.bullet"
+    epoch_dir = (
+        f"epoch_{_current_epoch_number}"
+        if _current_epoch_number is not None
+        else "no_epoch"
+    )
+    return (
+        MAP_CACHE_DIR
+        / BENCHMARK_VERSION
+        / epoch_dir
+        / f"type{challenge_type}"
+        / f"{key_hash}.bullet"
+    )
 
 
 def _static_world_cache_meta_file(
@@ -165,7 +182,9 @@ def _static_world_cache_meta_file(
     start: Optional[Tuple[float, float, float]],
     goal: Optional[Tuple[float, float, float]],
 ) -> Path:
-    return _static_world_cache_file(seed, challenge_type, start, goal).with_suffix(".json")
+    return _static_world_cache_file(seed, challenge_type, start, goal).with_suffix(
+        ".json"
+    )
 
 
 def _build_static_world_cache_meta(
@@ -527,7 +546,10 @@ def _try_load_static_world_cache(
             if expected_start_surface is None or actual_start_surface is None:
                 _invalidate_static_world_cache(cache_file, meta_file)
                 return False
-            if abs(float(actual_start_surface) - float(expected_start_surface)) > tolerance:
+            if (
+                abs(float(actual_start_surface) - float(expected_start_surface))
+                > tolerance
+            ):
                 _invalidate_static_world_cache(cache_file, meta_file)
                 return False
 
@@ -536,7 +558,10 @@ def _try_load_static_world_cache(
             if expected_goal_surface is None or actual_goal_surface is None:
                 _invalidate_static_world_cache(cache_file, meta_file)
                 return False
-            if abs(float(actual_goal_surface) - float(expected_goal_surface)) > tolerance:
+            if (
+                abs(float(actual_goal_surface) - float(expected_goal_surface))
+                > tolerance
+            ):
                 _invalidate_static_world_cache(cache_file, meta_file)
                 return False
 
@@ -570,7 +595,9 @@ def _find_clear_platform_position(
 
     def _overlaps(x: float, y: float, z: float) -> bool:
         probe_col = p.createCollisionShape(
-            p.GEOM_SPHERE, radius=check_r, physicsClientId=cli,
+            p.GEOM_SPHERE,
+            radius=check_r,
+            physicsClientId=cli,
         )
         probe_uid = p.createMultiBody(
             baseMass=0,
@@ -583,7 +610,10 @@ def _find_clear_platform_position(
             if body_id == probe_uid:
                 continue
             contacts = p.getClosestPoints(
-                probe_uid, body_id, distance=0.0, physicsClientId=cli,
+                probe_uid,
+                body_id,
+                distance=0.0,
+                physicsClientId=cli,
             )
             if contacts:
                 overlapping = True
@@ -599,7 +629,9 @@ def _find_clear_platform_position(
         dz = z - avoid_pos[2]
         return math.sqrt(dx * dx + dy * dy + dz * dz) < min_distance
 
-    if not _overlaps(candidate_x, candidate_y, candidate_z) and not _too_close(candidate_x, candidate_y, candidate_z):
+    if not _overlaps(candidate_x, candidate_y, candidate_z) and not _too_close(
+        candidate_x, candidate_y, candidate_z
+    ):
         return candidate_x, candidate_y, candidate_z
 
     for _ in range(TYPE_4_PLATFORM_MAX_ATTEMPTS):
@@ -622,7 +654,14 @@ def build_world(
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
     challenge_type: int = 1,
-) -> Tuple[List[int], List[int], Optional[float], Optional[float], Optional[Tuple[float, float, float]], Optional[Tuple[float, float, float]]]:
+) -> Tuple[
+    List[int],
+    List[int],
+    Optional[float],
+    Optional[float],
+    Optional[Tuple[float, float, float]],
+    Optional[Tuple[float, float, float]],
+]:
     """
     Create procedural obstacles (with safe‑zone constraints) and—if *goal*
     is provided—place a visual TAO badge at that position.
@@ -692,14 +731,27 @@ def build_world(
         5: (TYPE_4_WORLD_RANGE_X, TYPE_4_WORLD_RANGE_Y, TYPE_4_H_MIN, TYPE_4_H_MAX),
     }
 
-    if challenge_type in _collision_scan_types and sx is not None and sy is not None and sz is not None:
+    if (
+        challenge_type in _collision_scan_types
+        and sx is not None
+        and sy is not None
+        and sz is not None
+    ):
         _wx, _wy, _hmin, _hmax = _collision_scan_types[challenge_type]
         placement_rng = random.Random(seed + 777777)
 
         start_surface = sz - START_PLATFORM_TAKEOFF_BUFFER
         new_sx, new_sy, new_s_surface = _find_clear_platform_position(
-            cli, sx, sy, start_surface, placement_rng, static_world_body_base,
-            world_range_x=_wx, world_range_y=_wy, h_min=_hmin, h_max=_hmax,
+            cli,
+            sx,
+            sy,
+            start_surface,
+            placement_rng,
+            static_world_body_base,
+            world_range_x=_wx,
+            world_range_y=_wy,
+            h_min=_hmin,
+            h_max=_hmax,
         )
         sx, sy = new_sx, new_sy
         sz = new_s_surface + START_PLATFORM_TAKEOFF_BUFFER
@@ -708,8 +760,16 @@ def build_world(
 
         if gx is not None and gy is not None and gz is not None:
             new_gx, new_gy, new_gz = _find_clear_platform_position(
-                cli, gx, gy, gz, placement_rng, static_world_body_base,
-                world_range_x=_wx, world_range_y=_wy, h_min=_hmin, h_max=_hmax,
+                cli,
+                gx,
+                gy,
+                gz,
+                placement_rng,
+                static_world_body_base,
+                world_range_x=_wx,
+                world_range_y=_wy,
+                h_min=_hmin,
+                h_max=_hmax,
                 avoid_pos=(sx, sy, start_platform_surface_z),
                 min_distance=TYPE_4_MIN_PLATFORM_DISTANCE,
             )
@@ -836,7 +896,7 @@ def build_world(
 
             # 1) Physical landing platform - SOLID AND PRECISE -----------
             platform_radius = LANDING_PLATFORM_RADIUS  # Consistent radius
-            platform_height = 0.2         # Thicker for better physics stability
+            platform_height = 0.2  # Thicker for better physics stability
 
             # Create FLAT CIRCULAR platform - very short cylinder (like a coin)
             platform_collision = p.createCollisionShape(
@@ -852,7 +912,11 @@ def build_world(
                 radius=platform_radius,
                 length=platform_height,
                 rgbaColor=goal_color,
-                specularColor=[goal_color[0] * 0.6 + 0.4, goal_color[1] * 0.6 + 0.4, goal_color[2] * 0.6 + 0.4],
+                specularColor=[
+                    goal_color[0] * 0.6 + 0.4,
+                    goal_color[1] * 0.6 + 0.4,
+                    goal_color[2] * 0.6 + 0.4,
+                ],
                 physicsClientId=cli,
             )
 
@@ -862,7 +926,7 @@ def build_world(
                 baseCollisionShapeIndex=platform_collision,
                 baseVisualShapeIndex=platform_visual,
                 basePosition=[gx, gy, goal_platform_z],
-                physicsClientId=cli
+                physicsClientId=cli,
             )
             end_platform_uids.append(platform_uid)
 
@@ -873,15 +937,20 @@ def build_world(
                 lateralFriction=2.0,
                 spinningFriction=1.0,
                 rollingFriction=0.5,
-                physicsClientId=cli
+                physicsClientId=cli,
             )
 
             # 3)landing zone ---------------
             # Create multiple layers for depth and glow effect
             surface_radius = platform_radius * 0.8  # Slightly smaller than platform
-            surface_height = 0.008                  # Slightly thicker for better visibility
+            surface_height = 0.008  # Slightly thicker for better visibility
 
-            bright_goal_color = [min(1.0, goal_color[0] * 1.25), min(1.0, goal_color[1] * 1.25), min(1.0, goal_color[2] * 1.25), 1.0]
+            bright_goal_color = [
+                min(1.0, goal_color[0] * 1.25),
+                min(1.0, goal_color[1] * 1.25),
+                min(1.0, goal_color[2] * 1.25),
+                1.0,
+            ]
 
             # Main landing surface with glow effect
             surface_visual = p.createVisualShape(
@@ -889,7 +958,11 @@ def build_world(
                 radius=surface_radius,
                 length=surface_height,
                 rgbaColor=bright_goal_color,
-                specularColor=[bright_goal_color[0] * 0.8, bright_goal_color[1] * 0.8, bright_goal_color[2] * 0.8],
+                specularColor=[
+                    bright_goal_color[0] * 0.8,
+                    bright_goal_color[1] * 0.8,
+                    bright_goal_color[2] * 0.8,
+                ],
                 physicsClientId=cli,
             )
 
@@ -915,7 +988,7 @@ def build_world(
                 baseCollisionShapeIndex=flat_landing_collision,
                 baseVisualShapeIndex=-1,
                 basePosition=[gx, gy, surface_z + surface_height + 0.002],
-                physicsClientId=cli
+                physicsClientId=cli,
             )
             end_platform_uids.append(flat_landing_uid)
 
@@ -926,13 +999,13 @@ def build_world(
                 lateralFriction=3.0,
                 spinningFriction=2.0,
                 rollingFriction=1.0,
-                physicsClientId=cli
+                physicsClientId=cli,
             )
 
             # TAO logo as MASSIVE CIRCULAR badge covering the ENTIRE surface
             # Make it BIG and OBVIOUS - covering all the area
             tao_logo_radius = surface_radius * 1.06  # Cover all of circle
-            badge_height = 0.005       # Thicker for visibility
+            badge_height = 0.005  # Thicker for visibility
 
             # Create LARGE circular background first
             tao_background_visual = p.createVisualShape(
@@ -948,7 +1021,11 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_background_visual,
-                basePosition=[gx, gy, surface_z + surface_height + badge_height + 0.008],
+                basePosition=[
+                    gx,
+                    gy,
+                    surface_z + surface_height + badge_height + 0.008,
+                ],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
@@ -966,7 +1043,11 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_logo_visual,
-                basePosition=[gx, gy, surface_z + surface_height + badge_height + 0.011],
+                basePosition=[
+                    gx,
+                    gy,
+                    surface_z + surface_height + badge_height + 0.011,
+                ],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
@@ -981,8 +1062,8 @@ def build_world(
             )
 
             # 4) glowing guidance beacon ----------------------
-            pole_h = 0.5              # Taller, more elegant
-            pole_radius = 0.012        # Sleeker profile
+            pole_h = 0.5  # Taller, more elegant
+            pole_radius = 0.012  # Sleeker profile
 
             # Main beacon pole with gradient effect
             pole_visual = p.createVisualShape(
@@ -990,7 +1071,7 @@ def build_world(
                 radius=pole_radius,
                 length=pole_h,
                 rgbaColor=[1.0, 0.2, 0.1, 0.9],  # Bright glowing red-orange
-                specularColor=[1.0, 0.8, 0.2],   # Golden specular highlight
+                specularColor=[1.0, 0.8, 0.2],  # Golden specular highlight
                 physicsClientId=cli,
             )
 
@@ -999,7 +1080,7 @@ def build_world(
                 shapeType=p.GEOM_SPHERE,
                 radius=pole_radius * 2,
                 rgbaColor=[1.0, 0.3, 0.0, 1.0],  # Bright orange cap
-                specularColor=[1.0, 1.0, 0.4],   # Bright golden specular
+                specularColor=[1.0, 1.0, 0.4],  # Bright golden specular
                 physicsClientId=cli,
             )
 
@@ -1022,6 +1103,20 @@ def build_world(
             )
             end_platform_uids.append(cap_uid)
 
-            return (end_platform_uids, start_platform_uids, start_platform_surface_z, goal_platform_surface_z, adjusted_start, adjusted_goal)
+            return (
+                end_platform_uids,
+                start_platform_uids,
+                start_platform_surface_z,
+                goal_platform_surface_z,
+                adjusted_start,
+                adjusted_goal,
+            )
 
-    return (end_platform_uids, start_platform_uids, start_platform_surface_z, goal_platform_surface_z, adjusted_start, adjusted_goal)
+    return (
+        end_platform_uids,
+        start_platform_uids,
+        start_platform_surface_z,
+        goal_platform_surface_z,
+        adjusted_start,
+        adjusted_goal,
+    )

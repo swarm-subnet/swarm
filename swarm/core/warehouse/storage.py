@@ -17,7 +17,6 @@ from .constants import (
     STORAGE_RACK_EDGE_MARGIN_M,
     STORAGE_RACK_ROW_GAP_M,
     STORAGE_RACK_SLOT_GAP_M,
-    STORAGE_RACK_MAIN_AISLE_M,
     STORAGE_RACK_TARGET_ROW_COUNT,
     STORAGE_RACK_FORCE_ALONG_AXIS,
     STORAGE_RACK_GLOBAL_YAW_OFFSET_DEG,
@@ -50,7 +49,9 @@ from .loading import _spawn_obj_with_mtl_parts
 _STORAGE_RACK_SUPPORT_LEVELS_CACHE = {}
 
 
-def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli, seed=0):
+def build_storage_racks(
+    storage_loader, floor_top_z, area_layout, wall_info, cli, seed=0
+):
     if not ENABLE_STORAGE_RACK_LAYOUT:
         return {"storage_rack_enabled": False}
     if storage_loader is None:
@@ -80,10 +81,16 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     barrel_scale = tuple(float(v) for v in LOADING_STAGING_SCALES["barrel"])
 
     try:
-        rack_min_v, rack_max_v = model_bounds_xyz(storage_loader, rack_model, rack_scale)
-        pallet_min_v, pallet_max_v = model_bounds_xyz(storage_loader, pallet_model, pallet_scale)
+        rack_min_v, rack_max_v = model_bounds_xyz(
+            storage_loader, rack_model, rack_scale
+        )
+        pallet_min_v, pallet_max_v = model_bounds_xyz(
+            storage_loader, pallet_model, pallet_scale
+        )
         box_min_v, box_max_v = model_bounds_xyz(storage_loader, box_model, box_scale)
-        barrel_min_v, barrel_max_v = model_bounds_xyz(storage_loader, barrel_model, barrel_scale)
+        barrel_min_v, barrel_max_v = model_bounds_xyz(
+            storage_loader, barrel_model, barrel_scale
+        )
     except (FileNotFoundError, ValueError) as exc:
         return {
             "storage_rack_enabled": False,
@@ -139,7 +146,9 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     )
     rng = random.Random(int(storage_layout_seed) + 73129)
     pallets_per_level = max(1, int(STORAGE_RACK_PALLETS_PER_LEVEL))
-    top_level_drop_prob = max(0.0, min(0.95, float(STORAGE_RACK_NO_TOP_LEVEL_PROBABILITY)))
+    top_level_drop_prob = max(
+        0.0, min(0.95, float(STORAGE_RACK_NO_TOP_LEVEL_PROBABILITY))
+    )
     level_min_clear_m = float(STORAGE_RACK_LEVEL_MIN_CLEAR_M)
     rack_z_limit = float(floor_top_z) + float(rack_size_z)
 
@@ -177,27 +186,49 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                 barrel_local_x = barrel_size_x
                 barrel_local_y = barrel_size_y
                 barrel_yaw = key
-            max_gap_x = pallet_size_x - (2.0 * barrel_local_x) - (2.0 * barrel_edge_margin)
-            max_gap_y = pallet_size_y - (2.0 * barrel_local_y) - (2.0 * barrel_edge_margin)
+            max_gap_x = (
+                pallet_size_x - (2.0 * barrel_local_x) - (2.0 * barrel_edge_margin)
+            )
+            max_gap_y = (
+                pallet_size_y - (2.0 * barrel_local_y) - (2.0 * barrel_edge_margin)
+            )
             if max_gap_x < -1e-6 or max_gap_y < -1e-6:
                 continue
             use_gap = max(0.0, min(target_gap, max_gap_x, max_gap_y))
-            barrel_layout_candidates.append((use_gap, barrel_yaw, barrel_local_x, barrel_local_y))
+            barrel_layout_candidates.append(
+                (use_gap, barrel_yaw, barrel_local_x, barrel_local_y)
+            )
 
         if barrel_layout_candidates:
             barrel_layout_candidates.sort(key=lambda t: float(t[0]), reverse=True)
-            use_gap, barrel_yaw, barrel_local_x, barrel_local_y = barrel_layout_candidates[0]
+            (
+                use_gap,
+                barrel_yaw,
+                barrel_local_x,
+                barrel_local_y,
+            ) = barrel_layout_candidates[0]
             off_x = (barrel_local_x * 0.5) + (use_gap * 0.5)
             off_y = (barrel_local_y * 0.5) + (use_gap * 0.5)
-            off_x_max = max(0.0, (pallet_size_x * 0.5) - (barrel_local_x * 0.5) - barrel_edge_margin)
-            off_y_max = max(0.0, (pallet_size_y * 0.5) - (barrel_local_y * 0.5) - barrel_edge_margin)
+            off_x_max = max(
+                0.0, (pallet_size_x * 0.5) - (barrel_local_x * 0.5) - barrel_edge_margin
+            )
+            off_y_max = max(
+                0.0, (pallet_size_y * 0.5) - (barrel_local_y * 0.5) - barrel_edge_margin
+            )
             off_x = min(off_x, off_x_max)
             off_y = min(off_y, off_y_max)
-            layer1_slots = [(-off_x, -off_y), (off_x, -off_y), (-off_x, off_y), (off_x, off_y)]
+            layer1_slots = [
+                (-off_x, -off_y),
+                (off_x, -off_y),
+                (-off_x, off_y),
+                (off_x, off_y),
+            ]
         else:
             barrel_yaw = key
             barrel_local_x = barrel_size_x
-            off_x_max = max(0.0, (pallet_size_x * 0.5) - (barrel_local_x * 0.5) - barrel_edge_margin)
+            off_x_max = max(
+                0.0, (pallet_size_x * 0.5) - (barrel_local_x * 0.5) - barrel_edge_margin
+            )
             off_x = min(off_x_max, max(0.08, barrel_local_x * 0.5))
             layer1_slots = [(-off_x, 0.0), (off_x, 0.0)]
 
@@ -241,15 +272,26 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
             use_gap, box_yaw, box_local_x, box_local_y = layout_candidates[0]
             off_x = (box_local_x * 0.5) + (use_gap * 0.5)
             off_y = (box_local_y * 0.5) + (use_gap * 0.5)
-            off_x_max = max(0.0, (pallet_size_x * 0.5) - (box_local_x * 0.5) - box_edge_margin)
-            off_y_max = max(0.0, (pallet_size_y * 0.5) - (box_local_y * 0.5) - box_edge_margin)
+            off_x_max = max(
+                0.0, (pallet_size_x * 0.5) - (box_local_x * 0.5) - box_edge_margin
+            )
+            off_y_max = max(
+                0.0, (pallet_size_y * 0.5) - (box_local_y * 0.5) - box_edge_margin
+            )
             off_x = min(off_x, off_x_max)
             off_y = min(off_y, off_y_max)
-            layer1_slots = [(-off_x, -off_y), (off_x, -off_y), (-off_x, off_y), (off_x, off_y)]
+            layer1_slots = [
+                (-off_x, -off_y),
+                (off_x, -off_y),
+                (-off_x, off_y),
+                (off_x, off_y),
+            ]
         else:
             box_yaw = key
             box_local_x = box_size_x
-            off_x_max = max(0.0, (pallet_size_x * 0.5) - (box_local_x * 0.5) - box_edge_margin)
+            off_x_max = max(
+                0.0, (pallet_size_x * 0.5) - (box_local_x * 0.5) - box_edge_margin
+            )
             off_x = min(off_x_max, max(0.08, box_local_x * 0.5))
             layer1_slots = [(-off_x, 0.0), (off_x, 0.0)]
 
@@ -277,7 +319,6 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     edge_margin = max(0.35, float(STORAGE_RACK_EDGE_MARGIN_M))
     row_gap = max(1.4, float(STORAGE_RACK_ROW_GAP_M))
     slot_gap = max(0.25, float(STORAGE_RACK_SLOT_GAP_M))
-    main_aisle = max(0.0, float(STORAGE_RACK_MAIN_AISLE_M))
 
     target_row_count = max(1, int(STORAGE_RACK_TARGET_ROW_COUNT))
     forced_axis_cfg = str(STORAGE_RACK_FORCE_ALONG_AXIS).strip().lower()
@@ -320,20 +361,51 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
             along_size = float(cand["along_size"])
             cross_size = float(cand["cross_size"])
             if preferred_along_axis == "x":
-                along_lo = max(x_min + edge_margin + (along_size * 0.5), -floor_half_x + (along_size * 0.5))
-                along_hi = min(x_max - edge_margin - (along_size * 0.5), floor_half_x - (along_size * 0.5))
-                cross_lo = max(y_min + edge_margin + (cross_size * 0.5), -floor_half_y + (cross_size * 0.5))
-                cross_hi = min(y_max - edge_margin - (cross_size * 0.5), floor_half_y - (cross_size * 0.5))
+                along_lo = max(
+                    x_min + edge_margin + (along_size * 0.5),
+                    -floor_half_x + (along_size * 0.5),
+                )
+                along_hi = min(
+                    x_max - edge_margin - (along_size * 0.5),
+                    floor_half_x - (along_size * 0.5),
+                )
+                cross_lo = max(
+                    y_min + edge_margin + (cross_size * 0.5),
+                    -floor_half_y + (cross_size * 0.5),
+                )
+                cross_hi = min(
+                    y_max - edge_margin - (cross_size * 0.5),
+                    floor_half_y - (cross_size * 0.5),
+                )
             else:
-                along_lo = max(y_min + edge_margin + (along_size * 0.5), -floor_half_y + (along_size * 0.5))
-                along_hi = min(y_max - edge_margin - (along_size * 0.5), floor_half_y - (along_size * 0.5))
-                cross_lo = max(x_min + edge_margin + (cross_size * 0.5), -floor_half_x + (cross_size * 0.5))
-                cross_hi = min(x_max - edge_margin - (cross_size * 0.5), floor_half_x - (cross_size * 0.5))
+                along_lo = max(
+                    y_min + edge_margin + (along_size * 0.5),
+                    -floor_half_y + (along_size * 0.5),
+                )
+                along_hi = min(
+                    y_max - edge_margin - (along_size * 0.5),
+                    floor_half_y - (along_size * 0.5),
+                )
+                cross_lo = max(
+                    x_min + edge_margin + (cross_size * 0.5),
+                    -floor_half_x + (cross_size * 0.5),
+                )
+                cross_hi = min(
+                    x_max - edge_margin - (cross_size * 0.5),
+                    floor_half_x - (cross_size * 0.5),
+                )
             if along_hi <= along_lo or cross_hi <= cross_lo:
                 continue
 
             cross_span = float(cross_hi - cross_lo)
-            max_rows_fit = max(1, int(math.floor((cross_span + row_gap) / max(1e-6, (cross_size + row_gap)))))
+            max_rows_fit = max(
+                1,
+                int(
+                    math.floor(
+                        (cross_span + row_gap) / max(1e-6, (cross_size + row_gap))
+                    )
+                ),
+            )
             rows_use = min(target_row_count, max_rows_fit)
             if rows_use <= 1:
                 cross_centers = [0.5 * (cross_lo + cross_hi)]
@@ -399,6 +471,7 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
 
     best_plan = None
     if plan_candidates:
+
         def _plan_score(plan):
             return (
                 1 if bool(plan.get("is_long_along", False)) else 0,
@@ -407,6 +480,7 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                 int(plan.get("max_cols", 0)),
                 int(plan.get("slot_count", 0)),
             )
+
         best_plan = max(plan_candidates, key=_plan_score)
 
     if best_plan is None or not best_plan["slots"]:
@@ -438,19 +512,37 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
 
     rack_yaw_offset = float(STORAGE_RACK_GLOBAL_YAW_OFFSET_DEG) % 360.0
     main_rack_yaw = (main_rack_yaw + rack_yaw_offset) % 360.0
-    main_rack_ex, main_rack_ey = _oriented_xy_cached(rack_model, rack_scale, main_rack_yaw)
+    main_rack_ex, main_rack_ey = _oriented_xy_cached(
+        rack_model, rack_scale, main_rack_yaw
+    )
     along_size = float(main_rack_ex if along_axis == "x" else main_rack_ey)
     cross_size = float(main_rack_ey if along_axis == "x" else main_rack_ex)
     if along_axis == "x":
-        along_lo = max(x_min + edge_margin + (along_size * 0.5), -floor_half_x + (along_size * 0.5))
-        along_hi = min(x_max - edge_margin - (along_size * 0.5), floor_half_x - (along_size * 0.5))
-        cross_lo = max(y_min + edge_margin + (cross_size * 0.5), -floor_half_y + (cross_size * 0.5))
-        cross_hi = min(y_max - edge_margin - (cross_size * 0.5), floor_half_y - (cross_size * 0.5))
+        along_lo = max(
+            x_min + edge_margin + (along_size * 0.5), -floor_half_x + (along_size * 0.5)
+        )
+        along_hi = min(
+            x_max - edge_margin - (along_size * 0.5), floor_half_x - (along_size * 0.5)
+        )
+        cross_lo = max(
+            y_min + edge_margin + (cross_size * 0.5), -floor_half_y + (cross_size * 0.5)
+        )
+        cross_hi = min(
+            y_max - edge_margin - (cross_size * 0.5), floor_half_y - (cross_size * 0.5)
+        )
     else:
-        along_lo = max(y_min + edge_margin + (along_size * 0.5), -floor_half_y + (along_size * 0.5))
-        along_hi = min(y_max - edge_margin - (along_size * 0.5), floor_half_y - (along_size * 0.5))
-        cross_lo = max(x_min + edge_margin + (cross_size * 0.5), -floor_half_x + (cross_size * 0.5))
-        cross_hi = min(x_max - edge_margin - (cross_size * 0.5), floor_half_x - (cross_size * 0.5))
+        along_lo = max(
+            y_min + edge_margin + (along_size * 0.5), -floor_half_y + (along_size * 0.5)
+        )
+        along_hi = min(
+            y_max - edge_margin - (along_size * 0.5), floor_half_y - (along_size * 0.5)
+        )
+        cross_lo = max(
+            x_min + edge_margin + (cross_size * 0.5), -floor_half_x + (cross_size * 0.5)
+        )
+        cross_hi = min(
+            x_max - edge_margin - (cross_size * 0.5), floor_half_x - (cross_size * 0.5)
+        )
 
     target_rows = max(1, int(STORAGE_RACK_TARGET_ROW_COUNT))
     center_aisle_target = max(0.0, float(STORAGE_RACK_CENTER_AISLE_TARGET_M))
@@ -458,7 +550,9 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
 
     endcap_enabled = bool(STORAGE_RACK_ENABLE_ENDCAP_ROWS)
     endcap_rack_yaw = (main_rack_yaw + 90.0) % 360.0
-    endcap_rack_ex, endcap_rack_ey = _oriented_xy_cached(rack_model, rack_scale, endcap_rack_yaw)
+    endcap_rack_ex, endcap_rack_ey = _oriented_xy_cached(
+        rack_model, rack_scale, endcap_rack_yaw
+    )
     endcap_along_size = float(endcap_rack_ex if along_axis == "x" else endcap_rack_ey)
     endcap_cross_size = float(endcap_rack_ey if along_axis == "x" else endcap_rack_ex)
 
@@ -499,18 +593,28 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     if endcap_enabled:
         if (left_bound_hi - left_bound_lo) >= (endcap_along_size - 1e-6):
             left_endcap_center = left_bound_lo + (endcap_along_size * 0.5)
-            left_h_main_lo = left_endcap_center + (endcap_along_size * 0.5) + endcap_main_gap
+            left_h_main_lo = (
+                left_endcap_center + (endcap_along_size * 0.5) + endcap_main_gap
+            )
         if (right_bound_hi - right_bound_lo) >= (endcap_along_size - 1e-6):
             right_endcap_center = right_bound_hi - (endcap_along_size * 0.5)
-            right_h_main_hi = right_endcap_center - (endcap_along_size * 0.5) - endcap_main_gap
+            right_h_main_hi = (
+                right_endcap_center - (endcap_along_size * 0.5) - endcap_main_gap
+            )
 
     left_main_lo = left_h_main_lo
     left_main_hi = left_h_main_hi
     right_main_lo = right_h_main_lo
     right_main_hi = right_h_main_hi
-    left_centers = _packed_centers(left_main_lo, left_main_hi, along_size, slot_gap) if left_main_hi >= left_main_lo else []
+    left_centers = (
+        _packed_centers(left_main_lo, left_main_hi, along_size, slot_gap)
+        if left_main_hi >= left_main_lo
+        else []
+    )
     right_centers = (
-        _packed_centers(right_main_lo, right_main_hi, along_size, slot_gap) if right_main_hi >= right_main_lo else []
+        _packed_centers(right_main_lo, right_main_hi, along_size, slot_gap)
+        if right_main_hi >= right_main_lo
+        else []
     )
     if left_centers:
         left_first_target = left_h_main_lo + (along_size * 0.5)
@@ -537,7 +641,9 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
         }
 
     cross_span_centers = max(0.0, float(cross_rows_hi) - float(cross_rows_lo))
-    max_rows_fit = max(1, int(math.floor(cross_span_centers / max(1e-6, row_cross_size))) + 1)
+    max_rows_fit = max(
+        1, int(math.floor(cross_span_centers / max(1e-6, row_cross_size))) + 1
+    )
     rows_use = max(1, min(int(target_rows), int(max_rows_fit)))
     if rows_use <= 1:
         cross_centers = [0.5 * (cross_rows_lo + cross_rows_hi)]
@@ -589,12 +695,18 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                     }
                 )
 
-    if endcap_enabled and (left_endcap_center is not None) and (right_endcap_center is not None):
+    if (
+        endcap_enabled
+        and (left_endcap_center is not None)
+        and (right_endcap_center is not None)
+    ):
         endcap_cross_lo = cross_min_bound + (endcap_cross_size * 0.5)
         endcap_cross_hi = cross_max_bound - (endcap_cross_size * 0.5)
         endcap_slot_gap = 0.0
         endcap_cross_centers = (
-            _packed_centers(endcap_cross_lo, endcap_cross_hi, endcap_cross_size, endcap_slot_gap)
+            _packed_centers(
+                endcap_cross_lo, endcap_cross_hi, endcap_cross_size, endcap_slot_gap
+            )
             if endcap_cross_hi >= endcap_cross_lo
             else []
         )
@@ -602,9 +714,14 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
             ec_start = float(endcap_cross_lo)
             ec_end = float(endcap_cross_hi)
             ec_step = (ec_end - ec_start) / float(len(endcap_cross_centers) - 1)
-            endcap_cross_centers = [ec_start + (i * ec_step) for i in range(len(endcap_cross_centers))]
+            endcap_cross_centers = [
+                ec_start + (i * ec_step) for i in range(len(endcap_cross_centers))
+            ]
         for ec_idx, cross_v in enumerate(endcap_cross_centers):
-            for bank_idx, along_v in ((0, left_endcap_center), (1, right_endcap_center)):
+            for bank_idx, along_v in (
+                (0, left_endcap_center),
+                (1, right_endcap_center),
+            ):
                 sx, sy = _to_world_xy(float(along_v), float(cross_v))
                 selected.append(
                     {
@@ -631,24 +748,32 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
             dy = float(slot["y"]) - cy
             slot["x"] = cx + (dx * cos_r) - (dy * sin_r)
             slot["y"] = cy + (dx * sin_r) + (dy * cos_r)
-            slot["yaw_deg"] = (float(slot.get("yaw_deg", 0.0)) + group_rotate_deg) % 360.0
+            slot["yaw_deg"] = (
+                float(slot.get("yaw_deg", 0.0)) + group_rotate_deg
+            ) % 360.0
 
     if max_racks_cfg > 0 and len(selected) > max_racks_cfg:
         selected = selected[:max_racks_cfg]
 
-    storage_endcap_slot_count = sum(1 for s in selected if str(s.get("kind", "")).lower() == "endcap")
+    storage_endcap_slot_count = sum(
+        1 for s in selected if str(s.get("kind", "")).lower() == "endcap"
+    )
 
     selected_rows = {}
     for slot in selected:
         rk = (int(slot.get("row", 0)), int(slot.get("bank", 0)))
         selected_rows.setdefault(rk, []).append(slot)
     for rk in list(selected_rows.keys()):
-        selected_rows[rk] = sorted(selected_rows[rk], key=lambda s: float(s.get("along", 0.0)))
+        selected_rows[rk] = sorted(
+            selected_rows[rk], key=lambda s: float(s.get("along", 0.0))
+        )
 
     barrel_slot_keys = set()
     barrel_prob = max(0.0, min(0.95, float(STORAGE_RACK_BARREL_RACK_PROBABILITY)))
     barrel_phase = rng.randint(0, 2)
-    for row_key in sorted(selected_rows.keys(), key=lambda rk: (int(rk[1]), int(rk[0]))):
+    for row_key in sorted(
+        selected_rows.keys(), key=lambda rk: (int(rk[1]), int(rk[0]))
+    ):
         row_slots = selected_rows.get(row_key, [])
         if not row_slots:
             continue
@@ -658,7 +783,11 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
         row_prob = max(0.0, min(0.90, row_prob))
         row_has_barrel = False
         for slot in row_slots:
-            key = (int(slot.get("row", 0)), int(slot.get("bank", 0)), int(slot.get("col", 0)))
+            key = (
+                int(slot.get("row", 0)),
+                int(slot.get("bank", 0)),
+                int(slot.get("col", 0)),
+            )
             if rng.random() < row_prob:
                 barrel_slot_keys.add(key)
                 row_has_barrel = True
@@ -684,7 +813,9 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     rack_yaw = float(main_rack_yaw)
 
     def _cluster_level_area(area_map, merge_eps=0.03):
-        points = sorted((float(z), float(a)) for z, a in area_map.items() if float(a) > 1e-8)
+        points = sorted(
+            (float(z), float(a)) for z, a in area_map.items() if float(a) > 1e-8
+        )
         if not points:
             return []
         clusters = []
@@ -798,8 +929,14 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
 
         max_top_area = max(float(v["area"]) for v in top_levels)
         max_bottom_area = max(float(v["area"]) for v in bottom_levels)
-        top_levels = [v for v in top_levels if float(v["area"]) >= max(0.03, max_top_area * 0.12)]
-        bottom_levels = [v for v in bottom_levels if float(v["area"]) >= max(0.03, max_bottom_area * 0.12)]
+        top_levels = [
+            v for v in top_levels if float(v["area"]) >= max(0.03, max_top_area * 0.12)
+        ]
+        bottom_levels = [
+            v
+            for v in bottom_levels
+            if float(v["area"]) >= max(0.03, max_bottom_area * 0.12)
+        ]
         if not top_levels or not bottom_levels:
             return []
 
@@ -842,7 +979,9 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     if len(level_ratios) < level_count:
         level_ratios.extend([0.52] * (level_count - len(level_ratios)))
 
-    contact_lift_m = min(0.008, max(0.0, float(STORAGE_RACK_LEVEL_CONTACT_SNAP_M) * 0.2))
+    contact_lift_m = min(
+        0.008, max(0.0, float(STORAGE_RACK_LEVEL_CONTACT_SNAP_M) * 0.2)
+    )
     support_levels = _rack_support_surface_levels_m()
     level_zs = [0.0]
 
@@ -875,7 +1014,11 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
     fallback_max_level_z = rack_size_z - max(0.02, pallet_size_z * 0.15)
     while len(level_zs) < level_count:
         li = len(level_zs)
-        ratio = float(level_ratios[li]) if li < len(level_ratios) else min(0.95, 0.50 + (0.18 * li))
+        ratio = (
+            float(level_ratios[li])
+            if li < len(level_ratios)
+            else min(0.95, 0.50 + (0.18 * li))
+        )
         z_rel = max(0.0, (ratio * rack_size_z) + contact_lift_m)
         if level_zs:
             z_rel = max(z_rel, level_zs[-1] + pallet_size_z + level_min_clear_m)
@@ -930,7 +1073,9 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
         slot_yaw_rad = math.radians(slot_yaw)
         cos_y = math.cos(slot_yaw_rad)
         sin_y = math.sin(slot_yaw_rad)
-        slot_rack_ex, slot_rack_ey = _oriented_xy_cached(rack_model, rack_scale, slot_yaw)
+        slot_rack_ex, slot_rack_ey = _oriented_xy_cached(
+            rack_model, rack_scale, slot_yaw
+        )
         _spawn_mesh_with_anchor(
             loader=storage_loader,
             model_name=rack_model,
@@ -958,8 +1103,12 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
             if disable_top_level and level_idx == top_level_idx:
                 continue
             pallet_bottom_z = float(floor_top_z) + float(z_rel)
-            level_density = float(level_density_by_idx[min(level_idx, len(level_density_by_idx) - 1)])
-            cargo_spawn_prob = max(0.0, min(1.0, float(STORAGE_RACK_BOX_PROBABILITY) * level_density))
+            level_density = float(
+                level_density_by_idx[min(level_idx, len(level_density_by_idx) - 1)]
+            )
+            cargo_spawn_prob = max(
+                0.0, min(1.0, float(STORAGE_RACK_BOX_PROBABILITY) * level_density)
+            )
             barrel_layer2_prob = max(
                 0.0,
                 min(1.0, float(STORAGE_RACK_BARREL_LAYER2_PROBABILITY) * level_density),
@@ -989,7 +1138,11 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                     world_anchor_xyz=(px, py, pallet_bottom_z),
                     yaw_deg=slot_yaw,
                     mesh_scale_xyz=pallet_scale,
-                    local_anchor_xyz=(pallet_anchor_x, pallet_anchor_y, pallet_anchor_z),
+                    local_anchor_xyz=(
+                        pallet_anchor_x,
+                        pallet_anchor_y,
+                        pallet_anchor_z,
+                    ),
                     cli=cli,
                     with_collision=True,
                 )
@@ -998,7 +1151,11 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                 if rng.random() > cargo_spawn_prob:
                     continue
 
-                slot_key = (int(slot.get("row", 0)), int(slot.get("bank", 0)), int(slot.get("col", 0)))
+                slot_key = (
+                    int(slot.get("row", 0)),
+                    int(slot.get("bank", 0)),
+                    int(slot.get("col", 0)),
+                )
                 use_barrel_cargo = slot_key in barrel_slot_keys
 
                 if use_barrel_cargo:
@@ -1042,7 +1199,11 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                             world_anchor_xyz=(bx, by, barrel_base_z),
                             yaw_deg=barrel_yaw,
                             mesh_scale_xyz=barrel_scale,
-                            local_anchor_xyz=(barrel_anchor_x, barrel_anchor_y, barrel_anchor_z),
+                            local_anchor_xyz=(
+                                barrel_anchor_x,
+                                barrel_anchor_y,
+                                barrel_anchor_z,
+                            ),
                             cli=cli,
                             with_collision=False,
                         )
@@ -1076,7 +1237,11 @@ def build_storage_racks(storage_loader, floor_top_z, area_layout, wall_info, cli
                             world_anchor_xyz=(bx, by, top_barrel_bottom),
                             yaw_deg=barrel_yaw,
                             mesh_scale_xyz=barrel_scale,
-                            local_anchor_xyz=(barrel_anchor_x, barrel_anchor_y, barrel_anchor_z),
+                            local_anchor_xyz=(
+                                barrel_anchor_x,
+                                barrel_anchor_y,
+                                barrel_anchor_z,
+                            ),
                             cli=cli,
                             with_collision=False,
                         )

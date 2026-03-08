@@ -28,56 +28,59 @@ from swarm.utils.env_factory import make_env
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SEEDS = {
-    "City":      2,   # challenge_type=1
-    "Open":      4,   # challenge_type=2
-    "Mountain": 13,   # challenge_type=3
-    "Village":   8,   # challenge_type=4
-    "Warehouse": 1,   # challenge_type=5
+    "City": 2,  # challenge_type=1
+    "Open": 4,  # challenge_type=2
+    "Mountain": 13,  # challenge_type=3
+    "Village": 8,  # challenge_type=4
+    "Warehouse": 1,  # challenge_type=5
 }
-N_STEPS  = 40
-WARMUP   = 5
+N_STEPS = 40
+WARMUP = 5
 SEG_FLAG = p.ER_NO_SEGMENTATION_MASK | p.ER_DEPTH_ONLY
-FULL     = 3000  # steps per seed
+FULL = 3000  # steps per seed
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def benchmark_scene(label, seed):
     task = random_task(sim_dt=SIM_DT, seed=seed)
-    env  = make_env(task, gui=False)
+    env = make_env(task, gui=False)
     env.reset()
 
-    cli    = getattr(env, "CLIENT", 0)
-    fov    = getattr(env, "_fov", 91.0)
-    W, H   = env.IMG_RES
+    cli = getattr(env, "CLIENT", 0)
+    fov = getattr(env, "_fov", 91.0)
+    W, H = env.IMG_RES
     aspect = W / H
-    dummy  = np.zeros_like(env.action_space.low.flatten())[None, :]
-    light  = getattr(env, "_light_direction", [1, 1, 1])
-    proj   = p.computeProjectionMatrixFOV(
-        fov=fov, aspect=aspect, nearVal=DEPTH_NEAR, farVal=DEPTH_FAR, physicsClientId=cli
+    dummy = np.zeros_like(env.action_space.low.flatten())[None, :]
+    light = getattr(env, "_light_direction", [1, 1, 1])
+    proj = p.computeProjectionMatrixFOV(
+        fov=fov,
+        aspect=aspect,
+        nearVal=DEPTH_NEAR,
+        farVal=DEPTH_FAR,
+        physicsClientId=cli,
     )
 
     # Pre-build body list (same exclusion logic as _update_min_clearance)
-    drone_id  = env.DRONE_IDS[0]
+    drone_id = env.DRONE_IDS[0]
     ground_id = getattr(env, "PLANE_ID", 0)
-    excluded  = (
+    excluded = (
         {drone_id, -1, ground_id}
-        | set(getattr(env, "_end_platform_uids",   []))
+        | set(getattr(env, "_end_platform_uids", []))
         | set(getattr(env, "_start_platform_uids", []))
     )
     num_bodies = p.getNumBodies(physicsClientId=cli)
-    body_list  = [
+    body_list = [
         p.getBodyUniqueId(i, physicsClientId=cli)
         for i in range(num_bodies)
         if p.getBodyUniqueId(i, physicsClientId=cli) not in excluded
     ]
 
-    t_step      = []
-    t_render    = []
-    t_physics   = []
+    t_step = []
+    t_render = []
+    t_physics = []
     t_clearance = []
 
     for i in range(WARMUP + N_STEPS):
-
         # ── Full env.step() ──────────────────────────────────────────────────
         t0 = time.perf_counter()
         _, _, term, trunc, _ = env.step(dummy)
@@ -87,16 +90,25 @@ def benchmark_scene(label, seed):
 
         # ── Isolated: getCameraImage ─────────────────────────────────────────
         rot_mat = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
-        fwd     = rot_mat @ [1, 0, 0];  fwd /= np.linalg.norm(fwd)
-        up      = rot_mat @ [0, 0, 1]
-        cam     = env.pos[0] + fwd * 0.35 + up * 0.05
-        view    = p.computeViewMatrix(cam, cam + fwd * 20.0, up.tolist(), physicsClientId=cli)
+        fwd = rot_mat @ [1, 0, 0]
+        fwd /= np.linalg.norm(fwd)
+        up = rot_mat @ [0, 0, 1]
+        cam = env.pos[0] + fwd * 0.35 + up * 0.05
+        view = p.computeViewMatrix(
+            cam, cam + fwd * 20.0, up.tolist(), physicsClientId=cli
+        )
 
         t0 = time.perf_counter()
         p.getCameraImage(
-            W, H, shadow=0, renderer=p.ER_TINY_RENDERER,
-            viewMatrix=view, projectionMatrix=proj,
-            lightDirection=light, flags=SEG_FLAG, physicsClientId=cli,
+            W,
+            H,
+            shadow=0,
+            renderer=p.ER_TINY_RENDERER,
+            viewMatrix=view,
+            projectionMatrix=proj,
+            lightDirection=light,
+            flags=SEG_FLAG,
+            physicsClientId=cli,
         )
         t_render_i = (time.perf_counter() - t0) * 1000
 
@@ -110,8 +122,10 @@ def benchmark_scene(label, seed):
         min_dist = SAFETY_DISTANCE_SAFE
         for body_uid in body_list:
             closest = p.getClosestPoints(
-                bodyA=drone_id, bodyB=body_uid,
-                distance=SAFETY_DISTANCE_SAFE, physicsClientId=cli,
+                bodyA=drone_id,
+                bodyB=body_uid,
+                distance=SAFETY_DISTANCE_SAFE,
+                physicsClientId=cli,
             )
             for pt in closest:
                 if pt[8] < min_dist:
@@ -129,13 +143,13 @@ def benchmark_scene(label, seed):
     env.close()
 
     return dict(
-        label     = label,
-        n_bodies  = num_bodies,
-        n_checked = len(body_list),
-        step      = float(np.mean(t_step)),
-        render    = float(np.mean(t_render)),
-        physics   = float(np.mean(t_physics)),
-        clearance = float(np.mean(t_clearance)),
+        label=label,
+        n_bodies=num_bodies,
+        n_checked=len(body_list),
+        step=float(np.mean(t_step)),
+        render=float(np.mean(t_render)),
+        physics=float(np.mean(t_physics)),
+        clearance=float(np.mean(t_clearance)),
     )
 
 
@@ -144,49 +158,77 @@ def print_results(results):
 
     for r in results:
         other = r["step"] - r["render"] - r["physics"] - r["clearance"]
-        pct   = lambda ms: ms / r["step"] * 100
+
+        def pct(ms):
+            return ms / r["step"] * 100
 
         print(f"\n  {r['label']}")
         print(f"  {SEP}")
         print(f"  Total bodies in scene:       {r['n_bodies']}")
-        print(f"  Bodies queried by clearance: {r['n_checked']}  "
-              f"(excluded: {r['n_bodies'] - r['n_checked']})")
+        print(
+            f"  Bodies queried by clearance: {r['n_checked']}  "
+            f"(excluded: {r['n_bodies'] - r['n_checked']})"
+        )
         print()
         print(f"  env.step() total:            {r['step']:7.1f} ms  (100%)")
-        print(f"  ├─ getCameraImage (render):  {r['render']:7.1f} ms  ({pct(r['render']):.0f}%)")
-        print(f"  ├─ stepSimulation (physics): {r['physics']:7.1f} ms  ({pct(r['physics']):.0f}%)")
-        print(f"  ├─ _update_min_clearance:    {r['clearance']:7.1f} ms  ({pct(r['clearance']):.0f}%)")
+        print(
+            f"  ├─ getCameraImage (render):  {r['render']:7.1f} ms  ({pct(r['render']):.0f}%)"
+        )
+        print(
+            f"  ├─ stepSimulation (physics): {r['physics']:7.1f} ms  ({pct(r['physics']):.0f}%)"
+        )
+        print(
+            f"  ├─ _update_min_clearance:    {r['clearance']:7.1f} ms  ({pct(r['clearance']):.0f}%)"
+        )
         print(f"  └─ other (obs build, etc):   {other:7.1f} ms  ({pct(other):.0f}%)")
         print()
-        print(f"  Per-body getClosestPoints:   "
-              f"{r['clearance'] / max(r['n_checked'], 1) * 1000:.3f} µs/body")
+        print(
+            f"  Per-body getClosestPoints:   "
+            f"{r['clearance'] / max(r['n_checked'], 1) * 1000:.3f} µs/body"
+        )
         print()
         print(f"  Extrapolated × {FULL} steps:")
-        print(f"    Full step:       {r['step']*FULL/1000:6.0f}s  ({r['step']*FULL/60000:.1f} min)")
-        print(f"    Render alone:    {r['render']*FULL/1000:6.0f}s  ({r['render']*FULL/60000:.1f} min)")
-        print(f"    Clearance alone: {r['clearance']*FULL/1000:6.0f}s  ({r['clearance']*FULL/60000:.2f} min)")
+        print(
+            f"    Full step:       {r['step']*FULL/1000:6.0f}s  ({r['step']*FULL/60000:.1f} min)"
+        )
+        print(
+            f"    Render alone:    {r['render']*FULL/1000:6.0f}s  ({r['render']*FULL/60000:.1f} min)"
+        )
+        print(
+            f"    Clearance alone: {r['clearance']*FULL/1000:6.0f}s  ({r['clearance']*FULL/60000:.2f} min)"
+        )
         print()
         no_clear = r["step"] - r["clearance"]
-        print(f"  If clearance REMOVED:")
-        print(f"    New step time:   {no_clear:.1f} ms  →  {no_clear*FULL/1000:.0f}s "
-              f"({no_clear*FULL/60000:.1f} min/seed)")
+        print("  If clearance REMOVED:")
+        print(
+            f"    New step time:   {no_clear:.1f} ms  →  {no_clear*FULL/1000:.0f}s "
+            f"({no_clear*FULL/60000:.1f} min/seed)"
+        )
         print(f"    Speedup:         {r['step']/max(no_clear, 0.001):.2f}×")
 
     print()
     print("=" * 65)
     print("  Summary")
     print("=" * 65)
-    print(f"  {'Scene':<10}  {'Bodies':>7}  {'Step':>8}  {'Render':>8}  "
-          f"{'Physics':>8}  {'Clearance':>10}  {'Clear%':>7}")
+    print(
+        f"  {'Scene':<10}  {'Bodies':>7}  {'Step':>8}  {'Render':>8}  "
+        f"{'Physics':>8}  {'Clearance':>10}  {'Clear%':>7}"
+    )
     print(f"  {'-'*10}  {'-'*7}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*10}  {'-'*7}")
     for r in results:
-        print(f"  {r['label']:<10}  {r['n_checked']:>7}  "
-              f"{r['step']:>6.1f}ms  {r['render']:>6.1f}ms  "
-              f"{r['physics']:>6.1f}ms  {r['clearance']:>8.2f}ms  "
-              f"{r['clearance']/max(r['step'], 0.001)*100:>6.1f}%")
+        print(
+            f"  {r['label']:<10}  {r['n_checked']:>7}  "
+            f"{r['step']:>6.1f}ms  {r['render']:>6.1f}ms  "
+            f"{r['physics']:>6.1f}ms  {r['clearance']:>8.2f}ms  "
+            f"{r['clearance']/max(r['step'], 0.001)*100:>6.1f}%"
+        )
 
-    avg_clear_pct = float(np.mean([r["clearance"] / max(r["step"], 0.001) * 100 for r in results]))
-    avg_render_pct = float(np.mean([r["render"] / max(r["step"], 0.001) * 100 for r in results]))
+    avg_clear_pct = float(
+        np.mean([r["clearance"] / max(r["step"], 0.001) * 100 for r in results])
+    )
+    avg_render_pct = float(
+        np.mean([r["render"] / max(r["step"], 0.001) * 100 for r in results])
+    )
     print()
     print(f"  Average clearance share: {avg_clear_pct:.1f}%")
     print(f"  Average render share:    {avg_render_pct:.1f}%")
@@ -201,14 +243,18 @@ if __name__ == "__main__":
     print("=" * 65)
     print("  _update_min_clearance() — Full Step Cost Breakdown")
     print("=" * 65)
-    print(f"\n  Steps: {N_STEPS} measured  |  Warmup: {WARMUP}  |  Scenes: {list(SEEDS.keys())}\n")
+    print(
+        f"\n  Steps: {N_STEPS} measured  |  Warmup: {WARMUP}  |  Scenes: {list(SEEDS.keys())}\n"
+    )
 
     results = []
     for label, seed in SEEDS.items():
         print(f"  [{label}] running...", end=" ", flush=True)
         r = benchmark_scene(label, seed)
         results.append(r)
-        print(f"step={r['step']:.1f}ms  render={r['render']:.1f}ms  "
-              f"clearance={r['clearance']:.2f}ms  ({r['clearance']/max(r['step'], 0.001)*100:.1f}%)")
+        print(
+            f"step={r['step']:.1f}ms  render={r['render']:.1f}ms  "
+            f"clearance={r['clearance']:.2f}ms  ({r['clearance']/max(r['step'], 0.001)*100:.1f}%)"
+        )
 
     print_results(results)

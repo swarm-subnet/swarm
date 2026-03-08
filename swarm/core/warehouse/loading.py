@@ -6,7 +6,6 @@ import math
 import os
 import random
 
-import pybullet as p
 
 from .constants import (
     ENABLE_LOADING_TRUCKS,
@@ -60,7 +59,6 @@ from .helpers import (
     dock_inward_yaw_for_slot,
     model_bounds_xyz,
     _truck_extra_gap_for_gate_state,
-    oriented_xy_size,
 )
 
 
@@ -167,13 +165,19 @@ def build_loading_trucks(truck_loader, floor_top_z, wall_info, cli):
 
     outward_yaw = dock_inward_yaw_for_slot(loading_side)
     wall_thickness = float(wall_info.get("wall_thickness", 0.0))
-    floor_spawn_half_x = float(wall_info.get("floor_spawn_half_x", (WAREHOUSE_SIZE_X * 0.5)))
-    floor_spawn_half_y = float(wall_info.get("floor_spawn_half_y", (WAREHOUSE_SIZE_Y * 0.5)))
+    floor_spawn_half_x = float(
+        wall_info.get("floor_spawn_half_x", (WAREHOUSE_SIZE_X * 0.5))
+    )
+    floor_spawn_half_y = float(
+        wall_info.get("floor_spawn_half_y", (WAREHOUSE_SIZE_Y * 0.5))
+    )
 
     trucks = []
     for i, along in enumerate(door_centers):
         model_name = LOADING_TRUCK_MODELS[i % len(LOADING_TRUCK_MODELS)]
-        min_v, max_v = model_bounds_xyz(truck_loader, model_name, LOADING_TRUCK_SCALE_XYZ)
+        min_v, max_v = model_bounds_xyz(
+            truck_loader, model_name, LOADING_TRUCK_SCALE_XYZ
+        )
         sx = max_v[0] - min_v[0]
         sy = max_v[1] - min_v[1]
         sz = max_v[2] - min_v[2]
@@ -187,7 +191,12 @@ def build_loading_trucks(truck_loader, floor_top_z, wall_info, cli):
         wall_clearance = max(0.05, LOADING_TRUCK_WALL_GAP)
         gate_model_name = door_states[i] if i < len(door_states) else ""
         gate_extra_gap = _truck_extra_gap_for_gate_state(gate_model_name)
-        inward = inner_wall_face_inward + (depth_to_wall * 0.5) + wall_clearance + gate_extra_gap
+        inward = (
+            inner_wall_face_inward
+            + (depth_to_wall * 0.5)
+            + wall_clearance
+            + gate_extra_gap
+        )
         x, y = slot_point(loading_side, along, inward=inward)
         x_min = -floor_spawn_half_x + (ex * 0.5)
         x_max = floor_spawn_half_x - (ex * 0.5)
@@ -278,7 +287,16 @@ def build_loading_trucks(truck_loader, floor_top_z, wall_info, cli):
     }
 
 
-def build_overhead_cranes(crane_loader, crane_model_name, floor_top_z, roof_base_z, area_layout, shell_meshes, cli, seed=0):
+def build_overhead_cranes(
+    crane_loader,
+    crane_model_name,
+    floor_top_z,
+    roof_base_z,
+    area_layout,
+    shell_meshes,
+    cli,
+    seed=0,
+):
     _ = seed
     if not ENABLE_OVERHEAD_CRANES:
         return {"overhead_cranes_enabled": False}
@@ -330,7 +348,10 @@ def build_overhead_cranes(crane_loader, crane_model_name, floor_top_z, roof_base
         elif count == 3:
             fracs = (-0.38, 0.0, 0.38)
         else:
-            fracs = [(-0.40 + (0.80 * float(i) / float(max(1, count - 1)))) for i in range(count)]
+            fracs = [
+                (-0.40 + (0.80 * float(i) / float(max(1, count - 1))))
+                for i in range(count)
+            ]
 
         out = []
         if sx >= sy:
@@ -347,7 +368,9 @@ def build_overhead_cranes(crane_loader, crane_model_name, floor_top_z, roof_base
 
     def _far_enough(x, y):
         for prev in cranes:
-            if math.hypot(float(x) - float(prev["x"]), float(y) - float(prev["y"])) < (min_spacing - 1e-6):
+            if math.hypot(float(x) - float(prev["x"]), float(y) - float(prev["y"])) < (
+                min_spacing - 1e-6
+            ):
                 return False
         return True
 
@@ -390,8 +413,12 @@ def build_overhead_cranes(crane_loader, crane_model_name, floor_top_z, roof_base
                 continue
 
             x, y, yaw_deg = picked
-            support_end_z = float(roof_base_z) + float(OVERHEAD_CRANE_TRUSS_TOUCH_EXTRA_M)
-            anchor_world_z = float(support_end_z) - float(OVERHEAD_CRANE_ATTACH_CLEARANCE_M)
+            support_end_z = float(roof_base_z) + float(
+                OVERHEAD_CRANE_TRUSS_TOUCH_EXTRA_M
+            )
+            anchor_world_z = float(support_end_z) - float(
+                OVERHEAD_CRANE_ATTACH_CLEARANCE_M
+            )
             if (anchor_world_z - crane_height) < (float(floor_top_z) + 1.2):
                 anchor_world_z = float(floor_top_z) + 1.2 + crane_height
 
@@ -430,7 +457,9 @@ def build_overhead_cranes(crane_loader, crane_model_name, floor_top_z, roof_base
     }
 
 
-def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, cli, seed=0):
+def build_loading_staging(
+    loading_loader, floor_top_z, area_layout, wall_info, cli, seed=0
+):
     if not ENABLE_LOADING_STAGING:
         return {"loading_staging_enabled": False}
     if loading_loader is None:
@@ -539,7 +568,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             truck_depth = max(truck_depth, float(fy))
         else:
             truck_depth = max(truck_depth, float(fx))
-    dock_clearance = max(6.0, truck_depth + float(LOADING_STAGING_TRUCK_TAIL_CLEARANCE_M))
+    dock_clearance = max(
+        6.0, truck_depth + float(LOADING_STAGING_TRUCK_TAIL_CLEARANCE_M)
+    )
 
     edge_margin = max(0.4, float(LOADING_STAGING_EDGE_MARGIN_M))
     usable_depth = cross_depth_total - dock_clearance
@@ -626,7 +657,11 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
     gate_center = 0.5 * (dmin + dmax)
     gate_bias = (gate_center - zone_center) / max(1.0, (along_end - along_start))
 
-    if left_len >= LOADING_SECTION_MIN_SPAN_M and right_len >= LOADING_SECTION_MIN_SPAN_M and abs(gate_bias) <= 0.12:
+    if (
+        left_len >= LOADING_SECTION_MIN_SPAN_M
+        and right_len >= LOADING_SECTION_MIN_SPAN_M
+        and abs(gate_bias) <= 0.12
+    ):
         gate_position = "center"
     else:
         gate_position = "min" if gate_bias < 0.0 else "max"
@@ -658,9 +693,17 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             c = (base_range[0], g[0] - seg_gap)
         return g, c
 
-    if gate_position == "center" and _valid_range(left_range) and _valid_range(right_range):
+    if (
+        gate_position == "center"
+        and _valid_range(left_range)
+        and _valid_range(right_range)
+    ):
         office_area = (area_layout or {}).get("OFFICE")
-        office_along = float(office_area["cx"] if along_axis == "x" else office_area["cy"]) if office_area else zone_center
+        office_along = (
+            float(office_area["cx"] if along_axis == "x" else office_area["cy"])
+            if office_area
+            else zone_center
+        )
         left_mid = 0.5 * (left_range[0] + left_range[1])
         right_mid = 0.5 * (right_range[0] + right_range[1])
         if abs(left_mid - office_along) >= abs(right_mid - office_along):
@@ -670,17 +713,33 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             container_range = right_range
             goods_range = left_range
     elif gate_position == "min":
-        base = right_range if _range_len(right_range) >= _range_len(left_range) else left_range
+        base = (
+            right_range
+            if _range_len(right_range) >= _range_len(left_range)
+            else left_range
+        )
         near_start = abs(base[0] - (truck_max + seg_gap)) <= 1e-6
-        goods_range, container_range = _split_outer_range(base, near_at_start=near_start)
+        goods_range, container_range = _split_outer_range(
+            base, near_at_start=near_start
+        )
     else:
-        base = left_range if _range_len(left_range) >= _range_len(right_range) else right_range
+        base = (
+            left_range
+            if _range_len(left_range) >= _range_len(right_range)
+            else right_range
+        )
         near_start = abs(base[0] - (truck_max + seg_gap)) <= 1e-6
-        goods_range, container_range = _split_outer_range(base, near_at_start=near_start)
+        goods_range, container_range = _split_outer_range(
+            base, near_at_start=near_start
+        )
 
     if not _valid_range(goods_range, min_len=max(4.0, p_along + 1.0)):
-        fallback_ranges = sorted([left_range, right_range], key=lambda r: _range_len(r), reverse=True)
-        goods_range = fallback_ranges[0] if fallback_ranges else (along_start, along_end)
+        fallback_ranges = sorted(
+            [left_range, right_range], key=lambda r: _range_len(r), reverse=True
+        )
+        goods_range = (
+            fallback_ranges[0] if fallback_ranges else (along_start, along_end)
+        )
         container_range = fallback_ranges[1] if len(fallback_ranges) > 1 else None
 
     if not _valid_range(container_range, min_len=4.0):
@@ -688,9 +747,13 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
 
     if _valid_range(left_range, min_len=4.0) or _valid_range(right_range, min_len=4.0):
         if _range_len(left_range) >= _range_len(right_range):
-            container_range = left_range if _valid_range(left_range, min_len=4.0) else right_range
+            container_range = (
+                left_range if _valid_range(left_range, min_len=4.0) else right_range
+            )
         else:
-            container_range = right_range if _valid_range(right_range, min_len=4.0) else left_range
+            container_range = (
+                right_range if _valid_range(right_range, min_len=4.0) else left_range
+            )
     truck_mid = 0.5 * (truck_min + truck_max)
 
     box_count = 0
@@ -734,7 +797,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         material_parts = _obj_material_parts(model_path)
         if material_parts:
             for part in material_parts:
-                part_rgba = tuple(float(v) for v in part.get("rgba", (0.70, 0.70, 0.70, 1.0)))
+                part_rgba = tuple(
+                    float(v) for v in part.get("rgba", (0.70, 0.70, 0.70, 1.0))
+                )
                 mtl_name = str(part.get("material", "")).lower()
                 if body_rgba is not None:
                     if "container" in mtl_name:
@@ -803,8 +868,12 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             gap_used, box_yaw, box_along, box_cross = candidates[0]
             off_a = (box_along * 0.5) + (gap_used * 0.5)
             off_c = (box_cross * 0.5) + (gap_used * 0.5)
-            off_a_max = max(0.0, (pallet_along_local * 0.5) - (box_along * 0.5) - edge_margin_box)
-            off_c_max = max(0.0, (pallet_cross_local * 0.5) - (box_cross * 0.5) - edge_margin_box)
+            off_a_max = max(
+                0.0, (pallet_along_local * 0.5) - (box_along * 0.5) - edge_margin_box
+            )
+            off_c_max = max(
+                0.0, (pallet_cross_local * 0.5) - (box_cross * 0.5) - edge_margin_box
+            )
             off_a = min(off_a, off_a_max)
             off_c = min(off_c, off_c_max)
             slots = (
@@ -816,7 +885,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         else:
             box_yaw = yaw_deg % 360.0
             _bx, _by, box_along, _box_cross = _oriented_xy(box_spec, box_yaw)
-            off_a_max = max(0.0, (pallet_along_local * 0.5) - (box_along * 0.5) - edge_margin_box)
+            off_a_max = max(
+                0.0, (pallet_along_local * 0.5) - (box_along * 0.5) - edge_margin_box
+            )
             off_a = min(off_a_max, max(0.10, 0.5 * box_along))
             slots = (
                 (-off_a, 0.0),
@@ -862,7 +933,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
 
     def _spawn_barrel_pallet(px, py, yaw_deg, stack_layers=1):
         nonlocal pallet_count, barrel_count
-        stack_layers = min(int(LOADING_BARREL_MAX_STACK_LAYERS), int(max(1, stack_layers)))
+        stack_layers = min(
+            int(LOADING_BARREL_MAX_STACK_LAYERS), int(max(1, stack_layers))
+        )
         pallet_h = float(pallet_spec["size_xyz"][2])
         barrel_h = float(barrel_spec["size_xyz"][2])
         pallet_over_cargo_gap = 0.01
@@ -870,7 +943,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         ux = (math.cos(yaw_rad), math.sin(yaw_rad))
         uy = (-math.sin(yaw_rad), math.cos(yaw_rad))
         barrel_yaw_base = yaw_deg
-        _rx, _ry, barrel_along, barrel_cross = _oriented_xy(barrel_spec, barrel_yaw_base)
+        _rx, _ry, barrel_along, barrel_cross = _oriented_xy(
+            barrel_spec, barrel_yaw_base
+        )
         desired_gap = 0.04
         need_off_a = 0.5 * (barrel_along + desired_gap)
         need_off_c = 0.5 * (barrel_cross + desired_gap)
@@ -911,7 +986,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 bx = px + (ux[0] * ox_local) + (uy[0] * oy_local)
                 by = py + (ux[1] * ox_local) + (uy[1] * oy_local)
                 barrel_yaw = (barrel_yaw_base + (90.0 if (k % 2 == 1) else 0.0)) % 360.0
-                _spawn_prop(barrel_spec, bx, by, barrel_z, barrel_yaw, with_collision=False)
+                _spawn_prop(
+                    barrel_spec, bx, by, barrel_z, barrel_yaw, with_collision=False
+                )
                 barrel_count += 1
                 spawned_items.append(
                     {
@@ -936,7 +1013,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
 
     empty_stack_count = max(1, int(LOADING_EMPTY_PALLET_STACK_COUNT))
     empty_stack_min_layers = max(1, int(LOADING_EMPTY_PALLET_STACK_MIN_LAYERS))
-    empty_stack_max_layers = max(empty_stack_min_layers, int(LOADING_EMPTY_PALLET_STACK_MAX_LAYERS))
+    empty_stack_max_layers = max(
+        empty_stack_min_layers, int(LOADING_EMPTY_PALLET_STACK_MAX_LAYERS)
+    )
     along_half = p_along * 0.5
     side_gap = 0.8
     left_near_gate = (truck_min - side_gap) - along_half
@@ -947,9 +1026,10 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
     left_len = max(0.0, left_near_gate - left_far_end)
     right_len = max(0.0, right_far_end - right_near_gate)
     left_range = (min(left_near_gate, left_far_end), max(left_near_gate, left_far_end))
-    right_range = (min(right_near_gate, right_far_end), max(right_near_gate, right_far_end))
-    left_valid = _valid_range(left_range, min_len=max(2.2, p_along * 1.4))
-    right_valid = _valid_range(right_range, min_len=max(2.2, p_along * 1.4))
+    right_range = (
+        min(right_near_gate, right_far_end),
+        max(right_near_gate, right_far_end),
+    )
 
     left_raw = max(0.0, truck_min - along_start)
     right_raw = max(0.0, along_end - truck_max)
@@ -971,7 +1051,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
 
     left_can_container = _range_len(left_range) >= container_min_span_for_one
     right_can_container = _range_len(right_range) >= container_min_span_for_one
-    container_min_span_for_three = max(container_min_span_for_one, 3.0 * container_min_span_for_one)
+    container_min_span_for_three = max(
+        container_min_span_for_one, 3.0 * container_min_span_for_one
+    )
     left_can_three = _range_len(left_range) >= container_min_span_for_three
     right_can_three = _range_len(right_range) >= container_min_span_for_three
 
@@ -993,7 +1075,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
     preferred_side_right = not base_container_on_right
     preferred_can_three = right_can_three if preferred_side_right else left_can_three
     other_can_three = left_can_three if preferred_side_right else right_can_three
-    preferred_can_one = right_can_container if preferred_side_right else left_can_container
+    preferred_can_one = (
+        right_can_container if preferred_side_right else left_can_container
+    )
     other_can_one = left_can_container if preferred_side_right else right_can_container
     if preferred_can_three:
         container_on_right = preferred_side_right
@@ -1025,25 +1109,19 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         container_hi = min(same_hi, container_lo + container_span_use)
         empty_lo = container_lo
         empty_hi = container_hi
-        container_start_along = container_hi
-        container_end_along = container_lo
         container_dir = -1.0
         container_gate_edge_along = container_lo
         empty_start_along = empty_lo
         empty_end_along = empty_hi
-        empty_dir = 1.0
     else:
         container_hi = same_hi
         container_lo = max(same_lo, container_hi - container_span_use)
         empty_lo = container_lo
         empty_hi = container_hi
-        container_start_along = container_lo
-        container_end_along = container_hi
         container_dir = 1.0
         container_gate_edge_along = container_hi
         empty_start_along = empty_hi
         empty_end_along = empty_lo
-        empty_dir = -1.0
 
     container_candidate_range = (container_lo, container_hi)
 
@@ -1052,11 +1130,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         if empty_on_right:
             empty_start_along = (truck_max + tight_side_gap) + along_half
             empty_end_along = along_end - along_half
-            empty_dir = 1.0
         else:
             empty_start_along = (truck_min - tight_side_gap) - along_half
             empty_end_along = along_start + along_half
-            empty_dir = -1.0
 
         if abs(empty_end_along - empty_start_along) < 0.2:
             if empty_on_right:
@@ -1074,7 +1150,11 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             empty_start_along = anchor
             empty_end_along = anchor
 
-    container_range = container_candidate_range if _valid_range(container_candidate_range, min_len=1.8) else None
+    container_range = (
+        container_candidate_range
+        if _valid_range(container_candidate_range, min_len=1.8)
+        else None
+    )
 
     _container_cross_reserve = 0.0
     if container_spec is not None and container_range is not None:
@@ -1091,7 +1171,12 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
 
     empty_container_gap = max(1.30, p_cross * 0.70)
     if _container_cross_reserve > 0.0:
-        empty_cross_front = cross_depth_total - _container_cross_reserve - empty_container_gap - (p_cross * 0.5)
+        empty_cross_front = (
+            cross_depth_total
+            - _container_cross_reserve
+            - empty_container_gap
+            - (p_cross * 0.5)
+        )
     else:
         empty_cross_front = cross_depth_total - (p_cross * 0.5) - 0.12
     empty_cross_front = _clamp(
@@ -1103,7 +1188,6 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
     goods_s_min = max(0.0, min(s_min, float(LOADING_STAGING_GOODS_BACK_EDGE_PAD_M)))
     goods_s_max = s_max
     goods_cross_span = max(0.0, goods_s_max - goods_s_min)
-    cross_span = goods_cross_span
     row_gap = max(0.45, float(LOADING_STAGING_PROP_GAP_M))
     col_gap_default = max(0.60, float(LOADING_STAGING_PROP_GAP_M) + 0.20)
     max_rows_fit = int((goods_cross_span + row_gap) // (p_cross + row_gap))
@@ -1113,17 +1197,29 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             "loading_staging_reason": "Not enough room for loaded pallets in goods section.",
         }
 
-    truck_alongs = sorted(float(t.get("along", 0.0)) for t in wall_info.get("loading_trucks", []))
+    truck_alongs = sorted(
+        float(t.get("along", 0.0)) for t in wall_info.get("loading_trucks", [])
+    )
     if not truck_alongs:
-        truck_alongs = [float(v) for v in door_centers] if door_centers else [0.5 * (goods_layout_range[0] + goods_layout_range[1])]
-    truck_alongs = [a for a in truck_alongs if goods_layout_range[0] <= a <= goods_layout_range[1]]
+        truck_alongs = (
+            [float(v) for v in door_centers]
+            if door_centers
+            else [0.5 * (goods_layout_range[0] + goods_layout_range[1])]
+        )
+    truck_alongs = [
+        a for a in truck_alongs if goods_layout_range[0] <= a <= goods_layout_range[1]
+    ]
     if not truck_alongs:
         truck_alongs = [0.5 * (goods_layout_range[0] + goods_layout_range[1])]
 
     truck_lanes = []
     for i, a in enumerate(truck_alongs):
         lo = goods_layout_range[0] if i == 0 else 0.5 * (truck_alongs[i - 1] + a)
-        hi = goods_layout_range[1] if i == (len(truck_alongs) - 1) else 0.5 * (a + truck_alongs[i + 1])
+        hi = (
+            goods_layout_range[1]
+            if i == (len(truck_alongs) - 1)
+            else 0.5 * (a + truck_alongs[i + 1])
+        )
         lane_margin = 0.06
         lane_lo = lo + lane_margin
         lane_hi = hi - lane_margin
@@ -1131,7 +1227,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             truck_lanes.append((i, a, lane_lo, lane_hi))
 
     loaded_stack_min = max(1, int(LOADING_LOADED_PALLET_STACK_MIN_LAYERS))
-    loaded_stack_max = max(loaded_stack_min, int(LOADING_LOADED_PALLET_STACK_MAX_LAYERS))
+    loaded_stack_max = max(
+        loaded_stack_min, int(LOADING_LOADED_PALLET_STACK_MAX_LAYERS)
+    )
     truck_row_centers_used = []
 
     for truck_idx, truck_along, lane_lo, lane_hi in truck_lanes:
@@ -1140,8 +1238,12 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         if cols_fit < 1:
             continue
 
-        bundles_min = min(int(LOADING_BUNDLES_PER_TRUCK_MIN), int(LOADING_BUNDLES_PER_TRUCK_MAX))
-        bundles_max = max(int(LOADING_BUNDLES_PER_TRUCK_MIN), int(LOADING_BUNDLES_PER_TRUCK_MAX))
+        bundles_min = min(
+            int(LOADING_BUNDLES_PER_TRUCK_MIN), int(LOADING_BUNDLES_PER_TRUCK_MAX)
+        )
+        bundles_max = max(
+            int(LOADING_BUNDLES_PER_TRUCK_MIN), int(LOADING_BUNDLES_PER_TRUCK_MAX)
+        )
         bundles_min = max(4, bundles_min)
         bundles_max = max(bundles_min, min(6, bundles_max))
         target_bundles = rng.randint(bundles_min, bundles_max)
@@ -1169,9 +1271,13 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         if len(row_bundle_counts) >= 2:
             row_step = p_cross + row_gap
             row1_min = row0_center_s + max(0.35, p_cross * 0.65)
-            row1_max = goods_s_max - (p_cross * 0.5) - max(
-                1.20,
-                float(LOADING_STAGING_TRUCK_TAIL_CLEARANCE_M) + 0.80,
+            row1_max = (
+                goods_s_max
+                - (p_cross * 0.5)
+                - max(
+                    1.20,
+                    float(LOADING_STAGING_TRUCK_TAIL_CLEARANCE_M) + 0.80,
+                )
             )
             if row1_max > row1_min:
                 row1_center_s = _clamp(row0_center_s + row_step, row1_min, row1_max)
@@ -1180,7 +1286,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 row_bundle_counts = [bundle_count]
 
         bundle_count = sum(row_bundle_counts)
-        stack_layers_per_bundle = [rng.randint(loaded_stack_min, loaded_stack_max) for _ in range(bundle_count)]
+        stack_layers_per_bundle = [
+            rng.randint(loaded_stack_min, loaded_stack_max) for _ in range(bundle_count)
+        ]
         row_cargo_modes = []
         mixed_barrel_indices = set()
         if len(row_bundle_counts) >= 2:
@@ -1196,14 +1304,18 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 max(1, int(round(float(mixed_count) * 0.35))),
             )
             if barrel_target > 0:
-                mixed_barrel_indices = set(rng.sample(range(mixed_count), barrel_target))
+                mixed_barrel_indices = set(
+                    rng.sample(range(mixed_count), barrel_target)
+                )
             row_cargo_modes = ["mixed"]
 
         bundle_cursor = 0
         for row_idx, row_count in enumerate(row_bundle_counts):
             if row_count <= 0:
                 continue
-            row_cargo = row_cargo_modes[row_idx] if row_idx < len(row_cargo_modes) else "box"
+            row_cargo = (
+                row_cargo_modes[row_idx] if row_idx < len(row_cargo_modes) else "box"
+            )
 
             if row_count <= 1:
                 col_gap_use = 0.0
@@ -1213,7 +1325,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 col_gap_use = max(0.0, min(col_gap_default, fit_gap))
                 total_cols_len = (row_count * p_along) + ((row_count - 1) * col_gap_use)
 
-            first_col_center = lane_lo + ((lane_len - total_cols_len) * 0.5) + (p_along * 0.5)
+            first_col_center = (
+                lane_lo + ((lane_len - total_cols_len) * 0.5) + (p_along * 0.5)
+            )
             s_center = row_centers_s[min(row_idx, len(row_centers_s) - 1)]
             truck_row_centers_used.append(float(s_center))
 
@@ -1234,7 +1348,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 if spawn_barrel:
                     _spawn_barrel_pallet(px, py, yaw_along, stack_layers=layers)
                 else:
-                    _spawn_loaded_pallet_with_boxes(px, py, yaw_along, stack_layers=layers)
+                    _spawn_loaded_pallet_with_boxes(
+                        px, py, yaw_along, stack_layers=layers
+                    )
 
     side_spans = []
     container_side_name = None
@@ -1248,7 +1364,11 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             side_spans.append((side_name, span))
 
     if side_spans:
-        min_truck_s = min(truck_row_centers_used) if truck_row_centers_used else (usable_depth - (p_cross * 0.5))
+        min_truck_s = (
+            min(truck_row_centers_used)
+            if truck_row_centers_used
+            else (usable_depth - (p_cross * 0.5))
+        )
         support_rows_s = []
         support_row_step = p_cross + max(0.60, row_gap)
         support_s_min = s_min + (p_cross * 0.5) + 0.20
@@ -1271,7 +1391,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 lo = float(span[0]) + 0.06
                 hi = float(span[1]) - 0.06
                 span_len = max(0.0, hi - lo)
-                cols_fit = int((span_len + col_gap_default) // (p_along + col_gap_default))
+                cols_fit = int(
+                    (span_len + col_gap_default) // (p_along + col_gap_default)
+                )
                 if cols_fit < 1:
                     continue
 
@@ -1282,8 +1404,12 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 else:
                     fit_gap = (span_len - (cols_use * p_along)) / float(cols_use - 1)
                     col_gap_use = max(0.0, min(col_gap_default, fit_gap))
-                    total_cols_len = (cols_use * p_along) + ((cols_use - 1) * col_gap_use)
-                first_col_center = lo + ((span_len - total_cols_len) * 0.5) + (p_along * 0.5)
+                    total_cols_len = (cols_use * p_along) + (
+                        (cols_use - 1) * col_gap_use
+                    )
+                first_col_center = (
+                    lo + ((span_len - total_cols_len) * 0.5) + (p_along * 0.5)
+                )
 
                 side_pref_barrel = side_name == "left"
                 for ridx, s_center in enumerate(support_rows_s):
@@ -1291,13 +1417,16 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                         along = first_col_center + (cidx * (p_along + col_gap_use))
                         px, py = _xy_from_along_s(along, s_center)
                         layers = rng.randint(support_min_layers, support_max_layers)
-                        use_barrel = (ridx % 2 == 0) if side_pref_barrel else (ridx % 2 == 1)
+                        use_barrel = (
+                            (ridx % 2 == 0) if side_pref_barrel else (ridx % 2 == 1)
+                        )
                         if use_barrel:
                             _spawn_barrel_pallet(px, py, yaw_along, stack_layers=layers)
                         else:
-                            _spawn_loaded_pallet_with_boxes(px, py, yaw_along, stack_layers=layers)
+                            _spawn_loaded_pallet_with_boxes(
+                                px, py, yaw_along, stack_layers=layers
+                            )
 
-    container_target_center_along = None
     empty_slot_positions = []
     span_abs = abs(empty_end_along - empty_start_along)
     lo_along = min(empty_start_along, empty_end_along)
@@ -1344,12 +1473,14 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             step_max = span_len / float(row_count - 1)
             step_use = min(step_pref, max(0.20, step_max))
             cluster_half = 0.5 * step_use * float(max(0, row_count - 1))
-            row_alongs = [span_center + (dir_sign * ((float(i) * step_use) - cluster_half)) for i in range(row_count)]
+            row_alongs = [
+                span_center + (dir_sign * ((float(i) * step_use) - cluster_half))
+                for i in range(row_count)
+            ]
         row_cross = row_cross_values[min(ridx, len(row_cross_values) - 1)]
         for along in row_alongs:
             empty_slot_positions.append((along, row_cross))
 
-    empty_cross_values = [float(cross_s) for _along, cross_s in empty_slot_positions]
     for slot_idx, (along, cross_s) in enumerate(empty_slot_positions):
         along = _clamp(along, lo_along, hi_along)
         empty_x, empty_y = _xy_from_along_s(along, cross_s)
@@ -1434,7 +1565,15 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
                 if need_along <= (have_along + 1e-6):
                     total_target = base_count + upper_count
                     score = (total_target, -c_along)
-                    cand = (score, cand_yaw, c_along, c_cross, base_count, upper_count, total_target)
+                    cand = (
+                        score,
+                        cand_yaw,
+                        c_along,
+                        c_cross,
+                        base_count,
+                        upper_count,
+                        total_target,
+                    )
                     if best is None or cand[0] > best[0]:
                         best = cand
                     break
@@ -1442,7 +1581,15 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         if best is None:
             return False
 
-        _score, container_yaw, c_along, c_cross, base_count, upper_count, total_target = best
+        (
+            _score,
+            container_yaw,
+            c_along,
+            c_cross,
+            base_count,
+            upper_count,
+            total_target,
+        ) = best
         range_lo = float(target_range[0])
         range_hi = float(target_range[1])
         center_lo = range_lo + (c_along * 0.5)
@@ -1455,7 +1602,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             gap_along = 0.0
         else:
             section_span = max(0.0, range_hi - range_lo)
-            gap_max = max(0.0, (section_span - (base_count * c_along)) / float(base_count - 1))
+            gap_max = max(
+                0.0, (section_span - (base_count * c_along)) / float(base_count - 1)
+            )
             gap_along = min(gap_pref, gap_max)
         step = c_along + gap_along
 
@@ -1486,13 +1635,19 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         before = int(container_count)
         for along in base_alongs:
             cx, cy = _xy_from_along_s(along, row_cross)
-            _spawn_container(cx, cy, floor_top_z, container_yaw, with_collision=True, body_rgba=None)
+            _spawn_container(
+                cx, cy, floor_top_z, container_yaw, with_collision=True, body_rgba=None
+            )
             container_count += 1
             container_entries.append({"x": cx, "y": cy, "level": 0})
 
         if upper_count >= 1 and len(base_alongs) >= 2:
             container_h = float(c_size_z)
-            top_z = floor_top_z + container_h + float(LOADING_CONTAINER_STACK_VERTICAL_GAP_M)
+            top_z = (
+                floor_top_z
+                + container_h
+                + float(LOADING_CONTAINER_STACK_VERTICAL_GAP_M)
+            )
             if upper_count >= 2 and len(base_alongs) >= 3:
                 upper_alongs = [
                     0.5 * (base_alongs[0] + base_alongs[1]),
@@ -1503,15 +1658,15 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
             upper_alongs = upper_alongs[:upper_count]
             for along in upper_alongs:
                 cx, cy = _xy_from_along_s(along, row_cross)
-                _spawn_container(cx, cy, top_z, container_yaw, with_collision=True, body_rgba=None)
+                _spawn_container(
+                    cx, cy, top_z, container_yaw, with_collision=True, body_rgba=None
+                )
                 container_count += 1
                 container_entries.append({"x": cx, "y": cy, "level": 1})
 
         placed_now = int(container_count) - before
         if placed_now < total_target and not container_reason:
-            container_reason = (
-                f"Container stack fallback: placed {placed_now}/{total_target} in LOADING section."
-            )
+            container_reason = f"Container stack fallback: placed {placed_now}/{total_target} in LOADING section."
         return placed_now > 0
 
     placed_container = False
@@ -1527,7 +1682,9 @@ def build_loading_staging(loading_loader, floor_top_z, area_layout, wall_info, c
         if _valid_range(full_fallback_range, min_len=0.6):
             if _place_container_stack_in_range(full_fallback_range):
                 if not container_reason:
-                    container_reason = "Container placed using full LOADING fallback range."
+                    container_reason = (
+                        "Container placed using full LOADING fallback range."
+                    )
         elif not container_reason:
             container_reason = "Unable to place any container in LOADING zone."
     return {

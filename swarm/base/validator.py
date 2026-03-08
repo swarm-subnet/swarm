@@ -98,15 +98,12 @@ class BaseValidatorNeuron(BaseNeuron):
                 pass
 
         except Exception as e:
-            bt.logging.error(
-                f"Failed to create Axon initialize with exception: {e}"
-            )
+            bt.logging.error(f"Failed to create Axon initialize with exception: {e}")
             pass
 
     async def concurrent_forward(self):
         coroutines = [
-            self.forward()
-            for _ in range(self.config.neuron.num_concurrent_forwards)
+            self.forward() for _ in range(self.config.neuron.num_concurrent_forwards)
         ]
         await asyncio.gather(*coroutines)
 
@@ -141,7 +138,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 bt.logging.info(f"step({self.step}) block({self.block})")
 
                 # Restart wandb before each forward cycle for fresh run
-                if hasattr(self, 'wandb_helper') and self.wandb_helper:
+                if hasattr(self, "wandb_helper") and self.wandb_helper:
                     self.wandb_helper.restart()
 
                 # Run multiple forwards concurrently.
@@ -165,9 +162,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # In case of unforeseen errors, the validator will log the error and continue operations.
         except Exception as err:
             bt.logging.error(f"Error during validation: {str(err)}")
-            bt.logging.debug(
-                str(print_exception(type(err), err, err.__traceback__))
-            )
+            bt.logging.debug(str(print_exception(type(err), err, err.__traceback__)))
 
     def run_in_background_thread(self):
         """
@@ -197,7 +192,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self.run_in_background_thread()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, _exc_type, _exc_value, _traceback):
         """
         Stops the validator's background operations upon exiting the context.
         This method facilitates the use of the validator in a 'with' statement.
@@ -225,7 +220,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Check if self.scores contains any NaN values and log a warning if it does.
         if np.isnan(self.scores).any():
             bt.logging.warning(
-                f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
         # Calculate the average reward for each uid across non-zero values.
@@ -357,9 +352,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
         alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: np.ndarray = (
-            alpha * scattered_rewards + (1 - alpha) * self.scores
-        )
+        self.scores: np.ndarray = alpha * scattered_rewards + (1 - alpha) * self.scores
         bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):

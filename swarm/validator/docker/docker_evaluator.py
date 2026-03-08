@@ -1,7 +1,5 @@
 import asyncio
-import concurrent.futures
 import hashlib
-import multiprocessing
 import os
 import re
 import shutil
@@ -21,13 +19,20 @@ import numpy as np
 
 from swarm.protocol import ValidationResult
 from swarm.constants import (
-    SIM_DT, SPEED_LIMIT,
-    DOCKER_WORKER_MEMORY, DOCKER_WORKER_CPUS, N_DOCKER_WORKERS,
+    SIM_DT,
+    SPEED_LIMIT,
+    DOCKER_WORKER_MEMORY,
+    DOCKER_WORKER_CPUS,
+    N_DOCKER_WORKERS,
     DOCKER_PIP_WHITELIST,
-    RPC_STEP_TIMEOUT_SEC, RPC_FIRST_STEP_TIMEOUT_SEC,
-    RPC_RESET_TIMEOUT_SEC, RPC_PING_TIMEOUT_SEC,
+    RPC_STEP_TIMEOUT_SEC,
+    RPC_FIRST_STEP_TIMEOUT_SEC,
+    RPC_RESET_TIMEOUT_SEC,
+    RPC_PING_TIMEOUT_SEC,
     RPC_MAX_STRIKES_PER_SEED,
-    GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_PER_SEED_SEC, GLOBAL_EVAL_CAP_SEC,
+    GLOBAL_EVAL_BASE_SEC,
+    GLOBAL_EVAL_PER_SEED_SEC,
+    GLOBAL_EVAL_CAP_SEC,
     MINER_COMPUTE_BUDGET_SEC,
     CALIBRATION_ROUNDS,
     CALIBRATION_OVERHEAD_CAP_SEC,
@@ -43,7 +48,9 @@ from swarm.validator.reward import flight_reward
 from gym_pybullet_drones.utils.enums import ActionType
 
 
-def _run_multi_seed_rpc_sync_isolated_payload(tasks: list, uid: int, rpc_port: int) -> list[tuple[int, bool, float, float]]:
+def _run_multi_seed_rpc_sync_isolated_payload(
+    tasks: list, uid: int, rpc_port: int
+) -> list[tuple[int, bool, float, float]]:
     """Run RPC sync in an isolated subprocess and return primitive tuples."""
     evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
     results = DockerSecureEvaluator._run_multi_seed_rpc_sync(
@@ -65,37 +72,40 @@ def _run_multi_seed_rpc_sync_isolated_payload(tasks: list, uid: int, rpc_port: i
 
 class DockerSecureEvaluator:
     """Docker-based secure model evaluation"""
-    
+
     _instance = None
     _base_ready = False
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         # Only initialize attributes on first instantiation
-        if not hasattr(self, 'base_image'):
+        if not hasattr(self, "base_image"):
             self.base_image = "swarm_evaluator_base:latest"
             self.last_fake_model_info = None
-        
+
         if not DockerSecureEvaluator._base_ready:
             self._setup_base_container()
             DockerSecureEvaluator._base_ready = self.base_ready
-    
+
     def _check_docker_available(self):
         """Check if Docker is installed and available"""
         try:
             # Check if Docker command exists
-            result = subprocess.run(["docker", "--version"], 
-                                  capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                ["docker", "--version"], capture_output=True, text=True, check=True
+            )
             bt.logging.info(f"Docker found: {result.stdout.strip()}")
             return True
-            
+
         except (subprocess.CalledProcessError, FileNotFoundError):
             bt.logging.error("🐳 Docker not found! Please install Docker manually.")
-            bt.logging.error("📖 See installation instructions in swarm/requirements.txt")
+            bt.logging.error(
+                "📖 See installation instructions in swarm/requirements.txt"
+            )
             return False
 
     def _calculate_docker_hash(self) -> str:
@@ -123,8 +133,15 @@ class DockerSecureEvaluator:
         """Get the code hash label from the existing Docker image."""
         try:
             result = subprocess.run(
-                ["docker", "inspect", "--format", "{{index .Config.Labels \"swarm.code_hash\"}}", self.base_image],
-                capture_output=True, text=True
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    '{{index .Config.Labels "swarm.code_hash"}}',
+                    self.base_image,
+                ],
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 return result.stdout.strip()
@@ -138,11 +155,12 @@ class DockerSecureEvaluator:
 
         # Check if image exists
         result = subprocess.run(
-            ["docker", "images", "-q", self.base_image],
-            capture_output=True, text=True
+            ["docker", "images", "-q", self.base_image], capture_output=True, text=True
         )
         if not result.stdout.strip():
-            bt.logging.info(f"🐳 Docker image not found, will build (hash: {current_hash})")
+            bt.logging.info(
+                f"🐳 Docker image not found, will build (hash: {current_hash})"
+            )
             return True
 
         # Get hash from the image label (not from cache file)
@@ -153,9 +171,13 @@ class DockerSecureEvaluator:
             return False
 
         if image_hash:
-            bt.logging.info(f"🔄 Code changed: image={image_hash}, current={current_hash} - rebuilding")
+            bt.logging.info(
+                f"🔄 Code changed: image={image_hash}, current={current_hash} - rebuilding"
+            )
         else:
-            bt.logging.info(f"🔄 Image missing hash label - rebuilding (hash: {current_hash})")
+            bt.logging.info(
+                f"🔄 Image missing hash label - rebuilding (hash: {current_hash})"
+            )
 
         return True
 
@@ -178,19 +200,33 @@ class DockerSecureEvaluator:
             try:
                 result = subprocess.run(
                     ["docker", "images", "-q", self.base_image],
-                    capture_output=True, text=True
+                    capture_output=True,
+                    text=True,
                 )
                 old_image_id = result.stdout.strip() if result.returncode == 0 else None
             except Exception:
                 pass
 
             try:
-                subprocess.run(["docker", "container", "prune", "-f"], capture_output=True)
-                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_eval_)", shell=True, capture_output=True)
-                subprocess.run("docker rm -f $(docker ps -aq --filter=name=swarm_verify_)", shell=True, capture_output=True)
+                subprocess.run(
+                    ["docker", "container", "prune", "-f"], capture_output=True
+                )
+                subprocess.run(
+                    "docker rm -f $(docker ps -aq --filter=name=swarm_eval_)",
+                    shell=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    "docker rm -f $(docker ps -aq --filter=name=swarm_verify_)",
+                    shell=True,
+                    capture_output=True,
+                )
                 subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
                 subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-                subprocess.run(["docker", "builder", "prune", "-f", "--keep-storage", "5GB"], capture_output=True)
+                subprocess.run(
+                    ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
+                    capture_output=True,
+                )
             except Exception:
                 pass
 
@@ -199,11 +235,15 @@ class DockerSecureEvaluator:
             current_hash = self._calculate_docker_hash()
 
             cmd = [
-                "docker", "build",
-                "--label", f"swarm.code_hash={current_hash}",
-                "-t", self.base_image,
-                "-f", str(dockerfile_path),
-                str(build_context)
+                "docker",
+                "build",
+                "--label",
+                f"swarm.code_hash={current_hash}",
+                "-t",
+                self.base_image,
+                "-f",
+                str(dockerfile_path),
+                str(build_context),
             ]
 
             bt.logging.info(f"Building base Docker image (hash: {current_hash})...")
@@ -222,16 +262,25 @@ class DockerSecureEvaluator:
                     try:
                         new_result = subprocess.run(
                             ["docker", "images", "-q", self.base_image],
-                            capture_output=True, text=True
+                            capture_output=True,
+                            text=True,
                         )
-                        new_image_id = new_result.stdout.strip() if new_result.returncode == 0 else None
+                        new_image_id = (
+                            new_result.stdout.strip()
+                            if new_result.returncode == 0
+                            else None
+                        )
                         if new_image_id and old_image_id != new_image_id:
-                            subprocess.run(["docker", "rmi", old_image_id], capture_output=True)
+                            subprocess.run(
+                                ["docker", "rmi", old_image_id], capture_output=True
+                            )
                             bt.logging.debug(f"Removed old image: {old_image_id[:12]}")
                     except Exception:
                         pass
             else:
-                bt.logging.error(f"❌ Docker build failed with return code: {result.returncode}")
+                bt.logging.error(
+                    f"❌ Docker build failed with return code: {result.returncode}"
+                )
                 self.base_ready = False
                 DockerSecureEvaluator._base_ready = False
 
@@ -242,7 +291,7 @@ class DockerSecureEvaluator:
 
     def _find_free_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('', 0))
+            s.bind(("", 0))
             return s.getsockname()[1]
 
     def _check_rpc_ready(self, container_name: str, timeout: float = 5.0) -> bool:
@@ -250,7 +299,9 @@ class DockerSecureEvaluator:
         try:
             result = subprocess.run(
                 ["docker", "top", container_name],
-                capture_output=True, text=True, timeout=timeout
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
             return result.returncode == 0 and "main.py" in result.stdout
         except Exception:
@@ -260,8 +311,17 @@ class DockerSecureEvaluator:
         """Get the Docker bridge gateway IP (host IP as seen from containers)"""
         try:
             result = subprocess.run(
-                ["docker", "network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
-                capture_output=True, text=True, timeout=10
+                [
+                    "docker",
+                    "network",
+                    "inspect",
+                    "bridge",
+                    "-f",
+                    "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
@@ -274,7 +334,9 @@ class DockerSecureEvaluator:
         try:
             result = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Pid}}", container_name],
-                capture_output=True, text=True, timeout=10
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 pid = int(result.stdout.strip())
@@ -288,15 +350,67 @@ class DockerSecureEvaluator:
         """Apply iptables rules in container's network namespace from HOST using nsenter"""
         try:
             rules = [
-                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-d", validator_ip, "-j", "ACCEPT"],
-                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-d", "127.0.0.1", "-j", "ACCEPT"],
-                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-                ["nsenter", "-t", str(container_pid), "-n", "iptables", "-A", "OUTPUT", "-j", "DROP"],
+                [
+                    "nsenter",
+                    "-t",
+                    str(container_pid),
+                    "-n",
+                    "iptables",
+                    "-A",
+                    "OUTPUT",
+                    "-d",
+                    validator_ip,
+                    "-j",
+                    "ACCEPT",
+                ],
+                [
+                    "nsenter",
+                    "-t",
+                    str(container_pid),
+                    "-n",
+                    "iptables",
+                    "-A",
+                    "OUTPUT",
+                    "-d",
+                    "127.0.0.1",
+                    "-j",
+                    "ACCEPT",
+                ],
+                [
+                    "nsenter",
+                    "-t",
+                    str(container_pid),
+                    "-n",
+                    "iptables",
+                    "-A",
+                    "OUTPUT",
+                    "-m",
+                    "state",
+                    "--state",
+                    "ESTABLISHED,RELATED",
+                    "-j",
+                    "ACCEPT",
+                ],
+                [
+                    "nsenter",
+                    "-t",
+                    str(container_pid),
+                    "-n",
+                    "iptables",
+                    "-A",
+                    "OUTPUT",
+                    "-j",
+                    "DROP",
+                ],
             ]
             for rule in rules:
-                result = subprocess.run(rule, capture_output=True, text=True, timeout=10)
+                result = subprocess.run(
+                    rule, capture_output=True, text=True, timeout=10
+                )
                 if result.returncode != 0:
-                    bt.logging.warning(f"Failed to apply iptables rule: {' '.join(rule)}")
+                    bt.logging.warning(
+                        f"Failed to apply iptables rule: {' '.join(rule)}"
+                    )
                     return False
             return True
         except Exception as e:
@@ -325,11 +439,15 @@ class DockerSecureEvaluator:
                 return False
 
             if line.startswith(("git+", "http://", "https://", "file:", "./", "/")):
-                bt.logging.warning(f"UID {uid}: Direct URL/path install not allowed: {line}")
+                bt.logging.warning(
+                    f"UID {uid}: Direct URL/path install not allowed: {line}"
+                )
                 return False
 
             if " @ " in line:
-                bt.logging.warning(f"UID {uid}: PEP 508 direct reference not allowed: {line}")
+                bt.logging.warning(
+                    f"UID {uid}: PEP 508 direct reference not allowed: {line}"
+                )
                 return False
 
             line = line.split("#")[0].strip()
@@ -390,7 +508,9 @@ class DockerSecureEvaluator:
         This reuses the container for all seeds, calling agent.reset() between each.
         Much faster than creating a new container per seed.
         """
-        schema_file = Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
+        schema_file = (
+            Path(__file__).parent.parent.parent / "submission_template" / "agent.capnp"
+        )
         agent_capnp = capnp.load(str(schema_file))
         trace_rpc = os.getenv("SWARM_LOG_RPC_TRACE", "0") == "1"
         try:
@@ -422,7 +542,9 @@ class DockerSecureEvaluator:
                     "map_seed": int(getattr(task_obj, "map_seed", -1)),
                     "challenge_type": int(getattr(task_obj, "challenge_type", -1)),
                     "horizon_sec": float(getattr(task_obj, "horizon", 0.0)),
-                    "moving_platform": bool(getattr(task_obj, "moving_platform", False)),
+                    "moving_platform": bool(
+                        getattr(task_obj, "moving_platform", False)
+                    ),
                     "status": status,
                     "success": bool(success),
                     "sim_time_sec": float(sim_t),
@@ -463,7 +585,9 @@ class DockerSecureEvaluator:
         }
         watchdog_stop = threading.Event()
 
-        def _set_phase(phase: str, task: str = "n/a", step: int = 0, sim_t: float = 0.0) -> None:
+        def _set_phase(
+            phase: str, task: str = "n/a", step: int = 0, sim_t: float = 0.0
+        ) -> None:
             with phase_lock:
                 phase_state["phase"] = phase
                 phase_state["task"] = task
@@ -515,7 +639,9 @@ class DockerSecureEvaluator:
                     try:
                         _set_phase("rpc_connect", task="n/a", step=attempt, sim_t=0.0)
                         _trace(f"connect attempt {attempt}/{max_ping_attempts}")
-                        stream = await capnp.AsyncIoStream.create_connection(host="localhost", port=rpc_port)
+                        stream = await capnp.AsyncIoStream.create_connection(
+                            host="localhost", port=rpc_port
+                        )
                         client = capnp.TwoPartyClient(stream)
                         agent = client.bootstrap().cast_as(agent_capnp.Agent)
 
@@ -524,9 +650,13 @@ class DockerSecureEvaluator:
                             agent.ping("test"), timeout=RPC_PING_TIMEOUT_SEC
                         )
                         if ping_response.response != "pong":
-                            raise RuntimeError(f"Unexpected ping response (attempt {attempt}/{max_ping_attempts})")
+                            raise RuntimeError(
+                                f"Unexpected ping response (attempt {attempt}/{max_ping_attempts})"
+                            )
 
-                        _trace(f"ping ok (attempt {attempt}) response={ping_response.response}")
+                        _trace(
+                            f"ping ok (attempt {attempt}) response={ping_response.response}"
+                        )
                         break
                     except asyncio.TimeoutError:
                         _trace(
@@ -545,10 +675,14 @@ class DockerSecureEvaluator:
                                     success=False,
                                     sim_t=0.0,
                                 )
-                            return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
+                            return [
+                                ValidationResult(uid, False, 0.0, 0.0) for _ in tasks
+                            ]
                         await asyncio.sleep(2)
                     except Exception as e:
-                        _trace(f"connect/ping error on attempt {attempt}/{max_ping_attempts}: {type(e).__name__}: {e}")
+                        _trace(
+                            f"connect/ping error on attempt {attempt}/{max_ping_attempts}: {type(e).__name__}: {e}"
+                        )
                         if attempt >= max_ping_attempts:
                             bt.logging.warning(
                                 f"Cap'n Proto connection/ping failed for UID {uid} on port {rpc_port} "
@@ -562,7 +696,9 @@ class DockerSecureEvaluator:
                                     sim_t=0.0,
                                     error=f"{type(e).__name__}: {e}",
                                 )
-                            return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
+                            return [
+                                ValidationResult(uid, False, 0.0, 0.0) for _ in tasks
+                            ]
                         await asyncio.sleep(2)
 
                 if agent is None:
@@ -576,15 +712,24 @@ class DockerSecureEvaluator:
                     return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
                 calibrated_timeout = RPC_STEP_TIMEOUT_SEC
-                rpc_overhead_sec = max(RPC_STEP_TIMEOUT_SEC - MINER_COMPUTE_BUDGET_SEC, 0.010)
+                rpc_overhead_sec = max(
+                    RPC_STEP_TIMEOUT_SEC - MINER_COMPUTE_BUDGET_SEC, 0.010
+                )
                 cpu_factor = 1.0
                 calibrated = False
                 for task_idx, task in enumerate(tasks):
                     if stop_event is not None and stop_event.is_set():
                         remaining = len(tasks) - task_idx
                         if remaining > 0:
-                            _trace(f"stop requested; aborting {remaining} remaining seed(s)")
-                            results.extend([ValidationResult(uid, False, 0.0, 0.0) for _ in range(remaining)])
+                            _trace(
+                                f"stop requested; aborting {remaining} remaining seed(s)"
+                            )
+                            results.extend(
+                                [
+                                    ValidationResult(uid, False, 0.0, 0.0)
+                                    for _ in range(remaining)
+                                ]
+                            )
                             for failed_task in tasks[task_idx:]:
                                 _emit_seed_complete(
                                     failed_task,
@@ -603,38 +748,59 @@ class DockerSecureEvaluator:
                     seed_wall_start = time.time()
                     try:
                         _set_phase("seed_start", task=task_label, step=0, sim_t=0.0)
-                        _trace(f"{task_label} start horizon={getattr(task, 'horizon', 0.0):.1f}s")
+                        _trace(
+                            f"{task_label} start horizon={getattr(task, 'horizon', 0.0):.1f}s"
+                        )
                         t_env_start = time.time()
                         _set_phase("env_build", task=task_label, step=0, sim_t=0.0)
                         _trace(f"{task_label} building env")
                         env = make_env(task, gui=False)
-                        _trace(f"{task_label} env built in {(time.time() - t_env_start):.2f}s")
+                        _trace(
+                            f"{task_label} env built in {(time.time() - t_env_start):.2f}s"
+                        )
 
                         try:
                             t_reset_env_start = time.time()
                             _set_phase("env_reset", task=task_label, step=0, sim_t=0.0)
                             _trace(f"{task_label} env.reset() start")
                             obs, _ = env.reset()
-                            _trace(f"{task_label} env.reset() done in {(time.time() - t_reset_env_start):.2f}s")
+                            _trace(
+                                f"{task_label} env.reset() done in {(time.time() - t_reset_env_start):.2f}s"
+                            )
                             t_reset_start = time.time()
                             try:
-                                _set_phase("agent_reset", task=task_label, step=0, sim_t=0.0)
+                                _set_phase(
+                                    "agent_reset", task=task_label, step=0, sim_t=0.0
+                                )
                                 await asyncio.wait_for(
-                                    agent.reset(),
-                                    timeout=RPC_RESET_TIMEOUT_SEC
+                                    agent.reset(), timeout=RPC_RESET_TIMEOUT_SEC
                                 )
                             except Exception as e:
-                                _trace(f"{task_label} reset failed: {type(e).__name__}: {e}")
+                                _trace(
+                                    f"{task_label} reset failed: {type(e).__name__}: {e}"
+                                )
                                 raise
                             reset_ms = (time.time() - t_reset_start) * 1000.0
                             _trace(f"{task_label} reset ok in {reset_ms:.1f}ms")
 
                             if not calibrated:
-                                _set_phase("rpc_calibration", task=task_label, step=0, sim_t=0.0)
-                                rpc_overhead_sec, cpu_factor = await self._calibrate_rpc_overhead_async(
+                                _set_phase(
+                                    "rpc_calibration",
+                                    task=task_label,
+                                    step=0,
+                                    sim_t=0.0,
+                                )
+                                (
+                                    rpc_overhead_sec,
+                                    cpu_factor,
+                                ) = await self._calibrate_rpc_overhead_async(
                                     agent, agent_capnp, obs, uid
                                 )
-                                calibrated_timeout = (MINER_COMPUTE_BUDGET_SEC * cpu_factor) + rpc_overhead_sec + CALIBRATION_MARGIN_SEC
+                                calibrated_timeout = (
+                                    (MINER_COMPUTE_BUDGET_SEC * cpu_factor)
+                                    + rpc_overhead_sec
+                                    + CALIBRATION_MARGIN_SEC
+                                )
                                 calibrated = True
                                 bt.logging.info(
                                     f"UID {uid}: calibrated timeout = {calibrated_timeout*1000:.1f}ms "
@@ -645,7 +811,6 @@ class DockerSecureEvaluator:
                                     f"(overhead={rpc_overhead_sec*1000:.1f}ms cpu_factor={cpu_factor:.2f}x)"
                                 )
 
-                            pos0 = np.asarray(task.start, dtype=float)
                             t_sim = 0.0
                             success = False
                             info = {}
@@ -654,28 +819,44 @@ class DockerSecureEvaluator:
                             step_idx = 0
                             rpc_disconnected = False
 
-                            lo, hi = env.action_space.low.flatten(), env.action_space.high.flatten()
-                            last_pos = pos0
+                            lo, hi = (
+                                env.action_space.low.flatten(),
+                                env.action_space.high.flatten(),
+                            )
 
-                            while t_sim < task.horizon and not (stop_event is not None and stop_event.is_set()):
+                            while t_sim < task.horizon and not (
+                                stop_event is not None and stop_event.is_set()
+                            ):
                                 step_idx += 1
-                                step_timeout = RPC_FIRST_STEP_TIMEOUT_SEC if is_first_step else calibrated_timeout
+                                step_timeout = (
+                                    RPC_FIRST_STEP_TIMEOUT_SEC
+                                    if is_first_step
+                                    else calibrated_timeout
+                                )
 
-                                observation = self._serialize_observation(agent_capnp, obs)
-                                _set_phase("rpc_act", task=task_label, step=step_idx, sim_t=t_sim)
+                                observation = self._serialize_observation(
+                                    agent_capnp, obs
+                                )
+                                _set_phase(
+                                    "rpc_act",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
 
                                 try:
                                     t_act_start = time.time()
                                     action_response = await asyncio.wait_for(
-                                        agent.act(observation),
-                                        timeout=step_timeout
+                                        agent.act(observation), timeout=step_timeout
                                     )
                                     act_ms = (time.time() - t_act_start) * 1000.0
                                     action = np.frombuffer(
                                         action_response.action.data,
-                                        dtype=np.dtype(action_response.action.dtype)
+                                        dtype=np.dtype(action_response.action.dtype),
                                     ).reshape(tuple(action_response.action.shape))
-                                    if trace_rpc and (step_idx == 1 or step_idx % trace_every == 0):
+                                    if trace_rpc and (
+                                        step_idx == 1 or step_idx % trace_every == 0
+                                    ):
                                         _trace(
                                             f"{task_label} step={step_idx} t_sim={t_sim:.2f}s "
                                             f"act_ok={act_ms:.1f}ms timeout={step_timeout*1000:.0f}ms"
@@ -707,7 +888,9 @@ class DockerSecureEvaluator:
                                 except Exception as e:
                                     action = np.zeros(5, dtype=np.float32)
                                     err_txt = f"{type(e).__name__}: {e}"
-                                    _trace(f"{task_label} step={step_idx} act error: {err_txt}")
+                                    _trace(
+                                        f"{task_label} step={step_idx} act error: {err_txt}"
+                                    )
                                     lowered = err_txt.lower()
                                     if (
                                         "broken pipe" in lowered
@@ -715,23 +898,40 @@ class DockerSecureEvaluator:
                                         or "connection reset" in lowered
                                     ):
                                         rpc_disconnected = True
-                                        _trace(f"{task_label} rpc disconnected; aborting seed")
+                                        _trace(
+                                            f"{task_label} rpc disconnected; aborting seed"
+                                        )
                                         break
 
                                 is_first_step = False
 
-                                act = np.clip(np.asarray(action, dtype=np.float32).reshape(-1), lo, hi)
+                                act = np.clip(
+                                    np.asarray(action, dtype=np.float32).reshape(-1),
+                                    lo,
+                                    hi,
+                                )
 
-                                if hasattr(env, 'ACT_TYPE') and hasattr(env, 'SPEED_LIMIT'):
-                                    if env.ACT_TYPE == ActionType.VEL and env.SPEED_LIMIT:
+                                if hasattr(env, "ACT_TYPE") and hasattr(
+                                    env, "SPEED_LIMIT"
+                                ):
+                                    if (
+                                        env.ACT_TYPE == ActionType.VEL
+                                        and env.SPEED_LIMIT
+                                    ):
                                         n = max(np.linalg.norm(act[:3]), 1e-6)
                                         scale = min(1.0, SPEED_LIMIT / n)
                                         act[:3] *= scale
                                         act = np.clip(act, lo, hi)
 
-                                _set_phase("env_step", task=task_label, step=step_idx, sim_t=t_sim)
-                                obs, _r, terminated, truncated, info = env.step(act[None, :])
-                                last_pos = env._getDroneStateVector(0)[0:3]
+                                _set_phase(
+                                    "env_step",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
+                                obs, _r, terminated, truncated, info = env.step(
+                                    act[None, :]
+                                )
 
                                 t_sim += SIM_DT
                                 if terminated or truncated:
@@ -742,10 +942,19 @@ class DockerSecureEvaluator:
                                     )
                                     break
 
-                            seed_cancelled = stop_event is not None and stop_event.is_set()
+                            seed_cancelled = (
+                                stop_event is not None and stop_event.is_set()
+                            )
                             if seed_cancelled:
-                                _set_phase("seed_cancelled", task=task_label, step=step_idx, sim_t=t_sim)
-                                _trace(f"{task_label} cancelled due to stop request at t_sim={t_sim:.2f}s")
+                                _set_phase(
+                                    "seed_cancelled",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
+                                _trace(
+                                    f"{task_label} cancelled due to stop request at t_sim={t_sim:.2f}s"
+                                )
                                 results.append(ValidationResult(uid, False, t_sim, 0.0))
                                 _emit_seed_complete(
                                     task,
@@ -756,7 +965,12 @@ class DockerSecureEvaluator:
                                     step_idx=step_idx,
                                 )
                             elif rpc_disconnected:
-                                _set_phase("seed_failed_rpc_disconnect", task=task_label, step=step_idx, sim_t=t_sim)
+                                _set_phase(
+                                    "seed_failed_rpc_disconnect",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
                                 _trace(f"{task_label} failed due to rpc disconnect")
                                 results.append(ValidationResult(uid, False, t_sim, 0.0))
                                 _emit_seed_complete(
@@ -768,8 +982,15 @@ class DockerSecureEvaluator:
                                     step_idx=step_idx,
                                 )
                             elif strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                _set_phase("seed_failed_timeout_strikes", task=task_label, step=step_idx, sim_t=t_sim)
-                                _trace(f"{task_label} failed due to strike limit; returning zero result")
+                                _set_phase(
+                                    "seed_failed_timeout_strikes",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
+                                _trace(
+                                    f"{task_label} failed due to strike limit; returning zero result"
+                                )
                                 results.append(ValidationResult(uid, False, t_sim, 0.0))
                                 _emit_seed_complete(
                                     task,
@@ -795,8 +1016,15 @@ class DockerSecureEvaluator:
                                     f"{task_label} result success={success} "
                                     f"score={score:.4f} t_sim={t_sim:.2f}s"
                                 )
-                                _set_phase("seed_done", task=task_label, step=step_idx, sim_t=t_sim)
-                                results.append(ValidationResult(uid, success, t_sim, score))
+                                _set_phase(
+                                    "seed_done",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
+                                results.append(
+                                    ValidationResult(uid, success, t_sim, score)
+                                )
                                 _emit_seed_complete(
                                     task,
                                     status="seed_done",
@@ -820,8 +1048,12 @@ class DockerSecureEvaluator:
                         bt.logging.warning(
                             f"UID {uid} {task_label} failed: {type(e).__name__}: {e}"
                         )
-                        _set_phase("seed_exception", task=task_label, step=0, sim_t=exc_t_sim)
-                        _trace(f"{task_label} failed with exception: {type(e).__name__}: {e}")
+                        _set_phase(
+                            "seed_exception", task=task_label, step=0, sim_t=exc_t_sim
+                        )
+                        _trace(
+                            f"{task_label} failed with exception: {type(e).__name__}: {e}"
+                        )
                         results.append(ValidationResult(uid, False, exc_t_sim, 0.0))
                         _emit_seed_complete(
                             task,
@@ -864,8 +1096,7 @@ class DockerSecureEvaluator:
             try:
                 t0 = time.time()
                 cal_response = await asyncio.wait_for(
-                    agent.calibrate(cal_obs),
-                    timeout=CALIBRATION_TIMEOUT_SEC
+                    agent.calibrate(cal_obs), timeout=CALIBRATION_TIMEOUT_SEC
                 )
                 dt = time.time() - t0
                 bench_ns = cal_response.benchmarkNs
@@ -899,12 +1130,18 @@ class DockerSecureEvaluator:
         cpu_factor = 1.0
         if len(benchmark_times_ns) >= 3:
             benchmark_times_ns.sort()
-            trimmed_bench = benchmark_times_ns[1:-1] if len(benchmark_times_ns) > 4 else benchmark_times_ns
+            trimmed_bench = (
+                benchmark_times_ns[1:-1]
+                if len(benchmark_times_ns) > 4
+                else benchmark_times_ns
+            )
             median_bench_ns = statistics.median(trimmed_bench)
             cpu_factor = median_bench_ns / CALIBRATION_BENCHMARK_REF_NS
             cpu_factor = max(1.0, min(cpu_factor, CALIBRATION_CPU_FACTOR_CAP))
 
-        bench_median_ms = statistics.median(benchmark_times_ns) / 1e6 if benchmark_times_ns else 0.0
+        bench_median_ms = (
+            statistics.median(benchmark_times_ns) / 1e6 if benchmark_times_ns else 0.0
+        )
         bt.logging.info(
             f"UID {uid}: calibration results — "
             f"overhead={median_overhead*1000:.1f}ms, "
@@ -940,7 +1177,7 @@ class DockerSecureEvaluator:
                     progress_state,
                     task_offset,
                     task_total,
-                )
+                ),
             )
             return results
         except Exception as e:
@@ -1027,7 +1264,9 @@ class DockerSecureEvaluator:
             """Call on_seed_complete for all tasks when batch fails early."""
             with completed_lock:
                 remaining = max(0, len(tasks) - completed_count)
-            _phase(f"batch failing early; marking {remaining} pending seed(s) as failed")
+            _phase(
+                f"batch failing early; marking {remaining} pending seed(s) as failed"
+            )
             for _ in range(remaining):
                 _on_seed_complete_guarded()
 
@@ -1038,7 +1277,9 @@ class DockerSecureEvaluator:
             except Exception:
                 pass
 
-        def _cleanup_tmpdir_quiet(path: Optional[str], timeout_sec: float = 16.0) -> None:
+        def _cleanup_tmpdir_quiet(
+            path: Optional[str], timeout_sec: float = 16.0
+        ) -> None:
             """Best-effort tmpdir cleanup without blocking benchmark completion."""
             if not path:
                 return
@@ -1072,21 +1313,29 @@ class DockerSecureEvaluator:
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
         try:
-            with zipfile.ZipFile(model_path, 'r') as zf:
+            with zipfile.ZipFile(model_path, "r") as zf:
                 if "drone_agent.py" not in zf.namelist():
-                    bt.logging.warning(f"[Worker {worker_id}] Model {uid} missing drone_agent.py")
+                    bt.logging.warning(
+                        f"[Worker {worker_id}] Model {uid} missing drone_agent.py"
+                    )
                     _notify_all_failed()
                     return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
         except Exception as e:
-            bt.logging.warning(f"[Worker {worker_id}] Failed to validate model {uid}: {e}")
+            bt.logging.warning(
+                f"[Worker {worker_id}] Failed to validate model {uid}: {e}"
+            )
             _notify_all_failed()
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
         container_name = f"swarm_eval_{uid}_w{worker_id}_{int(time.time() * 1000)}"
         host_port = self._find_free_port()
 
-        bt.logging.info(f"[Worker {worker_id}] Starting container for UID {uid} ({len(tasks)} seeds)...")
-        _phase(f"prepare container={container_name} host_port={host_port} seeds={len(tasks)}")
+        bt.logging.info(
+            f"[Worker {worker_id}] Starting container for UID {uid} ({len(tasks)} seeds)..."
+        )
+        _phase(
+            f"prepare container={container_name} host_port={host_port} seeds={len(tasks)}"
+        )
 
         tmpdir = None
         try:
@@ -1104,7 +1353,7 @@ class DockerSecureEvaluator:
 
             template_dir = Path(__file__).parent.parent.parent / "submission_template"
 
-            with zipfile.ZipFile(model_path, 'r') as zf:
+            with zipfile.ZipFile(model_path, "r") as zf:
                 zf.extractall(submission_dir)
 
             contents = list(submission_dir.iterdir())
@@ -1131,19 +1380,27 @@ class DockerSecureEvaluator:
             miner_requirements = submission_dir / "requirements.txt"
             has_requirements = miner_requirements.exists()
 
-            if has_requirements and not self._validate_requirements(miner_requirements, uid):
-                bt.logging.warning(f"[Worker {worker_id}] UID {uid} requirements.txt rejected")
+            if has_requirements and not self._validate_requirements(
+                miner_requirements, uid
+            ):
+                bt.logging.warning(
+                    f"[Worker {worker_id}] UID {uid} requirements.txt rejected"
+                )
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
             validator_ip = self._get_docker_host_ip()
 
             if has_requirements:
-                bt.logging.info(f"[Worker {worker_id}] Miner has requirements.txt for UID {uid}")
+                bt.logging.info(
+                    f"[Worker {worker_id}] Miner has requirements.txt for UID {uid}"
+                )
                 startup_script = submission_dir / "startup.sh"
-                with open(startup_script, 'w') as f:
+                with open(startup_script, "w") as f:
                     f.write("#!/bin/bash\n")
-                    f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
+                    f.write(
+                        "pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n"
+                    )
                     f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
                     f.write("touch /workspace/submission/.pip_done\n")
                     f.write("sleep infinity\n")
@@ -1151,49 +1408,74 @@ class DockerSecureEvaluator:
                 os.chown(startup_script, current_uid, current_gid)
 
                 cmd = [
-                    "docker", "run",
+                    "docker",
+                    "run",
                     "--rm",
                     "-d",
-                    "--name", container_name,
-                    "--user", f"{current_uid}:{current_gid}",
+                    "--name",
+                    container_name,
+                    "--user",
+                    f"{current_uid}:{current_gid}",
                     f"--memory={DOCKER_WORKER_MEMORY}",
                     f"--cpus={DOCKER_WORKER_CPUS}",
                     "--pids-limit=50",
-                    "--ulimit", "nofile=256:256",
-                    "--ulimit", "fsize=524288000:524288000",
-                    "--security-opt", "no-new-privileges",
-                    "--cap-drop", "ALL",
-                    "--network", "bridge",
-                    "-p", f"{host_port}:8000",
-                    "-v", f"{submission_dir}:/workspace/submission:rw",
+                    "--ulimit",
+                    "nofile=256:256",
+                    "--ulimit",
+                    "fsize=524288000:524288000",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--cap-drop",
+                    "ALL",
+                    "--network",
+                    "bridge",
+                    "-p",
+                    f"{host_port}:8000",
+                    "-v",
+                    f"{submission_dir}:/workspace/submission:rw",
                     self.base_image,
-                    "bash", "/workspace/submission/startup.sh"
+                    "bash",
+                    "/workspace/submission/startup.sh",
                 ]
             else:
                 cmd = [
-                    "docker", "run",
+                    "docker",
+                    "run",
                     "--rm",
                     "-d",
-                    "--name", container_name,
-                    "--user", f"{current_uid}:{current_gid}",
+                    "--name",
+                    container_name,
+                    "--user",
+                    f"{current_uid}:{current_gid}",
                     f"--memory={DOCKER_WORKER_MEMORY}",
                     f"--cpus={DOCKER_WORKER_CPUS}",
                     "--pids-limit=20",
-                    "--ulimit", "nofile=256:256",
-                    "--ulimit", "fsize=524288000:524288000",
-                    "--security-opt", "no-new-privileges",
-                    "--cap-drop", "ALL",
-                    "--network", "bridge",
-                    "-p", f"{host_port}:8000",
-                    "-v", f"{submission_dir}:/workspace/submission:ro",
+                    "--ulimit",
+                    "nofile=256:256",
+                    "--ulimit",
+                    "fsize=524288000:524288000",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--cap-drop",
+                    "ALL",
+                    "--network",
+                    "bridge",
+                    "-p",
+                    f"{host_port}:8000",
+                    "-v",
+                    f"{submission_dir}:/workspace/submission:ro",
                     self.base_image,
-                    "bash", "-c", "sleep infinity"
+                    "bash",
+                    "-c",
+                    "sleep infinity",
                 ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
-                bt.logging.warning(f"[Worker {worker_id}] Container start failed: {result.stderr[:300]}")
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Container start failed: {result.stderr[:300]}"
+                )
                 _notify_all_failed()
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("container started successfully")
@@ -1204,7 +1486,9 @@ class DockerSecureEvaluator:
             pip_done = False
 
             if has_requirements:
-                bt.logging.info(f"[Worker {worker_id}] Waiting for pip install (max {pip_timeout}s)...")
+                bt.logging.info(
+                    f"[Worker {worker_id}] Waiting for pip install (max {pip_timeout}s)..."
+                )
                 _phase(f"waiting pip install (timeout={pip_timeout}s)")
                 pip_start = time.time()
                 pip_done_flag = submission_dir / ".pip_done"
@@ -1213,22 +1497,35 @@ class DockerSecureEvaluator:
                     if pip_done_flag.exists():
                         pip_done = True
                         elapsed = time.time() - pip_start
-                        bt.logging.info(f"[Worker {worker_id}] pip done in {elapsed:.1f}s")
+                        bt.logging.info(
+                            f"[Worker {worker_id}] pip done in {elapsed:.1f}s"
+                        )
                         _phase(f"pip install complete in {elapsed:.1f}s")
                         break
 
                     check = subprocess.run(
-                        ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
-                        capture_output=True, text=True
+                        [
+                            "docker",
+                            "inspect",
+                            "-f",
+                            "{{.State.Running}}",
+                            container_name,
+                        ],
+                        capture_output=True,
+                        text=True,
                     )
                     if check.returncode != 0 or check.stdout.strip() != "true":
-                        bt.logging.warning(f"[Worker {worker_id}] Container stopped during pip")
+                        bt.logging.warning(
+                            f"[Worker {worker_id}] Container stopped during pip"
+                        )
                         break
 
                     await asyncio.sleep(2)
 
                 if not pip_done:
-                    bt.logging.warning(f"[Worker {worker_id}] pip install failed for UID {uid}")
+                    bt.logging.warning(
+                        f"[Worker {worker_id}] pip install failed for UID {uid}"
+                    )
                     _phase("pip install failed")
                     _run_docker_cmd_quiet(["docker", "kill", container_name])
                     _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
@@ -1248,7 +1545,9 @@ class DockerSecureEvaluator:
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
             bt.logging.debug(f"[Worker {worker_id}] Applying network lockdown...")
-            _phase(f"applying network lockdown pid={container_pid} validator_ip={validator_ip}")
+            _phase(
+                f"applying network lockdown pid={container_pid} validator_ip={validator_ip}"
+            )
             if not self._apply_network_lockdown(container_pid, validator_ip):
                 bt.logging.warning(f"[Worker {worker_id}] Network lockdown failed")
                 _phase("network lockdown failed")
@@ -1259,11 +1558,22 @@ class DockerSecureEvaluator:
             _phase("network lockdown applied")
 
             exec_result = subprocess.run(
-                ["docker", "exec", "-d", container_name, "python", "/workspace/submission/main.py"],
-                capture_output=True, text=True, timeout=10
+                [
+                    "docker",
+                    "exec",
+                    "-d",
+                    container_name,
+                    "python",
+                    "/workspace/submission/main.py",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if exec_result.returncode != 0:
-                bt.logging.warning(f"[Worker {worker_id}] Failed to start main.py: {exec_result.stderr[:200]}")
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Failed to start main.py: {exec_result.stderr[:200]}"
+                )
                 _phase("failed to launch submission main.py")
                 _run_docker_cmd_quiet(["docker", "kill", container_name])
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
@@ -1271,7 +1581,9 @@ class DockerSecureEvaluator:
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("submission main.py launched")
 
-            bt.logging.debug(f"[Worker {worker_id}] Waiting for RPC server for UID {uid} (max {rpc_timeout}s)...")
+            bt.logging.debug(
+                f"[Worker {worker_id}] Waiting for RPC server for UID {uid} (max {rpc_timeout}s)..."
+            )
             rpc_start = time.time()
             max_rpc_wait = 30
             rpc_check_interval = 2
@@ -1287,7 +1599,9 @@ class DockerSecureEvaluator:
                     if self._check_rpc_ready(container_name, timeout=5.0):
                         connected = True
                         elapsed = time.time() - rpc_start
-                        bt.logging.debug(f"[Worker {worker_id}] RPC ready for UID {uid} after {elapsed:.1f}s")
+                        bt.logging.debug(
+                            f"[Worker {worker_id}] RPC ready for UID {uid} after {elapsed:.1f}s"
+                        )
                         _phase(f"rpc ready after {elapsed:.1f}s")
                         break
                 except Exception:
@@ -1307,10 +1621,17 @@ class DockerSecureEvaluator:
 
             container_check = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
-                capture_output=True, text=True, timeout=5
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
-            if container_check.returncode != 0 or "true" not in container_check.stdout.lower():
-                bt.logging.warning(f"[Worker {worker_id}] Container stopped before evaluation")
+            if (
+                container_check.returncode != 0
+                or "true" not in container_check.stdout.lower()
+            ):
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Container stopped before evaluation"
+                )
                 _phase("container not running before rpc batch")
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
                 _notify_all_failed()
@@ -1319,45 +1640,56 @@ class DockerSecureEvaluator:
             try:
                 base_batch_timeout = min(
                     GLOBAL_EVAL_BASE_SEC + GLOBAL_EVAL_PER_SEED_SEC * len(tasks),
-                    GLOBAL_EVAL_CAP_SEC
+                    GLOBAL_EVAL_CAP_SEC,
                 )
                 try:
-                    timeout_multiplier = max(1.0, float(os.getenv("SWARM_BATCH_TIMEOUT_MULT", "1.0")))
+                    timeout_multiplier = max(
+                        1.0, float(os.getenv("SWARM_BATCH_TIMEOUT_MULT", "1.0"))
+                    )
                 except ValueError:
                     timeout_multiplier = 1.0
                 batch_timeout = base_batch_timeout * timeout_multiplier
                 try:
-                    hard_cap_timeout = float(os.getenv("SWARM_BATCH_TIMEOUT_HARD_CAP_SEC", "0"))
+                    hard_cap_timeout = float(
+                        os.getenv("SWARM_BATCH_TIMEOUT_HARD_CAP_SEC", "0")
+                    )
                 except ValueError:
                     hard_cap_timeout = 0.0
                 if hard_cap_timeout > 0:
                     batch_timeout = min(batch_timeout, hard_cap_timeout)
-                extend_on_progress = os.getenv("SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS", "").strip().lower() in {
-                    "1", "true", "yes", "on"
-                }
+                extend_on_progress = os.getenv(
+                    "SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS", ""
+                ).strip().lower() in {"1", "true", "yes", "on"}
                 try:
                     extend_by_sec = max(
-                        1.0,
-                        float(os.getenv("SWARM_BATCH_TIMEOUT_EXTEND_SEC", "30.0"))
+                        1.0, float(os.getenv("SWARM_BATCH_TIMEOUT_EXTEND_SEC", "30.0"))
                     )
                 except ValueError:
                     extend_by_sec = 30.0
                 try:
                     progress_stale_sec = max(
                         0.5,
-                        float(os.getenv("SWARM_BATCH_TIMEOUT_PROGRESS_STALE_SEC", "3.0"))
+                        float(
+                            os.getenv("SWARM_BATCH_TIMEOUT_PROGRESS_STALE_SEC", "3.0")
+                        ),
                     )
                 except ValueError:
                     progress_stale_sec = 3.0
                 try:
                     progress_min_sim_advance = max(
                         0.0,
-                        float(os.getenv("SWARM_BATCH_TIMEOUT_PROGRESS_MIN_SIM_ADVANCE", "0.02"))
+                        float(
+                            os.getenv(
+                                "SWARM_BATCH_TIMEOUT_PROGRESS_MIN_SIM_ADVANCE", "0.02"
+                            )
+                        ),
                     )
                 except ValueError:
                     progress_min_sim_advance = 0.02
                 try:
-                    max_total_timeout_sec = float(os.getenv("SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC", "0"))
+                    max_total_timeout_sec = float(
+                        os.getenv("SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC", "0")
+                    )
                 except ValueError:
                     max_total_timeout_sec = 0.0
                 if max_total_timeout_sec < 0:
@@ -1428,12 +1760,14 @@ class DockerSecureEvaluator:
                             except Exception:
                                 current_sim_t = -1.0
                             try:
-                                current_step_idx = int(progress_state.get("step_idx", -1))
+                                current_step_idx = int(
+                                    progress_state.get("step_idx", -1)
+                                )
                             except Exception:
                                 current_step_idx = -1
 
-                            sim_advanced = (
-                                current_sim_t >= (last_extended_sim_t + progress_min_sim_advance)
+                            sim_advanced = current_sim_t >= (
+                                last_extended_sim_t + progress_min_sim_advance
                             )
                             step_advanced = current_step_idx > last_extended_step_idx
 
@@ -1443,11 +1777,17 @@ class DockerSecureEvaluator:
                                 hard_deadline = eval_start + max_total_timeout_sec
                                 within_total_cap = now < hard_deadline
 
-                            if stale_for <= progress_stale_sec and (sim_advanced or step_advanced) and within_total_cap:
+                            if (
+                                stale_for <= progress_stale_sec
+                                and (sim_advanced or step_advanced)
+                                and within_total_cap
+                            ):
                                 old_deadline = timeout_deadline
                                 timeout_deadline = old_deadline + extend_by_sec
                                 if hard_deadline is not None:
-                                    timeout_deadline = min(timeout_deadline, hard_deadline)
+                                    timeout_deadline = min(
+                                        timeout_deadline, hard_deadline
+                                    )
 
                                 if timeout_deadline > old_deadline:
                                     extension_count += 1
@@ -1509,7 +1849,9 @@ class DockerSecureEvaluator:
                         else:
                             _phase("container top snapshot unavailable")
                     except Exception as e:
-                        _phase(f"container top snapshot failed: {type(e).__name__}: {e}")
+                        _phase(
+                            f"container top snapshot failed: {type(e).__name__}: {e}"
+                        )
 
                     try:
                         logs_result = subprocess.run(
@@ -1546,12 +1888,16 @@ class DockerSecureEvaluator:
                     if 0.0 <= score <= 1.0:
                         valid_results.append(r)
                     else:
-                        bt.logging.warning(f"[Worker {worker_id}] Invalid score {score}")
+                        bt.logging.warning(
+                            f"[Worker {worker_id}] Invalid score {score}"
+                        )
                         model_hash = sha256sum(model_path)
                         add_to_blacklist(model_hash)
                         valid_results.append(ValidationResult(uid, False, 0.0, 0.0))
 
-                bt.logging.info(f"[Worker {worker_id}] Completed {len(tasks)} seeds for UID {uid}")
+                bt.logging.info(
+                    f"[Worker {worker_id}] Completed {len(tasks)} seeds for UID {uid}"
+                )
                 _phase(f"batch complete ({len(valid_results)} result(s))")
                 return valid_results
             finally:
@@ -1615,10 +1961,14 @@ class DockerSecureEvaluator:
             chunks.append(tasks[start:end])
             start = end
 
-        bt.logging.info(f"Evaluating {len(tasks)} seeds with {num_workers} parallel workers")
+        bt.logging.info(
+            f"Evaluating {len(tasks)} seeds with {num_workers} parallel workers"
+        )
 
         worker_tasks = [
-            self.evaluate_seeds_batch(chunk, uid, model_path, worker_id=i, on_seed_complete=on_seed_complete)
+            self.evaluate_seeds_batch(
+                chunk, uid, model_path, worker_id=i, on_seed_complete=on_seed_complete
+            )
             for i, chunk in enumerate(chunks)
         ]
 
@@ -1634,7 +1984,9 @@ class DockerSecureEvaluator:
                             on_seed_complete()
                         except Exception:
                             pass
-                results.extend([ValidationResult(uid, False, 0.0, 0.0) for _ in chunks[i]])
+                results.extend(
+                    [ValidationResult(uid, False, 0.0, 0.0) for _ in chunks[i]]
+                )
             else:
                 results.extend(chunk_result)
 
@@ -1645,34 +1997,63 @@ class DockerSecureEvaluator:
         try:
             # List all swarm evaluation containers
             result = subprocess.run(
-                ["docker", "ps", "-a", "--filter", "name=swarm_eval_", "--format", "{{.Names}}"],
+                [
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "name=swarm_eval_",
+                    "--format",
+                    "{{.Names}}",
+                ],
                 capture_output=True,
-                text=True
+                text=True,
             )
-            
+
             if result.returncode == 0 and result.stdout:
-                containers = result.stdout.strip().split('\n')
+                containers = result.stdout.strip().split("\n")
                 for container in containers:
                     if container:
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
+                        subprocess.run(
+                            ["docker", "rm", "-f", container],
+                            capture_output=True,
+                            timeout=30,
+                        )
                         bt.logging.debug(f"Cleaned up orphaned container: {container}")
 
             # Also clean up verification containers
             result_verify = subprocess.run(
-                ["docker", "ps", "-a", "--filter", "name=swarm_verify_", "--format", "{{.Names}}"],
+                [
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "name=swarm_verify_",
+                    "--format",
+                    "{{.Names}}",
+                ],
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result_verify.returncode == 0 and result_verify.stdout:
-                containers_v = result_verify.stdout.strip().split('\n')
+                containers_v = result_verify.stdout.strip().split("\n")
                 for container in containers_v:
                     if container:
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
-                        bt.logging.debug(f"Cleaned up orphaned verify container: {container}")
+                        subprocess.run(
+                            ["docker", "rm", "-f", container],
+                            capture_output=True,
+                            timeout=30,
+                        )
+                        bt.logging.debug(
+                            f"Cleaned up orphaned verify container: {container}"
+                        )
 
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-            subprocess.run(["docker", "builder", "prune", "-f", "--keep-storage", "5GB"], capture_output=True)
+            subprocess.run(
+                ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
+                capture_output=True,
+            )
 
         except Exception as e:
             bt.logging.warning(f"Container cleanup failed: {e}")

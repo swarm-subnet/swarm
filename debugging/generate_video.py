@@ -44,7 +44,7 @@ import numpy as np
 # without requiring a global install.
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_REPO_ROOT  = _SCRIPT_DIR / "swarm-repo"
+_REPO_ROOT = _SCRIPT_DIR / "swarm-repo"
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
@@ -57,39 +57,44 @@ os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
 VALID_MODES: List[str] = ["depth", "fpv", "chase", "overview"]
 
 TYPE_LABELS: Dict[int, str] = {
-    1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse",
+    1: "city",
+    2: "open",
+    3: "mountain",
+    4: "village",
+    5: "warehouse",
 }
 
 # --- output defaults ---
-DEFAULT_WIDTH  = 1280
+DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
-DEFAULT_FPS    = 25
+DEFAULT_FPS = 25
 
 # --- chase camera ---
-CHASE_DISTANCE_BACK_M   = 2.5
-CHASE_HEIGHT_ABOVE_M    = 1.0
-CHASE_FOV_DEG           = 65.0
-CHASE_SMOOTHING         = 0.92   # exponential smoothing (higher = smoother)
+CHASE_DISTANCE_BACK_M = 2.5
+CHASE_HEIGHT_ABOVE_M = 1.0
+CHASE_FOV_DEG = 65.0
+CHASE_SMOOTHING = 0.92  # exponential smoothing (higher = smoother)
 
 # --- first-person view ---
-FPV_FOV_DEG             = 90.0
-FPV_OFFSET_FORWARD_M    = 0.15
-FPV_OFFSET_UP_M         = 0.02
-FPV_SMOOTHING           = 0.85
+FPV_FOV_DEG = 90.0
+FPV_OFFSET_FORWARD_M = 0.15
+FPV_OFFSET_UP_M = 0.02
+FPV_SMOOTHING = 0.85
 
 # --- overview ---
-OVERVIEW_FOV_DEG        = 60.0
-OVERVIEW_PITCH_DEG      = -35.0
-OVERVIEW_ORBIT_DEG_SEC  = 5.0    # slow rotation around the scene
+OVERVIEW_FOV_DEG = 60.0
+OVERVIEW_PITCH_DEG = -35.0
+OVERVIEW_ORBIT_DEG_SEC = 5.0  # slow rotation around the scene
 
 # --- depth visualisation ---
-DEPTH_SENSOR_RES        = 128    # native sensor resolution (square)
-DEPTH_COLORMAP_NAME     = "inferno"
+DEPTH_SENSOR_RES = 128  # native sensor resolution (square)
+DEPTH_COLORMAP_NAME = "inferno"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Data classes
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @dataclass(frozen=True, slots=True)
 class FlightTask:
@@ -99,23 +104,25 @@ class FlightTask:
     in ``bittensor`` which hijacks ``argparse`` and takes several seconds to
     initialise — neither of which is acceptable for a video tool.
     """
-    map_seed:       int
-    start:          Tuple[float, float, float]
-    goal:           Tuple[float, float, float]
-    sim_dt:         float
-    horizon:        float
+
+    map_seed: int
+    start: Tuple[float, float, float]
+    goal: Tuple[float, float, float]
+    sim_dt: float
+    horizon: float
     challenge_type: int
-    version:        str = "1"
+    version: str = "1"
 
 
 @dataclass(frozen=True, slots=True)
 class VideoResult:
     """Metadata returned for every successfully written video file."""
-    mode:         str
-    path:         str
-    frames:       int
+
+    mode: str
+    path: str
+    frames: int
     duration_sec: float
-    success:      bool
+    success: bool
     sim_time_sec: float
     wall_time_sec: float
 
@@ -124,30 +131,62 @@ class VideoResult:
 #  Task construction  (mirrors swarm.validator.task_gen without bittensor)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _load_type_params(challenge_type: int) -> Dict[str, float]:
     """Return map-generation parameters for *challenge_type* from ``swarm.constants``."""
     from swarm import constants as C
+
     _MAP = {
-        1: dict(world_range=C.TYPE_1_WORLD_RANGE, r_min=C.TYPE_1_R_MIN, r_max=C.TYPE_1_R_MAX,
-                h_min=C.TYPE_1_H_MIN, h_max=C.TYPE_1_H_MAX,
-                start_h_min=C.TYPE_1_START_H_MIN, start_h_max=C.TYPE_1_START_H_MAX,
-                horizon=C.TYPE_1_HORIZON),
-        2: dict(world_range=C.TYPE_2_WORLD_RANGE, r_min=C.TYPE_2_R_MIN, r_max=C.TYPE_2_R_MAX,
-                h_min=C.TYPE_2_H_MIN, h_max=C.TYPE_2_H_MAX,
-                start_h_min=C.TYPE_2_START_H_MIN, start_h_max=C.TYPE_2_START_H_MAX,
-                horizon=C.TYPE_2_HORIZON),
-        3: dict(world_range=C.TYPE_3_WORLD_RANGE, r_min=C.TYPE_3_R_MIN, r_max=C.TYPE_3_R_MAX,
-                h_min=C.TYPE_3_H_MIN, h_max=C.TYPE_3_H_MAX,
-                start_h_min=C.TYPE_3_START_H_MIN, start_h_max=C.TYPE_3_START_H_MAX,
-                horizon=C.TYPE_3_HORIZON),
-        4: dict(world_range=C.TYPE_4_WORLD_RANGE, r_min=C.TYPE_4_R_MIN, r_max=C.TYPE_4_R_MAX,
-                h_min=C.TYPE_4_H_MIN, h_max=C.TYPE_4_H_MAX,
-                start_h_min=C.TYPE_4_START_H_MIN, start_h_max=C.TYPE_4_START_H_MAX,
-                horizon=C.TYPE_4_HORIZON),
-        5: dict(world_range=C.TYPE_5_WORLD_RANGE, r_min=C.TYPE_5_R_MIN, r_max=C.TYPE_5_R_MAX,
-                h_min=C.TYPE_5_H_MIN, h_max=C.TYPE_5_H_MAX,
-                start_h_min=C.TYPE_5_START_H_MIN, start_h_max=C.TYPE_5_START_H_MAX,
-                horizon=C.TYPE_5_HORIZON),
+        1: dict(
+            world_range=C.TYPE_1_WORLD_RANGE,
+            r_min=C.TYPE_1_R_MIN,
+            r_max=C.TYPE_1_R_MAX,
+            h_min=C.TYPE_1_H_MIN,
+            h_max=C.TYPE_1_H_MAX,
+            start_h_min=C.TYPE_1_START_H_MIN,
+            start_h_max=C.TYPE_1_START_H_MAX,
+            horizon=C.TYPE_1_HORIZON,
+        ),
+        2: dict(
+            world_range=C.TYPE_2_WORLD_RANGE,
+            r_min=C.TYPE_2_R_MIN,
+            r_max=C.TYPE_2_R_MAX,
+            h_min=C.TYPE_2_H_MIN,
+            h_max=C.TYPE_2_H_MAX,
+            start_h_min=C.TYPE_2_START_H_MIN,
+            start_h_max=C.TYPE_2_START_H_MAX,
+            horizon=C.TYPE_2_HORIZON,
+        ),
+        3: dict(
+            world_range=C.TYPE_3_WORLD_RANGE,
+            r_min=C.TYPE_3_R_MIN,
+            r_max=C.TYPE_3_R_MAX,
+            h_min=C.TYPE_3_H_MIN,
+            h_max=C.TYPE_3_H_MAX,
+            start_h_min=C.TYPE_3_START_H_MIN,
+            start_h_max=C.TYPE_3_START_H_MAX,
+            horizon=C.TYPE_3_HORIZON,
+        ),
+        4: dict(
+            world_range=C.TYPE_4_WORLD_RANGE,
+            r_min=C.TYPE_4_R_MIN,
+            r_max=C.TYPE_4_R_MAX,
+            h_min=C.TYPE_4_H_MIN,
+            h_max=C.TYPE_4_H_MAX,
+            start_h_min=C.TYPE_4_START_H_MIN,
+            start_h_max=C.TYPE_4_START_H_MAX,
+            horizon=C.TYPE_4_HORIZON,
+        ),
+        5: dict(
+            world_range=C.TYPE_5_WORLD_RANGE,
+            r_min=C.TYPE_5_R_MIN,
+            r_max=C.TYPE_5_R_MAX,
+            h_min=C.TYPE_5_H_MIN,
+            h_max=C.TYPE_5_H_MAX,
+            start_h_min=C.TYPE_5_START_H_MIN,
+            start_h_max=C.TYPE_5_START_H_MAX,
+            horizon=C.TYPE_5_HORIZON,
+        ),
     }
     raw = _MAP.get(challenge_type, _MAP[1])
     return {k: float(v) for k, v in raw.items()}
@@ -155,12 +194,15 @@ def _load_type_params(challenge_type: int) -> Dict[str, float]:
 
 def _sample_start(rng, params: Dict[str, float]) -> Tuple[float, float, float]:
     from swarm import constants as C
+
     wr = params["world_range"]
-    x  = rng.uniform(-wr, wr)
-    y  = rng.uniform(-wr, wr)
+    x = rng.uniform(-wr, wr)
+    y = rng.uniform(-wr, wr)
     if getattr(C, "START_PLATFORM", False):
         if getattr(C, "START_PLATFORM_RANDOMIZE", False):
-            pz = rng.uniform(float(C.START_PLATFORM_MIN_Z), float(C.START_PLATFORM_MAX_Z))
+            pz = rng.uniform(
+                float(C.START_PLATFORM_MIN_Z), float(C.START_PLATFORM_MAX_Z)
+            )
         else:
             pz = float(C.START_PLATFORM_SURFACE_Z)
         z = pz + float(C.START_PLATFORM_TAKEOFF_BUFFER)
@@ -169,8 +211,9 @@ def _sample_start(rng, params: Dict[str, float]) -> Tuple[float, float, float]:
     return float(x), float(y), float(z)
 
 
-def _sample_goal(rng, start: Tuple[float, float, float],
-                 params: Dict[str, float]) -> Tuple[float, float, float]:
+def _sample_goal(
+    rng, start: Tuple[float, float, float], params: Dict[str, float]
+) -> Tuple[float, float, float]:
     sx, sy, _ = start
     wr = params["world_range"]
     for _ in range(200):
@@ -178,10 +221,10 @@ def _sample_goal(rng, start: Tuple[float, float, float],
         ca, sa = math.cos(angle), math.sin(angle)
         max_r_x = abs((wr - sx) / ca) if abs(ca) > 1e-8 else float("inf")
         max_r_y = abs((wr - sy) / sa) if abs(sa) > 1e-8 else float("inf")
-        max_r   = min(max_r_x, max_r_y, params["r_max"])
+        max_r = min(max_r_x, max_r_y, params["r_max"])
         if max_r < params["r_min"]:
             continue
-        r  = rng.uniform(params["r_min"], min(max_r * 0.999, params["r_max"]))
+        r = rng.uniform(params["r_min"], min(max_r * 0.999, params["r_max"]))
         gx = sx + r * ca
         gy = sy + r * sa
         gz = rng.uniform(params["h_min"], params["h_max"])
@@ -189,7 +232,7 @@ def _sample_goal(rng, start: Tuple[float, float, float],
             return float(gx), float(gy), float(gz)
     # fallback — clamp
     angle = rng.uniform(0, 2 * math.pi)
-    r  = rng.uniform(params["r_min"], params["r_max"])
+    r = rng.uniform(params["r_min"], params["r_max"])
     gx = max(-wr, min(wr, sx + r * math.cos(angle)))
     gy = max(-wr, min(wr, sy + r * math.sin(angle)))
     gz = rng.uniform(params["h_min"], params["h_max"])
@@ -200,13 +243,17 @@ def build_task(seed: int, challenge_type: int) -> FlightTask:
     """Deterministically build a :class:`FlightTask` for *seed* / *challenge_type*."""
     import random as _random
     from swarm.constants import SIM_DT
+
     params = _load_type_params(challenge_type)
-    rng    = _random.Random(seed)
-    start  = _sample_start(rng, params)
-    goal   = _sample_goal(rng, start, params)
+    rng = _random.Random(seed)
+    start = _sample_start(rng, params)
+    goal = _sample_goal(rng, start, params)
     return FlightTask(
-        map_seed=seed, start=start, goal=goal,
-        sim_dt=float(SIM_DT), horizon=float(params["horizon"]),
+        map_seed=seed,
+        start=start,
+        goal=goal,
+        sim_dt=float(SIM_DT),
+        horizon=float(params["horizon"]),
         challenge_type=int(challenge_type),
     )
 
@@ -214,6 +261,7 @@ def build_task(seed: int, challenge_type: int) -> FlightTask:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Submission loading
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def _extract_zip(zip_path: Path, dest: Path) -> Path:
     if dest.exists():
@@ -245,7 +293,8 @@ def _load_agent(extracted: Path):
     if str(extracted) not in sys.path:
         sys.path.insert(0, str(extracted))
     spec = importlib.util.spec_from_file_location(
-        "drone_agent", str(extracted / "drone_agent.py"))
+        "drone_agent", str(extracted / "drone_agent.py")
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("Could not load drone_agent.py from submission")
     mod = importlib.util.module_from_spec(spec)
@@ -265,12 +314,16 @@ def _load_agent(extracted: Path):
 #  PyBullet rendering helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _render_rgb(cli: int, view, proj, w: int, h: int) -> np.ndarray:
     """Full-quality RGB render (shadows enabled, no depth-only shortcut)."""
     import pybullet as p
+
     _, _, rgba, _, _ = p.getCameraImage(
-        width=w, height=h,
-        viewMatrix=view, projectionMatrix=proj,
+        width=w,
+        height=h,
+        viewMatrix=view,
+        projectionMatrix=proj,
         renderer=p.ER_TINY_RENDERER,
         shadow=1,
         lightDirection=[0.4, 0.4, 1.0],
@@ -279,34 +332,39 @@ def _render_rgb(cli: int, view, proj, w: int, h: int) -> np.ndarray:
     return np.asarray(rgba, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
 
 
-def _render_depth(cli: int, view, proj, w: int, h: int,
-                  near: float, far: float) -> np.ndarray:
+def _render_depth(
+    cli: int, view, proj, w: int, h: int, near: float, far: float
+) -> np.ndarray:
     """Return depth in **metres** (float32 array, shape ``(h, w)``)."""
     import pybullet as p
+
     _, _, _, zbuf, _ = p.getCameraImage(
-        width=w, height=h,
-        viewMatrix=view, projectionMatrix=proj,
+        width=w,
+        height=h,
+        viewMatrix=view,
+        projectionMatrix=proj,
         renderer=p.ER_TINY_RENDERER,
         shadow=0,
         flags=p.ER_NO_SEGMENTATION_MASK,
         physicsClientId=cli,
     )
-    zbuf  = np.asarray(zbuf, dtype=np.float32).reshape(h, w)
+    zbuf = np.asarray(zbuf, dtype=np.float32).reshape(h, w)
     denom = np.maximum(far - (far - near) * zbuf, near * 1e-6)
     return far * near / denom
 
 
-def _colourise_depth(depth_m: np.ndarray,
-                     clip_min: float = 0.5,
-                     clip_max: float = 20.0) -> np.ndarray:
+def _colourise_depth(
+    depth_m: np.ndarray, clip_min: float = 0.5, clip_max: float = 20.0
+) -> np.ndarray:
     """Map a depth image (metres) to a uint8 RGB frame via the Inferno colourmap."""
     normalised = np.clip((depth_m - clip_min) / (clip_max - clip_min), 0.0, 1.0)
     try:
         import matplotlib.cm as cm
+
         cmap = cm.get_cmap(DEPTH_COLORMAP_NAME)
-        rgb  = cmap(1.0 - normalised)[:, :, :3]          # invert → close = bright
+        rgb = cmap(1.0 - normalised)[:, :, :3]  # invert → close = bright
         return (rgb * 255).astype(np.uint8)
-    except Exception:                                     # matplotlib unavailable
+    except Exception:  # matplotlib unavailable
         grey = (255 * (1.0 - normalised)).astype(np.uint8)
         return np.stack([grey, grey, grey], axis=-1)
 
@@ -315,31 +373,39 @@ def _colourise_depth(depth_m: np.ndarray,
 #  Camera controllers
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class _CameraBase:
     """Common interface for all camera modes."""
 
     def __init__(self, cli: int, width: int, height: int, fov: float):
         import pybullet as p
-        self._p   = p
+
+        self._p = p
         self._cli = cli
-        self._w   = width
-        self._h   = height
+        self._w = width
+        self._h = height
         self._fov = fov
 
     def _proj(self, near: float = 0.1, far: float = 500.0):
         return self._p.computeProjectionMatrixFOV(
-            fov=self._fov, aspect=self._w / self._h,
-            nearVal=near, farVal=far, physicsClientId=self._cli)
+            fov=self._fov,
+            aspect=self._w / self._h,
+            nearVal=near,
+            farVal=far,
+            physicsClientId=self._cli,
+        )
 
     def _view(self, eye, target, up=(0, 0, 1)):
         return self._p.computeViewMatrix(
             cameraEyePosition=list(eye),
             cameraTargetPosition=list(target),
             cameraUpVector=list(up),
-            physicsClientId=self._cli)
+            physicsClientId=self._cli,
+        )
 
-    def capture(self, drone_pos: np.ndarray, drone_quat: np.ndarray,
-                rot: np.ndarray, dt: float) -> np.ndarray:
+    def capture(
+        self, drone_pos: np.ndarray, drone_quat: np.ndarray, rot: np.ndarray, dt: float
+    ) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -349,30 +415,40 @@ class DepthCamera(_CameraBase):
     def __init__(self, cli: int, width: int, height: int):
         super().__init__(cli, DEPTH_SENSOR_RES, DEPTH_SENSOR_RES, fov=90.0)
         from swarm.constants import DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M
-        self._near     = 0.05
-        self._far      = float(DEPTH_FAR)
+
+        self._near = 0.05
+        self._far = float(DEPTH_FAR)
         self._clip_min = float(DEPTH_MIN_M)
         self._clip_max = float(DEPTH_MAX_M)
-        self._out_w    = width
-        self._out_h    = height
+        self._out_w = width
+        self._out_h = height
 
     def capture(self, drone_pos, drone_quat, rot, dt):
         fwd = rot @ np.array([1.0, 0.0, 0.0])
         fwd /= np.linalg.norm(fwd) + 1e-9
-        up  = rot @ np.array([0.0, 0.0, 1.0])
+        up = rot @ np.array([0.0, 0.0, 1.0])
         eye = drone_pos + fwd * 0.35 + up * 0.05
         tgt = eye + fwd * 20.0
 
         view = self._view(eye, tgt, up)
         proj = self._proj(near=self._near, far=self._far)
 
-        depth_m   = _render_depth(self._cli, view, proj, DEPTH_SENSOR_RES,
-                                  DEPTH_SENSOR_RES, self._near, self._far)
+        depth_m = _render_depth(
+            self._cli,
+            view,
+            proj,
+            DEPTH_SENSOR_RES,
+            DEPTH_SENSOR_RES,
+            self._near,
+            self._far,
+        )
         depth_rgb = _colourise_depth(depth_m, self._clip_min, self._clip_max)
 
         from PIL import Image
+
         return np.asarray(
-            Image.fromarray(depth_rgb).resize((self._out_w, self._out_h), Image.NEAREST))
+            Image.fromarray(depth_rgb).resize((self._out_w, self._out_h), Image.NEAREST)
+        )
 
 
 class FPVCamera(_CameraBase):
@@ -381,40 +457,47 @@ class FPVCamera(_CameraBase):
     def __init__(self, cli: int, width: int, height: int, fov: float = FPV_FOV_DEG):
         super().__init__(cli, width, height, fov)
         self._smooth_fwd: Optional[np.ndarray] = None
-        self._smooth_up:  Optional[np.ndarray] = None
+        self._smooth_up: Optional[np.ndarray] = None
 
     def capture(self, drone_pos, drone_quat, rot, dt):
         cur_fwd = rot @ np.array([1.0, 0.0, 0.0])
         cur_fwd /= np.linalg.norm(cur_fwd) + 1e-9
-        cur_up  = rot @ np.array([0.0, 0.0, 1.0])
-        cur_up  /= np.linalg.norm(cur_up) + 1e-9
+        cur_up = rot @ np.array([0.0, 0.0, 1.0])
+        cur_up /= np.linalg.norm(cur_up) + 1e-9
 
         a = FPV_SMOOTHING
         if self._smooth_fwd is not None:
             fwd = a * self._smooth_fwd + (1 - a) * cur_fwd
-            up  = a * self._smooth_up  + (1 - a) * cur_up
+            up = a * self._smooth_up + (1 - a) * cur_up
         else:
             fwd, up = cur_fwd, cur_up
         fwd /= np.linalg.norm(fwd) + 1e-9
-        up  /= np.linalg.norm(up)  + 1e-9
+        up /= np.linalg.norm(up) + 1e-9
         self._smooth_fwd = fwd
-        self._smooth_up  = up
+        self._smooth_up = up
 
         eye = drone_pos + fwd * FPV_OFFSET_FORWARD_M + up * FPV_OFFSET_UP_M
         tgt = eye + fwd * 20.0
-        return _render_rgb(self._cli, self._view(eye, tgt, up), self._proj(), self._w, self._h)
+        return _render_rgb(
+            self._cli, self._view(eye, tgt, up), self._proj(), self._w, self._h
+        )
 
 
 class ChaseCamera(_CameraBase):
     """Cinematic third-person follow camera with smoothed heading."""
 
-    def __init__(self, cli: int, width: int, height: int,
-                 fov: float = CHASE_FOV_DEG,
-                 back: float = CHASE_DISTANCE_BACK_M,
-                 up: float = CHASE_HEIGHT_ABOVE_M):
+    def __init__(
+        self,
+        cli: int,
+        width: int,
+        height: int,
+        fov: float = CHASE_FOV_DEG,
+        back: float = CHASE_DISTANCE_BACK_M,
+        up: float = CHASE_HEIGHT_ABOVE_M,
+    ):
         super().__init__(cli, width, height, fov)
         self._back = back
-        self._up   = up
+        self._up = up
         self._smooth_fwd: Optional[np.ndarray] = None
 
     def capture(self, drone_pos, drone_quat, rot, dt):
@@ -431,55 +514,66 @@ class ChaseCamera(_CameraBase):
 
         eye = drone_pos - fwd * self._back + np.array([0.0, 0.0, self._up])
         tgt = drone_pos + np.array([0.0, 0.0, 0.15])
-        return _render_rgb(self._cli, self._view(eye, tgt), self._proj(), self._w, self._h)
+        return _render_rgb(
+            self._cli, self._view(eye, tgt), self._proj(), self._w, self._h
+        )
 
 
 class OverviewCamera(_CameraBase):
     """Slowly orbiting bird's-eye camera centred between drone and goal."""
 
-    def __init__(self, cli: int, width: int, height: int,
-                 goal: Tuple[float, float, float],
-                 fov: float = OVERVIEW_FOV_DEG):
+    def __init__(
+        self,
+        cli: int,
+        width: int,
+        height: int,
+        goal: Tuple[float, float, float],
+        fov: float = OVERVIEW_FOV_DEG,
+    ):
         super().__init__(cli, width, height, fov)
         self._goal = np.asarray(goal)
-        self._yaw  = 0.0
+        self._yaw = 0.0
 
     def capture(self, drone_pos, drone_quat, rot, dt):
-        mid       = (drone_pos + self._goal) * 0.5
-        span      = float(np.linalg.norm(drone_pos - self._goal))
-        cam_dist  = max(15.0, span * 1.3)
+        mid = (drone_pos + self._goal) * 0.5
+        span = float(np.linalg.norm(drone_pos - self._goal))
+        cam_dist = max(15.0, span * 1.3)
 
         self._yaw += OVERVIEW_ORBIT_DEG_SEC * dt
-        yaw_r     = math.radians(self._yaw)
-        pitch_r   = math.radians(OVERVIEW_PITCH_DEG)
+        yaw_r = math.radians(self._yaw)
+        pitch_r = math.radians(OVERVIEW_PITCH_DEG)
 
-        eye = np.array([
-            mid[0] + cam_dist * math.cos(yaw_r) * math.cos(pitch_r),
-            mid[1] + cam_dist * math.sin(yaw_r) * math.cos(pitch_r),
-            mid[2] - cam_dist * math.sin(pitch_r),
-        ])
+        eye = np.array(
+            [
+                mid[0] + cam_dist * math.cos(yaw_r) * math.cos(pitch_r),
+                mid[1] + cam_dist * math.sin(yaw_r) * math.cos(pitch_r),
+                mid[2] - cam_dist * math.sin(pitch_r),
+            ]
+        )
         return _render_rgb(
-            self._cli, self._view(eye, mid), self._proj(far=1000.0), self._w, self._h)
+            self._cli, self._view(eye, mid), self._proj(far=1000.0), self._w, self._h
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Core recording function  (importable by validators)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def record_flight(
     model_path: Path,
-    seed:       int,
+    seed: int,
     challenge_type: int,
-    modes:      List[str],
-    out_dir:    Path,
+    modes: List[str],
+    out_dir: Path,
     *,
-    width:      int   = DEFAULT_WIDTH,
-    height:     int   = DEFAULT_HEIGHT,
-    fps:        int   = DEFAULT_FPS,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    fps: int = DEFAULT_FPS,
     chase_back: float = CHASE_DISTANCE_BACK_M,
-    chase_up:   float = CHASE_HEIGHT_ABOVE_M,
-    chase_fov:  float = CHASE_FOV_DEG,
-    fpv_fov:    float = FPV_FOV_DEG,
+    chase_up: float = CHASE_HEIGHT_ABOVE_M,
+    chase_fov: float = CHASE_FOV_DEG,
+    fpv_fov: float = FPV_FOV_DEG,
     overview_fov: float = OVERVIEW_FOV_DEG,
 ) -> List[VideoResult]:
     """Record one flight and return metadata for each requested camera mode.
@@ -502,11 +596,11 @@ def record_flight(
     from swarm.constants import SIM_DT, SPEED_LIMIT
 
     model_path = Path(model_path).resolve()
-    out_dir    = Path(out_dir)
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- agent ----------------------------------------------------------
-    work_dir  = out_dir / f".work_seed{seed}"
+    work_dir = out_dir / f".work_seed{seed}"
     extracted = _extract_zip(model_path, work_dir)
     _link_workspace(extracted)
     agent = _load_agent(extracted)
@@ -514,42 +608,53 @@ def record_flight(
     # --- environment ----------------------------------------------------
     task = build_task(seed, challenge_type)
     from swarm.utils.env_factory import make_env
-    env     = make_env(task, gui=False)
-    obs, _  = env.reset(seed=task.map_seed)
-    cli     = getattr(env, "CLIENT", 0)
-    act_lo  = env.action_space.low.flatten()
-    act_hi  = env.action_space.high.flatten()
+
+    env = make_env(task, gui=False)
+    obs, _ = env.reset(seed=task.map_seed)
+    cli = getattr(env, "CLIENT", 0)
+    act_lo = env.action_space.low.flatten()
+    act_hi = env.action_space.high.flatten()
 
     # --- cameras --------------------------------------------------------
     cameras: Dict[str, _CameraBase] = {}
-    if "depth"    in modes: cameras["depth"]    = DepthCamera(cli, width, height)
-    if "fpv"      in modes: cameras["fpv"]      = FPVCamera(cli, width, height, fpv_fov)
-    if "chase"    in modes: cameras["chase"]    = ChaseCamera(cli, width, height, chase_fov, chase_back, chase_up)
-    if "overview" in modes: cameras["overview"] = OverviewCamera(cli, width, height, task.goal, overview_fov)
+    if "depth" in modes:
+        cameras["depth"] = DepthCamera(cli, width, height)
+    if "fpv" in modes:
+        cameras["fpv"] = FPVCamera(cli, width, height, fpv_fov)
+    if "chase" in modes:
+        cameras["chase"] = ChaseCamera(
+            cli, width, height, chase_fov, chase_back, chase_up
+        )
+    if "overview" in modes:
+        cameras["overview"] = OverviewCamera(
+            cli, width, height, task.goal, overview_fov
+        )
 
     # --- writers --------------------------------------------------------
     type_label = TYPE_LABELS.get(challenge_type, f"type{challenge_type}")
-    writers:   Dict[str, Any]  = {}
+    writers: Dict[str, Any] = {}
     out_paths: Dict[str, Path] = {}
     tmp_paths: Dict[str, Path] = {}
 
     for mode in modes:
-        fname          = f"seed{seed}_{type_label}_{mode}.mp4"
+        fname = f"seed{seed}_{type_label}_{mode}.mp4"
         out_paths[mode] = out_dir / fname
         tmp_paths[mode] = out_dir / f".tmp_{fname}"
-        writers[mode]   = imageio.get_writer(str(tmp_paths[mode]), fps=fps)
+        writers[mode] = imageio.get_writer(str(tmp_paths[mode]), fps=fps)
 
     # --- simulation loop ------------------------------------------------
-    frame_dt     = 1.0 / fps
+    frame_dt = 1.0 / fps
     next_frame_t = 0.0
-    frame_count  = 0
-    t_sim        = 0.0
-    success      = False
+    frame_count = 0
+    t_sim = 0.0
+    success = False
     t_wall_start = time.time()
 
     dist_m = math.dist(task.start, task.goal)
-    print(f"[video] seed={seed}  type={challenge_type} ({type_label})  "
-          f"dist={dist_m:.1f}m  modes={modes}")
+    print(
+        f"[video] seed={seed}  type={challenge_type} ({type_label})  "
+        f"dist={dist_m:.1f}m  modes={modes}"
+    )
 
     try:
         while t_sim < task.horizon:
@@ -572,15 +677,15 @@ def record_flight(
 
             # --- render frame ---
             if t_sim >= next_frame_t:
-                drone_pos  = np.asarray(env._getDroneStateVector(0)[:3])
+                drone_pos = np.asarray(env._getDroneStateVector(0)[:3])
                 drone_quat = np.asarray(env.quat[0])
-                rot        = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+                rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
 
                 for mode, cam in cameras.items():
                     frame = cam.capture(drone_pos, drone_quat, rot, frame_dt)
                     writers[mode].append_data(frame)
 
-                frame_count  += 1
+                frame_count += 1
                 next_frame_t += frame_dt
 
             if terminated or truncated:
@@ -590,17 +695,23 @@ def record_flight(
     finally:
         # close writers before anything else to flush buffers
         for w in writers.values():
-            try: w.close()
-            except Exception: pass
-        try: env.close()
-        except Exception: pass
+            try:
+                w.close()
+            except Exception:
+                pass
+        try:
+            env.close()
+        except Exception:
+            pass
 
         # atomic rename: tmp → final
         for mode in modes:
             src = tmp_paths[mode]
             if src.exists():
-                try:   src.replace(out_paths[mode])
-                except Exception: pass
+                try:
+                    src.replace(out_paths[mode])
+                except Exception:
+                    pass
 
         # cleanup extraction directory
         try:
@@ -609,24 +720,32 @@ def record_flight(
         except Exception:
             pass
 
-    wall_sec  = time.time() - t_wall_start
+    wall_sec = time.time() - t_wall_start
     video_sec = frame_count / fps if fps else 0.0
 
     # --- summary --------------------------------------------------------
     results: List[VideoResult] = []
     for mode in modes:
         fpath = out_paths[mode]
-        size  = fpath.stat().st_size / (1024 * 1024) if fpath.exists() else 0.0
-        results.append(VideoResult(
-            mode=mode, path=str(fpath), frames=frame_count,
-            duration_sec=video_sec, success=success,
-            sim_time_sec=t_sim, wall_time_sec=wall_sec,
-        ))
+        size = fpath.stat().st_size / (1024 * 1024) if fpath.exists() else 0.0
+        results.append(
+            VideoResult(
+                mode=mode,
+                path=str(fpath),
+                frames=frame_count,
+                duration_sec=video_sec,
+                success=success,
+                sim_time_sec=t_sim,
+                wall_time_sec=wall_sec,
+            )
+        )
         print(f"  {mode:<10}  {fpath.name}  ({size:.1f} MB)")
 
     status = "SUCCESS" if success else "TIMEOUT"
-    print(f"[video] {status}  frames={frame_count}  video={video_sec:.1f}s  "
-          f"sim={t_sim:.1f}s  wall={wall_sec:.1f}s")
+    print(
+        f"[video] {status}  frames={frame_count}  video={video_sec:.1f}s  "
+        f"sim={t_sim:.1f}s  wall={wall_sec:.1f}s"
+    )
     return results
 
 
@@ -634,12 +753,14 @@ def record_flight(
 #  CLI entry-point
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="generate_video",
         description="Swarm V4 — render drone flight videos for a given model + seed.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=textwrap.dedent("""\
+        epilog=textwrap.dedent(
+            """\
             camera modes
               depth     onboard 128x128 depth sensor (Inferno colourmap, upscaled)
               fpv       first-person RGB from the drone nose
@@ -651,38 +772,98 @@ def _build_parser() -> argparse.ArgumentParser:
               %(prog)s --model UID_178.zip --seed 42 --type 1 --mode chase
               %(prog)s --model UID_178.zip --seed 42 --type 5 --mode all --out ./videos
               %(prog)s --model UID_178.zip --seed 42 --type 1 --mode depth,fpv --width 1920 --height 1080
-        """),
+        """
+        ),
     )
 
     req = ap.add_argument_group("required arguments")
-    req.add_argument("--model", type=Path, required=True,
-                     metavar="ZIP", help="miner submission zip")
-    req.add_argument("--seed",  type=int, required=True,
-                     help="map seed for deterministic world generation")
-    req.add_argument("--type",  type=int, required=True, choices=[1, 2, 3, 4, 5],
-                     metavar="TYPE",
-                     help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse)")
+    req.add_argument(
+        "--model", type=Path, required=True, metavar="ZIP", help="miner submission zip"
+    )
+    req.add_argument(
+        "--seed",
+        type=int,
+        required=True,
+        help="map seed for deterministic world generation",
+    )
+    req.add_argument(
+        "--type",
+        type=int,
+        required=True,
+        choices=[1, 2, 3, 4, 5],
+        metavar="TYPE",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse)",
+    )
 
     vid = ap.add_argument_group("video options")
-    vid.add_argument("--mode",   type=str, default="chase",
-                     help="camera mode(s), comma-separated  (default: chase)")
-    vid.add_argument("--out",    type=Path, default=None,
-                     metavar="DIR", help="output directory  (default: ./videos)")
-    vid.add_argument("--width",  type=int, default=DEFAULT_WIDTH,  help=f"frame width   (default: {DEFAULT_WIDTH})")
-    vid.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help=f"frame height  (default: {DEFAULT_HEIGHT})")
-    vid.add_argument("--fps",    type=int, default=DEFAULT_FPS,    help=f"frames/sec    (default: {DEFAULT_FPS})")
+    vid.add_argument(
+        "--mode",
+        type=str,
+        default="chase",
+        help="camera mode(s), comma-separated  (default: chase)",
+    )
+    vid.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="output directory  (default: ./videos)",
+    )
+    vid.add_argument(
+        "--width",
+        type=int,
+        default=DEFAULT_WIDTH,
+        help=f"frame width   (default: {DEFAULT_WIDTH})",
+    )
+    vid.add_argument(
+        "--height",
+        type=int,
+        default=DEFAULT_HEIGHT,
+        help=f"frame height  (default: {DEFAULT_HEIGHT})",
+    )
+    vid.add_argument(
+        "--fps",
+        type=int,
+        default=DEFAULT_FPS,
+        help=f"frames/sec    (default: {DEFAULT_FPS})",
+    )
 
     cam = ap.add_argument_group("camera tuning")
-    cam.add_argument("--chase-back", type=float, default=CHASE_DISTANCE_BACK_M,
-                     metavar="M", help="chase: distance behind drone (m)")
-    cam.add_argument("--chase-up",   type=float, default=CHASE_HEIGHT_ABOVE_M,
-                     metavar="M", help="chase: height above drone (m)")
-    cam.add_argument("--chase-fov",  type=float, default=CHASE_FOV_DEG,
-                     metavar="DEG", help="chase: field of view")
-    cam.add_argument("--fpv-fov",    type=float, default=FPV_FOV_DEG,
-                     metavar="DEG", help="fpv: field of view")
-    cam.add_argument("--overview-fov", type=float, default=OVERVIEW_FOV_DEG,
-                     metavar="DEG", help="overview: field of view")
+    cam.add_argument(
+        "--chase-back",
+        type=float,
+        default=CHASE_DISTANCE_BACK_M,
+        metavar="M",
+        help="chase: distance behind drone (m)",
+    )
+    cam.add_argument(
+        "--chase-up",
+        type=float,
+        default=CHASE_HEIGHT_ABOVE_M,
+        metavar="M",
+        help="chase: height above drone (m)",
+    )
+    cam.add_argument(
+        "--chase-fov",
+        type=float,
+        default=CHASE_FOV_DEG,
+        metavar="DEG",
+        help="chase: field of view",
+    )
+    cam.add_argument(
+        "--fpv-fov",
+        type=float,
+        default=FPV_FOV_DEG,
+        metavar="DEG",
+        help="fpv: field of view",
+    )
+    cam.add_argument(
+        "--overview-fov",
+        type=float,
+        default=OVERVIEW_FOV_DEG,
+        metavar="DEG",
+        help="overview: field of view",
+    )
     return ap
 
 
@@ -706,7 +887,7 @@ def main() -> None:
         raise ValueError(f"No modes selected. Choose from: {VALID_MODES}")
 
     out_dir = args.out or (_SCRIPT_DIR / "videos")
-    tname   = TYPE_LABELS.get(args.type, "?")
+    tname = TYPE_LABELS.get(args.type, "?")
 
     print("=" * 64)
     print("  Swarm V4 Video Generator")
@@ -722,11 +903,18 @@ def main() -> None:
 
     t0 = time.time()
     results = record_flight(
-        model_path=model, seed=args.seed, challenge_type=args.type,
-        modes=modes, out_dir=out_dir,
-        width=args.width, height=args.height, fps=args.fps,
-        chase_back=args.chase_back, chase_up=args.chase_up,
-        chase_fov=args.chase_fov, fpv_fov=args.fpv_fov,
+        model_path=model,
+        seed=args.seed,
+        challenge_type=args.type,
+        modes=modes,
+        out_dir=out_dir,
+        width=args.width,
+        height=args.height,
+        fps=args.fps,
+        chase_back=args.chase_back,
+        chase_up=args.chase_up,
+        chase_fov=args.chase_fov,
+        fpv_fov=args.fpv_fov,
         overview_fov=args.overview_fov,
     )
 

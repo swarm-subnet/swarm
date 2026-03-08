@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import io
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -28,7 +27,7 @@ def test_evaluator_verify_only_legitimate_writes_success(monkeypatch, tmp_path):
     monkeypatch.setattr(
         evaluator,
         "classify_model_validity",
-        lambda inspection: ("legitimate", "RPC submission validated"),
+        lambda _inspection: ("legitimate", "RPC submission validated"),
     )
     monkeypatch.setattr(evaluator.resource, "setrlimit", lambda *a, **k: None)
     monkeypatch.setattr(sys, "stderr", _NoCloseIO())
@@ -56,11 +55,16 @@ def test_evaluator_verify_only_fake_writes_fake_flags(monkeypatch, tmp_path):
     model_file.write_bytes(b"zip")
 
     fake_inspection = {"error": "Dangerous executable files detected: ['payload.sh']"}
-    monkeypatch.setattr(evaluator, "inspect_model_structure", lambda path: fake_inspection)
+    monkeypatch.setattr(
+        evaluator, "inspect_model_structure", lambda path: fake_inspection
+    )
     monkeypatch.setattr(
         evaluator,
         "classify_model_validity",
-        lambda inspection: ("fake", "Dangerous executable files detected: ['payload.sh']"),
+        lambda _inspection: (
+            "fake",
+            "Dangerous executable files detected: ['payload.sh']",
+        ),
     )
     monkeypatch.setattr(evaluator.resource, "setrlimit", lambda *a, **k: None)
     monkeypatch.setattr(sys, "stderr", _NoCloseIO())

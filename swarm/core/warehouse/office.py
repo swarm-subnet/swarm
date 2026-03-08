@@ -176,7 +176,9 @@ class AssetLoader:
                 if line.startswith("v "):
                     parts = line.split()
                     if len(parts) >= 4:
-                        verts.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                        verts.append(
+                            (float(parts[1]), float(parts[2]), float(parts[3]))
+                        )
         if not verts:
             raise ValueError(f"No vertices found in {path}")
         return verts
@@ -195,7 +197,9 @@ class AssetLoader:
         transformed = []
         for v in verts:
             rx, ry, rz = self._rotate_y_up_to_z_up(v)
-            transformed.append((rx * scale_xyz[0], ry * scale_xyz[1], rz * scale_xyz[2]))
+            transformed.append(
+                (rx * scale_xyz[0], ry * scale_xyz[1], rz * scale_xyz[2])
+            )
         min_v = [min(v[i] for v in transformed) for i in range(3)]
         max_v = [max(v[i] for v in transformed) for i in range(3)]
         self.bounds_cache[key] = (min_v, max_v)
@@ -212,7 +216,9 @@ class AssetLoader:
                 if line.startswith("v "):
                     parts = line.split()
                     if len(parts) >= 4:
-                        verts.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                        verts.append(
+                            (float(parts[1]), float(parts[2]), float(parts[3]))
+                        )
                 elif line.startswith("f "):
                     tokens = line.split()[1:]
                     idx = []
@@ -304,7 +310,9 @@ class AssetLoader:
             return self.urdf_cache[key]
         mesh_path = self._asset_path(filename).replace("\\", "/")
         name = os.path.splitext(filename)[0]
-        urdf_path = os.path.join(self.temp_dir, f"{name}_s{str(scale).replace('.', '_')}.urdf")
+        urdf_path = os.path.join(
+            self.temp_dir, f"{name}_s{str(scale).replace('.', '_')}.urdf"
+        )
         roll, pitch, yaw = MESH_UP_FIX_RPY
         urdf = f"""<?xml version="1.0" ?>
 <robot name="{name}">
@@ -345,7 +353,9 @@ class AssetLoader:
         if key in self.urdf_cache:
             return self.urdf_cache[key]
         safe_tag = mesh_tag.replace(" ", "_")
-        scale_tag = "_".join(str(v).replace(".", "_").replace("-", "m") for v in scale_xyz)
+        scale_tag = "_".join(
+            str(v).replace(".", "_").replace("-", "m") for v in scale_xyz
+        )
         urdf_path = os.path.join(
             self.temp_dir,
             f"{safe_tag}_s{scale_tag}_{rgba_key[0]}_{rgba_key[1]}_{rgba_key[2]}.urdf",
@@ -519,7 +529,9 @@ class AssetLoader:
     def _material_parts(self, filename):
         if filename in self.material_parts_cache:
             return self.material_parts_cache[filename]
-        mtllib, v_lines, vt_lines, vn_lines, faces_by_mat = self._read_material_usage(filename)
+        mtllib, v_lines, vt_lines, vn_lines, faces_by_mat = self._read_material_usage(
+            filename
+        )
         mtl_colors = self._read_mtl_colors(mtllib)
         if not faces_by_mat:
             mesh = self._asset_path(filename).replace("\\", "/")
@@ -586,13 +598,13 @@ class AssetLoader:
             except Exception:
                 continue
             w, h = logo.size
-            l, t, r, b = self._foreground_bbox_against_corner_bg(logo)
-            margin = min(l, t, w - r, h - b)
+            left, top, right, bottom = self._foreground_bbox_against_corner_bg(logo)
+            margin = min(left, top, w - right, h - bottom)
             score = max(0, margin)
             if score > best_score:
                 best_score = score
                 best_path = path
-                best_bbox = (l, t, r, b)
+                best_bbox = (left, top, right, bottom)
         return best_path, best_bbox
 
     def _ensure_brand_screen_texture(self):
@@ -600,28 +612,36 @@ class AssetLoader:
             return None
         tex_path = os.path.join(self.temp_dir, "screen_swarm_logo.png")
         w, h = 512, 320
-        resampling = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        resampling = (
+            Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        )
         logo_path, logo_bbox = self._pick_best_logo_path(SCREEN_LOGO_CANDIDATES)
         if logo_path is not None:
             logo = Image.open(logo_path).convert("RGBA")
             if logo_bbox is not None:
-                l, t, r, b = logo_bbox
+                left, top, right, bottom = logo_bbox
                 pad = 4
-                l = max(0, l - pad)
-                t = max(0, t - pad)
-                r = min(logo.size[0], r + pad)
-                b = min(logo.size[1], b + pad)
-                logo = logo.crop((l, t, r, b))
+                left = max(0, left - pad)
+                top = max(0, top - pad)
+                right = min(logo.size[0], right + pad)
+                bottom = min(logo.size[1], bottom + pad)
+                logo = logo.crop((left, top, right, bottom))
             img = Image.new("RGBA", (w, h), (8, 8, 8, 255))
             safe_pad = 12
-            fitted = ImageOps.contain(logo, (w - safe_pad * 2, h - safe_pad * 2), method=resampling)
+            fitted = ImageOps.contain(
+                logo, (w - safe_pad * 2, h - safe_pad * 2), method=resampling
+            )
             px = (w - fitted.width) // 2
             py = (h - fitted.height) // 2
             img.alpha_composite(fitted, (px, py))
         else:
             img = Image.new("RGBA", (w, h), (224, 238, 245, 255))
             draw = ImageDraw.Draw(img)
-            draw.text((int(w * 0.20), int(h * 0.38)), SCREEN_BRANDING_LABEL, fill=(25, 94, 122, 255))
+            draw.text(
+                (int(w * 0.20), int(h * 0.38)),
+                SCREEN_BRANDING_LABEL,
+                fill=(25, 94, 122, 255),
+            )
         if SCREEN_TEXTURE_ROTATE_DEG % 360 != 0:
             img = img.rotate(SCREEN_TEXTURE_ROTATE_DEG, expand=False)
         img.convert("RGB").save(tex_path)
@@ -713,11 +733,16 @@ class AssetLoader:
             )
             if first_body is None:
                 first_body = body_id
-            if SCREEN_BRANDING_ENABLED and filename == ASSETS["monitor"] and mat_name == "metal":
+            if (
+                SCREEN_BRANDING_ENABLED
+                and filename == ASSETS["monitor"]
+                and mat_name == "metal"
+            ):
                 tex_id = self._brand_texture_for_monitor()
                 if tex_id is not None:
                     p.changeVisualShape(
-                        body_id, -1,
+                        body_id,
+                        -1,
                         rgbaColor=[1, 1, 1, 1],
                         textureUniqueId=tex_id,
                         physicsClientId=self.cli,
@@ -732,7 +757,9 @@ class AssetLoader:
         transformed = []
         for v in verts:
             rx, ry, rz = self._rotate_y_up_to_z_up(v)
-            transformed.append((rx * scale_xyz[0], ry * scale_xyz[1], rz * scale_xyz[2]))
+            transformed.append(
+                (rx * scale_xyz[0], ry * scale_xyz[1], rz * scale_xyz[2])
+            )
         min_v = [min(v[i] for v in transformed) for i in range(3)]
         max_v = [max(v[i] for v in transformed) for i in range(3)]
         center_x = (min_v[0] + max_v[0]) * 0.5
@@ -957,9 +984,14 @@ def _wall_segment_plan(loader):
     if not ENABLE_PERIMETER_WALL_CORNERS:
         nseg = round(FLOOR_SIZE / wall_len)
         if abs(nseg * wall_len - FLOOR_SIZE) > 1e-6:
-            raise ValueError(f"Wall model does not tile {FLOOR_SIZE:.2f}m exactly at scale {UNIFORM_SCALE}.")
+            raise ValueError(
+                f"Wall model does not tile {FLOOR_SIZE:.2f}m exactly at scale {UNIFORM_SCALE}."
+            )
         start = -FLOOR_SIZE / 2.0 + wall_len / 2.0
-        return [(start + i * wall_len, float(PERIMETER_WALL_ALONG_SCALE)) for i in range(int(nseg))]
+        return [
+            (start + i * wall_len, float(PERIMETER_WALL_ALONG_SCALE))
+            for i in range(int(nseg))
+        ]
     trim = _corner_trim_from_model(loader)
     inner_span = FLOOR_SIZE - (2.0 * trim)
     if inner_span <= 0.2:
@@ -978,7 +1010,9 @@ def spawn_walls(loader, floor_top_z):
         for along, along_scale in seg_plan:
             x, y = slot_xy(slot, along, inward=0.0)
             loader.spawn(
-                ASSETS["wall"], x, y,
+                ASSETS["wall"],
+                x,
+                y,
                 yaw_deg=wall_yaw,
                 floor_z=floor_top_z,
                 scale=(UNIFORM_SCALE * along_scale, UNIFORM_SCALE, UNIFORM_SCALE),
@@ -1025,19 +1059,27 @@ def spawn_wall_corners(loader, floor_top_z):
         loader.spawn(corner_model, x, y, yaw_deg=yaw, floor_z=floor_top_z)
 
 
-def spawn_walls_with_entry(loader, floor_top_z, entry_slot, door_along=0.0, open_mode=ENTRY_WALL_OPENING_MODE):
+def spawn_walls_with_entry(
+    loader, floor_top_z, entry_slot, door_along=0.0, open_mode=ENTRY_WALL_OPENING_MODE
+):
     if entry_slot not in WALL_SLOTS:
         raise ValueError(f"Unknown entry slot: {entry_slot}")
     seg_plan = _wall_segment_plan(loader)
     seg_along = [a for a, _s in seg_plan]
     if not seg_along:
         return
-    door_idx = min(range(len(seg_along)), key=lambda i: abs(seg_along[i] - float(door_along)))
+    door_idx = min(
+        range(len(seg_along)), key=lambda i: abs(seg_along[i] - float(door_along))
+    )
     use_gap = str(open_mode).lower() == "gap"
     slot_yaw_cache = {}
     for slot in WALL_SLOTS:
-        slot_yaw_cache[(slot, ASSETS["wall"])] = slot_inward_wall_yaw(loader, ASSETS["wall"], slot)
-        slot_yaw_cache[(slot, ASSETS["wall_door"])] = slot_inward_wall_yaw(loader, ASSETS["wall_door"], slot)
+        slot_yaw_cache[(slot, ASSETS["wall"])] = slot_inward_wall_yaw(
+            loader, ASSETS["wall"], slot
+        )
+        slot_yaw_cache[(slot, ASSETS["wall_door"])] = slot_inward_wall_yaw(
+            loader, ASSETS["wall_door"], slot
+        )
         for i, (along, along_scale) in enumerate(seg_plan):
             if slot == entry_slot and i == door_idx:
                 if use_gap:
@@ -1048,7 +1090,9 @@ def spawn_walls_with_entry(loader, floor_top_z, entry_slot, door_along=0.0, open
             x, y = slot_xy(slot, along, inward=0.0)
             wall_yaw = slot_yaw_cache[(slot, model)]
             loader.spawn(
-                model, x, y,
+                model,
+                x,
+                y,
                 yaw_deg=wall_yaw,
                 floor_z=floor_top_z,
                 scale=(UNIFORM_SCALE * along_scale, UNIFORM_SCALE, UNIFORM_SCALE),
@@ -1070,7 +1114,9 @@ def place_entry_wall(loader, floor_top_z, slot, seed, corners=None, spawn_doorwa
     plant_along = 2.55 * mirror
     cx, cy = slot_xy(slot, coat_along, inward=1.00)
     px, py = slot_xy(slot, plant_along, inward=1.02)
-    loader.spawn(ASSETS["entry_coat_rack"], cx, cy, yaw_deg=face_yaw, floor_z=floor_top_z)
+    loader.spawn(
+        ASSETS["entry_coat_rack"], cx, cy, yaw_deg=face_yaw, floor_z=floor_top_z
+    )
     loader.spawn(ASSETS["entry_plant"], px, py, yaw_deg=face_yaw, floor_z=floor_top_z)
     forbidden_by_corner = {}
     coat_corner = nearest_corner_index(cx, cy, corners)
@@ -1084,11 +1130,25 @@ def place_workstations_wall(loader, floor_top_z, slot, seed):
     rng = random.Random(seed + 1700 + WALL_SLOTS.index(slot))
     desk_w, desk_d, _ = loader.model_size(ASSETS["desk"])
     _, chair_d, _ = loader.model_size(ASSETS["desk_chair"])
-    right_corner_model = ASSETS["desk_corner"] if rng.random() < 0.65 else ASSETS["desk"]
+    right_corner_model = (
+        ASSETS["desk_corner"] if rng.random() < 0.65 else ASSETS["desk"]
+    )
     if workstation_right_is_positive_along(slot):
-        row_models = [ASSETS["desk"], ASSETS["desk"], ASSETS["desk"], ASSETS["desk"], right_corner_model]
+        row_models = [
+            ASSETS["desk"],
+            ASSETS["desk"],
+            ASSETS["desk"],
+            ASSETS["desk"],
+            right_corner_model,
+        ]
     else:
-        row_models = [right_corner_model, ASSETS["desk"], ASSETS["desk"], ASSETS["desk"], ASSETS["desk"]]
+        row_models = [
+            right_corner_model,
+            ASSETS["desk"],
+            ASSETS["desk"],
+            ASSETS["desk"],
+            ASSETS["desk"],
+        ]
     widths = [loader.model_size(m)[0] for m in row_models]
     gap = 0.14
     max_span = FLOOR_SIZE - 1.9
@@ -1107,34 +1167,76 @@ def place_workstations_wall(loader, floor_top_z, slot, seed):
     base_keyboard_offset = 0.12
     desk_yaw = wall_face_yaw(slot)
     inward_normal = slot_config(slot)["normal"]
-    back_regular = loader.back_offset(ASSETS["desk"], desk_yaw, inward_normal, scale=UNIFORM_SCALE)
+    back_regular = loader.back_offset(
+        ASSETS["desk"], desk_yaw, inward_normal, scale=UNIFORM_SCALE
+    )
     target_back_inward = base_desk_inward - back_regular
     unified_chair_inward = base_desk_inward + base_chair_offset
     unified_monitor_inward = base_desk_inward + base_monitor_offset
     unified_keyboard_inward = base_desk_inward + base_keyboard_offset
 
     def spawn_station(st_slot, along, desk_model, chair_along_nudge=0.0):
-        key_along_offset, mouse_along_offset = desk_lr_along_offsets(st_slot, separation=0.28)
+        key_along_offset, mouse_along_offset = desk_lr_along_offsets(
+            st_slot, separation=0.28
+        )
         st_desk_yaw = wall_face_yaw(st_slot)
         st_chair_yaw = (st_desk_yaw + 180.0) % 360.0
         desk_h = loader.model_size(desk_model)[2]
         st_inward_normal = slot_config(st_slot)["normal"]
-        back_model = loader.back_offset(desk_model, st_desk_yaw, st_inward_normal, scale=UNIFORM_SCALE)
+        back_model = loader.back_offset(
+            desk_model, st_desk_yaw, st_inward_normal, scale=UNIFORM_SCALE
+        )
         desk_inward = target_back_inward + back_model
         chair_inward = unified_chair_inward
         monitor_inward = unified_monitor_inward
         keyboard_inward = unified_keyboard_inward
         logical_along = along
         dx, dy = slot_xy(st_slot, along, inward=desk_inward)
-        loader.spawn(desk_model, dx, dy, yaw_deg=st_desk_yaw, floor_z=floor_top_z, scale=UNIFORM_SCALE)
-        cx, cy = slot_xy(st_slot, logical_along + chair_along_nudge, inward=chair_inward)
-        loader.spawn(ASSETS["desk_chair"], cx, cy, yaw_deg=st_chair_yaw, floor_z=floor_top_z)
+        loader.spawn(
+            desk_model,
+            dx,
+            dy,
+            yaw_deg=st_desk_yaw,
+            floor_z=floor_top_z,
+            scale=UNIFORM_SCALE,
+        )
+        cx, cy = slot_xy(
+            st_slot, logical_along + chair_along_nudge, inward=chair_inward
+        )
+        loader.spawn(
+            ASSETS["desk_chair"], cx, cy, yaw_deg=st_chair_yaw, floor_z=floor_top_z
+        )
         mx, my = slot_xy(st_slot, logical_along, inward=monitor_inward)
-        loader.spawn(ASSETS["monitor"], mx, my, yaw_deg=st_desk_yaw, floor_z=floor_top_z, extra_z=desk_h + 0.01)
-        kx, ky = slot_xy(st_slot, logical_along + key_along_offset, inward=keyboard_inward)
-        loader.spawn(ASSETS["keyboard"], kx, ky, yaw_deg=st_desk_yaw, floor_z=floor_top_z, extra_z=desk_h + 0.01)
-        msx, msy = slot_xy(st_slot, logical_along + mouse_along_offset, inward=keyboard_inward)
-        loader.spawn(ASSETS["mouse"], msx, msy, yaw_deg=st_desk_yaw, floor_z=floor_top_z, extra_z=desk_h + 0.01)
+        loader.spawn(
+            ASSETS["monitor"],
+            mx,
+            my,
+            yaw_deg=st_desk_yaw,
+            floor_z=floor_top_z,
+            extra_z=desk_h + 0.01,
+        )
+        kx, ky = slot_xy(
+            st_slot, logical_along + key_along_offset, inward=keyboard_inward
+        )
+        loader.spawn(
+            ASSETS["keyboard"],
+            kx,
+            ky,
+            yaw_deg=st_desk_yaw,
+            floor_z=floor_top_z,
+            extra_z=desk_h + 0.01,
+        )
+        msx, msy = slot_xy(
+            st_slot, logical_along + mouse_along_offset, inward=keyboard_inward
+        )
+        loader.spawn(
+            ASSETS["mouse"],
+            msx,
+            msy,
+            yaw_deg=st_desk_yaw,
+            floor_z=floor_top_z,
+            extra_z=desk_h + 0.01,
+        )
 
     for i, (model, along) in enumerate(zip(row_models, centers)):
         chair_along_nudge = 0.0
@@ -1152,9 +1254,26 @@ def place_files_wall(loader, floor_top_z, slot, seed):
     face_yaw = wall_face_yaw(slot)
     tangent_yaw = wall_tangent_yaw(slot)
     shelf_variants = [
-        [ASSETS["bookcase_open"], ASSETS["bookcase_open"], ASSETS["bookcase_closed"], ASSETS["bookcase_wide"]],
-        [ASSETS["bookcase_open"], ASSETS["bookcase_closed"], ASSETS["bookcase_open"], ASSETS["bookcase_open_low"], ASSETS["bookcase_open"]],
-        [ASSETS["bookcase_open"], ASSETS["bookcase_wide"], ASSETS["bookcase_open_low"], ASSETS["bookcase_open"], ASSETS["bookcase_closed"]],
+        [
+            ASSETS["bookcase_open"],
+            ASSETS["bookcase_open"],
+            ASSETS["bookcase_closed"],
+            ASSETS["bookcase_wide"],
+        ],
+        [
+            ASSETS["bookcase_open"],
+            ASSETS["bookcase_closed"],
+            ASSETS["bookcase_open"],
+            ASSETS["bookcase_open_low"],
+            ASSETS["bookcase_open"],
+        ],
+        [
+            ASSETS["bookcase_open"],
+            ASSETS["bookcase_wide"],
+            ASSETS["bookcase_open_low"],
+            ASSETS["bookcase_open"],
+            ASSETS["bookcase_closed"],
+        ],
     ]
     shelves = rng.choice(shelf_variants)
     shelf_gap = 0.08
@@ -1168,15 +1287,23 @@ def place_files_wall(loader, floor_top_z, slot, seed):
         centers.append(cursor + w / 2.0)
         cursor += w + shelf_gap
     shelf_profiles = {
-        ASSETS["bookcase_open_low"]: {"max_per_row": 1, "book_inward": shelf_inward + 0.00},
+        ASSETS["bookcase_open_low"]: {
+            "max_per_row": 1,
+            "book_inward": shelf_inward + 0.00,
+        },
         ASSETS["bookcase_open"]: {"max_per_row": 1, "book_inward": shelf_inward + 0.00},
-        ASSETS["bookcase_closed"]: {"max_per_row": 1, "book_inward": shelf_inward + 0.00},
+        ASSETS["bookcase_closed"]: {
+            "max_per_row": 1,
+            "book_inward": shelf_inward + 0.00,
+        },
         ASSETS["bookcase_wide"]: {"max_per_row": 3, "book_inward": shelf_inward + 0.00},
     }
     for model, along in zip(shelves, centers):
         x, y = slot_xy(slot, along, inward=shelf_inward)
         loader.spawn(model, x, y, yaw_deg=face_yaw, floor_z=floor_top_z)
-        profile = shelf_profiles.get(model, {"max_per_row": 1, "book_inward": shelf_inward + 0.00})
+        profile = shelf_profiles.get(
+            model, {"max_per_row": 1, "book_inward": shelf_inward + 0.00}
+        )
         shelf_h = loader.model_size(model)[2]
         book_inward = profile["book_inward"]
         row_levels = list(loader.shelf_surface_levels(model))
@@ -1195,16 +1322,22 @@ def place_files_wall(loader, floor_top_z, slot, seed):
                 row_offsets = [-0.30, 0.0, 0.30]
             for oi, offset in enumerate(row_offsets):
                 bx, by = slot_xy(slot, along + offset, inward=book_inward)
-                flip = ((li + oi) % 2 == 1)
+                flip = (li + oi) % 2 == 1
                 byaw = face_yaw if not flip else (face_yaw + 180.0) % 360.0
                 loader.spawn(
-                    ASSETS["books"], bx, by,
+                    ASSETS["books"],
+                    bx,
+                    by,
                     yaw_deg=byaw,
                     floor_z=floor_top_z,
                     extra_z=level + 0.005,
                 )
-    left_box_along = -total_span / 2.0 - loader.model_size(ASSETS["box"])[0] / 2.0 - 0.20
-    right_box_along = total_span / 2.0 + loader.model_size(ASSETS["box_open"])[0] / 2.0 + 0.20
+    left_box_along = (
+        -total_span / 2.0 - loader.model_size(ASSETS["box"])[0] / 2.0 - 0.20
+    )
+    right_box_along = (
+        total_span / 2.0 + loader.model_size(ASSETS["box_open"])[0] / 2.0 + 0.20
+    )
     bx1, by1 = slot_xy(slot, left_box_along, inward=1.08)
     bx2, by2 = slot_xy(slot, right_box_along, inward=1.08)
     loader.spawn(ASSETS["box"], bx1, by1, yaw_deg=tangent_yaw, floor_z=floor_top_z)
@@ -1223,7 +1356,9 @@ def place_services_wall(loader, floor_top_z, slot, seed, corners=None):
         weights=[0.55, 0.35, 0.10],
         k=1,
     )[0]
-    storage_model = rng.choice([ASSETS["bookcase_closed_doors"], ASSETS["cabinet_tv_doors"]])
+    storage_model = rng.choice(
+        [ASSETS["bookcase_closed_doors"], ASSETS["cabinet_tv_doors"]]
+    )
     mirror = -1.0 if rng.random() < 0.5 else 1.0
     fridge_along = -1.90 * mirror
     cabinet_along = 0.00 * mirror
@@ -1235,7 +1370,14 @@ def place_services_wall(loader, floor_top_z, slot, seed, corners=None):
     cx, cy = slot_xy(slot, cabinet_along, inward=0.93)
     loader.spawn(ASSETS["cabinet"], cx, cy, yaw_deg=face_yaw, floor_z=floor_top_z)
     kx, ky = slot_xy(slot, cabinet_along, inward=0.88)
-    loader.spawn(ASSETS["coffee_machine"], kx, ky, yaw_deg=face_yaw, floor_z=floor_top_z, extra_z=cab_h + 0.01)
+    loader.spawn(
+        ASSETS["coffee_machine"],
+        kx,
+        ky,
+        yaw_deg=face_yaw,
+        floor_z=floor_top_z,
+        extra_z=cab_h + 0.01,
+    )
     sx, sy = slot_xy(slot, storage_along, inward=0.92)
     loader.spawn(storage_model, sx, sy, yaw_deg=face_yaw, floor_z=floor_top_z)
     tx, ty = slot_xy(slot, trash_along, inward=1.06)
@@ -1250,14 +1392,22 @@ def place_services_wall(loader, floor_top_z, slot, seed, corners=None):
     return forbidden_by_corner
 
 
-def place_corner_decor(loader, floor_top_z, seed, forbidden_styles_by_corner=None, blocked_corner_indices=None):
+def place_corner_decor(
+    loader,
+    floor_top_z,
+    seed,
+    forbidden_styles_by_corner=None,
+    blocked_corner_indices=None,
+):
     rng = random.Random(seed + 9007)
     if forbidden_styles_by_corner is None:
         forbidden_styles_by_corner = {}
     if blocked_corner_indices is None:
         blocked_corner_indices = set()
     corners = corner_points()
-    active_corner_indices = [i for i in range(len(corners)) if i not in blocked_corner_indices]
+    active_corner_indices = [
+        i for i in range(len(corners)) if i not in blocked_corner_indices
+    ]
     if len(active_corner_indices) > 3:
         rng.shuffle(active_corner_indices)
         active_corner_indices = active_corner_indices[:3]
@@ -1282,14 +1432,24 @@ def place_corner_decor(loader, floor_top_z, seed, forbidden_styles_by_corner=Non
     for ci, style in zip(active_corner_indices, assigned):
         x, y = corners[ci]
         if style == "entry_plant":
-            yaw = snap_octant(loader.yaw_to_face_point(ASSETS["entry_plant"], x, y, ROOM_CENTER[0], ROOM_CENTER[1]))
+            yaw = snap_octant(
+                loader.yaw_to_face_point(
+                    ASSETS["entry_plant"], x, y, ROOM_CENTER[0], ROOM_CENTER[1]
+                )
+            )
             loader.spawn(ASSETS["entry_plant"], x, y, yaw_deg=yaw, floor_z=floor_top_z)
             continue
         if style == "trashcan":
-            yaw = snap_octant(loader.yaw_to_face_point(ASSETS["trashcan"], x, y, ROOM_CENTER[0], ROOM_CENTER[1]))
+            yaw = snap_octant(
+                loader.yaw_to_face_point(
+                    ASSETS["trashcan"], x, y, ROOM_CENTER[0], ROOM_CENTER[1]
+                )
+            )
             loader.spawn(ASSETS["trashcan"], x, y, yaw_deg=yaw, floor_z=floor_top_z)
             continue
-        yaw = snap_octant(loader.yaw_to_face_point(tall_asset, x, y, ROOM_CENTER[0], ROOM_CENTER[1]))
+        yaw = snap_octant(
+            loader.yaw_to_face_point(tall_asset, x, y, ROOM_CENTER[0], ROOM_CENTER[1])
+        )
         loader.spawn(tall_asset, x, y, yaw_deg=yaw, floor_z=floor_top_z)
 
 
@@ -1326,11 +1486,23 @@ def build_center_meeting(loader, floor_top_z, seed):
         x_top = tx + side_axis[0] * row_offset
         y_top = ty + side_axis[1] * row_offset
         yaw_top = loader.yaw_to_face_point(chair_model, x_top, y_top, tx, ty)
-        loader.spawn(chair_model, x_top, y_top, yaw_deg=snap_cardinal(yaw_top), floor_z=floor_top_z)
+        loader.spawn(
+            chair_model,
+            x_top,
+            y_top,
+            yaw_deg=snap_cardinal(yaw_top),
+            floor_z=floor_top_z,
+        )
         x_bottom = tx - side_axis[0] * row_offset
         y_bottom = ty - side_axis[1] * row_offset
         yaw_bottom = loader.yaw_to_face_point(chair_model, x_bottom, y_bottom, tx, ty)
-        loader.spawn(chair_model, x_bottom, y_bottom, yaw_deg=snap_cardinal(yaw_bottom), floor_z=floor_top_z)
+        loader.spawn(
+            chair_model,
+            x_bottom,
+            y_bottom,
+            yaw_deg=snap_cardinal(yaw_bottom),
+            floor_z=floor_top_z,
+        )
     head_offset = (table_length / 2.0) + (chair_y / 2.0) + 0.10
     x_left = cx - len_axis[0] * head_offset
     y_left = cy - len_axis[1] * head_offset
@@ -1338,8 +1510,20 @@ def build_center_meeting(loader, floor_top_z, seed):
     y_right = cy + len_axis[1] * head_offset
     yaw_left = loader.yaw_to_face_point(chair_model, x_left, y_left, cx, cy)
     yaw_right = loader.yaw_to_face_point(chair_model, x_right, y_right, cx, cy)
-    loader.spawn(chair_model, x_left, y_left, yaw_deg=snap_cardinal(yaw_left), floor_z=floor_top_z)
-    loader.spawn(chair_model, x_right, y_right, yaw_deg=snap_cardinal(yaw_right), floor_z=floor_top_z)
+    loader.spawn(
+        chair_model,
+        x_left,
+        y_left,
+        yaw_deg=snap_cardinal(yaw_left),
+        floor_z=floor_top_z,
+    )
+    loader.spawn(
+        chair_model,
+        x_right,
+        y_right,
+        yaw_deg=snap_cardinal(yaw_right),
+        floor_z=floor_top_z,
+    )
 
 
 def wall_role_map(seed):
@@ -1376,8 +1560,10 @@ def _embedded_office_role_map(seed, office_center_xy, entry_target_xy=None):
         entry_slot = preferred_entry_slot
     else:
         slot_dirs = {
-            "east": (1.0, 0.0), "west": (-1.0, 0.0),
-            "north": (0.0, 1.0), "south": (0.0, -1.0),
+            "east": (1.0, 0.0),
+            "west": (-1.0, 0.0),
+            "north": (0.0, 1.0),
+            "south": (0.0, -1.0),
         }
         mag = max(1e-6, math.hypot(to_target_x, to_target_y))
         tx = to_target_x / mag
@@ -1417,7 +1603,9 @@ def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
         ROOM_CENTER = (float(office_area["cx"]), float(office_area["cy"]))
         loader = AssetLoader(ASSET_PATH, TEMP_URDF_DIR, UNIFORM_SCALE, cli=cli)
         entry_target_xy = None
-        personnel_side = str((wall_info or {}).get("personnel_side", "")).strip().lower()
+        personnel_side = (
+            str((wall_info or {}).get("personnel_side", "")).strip().lower()
+        )
         if personnel_side in WALL_SLOTS:
             personnel_along = float((wall_info or {}).get("personnel_along", 0.0))
             wall_thickness = float((wall_info or {}).get("wall_thickness", 0.0))
@@ -1435,7 +1623,10 @@ def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
             else:
                 dir_x, dir_y = 0.0, 1.0
             corridor_nudge_m = 1.2
-            entry_target_xy = (float(px) + (dir_x * corridor_nudge_m), float(py) + (dir_y * corridor_nudge_m))
+            entry_target_xy = (
+                float(px) + (dir_x * corridor_nudge_m),
+                float(py) + (dir_y * corridor_nudge_m),
+            )
         role_by_slot = _embedded_office_role_map(
             seed=int(seed),
             office_center_xy=ROOM_CENTER,
@@ -1466,20 +1657,27 @@ def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
             role = role_by_slot[slot]
             if role == "entry":
                 blocked = place_entry_wall(
-                    loader, floor_top_z, slot, int(seed),
+                    loader,
+                    floor_top_z,
+                    slot,
+                    int(seed),
                     corners=corners,
                     spawn_doorway=spawn_entry_doorway,
                 )
                 for k, vals in blocked.items():
                     forbidden_styles_by_corner.setdefault(k, set()).update(vals)
             elif role == "workstations":
-                workstation_corner = place_workstations_wall(loader, floor_top_z, slot, int(seed))
+                workstation_corner = place_workstations_wall(
+                    loader, floor_top_z, slot, int(seed)
+                )
                 if workstation_corner is not None:
                     blocked_corner_indices.add(workstation_corner)
             elif role == "files":
                 place_files_wall(loader, floor_top_z, slot, int(seed))
             elif role == "services":
-                blocked = place_services_wall(loader, floor_top_z, slot, int(seed), corners=corners)
+                blocked = place_services_wall(
+                    loader, floor_top_z, slot, int(seed), corners=corners
+                )
                 for k, vals in blocked.items():
                     forbidden_styles_by_corner.setdefault(k, set()).update(vals)
         place_corner_decor(

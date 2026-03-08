@@ -11,9 +11,6 @@ import random
 import pybullet as p
 
 from .constants import (
-    ASSETS_DIR,
-    CONVEYOR_KIT_OBJ_DIR,
-    CONVEYOR_KIT_TEXTURE,
     ENABLE_EMBEDDED_FACTORY_MAP,
     ENABLE_FACTORY_BARRIER_RING,
     EMBEDDED_FACTORY_SEED_OFFSET,
@@ -34,7 +31,7 @@ from .helpers import (
     _spawn_mesh_with_anchor,
     model_bounds_xyz,
 )
-from .shared import MeshKitLoader, first_existing_path, normalize_mtl_texture_paths
+from .shared import MeshKitLoader, first_existing_path
 
 # ---------------------------------------------------------------------------
 # Factory geometry constants
@@ -126,9 +123,7 @@ PACKOUT_BOX_SCALE_Z_MULT = 1.00
 # Swarm drone URDF
 # ---------------------------------------------------------------------------
 _SWARM_DRONE_DIR = os.path.join(OTHER_SOURCES_DIR, "swarm_drone")
-SWARM_DRONE_URDF_CANDIDATES = (
-    os.path.join(_SWARM_DRONE_DIR, "swarm_drone.urdf"),
-)
+SWARM_DRONE_URDF_CANDIDATES = (os.path.join(_SWARM_DRONE_DIR, "swarm_drone.urdf"),)
 SWARM_DRONE_GLOBAL_SCALE = 3.5
 SWARM_DRONE_SCALE_MULT = 1.38
 
@@ -175,11 +170,15 @@ def _spawn_box(center_xyz, size_xyz, rgba, cli, with_collision=True):
     hy = float(size_xyz[1]) * 0.5
     hz = float(size_xyz[2]) * 0.5
     vid = p.createVisualShape(
-        p.GEOM_BOX, halfExtents=[hx, hy, hz], rgbaColor=list(rgba),
+        p.GEOM_BOX,
+        halfExtents=[hx, hy, hz],
+        rgbaColor=list(rgba),
         physicsClientId=cli,
     )
     cid = (
-        p.createCollisionShape(p.GEOM_BOX, halfExtents=[hx, hy, hz], physicsClientId=cli)
+        p.createCollisionShape(
+            p.GEOM_BOX, halfExtents=[hx, hy, hz], physicsClientId=cli
+        )
         if with_collision
         else -1
     )
@@ -192,13 +191,17 @@ def _spawn_box(center_xyz, size_xyz, rgba, cli, with_collision=True):
         physicsClientId=cli,
     )
     p.changeVisualShape(
-        body_id, -1, textureUniqueId=-1,
+        body_id,
+        -1,
+        textureUniqueId=-1,
         specularColor=list(UNIFORM_SPECULAR_COLOR),
         physicsClientId=cli,
     )
 
 
-def _spawn_swarm_drone_urdf(urdf_path, x, y, z, yaw_deg, global_scale, cli, target_bottom_z=None):
+def _spawn_swarm_drone_urdf(
+    urdf_path, x, y, z, yaw_deg, global_scale, cli, target_bottom_z=None
+):
     urdf_abs = os.path.abspath(urdf_path)
     urdf_dir = os.path.dirname(urdf_abs)
     cache_key = (cli, urdf_dir)
@@ -217,7 +220,9 @@ def _spawn_swarm_drone_urdf(urdf_path, x, y, z, yaw_deg, global_scale, cli, targ
     body_id = p.loadURDF(
         urdf_abs.replace("\\", "/"),
         basePosition=[float(x), float(y), z_spawn],
-        baseOrientation=p.getQuaternionFromEuler((0.0, 0.0, math.radians(float(yaw_deg)))),
+        baseOrientation=p.getQuaternionFromEuler(
+            (0.0, 0.0, math.radians(float(yaw_deg)))
+        ),
         useFixedBase=True,
         globalScaling=float(global_scale),
         physicsClientId=cli,
@@ -236,13 +241,17 @@ def _spawn_swarm_drone_urdf(urdf_path, x, y, z, yaw_deg, global_scale, cli, targ
             )
         _SWARM_URDF_BOTTOM_Z_OFFSET_CACHE[offset_key] = float(dz)
     p.changeVisualShape(
-        body_id, -1, specularColor=list(UNIFORM_SPECULAR_COLOR),
+        body_id,
+        -1,
+        specularColor=list(UNIFORM_SPECULAR_COLOR),
         physicsClientId=cli,
     )
     joint_count = p.getNumJoints(body_id, physicsClientId=cli)
     for j in range(joint_count):
         p.changeVisualShape(
-            body_id, j, specularColor=list(UNIFORM_SPECULAR_COLOR),
+            body_id,
+            j,
+            specularColor=list(UNIFORM_SPECULAR_COLOR),
             physicsClientId=cli,
         )
 
@@ -304,11 +313,35 @@ def _generate_step1_path_seeded(cols, rows, seed):
         start_corner = corners[start_idx]
         end_corner = corners[(start_idx + 2) % 4]
         end_goal = (
-            max(1, min(cols - 2, end_corner[0] + (END_TARGET_OFFSET_CELLS if end_corner[0] <= 1 else -END_TARGET_OFFSET_CELLS))),
-            max(1, min(rows - 2, end_corner[1] + (END_TARGET_OFFSET_CELLS if end_corner[1] <= 1 else -END_TARGET_OFFSET_CELLS))),
+            max(
+                1,
+                min(
+                    cols - 2,
+                    end_corner[0]
+                    + (
+                        END_TARGET_OFFSET_CELLS
+                        if end_corner[0] <= 1
+                        else -END_TARGET_OFFSET_CELLS
+                    ),
+                ),
+            ),
+            max(
+                1,
+                min(
+                    rows - 2,
+                    end_corner[1]
+                    + (
+                        END_TARGET_OFFSET_CELLS
+                        if end_corner[1] <= 1
+                        else -END_TARGET_OFFSET_CELLS
+                    ),
+                ),
+            ),
         )
         fallback = _expand_waypoints_to_cells(
-            [start_corner, (end_goal[0], start_corner[1]), end_goal], cols, rows,
+            [start_corner, (end_goal[0], start_corner[1]), end_goal],
+            cols,
+            rows,
         )
         return fallback
 
@@ -362,7 +395,9 @@ def _generate_step1_path_seeded(cols, rows, seed):
                     out_path.append((current_x, current_y))
 
             top_span = max(1, gx_right - gx_left)
-            max_inset = min(TOP_PHASE_EDGE_INSET_MAX_CELLS, max(0, (top_span - 10) // 8))
+            max_inset = min(
+                TOP_PHASE_EDGE_INSET_MAX_CELLS, max(0, (top_span - 10) // 8)
+            )
             go_right = local_start_on_left
             for i, y_lane in enumerate(top_lanes):
                 _append_line_to(current_x, y_lane)
@@ -380,7 +415,9 @@ def _generate_step1_path_seeded(cols, rows, seed):
                 x_lanes = [gx_left]
                 x_cursor = gx_left
                 while True:
-                    step = _lane_step() + (1 if rng.random() < VERTICAL_PHASE_EXTRA_SKIP_CHANCE else 0)
+                    step = _lane_step() + (
+                        1 if rng.random() < VERTICAL_PHASE_EXTRA_SKIP_CHANCE else 0
+                    )
                     nx = x_cursor + step
                     if nx > gx_right:
                         break
@@ -390,7 +427,9 @@ def _generate_step1_path_seeded(cols, rows, seed):
                 x_lanes = [gx_right]
                 x_cursor = gx_right
                 while True:
-                    step = _lane_step() + (1 if rng.random() < VERTICAL_PHASE_EXTRA_SKIP_CHANCE else 0)
+                    step = _lane_step() + (
+                        1 if rng.random() < VERTICAL_PHASE_EXTRA_SKIP_CHANCE else 0
+                    )
                     nx = x_cursor - step
                     if nx < gx_left:
                         break
@@ -439,11 +478,22 @@ def _generate_step1_path_seeded(cols, rows, seed):
 
     def _path_metrics(path):
         if not path:
-            return {"ok": False, "cells": 0, "corners": 0, "span_x_ratio": 0.0, "span_y_ratio": 0.0}
+            return {
+                "ok": False,
+                "cells": 0,
+                "corners": 0,
+                "span_x_ratio": 0.0,
+                "span_y_ratio": 0.0,
+            }
         if len(path) != len(set(path)):
             return {
-                "ok": False, "unique": False, "cells": len(path), "corners": 0,
-                "span_x_ratio": 0.0, "span_y_ratio": 0.0, "min_seg_len": 0,
+                "ok": False,
+                "unique": False,
+                "cells": len(path),
+                "corners": 0,
+                "span_x_ratio": 0.0,
+                "span_y_ratio": 0.0,
+                "min_seg_len": 0,
             }
 
         def _min_segment_len_edges():
@@ -509,7 +559,9 @@ def _generate_step1_path_seeded(cols, rows, seed):
             bx = max(0, min(bins_x - 1, int(nx * bins_x)))
             by = max(0, min(bins_y - 1, int(ny * bins_y)))
             occ[bx][by] += 1
-        empty_bins = sum(1 for bx in range(bins_x) for by in range(bins_y) if occ[bx][by] <= 0)
+        empty_bins = sum(
+            1 for bx in range(bins_x) for by in range(bins_y) if occ[bx][by] <= 0
+        )
         min_bin_fill = min(occ[bx][by] for bx in range(bins_x) for by in range(bins_y))
 
         min_cells_target = min(PATH_MAX_CELLS_HARD, max(48, PATH_MIN_CELLS))
@@ -528,12 +580,17 @@ def _generate_step1_path_seeded(cols, rows, seed):
             and min_quad_ratio >= PATH_QUADRANT_MIN_RATIO
         )
         return {
-            "ok": ok, "unique": True, "cells": len(path), "corners": corners_n,
-            "span_x_ratio": span_x_ratio, "span_y_ratio": span_y_ratio,
+            "ok": ok,
+            "unique": True,
+            "cells": len(path),
+            "corners": corners_n,
+            "span_x_ratio": span_x_ratio,
+            "span_y_ratio": span_y_ratio,
             "min_seg_len": min_seg_len,
             "half_balance": min(left_ratio, right_ratio, bottom_ratio, top_ratio),
             "min_quad_ratio": min_quad_ratio,
-            "empty_bins": empty_bins, "min_bin_fill": min_bin_fill,
+            "empty_bins": empty_bins,
+            "min_bin_fill": min_bin_fill,
         }
 
     best_path = None
@@ -578,7 +635,10 @@ def _generate_step1_path_seeded(cols, rows, seed):
             if score > best_score:
                 best_score = score
                 best_path = candidate
-            if metrics["empty_bins"] <= PATH_FALLBACK_EMPTY_BINS_MAX and score > best_score_limited_empty:
+            if (
+                metrics["empty_bins"] <= PATH_FALLBACK_EMPTY_BINS_MAX
+                and score > best_score_limited_empty
+            ):
                 best_score_limited_empty = score
                 best_path_limited_empty = candidate
     if best_ok_path is not None:
@@ -640,7 +700,8 @@ def pick_section_belt_models(loader, rng):
     available = list_existing_models(loader, NETWORK_BELT_MODEL_CANDIDATES)
     if not available:
         raise FileNotFoundError(
-            "No conveyor models found. Expected one of: " + ", ".join(NETWORK_BELT_MODEL_CANDIDATES)
+            "No conveyor models found. Expected one of: "
+            + ", ".join(NETWORK_BELT_MODEL_CANDIDATES)
         )
     if NETWORK_BELT_MODEL in available:
         base_model = NETWORK_BELT_MODEL
@@ -707,7 +768,9 @@ def select_support_for_target_height(loader, target_top_z):
 # ---------------------------------------------------------------------------
 # Main belt network builder
 # ---------------------------------------------------------------------------
-def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=None, floor_z=0.0):
+def build_single_belt_network(
+    loader, seed, cli, center_xy=(0.0, 0.0), size_xy=None, floor_z=0.0
+):
     belt_rng = random.Random(int(seed) + 1701)
     (
         base_belt_model,
@@ -737,7 +800,9 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
     cols = max(8, int((x_max - x_min) // cell))
     rows = max(6, int((y_max - y_min) // cell))
 
-    path_cells, start_corner, end_corner, end_goal = _generate_step1_path_seeded(cols, rows, seed=seed)
+    path_cells, start_corner, end_corner, end_goal = _generate_step1_path_seeded(
+        cols, rows, seed=seed
+    )
 
     def _to_world(cell_xy):
         cx, cy = cell_xy
@@ -751,7 +816,11 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
         support_model, support_scale = base_support
     else:
         support_model = pick_support_model(loader)
-        support_scale = support_scale_for_top_alignment(loader, support_model) if support_model is not None else None
+        support_scale = (
+            support_scale_for_top_alignment(loader, support_model)
+            if support_model is not None
+            else None
+        )
     support_choice_cache = {}
 
     def _support_for_height(target_top_z):
@@ -765,19 +834,30 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
         return chosen
 
     end_cap_model = pick_end_cap_model(loader)
-    section_divider_model = pick_first_existing_model(loader, SECTION_DIVIDER_MODEL_CANDIDATES)
+    section_divider_model = pick_first_existing_model(
+        loader, SECTION_DIVIDER_MODEL_CANDIDATES
+    )
     drone_model = pick_first_existing_model(loader, ASSEMBLY_DRONE_MODEL_CANDIDATES)
     worker_model = pick_first_existing_model(loader, ASSEMBLY_WORKER_MODEL_CANDIDATES)
     swarm_drone_urdf = resolve_swarm_drone_urdf()
-    assembly_model_label = "swarm_drone.urdf" if swarm_drone_urdf is not None else (drone_model or "none")
+    assembly_model_label = (
+        "swarm_drone.urdf" if swarm_drone_urdf is not None else (drone_model or "none")
+    )
     worker_model_label = worker_model or "none"
     box_models = list_existing_models(loader, PACKOUT_BOX_MODEL_CANDIDATES)
     decor_rng = random.Random(int(seed) + 4049)
     split_idx = None
-    if SECTION_DECOR_ENABLE and len(path_cells) >= (SECTION_SPLIT_MARGIN_CELLS * 2 + 12):
-        split_ratio = decor_rng.uniform(SECTION_SPLIT_RATIO_MIN, SECTION_SPLIT_RATIO_MAX)
+    if SECTION_DECOR_ENABLE and len(path_cells) >= (
+        SECTION_SPLIT_MARGIN_CELLS * 2 + 12
+    ):
+        split_ratio = decor_rng.uniform(
+            SECTION_SPLIT_RATIO_MIN, SECTION_SPLIT_RATIO_MAX
+        )
         split_idx = int(round((len(path_cells) - 1) * split_ratio))
-        split_idx = max(SECTION_SPLIT_MARGIN_CELLS, min(len(path_cells) - 1 - SECTION_SPLIT_MARGIN_CELLS, split_idx))
+        split_idx = max(
+            SECTION_SPLIT_MARGIN_CELLS,
+            min(len(path_cells) - 1 - SECTION_SPLIT_MARGIN_CELLS, split_idx),
+        )
     if split_idx is None:
         packout_belt_model = assembly_belt_model
 
@@ -830,8 +910,13 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
         belt_model = packout_belt_model if use_packout_belt else assembly_belt_model
         belt_h = packout_belt_size[2] if use_packout_belt else assembly_belt_size[2]
         loader.spawn(
-            belt_model, x=wx, y=wy, yaw_deg=yaw,
-            floor_z=base_floor_z, scale=CONVEYOR_SCALE, extra_z=z_here,
+            belt_model,
+            x=wx,
+            y=wy,
+            yaw_deg=yaw,
+            floor_z=base_floor_z,
+            scale=CONVEYOR_SCALE,
+            extra_z=z_here,
         )
         cell_world.append((wx, wy))
         cell_yaw.append(yaw)
@@ -843,8 +928,13 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
                 use_model, use_scale = _support_for_height(z_here)
                 if use_model is not None and use_scale is not None:
                     loader.spawn(
-                        use_model, x=wx, y=wy, yaw_deg=yaw,
-                        floor_z=base_floor_z, scale=use_scale, extra_z=0.0,
+                        use_model,
+                        x=wx,
+                        y=wy,
+                        yaw_deg=yaw,
+                        floor_z=base_floor_z,
+                        scale=use_scale,
+                        extra_z=0.0,
                     )
 
     # -- inner helpers for decor placement --
@@ -899,13 +989,19 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
         if section_divider_model is not None and 0 <= divider_idx < len(path_cells):
             swx, swy = cell_world[divider_idx]
             loader.spawn(
-                section_divider_model, x=swx, y=swy,
-                yaw_deg=cell_yaw[divider_idx], floor_z=base_floor_z,
-                scale=CONVEYOR_SCALE, extra_z=cell_z[divider_idx],
+                section_divider_model,
+                x=swx,
+                y=swy,
+                yaw_deg=cell_yaw[divider_idx],
+                floor_z=base_floor_z,
+                scale=CONVEYOR_SCALE,
+                extra_z=cell_z[divider_idx],
             )
 
         if (swarm_drone_urdf is not None or drone_model is not None) and split_idx > 10:
-            interval = decor_rng.randint(ASSEMBLY_DRONE_INTERVAL_MIN, ASSEMBLY_DRONE_INTERVAL_MAX)
+            interval = decor_rng.randint(
+                ASSEMBLY_DRONE_INTERVAL_MIN, ASSEMBLY_DRONE_INTERVAL_MAX
+            )
             i = max(6, interval // 2)
             while i < (split_idx - 4):
                 idx_guess = max(4, min(split_idx - 4, i + decor_rng.randint(-2, 2)))
@@ -914,11 +1010,17 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
                     i += interval
                     continue
                 dwx, dwy = cell_world[idx]
-                drone_z = cell_z[idx] + cell_belt_height[idx] + ASSEMBLY_DRONE_Z_OFFSET_M
+                drone_z = (
+                    cell_z[idx] + cell_belt_height[idx] + ASSEMBLY_DRONE_Z_OFFSET_M
+                )
                 if swarm_drone_urdf is not None:
-                    belt_top_z = cell_z[idx] + cell_belt_height[idx] + ASSEMBLY_DRONE_Z_OFFSET_M
+                    belt_top_z = (
+                        cell_z[idx] + cell_belt_height[idx] + ASSEMBLY_DRONE_Z_OFFSET_M
+                    )
                     _spawn_swarm_drone_urdf(
-                        swarm_drone_urdf, x=dwx, y=dwy,
+                        swarm_drone_urdf,
+                        x=dwx,
+                        y=dwy,
                         z=base_floor_z + drone_z,
                         yaw_deg=cell_yaw[idx],
                         global_scale=SWARM_DRONE_GLOBAL_SCALE * SWARM_DRONE_SCALE_MULT,
@@ -927,9 +1029,13 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
                     )
                 elif drone_model is not None:
                     loader.spawn(
-                        drone_model, x=dwx, y=dwy,
-                        yaw_deg=cell_yaw[idx], floor_z=base_floor_z,
-                        scale=CONVEYOR_SCALE, extra_z=drone_z,
+                        drone_model,
+                        x=dwx,
+                        y=dwy,
+                        yaw_deg=cell_yaw[idx],
+                        floor_z=base_floor_z,
+                        scale=CONVEYOR_SCALE,
+                        extra_z=drone_z,
                     )
                 drones_spawned += 1
                 i += interval
@@ -938,7 +1044,8 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
             i = 5
             worker_anchor_used = set()
             worker_yaw_fix = ASSEMBLY_WORKER_MODEL_YAW_FIX_BY_MODEL.get(
-                worker_model, ASSEMBLY_WORKER_MODEL_YAW_FIX_DEFAULT_DEG,
+                worker_model,
+                ASSEMBLY_WORKER_MODEL_YAW_FIX_DEFAULT_DEG,
             )
             while i < (split_idx - 4):
                 idx_guess = max(4, min(split_idx - 4, i + decor_rng.randint(-1, 1)))
@@ -969,8 +1076,13 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
                         aim_yaw = math.degrees(math.atan2(to_belt_y, to_belt_x))
                         face_yaw = (aim_yaw + worker_yaw_fix) % 360.0
                         loader.spawn(
-                            worker_model, x=rx, y=ry, yaw_deg=face_yaw,
-                            floor_z=base_floor_z, scale=CONVEYOR_SCALE, extra_z=0.0,
+                            worker_model,
+                            x=rx,
+                            y=ry,
+                            yaw_deg=face_yaw,
+                            floor_z=base_floor_z,
+                            scale=CONVEYOR_SCALE,
+                            extra_z=0.0,
                         )
                         worker_points.append((rx, ry))
                         workers_spawned += 1
@@ -981,11 +1093,18 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
                 i += ASSEMBLY_WORKER_INTERVAL_CELLS
 
         if box_models and split_idx is not None and split_idx < (len(path_cells) - 10):
-            interval = decor_rng.randint(PACKOUT_BOX_INTERVAL_MIN, PACKOUT_BOX_INTERVAL_MAX)
+            interval = decor_rng.randint(
+                PACKOUT_BOX_INTERVAL_MIN, PACKOUT_BOX_INTERVAL_MAX
+            )
             i = split_idx + 5
             while i < (len(path_cells) - 4):
-                idx_guess = max(split_idx + 4, min(len(path_cells) - 4, i + decor_rng.randint(-2, 2)))
-                idx = _nearest_straight_index(idx_guess, split_idx + 4, len(path_cells) - 4)
+                idx_guess = max(
+                    split_idx + 4,
+                    min(len(path_cells) - 4, i + decor_rng.randint(-2, 2)),
+                )
+                idx = _nearest_straight_index(
+                    idx_guess, split_idx + 4, len(path_cells) - 4
+                )
                 if idx is None:
                     i += interval
                     continue
@@ -994,19 +1113,24 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
                 yaw_rad = math.radians(yaw)
                 side_x = -math.sin(yaw_rad)
                 side_y = math.cos(yaw_rad)
-                side_off = cell * PACKOUT_BOX_SIDE_OFFSET_CELLS * decor_rng.choice((-1.0, 1.0))
+                side_off = (
+                    cell * PACKOUT_BOX_SIDE_OFFSET_CELLS * decor_rng.choice((-1.0, 1.0))
+                )
                 model_name = box_models[decor_rng.randint(0, len(box_models) - 1)]
                 loader.spawn(
                     model_name,
                     x=bwx + (side_x * side_off),
                     y=bwy + (side_y * side_off),
-                    yaw_deg=yaw, floor_z=base_floor_z,
+                    yaw_deg=yaw,
+                    floor_z=base_floor_z,
                     scale=(
                         CONVEYOR_SCALE * PACKOUT_BOX_SCALE_XY_MULT,
                         CONVEYOR_SCALE * PACKOUT_BOX_SCALE_XY_MULT,
                         CONVEYOR_SCALE * PACKOUT_BOX_SCALE_Z_MULT,
                     ),
-                    extra_z=cell_z[idx] + cell_belt_height[idx] + PACKOUT_BOX_Z_OFFSET_M,
+                    extra_z=cell_z[idx]
+                    + cell_belt_height[idx]
+                    + PACKOUT_BOX_Z_OFFSET_M,
                 )
                 cartons_spawned += 1
                 i += interval
@@ -1035,14 +1159,18 @@ def build_single_belt_network(loader, seed, cli, center_xy=(0.0, 0.0), size_xy=N
             x=start_wx - (start_dir[0] * off),
             y=start_wy - (start_dir[1] * off),
             yaw_deg=_dir_to_yaw(start_dir),
-            floor_z=base_floor_z, scale=CONVEYOR_SCALE, extra_z=start_z,
+            floor_z=base_floor_z,
+            scale=CONVEYOR_SCALE,
+            extra_z=start_z,
         )
         loader.spawn(
             end_cap_model,
             x=end_wx + (end_dir[0] * off),
             y=end_wy + (end_dir[1] * off),
             yaw_deg=_dir_to_yaw(end_dir),
-            floor_z=base_floor_z, scale=CONVEYOR_SCALE, extra_z=end_z,
+            floor_z=base_floor_z,
+            scale=CONVEYOR_SCALE,
+            extra_z=end_z,
         )
 
     line_len = max(0.0, (len(path_cells) - 1) * cell)
@@ -1119,27 +1247,42 @@ def _get_factory_barrier_loader(model_dir, texture_path, cli):
     return loader
 
 
-def build_factory_barrier_ring(conveyor_loader, floor_top_z, factory_area, network, cli):
+def build_factory_barrier_ring(
+    conveyor_loader, floor_top_z, factory_area, network, cli
+):
     if not ENABLE_FACTORY_BARRIER_RING:
         return {"factory_barrier_enabled": False}
     if not factory_area:
-        return {"factory_barrier_enabled": False, "factory_barrier_reason": "FACTORY area missing."}
+        return {
+            "factory_barrier_enabled": False,
+            "factory_barrier_reason": "FACTORY area missing.",
+        }
 
     barrier_model_path = _resolve_factory_barrier_model()
     if not barrier_model_path:
-        return {"factory_barrier_enabled": False, "factory_barrier_reason": "Barrier model not found."}
+        return {
+            "factory_barrier_enabled": False,
+            "factory_barrier_reason": "Barrier model not found.",
+        }
 
     model_dir = os.path.dirname(barrier_model_path)
     model_name = os.path.basename(barrier_model_path)
     barrier_loader = _get_factory_barrier_loader(
-        model_dir=model_dir, texture_path=conveyor_loader.texture_path, cli=cli,
+        model_dir=model_dir,
+        texture_path=conveyor_loader.texture_path,
+        cli=cli,
     )
 
-    min_v, max_v = model_bounds_xyz(barrier_loader, model_name, FACTORY_BARRIER_SCALE_XYZ)
+    min_v, max_v = model_bounds_xyz(
+        barrier_loader, model_name, FACTORY_BARRIER_SCALE_XYZ
+    )
     seg_len = max(0.0, max_v[0] - min_v[0])
     seg_dep = max(0.0, max_v[1] - min_v[1])
     if seg_len <= 1e-6 or seg_dep <= 1e-6:
-        return {"factory_barrier_enabled": False, "factory_barrier_reason": "Barrier model has invalid bounds."}
+        return {
+            "factory_barrier_enabled": False,
+            "factory_barrier_reason": "Barrier model has invalid bounds.",
+        }
 
     anchor_x = (min_v[0] + max_v[0]) * 0.5
     anchor_y = (min_v[1] + max_v[1]) * 0.5
@@ -1158,7 +1301,10 @@ def build_factory_barrier_ring(conveyor_loader, floor_top_z, factory_area, netwo
     y_min = cy - half_y + inset
     y_max = cy + half_y - inset
     if x_max <= x_min or y_max <= y_min:
-        return {"factory_barrier_enabled": False, "factory_barrier_reason": "FACTORY area too small for barrier inset."}
+        return {
+            "factory_barrier_enabled": False,
+            "factory_barrier_reason": "FACTORY area too small for barrier inset.",
+        }
 
     north_y = y_max - (seg_dep * 0.5)
     south_y = y_min + (seg_dep * 0.5)
@@ -1173,7 +1319,10 @@ def build_factory_barrier_ring(conveyor_loader, floor_top_z, factory_area, netwo
         segments.append({"side": "east", "x": east_x, "y": y, "yaw": 90.0})
         segments.append({"side": "west", "x": west_x, "y": y, "yaw": 90.0})
     if not segments:
-        return {"factory_barrier_enabled": False, "factory_barrier_reason": "No barrier segments could be generated."}
+        return {
+            "factory_barrier_enabled": False,
+            "factory_barrier_reason": "No barrier segments could be generated.",
+        }
 
     start_pos = (cx, cy)
     start_cell = network.get("start_cell")
@@ -1195,7 +1344,8 @@ def build_factory_barrier_ring(conveyor_loader, floor_top_z, factory_area, netwo
 
     gap_idx = min(
         range(len(segments)),
-        key=lambda i: (segments[i]["x"] - start_pos[0]) ** 2 + (segments[i]["y"] - start_pos[1]) ** 2,
+        key=lambda i: (segments[i]["x"] - start_pos[0]) ** 2
+        + (segments[i]["y"] - start_pos[1]) ** 2,
     )
     entry_side = segments[gap_idx]["side"]
     segments_to_spawn = [s for i, s in enumerate(segments) if i != gap_idx]
@@ -1250,7 +1400,10 @@ def build_embedded_factory(conveyor_loader, floor_top_z, area_layout, seed, cli=
 
     factory_area = (area_layout or {}).get("FACTORY")
     if not factory_area:
-        return {"factory_map_embedded": False, "factory_map_reason": "FACTORY area not present in layout."}
+        return {
+            "factory_map_embedded": False,
+            "factory_map_reason": "FACTORY area not present in layout.",
+        }
 
     size_xy = (float(factory_area["sx"]), float(factory_area["sy"]))
     center_xy = (float(factory_area["cx"]), float(factory_area["cy"]))

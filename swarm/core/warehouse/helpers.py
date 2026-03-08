@@ -11,27 +11,19 @@ import shutil
 import pybullet as p
 
 from .constants import (
-    ASSETS_DIR,
     CONVEYOR_KIT_OBJ_DIR,
     CONVEYOR_KIT_TEXTURE,
     CONVEYOR_ASSETS,
-    CRANE_DIR,
     ENABLE_FORKLIFT_PARKING,
     ENABLE_LOADING_OPERATION_FORKLIFTS,
     ENABLE_LOADING_STAGING,
     ENABLE_LOADING_TRUCKS,
     ENABLE_MACHINING_CELL_LAYOUT,
-    ENABLE_OVERHEAD_CRANES,
     ENABLE_STORAGE_RACK_LAYOUT,
-    ENABLE_WORKER_CREW,
-    ENABLE_FACTORY_BARRIER_RING,
-    FENCE_DIR,
     FLOOR_INNER_MARGIN_TILES,
     FLOOR_SPAWN_SAFETY_MARGIN_M,
     FORKLIFT_MODEL_NAME,
     FORKLIFT_TEXTURE_NAME,
-    FURNITURE_KIT_OBJ_DIR,
-    FURNITURE_KIT_TEXTURE,
     HALF_X,
     HALF_Y,
     LOADING_KIT_DIR,
@@ -41,8 +33,6 @@ from .constants import (
     LOADING_TRUCK_MODELS,
     LOADING_TRUCK_SCALE_XYZ,
     MACHINING_FORCE_REFRESH_MTL_PROXY,
-    MESH_UP_FIX_RPY,
-    OVERHEAD_CRANE_MODEL_CANDIDATES,
     STORAGE_RACK_MODEL_NAME,
     UNIFORM_SCALE,
     UNIFORM_SPECULAR_COLOR,
@@ -53,9 +43,8 @@ from .constants import (
     WAREHOUSE_SHELL_FILES,
     WAREHOUSE_SIZE_X,
     WAREHOUSE_SIZE_Y,
-    WORKER_MODEL_CANDIDATES,
 )
-from .shared import MeshKitLoader, first_existing_path, normalize_mtl_texture_paths
+from .shared import normalize_mtl_texture_paths
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +140,9 @@ def _resolve_kit_paths():
 
     if ENABLE_STORAGE_RACK_LAYOUT:
         if not os.path.exists(loading_staging_obj):
-            raise FileNotFoundError(f"Missing loading kit folder: {loading_staging_obj}")
+            raise FileNotFoundError(
+                f"Missing loading kit folder: {loading_staging_obj}"
+            )
         rack_mp = os.path.join(loading_staging_obj, STORAGE_RACK_MODEL_NAME)
         if not os.path.exists(rack_mp):
             raise FileNotFoundError(f"Missing storage rack model: {rack_mp}")
@@ -162,7 +153,9 @@ def _resolve_kit_paths():
         "truck_obj": truck_obj,
         "forklift_obj": forklift_obj,
         "forklift_tex": forklift_tex,
-        "loading_staging_obj": loading_staging_obj if os.path.exists(loading_staging_obj) else "",
+        "loading_staging_obj": loading_staging_obj
+        if os.path.exists(loading_staging_obj)
+        else "",
     }
 
 
@@ -187,7 +180,13 @@ def _resolve_shell_mesh_paths():
         except Exception:
             config = {}
 
-    return {"root": root, "roof": roof, "fillers": fillers, "truss": truss, "config": config}
+    return {
+        "root": root,
+        "roof": roof,
+        "fillers": fillers,
+        "truss": truss,
+        "config": config,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +197,11 @@ def _loader_runtime_key(loader):
     if cached:
         return cached
     obj_dir = str(getattr(loader, "obj_dir", "") or "").strip()
-    key = os.path.abspath(obj_dir).replace("\\", "/") if obj_dir else f"loader:{id(loader)}"
+    key = (
+        os.path.abspath(obj_dir).replace("\\", "/")
+        if obj_dir
+        else f"loader:{id(loader)}"
+    )
     try:
         setattr(loader, "_swarm_runtime_key", key)
     except Exception:
@@ -262,7 +265,11 @@ def _spawn_generated_mesh(
     mesh_scale_xyz=(1.0, 1.0, 1.0),
 ):
     mesh_key = mesh_path.replace("\\", "/")
-    msx, msy, msz = float(mesh_scale_xyz[0]), float(mesh_scale_xyz[1]), float(mesh_scale_xyz[2])
+    msx, msy, msz = (
+        float(mesh_scale_xyz[0]),
+        float(mesh_scale_xyz[1]),
+        float(mesh_scale_xyz[2]),
+    )
 
     create_visual_kwargs = {}
     if double_sided and hasattr(p, "VISUAL_SHAPE_DOUBLE_SIDED"):
@@ -298,14 +305,22 @@ def _spawn_generated_mesh(
         useMaximalCoordinates=True,
         physicsClientId=cli,
     )
-    visual_kwargs = {"rgbaColor": list(rgba), "specularColor": list(UNIFORM_SPECULAR_COLOR)}
+    visual_kwargs = {
+        "rgbaColor": list(rgba),
+        "specularColor": list(UNIFORM_SPECULAR_COLOR),
+    }
     if use_texture:
         p.changeVisualShape(
-            body, -1, textureUniqueId=_load_texture_cached(texture_path, cli),
-            physicsClientId=cli, **visual_kwargs,
+            body,
+            -1,
+            textureUniqueId=_load_texture_cached(texture_path, cli),
+            physicsClientId=cli,
+            **visual_kwargs,
         )
     else:
-        p.changeVisualShape(body, -1, textureUniqueId=-1, physicsClientId=cli, **visual_kwargs)
+        p.changeVisualShape(
+            body, -1, textureUniqueId=-1, physicsClientId=cli, **visual_kwargs
+        )
     return body
 
 
@@ -337,11 +352,24 @@ def _spawn_mesh_with_anchor(
     base_pos = [wx - anchor_off_x, wy - anchor_off_y, wz - az]
     yaw_quat = p.getQuaternionFromEuler((0.0, 0.0, yaw_rad))
 
-    frame_quat = frame_quat_override if frame_quat_override is not None else loader.up_fix_quat
-    frame_quat_key = tuple(round(float(v), 8) for v in frame_quat) if frame_quat is not None else None
+    frame_quat = (
+        frame_quat_override if frame_quat_override is not None else loader.up_fix_quat
+    )
+    frame_quat_key = (
+        tuple(round(float(v), 8) for v in frame_quat)
+        if frame_quat is not None
+        else None
+    )
     scale_key = (round(float(sx), 8), round(float(sy), 8), round(float(sz), 8))
     rgba_key = tuple(round(float(v), 6) for v in rgba)
-    visual_key = (cli, mesh_path, scale_key, rgba_key, bool(double_sided), frame_quat_key)
+    visual_key = (
+        cli,
+        mesh_path,
+        scale_key,
+        rgba_key,
+        bool(double_sided),
+        frame_quat_key,
+    )
 
     visual_id = _MESH_VISUAL_SHAPE_CACHE.get(visual_key)
     if visual_id is None:
@@ -387,16 +415,23 @@ def _spawn_mesh_with_anchor(
         useMaximalCoordinates=True,
         physicsClientId=cli,
     )
-    visual_kwargs = {"rgbaColor": list(rgba), "specularColor": list(UNIFORM_SPECULAR_COLOR)}
+    visual_kwargs = {
+        "rgbaColor": list(rgba),
+        "specularColor": list(UNIFORM_SPECULAR_COLOR),
+    }
     if use_texture:
         tex_id = (
             _load_texture_cached(texture_path_override, cli)
             if texture_path_override
             else loader._ensure_texture()
         )
-        p.changeVisualShape(body_id, -1, textureUniqueId=tex_id, physicsClientId=cli, **visual_kwargs)
+        p.changeVisualShape(
+            body_id, -1, textureUniqueId=tex_id, physicsClientId=cli, **visual_kwargs
+        )
     else:
-        p.changeVisualShape(body_id, -1, textureUniqueId=-1, physicsClientId=cli, **visual_kwargs)
+        p.changeVisualShape(
+            body_id, -1, textureUniqueId=-1, physicsClientId=cli, **visual_kwargs
+        )
     return body_id
 
 
@@ -446,7 +481,8 @@ def _spawn_native_mtl_visual_with_anchor(
     if with_collision:
         collision_mesh_path = (
             os.path.abspath(collision_model_path_override).replace("\\", "/")
-            if collision_model_path_override and os.path.exists(collision_model_path_override)
+            if collision_model_path_override
+            and os.path.exists(collision_model_path_override)
             else mesh_path
         )
         kwargs = {}
@@ -506,7 +542,9 @@ def _spawn_collision_only_with_anchor(
     kwargs = {}
     if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH"):
         kwargs["flags"] = p.GEOM_FORCE_CONCAVE_TRIMESH
-    frame = frame_quat_override if frame_quat_override is not None else loader.up_fix_quat
+    frame = (
+        frame_quat_override if frame_quat_override is not None else loader.up_fix_quat
+    )
     collision_id = p.createCollisionShape(
         p.GEOM_MESH,
         fileName=mesh_path,
@@ -525,7 +563,8 @@ def _spawn_collision_only_with_anchor(
         physicsClientId=cli,
     )
     p.changeVisualShape(
-        body_id, -1,
+        body_id,
+        -1,
         rgbaColor=[1.0, 1.0, 1.0, 0.0],
         textureUniqueId=-1,
         specularColor=list(UNIFORM_SPECULAR_COLOR),
@@ -539,10 +578,15 @@ def _spawn_box_primitive(center_xyz, size_xyz, rgba, cli, with_collision=True):
     hy = float(size_xyz[1]) * 0.5
     hz = float(size_xyz[2]) * 0.5
     vid = p.createVisualShape(
-        p.GEOM_BOX, halfExtents=[hx, hy, hz], rgbaColor=list(rgba), physicsClientId=cli,
+        p.GEOM_BOX,
+        halfExtents=[hx, hy, hz],
+        rgbaColor=list(rgba),
+        physicsClientId=cli,
     )
     cid = (
-        p.createCollisionShape(p.GEOM_BOX, halfExtents=[hx, hy, hz], physicsClientId=cli)
+        p.createCollisionShape(
+            p.GEOM_BOX, halfExtents=[hx, hy, hz], physicsClientId=cli
+        )
         if with_collision
         else -1
     )
@@ -555,7 +599,8 @@ def _spawn_box_primitive(center_xyz, size_xyz, rgba, cli, with_collision=True):
         physicsClientId=cli,
     )
     p.changeVisualShape(
-        body_id, -1,
+        body_id,
+        -1,
         rgbaColor=list(rgba),
         textureUniqueId=-1,
         specularColor=list(UNIFORM_SPECULAR_COLOR),
@@ -696,7 +741,9 @@ def _resolve_mtl_texture_path(mtl_path, tex_ref):
 
 def _obj_mtl_visual_proxy_path(model_path):
     cache_key = os.path.abspath(model_path)
-    if (not MACHINING_FORCE_REFRESH_MTL_PROXY) and cache_key in _OBJ_MTL_VISUAL_PROXY_CACHE:
+    if (
+        not MACHINING_FORCE_REFRESH_MTL_PROXY
+    ) and cache_key in _OBJ_MTL_VISUAL_PROXY_CACHE:
         return _OBJ_MTL_VISUAL_PROXY_CACHE[cache_key]
     try:
         with open(model_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -735,7 +782,11 @@ def _obj_mtl_visual_proxy_path(model_path):
         for raw in f:
             stripped = raw.strip()
             if stripped.lower().startswith("map_kd "):
-                tex_ref = stripped.split(maxsplit=1)[1].strip() if len(stripped.split(maxsplit=1)) >= 2 else ""
+                tex_ref = (
+                    stripped.split(maxsplit=1)[1].strip()
+                    if len(stripped.split(maxsplit=1)) >= 2
+                    else ""
+                )
                 resolved_tex = _resolve_mtl_texture_path(mtl_path, tex_ref)
                 if resolved_tex and os.path.exists(resolved_tex):
                     tex_name = os.path.basename(resolved_tex)
@@ -802,16 +853,29 @@ def _parse_mtl_colors(mtl_path):
                 continue
             if head == "Kd" and len(parts) >= 4:
                 try:
-                    colors[current] = [float(parts[1]), float(parts[2]), float(parts[3]), alpha.get(current, 1.0)]
+                    colors[current] = [
+                        float(parts[1]),
+                        float(parts[2]),
+                        float(parts[3]),
+                        alpha.get(current, 1.0),
+                    ]
                 except Exception:
                     pass
             elif head == "Ka" and len(parts) >= 4:
                 try:
-                    ka_colors[current] = [float(parts[1]), float(parts[2]), float(parts[3])]
+                    ka_colors[current] = [
+                        float(parts[1]),
+                        float(parts[2]),
+                        float(parts[3]),
+                    ]
                 except Exception:
                     pass
             elif head.lower() == "map_kd":
-                tex = line.split(maxsplit=1)[1].strip() if len(line.split(maxsplit=1)) >= 2 else ""
+                tex = (
+                    line.split(maxsplit=1)[1].strip()
+                    if len(line.split(maxsplit=1)) >= 2
+                    else ""
+                )
                 if tex:
                     map_kd[current] = tex
             elif head == "d" and len(parts) >= 2:
@@ -875,7 +939,9 @@ def _obj_material_parts(model_path):
         st = os.stat(model_path)
         model_sig = {
             "size": int(st.st_size),
-            "mtime_ns": int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))),
+            "mtime_ns": int(
+                getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))
+            ),
         }
     except Exception:
         pass
@@ -886,7 +952,10 @@ def _obj_material_parts(model_path):
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f) or {}
             sig = manifest.get("model_sig", {}) or {}
-            if int(sig.get("size", -1)) == model_sig["size"] and int(sig.get("mtime_ns", -1)) == model_sig["mtime_ns"]:
+            if (
+                int(sig.get("size", -1)) == model_sig["size"]
+                and int(sig.get("mtime_ns", -1)) == model_sig["mtime_ns"]
+            ):
                 cached_parts = []
                 valid_manifest = True
                 for item in manifest.get("parts", []) or []:
@@ -895,7 +964,8 @@ def _obj_material_parts(model_path):
                         valid_manifest = False
                         break
                     part_path = (
-                        rel_or_abs if os.path.isabs(rel_or_abs)
+                        rel_or_abs
+                        if os.path.isabs(rel_or_abs)
                         else os.path.join(split_root, rel_or_abs)
                     )
                     part_path = os.path.abspath(part_path)
@@ -905,14 +975,20 @@ def _obj_material_parts(model_path):
                     rgba = item.get("rgba", [0.72, 0.72, 0.72, 1.0])
                     if not isinstance(rgba, (list, tuple)) or len(rgba) < 3:
                         rgba = [0.72, 0.72, 0.72, 1.0]
-                    rgba = [float(rgba[0]), float(rgba[1]), float(rgba[2]),
-                            float(rgba[3]) if len(rgba) >= 4 else 1.0]
-                    cached_parts.append({
-                        "path": part_path,
-                        "material": str(item.get("material", "default")),
-                        "rgba": rgba,
-                        "texture_path": str(item.get("texture_path", "")),
-                    })
+                    rgba = [
+                        float(rgba[0]),
+                        float(rgba[1]),
+                        float(rgba[2]),
+                        float(rgba[3]) if len(rgba) >= 4 else 1.0,
+                    ]
+                    cached_parts.append(
+                        {
+                            "path": part_path,
+                            "material": str(item.get("material", "default")),
+                            "rgba": rgba,
+                            "texture_path": str(item.get("texture_path", "")),
+                        }
+                    )
                 if valid_manifest:
                     _OBJ_MTL_SPLIT_CACHE[cache_key] = cached_parts
                     return cached_parts
@@ -939,7 +1015,9 @@ def _obj_material_parts(model_path):
             if len(parts) >= 3:
                 try:
                     if len(parts) >= 4:
-                        texcoords.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                        texcoords.append(
+                            (float(parts[1]), float(parts[2]), float(parts[3]))
+                        )
                     else:
                         texcoords.append((float(parts[1]), float(parts[2])))
                 except Exception:
@@ -985,11 +1063,17 @@ def _obj_material_parts(model_path):
         corners = []
         for t in toks:
             chunks = t.split("/")
-            vi = _resolve_obj_index(chunks[0] if len(chunks) >= 1 else "", len(vertices))
+            vi = _resolve_obj_index(
+                chunks[0] if len(chunks) >= 1 else "", len(vertices)
+            )
             if vi is None:
                 continue
-            vti = _resolve_obj_index(chunks[1] if len(chunks) >= 2 else "", len(texcoords))
-            vni = _resolve_obj_index(chunks[2] if len(chunks) >= 3 else "", len(normals))
+            vti = _resolve_obj_index(
+                chunks[1] if len(chunks) >= 2 else "", len(texcoords)
+            )
+            vni = _resolve_obj_index(
+                chunks[2] if len(chunks) >= 3 else "", len(normals)
+            )
             corners.append((vi, vti, vni))
         if len(corners) < 3:
             continue
@@ -1068,27 +1152,38 @@ def _obj_material_parts(model_path):
                 o.write("f " + " ".join(tokens) + "\n")
 
         rgba = mtl_colors.get(mtl_name, [0.72, 0.72, 0.72, 1.0])
-        out_parts.append({
-            "path": out_path,
-            "material": mtl_name,
-            "rgba": rgba,
-            "texture_path": mtl_textures.get(mtl_name, ""),
-        })
+        out_parts.append(
+            {
+                "path": out_path,
+                "material": mtl_name,
+                "rgba": rgba,
+                "texture_path": mtl_textures.get(mtl_name, ""),
+            }
+        )
 
     try:
         manifest_parts = []
         for part in out_parts:
             part_path_abs = os.path.abspath(str(part.get("path", "")))
             part_rel = os.path.relpath(part_path_abs, split_root).replace("\\", "/")
-            manifest_parts.append({
-                "path": part_rel,
-                "material": str(part.get("material", "default")),
-                "rgba": [float(v) for v in list(part.get("rgba", [0.72, 0.72, 0.72, 1.0]))[:4]],
-                "texture_path": str(part.get("texture_path", "")),
-            })
+            manifest_parts.append(
+                {
+                    "path": part_rel,
+                    "material": str(part.get("material", "default")),
+                    "rgba": [
+                        float(v)
+                        for v in list(part.get("rgba", [0.72, 0.72, 0.72, 1.0]))[:4]
+                    ],
+                    "texture_path": str(part.get("texture_path", "")),
+                }
+            )
         with open(manifest_path, "w", encoding="utf-8") as mf:
-            json.dump({"version": 1, "model_sig": model_sig, "parts": manifest_parts},
-                      mf, ensure_ascii=True, indent=0)
+            json.dump(
+                {"version": 1, "model_sig": model_sig, "parts": manifest_parts},
+                mf,
+                ensure_ascii=True,
+                indent=0,
+            )
     except Exception:
         pass
 
@@ -1288,7 +1383,9 @@ def _rect_bounds(cx, cy, sx, sy):
 def _candidate_rect_bounds(candidate):
     cached = candidate.get("_rect_bounds")
     if cached is None:
-        cached = _rect_bounds(candidate["cx"], candidate["cy"], candidate["sx"], candidate["sy"])
+        cached = _rect_bounds(
+            candidate["cx"], candidate["cy"], candidate["sx"], candidate["sy"]
+        )
         candidate["_rect_bounds"] = cached
     return cached
 
@@ -1311,8 +1408,8 @@ def _rects_overlap(a, b, gap):
 
 
 def _size_fits_half_span(sx, sy, half_x, half_y, margin):
-    max_sx = (2.0 * (half_x - margin))
-    max_sy = (2.0 * (half_y - margin))
+    max_sx = 2.0 * (half_x - margin)
+    max_sy = 2.0 * (half_y - margin)
     return float(sx) <= max_sx + 1e-6 and float(sy) <= max_sy + 1e-6
 
 
@@ -1408,7 +1505,15 @@ def mirrored_wide_window_starts(segment_count, span_steps, seed_key):
         if right - left >= span_steps + 1:
             starts = [left, right]
         else:
-            starts = [max(1, min(segment_count // 2 - (span_steps // 2), segment_count - span_steps - 1))]
+            starts = [
+                max(
+                    1,
+                    min(
+                        segment_count // 2 - (span_steps // 2),
+                        segment_count - span_steps - 1,
+                    ),
+                )
+            ]
     elif segment_count >= 12:
         center = segment_count // 2 - (span_steps // 2)
         starts = [max(1, min(center, segment_count - span_steps - 1))]
@@ -1445,7 +1550,9 @@ def _indices_blocked_by_doors(along_values, door_centers, door_span):
 def _merge_spans_1d(spans, eps=1e-6):
     if not spans:
         return []
-    ordered = sorted((float(lo), float(hi)) for lo, hi in spans if float(hi) > float(lo) + eps)
+    ordered = sorted(
+        (float(lo), float(hi)) for lo, hi in spans if float(hi) > float(lo) + eps
+    )
     if not ordered:
         return []
     merged = [list(ordered[0])]
@@ -1509,7 +1616,9 @@ def _span_is_clear(start_idx, span_steps, blocked_indices):
     return True
 
 
-def _filter_mirrored_wide_windows(candidate_starts, span_steps, blocked_indices, segment_count):
+def _filter_mirrored_wide_windows(
+    candidate_starts, span_steps, blocked_indices, segment_count
+):
     if span_steps <= 1:
         return sorted(candidate_starts)
     min_start = 1
@@ -1525,7 +1634,9 @@ def _filter_mirrored_wide_windows(candidate_starts, span_steps, blocked_indices,
             if _span_is_clear(s, span_steps, blocked_indices):
                 out.add(s)
             continue
-        if _span_is_clear(s, span_steps, blocked_indices) and _span_is_clear(m, span_steps, blocked_indices):
+        if _span_is_clear(s, span_steps, blocked_indices) and _span_is_clear(
+            m, span_steps, blocked_indices
+        ):
             out.add(s)
             out.add(m)
     return sorted(out)

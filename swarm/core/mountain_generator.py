@@ -17,7 +17,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pybullet as p
 
 from swarm.constants import (
-    TYPE_3_SCALE_MIN, TYPE_3_SCALE_MAX, TYPE_3_SCALE_SEED_OFFSET,
+    TYPE_3_SCALE_MIN,
+    TYPE_3_SCALE_MAX,
+    TYPE_3_SCALE_SEED_OFFSET,
     MOUNTAIN_SUBTYPE_DISTRIBUTION,
 )
 
@@ -25,7 +27,9 @@ from swarm.constants import (
 # SECTION 1: Constants & asset paths
 # ---------------------------------------------------------------------------
 ASSETS_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "assets", "maps")
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), os.pardir, "assets", "maps"
+    )
 )
 CUSTOM_DIR = os.path.join(ASSETS_DIR, "custom")
 MOUNTAIN_DIR = os.path.join(CUSTOM_DIR, "mountains")
@@ -54,8 +58,13 @@ HOUSE_SCALE = 2.0
 HOUSE_GAP = 0.3
 
 CAR_ASSETS = [
-    "sedan.obj", "hatchback-sports.obj", "taxi.obj",
-    "police.obj", "suv.obj", "van.obj", "truck.obj",
+    "sedan.obj",
+    "hatchback-sports.obj",
+    "taxi.obj",
+    "police.obj",
+    "suv.obj",
+    "van.obj",
+    "truck.obj",
 ]
 
 ROAD_ASSETS = {
@@ -106,20 +115,26 @@ def _make_noise_params(seed: int, gs: float) -> List[dict]:
     rng = random.Random(seed + 9999)
     params = []
     for i in range(TERRAIN_N_OCTAVES):
-        params.append({
-            "amp": 1.0 / (1.6 ** i),
-            "fx": rng.uniform(0.008, 0.022) / gs * (1.4 ** i),
-            "fy": rng.uniform(0.008, 0.022) / gs * (1.4 ** i),
-            "px": rng.uniform(0, 2 * math.pi),
-            "py": rng.uniform(0, 2 * math.pi),
-        })
+        params.append(
+            {
+                "amp": 1.0 / (1.6**i),
+                "fx": rng.uniform(0.008, 0.022) / gs * (1.4**i),
+                "fy": rng.uniform(0.008, 0.022) / gs * (1.4**i),
+                "px": rng.uniform(0, 2 * math.pi),
+                "py": rng.uniform(0, 2 * math.pi),
+            }
+        )
     return params
 
 
-def _sample_terrain_height(x: float, y: float, noise_params: List[dict], amplitude: float) -> float:
+def _sample_terrain_height(
+    x: float, y: float, noise_params: List[dict], amplitude: float
+) -> float:
     h = 0.0
     for o in noise_params:
-        h += o["amp"] * math.sin(x * o["fx"] + o["px"]) * math.cos(y * o["fy"] + o["py"])
+        h += (
+            o["amp"] * math.sin(x * o["fx"] + o["px"]) * math.cos(y * o["fy"] + o["py"])
+        )
     return h * amplitude
 
 
@@ -152,7 +167,12 @@ def get_terrain_z(x: float, y: float, seed: int, gs: float) -> float:
     h01 = round(_sample_terrain_height(x0, y1, noise, amp), 4)
     h11 = round(_sample_terrain_height(x1, y1, noise, amp), 4)
 
-    return h00 * (1 - tx) * (1 - ty) + h10 * tx * (1 - ty) + h01 * (1 - tx) * ty + h11 * tx * ty
+    return (
+        h00 * (1 - tx) * (1 - ty)
+        + h10 * tx * (1 - ty)
+        + h01 * (1 - tx) * ty
+        + h11 * tx * ty
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +194,9 @@ class _ShapeCache:
             kw["rgbaColor"] = rgba
             kw["specularColor"] = [0, 0, 0]
         vis = p.createVisualShape(p.GEOM_MESH, physicsClientId=cli, **kw)
-        col = p.createCollisionShape(p.GEOM_MESH, fileName=path, meshScale=scale_vec, physicsClientId=cli)
+        col = p.createCollisionShape(
+            p.GEOM_MESH, fileName=path, meshScale=scale_vec, physicsClientId=cli
+        )
         self._cache[key] = (vis, col)
         return vis, col
 
@@ -185,9 +207,14 @@ _cache = _ShapeCache()
 # ---------------------------------------------------------------------------
 # SECTION 4: Terrain OBJ generation & spawning
 # ---------------------------------------------------------------------------
-def _generate_terrain_tiles(obj_dir: str, size: float, res: int,
-                            noise_params: List[dict], amplitude: float,
-                            tiles: int) -> Tuple[Dict, float, List[str]]:
+def _generate_terrain_tiles(
+    obj_dir: str,
+    size: float,
+    res: int,
+    noise_params: List[dict],
+    amplitude: float,
+    tiles: int,
+) -> Tuple[Dict, float, List[str]]:
     half = size / 2.0
     step = size / (res - 1)
     heights: Dict[Tuple[int, int], float] = {}
@@ -232,8 +259,9 @@ def _generate_terrain_tiles(obj_dir: str, size: float, res: int,
     return heights, step, tile_paths
 
 
-def _terrain_z_at(x: float, y: float, heights: Dict, res: int,
-                  step: float, half: float) -> float:
+def _terrain_z_at(
+    x: float, y: float, heights: Dict, res: int, step: float, half: float
+) -> float:
     gx = (x + half) / step
     gy = (y + half) / step
     gx = max(0.0, min(res - 1.001, gx))
@@ -245,7 +273,12 @@ def _terrain_z_at(x: float, y: float, heights: Dict, res: int,
     h10 = heights.get((r0, c1), 0.0)
     h01 = heights.get((r1, c0), 0.0)
     h11 = heights.get((r1, c1), 0.0)
-    return h00 * (1 - tx) * (1 - ty) + h10 * tx * (1 - ty) + h01 * (1 - tx) * ty + h11 * tx * ty
+    return (
+        h00 * (1 - tx) * (1 - ty)
+        + h10 * tx * (1 - ty)
+        + h01 * (1 - tx) * ty
+        + h11 * tx * ty
+    )
 
 
 def _spawn_terrain(cli: int, seed: int, obj_dir: str, gs: float):
@@ -257,24 +290,38 @@ def _spawn_terrain(cli: int, seed: int, obj_dir: str, gs: float):
     tile_dir = os.path.join(obj_dir, f"terrain_seed_{seed}")
     os.makedirs(tile_dir, exist_ok=True)
     heights, step, tile_paths = _generate_terrain_tiles(
-        tile_dir, mesh_size, TERRAIN_RESOLUTION, noise_params, amplitude, TERRAIN_TILES,
+        tile_dir,
+        mesh_size,
+        TERRAIN_RESOLUTION,
+        noise_params,
+        amplitude,
+        TERRAIN_TILES,
     )
 
     for tile_path in tile_paths:
         vi = p.createVisualShape(
-            p.GEOM_MESH, fileName=tile_path, meshScale=[1, 1, 1],
-            rgbaColor=SNOW, specularColor=[0, 0, 0], physicsClientId=cli,
+            p.GEOM_MESH,
+            fileName=tile_path,
+            meshScale=[1, 1, 1],
+            rgbaColor=SNOW,
+            specularColor=[0, 0, 0],
+            physicsClientId=cli,
         )
         ci = p.createCollisionShape(
-            p.GEOM_MESH, fileName=tile_path, meshScale=[1, 1, 1],
-            flags=p.GEOM_FORCE_CONCAVE_TRIMESH, physicsClientId=cli,
+            p.GEOM_MESH,
+            fileName=tile_path,
+            meshScale=[1, 1, 1],
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH,
+            physicsClientId=cli,
         )
         p.createMultiBody(0, ci, vi, [0, 0, 0], physicsClientId=cli)
 
-    min_h = min(heights.values())
     gv = p.createVisualShape(
-        p.GEOM_BOX, halfExtents=[2000 * gs, 2000 * gs, 0.5],
-        rgbaColor=SNOW, specularColor=[0, 0, 0], physicsClientId=cli,
+        p.GEOM_BOX,
+        halfExtents=[2000 * gs, 2000 * gs, 0.5],
+        rgbaColor=SNOW,
+        specularColor=[0, 0, 0],
+        physicsClientId=cli,
     )
     p.createMultiBody(0, -1, gv, [0, 0, -0.45], physicsClientId=cli)
 
@@ -297,8 +344,9 @@ class _Placed:
     radius: float
 
 
-def _too_close(x: float, y: float, radius: float, placed: List[_Placed],
-               max_overlap: float = 0.60) -> bool:
+def _too_close(
+    x: float, y: float, radius: float, placed: List[_Placed], max_overlap: float = 0.60
+) -> bool:
     for p0 in placed:
         min_dist = (radius + p0.radius) * (1.0 - max_overlap)
         dx = x - p0.x
@@ -306,7 +354,6 @@ def _too_close(x: float, y: float, radius: float, placed: List[_Placed],
         if dx * dx + dy * dy < min_dist * min_dist:
             return True
     return False
-
 
 
 def _estimate_radius_peak(gs: float, scale_var: float) -> float:
@@ -336,11 +383,19 @@ def _hill_objs() -> List[str]:
     return cands
 
 
-def _spawn_mesh_snapped(cli: int, cache: _ShapeCache, path: str,
-                        x: float, y: float, rot_deg: float, scale_vec: list,
-                        rgba: list = None, sink_z: float = 0.0,
-                        tex_id: Optional[int] = None,
-                        get_z: Optional[Callable] = None) -> Tuple[int, float]:
+def _spawn_mesh_snapped(
+    cli: int,
+    cache: _ShapeCache,
+    path: str,
+    x: float,
+    y: float,
+    rot_deg: float,
+    scale_vec: list,
+    rgba: list = None,
+    sink_z: float = 0.0,
+    tex_id: Optional[int] = None,
+    get_z: Optional[Callable] = None,
+) -> Tuple[int, float]:
     if rgba is None:
         rgba = SNOW
     vis, col = cache.get(cli, path, scale_vec, rgba)
@@ -348,7 +403,9 @@ def _spawn_mesh_snapped(cli: int, cache: _ShapeCache, path: str,
     bid = p.createMultiBody(0, col, vis, [x, y, 0], orn, physicsClientId=cli)
     mn, mx = p.getAABB(bid, physicsClientId=cli)
     terrain_z = get_z(x, y) if get_z else 0.0
-    p.resetBasePositionAndOrientation(bid, [x, y, terrain_z - mn[2] - sink_z], orn, physicsClientId=cli)
+    p.resetBasePositionAndOrientation(
+        bid, [x, y, terrain_z - mn[2] - sink_z], orn, physicsClientId=cli
+    )
     if tex_id is not None:
         try:
             p.changeVisualShape(bid, -1, textureUniqueId=tex_id, physicsClientId=cli)
@@ -361,9 +418,13 @@ def _spawn_mesh_snapped(cli: int, cache: _ShapeCache, path: str,
 # ---------------------------------------------------------------------------
 # SECTION 6: Mountains Only generator
 # ---------------------------------------------------------------------------
-def _build_mountains_only(cli: int, seed: int, gs: float,
-                          safe_zones: List[Tuple[float, float]],
-                          safe_zone_radius: float) -> Tuple[Callable, List]:
+def _build_mountains_only(
+    cli: int,
+    seed: int,
+    gs: float,
+    safe_zones: List[Tuple[float, float]],
+    safe_zone_radius: float,
+) -> Tuple[Callable, List]:
     rng = random.Random(seed)
     map_size = 500.0 * gs
     half = map_size / 2.0
@@ -373,8 +434,10 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
 
     hills = _hill_objs()
     if not hills:
+
         def flat_z(x, y):
             return 0.0
+
         return flat_z, []
 
     tex_id = None
@@ -405,9 +468,17 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
         sv = [round(v * scale_var, 2) for v in base]
         sink = (18.0 if is_edge else 14.0) * gs
         _, h = _spawn_mesh_snapped(
-            cli, _cache, PEAK_OBJ, x, y,
-            rot_deg=rng.uniform(0, 360), scale_vec=sv, rgba=SNOW,
-            sink_z=sink, tex_id=tex_id, get_z=get_z,
+            cli,
+            _cache,
+            PEAK_OBJ,
+            x,
+            y,
+            rot_deg=rng.uniform(0, 360),
+            scale_vec=sv,
+            rgba=SNOW,
+            sink_z=sink,
+            tex_id=tex_id,
+            get_z=get_z,
         )
         peak_heights.append((x, y, h))
 
@@ -416,9 +487,15 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
         s = round(scale * 2) / 2
         sz = round(s * 0.55 * 2) / 2
         _spawn_mesh_snapped(
-            cli, _cache, path, x, y,
-            rot_deg=rng.uniform(0, 360), scale_vec=[s, s, sz],
-            rgba=SNOW, get_z=get_z,
+            cli,
+            _cache,
+            path,
+            x,
+            y,
+            rot_deg=rng.uniform(0, 360),
+            scale_vec=[s, s, sz],
+            rgba=SNOW,
+            get_z=get_z,
         )
 
     # Edge walls
@@ -532,9 +609,15 @@ def _build_mountains_only(cli: int, seed: int, gs: float,
                 path = rng.choice(hills)
                 s_q = round(s * 2) / 2
                 _spawn_mesh_snapped(
-                    cli, _cache, path, x, y,
-                    rot_deg=rng.uniform(0, 360), scale_vec=[s_q, s_q, s_q],
-                    rgba=SNOW, get_z=get_z,
+                    cli,
+                    _cache,
+                    path,
+                    x,
+                    y,
+                    rot_deg=rng.uniform(0, 360),
+                    scale_vec=[s_q, s_q, s_q],
+                    rgba=SNOW,
+                    get_z=get_z,
                 )
                 break
 
@@ -586,8 +669,13 @@ class _SeededRNG:
         return self._rng.choice(seq)
 
 
-def _village_road_positions(rng: _SeededRNG, min_spacing: int, target_area: int,
-                            tile_size: float, map_size: float) -> List[float]:
+def _village_road_positions(
+    rng: _SeededRNG,
+    min_spacing: int,
+    target_area: int,
+    tile_size: float,
+    map_size: float,
+) -> List[float]:
     min_side = math.sqrt(target_area)
     needed_gap = max(min_spacing, min_side)
     raw_min_step = needed_gap + tile_size
@@ -625,9 +713,13 @@ def _village_road_positions(rng: _SeededRNG, min_spacing: int, target_area: int,
     return valid
 
 
-def _village_road_tiles(v_pos: List[float], h_pos: List[float],
-                        rng: _SeededRNG, tile_size: float,
-                        map_size: float) -> Tuple[List[_RoadTile], list, list, list, list]:
+def _village_road_tiles(
+    v_pos: List[float],
+    h_pos: List[float],
+    rng: _SeededRNG,
+    tile_size: float,
+    map_size: float,
+) -> Tuple[List[_RoadTile], list, list, list, list]:
     num_tiles = round(map_size / tile_size)
     eff_size = num_tiles * tile_size
     max_block_size = 18
@@ -756,8 +848,9 @@ def _village_road_tiles(v_pos: List[float], h_pos: List[float],
     return tiles, removed_h, removed_v, added_h, added_v
 
 
-def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
-                            added_h, added_v, tile_size) -> List[_Block]:
+def _village_extract_blocks(
+    v_pos, h_pos, min_area, removed_h, removed_v, added_h, added_v, tile_size
+) -> List[_Block]:
     h_rm_set = set(removed_h)
     v_rm_set = set(removed_v)
     n_cols = len(v_pos) - 1
@@ -829,8 +922,11 @@ def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
                 for idx in range(len(row_cells)):
                     ci = row_cells[idx]
                     next_ci = row_cells[idx + 1] if idx + 1 < len(row_cells) else None
-                    is_end = (next_ci is None or next_ci != ci + 1
-                              or (v_pos[ci + 1], h_pos[j], h_pos[j + 1]) not in v_rm_set)
+                    is_end = (
+                        next_ci is None
+                        or next_ci != ci + 1
+                        or (v_pos[ci + 1], h_pos[j], h_pos[j + 1]) not in v_rm_set
+                    )
                     if is_end:
                         rect_key = (run_start, j, ci, j)
                         if rect_key not in covered:
@@ -858,8 +954,12 @@ def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
 
                             already = False
                             for c_key in covered:
-                                if (c_key[0] <= run_start and c_key[2] >= ci
-                                        and c_key[1] <= ry1 and c_key[3] >= ry2):
+                                if (
+                                    c_key[0] <= run_start
+                                    and c_key[2] >= ci
+                                    and c_key[1] <= ry1
+                                    and c_key[3] >= ry2
+                                ):
                                     already = True
                                     break
                             if not already:
@@ -870,8 +970,13 @@ def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
                                 y2 = h_pos[ry2 + 1]
                                 w, h = x2 - x1, y2 - y1
                                 if w > 1 and h > 1:
-                                    blocks.append(_Block(bid, _Rect(x1, y1, w, h),
-                                                         w * h < min_area * 0.95))
+                                    blocks.append(
+                                        _Block(
+                                            bid,
+                                            _Rect(x1, y1, w, h),
+                                            w * h < min_area * 0.95,
+                                        )
+                                    )
                                     bid += 1
 
                         if next_ci is not None and next_ci == ci + 1:
@@ -884,14 +989,20 @@ def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
         block = queue.pop(0)
         split = False
         for y_seg, sx1, sx2 in added_h:
-            if block.rect.y < y_seg and (y_seg + tile_size) < (block.rect.y + block.rect.h):
+            if block.rect.y < y_seg and (y_seg + tile_size) < (
+                block.rect.y + block.rect.h
+            ):
                 if sx1 < block.rect.x + block.rect.w and sx2 > block.rect.x:
                     h1 = y_seg - block.rect.y
-                    b1 = _Block(bid, _Rect(block.rect.x, block.rect.y, block.rect.w, h1), False)
+                    b1 = _Block(
+                        bid, _Rect(block.rect.x, block.rect.y, block.rect.w, h1), False
+                    )
                     bid += 1
                     y2_new = y_seg + tile_size
                     h2 = (block.rect.y + block.rect.h) - y2_new
-                    b2 = _Block(bid, _Rect(block.rect.x, y2_new, block.rect.w, h2), False)
+                    b2 = _Block(
+                        bid, _Rect(block.rect.x, y2_new, block.rect.w, h2), False
+                    )
                     bid += 1
                     queue.extend([b1, b2])
                     split = True
@@ -899,14 +1010,20 @@ def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
         if split:
             continue
         for x_seg, sy1, sy2 in added_v:
-            if block.rect.x < x_seg and (x_seg + tile_size) < (block.rect.x + block.rect.w):
+            if block.rect.x < x_seg and (x_seg + tile_size) < (
+                block.rect.x + block.rect.w
+            ):
                 if sy1 < block.rect.y + block.rect.h and sy2 > block.rect.y:
                     w1 = x_seg - block.rect.x
-                    b1 = _Block(bid, _Rect(block.rect.x, block.rect.y, w1, block.rect.h), False)
+                    b1 = _Block(
+                        bid, _Rect(block.rect.x, block.rect.y, w1, block.rect.h), False
+                    )
                     bid += 1
                     x2_new = x_seg + tile_size
                     w2 = (block.rect.x + block.rect.w) - x2_new
-                    b2 = _Block(bid, _Rect(x2_new, block.rect.y, w2, block.rect.h), False)
+                    b2 = _Block(
+                        bid, _Rect(x2_new, block.rect.y, w2, block.rect.h), False
+                    )
                     bid += 1
                     queue.extend([b1, b2])
                     split = True
@@ -922,9 +1039,17 @@ def _village_extract_blocks(v_pos, h_pos, min_area, removed_h, removed_v,
 # ---------------------------------------------------------------------------
 # SECTION 8: Village spawning helpers
 # ---------------------------------------------------------------------------
-def _spawn_village_asset(cli: int, cache: _ShapeCache, path: str,
-                         x: float, y: float, z: float, rot_deg: float,
-                         scale, rgba: Optional[list] = None) -> Optional[int]:
+def _spawn_village_asset(
+    cli: int,
+    cache: _ShapeCache,
+    path: str,
+    x: float,
+    y: float,
+    z: float,
+    rot_deg: float,
+    scale,
+    rgba: Optional[list] = None,
+) -> Optional[int]:
     if not os.path.exists(path):
         return None
     if isinstance(scale, (list, tuple)):
@@ -937,10 +1062,14 @@ def _spawn_village_asset(cli: int, cache: _ShapeCache, path: str,
     return bid
 
 
-def _spawn_village_roads(cli: int, cache: _ShapeCache,
-                         tiles: List[_RoadTile], offset: float,
-                         safe_zones: Optional[List[Tuple[float, float]]] = None,
-                         safe_zone_radius: float = 0.0):
+def _spawn_village_roads(
+    cli: int,
+    cache: _ShapeCache,
+    tiles: List[_RoadTile],
+    offset: float,
+    safe_zones: Optional[List[Tuple[float, float]]] = None,
+    safe_zone_radius: float = 0.0,
+):
     for tile in tiles:
         if tile.type == "roundabout_arm":
             continue
@@ -959,13 +1088,17 @@ def _spawn_village_roads(cli: int, cache: _ShapeCache,
         p.createMultiBody(0, col, vis, [fx, fy, 0.08], orn, physicsClientId=cli)
 
 
-def _spawn_village_buildings(cli: int, cache: _ShapeCache,
-                             blocks: List[_Block], offset: float,
-                             rng: random.Random,
-                             roundabout_centers: List[Tuple[float, float]],
-                             tiles: List[_RoadTile] = None,
-                             safe_zones: Optional[List[Tuple[float, float]]] = None,
-                             safe_zone_radius: float = 0.0):
+def _spawn_village_buildings(
+    cli: int,
+    cache: _ShapeCache,
+    blocks: List[_Block],
+    offset: float,
+    rng: random.Random,
+    roundabout_centers: List[Tuple[float, float]],
+    tiles: List[_RoadTile] = None,
+    safe_zones: Optional[List[Tuple[float, float]]] = None,
+    safe_zone_radius: float = 0.0,
+):
     row_depth = 3.0
     corner_reserve = row_depth + 0.5
 
@@ -1015,11 +1148,15 @@ def _spawn_village_buildings(cli: int, cache: _ShapeCache,
         winter_path = os.path.join(BUILDING_DIR, filename)
         if os.path.exists(winter_path):
             final_rot = rotation + 180 if rotation % 180 == 0 else rotation
-            house_id = _spawn_village_asset(cli, cache, winter_path, x, y, 0, final_rot, HOUSE_SCALE)
+            _spawn_village_asset(
+                cli, cache, winter_path, x, y, 0, final_rot, HOUSE_SCALE
+            )
             roof_name = filename.replace(".obj", "_roof.obj")
             roof_path = os.path.join(BUILDING_DIR, "SnowRoofs", roof_name)
             if os.path.exists(roof_path):
-                _spawn_village_asset(cli, cache, roof_path, x, y, 0.01, final_rot, HOUSE_SCALE)
+                _spawn_village_asset(
+                    cli, cache, roof_path, x, y, 0.01, final_rot, HOUSE_SCALE
+                )
         else:
             sub_path = os.path.join(SUBURBAN_DIR, filename)
             final_rot = rotation + 180 if rotation % 180 == 0 else rotation
@@ -1073,11 +1210,15 @@ def _spawn_village_buildings(cli: int, cache: _ShapeCache,
             fill_row(col_b, col_t, right - row_depth / 2, 270, True)
 
 
-def _spawn_village_lanterns(cli: int, cache: _ShapeCache,
-                            tiles: List[_RoadTile], offset: float,
-                            rng: random.Random,
-                            safe_zones: Optional[List[Tuple[float, float]]] = None,
-                            safe_zone_radius: float = 0.0):
+def _spawn_village_lanterns(
+    cli: int,
+    cache: _ShapeCache,
+    tiles: List[_RoadTile],
+    offset: float,
+    rng: random.Random,
+    safe_zones: Optional[List[Tuple[float, float]]] = None,
+    safe_zone_radius: float = 0.0,
+):
     half_tile = ROAD_WIDTH / 2
     lamp_offset_val = half_tile - 0.3
     lantern_scale = [1.05, 1.62, 1.05]
@@ -1093,21 +1234,47 @@ def _spawn_village_lanterns(cli: int, cache: _ShapeCache,
         cy = tile.y - offset + half_tile
         if tile.type == "straight_v":
             for lx, rot in [(cx - lamp_offset_val, 180), (cx + lamp_offset_val, 0)]:
-                _spawn_village_asset(cli, cache, LANTERN_PATH, lx, cy, lantern_z, rot, lantern_scale)
+                _spawn_village_asset(
+                    cli, cache, LANTERN_PATH, lx, cy, lantern_z, rot, lantern_scale
+                )
                 if os.path.exists(LANTERN_ROOF_PATH):
-                    _spawn_village_asset(cli, cache, LANTERN_ROOF_PATH, lx, cy, lantern_z + 0.01, rot, lantern_scale)
+                    _spawn_village_asset(
+                        cli,
+                        cache,
+                        LANTERN_ROOF_PATH,
+                        lx,
+                        cy,
+                        lantern_z + 0.01,
+                        rot,
+                        lantern_scale,
+                    )
         elif tile.type == "straight_h":
             for ly, rot in [(cy - lamp_offset_val, 270), (cy + lamp_offset_val, 90)]:
-                _spawn_village_asset(cli, cache, LANTERN_PATH, cx, ly, lantern_z, rot, lantern_scale)
+                _spawn_village_asset(
+                    cli, cache, LANTERN_PATH, cx, ly, lantern_z, rot, lantern_scale
+                )
                 if os.path.exists(LANTERN_ROOF_PATH):
-                    _spawn_village_asset(cli, cache, LANTERN_ROOF_PATH, cx, ly, lantern_z + 0.01, rot, lantern_scale)
+                    _spawn_village_asset(
+                        cli,
+                        cache,
+                        LANTERN_ROOF_PATH,
+                        cx,
+                        ly,
+                        lantern_z + 0.01,
+                        rot,
+                        lantern_scale,
+                    )
 
 
-def _spawn_village_cars(cli: int, cache: _ShapeCache,
-                        tiles: List[_RoadTile], offset: float,
-                        rng: random.Random,
-                        safe_zones: Optional[List[Tuple[float, float]]] = None,
-                        safe_zone_radius: float = 0.0):
+def _spawn_village_cars(
+    cli: int,
+    cache: _ShapeCache,
+    tiles: List[_RoadTile],
+    offset: float,
+    rng: random.Random,
+    safe_zones: Optional[List[Tuple[float, float]]] = None,
+    safe_zone_radius: float = 0.0,
+):
     lane_off = ROAD_WIDTH * 0.18
     for tile in tiles:
         if tile.type not in ("straight_v", "straight_h"):
@@ -1129,8 +1296,7 @@ def _spawn_village_cars(cli: int, cache: _ShapeCache,
             _spawn_village_asset(cli, cache, car_path, cx, car_y, 0.1, car_rot, 0.58)
 
 
-def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache,
-                                  rng: random.Random):
+def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache, rng: random.Random):
     hills = _hill_objs()
     if not hills:
         return
@@ -1178,12 +1344,16 @@ def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache,
             s_var = round(rng.uniform(0.9, 1.2), 1)
             final_scale = [round(v * s_var, 2) for v in base_scale]
             vis, col = cache.get(cli, PEAK_OBJ, final_scale, SNOW)
-            orn = p.getQuaternionFromEuler([1.5708, 0, math.radians(rng.uniform(0, 360))])
+            orn = p.getQuaternionFromEuler(
+                [1.5708, 0, math.radians(rng.uniform(0, 360))]
+            )
             bid = p.createMultiBody(0, col, vis, [x, y, 0.0], orn, physicsClientId=cli)
             snap_to_ground(bid, x, y, orn, sink=10.0)
             if tex_id is not None:
                 try:
-                    p.changeVisualShape(bid, -1, textureUniqueId=tex_id, physicsClientId=cli)
+                    p.changeVisualShape(
+                        bid, -1, textureUniqueId=tex_id, physicsClientId=cli
+                    )
                 except Exception:
                     pass
 
@@ -1191,19 +1361,27 @@ def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache,
 # ---------------------------------------------------------------------------
 # SECTION 9: Ski Village generator
 # ---------------------------------------------------------------------------
-def _build_ski_village(cli: int, seed: int, gs: float,
-                       safe_zones: List[Tuple[float, float]],
-                       safe_zone_radius: float) -> Tuple[Callable, List]:
+def _build_ski_village(
+    cli: int,
+    seed: int,
+    gs: float,
+    safe_zones: List[Tuple[float, float]],
+    safe_zone_radius: float,
+) -> Tuple[Callable, List]:
     rng = random.Random(seed)
 
     ground_size = VILLAGE_SIZE * 20
     ground_half = ground_size / 2
     gv = p.createVisualShape(
-        p.GEOM_BOX, halfExtents=[ground_half, ground_half, 0.1],
-        rgbaColor=SNOW, specularColor=[0, 0, 0], physicsClientId=cli,
+        p.GEOM_BOX,
+        halfExtents=[ground_half, ground_half, 0.1],
+        rgbaColor=SNOW,
+        specularColor=[0, 0, 0],
+        physicsClientId=cli,
     )
     gc = p.createCollisionShape(
-        p.GEOM_BOX, halfExtents=[ground_half, ground_half, 0.1],
+        p.GEOM_BOX,
+        halfExtents=[ground_half, ground_half, 0.1],
         physicsClientId=cli,
     )
     p.createMultiBody(0, gc, gv, [0, 0, 0.0], physicsClientId=cli)
@@ -1214,7 +1392,9 @@ def _build_ski_village(cli: int, seed: int, gs: float,
     tiles, rm_h, rm_v, add_h, add_v = _village_road_tiles(
         v_pos, h_pos, village_rng, ROAD_WIDTH, VILLAGE_SIZE
     )
-    blocks = _village_extract_blocks(v_pos, h_pos, 50, rm_h, rm_v, add_h, add_v, ROAD_WIDTH)
+    blocks = _village_extract_blocks(
+        v_pos, h_pos, 50, rm_h, rm_v, add_h, add_v, ROAD_WIDTH
+    )
 
     offset = VILLAGE_SIZE / 2
     roundabout_centers = []
@@ -1296,7 +1476,9 @@ def build_mountains(
         chosen = get_mountain_subtype(seed)
 
     if chosen == 1:
-        get_z, peaks = _build_mountains_only(cli, seed, gs, safe_zones, safe_zone_radius)
+        get_z, peaks = _build_mountains_only(
+            cli, seed, gs, safe_zones, safe_zone_radius
+        )
     else:
         get_z, peaks = _build_ski_village(cli, seed, gs, safe_zones, safe_zone_radius)
 

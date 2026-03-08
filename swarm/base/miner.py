@@ -59,7 +59,7 @@ class BaseMinerNeuron(BaseNeuron):
         self.axon.attach(
             forward_fn=self.forward,
             blacklist_fn=self.blacklist,
-            priority_fn=self.priority
+            priority_fn=self.priority,
         )
         # self.axon.attach(
         #     forward_fn=self.forward_feedback,
@@ -142,7 +142,7 @@ class BaseMinerNeuron(BaseNeuron):
             exit()
 
         # In case of unforeseen errors, the miner will log the error and continue operations.
-        except Exception as e:
+        except Exception:
             bt.logging.error(traceback.format_exc())
 
     def run_in_background_thread(self):
@@ -178,7 +178,7 @@ class BaseMinerNeuron(BaseNeuron):
         self.run_in_background_thread()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, _exc_type, _exc_value, _traceback):
         """
         Stops the miner's background operations upon exiting the context.
         This method facilitates the use of the miner in a 'with' statement.

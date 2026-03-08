@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
-from swarm.core.warehouse.shared import MeshKitLoader, first_existing_path, normalize_mtl_texture_paths
+from swarm.core.warehouse.shared import (
+    MeshKitLoader,
+    first_existing_path,
+    normalize_mtl_texture_paths,
+)
 
 
 def test_first_existing_path_returns_first_hit(tmp_path):

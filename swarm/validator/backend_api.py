@@ -46,6 +46,7 @@ RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"
 # Backend Response Helpers
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def extract_backend_reason(response: Dict[str, Any]) -> str:
     """Extract a human-readable reason from a backend error response."""
     for key in ("detail", "reason", "message", "error"):
@@ -55,9 +56,7 @@ def extract_backend_reason(response: Dict[str, Any]) -> str:
     return str(response)
 
 
-def classify_backend_failure(
-    response: Dict[str, Any], stage: str
-) -> Tuple[bool, str]:
+def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool, str]:
     """Classify whether a backend failure is terminal or transient.
 
     Returns (is_terminal, reason).
@@ -111,7 +110,7 @@ def _load_runtime_state() -> dict:
     """Load runtime state (last known weights, re-eval queue)."""
     try:
         if RUNTIME_STATE_FILE.exists():
-            with open(RUNTIME_STATE_FILE, 'r') as f:
+            with open(RUNTIME_STATE_FILE, "r") as f:
                 return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         bt.logging.warning(f"Runtime state load failed: {e}")
@@ -123,7 +122,7 @@ def _save_runtime_state(state: dict) -> None:
     STATE_DIR.mkdir(exist_ok=True)
     temp_file = RUNTIME_STATE_FILE.with_suffix(".tmp")
     try:
-        with open(temp_file, 'w') as f:
+        with open(temp_file, "w") as f:
             json.dump(state, f)
         temp_file.replace(RUNTIME_STATE_FILE)
     except IOError as e:
@@ -135,10 +134,7 @@ class BackendApiClient:
     """HTTP client for backend API communication with signature authentication."""
 
     def __init__(
-        self,
-        wallet: "bt.wallet" = None,
-        base_url: str = None,
-        timeout: float = 30.0
+        self, wallet: "bt.wallet" = None, base_url: str = None, timeout: float = 30.0
     ):
         """Initialize backend API client.
 
@@ -199,9 +195,7 @@ class BackendApiClient:
 
         try:
             resp = await self.client.post(
-                f"{self.base_url}{endpoint}",
-                content=body,
-                headers=headers
+                f"{self.base_url}{endpoint}", content=body, headers=headers
             )
             resp.raise_for_status()
             return resp.json()
@@ -209,7 +203,7 @@ class BackendApiClient:
             bt.logging.warning(f"Backend rejected {endpoint}: {e.response.status_code}")
             try:
                 return e.response.json()
-            except:
+            except Exception:
                 return {"error": str(e), "status_code": e.response.status_code}
         except Exception as e:
             bt.logging.warning(f"Backend API error ({endpoint}): {e}")
@@ -221,10 +215,7 @@ class BackendApiClient:
         headers = self._sign_request("GET", endpoint, body)
 
         try:
-            resp = await self.client.get(
-                f"{self.base_url}{endpoint}",
-                headers=headers
-            )
+            resp = await self.client.get(f"{self.base_url}{endpoint}", headers=headers)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -235,11 +226,7 @@ class BackendApiClient:
     # POST /validators/models/new
     # ──────────────────────────────────────────────────────────────────────
     async def post_new_model(
-        self,
-        uid: int,
-        model_hash: str,
-        coldkey: str,
-        validator_hotkey: str
+        self, uid: int, model_hash: str, coldkey: str, validator_hotkey: str
     ) -> Dict[str, Any]:
         """Notify backend of new model.
 
@@ -263,15 +250,18 @@ class BackendApiClient:
                 "uid": uid,
                 "model_hash": model_hash,
                 "coldkey": coldkey,
-                "hotkey": miner_hotkey
-            }
+                "hotkey": miner_hotkey,
+            },
         )
 
         # Map backend response to expected format
         if "model_id" in result:
             return {"accepted": True, "model_id": result["model_id"]}
         elif "error" in result or "detail" in result:
-            return {"accepted": False, "reason": result.get("detail", result.get("error", "unknown"))}
+            return {
+                "accepted": False,
+                "reason": result.get("detail", result.get("error", "unknown")),
+            }
         return result
 
     def _get_miner_hotkey(self, uid: int) -> str:
@@ -294,7 +284,7 @@ class BackendApiClient:
         validator_hotkey: str,
         validator_stake: float,
         screening_score: float,
-        passed: bool
+        passed: bool,
     ) -> Dict[str, Any]:
         """Submit screening result.
 
@@ -310,10 +300,7 @@ class BackendApiClient:
         """
         return await self._post_signed(
             f"/validators/models/{uid}/screening",
-            {
-                "score": screening_score,
-                "passed": passed
-            }
+            {"score": screening_score, "passed": passed},
         )
 
     # ──────────────────────────────────────────────────────────────────────
@@ -328,7 +315,7 @@ class BackendApiClient:
         total_score: float,
         per_type_scores: Dict[str, float],
         seeds_evaluated: int,
-        epoch_number: Optional[int] = None
+        epoch_number: Optional[int] = None,
     ) -> Dict[str, Any]:
         data = {
             "score": total_score,
@@ -368,16 +355,15 @@ class BackendApiClient:
                     current_top = {
                         "uid": current_champion.get("uid"),
                         "score": current_champion.get("benchmark_score"),
-                        "model_hash": current_champion.get("model_hash")
+                        "model_hash": current_champion.get("model_hash"),
                     }
 
                 # Map reeval_queue to use uid
                 reeval_queue = []
                 for item in data.get("reeval_queue", []):
-                    reeval_queue.append({
-                        "uid": item.get("uid"),
-                        "reason": item.get("reason")
-                    })
+                    reeval_queue.append(
+                        {"uid": item.get("uid"), "reason": item.get("reason")}
+                    )
 
                 self._runtime_state["last_weights"] = data.get("weights", {})
                 self._runtime_state["reeval_queue"] = reeval_queue
@@ -385,18 +371,22 @@ class BackendApiClient:
                 self._runtime_state["current_top"] = current_top
                 _save_runtime_state(self._runtime_state)
 
-                bt.logging.info(f"Backend sync successful: leaderboard v{data.get('leaderboard_version', '?')}")
+                bt.logging.info(
+                    f"Backend sync successful: leaderboard v{data.get('leaderboard_version', '?')}"
+                )
                 return {
                     "current_top": current_top,
                     "weights": data.get("weights", {}),
                     "reeval_queue": reeval_queue,
-                    "leaderboard_version": data.get("leaderboard_version", 0)
+                    "leaderboard_version": data.get("leaderboard_version", 0),
                 }
 
             raise Exception(data.get("error", "Unknown error"))
 
         except Exception as e:
-            bt.logging.warning(f"Backend API error (sync): {e} — fallback active, emissions will burn")
+            bt.logging.warning(
+                f"Backend API error (sync): {e} — fallback active, emissions will burn"
+            )
 
             return {
                 "current_top": self._runtime_state.get("current_top", {}),
@@ -404,7 +394,7 @@ class BackendApiClient:
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
                 "fallback": True,
-                "error": str(e)
+                "error": str(e),
             }
 
     # ──────────────────────────────────────────────────────────────────────
@@ -456,7 +446,9 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            bt.logging.warning(f"Backend rejected upload for UID {uid}: {e.response.status_code}")
+            bt.logging.warning(
+                f"Backend rejected upload for UID {uid}: {e.response.status_code}"
+            )
             try:
                 return e.response.json()
             except (ValueError, RuntimeError):
@@ -473,7 +465,7 @@ class BackendApiClient:
         status: str,
         current_uid: Optional[int] = None,
         progress: Optional[int] = None,
-        total_seeds: Optional[int] = None
+        total_seeds: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Post validator heartbeat for liveness tracking.
 

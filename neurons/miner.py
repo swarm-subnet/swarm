@@ -20,8 +20,7 @@ from swarm.base.miner import BaseMinerNeuron
 from swarm.protocol import PolicySynapse, PolicyRef, PolicyChunk
 from swarm.utils.hash import sha256sum
 
-from bittensor_wallet import Keypair                        
-from bittensor.core.errors import NotVerifiedException      
+from bittensor.core.errors import NotVerifiedException
 
 # Optional coloured logging – fall back gracefully if unavailable
 try:
@@ -58,22 +57,22 @@ class Miner(BaseMinerNeuron):
     #  **Adjust these constants for your own model**
     # ------------------------------------------------------------------
     POLICY_PATH = Path(__file__).parent.parent / "Submission" / "submission.zip"
-    ENTRYPOINT  = ""
-    FRAMEWORK   = "sb3-ppo"
-    
+    ENTRYPOINT = ""
+    FRAMEWORK = "sb3-ppo"
+
     # ------------------------------------------------------------------
     #  Whitelisted validators - only these can access the miner
     # ------------------------------------------------------------------
     WHITELISTED_VALIDATORS = {
         "5FTr8ZAQCGieBGdqXvGxHcAuzcEscEyvUQmnRZ8PJnEsn124": "RoundTable21",
-        "5FKk6ucEKuKzLspVYSv9fVHonumxMJ33MdHqbVjZi2NUs124": "Rizzo", 
+        "5FKk6ucEKuKzLspVYSv9fVHonumxMJ33MdHqbVjZi2NUs124": "Rizzo",
         "5FF6pxRem43f7wCisfXevqYVURZtxxnC4kYTx4dnNAWqi9vg": "Owner",
         "5CsvRJXuR955WojnGMdok1hbhffZyB4N5ocrv82f3p5A2zVp": "tao5",
         "5CUwbDbxCm3A4uk3rC69gQuphyG1CZaWBZRjFQTnvvMMPGun": "Yuma",
         "5EhiBKjj56jE1a6rLPP14TtrzxiwgfG8qk7nuZprkbYKH87C": "OTF",
         "5FCvTkZK44fcs1iHsyUce8ZgJQD8351QJiVA8YvvuA6YcP2v": "New vali",
         "5FBqnTwnCq6yeVeXTnVGHbiRR6zh6ZGbKVRBusu4zSCu4WUw": "New vali2",
-        "5EbgPJdzg1daqm9DcXJ98hGUQUKU84uffumUJzEt6Cva835H": "TestValidator"  # Keep existing test validator
+        "5EbgPJdzg1daqm9DcXJ98hGUQUKU84uffumUJzEt6Cva835H": "TestValidator",  # Keep existing test validator
     }
 
     # ------------------------------------------------------------------
@@ -87,10 +86,9 @@ class Miner(BaseMinerNeuron):
             raise FileNotFoundError(f"Model not found: {self.POLICY_PATH}")
 
         self._sha256 = sha256sum(self.POLICY_PATH)
-        self._size   = self.POLICY_PATH.stat().st_size
+        self._size = self.POLICY_PATH.stat().st_size
         self.axon.verify_fns[PolicySynapse.__name__] = self._verify_validator_request
         ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
-
 
     async def _verify_validator_request(self, synapse: PolicySynapse) -> None:
         """
@@ -105,10 +103,10 @@ class Miner(BaseMinerNeuron):
         if synapse.dendrite is None:
             raise NotVerifiedException("Missing dendrite terminal in request")
 
-        hotkey    = synapse.dendrite.hotkey
+        hotkey = synapse.dendrite.hotkey
         signature = synapse.dendrite.signature
-        nonce     = synapse.dendrite.nonce
-        uuid      = synapse.dendrite.uuid
+        nonce = synapse.dendrite.nonce
+        uuid = synapse.dendrite.uuid
         body_hash = synapse.computed_body_hash
 
         # 1 — is the sender even on our allow‑list?
@@ -147,7 +145,7 @@ class Miner(BaseMinerNeuron):
     # ------------------------------------------------------------------
     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
         """
-        • need_blob absent / False → return PolicyRef  
+        • need_blob absent / False → return PolicyRef
         • need_blob True          → return a single base‑64 chunk
         """
         try:
@@ -159,7 +157,7 @@ class Miner(BaseMinerNeuron):
                 ColoredLogger.info("Sending full model blob …", ColoredLogger.BLUE)
 
                 raw_bytes = self.POLICY_PATH.read_bytes()
-                b64_str   = base64.b64encode(raw_bytes).decode("ascii")
+                b64_str = base64.b64encode(raw_bytes).decode("ascii")
 
                 return PolicySynapse.from_chunk(
                     PolicyChunk(sha256=self._sha256, data=b64_str)
@@ -167,19 +165,18 @@ class Miner(BaseMinerNeuron):
 
             # ── first handshake: send manifest ────────────────────────
             ref = PolicyRef(
-                sha256     = self._sha256,
-                entrypoint = self.ENTRYPOINT,
-                framework  = self.FRAMEWORK,
-                size_bytes = self._size,
+                sha256=self._sha256,
+                entrypoint=self.ENTRYPOINT,
+                framework=self.FRAMEWORK,
+                size_bytes=self._size,
             )
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
             return PolicySynapse.from_ref(ref)
 
         except Exception as e:
             bt.logging.error(f"Miner forward error: {e}")
-            return PolicySynapse()          # fail‑safe empty reply
+            return PolicySynapse()  # fail‑safe empty reply
 
-        
     # ------------------------------------------------------------------
     #  Black‑list logic (unchanged except for type names)
     # ------------------------------------------------------------------
@@ -187,13 +184,14 @@ class Miner(BaseMinerNeuron):
         return await self._common_blacklist(synapse)
 
     async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
-    
         # 1 — now we can safely trust synapse.dendrite.hotkey
         hotkey = synapse.dendrite.hotkey
 
         if hotkey in self.WHITELISTED_VALIDATORS:
             name = self.WHITELISTED_VALIDATORS[hotkey]
-            ColoredLogger.success(f"Synapse from {name} with ({hotkey} arrived, starting verification.")
+            ColoredLogger.success(
+                f"Synapse from {name} with ({hotkey} arrived, starting verification."
+            )
             return False, f"whitelisted: {name}"
 
         ColoredLogger.warning(f"Denying non‑whitelisted validator {hotkey}")

@@ -5,11 +5,8 @@ Entry point: ``build_warehouse_map(seed, cli, start, goal)``
 """
 
 import json
-import math
 import os
 import time
-
-import pybullet as p
 
 from .constants import (
     ASSETS_DIR,
@@ -47,7 +44,11 @@ from .operations import (
     build_machining_cell_layout,
     build_worker_crew,
 )
-from .shared import MeshKitLoader, first_existing_path, normalize_mtl_texture_paths
+from .shared import (
+    MeshKitLoader,
+    first_existing_path as first_existing_path,
+    normalize_mtl_texture_paths,
+)
 from .storage import build_storage_racks
 from .structure import (
     build_columns,
@@ -140,7 +141,9 @@ def _resolve_kit_paths():
 
     if ENABLE_STORAGE_RACK_LAYOUT:
         if not os.path.exists(loading_staging_obj):
-            raise FileNotFoundError(f"Missing loading staging folder: {loading_staging_obj}")
+            raise FileNotFoundError(
+                f"Missing loading staging folder: {loading_staging_obj}"
+            )
         rack_mp = os.path.join(loading_staging_obj, STORAGE_RACK_MODEL_NAME)
         if not os.path.exists(rack_mp):
             raise FileNotFoundError(f"Missing storage rack model: {rack_mp}")
@@ -251,7 +254,9 @@ def _create_runtime_context(cli=0):
         else None
     )
 
-    has_staging_dir = kit_paths.get("loading_staging_obj") and os.path.exists(kit_paths["loading_staging_obj"])
+    has_staging_dir = kit_paths.get("loading_staging_obj") and os.path.exists(
+        kit_paths["loading_staging_obj"]
+    )
     ctx["loading_staging_loader"] = (
         MeshKitLoader(
             obj_dir=kit_paths["loading_staging_obj"],
@@ -265,20 +270,26 @@ def _create_runtime_context(cli=0):
     worker_loader = None
     if ENABLE_WORKER_CREW:
         worker_obj_dir, worker_model_name = _resolve_optional_model(
-            _WORKER_ASSET_CANDIDATES, WORKER_MODEL_CANDIDATES,
+            _WORKER_ASSET_CANDIDATES,
+            WORKER_MODEL_CANDIDATES,
         )
         if worker_obj_dir and worker_model_name:
-            worker_loader = MeshKitLoader(obj_dir=worker_obj_dir, texture_path="", cli=cli)
+            worker_loader = MeshKitLoader(
+                obj_dir=worker_obj_dir, texture_path="", cli=cli
+            )
             ctx["worker_model_name"] = worker_model_name
     ctx["worker_loader"] = worker_loader
 
     crane_loader = None
     if ENABLE_OVERHEAD_CRANES:
         crane_obj_dir, crane_model_name = _resolve_optional_model(
-            _OVERHEAD_CRANE_ASSET_CANDIDATES, OVERHEAD_CRANE_MODEL_CANDIDATES,
+            _OVERHEAD_CRANE_ASSET_CANDIDATES,
+            OVERHEAD_CRANE_MODEL_CANDIDATES,
         )
         if crane_obj_dir and crane_model_name:
-            crane_loader = MeshKitLoader(obj_dir=crane_obj_dir, texture_path="", cli=cli)
+            crane_loader = MeshKitLoader(
+                obj_dir=crane_obj_dir, texture_path="", cli=cli
+            )
             ctx["crane_model_name"] = crane_model_name
     ctx["crane_loader"] = crane_loader
 
@@ -287,8 +298,12 @@ def _create_runtime_context(cli=0):
 
 def _reset_runtime_context(ctx):
     for key in (
-        "conveyor_loader", "truck_loader", "industry_loader",
-        "loading_staging_loader", "worker_loader", "crane_loader",
+        "conveyor_loader",
+        "truck_loader",
+        "industry_loader",
+        "loading_staging_loader",
+        "worker_loader",
+        "crane_loader",
     ):
         _clear_loader_spawn_caches(ctx.get(key))
 
@@ -350,7 +365,9 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     wall_info.update(
         _stage(
             "personnel_lane",
-            lambda: build_personnel_floor_lane(conveyor_loader, floor_top_z, wall_info, cli=cli),
+            lambda: build_personnel_floor_lane(
+                conveyor_loader, floor_top_z, wall_info, cli=cli
+            ),
         )
     )
 
@@ -368,7 +385,9 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     # 5. Area layout zones
     area_layout = _stage(
         "area_layout",
-        lambda: build_area_layout_markers(conveyor_loader, floor_top_z, wall_info, seed=seed, cli=cli),
+        lambda: build_area_layout_markers(
+            conveyor_loader, floor_top_z, wall_info, seed=seed, cli=cli
+        ),
     )
     wall_info["area_layout"] = area_layout
 
@@ -377,8 +396,12 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
         _stage(
             "loading_staging",
             lambda: build_loading_staging(
-                loading_staging_loader, floor_top_z, area_layout, wall_info,
-                seed=seed, cli=cli,
+                loading_staging_loader,
+                floor_top_z,
+                area_layout,
+                wall_info,
+                seed=seed,
+                cli=cli,
             ),
         )
     )
@@ -388,8 +411,12 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
         _stage(
             "storage_racks",
             lambda: build_storage_racks(
-                loading_staging_loader, floor_top_z, area_layout, wall_info,
-                seed=seed, cli=cli,
+                loading_staging_loader,
+                floor_top_z,
+                area_layout,
+                wall_info,
+                seed=seed,
+                cli=cli,
             ),
         )
     )
@@ -398,7 +425,9 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     loading_op_info = _stage(
         "loading_operation_forklifts",
         lambda: (
-            build_loading_operation_forklifts(industry_loader, floor_top_z, area_layout, wall_info, seed=seed, cli=cli)
+            build_loading_operation_forklifts(
+                industry_loader, floor_top_z, area_layout, wall_info, seed=seed, cli=cli
+            )
             if industry_loader is not None
             else {}
         ),
@@ -409,7 +438,9 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     wall_info.update(
         _stage(
             "office",
-            lambda: build_embedded_office(floor_top_z, area_layout, wall_info, cli=cli, seed=seed),
+            lambda: build_embedded_office(
+                floor_top_z, area_layout, wall_info, cli=cli, seed=seed
+            ),
         )
     )
 
@@ -417,7 +448,9 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     wall_info.update(
         _stage(
             "factory",
-            lambda: build_embedded_factory(conveyor_loader, floor_top_z, area_layout, seed=seed, cli=cli),
+            lambda: build_embedded_factory(
+                conveyor_loader, floor_top_z, area_layout, seed=seed, cli=cli
+            ),
         )
     )
 
@@ -425,7 +458,9 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     forklift_info = _stage(
         "forklift_parking",
         lambda: (
-            build_forklift_parking(industry_loader, floor_top_z, area_layout, seed=seed, cli=cli)
+            build_forklift_parking(
+                industry_loader, floor_top_z, area_layout, seed=seed, cli=cli
+            )
             if industry_loader is not None
             else {}
         ),
@@ -436,9 +471,15 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     machining_info = _stage(
         "machining",
         lambda: (
-            build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli=cli)
+            build_machining_cell_layout(
+                industry_loader, floor_top_z, area_layout, cli=cli
+            )
             if industry_loader is not None
-            else {"machining_mills": [], "machining_lathes": [], "machining_pending_slots": []}
+            else {
+                "machining_mills": [],
+                "machining_lathes": [],
+                "machining_pending_slots": [],
+            }
         ),
     )
     wall_info.update(machining_info)
@@ -448,8 +489,13 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
         _stage(
             "workers",
             lambda: build_worker_crew(
-                worker_loader, worker_model_name, floor_top_z,
-                area_layout, wall_info, seed=seed, cli=cli,
+                worker_loader,
+                worker_model_name,
+                floor_top_z,
+                area_layout,
+                wall_info,
+                seed=seed,
+                cli=cli,
             ),
         )
     )
@@ -462,15 +508,19 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     # 15. Curved roof shell
     _stage(
         "roof_shell",
-        lambda: build_curved_roof(conveyor_loader, roof_base_z=roof_base_z, shell_meshes=shell_meshes, cli=cli),
+        lambda: build_curved_roof(
+            conveyor_loader, roof_base_z=roof_base_z, shell_meshes=shell_meshes, cli=cli
+        ),
     )
 
     # 16. Roof truss system
     support_info = _stage(
         "roof_truss",
         lambda: build_roof_truss_system(
-            floor_top_z=floor_top_z, roof_base_z=roof_base_z,
-            shell_meshes=shell_meshes, cli=cli,
+            floor_top_z=floor_top_z,
+            roof_base_z=roof_base_z,
+            shell_meshes=shell_meshes,
+            cli=cli,
         ),
     )
     wall_info.update(support_info)
@@ -480,10 +530,14 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
         _stage(
             "overhead_cranes",
             lambda: build_overhead_cranes(
-                crane_loader=crane_loader, crane_model_name=crane_model_name,
-                floor_top_z=floor_top_z, roof_base_z=roof_base_z,
-                area_layout=area_layout, shell_meshes=shell_meshes,
-                seed=seed, cli=cli,
+                crane_loader=crane_loader,
+                crane_model_name=crane_model_name,
+                floor_top_z=floor_top_z,
+                roof_base_z=roof_base_z,
+                area_layout=area_layout,
+                shell_meshes=shell_meshes,
+                seed=seed,
+                cli=cli,
             ),
         )
     )
