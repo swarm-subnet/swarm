@@ -64,6 +64,11 @@ setup(
     license="MIT",
     packages=find_packages(),
     include_package_data=True,
+    entry_points={
+        "console_scripts": [
+            "swarm=swarm.cli:main",
+        ],
+    },
     install_requires=requirements,
     python_requires=">=3.10",
     classifiers=[

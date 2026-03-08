@@ -4,6 +4,7 @@ import asyncio
 import io
 import sys
 from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +37,56 @@ def test_tee_write_ignores_closed_secondary_stream():
 
     assert written == 5
     assert primary.getvalue() == "hello"
+
+
+def test_infer_uid_from_model_path():
+    assert bench_full_eval._infer_uid_from_model_path(Path("model/UID_178.zip")) == 178
+    assert bench_full_eval._infer_uid_from_model_path(Path("model/uid-42.zip")) == 42
+    assert bench_full_eval._infer_uid_from_model_path(Path("model/submission.zip")) is None
+
+
+def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
+    model_path = tmp_path / "UID_178.zip"
+    model_path.write_bytes(b"zip")
+    captured = {}
+
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+        _ = model_path, type_seeds, num_workers, run_opts
+        captured["uid"] = uid
+        return ([], [], [], {}, 0.0, 0.0, 1)
+
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_find_seeds",
+        lambda seeds_per_group: {"type5_warehouse": [200662]},
+    )
+    monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
+    monkeypatch.setattr(sys, "argv", _argv_for_model(model_path))
+
+    bench_full_eval.main()
+    assert captured["uid"] == 178
+
+
+def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
+    model_path = tmp_path / "UID_178.zip"
+    model_path.write_bytes(b"zip")
+    captured = {}
+
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+        _ = model_path, type_seeds, num_workers, run_opts
+        captured["uid"] = uid
+        return ([], [], [], {}, 0.0, 0.0, 1)
+
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_find_seeds",
+        lambda seeds_per_group: {"type5_warehouse": [200662]},
+    )
+    monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
+    monkeypatch.setattr(sys, "argv", _argv_for_model(model_path, "--uid", "12"))
+
+    bench_full_eval.main()
+    assert captured["uid"] == 12
 
 
 def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):

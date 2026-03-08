@@ -18,6 +18,7 @@ import asyncio
 import io
 import os
 import random
+import re
 import statistics
 import sys
 import threading
@@ -29,10 +30,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    from tqdm import tqdm as _tqdm
+except Exception:  # pragma: no cover - fallback path when tqdm is unavailable.
+    _tqdm = None
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
+
+_UID_RE = re.compile(r"uid[_-]?(\d+)", re.IGNORECASE)
 
 BENCH_GROUP_ORDER = [
     "type1_city",
@@ -110,8 +118,8 @@ def _parse_args() -> argparse.Namespace:
         help="Path to miner submission zip (e.g. model/UID_178.zip).",
     )
     parser.add_argument(
-        "--uid", type=int, default=0,
-        help="Miner UID (default: 0).",
+        "--uid", type=int, default=None,
+        help="Miner UID (default: inferred from --model filename, fallback 0).",
     )
     parser.add_argument(
         "--seeds-per-group", type=int, default=3,
@@ -136,6 +144,18 @@ def _parse_args() -> argparse.Namespace:
         help="RPC log verbosity level (default: mid).",
     )
     return parser.parse_args()
+
+
+def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
+    """Infer miner UID from model filename patterns like UID_178.zip."""
+    for candidate in (model_path.stem, model_path.name):
+        match = _UID_RE.search(candidate)
+        if match:
+            try:
+                return int(match.group(1))
+            except Exception:
+                continue
+    return None
 
 
 class _Tee(io.TextIOBase):
@@ -204,6 +224,31 @@ class _Tee(io.TextIOBase):
 
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
+
+
+class _NoopProgressBar:
+    def update(self, _n: int) -> None:
+        return None
+
+    def set_postfix_str(self, _text: str, refresh: bool = True) -> None:
+        _ = refresh
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _build_progress_bar(total_seeds: int):
+    if _tqdm is None:
+        return _NoopProgressBar()
+    return _tqdm(
+        total=total_seeds,
+        desc="Seed progress",
+        unit="seed",
+        dynamic_ncols=True,
+        mininterval=0.5,
+        leave=True,
+    )
 
 
 def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
@@ -326,6 +371,7 @@ async def _run_benchmark(
     heartbeat_sec = run_opts.heartbeat_sec
 
     eval_start = time.time()
+    progress_bar = _build_progress_bar(total_seeds)
     progress_lock = threading.Lock()
     done_count = 0
     last_done_at = eval_start
@@ -355,15 +401,21 @@ async def _run_benchmark(
             done_count += 1
             last_done_at = now
             done_snapshot = done_count
+            progress_bar.update(1)
 
         elapsed = now - eval_start
         eta_min = _eta_minutes(elapsed, done_snapshot)
         eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
-        print(
-            f"[{_ts()}] Progress: {done_snapshot}/{total_seeds} seeds complete | "
-            f"elapsed {elapsed/60.0:.1f}m | ETA {eta_txt}",
-            flush=True,
+        progress_bar.set_postfix_str(
+            f"done={done_snapshot}/{total_seeds}, elapsed={elapsed/60.0:.1f}m, eta={eta_txt}",
+            refresh=False,
         )
+        if _tqdm is None:
+            print(
+                f"[{_ts()}] Progress: {done_snapshot}/{total_seeds} seeds complete | "
+                f"elapsed {elapsed/60.0:.1f}m | ETA {eta_txt}",
+                flush=True,
+            )
 
     def _heartbeat() -> None:
         try:
@@ -505,6 +557,7 @@ async def _run_benchmark(
     finally:
         stop_heartbeat.set()
         heartbeat_thread.join(timeout=2.0)
+        progress_bar.close()
 
     elapsed = time.time() - eval_start
     return task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start, worker_count
@@ -728,6 +781,11 @@ def main() -> None:
     model_path = args.model.resolve()
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
+    inferred_uid = _infer_uid_from_model_path(model_path)
+    if args.uid is None:
+        uid = inferred_uid if inferred_uid is not None else 0
+    else:
+        uid = int(args.uid)
 
     effective_log_out = args.log_out
     if effective_log_out is None and run_opts.default_log_out:
@@ -756,6 +814,12 @@ def main() -> None:
 
         print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
         print(f"[{_ts()}] Model: {model_path}")
+        if args.uid is None and inferred_uid is not None:
+            print(f"[{_ts()}] UID: {uid} (inferred from model filename)")
+        elif args.uid is None:
+            print(f"[{_ts()}] UID: {uid} (default fallback)")
+        else:
+            print(f"[{_ts()}] UID: {uid} (from --uid)")
         print(f"[{_ts()}] Workers requested: {requested_workers}")
         print(f"[{_ts()}] Workers effective:  {effective_workers}")
         print(f"[{_ts()}] Profile: debug")
@@ -778,7 +842,7 @@ def main() -> None:
         task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start, launched_workers = asyncio.run(
             _run_benchmark(
                 model_path,
-                args.uid,
+                uid,
                 type_seeds,
                 effective_workers,
                 run_opts=run_opts,
