@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import shutil
 import threading
@@ -25,7 +24,6 @@ from swarm.core.model_verify import (
 from swarm.constants import (
     SIM_DT,
     QUERY_REF_TIMEOUT,
-    QUERY_BLOB_TIMEOUT,
     BURN_EMISSIONS,
     MAX_MODEL_BYTES,
     BURN_FRACTION,
@@ -45,6 +43,7 @@ from swarm.constants import (
 from swarm.core.env_builder import prebuild_static_world_cache
 from .task_gen import random_task
 from .backend_api import BackendApiClient, classify_backend_failure
+from swarm.utils.github import validate_github_url, build_raw_urls, download_from_github
 
 # ──────────────────────────────────────────────────────────────────────────
 # State file paths
@@ -563,72 +562,44 @@ def has_cached_score(model_hash: str, epoch: int) -> bool:
 # Model download & retrieval
 # ──────────────────────────────────────────────────────────────────────────
 
-async def _download_model(self, axon, ref: PolicyRef, dest: Path, uid: int) -> None:
-    """Download model ZIP from miner via base-64 encoded blob."""
-    tmp = dest.with_suffix(".part")
-    tmp.unlink(missing_ok=True)
+async def _download_model_from_github(
+    github_url: str, ref: PolicyRef, dest: Path, uid: int
+) -> bool:
+    """Download model ZIP from a miner's public GitHub repository."""
+    validated = validate_github_url(github_url, uid=uid)
+    if not validated:
+        bt.logging.warning(f"UID {uid}: invalid github_url: {github_url}")
+        return False
 
-    try:
-        responses = await send_with_fresh_uuid(
-            wallet=self.wallet,
-            synapse=PolicySynapse.request_blob(),
-            axon=axon,
-            timeout=QUERY_BLOB_TIMEOUT,
+    candidate_urls = build_raw_urls(validated)
+    downloaded = False
+    for raw_url in candidate_urls:
+        if await download_from_github(raw_url, dest, max_bytes=MAX_MODEL_BYTES):
+            downloaded = True
+            break
+
+    if not downloaded:
+        bt.logging.warning(f"UID {uid}: GitHub download failed from {validated}")
+        dest.unlink(missing_ok=True)
+        return False
+
+    if not zip_is_safe(dest, max_uncompressed=MAX_MODEL_BYTES):
+        bt.logging.error(f"UID {uid}: unsafe ZIP from GitHub")
+        dest.unlink(missing_ok=True)
+        return False
+
+    downloaded_hash = sha256sum(dest)
+    if downloaded_hash != ref.sha256:
+        bt.logging.error(
+            f"UID {uid}: SHA256 mismatch — "
+            f"expected {ref.sha256[:16]}..., got {downloaded_hash[:16]}..."
         )
+        dest.unlink(missing_ok=True)
+        return False
 
-        if not responses:
-            bt.logging.warning(f"Miner {axon.hotkey} sent no reply to blob request")
-            return
-
-        syn = responses[0]
-
-        if not syn.chunk or "data" not in syn.chunk:
-            bt.logging.warning(f"Miner {axon.hotkey} reply lacked chunk data")
-            return
-
-        try:
-            raw_bytes = base64.b64decode(syn.chunk["data"])
-        except Exception as e:
-            bt.logging.warning(f"Base‑64 decode failed from miner {axon.hotkey}: {e}")
-            return
-
-        if len(raw_bytes) > MAX_MODEL_BYTES:
-            bt.logging.error(
-                f"Miner {axon.hotkey} sent oversized blob "
-                f"({len(raw_bytes)/1e6:.1f} MB > {MAX_MODEL_BYTES/1e6:.0f} MB)"
-            )
-            return
-
-        with tmp.open("wb") as fh:
-            fh.write(raw_bytes)
-
-        if not zip_is_safe(tmp, max_uncompressed=MAX_MODEL_BYTES):
-            bt.logging.error(f"Unsafe ZIP from miner {axon.hotkey}.")
-            tmp.unlink(missing_ok=True)
-            return
-
-        bt.logging.info(f"📦 Downloaded model {ref.sha256[:16]}... from miner {axon.hotkey}")
-
-        if dest.exists() and dest.is_dir():
-            bt.logging.warning(f"Replacing directory with file: {dest}")
-            shutil.rmtree(dest)
-        tmp.replace(dest)
-
-        downloaded_hash = sha256sum(dest)
-        if downloaded_hash != ref.sha256:
-            bt.logging.error(
-                f"SHA256 mismatch for {axon.hotkey}: "
-                f"expected {ref.sha256[:16]}..., got {downloaded_hash[:16]}..."
-            )
-            dest.unlink(missing_ok=True)
-            return
-
-        bt.logging.info(f"Stored model for {axon.hotkey} at {dest}.")
-        await verify_new_model_with_docker(dest, ref.sha256, axon.hotkey, uid)
-
-    except Exception as e:
-        bt.logging.warning(f"Download error ({axon.hotkey}): {e}")
-        tmp.unlink(missing_ok=True)
+    bt.logging.info(f"Stored model for UID {uid} from GitHub at {dest}")
+    await verify_new_model_with_docker(dest, ref.sha256, f"github-uid-{uid}", uid)
+    return True
 
 
 async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
@@ -681,13 +652,12 @@ async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
             else:
                 model_fp.unlink(missing_ok=True)
 
-        await _download_model(self, axon, ref, model_fp, uid)
-        if (
-            model_fp.is_file()
-            and sha256sum(model_fp) == ref.sha256
-            and model_fp.stat().st_size <= MAX_MODEL_BYTES
-            and zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
-        ):
+        if not ref.github_url:
+            bt.logging.warning(f"UID {uid}: no github_url in PolicyRef, skipping")
+            return (uid, None)
+
+        ok = await _download_model_from_github(ref.github_url, ref, model_fp, uid)
+        if ok and model_fp.is_file():
             return (uid, model_fp)
         else:
             model_fp.unlink(missing_ok=True)

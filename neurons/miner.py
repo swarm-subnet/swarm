@@ -1,33 +1,34 @@
 # neurons/miner.py
 # -------------------------------------------------------------------------
-#  Swarm Miner (SDK v2.0.0 – Policy API)
+#  Swarm Miner (SDK v2.3 – GitHub-hosted models)
 # -------------------------------------------------------------------------
-#  Implements the handshake described in Phase 2:
+#  Implements the handshake:
 #
-#  1) Every inbound request → send a PolicyRef (points at our model).
-#  2) If the validator replies with `need_blob=True` → stream the model
-#     back in fixed‑size chunks (PolicyChunk messages).
+#  1) Validator sends an empty PolicySynapse.
+#  2) Miner replies with a PolicyRef containing the model hash and
+#     the public GitHub repository URL where submission.zip is hosted.
+#  3) Validator downloads the ZIP directly from GitHub.
 # -------------------------------------------------------------------------
 
+import os
 import time
 from pathlib import Path
 from typing import Tuple
-import base64
+
 import bittensor as bt
 
-# ── Swarm core ────────────────────────────────────────────────────────────
 from swarm.base.miner import BaseMinerNeuron
-from swarm.protocol import PolicySynapse, PolicyRef, PolicyChunk
+from swarm.protocol import PolicySynapse, PolicyRef
 from swarm.utils.hash import sha256sum
+from swarm.utils.github import validate_github_url
 
 from bittensor.core.errors import NotVerifiedException
 
-# Optional coloured logging – fall back gracefully if unavailable
 try:
     from swarm.utils.logging import ColoredLogger
-except Exception:  # pragma: no cover – colour module optional
+except Exception:
 
-    class _Stub:  # noqa: D401 – simple stub
+    class _Stub:
         RED = GREEN = YELLOW = BLUE = GRAY = ""
 
         @staticmethod
@@ -53,16 +54,10 @@ except Exception:  # pragma: no cover – colour module optional
 #  Miner implementation
 # =========================================================================
 class Miner(BaseMinerNeuron):
-    # ------------------------------------------------------------------
-    #  **Adjust these constants for your own model**
-    # ------------------------------------------------------------------
     POLICY_PATH = Path(__file__).parent.parent / "Submission" / "submission.zip"
     ENTRYPOINT = ""
     FRAMEWORK = "sb3-ppo"
 
-    # ------------------------------------------------------------------
-    #  Whitelisted validators - only these can access the miner
-    # ------------------------------------------------------------------
     WHITELISTED_VALIDATORS = {
         "5FTr8ZAQCGieBGdqXvGxHcAuzcEscEyvUQmnRZ8PJnEsn124": "RoundTable21",
         "5FKk6ucEKuKzLspVYSv9fVHonumxMJ33MdHqbVjZi2NUs124": "Rizzo",
@@ -72,12 +67,9 @@ class Miner(BaseMinerNeuron):
         "5EhiBKjj56jE1a6rLPP14TtrzxiwgfG8qk7nuZprkbYKH87C": "OTF",
         "5FCvTkZK44fcs1iHsyUce8ZgJQD8351QJiVA8YvvuA6YcP2v": "New vali",
         "5FBqnTwnCq6yeVeXTnVGHbiRR6zh6ZGbKVRBusu4zSCu4WUw": "New vali2",
-        "5EbgPJdzg1daqm9DcXJ98hGUQUKU84uffumUJzEt6Cva835H": "TestValidator",  # Keep existing test validator
+        "5EbgPJdzg1daqm9DcXJ98hGUQUKU84uffumUJzEt6Cva835H": "TestValidator",
     }
 
-    # ------------------------------------------------------------------
-    #  Life cycle
-    # ------------------------------------------------------------------
     def __init__(self, config=None):
         super().__init__(config=config)
         self.load_state()
@@ -87,19 +79,23 @@ class Miner(BaseMinerNeuron):
 
         self._sha256 = sha256sum(self.POLICY_PATH)
         self._size = self.POLICY_PATH.stat().st_size
+
+        raw_url = os.environ.get("GITHUB_URL", "").strip()
+        self._github_url = validate_github_url(raw_url)
+        if not self._github_url:
+            raise ValueError(
+                "GITHUB_URL environment variable is required. "
+                "Set it to your public GitHub repo, e.g. "
+                "GITHUB_URL=https://github.com/yourname/your-model"
+            )
+
         self.axon.verify_fns[PolicySynapse.__name__] = self._verify_validator_request
-        ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
+        ColoredLogger.success(
+            f"Swarm Miner initialised (github={self._github_url}).",
+            ColoredLogger.GREEN,
+        )
 
     async def _verify_validator_request(self, synapse: PolicySynapse) -> None:
-        """
-        Rejects any RPC that is not cryptographically proven to come from
-        one of the whitelisted validator hotkeys.
-
-        Signature *must* be present and valid.  If anything is missing or
-        incorrect we raise `NotVerifiedException`, which the Axon middleware
-        converts into a 401 reply.
-        """
-        # ----------  basic sanity checks  ----------
         if synapse.dendrite is None:
             raise NotVerifiedException("Missing dendrite terminal in request")
 
@@ -109,17 +105,12 @@ class Miner(BaseMinerNeuron):
         uuid = synapse.dendrite.uuid
         body_hash = synapse.computed_body_hash
 
-        # 1 — is the sender even on our allow‑list?
         if hotkey not in self.WHITELISTED_VALIDATORS:
             raise NotVerifiedException(f"{hotkey} is not a whitelisted validator")
 
-        # 2 — signature header is mandatory
         if not signature:
             raise NotVerifiedException("Request carries no signature header")
 
-        # 3 — run all the standard Bittensor checks (nonce window, replay,
-        #     timeout, signature, …).  This *does not* insist on a signature,
-        #     so we still do step 4 afterwards.
         message = (
             f"nonce: {nonce}. "
             f"hotkey {hotkey}. "
@@ -127,64 +118,38 @@ class Miner(BaseMinerNeuron):
             f"uuid {uuid}. "
             f"body hash {body_hash} "
         )
-        ColoredLogger.info(
-            f"Verifying message: {message}",
-            ColoredLogger.YELLOW,
-        )
+        ColoredLogger.info(f"Verifying message: {message}", ColoredLogger.YELLOW)
 
         await self.axon.default_verify(synapse)
 
-        # 5 — all good ➜ let the middleware continue
         ColoredLogger.success(
             f"Verified call from {self.WHITELISTED_VALIDATORS[hotkey]} ({hotkey})",
             ColoredLogger.GREEN,
         )
 
-    # ------------------------------------------------------------------
-    #  Main RPC endpoint
-    # ------------------------------------------------------------------
     async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
-        """
-        • need_blob absent / False → return PolicyRef
-        • need_blob True          → return a single base‑64 chunk
-        """
         try:
             vk = getattr(synapse.dendrite, "hotkey", "<??>")
             ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
 
-            # ── validator wants the model binary ──────────────────────
-            if synapse.need_blob:
-                ColoredLogger.info("Sending full model blob …", ColoredLogger.BLUE)
-
-                raw_bytes = self.POLICY_PATH.read_bytes()
-                b64_str = base64.b64encode(raw_bytes).decode("ascii")
-
-                return PolicySynapse.from_chunk(
-                    PolicyChunk(sha256=self._sha256, data=b64_str)
-                )
-
-            # ── first handshake: send manifest ────────────────────────
             ref = PolicyRef(
                 sha256=self._sha256,
                 entrypoint=self.ENTRYPOINT,
                 framework=self.FRAMEWORK,
                 size_bytes=self._size,
+                github_url=self._github_url,
             )
             ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
             return PolicySynapse.from_ref(ref)
 
         except Exception as e:
             bt.logging.error(f"Miner forward error: {e}")
-            return PolicySynapse()  # fail‑safe empty reply
+            return PolicySynapse()
 
-    # ------------------------------------------------------------------
-    #  Black‑list logic (unchanged except for type names)
-    # ------------------------------------------------------------------
     async def blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
         return await self._common_blacklist(synapse)
 
     async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
-        # 1 — now we can safely trust synapse.dendrite.hotkey
         hotkey = synapse.dendrite.hotkey
 
         if hotkey in self.WHITELISTED_VALIDATORS:
@@ -194,12 +159,9 @@ class Miner(BaseMinerNeuron):
             )
             return False, f"whitelisted: {name}"
 
-        ColoredLogger.warning(f"Denying non‑whitelisted validator {hotkey}")
+        ColoredLogger.warning(f"Denying non-whitelisted validator {hotkey}")
         return True, f"{hotkey} not in whitelist"
 
-    # ------------------------------------------------------------------
-    #  Priority logic
-    # ------------------------------------------------------------------
     async def priority(self, synapse: PolicySynapse) -> float:
         return await self._common_priority(synapse)
 
@@ -216,7 +178,7 @@ class Miner(BaseMinerNeuron):
 
 
 # -------------------------------------------------------------------------
-#  Stand‑alone entry‑point
+#  Stand-alone entry-point
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
     with Miner() as miner:

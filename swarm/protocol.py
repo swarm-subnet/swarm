@@ -1,21 +1,20 @@
 # --------------------------------------------------------------------------- #
-#  Swarm – unified protocol definitions (SDK v2.2, simplified handshake)
+#  Swarm – unified protocol definitions (SDK v2.3, GitHub-hosted models)
 # --------------------------------------------------------------------------- #
 """
-Handshake (always two messages max):
+Handshake (single message):
 
     Validator            Miner
     ────────── empty ─────►      (request PolicyRef)
-                   ref   ◄──────
-    ─── need_blob=True ──►      (only if SHA mismatch)
-               chunks   ◄──────  (streamed until EOF)
+                   ref   ◄──────  (includes github_url for model download)
 
-No MapTask data is exchanged; miners never know the evaluation map.
+Validators download submission.zip directly from the miner's public GitHub
+repository.  No binary streaming over the wire.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, Tuple, Optional, Any
+from typing import Any, Dict, Optional, Tuple
 
 import msgpack
 import bittensor as bt
@@ -53,7 +52,7 @@ class ValidationResult:
 
 
 # --------------------------------------------------------------------------- #
-# 2.  Model‑streaming helpers                                                 #
+# 2.  Model reference                                                         #
 # --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class PolicyRef:
@@ -61,19 +60,11 @@ class PolicyRef:
     entrypoint: str
     framework: str
     size_bytes: int
+    github_url: str
     version: str = "1"
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
-
-
-@dataclass(slots=True)
-class PolicyChunk:
-    sha256: str
-    data: str
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {"sha256": self.sha256, "data": self.data}
 
 
 # --------------------------------------------------------------------------- #
@@ -86,24 +77,15 @@ class PolicySynapse(Synapse):
     """
     Fields                               Direction
     ------                               ---------
-    need_blob    : bool                V → M   request model payload
-
-    ref          : PolicyRef dict      M → V   model manifest
-    chunk        : PolicyChunk dict    M → V   streamed binary data
+    ref          : PolicyRef dict      M → V   model manifest + github_url
     result       : ValidationResult    V → M   evaluation score
     """
-
-    need_blob: Optional[bool] = None  # validator ➜ miner
-
-    ref: Optional[Dict[str, Any]] = None  # miner ➜ validator
-    chunk: Optional[Dict[str, Any]] = None  # miner ➜ validator
-
-    result: Optional[Dict[str, Any]] = None  # validator ➜ miner
+    ref: Optional[Dict[str, Any]] = None  # miner → validator
+    result: Optional[Dict[str, Any]] = None  # validator → miner
 
     version: str = "1"
-    timeout: float = 5.0  # custom timeout in seconds
+    timeout: float = 5.0
 
-    # Bittensor hook
     def deserialize(self) -> "PolicySynapse":
         return self
 
@@ -113,31 +95,18 @@ class PolicySynapse(Synapse):
         return PolicyRef(**self.ref) if self.ref else None  # type: ignore[arg-type]
 
     @property
-    def policy_chunk(self) -> Optional[PolicyChunk]:
-        return PolicyChunk(**self.chunk) if self.chunk else None  # type: ignore[arg-type]
-
-    @property
     def validation_result(self) -> Optional[ValidationResult]:
         return ValidationResult(**self.result) if self.result else None  # type: ignore[arg-type]
 
     # -------- static builders ---------------------------------------
     @staticmethod
     def request_ref() -> "PolicySynapse":
-        """Validator → Miner: “send me your current PolicyRef”"""
+        """Validator -> Miner: send me your current PolicyRef."""
         return PolicySynapse()
-
-    @staticmethod
-    def request_blob() -> "PolicySynapse":
-        """Validator → Miner: “stream me the binary”"""
-        return PolicySynapse(need_blob=True)
 
     @staticmethod
     def from_ref(ref: PolicyRef) -> "PolicySynapse":
         return PolicySynapse(ref=ref.as_dict())
-
-    @staticmethod
-    def from_chunk(chunk: PolicyChunk) -> "PolicySynapse":
-        return PolicySynapse(chunk=chunk.as_dict())
 
     @staticmethod
     def from_result(res: ValidationResult) -> "PolicySynapse":
@@ -151,6 +120,5 @@ __all__ = [
     "MapTask",
     "ValidationResult",
     "PolicyRef",
-    "PolicyChunk",
     "PolicySynapse",
 ]

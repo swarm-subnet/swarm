@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from swarm.protocol import MapTask, PolicyChunk, PolicyRef, PolicySynapse, ValidationResult
+from swarm.protocol import MapTask, PolicyRef, PolicySynapse, ValidationResult
 
 
 def test_map_task_pack_round_trip():
@@ -24,40 +24,42 @@ def test_map_task_pack_round_trip():
     assert restored.moving_platform == task.moving_platform
 
 
-def test_policy_ref_and_chunk_as_dict():
+def test_policy_ref_as_dict_includes_github_url():
     ref = PolicyRef(
         sha256="abc",
         entrypoint="main.py",
         framework="torch",
         size_bytes=42,
+        github_url="https://github.com/user/repo",
     )
-    chunk = PolicyChunk(sha256="abc", data="deadbeef")
-
-    assert ref.as_dict()["sha256"] == "abc"
-    assert chunk.as_dict() == {"sha256": "abc", "data": "deadbeef"}
-
-
-def test_policy_synapse_request_builders():
-    ref_req = PolicySynapse.request_ref()
-    blob_req = PolicySynapse.request_blob()
-    assert ref_req.need_blob is None
-    assert blob_req.need_blob is True
+    d = ref.as_dict()
+    assert d["sha256"] == "abc"
+    assert d["github_url"] == "https://github.com/user/repo"
 
 
-def test_policy_synapse_accessors_for_ref_chunk_result():
-    ref = PolicyRef(sha256="h", entrypoint="e", framework="f", size_bytes=1)
-    chunk = PolicyChunk(sha256="h", data="d")
+def test_policy_synapse_request_ref():
+    syn = PolicySynapse.request_ref()
+    assert syn.ref is None
+    assert syn.result is None
+
+
+def test_policy_synapse_accessors_for_ref_and_result():
+    ref = PolicyRef(
+        sha256="h",
+        entrypoint="e",
+        framework="f",
+        size_bytes=1,
+        github_url="https://github.com/a/b",
+    )
     result = ValidationResult(uid=7, success=True, time_sec=1.2, score=0.8)
 
     syn_ref = PolicySynapse.from_ref(ref)
-    syn_chunk = PolicySynapse.from_chunk(chunk)
     syn_result = PolicySynapse.from_result(result)
 
     assert syn_ref.policy_ref == ref
-    assert syn_chunk.policy_chunk == chunk
     assert syn_result.validation_result == result
 
 
 def test_policy_synapse_deserialize_returns_self():
-    syn = PolicySynapse(need_blob=True)
+    syn = PolicySynapse()
     assert syn.deserialize() is syn
