@@ -68,10 +68,6 @@ def set_map_cache_epoch(epoch: int) -> None:
     _current_epoch_number = epoch
 
 
-def get_map_cache_epoch() -> int | None:
-    return _current_epoch_number
-
-
 def cleanup_old_epoch_cache(keep_epoch: int) -> None:
     base = MAP_CACHE_DIR / BENCHMARK_VERSION
     if not base.exists():
@@ -222,15 +218,6 @@ def _read_static_world_cache_meta(meta_file: Path) -> Optional[dict]:
 def _invalidate_static_world_cache(cache_file: Path, meta_file: Path) -> None:
     cache_file.unlink(missing_ok=True)
     meta_file.unlink(missing_ok=True)
-
-
-def get_static_world_cache_path(
-    seed: int,
-    challenge_type: int,
-    start: Optional[Tuple[float, float, float]],
-    goal: Optional[Tuple[float, float, float]],
-) -> Path:
-    return _static_world_cache_file(seed, challenge_type, start, goal)
 
 
 def _build_static_world(

@@ -199,13 +199,3 @@ class BenchmarkSeedManager:
 
     def get_all_seeds(self) -> List[int]:
         return list(self.seeds)
-
-    def get_current_seeds_data(self) -> dict:
-        start, end = self.epoch_time_range(self.epoch_number)
-        return {
-            "epoch_number": self.epoch_number,
-            "started_at": start.isoformat(),
-            "ended_at": end.isoformat(),
-            "seed_count": len(self.seeds),
-            "seeds": list(self.seeds),
-        }

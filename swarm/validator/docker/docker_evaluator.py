@@ -1031,14 +1031,14 @@ class DockerSecureEvaluator:
             for _ in range(remaining):
                 _on_seed_complete_guarded()
 
-        def _run_docker_cmd_quiet(cmd: list[str], timeout_sec: float = 15.0) -> None:
+        def _run_docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
             """Run cleanup docker command without letting hangs block benchmark completion."""
             try:
                 subprocess.run(cmd, capture_output=True, timeout=timeout_sec)
             except Exception:
                 pass
 
-        def _cleanup_tmpdir_quiet(path: Optional[str], timeout_sec: float = 8.0) -> None:
+        def _cleanup_tmpdir_quiet(path: Optional[str], timeout_sec: float = 16.0) -> None:
             """Best-effort tmpdir cleanup without blocking benchmark completion."""
             if not path:
                 return
@@ -1654,7 +1654,7 @@ class DockerSecureEvaluator:
                 containers = result.stdout.strip().split('\n')
                 for container in containers:
                     if container:
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=15)
+                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
                         bt.logging.debug(f"Cleaned up orphaned container: {container}")
 
             # Also clean up verification containers
@@ -1667,7 +1667,7 @@ class DockerSecureEvaluator:
                 containers_v = result_verify.stdout.strip().split('\n')
                 for container in containers_v:
                     if container:
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=15)
+                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
                         bt.logging.debug(f"Cleaned up orphaned verify container: {container}")
 
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)

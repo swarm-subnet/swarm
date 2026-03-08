@@ -31,7 +31,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 import httpx
 import bittensor as bt
@@ -40,6 +40,71 @@ from swarm.constants import BENCHMARK_VERSION
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Backend Response Helpers
+# ──────────────────────────────────────────────────────────────────────────
+
+def extract_backend_reason(response: Dict[str, Any]) -> str:
+    """Extract a human-readable reason from a backend error response."""
+    for key in ("detail", "reason", "message", "error"):
+        value = response.get(key)
+        if value:
+            return str(value)
+    return str(response)
+
+
+def classify_backend_failure(
+    response: Dict[str, Any], stage: str
+) -> Tuple[bool, str]:
+    """Classify whether a backend failure is terminal or transient.
+
+    Returns (is_terminal, reason).
+    """
+    reason = extract_backend_reason(response)
+    text = reason.lower()
+
+    if stage == "new_model":
+        terminal_patterns = (
+            "already submitted",
+            "can only submit once",
+            "already registered",
+            "already exists",
+            "duplicate",
+            "409",
+            "429",
+            "conflict",
+        )
+        if any(pattern in text for pattern in terminal_patterns):
+            return True, reason
+
+    if stage in ("screening", "score"):
+        terminal_patterns = (
+            "no model with uid",
+            "pending screening",
+            "pending benchmark",
+            "not found",
+            "404",
+        )
+        if any(pattern in text for pattern in terminal_patterns):
+            return True, reason
+
+    transient_patterns = (
+        "timeout",
+        "timed out",
+        "connection",
+        "temporar",
+        "unreachable",
+        "503",
+        "502",
+        "500",
+        "network",
+    )
+    if any(pattern in text for pattern in transient_patterns):
+        return False, reason
+
+    return False, reason
 
 
 def _load_runtime_state() -> dict:
@@ -100,10 +165,6 @@ class BackendApiClient:
 
         self._runtime_state = _load_runtime_state()
         bt.logging.info(f"BackendApiClient initialized: {self.base_url}")
-
-    def set_wallet(self, wallet: "bt.wallet") -> None:
-        """Set wallet for signing requests (can be called after init)."""
-        self.wallet = wallet
 
     async def close(self) -> None:
         """Close HTTP client."""

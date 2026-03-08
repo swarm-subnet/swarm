@@ -14,7 +14,6 @@ No MapTask data is exchanged; miners never know the evaluation map.
 """
 from __future__ import annotations
 
-import hashlib
 from dataclasses import asdict, dataclass
 from typing import Dict, List, Tuple, Optional, Any
 
@@ -43,12 +42,6 @@ class MapTask:
     @staticmethod
     def unpack(blob: bytes) -> "MapTask":
         return MapTask(**msgpack.unpackb(blob, raw=False))
-
-
-@dataclass(slots=True)
-class RPMCmd:
-    t: float
-    rpm: Tuple[float, float, float, float]
 
 
 @dataclass(slots=True)
@@ -155,7 +148,6 @@ class PolicySynapse(Synapse):
 # --------------------------------------------------------------------------- #
 __all__ = [
     "MapTask",
-    "RPMCmd",
     "ValidationResult",
     "PolicyRef",
     "PolicyChunk",
