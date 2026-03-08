@@ -43,7 +43,12 @@ from swarm.constants import (
 from swarm.core.env_builder import prebuild_static_world_cache
 from .task_gen import random_task
 from .backend_api import BackendApiClient, classify_backend_failure
-from swarm.utils.github import validate_github_url, build_raw_urls, download_from_github
+from swarm.utils.github import (
+    validate_github_url,
+    build_raw_urls,
+    download_from_github,
+    check_readme_matches,
+)
 
 # ──────────────────────────────────────────────────────────────────────────
 # State file paths
@@ -562,6 +567,9 @@ def has_cached_score(model_hash: str, epoch: int) -> bool:
 # Model download & retrieval
 # ──────────────────────────────────────────────────────────────────────────
 
+_readme_ok_cache: set[str] = set()
+
+
 async def _download_model_from_github(
     github_url: str, ref: PolicyRef, dest: Path, uid: int
 ) -> bool:
@@ -570,6 +578,15 @@ async def _download_model_from_github(
     if not validated:
         bt.logging.warning(f"UID {uid}: invalid github_url: {github_url}")
         return False
+
+    cache_key = f"{validated}:{ref.sha256}"
+    if cache_key not in _readme_ok_cache:
+        if not await check_readme_matches(validated, uid=uid):
+            bt.logging.warning(
+                f"UID {uid}: README.md missing or does not match template, skipping"
+            )
+            return False
+        _readme_ok_cache.add(cache_key)
 
     candidate_urls = build_raw_urls(validated)
     downloaded = False

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,9 @@ import bittensor as bt
 GITHUB_DOWNLOAD_TIMEOUT_SEC = 60.0
 GITHUB_CONNECT_TIMEOUT_SEC = 10.0
 GITHUB_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+GITHUB_MAX_README_BYTES = 64 * 1024
+
+REQUIRED_README_HASH = "b25a1070382fee289d7cbec071e6c1e9e7759c7a1155a845d4625890987fc7cc"
 
 
 def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[str]:
@@ -116,3 +120,47 @@ async def download_from_github(
         bt.logging.warning(f"GitHub download error: {e}")
         tmp.unlink(missing_ok=True)
         return False
+
+
+async def check_readme_matches(
+    repo_url: str, *, uid: Optional[int] = None
+) -> bool:
+    """Verify that the repository contains the required README.md.
+
+    Downloads ``README.md`` from the repo (tries ``main``, then ``master``)
+    and checks its SHA-256 against ``REQUIRED_README_HASH``.
+    """
+    base = repo_url.rstrip("/")
+    tag = f" (UID {uid})" if uid is not None else ""
+    candidates = [
+        f"{base}/raw/main/README.md",
+        f"{base}/raw/master/README.md",
+    ]
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(GITHUB_DOWNLOAD_TIMEOUT_SEC, connect=GITHUB_CONNECT_TIMEOUT_SEC),
+        ) as client:
+            for url in candidates:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    continue
+                if len(resp.content) > GITHUB_MAX_README_BYTES:
+                    bt.logging.warning(f"README.md too large{tag}: {len(resp.content)} bytes")
+                    return False
+                digest = hashlib.sha256(resp.content).hexdigest()
+                if digest == REQUIRED_README_HASH:
+                    return True
+                bt.logging.warning(
+                    f"README.md hash mismatch{tag}: "
+                    f"expected {REQUIRED_README_HASH[:16]}..., "
+                    f"got {digest[:16]}..."
+                )
+                return False
+    except Exception as e:
+        bt.logging.warning(f"README.md check failed{tag}: {e}")
+        return False
+
+    bt.logging.warning(f"README.md not found in repo{tag}: {repo_url}")
+    return False
