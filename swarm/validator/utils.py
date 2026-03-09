@@ -59,6 +59,7 @@ NORMAL_MODEL_QUEUE_FILE = STATE_DIR / "normal_model_queue.json"
 NORMAL_MODEL_QUEUE_PROCESS_LIMIT = 1
 MAP_CACHE_WARMUP_STATE_FILE = STATE_DIR / "map_cache_warmup_state.json"
 CACHE_FILE = STATE_DIR / "benchmark_cache.json"
+CLAIMED_REPOS_FILE = STATE_DIR / "claimed_repos.json"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -229,6 +230,51 @@ def mark_model_hash_processed(uid: int, model_hash: str) -> None:
     tracker = load_model_hash_tracker()
     tracker[str(uid)] = model_hash
     save_model_hash_tracker(tracker)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# GitHub repo ownership (one repo per UID)
+# ──────────────────────────────────────────────────────────────────────────
+
+def load_claimed_repos() -> dict:
+    try:
+        if CLAIMED_REPOS_FILE.exists():
+            with open(CLAIMED_REPOS_FILE, 'r') as f:
+                return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def save_claimed_repos(claimed: dict) -> None:
+    STATE_DIR.mkdir(exist_ok=True)
+    temp_file = CLAIMED_REPOS_FILE.with_suffix(".tmp")
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(claimed, f)
+        temp_file.replace(CLAIMED_REPOS_FILE)
+    except IOError as e:
+        bt.logging.error(f"Failed to save claimed repos: {e}")
+        temp_file.unlink(missing_ok=True)
+
+
+def check_repo_ownership(github_url: str, uid: int) -> bool:
+    normalized = validate_github_url(github_url)
+    if not normalized:
+        return False
+    key = normalized.lower()
+    claimed = load_claimed_repos()
+    owner = claimed.get(key)
+    if owner is None:
+        claimed[key] = uid
+        save_claimed_repos(claimed)
+        return True
+    if owner == uid:
+        return True
+    bt.logging.warning(
+        f"UID {uid}: repo {normalized} already claimed by UID {owner}"
+    )
+    return False
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -671,6 +717,9 @@ async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
 
         if not ref.github_url:
             bt.logging.warning(f"UID {uid}: no github_url in PolicyRef, skipping")
+            return (uid, None)
+
+        if not check_repo_ownership(ref.github_url, uid):
             return (uid, None)
 
         ok = await _download_model_from_github(ref.github_url, ref, model_fp, uid)
