@@ -1319,15 +1319,38 @@ class DockerSecureEvaluator:
             except Exception:
                 pass
 
-        def _notify_all_failed():
-            """Call on_seed_complete for all tasks when batch fails early."""
+        def _build_failure_seed_meta(task_obj, *, status: str, error: str = "") -> dict:
+            return {
+                "uid": int(uid),
+                "map_seed": int(getattr(task_obj, "map_seed", -1)),
+                "challenge_type": int(getattr(task_obj, "challenge_type", -1)),
+                "horizon_sec": float(getattr(task_obj, "horizon", 0.0)),
+                "moving_platform": bool(getattr(task_obj, "moving_platform", False)),
+                "status": status,
+                "success": False,
+                "sim_time_sec": 0.0,
+                "seed_wall_sec": 0.0,
+                "step_idx": 0,
+                "error": error,
+            }
+
+        def _notify_all_failed(*, status: str = "batch_failed", error: str = ""):
+            """Call on_seed_complete for all pending tasks when batch fails early."""
             with completed_lock:
-                remaining = max(0, len(tasks) - completed_count)
+                start_index = min(completed_count, len(tasks))
+                remaining_tasks = list(tasks[start_index:])
             _phase(
-                f"batch failing early; marking {remaining} pending seed(s) as failed"
+                f"batch failing early; marking {len(remaining_tasks)} pending seed(s) as failed "
+                f"with status={status}"
             )
-            for _ in range(remaining):
-                _on_seed_complete_guarded()
+            for failed_task in remaining_tasks:
+                _on_seed_complete_guarded(
+                    _build_failure_seed_meta(
+                        failed_task,
+                        status=status,
+                        error=error,
+                    )
+                )
 
         def _run_docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
             """Run cleanup docker command without letting hangs block benchmark completion."""
@@ -1363,12 +1386,12 @@ class DockerSecureEvaluator:
 
         if not model_path.is_file():
             bt.logging.warning(f"[Worker {worker_id}] Model path missing: {model_path}")
-            _notify_all_failed()
+            _notify_all_failed(status="model_path_missing")
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
         if not DockerSecureEvaluator._base_ready:
             bt.logging.warning(f"[Worker {worker_id}] Docker not ready for UID {uid}")
-            _notify_all_failed()
+            _notify_all_failed(status="docker_not_ready")
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
         try:
@@ -1377,13 +1400,16 @@ class DockerSecureEvaluator:
                     bt.logging.warning(
                         f"[Worker {worker_id}] Model {uid} missing drone_agent.py"
                     )
-                    _notify_all_failed()
+                    _notify_all_failed(status="submission_missing_drone_agent")
                     return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
         except Exception as e:
             bt.logging.warning(
                 f"[Worker {worker_id}] Failed to validate model {uid}: {e}"
             )
-            _notify_all_failed()
+            _notify_all_failed(
+                status="submission_validation_failed",
+                error=f"{type(e).__name__}: {e}",
+            )
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
         container_name = f"swarm_eval_{uid}_w{worker_id}_{int(time.time() * 1000)}"
@@ -1447,7 +1473,7 @@ class DockerSecureEvaluator:
                 bt.logging.warning(
                     f"[Worker {worker_id}] UID {uid} requirements.txt rejected"
                 )
-                _notify_all_failed()
+                _notify_all_failed(status="requirements_rejected")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
             validator_ip = self._get_docker_host_ip()
@@ -1553,7 +1579,10 @@ class DockerSecureEvaluator:
                 bt.logging.warning(
                     f"[Worker {worker_id}] Container start failed: {result.stderr[:300]}"
                 )
-                _notify_all_failed()
+                _notify_all_failed(
+                    status="container_start_failed",
+                    error=result.stderr[:300],
+                )
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("container started successfully")
 
@@ -1606,7 +1635,7 @@ class DockerSecureEvaluator:
                     _phase("pip install failed")
                     _run_docker_cmd_quiet(["docker", "kill", container_name])
                     _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-                    _notify_all_failed()
+                    _notify_all_failed(status="pip_install_failed")
                     return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             else:
                 pip_done = True
@@ -1618,7 +1647,7 @@ class DockerSecureEvaluator:
                 _phase("failed to resolve container pid")
                 _run_docker_cmd_quiet(["docker", "kill", container_name])
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-                _notify_all_failed()
+                _notify_all_failed(status="container_pid_missing")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
             bt.logging.debug(f"[Worker {worker_id}] Applying network lockdown...")
@@ -1630,7 +1659,7 @@ class DockerSecureEvaluator:
                 _phase("network lockdown failed")
                 _run_docker_cmd_quiet(["docker", "kill", container_name])
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-                _notify_all_failed()
+                _notify_all_failed(status="network_lockdown_failed")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("network lockdown applied")
 
@@ -1654,7 +1683,10 @@ class DockerSecureEvaluator:
                 _phase("failed to launch submission main.py")
                 _run_docker_cmd_quiet(["docker", "kill", container_name])
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-                _notify_all_failed()
+                _notify_all_failed(
+                    status="submission_start_failed",
+                    error=exec_result.stderr[:200],
+                )
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
             _phase("submission main.py launched")
 
@@ -1693,7 +1725,7 @@ class DockerSecureEvaluator:
                 _phase("rpc readiness failed")
                 _run_docker_cmd_quiet(["docker", "kill", container_name])
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-                _notify_all_failed()
+                _notify_all_failed(status="rpc_connection_failed")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
             container_check = subprocess.run(
@@ -1711,7 +1743,7 @@ class DockerSecureEvaluator:
                 )
                 _phase("container not running before rpc batch")
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])
-                _notify_all_failed()
+                _notify_all_failed(status="container_stopped_before_eval")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
             try:
@@ -1948,7 +1980,7 @@ class DockerSecureEvaluator:
                     except Exception as e:
                         _phase(f"container logs tail failed: {type(e).__name__}: {e}")
 
-                    _notify_all_failed()
+                    _notify_all_failed(status="batch_timeout")
                     return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
                 if "error" in rpc_payload:
@@ -1986,7 +2018,10 @@ class DockerSecureEvaluator:
         except Exception as e:
             bt.logging.warning(f"[Worker {worker_id}] Batch evaluation failed: {e}")
             _phase(f"batch evaluation exception: {type(e).__name__}: {e}")
-            _notify_all_failed()
+            _notify_all_failed(
+                status="batch_exception",
+                error=f"{type(e).__name__}: {e}",
+            )
             try:
                 _run_docker_cmd_quiet(["docker", "kill", container_name])
                 _run_docker_cmd_quiet(["docker", "rm", "-f", container_name])

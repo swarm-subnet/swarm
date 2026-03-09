@@ -401,19 +401,20 @@ def test_evaluate_seeds_parallel_handles_worker_exception(monkeypatch, tmp_path)
 def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):
     ev = _new_evaluator()
     de.DockerSecureEvaluator._base_ready = True
-    calls = {"n": 0}
+    payloads = []
     tasks = [SimpleNamespace(map_seed=1), SimpleNamespace(map_seed=2)]
     results = asyncio.run(
         ev.evaluate_seeds_batch(
             tasks,
             uid=1,
             model_path=tmp_path / "missing.zip",
-            on_seed_complete=lambda *_: calls.__setitem__("n", calls["n"] + 1),
+            on_seed_complete=lambda payload=None: payloads.append(payload),
         )
     )
     assert len(results) == 2
     assert all(r.score == 0.0 for r in results)
-    assert calls["n"] == 2
+    assert len(payloads) == 2
+    assert [payload["status"] for payload in payloads] == ["model_path_missing", "model_path_missing"]
 
 
 def test_evaluate_seeds_batch_returns_failures_when_docker_not_ready(tmp_path):
@@ -422,19 +423,20 @@ def test_evaluate_seeds_batch_returns_failures_when_docker_not_ready(tmp_path):
     model = tmp_path / "model.zip"
     with zipfile.ZipFile(model, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("drone_agent.py", "class Agent: pass")
-    calls = {"n": 0}
+    payloads = []
     tasks = [SimpleNamespace(map_seed=3)]
     results = asyncio.run(
         ev.evaluate_seeds_batch(
             tasks,
             uid=2,
             model_path=model,
-            on_seed_complete=lambda *_: calls.__setitem__("n", calls["n"] + 1),
+            on_seed_complete=lambda payload=None: payloads.append(payload),
         )
     )
     assert len(results) == 1
     assert results[0].score == 0.0
-    assert calls["n"] == 1
+    assert len(payloads) == 1
+    assert payloads[0]["status"] == "docker_not_ready"
 
 
 def test_run_multi_seed_rpc_sync_isolated_payload_transforms_results(monkeypatch):

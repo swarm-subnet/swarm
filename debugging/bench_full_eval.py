@@ -28,7 +28,7 @@ import threading
 import time
 import traceback
 import gc
-from collections import deque
+from collections import Counter, deque
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -490,6 +490,10 @@ def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float]:
     )
 
 
+def _is_clean_execution_status(status: str) -> bool:
+    return status == "seed_done"
+
+
 def _benchmark_worker_main(
     process_slot: int,
     task_queue: Any,
@@ -708,6 +712,7 @@ async def _run_benchmark(
 
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
+    seed_status_by_key: Dict[Tuple[int, int], deque[str]] = {}
     full_wall_by_key: Dict[Tuple[int, int], float] = {}
     batch_stats: List[_BatchStat] = []
     total_seeds = len(all_tasks)
@@ -739,6 +744,9 @@ async def _run_benchmark(
                     )
                     seed_wall = max(0.0, float(seed_meta.get("seed_wall_sec", 0.0)))
                     seed_wall_by_key.setdefault(seed_key, deque()).append(seed_wall)
+                    seed_status = str(seed_meta.get("status", "")).strip()
+                    if seed_status:
+                        seed_status_by_key.setdefault(seed_key, deque()).append(seed_status)
                 except Exception:
                     pass
             done_count += 1
@@ -927,6 +935,7 @@ async def _run_benchmark(
         results,
         seed_times,
         seed_wall_by_key,
+        seed_status_by_key,
         full_wall_by_key,
         batch_stats,
         elapsed,
@@ -940,6 +949,7 @@ def _print_results(
     results: list,
     seed_times: List[float],
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]],
+    seed_status_by_key: Dict[Tuple[int, int], deque[str]],
     full_wall_by_key: Dict[Tuple[int, int], float],
     batch_stats: List[_BatchStat],
     elapsed: float,
@@ -951,6 +961,9 @@ def _print_results(
     GROUP_ORDER = BENCH_GROUP_ORDER
     seed_wall_queues: Dict[Tuple[int, int], deque[float]] = {
         key: deque(values) for key, values in seed_wall_by_key.items()
+    }
+    seed_status_queues: Dict[Tuple[int, int], deque[str]] = {
+        key: deque(values) for key, values in seed_status_by_key.items()
     }
 
     group_results: Dict[str, List[Dict[str, Any]]] = {}
@@ -965,6 +978,9 @@ def _print_results(
         sim_time = float(result.time_sec) if result else 0.0
 
         seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
+        status_q = seed_status_queues.get(seed_key)
+        execution_status = str(status_q.popleft()) if status_q and len(status_q) > 0 else "unknown"
+        execution_ok = _is_clean_execution_status(execution_status)
         wall_q = seed_wall_queues.get(seed_key)
         if wall_q and len(wall_q) > 0:
             processing_wall = float(wall_q.popleft())
@@ -983,6 +999,8 @@ def _print_results(
             "sim_time": sim_time,
             "wall_time": wall,
             "processing_wall_time": processing_wall,
+            "execution_status": execution_status,
+            "execution_ok": execution_ok,
             "timeout_zero": is_timeout,
         })
 
@@ -1010,6 +1028,8 @@ def _print_results(
     all_seed_walls = [float(r["wall_time"]) for r in all_rows if float(r["wall_time"]) > 0.0]
     all_sim_times = [float(r["sim_time"]) for r in all_rows]
     success_count = sum(1 for r in all_rows if bool(r["success"]))
+    execution_success_count = sum(1 for r in all_rows if bool(r["execution_ok"]))
+    execution_status_counts = Counter(str(r["execution_status"]) for r in all_rows)
     total_seeds = len(all_rows)
     workers_used = max(1, int(num_workers))
 
@@ -1044,6 +1064,17 @@ def _print_results(
         f"    Success rate:              {success_count}/{total_seeds} "
         f"({(100.0 * success_count / total_seeds) if total_seeds else 0.0:.1f}%)"
     )
+    print(
+        f"    Clean execution rate:      {execution_success_count}/{total_seeds} "
+        f"({(100.0 * execution_success_count / total_seeds) if total_seeds else 0.0:.1f}%)"
+    )
+    execution_failures = [
+        f"{status}={count}"
+        for status, count in sorted(execution_status_counts.items())
+        if not _is_clean_execution_status(status)
+    ]
+    if execution_failures:
+        print(f"    Execution failure modes:   {', '.join(execution_failures)}")
     print(f"    Total wall-clock:          {elapsed:.1f}s ({elapsed / 60:.1f} min)")
     print(f"    Avg wall / seed:           {avg_wall_per_seed:.2f}s")
     print(f"    Median wall / seed:        {med_wall_per_seed:.2f}s")
@@ -1123,6 +1154,12 @@ def _print_results(
         "seed_timings_note": "wall_time includes equal share of per-container startup overhead",
         "run_metrics": {
             "success_count": success_count,
+            "execution_success_count": execution_success_count,
+            "execution_success_rate": (
+                (float(execution_success_count) / float(total_seeds))
+                if total_seeds
+                else 0.0
+            ),
             "avg_wall_per_seed_sec": avg_wall_per_seed,
             "median_wall_per_seed_sec": med_wall_per_seed,
             "p90_wall_per_seed_sec": p90_wall_per_seed,
@@ -1137,6 +1174,7 @@ def _print_results(
             "avg_startup_overhead_per_container_sec": avg_startup_overhead_sec,
             "total_startup_overhead_sec": total_startup_overhead_sec,
         },
+        "execution_status_counts": dict(sorted(execution_status_counts.items())),
         "group_results": {g: rs for g, rs in group_results.items()},
         "batch_stats": [asdict(stat) for stat in batch_stats],
         "extrapolation_1000_seeds": {
@@ -1178,6 +1216,7 @@ def main() -> None:
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
     full_wall_by_key: Dict[Tuple[int, int], float] = {}
+    seed_status_by_key: Dict[Tuple[int, int], deque[str]] = {}
     batch_stats: List[_BatchStat] = []
     elapsed = 0.0
     eval_start = time.time()
@@ -1241,6 +1280,7 @@ def main() -> None:
             results,
             seed_times,
             seed_wall_by_key,
+            seed_status_by_key,
             full_wall_by_key,
             batch_stats,
             elapsed,
@@ -1283,6 +1323,7 @@ def main() -> None:
                 results,
                 seed_times,
                 seed_wall_by_key,
+                seed_status_by_key,
                 full_wall_by_key,
                 batch_stats,
                 elapsed,

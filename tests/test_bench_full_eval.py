@@ -71,7 +71,7 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, {}, [], 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -93,7 +93,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, {}, [], 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -132,6 +132,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
             [fake_result],
             [1060.0],
             {(seed, 5): deque([60.0])},
+            {(seed, 5): deque(["seed_done"])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -154,6 +155,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
 
     assert "=== RESULTS ===" in combined
     assert "Run summary:" in combined
+    assert "Clean execution rate:      1/1 (100.0%)" in combined
     assert "=== BENCHMARK COMPLETE ===" in combined
 
 
@@ -211,6 +213,7 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
             [fake_result],
             [1060.0],
             {(seed, 5): deque([60.0])},
+            {(seed, 5): deque(["seed_done"])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -287,6 +290,7 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
                 "map_seed": 123456,
                 "challenge_type": 5,
                 "seed_wall_sec": 0.1,
+                "status": "seed_done",
             }
         )
         kwargs["record_batch_completion"](
@@ -340,6 +344,7 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
                 "map_seed": 123456,
                 "challenge_type": 5,
                 "seed_wall_sec": 0.25,
+                "status": "seed_done",
             }
         )
         kwargs["record_batch_completion"](
@@ -375,7 +380,8 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
     assert captured["called"] is True
     assert out[-1] == 2
     assert out[1][0].score == 0.5
-    assert out[4][(123456, 5)] == 0.5
+    assert out[4][(123456, 5)][0] == "seed_done"
+    assert out[5][(123456, 5)] == 0.5
 
 
 def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path):
@@ -404,6 +410,7 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
                             "map_seed": task.map_seed,
                             "challenge_type": task.challenge_type,
                             "seed_wall_sec": 0.2,
+                            "status": "seed_done",
                         }
                     )
             return [SimpleNamespace(uid=uid, success=False, time_sec=0.0, score=0.0) for _ in tasks]
@@ -435,6 +442,7 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
     result = result_queue.get_nowait()
 
     assert [event.seed_meta["map_seed"] for event in progress_events] == [10, 11]
+    assert [event.seed_meta["status"] for event in progress_events] == ["seed_done", "seed_done"]
     assert result.worker_id == 0
     assert result.batch_index == 0
     assert len(result.results) == 2
