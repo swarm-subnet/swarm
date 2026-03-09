@@ -4,6 +4,8 @@ import asyncio
 import io
 import queue
 import sys
+import threading
+import time
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,6 +56,29 @@ def test_batch_indices_creates_one_seed_per_batch():
         [3],
         [4],
     ]
+
+
+def test_build_worker_stall_seed_meta_marks_failure():
+    task = SimpleNamespace(
+        map_seed=123,
+        challenge_type=5,
+        horizon=60.0,
+        moving_platform=False,
+    )
+
+    meta = bench_full_eval._build_worker_stall_seed_meta(
+        task,
+        uid=7,
+        elapsed_sec=91.5,
+        error="worker stalled",
+    )
+
+    assert meta["uid"] == 7
+    assert meta["map_seed"] == 123
+    assert meta["challenge_type"] == 5
+    assert meta["status"] == "worker_stall_timeout"
+    assert meta["success"] is False
+    assert meta["seed_wall_sec"] == pytest.approx(91.5)
 
 
 def test_select_next_batch_index_avoids_second_heavy_seed_when_light_available():
@@ -524,11 +549,154 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
 
     bench_full_eval._benchmark_worker_main(0, task_queue, result_queue, progress_queue)
 
-    progress_events = [progress_queue.get_nowait(), progress_queue.get_nowait()]
+    queue_events = []
+    while True:
+        try:
+            queue_events.append(progress_queue.get_nowait())
+        except queue.Empty:
+            break
+    progress_events = [
+        event for event in queue_events if isinstance(event, bench_full_eval._ProcessSeedEvent)
+    ]
+    heartbeat_events = [
+        event for event in queue_events if isinstance(event, bench_full_eval._ProcessWorkerHeartbeat)
+    ]
     result = result_queue.get_nowait()
 
     assert [event.seed_meta["map_seed"] for event in progress_events] == [10, 11]
     assert [event.seed_meta["status"] for event in progress_events] == ["seed_done", "seed_done"]
+    assert heartbeat_events[0].event_type == "batch_started"
+    assert heartbeat_events[0].worker_id == 0
+    assert heartbeat_events[0].batch_index == 0
     assert result.worker_id == 0
     assert result.batch_index == 0
     assert len(result.results) == 2
+
+
+def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+
+    monkeypatch.setattr(bench_full_eval, "_PARENT_WORKER_STALL_TIMEOUT_SEC", 0.05)
+    monkeypatch.setattr(bench_full_eval, "_PARENT_WORKER_HEARTBEAT_SEC", 0.01)
+
+    class _FakeProcess:
+        generations: dict[int, int] = {}
+
+        def __init__(self, target, args, name=None, daemon=None):
+            _ = target, name, daemon
+            self.worker_slot = int(args[0])
+            self.task_queue = args[1]
+            self.result_queue = args[2]
+            self.progress_queue = args[3]
+            self.generation = self.generations.get(self.worker_slot, 0)
+            self.generations[self.worker_slot] = self.generation + 1
+            self._thread = None
+            self._stop = threading.Event()
+            self.exitcode = None
+
+        def start(self):
+            if self.generation == 0:
+                def _stall():
+                    request = self.task_queue.get()
+                    if request is None:
+                        self.exitcode = 0
+                        return
+                    self.progress_queue.put(
+                        bench_full_eval._ProcessWorkerHeartbeat(
+                            worker_id=self.worker_slot,
+                            batch_index=request.batch_index,
+                            event_type="batch_started",
+                            ts=time.time(),
+                        )
+                    )
+                    while not self._stop.wait(0.01):
+                        pass
+                    if self.exitcode is None:
+                        self.exitcode = -15
+
+                self._thread = threading.Thread(target=_stall, daemon=True)
+            else:
+                def _idle():
+                    request = self.task_queue.get()
+                    if request is None:
+                        self.exitcode = 0
+                        return
+                    self.progress_queue.put(
+                        bench_full_eval._ProcessWorkerHeartbeat(
+                            worker_id=self.worker_slot,
+                            batch_index=request.batch_index,
+                            event_type="batch_started",
+                            ts=time.time(),
+                        )
+                    )
+                    self.exitcode = 0
+
+                self._thread = threading.Thread(target=_idle, daemon=True)
+            self._thread.start()
+
+        def is_alive(self):
+            return bool(self._thread and self._thread.is_alive())
+
+        def join(self, timeout=None):
+            if self._thread is not None:
+                self._thread.join(timeout=timeout)
+
+        def terminate(self):
+            self.exitcode = -15
+            self._stop.set()
+
+    class _FakeCtx:
+        @staticmethod
+        def Queue():
+            return queue.Queue()
+
+        @staticmethod
+        def Process(*args, **kwargs):
+            return _FakeProcess(*args, **kwargs)
+
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: _FakeCtx())
+
+    recorded = []
+    seed_events = []
+
+    def _record_batch_completion(worker_slot, batch_index, batch_indices, seed_results, batch_elapsed):
+        recorded.append(
+            {
+                "worker_slot": worker_slot,
+                "batch_index": batch_index,
+                "batch_indices": list(batch_indices),
+                "seed_results": list(seed_results),
+                "batch_elapsed": batch_elapsed,
+            }
+        )
+
+    def _on_seed_done(seed_meta):
+        seed_events.append(seed_meta)
+
+    task = SimpleNamespace(
+        map_seed=123456,
+        challenge_type=5,
+        horizon=60.0,
+        moving_platform=False,
+    )
+
+    launched = asyncio.run(
+        bench_full_eval._run_benchmark_process_mode(
+            all_tasks=[task],
+            task_meta=[{"group": "type5_warehouse", "seed": 123456, "challenge_type": 5}],
+            batch_plan=[[0]],
+            uid=7,
+            model_path=model_path,
+            effective_workers=1,
+            record_batch_completion=_record_batch_completion,
+            on_seed_done=_on_seed_done,
+            run_opts=bench_full_eval._RunOptions(heartbeat_sec=0.0),
+        )
+    )
+
+    assert launched == 1
+    assert len(recorded) == 1
+    assert len(recorded[0]["seed_results"]) == 1
+    assert recorded[0]["seed_results"][0].success is False
+    assert seed_events[0]["status"] == "worker_stall_timeout"

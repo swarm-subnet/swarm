@@ -117,6 +117,14 @@ class _ProcessSeedEvent:
     seed_meta: Optional[Dict[str, Any]] = None
 
 
+@dataclass
+class _ProcessWorkerHeartbeat:
+    worker_id: int
+    batch_index: int
+    event_type: str
+    ts: float
+
+
 def _debug_profile_options() -> _RunOptions:
     return _RunOptions(
         heartbeat_sec=15.0,
@@ -513,6 +521,8 @@ _BACKOFF_COOLDOWN_COMPLETIONS = 6
 _BACKOFF_CLEAN_RATE_THRESHOLD = 0.85
 _BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC = 0.25
 _BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE = 1.5
+_PARENT_WORKER_HEARTBEAT_SEC = 15.0
+_PARENT_WORKER_STALL_TIMEOUT_SEC = 90.0
 _BACKOFF_FAILURE_STATUSES = frozenset(
     {
         "batch_timeout",
@@ -525,6 +535,7 @@ _BACKOFF_FAILURE_STATUSES = frozenset(
         "seed_rpc_disconnected",
         "seed_exception",
         "seed_cancelled",
+        "worker_stall_timeout",
     }
 )
 
@@ -566,6 +577,28 @@ def _format_seed_desc(seed_meta: Optional[Dict[str, Any]]) -> str:
     if "challenge_type" in seed_meta:
         parts.append(f"type={seed_meta.get('challenge_type')}")
     return " ".join(parts) if parts else "seed=unknown"
+
+
+def _build_worker_stall_seed_meta(
+    task: Any,
+    *,
+    uid: int,
+    elapsed_sec: float,
+    error: str,
+) -> Dict[str, Any]:
+    return {
+        "uid": int(uid),
+        "map_seed": int(getattr(task, "map_seed", -1)),
+        "challenge_type": int(getattr(task, "challenge_type", -1)),
+        "horizon_sec": float(getattr(task, "horizon", 0.0)),
+        "moving_platform": bool(getattr(task, "moving_platform", False)),
+        "status": "worker_stall_timeout",
+        "success": False,
+        "sim_time_sec": 0.0,
+        "seed_wall_sec": max(0.0, float(elapsed_sec)),
+        "step_idx": 0,
+        "error": error,
+    }
 
 
 @dataclass
@@ -730,6 +763,7 @@ def _benchmark_worker_main(
                 return
 
             batch_start = time.time()
+            heartbeat_stop = threading.Event()
 
             def _on_seed_complete(seed_meta: Optional[Dict[str, Any]] = None) -> None:
                 try:
@@ -742,6 +776,31 @@ def _benchmark_worker_main(
                     )
                 except Exception:
                     pass
+
+            def _emit_worker_heartbeat(event_type: str) -> None:
+                try:
+                    progress_queue.put(
+                        _ProcessWorkerHeartbeat(
+                            worker_id=process_slot,
+                            batch_index=request.batch_index,
+                            event_type=event_type,
+                            ts=time.time(),
+                        )
+                    )
+                except Exception:
+                    pass
+
+            def _heartbeat_loop() -> None:
+                while not heartbeat_stop.wait(timeout=_PARENT_WORKER_HEARTBEAT_SEC):
+                    _emit_worker_heartbeat("heartbeat")
+
+            _emit_worker_heartbeat("batch_started")
+            heartbeat_thread = threading.Thread(
+                target=_heartbeat_loop,
+                name=f"bench_worker_hb_{process_slot}",
+                daemon=True,
+            )
+            heartbeat_thread.start()
 
             try:
                 seed_results = loop.run_until_complete(
@@ -778,6 +837,8 @@ def _benchmark_worker_main(
                 )
                 return
             finally:
+                heartbeat_stop.set()
+                heartbeat_thread.join(timeout=1.0)
                 gc.collect()
     finally:
         asyncio.set_event_loop(None)
@@ -794,23 +855,34 @@ async def _run_benchmark_process_mode(
     effective_workers: int,
     record_batch_completion: Any,
     on_seed_done: Any,
+    run_opts: _RunOptions,
 ) -> int:
     ctx = _benchmark_mp_context()
     task_queue = ctx.Queue()
     result_queue = ctx.Queue()
     progress_queue = ctx.Queue()
-    workers = [
-        ctx.Process(
+    workers: Dict[int, Any] = {}
+    scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
+    pending_batch_ids: List[int] = list(range(len(batch_plan)))
+    inflight_batches: Dict[int, _ProcessBatchRequest] = {}
+    worker_active_batches: Dict[int, int] = {}
+    worker_last_heartbeat: Dict[int, float] = {}
+    worker_started_at: Dict[int, float] = {}
+    stall_timeout_sec = max(
+        _PARENT_WORKER_STALL_TIMEOUT_SEC,
+        max(0.0, float(getattr(run_opts, "heartbeat_sec", 0.0))) * 2.0,
+    )
+
+    def _spawn_worker(worker_slot: int) -> Any:
+        worker = ctx.Process(
             target=_benchmark_worker_main,
             args=(worker_slot, task_queue, result_queue, progress_queue),
             name=f"bench_host_worker_{worker_slot}",
             daemon=True,
         )
-        for worker_slot in range(effective_workers)
-    ]
-    scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
-    pending_batch_ids: List[int] = list(range(len(batch_plan)))
-    inflight_batches: Dict[int, _ProcessBatchRequest] = {}
+        worker.start()
+        workers[worker_slot] = worker
+        return worker
 
     print(
         f"[{_ts()}] Dispatch policy: heavy-aware scheduling enabled "
@@ -825,6 +897,10 @@ async def _run_benchmark_process_mode(
         )
     else:
         print(f"[{_ts()}] Adaptive backoff: disabled (requested workers <= {_BACKOFF_ACTIVE_WORKERS})")
+    print(
+        f"[{_ts()}] Parent worker stall watchdog: "
+        f"{stall_timeout_sec:.1f}s without worker heartbeat -> discard seed and replace worker"
+    )
 
     def _drain_progress_events() -> None:
         while True:
@@ -832,11 +908,83 @@ async def _run_benchmark_process_mode(
                 event = progress_queue.get_nowait()
             except queue_mod.Empty:
                 return
+            if isinstance(event, _ProcessWorkerHeartbeat):
+                worker_last_heartbeat[int(event.worker_id)] = float(event.ts)
+                if event.event_type == "batch_started":
+                    worker_active_batches[int(event.worker_id)] = int(event.batch_index)
+                    worker_started_at[int(event.worker_id)] = float(event.ts)
+                continue
             seed_meta = getattr(event, "seed_meta", None)
             on_seed_done(seed_meta)
             note = scheduler.observe_seed(seed_meta)
             if note:
                 print(f"[{_ts()}] {note}", flush=True)
+
+    def _restart_worker(worker_slot: int) -> None:
+        worker = workers.get(worker_slot)
+        if worker is not None:
+            try:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=2.0)
+            except Exception:
+                pass
+        _spawn_worker(worker_slot)
+
+    def _check_for_stalled_workers() -> int:
+        completed_now = 0
+        now = time.time()
+        for worker_slot, batch_index in list(worker_active_batches.items()):
+            last_hb = worker_last_heartbeat.get(worker_slot)
+            if last_hb is None or (now - last_hb) < stall_timeout_sec:
+                continue
+            request = inflight_batches.pop(batch_index, None)
+            worker_active_batches.pop(worker_slot, None)
+            started_at = worker_started_at.pop(worker_slot, now)
+            worker_last_heartbeat.pop(worker_slot, None)
+            elapsed_sec = max(0.0, now - started_at)
+            if request is None:
+                _restart_worker(worker_slot)
+                continue
+
+            batch_meta = [task_meta[idx] for idx in request.batch_indices]
+            seed_list = [int(meta["seed"]) for meta in batch_meta]
+            print(
+                f"[{_ts()}] Worker {worker_slot} stalled on batch {batch_index + 1}/{len(batch_plan)} "
+                f"for {elapsed_sec:.1f}s without heartbeat | seeds={seed_list} | replacing worker",
+                flush=True,
+            )
+            stall_error = (
+                f"worker {worker_slot} heartbeat stalled for {elapsed_sec:.1f}s"
+            )
+            for task in request.tasks:
+                seed_meta = _build_worker_stall_seed_meta(
+                    task,
+                    uid=request.uid,
+                    elapsed_sec=elapsed_sec,
+                    error=stall_error,
+                )
+                on_seed_done(seed_meta)
+                note = scheduler.observe_seed(seed_meta)
+                if note:
+                    print(f"[{_ts()}] {note}", flush=True)
+
+            from swarm.protocol import ValidationResult
+
+            record_batch_completion(
+                worker_slot,
+                batch_index,
+                list(request.batch_indices),
+                [
+                    ValidationResult(int(request.uid), False, 0.0, 0.0)
+                    for _ in request.batch_indices
+                ],
+                elapsed_sec,
+            )
+            completed_now += 1
+            _restart_worker(worker_slot)
+            _dispatch_available_batches()
+        return completed_now
 
     def _dispatch_available_batches() -> None:
         while pending_batch_ids and len(inflight_batches) < scheduler.active_worker_cap:
@@ -873,20 +1021,26 @@ async def _run_benchmark_process_mode(
             task_queue.put(request)
 
     try:
-        for worker in workers:
-            worker.start()
+        for worker_slot in range(effective_workers):
+            _spawn_worker(worker_slot)
         _dispatch_available_batches()
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
             _drain_progress_events()
+            completed_batches += _check_for_stalled_workers()
+            if completed_batches >= len(batch_plan):
+                break
             try:
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
-                if any((not worker.is_alive()) and worker.exitcode not in (0, None) for worker in workers):
+                if any(
+                    (not worker.is_alive()) and worker.exitcode not in (0, None)
+                    for worker in workers.values()
+                ):
                     crashed = [
                         f"{worker.name}(exitcode={worker.exitcode})"
-                        for worker in workers
+                        for worker in workers.values()
                         if (not worker.is_alive()) and worker.exitcode not in (0, None)
                     ]
                     raise RuntimeError(
@@ -897,6 +1051,16 @@ async def _run_benchmark_process_mode(
                 continue
 
             _drain_progress_events()
+            completed_batches += _check_for_stalled_workers()
+            if completed_batches >= len(batch_plan):
+                break
+            if int(payload.batch_index) not in inflight_batches:
+                print(
+                    f"[{_ts()}] Ignoring late batch result from worker {payload.worker_id} "
+                    f"for already-resolved batch {payload.batch_index + 1}",
+                    flush=True,
+                )
+                continue
             if payload.error:
                 raise RuntimeError(
                     f"Host worker {payload.worker_id} failed on batch {payload.batch_index + 1}: "
@@ -906,6 +1070,9 @@ async def _run_benchmark_process_mode(
             from swarm.protocol import ValidationResult
 
             inflight_batches.pop(int(payload.batch_index), None)
+            worker_active_batches.pop(int(payload.worker_id), None)
+            worker_last_heartbeat.pop(int(payload.worker_id), None)
+            worker_started_at.pop(int(payload.worker_id), None)
             record_batch_completion(
                 int(payload.worker_id),
                 int(payload.batch_index),
@@ -919,9 +1086,9 @@ async def _run_benchmark_process_mode(
         _drain_progress_events()
         return effective_workers
     finally:
-        for _ in workers:
+        for _ in workers.values():
             task_queue.put(None)
-        for worker in workers:
+        for worker in workers.values():
             worker.join(timeout=5.0)
             if worker.is_alive():
                 worker.terminate()
@@ -1177,6 +1344,7 @@ async def _run_benchmark(
                 effective_workers=effective_workers,
                 record_batch_completion=_record_batch_completion,
                 on_seed_done=_on_seed_done,
+                run_opts=run_opts,
             )
 
             if any(r is None for r in results):
