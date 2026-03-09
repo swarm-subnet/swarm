@@ -56,6 +56,92 @@ def test_batch_indices_creates_one_seed_per_batch():
     ]
 
 
+def test_select_next_batch_index_avoids_second_heavy_seed_when_light_available():
+    batch_plan = [[0], [1], [2]]
+    task_meta = [
+        {"group": "type3_mountain"},
+        {"group": "type5_warehouse"},
+        {"group": "type1_city"},
+    ]
+
+    selected = bench_full_eval._select_next_batch_index(
+        pending_batch_ids=[1, 2],
+        batch_plan=batch_plan,
+        task_meta=task_meta,
+        active_batch_ids=[0],
+        active_worker_cap=2,
+    )
+
+    assert selected == 2
+
+
+def test_select_next_batch_index_falls_back_to_heavy_when_only_heavy_remain():
+    batch_plan = [[0], [1]]
+    task_meta = [
+        {"group": "type3_mountain"},
+        {"group": "type5_warehouse"},
+    ]
+
+    selected = bench_full_eval._select_next_batch_index(
+        pending_batch_ids=[1],
+        batch_plan=batch_plan,
+        task_meta=task_meta,
+        active_batch_ids=[0],
+        active_worker_cap=2,
+    )
+
+    assert selected == 1
+
+
+def test_adaptive_backoff_triggers_on_calibration_spike_and_recovers():
+    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=3)
+
+    note = controller.observe_seed(
+        {
+            "status": "seed_done",
+            "map_seed": 123,
+            "challenge_type": 3,
+            "calibration_overhead_sec": 0.6,
+            "calibration_cpu_factor": 2.0,
+        }
+    )
+
+    assert "Adaptive backoff active" in str(note)
+    assert controller.active_worker_cap == 2
+
+    notes = []
+    for idx in range(6):
+        notes.append(
+            controller.observe_seed(
+                {
+                    "status": "seed_done",
+                    "map_seed": 200 + idx,
+                    "challenge_type": 2,
+                    "calibration_overhead_sec": 0.01,
+                    "calibration_cpu_factor": 1.0,
+                }
+            )
+        )
+
+    assert controller.active_worker_cap == 3
+    assert any(note and "Adaptive backoff cleared" in note for note in notes)
+
+
+def test_adaptive_backoff_triggers_on_clean_execution_failure():
+    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=3)
+
+    note = controller.observe_seed(
+        {
+            "status": "batch_timeout",
+            "map_seed": 456,
+            "challenge_type": 5,
+        }
+    )
+
+    assert "Adaptive backoff active" in str(note)
+    assert controller.active_worker_cap == 2
+
+
 def test_save_and_load_type_seeds(tmp_path):
     seed_file = tmp_path / "seeds.json"
     payload = {group: [i + 1] for i, group in enumerate(bench_full_eval.BENCH_GROUP_ORDER)}

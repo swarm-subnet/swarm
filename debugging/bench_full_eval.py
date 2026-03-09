@@ -30,7 +30,7 @@ import traceback
 import gc
 from collections import Counter, deque
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -494,6 +494,225 @@ def _is_clean_execution_status(status: str) -> bool:
     return status == "seed_done"
 
 
+_GROUP_DISPATCH_WEIGHTS = {
+    "type1_city": 1,
+    "type2_open": 1,
+    "type3_mountain": 4,
+    "type4_village": 2,
+    "type5_warehouse": 3,
+}
+_GROUP_CONCURRENCY_LIMITS = {
+    "type3_mountain": 1,
+    "type5_warehouse": 1,
+}
+_HEAVY_GROUPS = frozenset({"type3_mountain", "type5_warehouse"})
+_BACKOFF_ACTIVE_WORKERS = 2
+_BACKOFF_RECENT_WINDOW = 6
+_BACKOFF_MIN_SAMPLES = 4
+_BACKOFF_COOLDOWN_COMPLETIONS = 6
+_BACKOFF_CLEAN_RATE_THRESHOLD = 0.85
+_BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC = 0.25
+_BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE = 1.5
+_BACKOFF_FAILURE_STATUSES = frozenset(
+    {
+        "batch_timeout",
+        "batch_exception",
+        "rpc_connection_failed",
+        "rpc_ping_timeout",
+        "rpc_connect_failed",
+        "rpc_agent_unavailable",
+        "seed_timeout_strikes",
+        "seed_rpc_disconnected",
+        "seed_exception",
+        "seed_cancelled",
+    }
+)
+
+
+def _group_dispatch_weight(group_name: str) -> int:
+    return int(_GROUP_DISPATCH_WEIGHTS.get(group_name, 1))
+
+
+def _max_heavy_active(active_worker_cap: int) -> int:
+    if active_worker_cap <= 1:
+        return 1
+    if active_worker_cap <= 2:
+        return 1
+    return 2
+
+
+def _seed_has_calibration_spike(seed_meta: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(seed_meta, dict):
+        return False
+    try:
+        overhead = seed_meta.get("calibration_overhead_sec")
+        cpu_factor = seed_meta.get("calibration_cpu_factor")
+        overhead_val = float(overhead) if overhead is not None else 0.0
+        cpu_factor_val = float(cpu_factor) if cpu_factor is not None else 1.0
+    except Exception:
+        return False
+    return (
+        overhead_val >= _BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC
+        or cpu_factor_val >= _BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE
+    )
+
+
+def _format_seed_desc(seed_meta: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(seed_meta, dict):
+        return "seed=unknown"
+    parts = []
+    if "map_seed" in seed_meta:
+        parts.append(f"seed={seed_meta.get('map_seed')}")
+    if "challenge_type" in seed_meta:
+        parts.append(f"type={seed_meta.get('challenge_type')}")
+    return " ".join(parts) if parts else "seed=unknown"
+
+
+@dataclass
+class _AdaptiveBackoffController:
+    requested_workers: int
+    active_worker_cap: int = field(init=False)
+    cooldown_remaining: int = 0
+    recent_statuses: deque[str] = field(
+        default_factory=lambda: deque(maxlen=_BACKOFF_RECENT_WINDOW)
+    )
+    recent_spikes: deque[bool] = field(
+        default_factory=lambda: deque(maxlen=_BACKOFF_RECENT_WINDOW)
+    )
+
+    def __post_init__(self) -> None:
+        self.active_worker_cap = max(1, int(self.requested_workers))
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested_workers > _BACKOFF_ACTIVE_WORKERS
+
+    def recent_clean_rate(self) -> float:
+        if not self.recent_statuses:
+            return 1.0
+        clean = sum(1 for status in self.recent_statuses if _is_clean_execution_status(status))
+        return clean / float(len(self.recent_statuses))
+
+    def recent_window_is_healthy(self) -> bool:
+        if len(self.recent_statuses) < _BACKOFF_RECENT_WINDOW:
+            return False
+        return (
+            all(_is_clean_execution_status(status) for status in self.recent_statuses)
+            and not any(self.recent_spikes)
+        )
+
+    def observe_seed(self, seed_meta: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not self.enabled or not isinstance(seed_meta, dict):
+            return None
+
+        status = str(seed_meta.get("status", "")).strip() or "unknown"
+        spike = _seed_has_calibration_spike(seed_meta)
+        self.recent_statuses.append(status)
+        self.recent_spikes.append(spike)
+
+        trigger_reason: Optional[str] = None
+        if status in _BACKOFF_FAILURE_STATUSES:
+            trigger_reason = f"status={status} {_format_seed_desc(seed_meta)}"
+        elif spike:
+            try:
+                overhead_ms = float(seed_meta.get("calibration_overhead_sec") or 0.0) * 1000.0
+            except Exception:
+                overhead_ms = 0.0
+            try:
+                cpu_factor = float(seed_meta.get("calibration_cpu_factor") or 1.0)
+            except Exception:
+                cpu_factor = 1.0
+            trigger_reason = (
+                f"calibration spike {_format_seed_desc(seed_meta)} "
+                f"overhead={overhead_ms:.1f}ms cpu_factor={cpu_factor:.2f}x"
+            )
+        elif (
+            len(self.recent_statuses) >= _BACKOFF_MIN_SAMPLES
+            and self.recent_clean_rate() < _BACKOFF_CLEAN_RATE_THRESHOLD
+        ):
+            trigger_reason = (
+                f"recent clean execution {self.recent_clean_rate() * 100.0:.0f}% "
+                f"over last {len(self.recent_statuses)} seeds"
+            )
+
+        if trigger_reason is not None:
+            previous_cap = self.active_worker_cap
+            self.active_worker_cap = min(self.active_worker_cap, _BACKOFF_ACTIVE_WORKERS)
+            self.cooldown_remaining = max(
+                self.cooldown_remaining,
+                _BACKOFF_COOLDOWN_COMPLETIONS,
+            )
+            if previous_cap > self.active_worker_cap:
+                return (
+                    f"Adaptive backoff active: limiting dispatch to "
+                    f"{self.active_worker_cap}/{self.requested_workers} workers "
+                    f"({trigger_reason})"
+                )
+            return (
+                f"Adaptive backoff extended: keeping dispatch at "
+                f"{self.active_worker_cap}/{self.requested_workers} workers "
+                f"({trigger_reason})"
+            )
+
+        if self.active_worker_cap < self.requested_workers:
+            self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
+            if self.cooldown_remaining == 0 and self.recent_window_is_healthy():
+                self.active_worker_cap = self.requested_workers
+                return (
+                    f"Adaptive backoff cleared: restoring dispatch to "
+                    f"{self.requested_workers} workers"
+                )
+
+        return None
+
+
+def _select_next_batch_index(
+    *,
+    pending_batch_ids: List[int],
+    batch_plan: List[List[int]],
+    task_meta: List[Dict[str, Any]],
+    active_batch_ids: List[int],
+    active_worker_cap: int,
+) -> Optional[int]:
+    if not pending_batch_ids:
+        return None
+
+    active_groups = Counter(
+        str(task_meta[batch_plan[batch_id][0]]["group"])
+        for batch_id in active_batch_ids
+        if batch_plan[batch_id]
+    )
+    active_heavy = sum(
+        1
+        for batch_id in active_batch_ids
+        if batch_plan[batch_id]
+        and str(task_meta[batch_plan[batch_id][0]]["group"]) in _HEAVY_GROUPS
+    )
+
+    def _is_preferred(batch_id: int) -> bool:
+        if not batch_plan[batch_id]:
+            return False
+        group_name = str(task_meta[batch_plan[batch_id][0]]["group"])
+        group_limit = int(_GROUP_CONCURRENCY_LIMITS.get(group_name, active_worker_cap))
+        if active_groups[group_name] >= group_limit:
+            return False
+        if (
+            group_name in _HEAVY_GROUPS
+            and active_heavy >= _max_heavy_active(active_worker_cap)
+        ):
+            return False
+        return True
+
+    preferred = [batch_id for batch_id in pending_batch_ids if _is_preferred(batch_id)]
+    candidate_pool = preferred if preferred else pending_batch_ids
+
+    def _sort_key(batch_id: int) -> Tuple[int, int]:
+        group_name = str(task_meta[batch_plan[batch_id][0]]["group"])
+        return (_group_dispatch_weight(group_name), -batch_id)
+
+    return max(candidate_pool, key=_sort_key)
+
+
 def _benchmark_worker_main(
     process_slot: int,
     task_queue: Any,
@@ -589,6 +808,23 @@ async def _run_benchmark_process_mode(
         )
         for worker_slot in range(effective_workers)
     ]
+    scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
+    pending_batch_ids: List[int] = list(range(len(batch_plan)))
+    inflight_batches: Dict[int, _ProcessBatchRequest] = {}
+
+    print(
+        f"[{_ts()}] Dispatch policy: heavy-aware scheduling enabled "
+        f"(mountain<=1, warehouse<=1, max_heavy={_max_heavy_active(scheduler.active_worker_cap)})"
+    )
+    if scheduler.enabled:
+        print(
+            f"[{_ts()}] Adaptive backoff: enabled "
+            f"(fallback cap={_BACKOFF_ACTIVE_WORKERS}, cooldown={_BACKOFF_COOLDOWN_COMPLETIONS} seeds, "
+            f"calibration spike>={_BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC*1000:.0f}ms "
+            f"or cpu_factor>={_BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE:.2f}x)"
+        )
+    else:
+        print(f"[{_ts()}] Adaptive backoff: disabled (requested workers <= {_BACKOFF_ACTIVE_WORKERS})")
 
     def _drain_progress_events() -> None:
         while True:
@@ -596,31 +832,50 @@ async def _run_benchmark_process_mode(
                 event = progress_queue.get_nowait()
             except queue_mod.Empty:
                 return
-            on_seed_done(getattr(event, "seed_meta", None))
+            seed_meta = getattr(event, "seed_meta", None)
+            on_seed_done(seed_meta)
+            note = scheduler.observe_seed(seed_meta)
+            if note:
+                print(f"[{_ts()}] {note}", flush=True)
+
+    def _dispatch_available_batches() -> None:
+        while pending_batch_ids and len(inflight_batches) < scheduler.active_worker_cap:
+            batch_index = _select_next_batch_index(
+                pending_batch_ids=pending_batch_ids,
+                batch_plan=batch_plan,
+                task_meta=task_meta,
+                active_batch_ids=list(inflight_batches.keys()),
+                active_worker_cap=scheduler.active_worker_cap,
+            )
+            if batch_index is None:
+                return
+            pending_batch_ids.remove(batch_index)
+            batch_indices = list(batch_plan[batch_index])
+            batch_meta = [task_meta[idx] for idx in batch_indices]
+            seed_list = [meta["seed"] for meta in batch_meta]
+            group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
+            print(
+                f"[{_ts()}] Dispatch batch {batch_index + 1}/{len(batch_plan)} | "
+                f"worker=queued | group={group_name} | seeds={len(batch_indices)} | "
+                f"first_seed={seed_list[0]} | last_seed={seed_list[-1]} | "
+                f"active_limit={scheduler.active_worker_cap}",
+                flush=True,
+            )
+            request = _ProcessBatchRequest(
+                batch_index=batch_index,
+                batch_indices=list(batch_indices),
+                tasks=[all_tasks[idx] for idx in batch_indices],
+                uid=uid,
+                model_path=str(model_path),
+                task_total=len(all_tasks),
+            )
+            inflight_batches[batch_index] = request
+            task_queue.put(request)
 
     try:
         for worker in workers:
             worker.start()
-
-        for batch_index, batch_indices in enumerate(batch_plan):
-            batch_meta = [task_meta[idx] for idx in batch_indices]
-            seed_list = [meta["seed"] for meta in batch_meta]
-            print(
-                f"[{_ts()}] Dispatch batch {batch_index + 1}/{len(batch_plan)} | "
-                f"worker=queued | seeds={len(batch_indices)} | "
-                f"first_seed={seed_list[0]} | last_seed={seed_list[-1]}",
-                flush=True,
-            )
-            task_queue.put(
-                _ProcessBatchRequest(
-                    batch_index=batch_index,
-                    batch_indices=list(batch_indices),
-                    tasks=[all_tasks[idx] for idx in batch_indices],
-                    uid=uid,
-                    model_path=str(model_path),
-                    task_total=len(all_tasks),
-                )
-            )
+        _dispatch_available_batches()
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
@@ -650,6 +905,7 @@ async def _run_benchmark_process_mode(
 
             from swarm.protocol import ValidationResult
 
+            inflight_batches.pop(int(payload.batch_index), None)
             record_batch_completion(
                 int(payload.worker_id),
                 int(payload.batch_index),
@@ -658,6 +914,7 @@ async def _run_benchmark_process_mode(
                 float(payload.elapsed_sec),
             )
             completed_batches += 1
+            _dispatch_available_batches()
 
         _drain_progress_events()
         return effective_workers

@@ -593,6 +593,9 @@ class DockerSecureEvaluator:
             seed_wall_sec: float = 0.0,
             step_idx: int = 0,
             error: str = "",
+            calibration_overhead_sec: Optional[float] = None,
+            calibration_cpu_factor: Optional[float] = None,
+            calibrated_timeout_sec: Optional[float] = None,
         ) -> None:
             if on_seed_complete is None:
                 return
@@ -613,6 +616,21 @@ class DockerSecureEvaluator:
                     "seed_wall_sec": max(0.0, float(seed_wall_sec)),
                     "step_idx": int(step_idx),
                     "error": error,
+                    "calibration_overhead_sec": (
+                        None
+                        if calibration_overhead_sec is None
+                        else float(calibration_overhead_sec)
+                    ),
+                    "calibration_cpu_factor": (
+                        None
+                        if calibration_cpu_factor is None
+                        else float(calibration_cpu_factor)
+                    ),
+                    "calibrated_timeout_sec": (
+                        None
+                        if calibrated_timeout_sec is None
+                        else float(calibrated_timeout_sec)
+                    ),
                 }
             try:
                 on_seed_complete(payload)
@@ -1025,6 +1043,9 @@ class DockerSecureEvaluator:
                                     sim_t=t_sim,
                                     seed_wall_sec=time.time() - seed_wall_start,
                                     step_idx=step_idx,
+                                    calibration_overhead_sec=rpc_overhead_sec,
+                                    calibration_cpu_factor=cpu_factor,
+                                    calibrated_timeout_sec=calibrated_timeout,
                                 )
                             elif rpc_disconnected:
                                 _set_phase(
@@ -1042,6 +1063,9 @@ class DockerSecureEvaluator:
                                     sim_t=t_sim,
                                     seed_wall_sec=time.time() - seed_wall_start,
                                     step_idx=step_idx,
+                                    calibration_overhead_sec=rpc_overhead_sec,
+                                    calibration_cpu_factor=cpu_factor,
+                                    calibrated_timeout_sec=calibrated_timeout,
                                 )
                             elif strikes >= RPC_MAX_STRIKES_PER_SEED:
                                 _set_phase(
@@ -1061,6 +1085,9 @@ class DockerSecureEvaluator:
                                     sim_t=t_sim,
                                     seed_wall_sec=time.time() - seed_wall_start,
                                     step_idx=step_idx,
+                                    calibration_overhead_sec=rpc_overhead_sec,
+                                    calibration_cpu_factor=cpu_factor,
+                                    calibrated_timeout_sec=calibrated_timeout,
                                 )
                             else:
                                 min_clearance = info.get("min_clearance", None)
@@ -1094,6 +1121,9 @@ class DockerSecureEvaluator:
                                     sim_t=t_sim,
                                     seed_wall_sec=time.time() - seed_wall_start,
                                     step_idx=step_idx,
+                                    calibration_overhead_sec=rpc_overhead_sec,
+                                    calibration_cpu_factor=cpu_factor,
+                                    calibrated_timeout_sec=calibrated_timeout,
                                 )
 
                         finally:
@@ -1122,6 +1152,9 @@ class DockerSecureEvaluator:
                             seed_wall_sec=time.time() - seed_wall_start,
                             step_idx=0,
                             error=f"{type(e).__name__}: {e}",
+                            calibration_overhead_sec=locals().get("rpc_overhead_sec"),
+                            calibration_cpu_factor=locals().get("cpu_factor"),
+                            calibrated_timeout_sec=locals().get("calibrated_timeout"),
                         )
 
             return results
