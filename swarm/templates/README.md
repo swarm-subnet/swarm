@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm — Decentralized Drone Intelligence" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm — Decentralized Drone Intelligence" width="60%">
 
 # Swarm Subnet 124 — Drone Navigation Model
 
