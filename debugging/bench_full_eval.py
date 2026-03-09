@@ -16,7 +16,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import io
+import json
+import multiprocessing as mp
 import os
+import queue as queue_mod
 import random
 import re
 import statistics
@@ -24,9 +27,10 @@ import sys
 import threading
 import time
 import traceback
+import gc
 from collections import deque
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -72,6 +76,45 @@ class _RunOptions:
     timeout_progress_min_sim_advance: float = 0.02
     max_seed_walltime_sec: float = 0.0
     default_log_out: Optional[str] = None
+
+
+@dataclass
+class _BatchStat:
+    worker_id: int
+    batch_index: int
+    seed_count: int
+    elapsed_sec: float
+    seed_processing_sec: float
+    startup_overhead_sec: float
+    seeds: List[int]
+
+
+@dataclass
+class _ProcessBatchRequest:
+    batch_index: int
+    batch_indices: List[int]
+    tasks: List[Any]
+    uid: int
+    model_path: str
+    task_total: int
+
+
+@dataclass
+class _ProcessBatchResult:
+    worker_id: int
+    batch_index: int
+    batch_indices: List[int]
+    results: List[Tuple[int, bool, float, float]]
+    elapsed_sec: float
+    error: Optional[str] = None
+    traceback_text: Optional[str] = None
+
+
+@dataclass
+class _ProcessSeedEvent:
+    worker_id: int
+    batch_index: int
+    seed_meta: Optional[Dict[str, Any]] = None
 
 
 def _debug_profile_options() -> _RunOptions:
@@ -143,6 +186,30 @@ def _parse_args() -> argparse.Namespace:
         default="mid",
         help="RPC log verbosity level (default: mid).",
     )
+    parser.add_argument(
+        "--seed-file",
+        type=Path,
+        default=None,
+        help="JSON file with exact benchmark seeds to reuse across runs.",
+    )
+    parser.add_argument(
+        "--save-seed-file",
+        type=Path,
+        default=None,
+        help="Write the resolved benchmark seed map to JSON.",
+    )
+    parser.add_argument(
+        "--seed-search-rng",
+        type=int,
+        default=None,
+        help="Seed used for reproducible seed discovery when --seed-file is not provided.",
+    )
+    parser.add_argument(
+        "--summary-json-out",
+        type=Path,
+        default=None,
+        help="Write benchmark summary JSON to this path.",
+    )
     return parser.parse_args()
 
 
@@ -156,6 +223,33 @@ def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
             except Exception:
                 continue
     return None
+
+
+def _normalize_type_seeds(raw: Any) -> Dict[str, List[int]]:
+    if not isinstance(raw, dict):
+        raise ValueError("Seed file must contain a JSON object mapping benchmark groups to seed lists.")
+
+    normalized: Dict[str, List[int]] = {}
+    missing = [group for group in BENCH_GROUP_ORDER if group not in raw]
+    if missing:
+        raise ValueError(f"Seed file missing groups: {', '.join(missing)}")
+
+    for group in BENCH_GROUP_ORDER:
+        values = raw.get(group)
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"Seed group {group} must be a non-empty list.")
+        normalized[group] = [int(seed) for seed in values]
+
+    return normalized
+
+
+def _load_type_seeds(seed_file: Path) -> Dict[str, List[int]]:
+    return _normalize_type_seeds(json.loads(seed_file.read_text()))
+
+
+def _save_type_seeds(seed_file: Path, type_seeds: Dict[str, List[int]]) -> None:
+    seed_file.parent.mkdir(parents=True, exist_ok=True)
+    seed_file.write_text(json.dumps(type_seeds, indent=2, sort_keys=True))
 
 
 class _Tee(io.TextIOBase):
@@ -332,6 +426,252 @@ def _find_seeds(seeds_per_group: int) -> Dict[str, List[int]]:
     return groups
 
 
+def _batch_indices(total_tasks: int) -> List[List[int]]:
+    if total_tasks <= 0:
+        return []
+    return [
+        [index]
+        for index in range(total_tasks)
+    ]
+
+
+def _active_runtime_overrides() -> Dict[str, str]:
+    keys = [
+        "SWARM_DOCKER_THREAD_CAPS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+        "SWARM_TORCH_NUM_THREADS",
+        "SWARM_TORCH_INTEROP_THREADS",
+        "SWARM_DOCKER_WORKER_CPUS_OVERRIDE",
+        "SWARM_DOCKER_WORKER_MEMORY_OVERRIDE",
+        "SWARM_DOCKER_WORKER_CPUSETS",
+    ]
+    active: Dict[str, str] = {}
+    for key in keys:
+        value = os.getenv(key)
+        if value not in (None, ""):
+            active[key] = value
+    for key, value in os.environ.items():
+        if key.startswith("SWARM_DOCKER_WORKER_CPUSET_CPUS_") and value not in ("",):
+            active[key] = value
+    return active
+
+
+def _benchmark_mp_context() -> mp.context.BaseContext:
+    if sys.platform != "win32":
+        try:
+            return mp.get_context("fork")
+        except ValueError:
+            pass
+    return mp.get_context("spawn")
+
+
+def _create_prepared_benchmark_evaluator():
+    from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+
+    evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
+    evaluator.base_image = "swarm_evaluator_base:latest"
+    evaluator.last_fake_model_info = None
+    evaluator.base_ready = True
+    DockerSecureEvaluator._base_ready = True
+    return evaluator
+
+
+def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float]:
+    return (
+        int(getattr(result, "uid")),
+        bool(getattr(result, "success")),
+        float(getattr(result, "time_sec")),
+        float(getattr(result, "score")),
+    )
+
+
+def _benchmark_worker_main(
+    process_slot: int,
+    task_queue: Any,
+    result_queue: Any,
+    progress_queue: Any,
+) -> None:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        evaluator = _create_prepared_benchmark_evaluator()
+
+        while True:
+            request = task_queue.get()
+            if request is None:
+                return
+
+            batch_start = time.time()
+
+            def _on_seed_complete(seed_meta: Optional[Dict[str, Any]] = None) -> None:
+                try:
+                    progress_queue.put(
+                        _ProcessSeedEvent(
+                            worker_id=process_slot,
+                            batch_index=request.batch_index,
+                            seed_meta=seed_meta,
+                        )
+                    )
+                except Exception:
+                    pass
+
+            try:
+                seed_results = loop.run_until_complete(
+                    evaluator.evaluate_seeds_batch(
+                        tasks=request.tasks,
+                        uid=request.uid,
+                        model_path=Path(request.model_path),
+                        worker_id=process_slot,
+                        on_seed_complete=_on_seed_complete,
+                        task_offset=request.batch_indices[0] if request.batch_indices else 0,
+                        task_total=request.task_total,
+                    )
+                )
+                result_queue.put(
+                    _ProcessBatchResult(
+                        worker_id=process_slot,
+                        batch_index=request.batch_index,
+                        batch_indices=list(request.batch_indices),
+                        results=[_pack_validation_result(result) for result in seed_results],
+                        elapsed_sec=time.time() - batch_start,
+                    )
+                )
+            except Exception as exc:
+                result_queue.put(
+                    _ProcessBatchResult(
+                        worker_id=process_slot,
+                        batch_index=request.batch_index,
+                        batch_indices=list(request.batch_indices),
+                        results=[],
+                        elapsed_sec=time.time() - batch_start,
+                        error=f"{type(exc).__name__}: {exc}",
+                        traceback_text=traceback.format_exc(),
+                    )
+                )
+                return
+            finally:
+                gc.collect()
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+async def _run_benchmark_process_mode(
+    *,
+    all_tasks: List[Any],
+    task_meta: List[Dict[str, Any]],
+    batch_plan: List[List[int]],
+    uid: int,
+    model_path: Path,
+    effective_workers: int,
+    record_batch_completion: Any,
+    on_seed_done: Any,
+) -> int:
+    ctx = _benchmark_mp_context()
+    task_queue = ctx.Queue()
+    result_queue = ctx.Queue()
+    progress_queue = ctx.Queue()
+    workers = [
+        ctx.Process(
+            target=_benchmark_worker_main,
+            args=(worker_slot, task_queue, result_queue, progress_queue),
+            name=f"bench_host_worker_{worker_slot}",
+            daemon=True,
+        )
+        for worker_slot in range(effective_workers)
+    ]
+
+    def _drain_progress_events() -> None:
+        while True:
+            try:
+                event = progress_queue.get_nowait()
+            except queue_mod.Empty:
+                return
+            on_seed_done(getattr(event, "seed_meta", None))
+
+    try:
+        for worker in workers:
+            worker.start()
+
+        for batch_index, batch_indices in enumerate(batch_plan):
+            batch_meta = [task_meta[idx] for idx in batch_indices]
+            seed_list = [meta["seed"] for meta in batch_meta]
+            print(
+                f"[{_ts()}] Dispatch batch {batch_index + 1}/{len(batch_plan)} | "
+                f"worker=queued | seeds={len(batch_indices)} | "
+                f"first_seed={seed_list[0]} | last_seed={seed_list[-1]}",
+                flush=True,
+            )
+            task_queue.put(
+                _ProcessBatchRequest(
+                    batch_index=batch_index,
+                    batch_indices=list(batch_indices),
+                    tasks=[all_tasks[idx] for idx in batch_indices],
+                    uid=uid,
+                    model_path=str(model_path),
+                    task_total=len(all_tasks),
+                )
+            )
+
+        completed_batches = 0
+        while completed_batches < len(batch_plan):
+            _drain_progress_events()
+            try:
+                payload = result_queue.get(timeout=0.2)
+            except queue_mod.Empty:
+                if any((not worker.is_alive()) and worker.exitcode not in (0, None) for worker in workers):
+                    crashed = [
+                        f"{worker.name}(exitcode={worker.exitcode})"
+                        for worker in workers
+                        if (not worker.is_alive()) and worker.exitcode not in (0, None)
+                    ]
+                    raise RuntimeError(
+                        "Benchmark host worker crashed before returning results: "
+                        + ", ".join(crashed)
+                    )
+                await asyncio.sleep(0)
+                continue
+
+            _drain_progress_events()
+            if payload.error:
+                raise RuntimeError(
+                    f"Host worker {payload.worker_id} failed on batch {payload.batch_index + 1}: "
+                    f"{payload.error}\n{payload.traceback_text or ''}".rstrip()
+                )
+
+            from swarm.protocol import ValidationResult
+
+            record_batch_completion(
+                int(payload.worker_id),
+                int(payload.batch_index),
+                list(payload.batch_indices),
+                [ValidationResult(*packed) for packed in payload.results],
+                float(payload.elapsed_sec),
+            )
+            completed_batches += 1
+
+        _drain_progress_events()
+        return effective_workers
+    finally:
+        for _ in workers:
+            task_queue.put(None)
+        for worker in workers:
+            worker.join(timeout=5.0)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=2.0)
+        for q in (task_queue, result_queue, progress_queue):
+            try:
+                q.close()
+            except Exception:
+                pass
+
+
 async def _run_benchmark(
     model_path: Path,
     uid: int,
@@ -364,9 +704,12 @@ async def _run_benchmark(
     evaluator = DockerSecureEvaluator()
     if not evaluator._base_ready:
         raise RuntimeError("Docker evaluator base image is not ready.")
+    del evaluator
 
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
+    full_wall_by_key: Dict[Tuple[int, int], float] = {}
+    batch_stats: List[_BatchStat] = []
     total_seeds = len(all_tasks)
     heartbeat_sec = run_opts.heartbeat_sec
 
@@ -496,61 +839,80 @@ async def _run_benchmark(
         print(f"[{_ts()}] Progress timeout extension: disabled")
 
     effective_workers = max(1, int(num_workers))
+    batch_plan = _batch_indices(total_tasks=len(all_tasks))
     print(
         f"[{_ts()}] Running evaluation ({effective_workers} workers, {len(all_tasks)} seeds, "
-        f"dynamic dispatch)..."
+        f"container_mode=single-seed, host_parallelism=process, batches={len(batch_plan)})..."
     )
     heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
     heartbeat_thread.start()
     try:
         with _temporary_env(env_overrides):
             results: List[Optional[Any]] = [None] * len(all_tasks)
-            pending_indices = deque(range(len(all_tasks)))
-            pending_lock = asyncio.Lock()
 
-            async def _claim_next_index() -> Optional[int]:
-                async with pending_lock:
-                    if not pending_indices:
-                        return None
-                    return pending_indices.popleft()
+            def _record_batch_completion(
+                worker_slot: int,
+                batch_index: int,
+                batch_indices: List[int],
+                seed_results: List[Any],
+                batch_elapsed: float,
+            ) -> None:
+                if len(seed_results) != len(batch_indices):
+                    raise RuntimeError(
+                        f"Worker {worker_slot}: unexpected result count {len(seed_results)} "
+                        f"for batch of {len(batch_indices)} seeds."
+                    )
 
-            async def _worker_loop(worker_slot: int) -> None:
-                while True:
-                    idx = await _claim_next_index()
-                    if idx is None:
-                        return
-
+                batch_meta = [task_meta[idx] for idx in batch_indices]
+                seed_list = [meta["seed"] for meta in batch_meta]
+                batch_processing_sec = 0.0
+                for idx, result in zip(batch_indices, seed_results):
+                    results[idx] = result
                     meta = task_meta[idx]
-                    task = all_tasks[idx]
-                    print(
-                        f"[{_ts()}] Dispatch {idx + 1}/{len(all_tasks)} | "
-                        f"worker={worker_slot} | seed={meta['seed']} | group={meta['group']}",
-                        flush=True,
-                    )
-                    seed_start = time.time()
-                    seed_results = await evaluator.evaluate_seeds_batch(
-                        tasks=[task],
-                        uid=uid,
-                        model_path=model_path,
-                        worker_id=worker_slot,
-                        on_seed_complete=_on_seed_done,
-                        task_offset=idx,
-                        task_total=len(all_tasks),
-                    )
-                    if len(seed_results) != 1:
-                        raise RuntimeError(
-                            f"Worker {worker_slot}: unexpected result count "
-                            f"{len(seed_results)} for single-task dispatch (seed {meta['seed']})."
-                        )
-                    results[idx] = seed_results[0]
-                    print(
-                        f"[{_ts()}] Worker {worker_slot} complete | seed={meta['seed']} "
-                        f"in {time.time() - seed_start:.1f}s",
-                        flush=True,
-                    )
+                    seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
+                    seed_values = seed_wall_by_key.get(seed_key)
+                    seed_processing = float(seed_values[0]) if seed_values else 0.0
+                    batch_processing_sec += seed_processing
 
-            worker_count = effective_workers
-            await asyncio.gather(*(_worker_loop(i) for i in range(worker_count)))
+                startup_overhead_sec = max(0.0, batch_elapsed - batch_processing_sec)
+                startup_share = (
+                    startup_overhead_sec / len(batch_indices) if batch_indices else 0.0
+                )
+                for idx in batch_indices:
+                    meta = task_meta[idx]
+                    seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
+                    seed_values = seed_wall_by_key.get(seed_key)
+                    seed_processing = float(seed_values[0]) if seed_values else 0.0
+                    full_wall_by_key[seed_key] = seed_processing + startup_share
+
+                batch_stats.append(
+                    _BatchStat(
+                        worker_id=worker_slot,
+                        batch_index=batch_index,
+                        seed_count=len(batch_indices),
+                        elapsed_sec=batch_elapsed,
+                        seed_processing_sec=batch_processing_sec,
+                        startup_overhead_sec=startup_overhead_sec,
+                        seeds=seed_list,
+                    )
+                )
+                print(
+                    f"[{_ts()}] Worker {worker_slot} complete | batch {batch_index + 1} "
+                    f"| seeds={len(batch_indices)} | elapsed={batch_elapsed:.1f}s "
+                    f"| startup={startup_overhead_sec:.1f}s",
+                    flush=True,
+                )
+
+            worker_count = await _run_benchmark_process_mode(
+                all_tasks=all_tasks,
+                task_meta=task_meta,
+                batch_plan=batch_plan,
+                uid=uid,
+                model_path=model_path,
+                effective_workers=effective_workers,
+                record_batch_completion=_record_batch_completion,
+                on_seed_done=_on_seed_done,
+            )
 
             if any(r is None for r in results):
                 raise RuntimeError("Dynamic dispatch ended with missing seed result(s).")
@@ -560,7 +922,17 @@ async def _run_benchmark(
         progress_bar.close()
 
     elapsed = time.time() - eval_start
-    return task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start, worker_count
+    return (
+        task_meta,
+        results,
+        seed_times,
+        seed_wall_by_key,
+        full_wall_by_key,
+        batch_stats,
+        elapsed,
+        eval_start,
+        worker_count,
+    )
 
 
 def _print_results(
@@ -568,9 +940,12 @@ def _print_results(
     results: list,
     seed_times: List[float],
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]],
+    full_wall_by_key: Dict[Tuple[int, int], float],
+    batch_stats: List[_BatchStat],
     elapsed: float,
     eval_start: float,
     num_workers: int,
+    host_parallelism: str = "process",
 ) -> Dict[str, Any]:
     """Print results table and return JSON-serializable summary."""
     GROUP_ORDER = BENCH_GROUP_ORDER
@@ -592,12 +967,13 @@ def _print_results(
         seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
         wall_q = seed_wall_queues.get(seed_key)
         if wall_q and len(wall_q) > 0:
-            wall = float(wall_q.popleft())
+            processing_wall = float(wall_q.popleft())
         elif i < len(seed_times):
             # Fallback for compatibility if callback metadata was not provided.
-            wall = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
+            processing_wall = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
         else:
-            wall = 0.0
+            processing_wall = 0.0
+        wall = float(full_wall_by_key.get(seed_key, processing_wall))
 
         is_timeout = wall < 0.5 and i > 0
         group_results[group].append({
@@ -606,6 +982,7 @@ def _print_results(
             "success": success,
             "sim_time": sim_time,
             "wall_time": wall,
+            "processing_wall_time": processing_wall,
             "timeout_zero": is_timeout,
         })
 
@@ -648,9 +1025,18 @@ def _print_results(
 
     throughput_seeds_per_min = (total_seeds / elapsed * 60.0) if elapsed > 0 else 0.0
     throughput_per_worker = throughput_seeds_per_min / workers_used
-    total_seed_worker_sec = sum(all_seed_walls)
+    total_seed_worker_sec = sum(float(stat.elapsed_sec) for stat in batch_stats) if batch_stats else sum(all_seed_walls)
     effective_parallelism = (total_seed_worker_sec / elapsed) if elapsed > 0 else 0.0
     worker_utilization = min(1.0, effective_parallelism / workers_used) if workers_used > 0 else 0.0
+    total_startup_overhead_sec = sum(float(stat.startup_overhead_sec) for stat in batch_stats)
+    avg_startup_overhead_sec = (
+        total_startup_overhead_sec / len(batch_stats) if batch_stats else 0.0
+    )
+    avg_batch_size = (
+        sum(int(stat.seed_count) for stat in batch_stats) / len(batch_stats)
+        if batch_stats
+        else 0.0
+    )
 
     print("  Run summary:")
     print(f"    Seeds evaluated:           {total_seeds}")
@@ -670,25 +1056,11 @@ def _print_results(
         f"    Effective parallelism:     {effective_parallelism:.2f}x "
         f"(utilization {worker_utilization * 100.0:.1f}% of {workers_used} workers)"
     )
+    print(f"    Batches run:               {len(batch_stats)}")
+    print(f"    Avg seeds / container:     {avg_batch_size:.2f}")
+    print(f"    Total startup overhead:    {total_startup_overhead_sec:.1f}s")
+    print(f"    Avg startup / container:   {avg_startup_overhead_sec:.1f}s")
     print()
-
-    # Optional startup overhead estimate for single-worker runs.
-    startup_overhead = 0.0
-    real_deltas: List[float] = []
-    if workers_used == 1:
-        for i in range(len(seed_times)):
-            dt = (seed_times[i] - seed_times[i - 1]) if i > 0 else (seed_times[0] - eval_start)
-            if dt >= 0.5:
-                real_deltas.append(dt)
-    if real_deltas:
-        first_wall = real_deltas[0]
-        steady = real_deltas[1:] if len(real_deltas) > 1 else []
-        avg_steady = sum(steady) / len(steady) if steady else 0
-        startup_overhead = max(0, first_wall - avg_steady) if avg_steady > 0 else first_wall
-        print(f"  Container startup overhead: ~{startup_overhead:.0f}s")
-        if steady:
-            print(f"  Steady-state per seed:      ~{avg_steady:.1f}s")
-        print()
 
     # Extrapolation (derived from challenge type distribution).
     from math import floor
@@ -744,9 +1116,11 @@ def _print_results(
     return {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "num_workers": workers_used,
+        "host_parallelism": host_parallelism,
         "total_seeds": len(task_meta),
         "wall_clock_sec": elapsed,
-        "startup_overhead_sec": startup_overhead,
+        "startup_overhead_sec": total_startup_overhead_sec,
+        "seed_timings_note": "wall_time includes equal share of per-container startup overhead",
         "run_metrics": {
             "success_count": success_count,
             "avg_wall_per_seed_sec": avg_wall_per_seed,
@@ -758,8 +1132,13 @@ def _print_results(
             "throughput_per_worker_seeds_per_min": throughput_per_worker,
             "effective_parallelism": effective_parallelism,
             "worker_utilization": worker_utilization,
+            "batch_count": len(batch_stats),
+            "avg_seeds_per_container": avg_batch_size,
+            "avg_startup_overhead_per_container_sec": avg_startup_overhead_sec,
+            "total_startup_overhead_sec": total_startup_overhead_sec,
         },
         "group_results": {g: rs for g, rs in group_results.items()},
+        "batch_stats": [asdict(stat) for stat in batch_stats],
         "extrapolation_1000_seeds": {
             "workers_used": workers_used,
             "total_seed_worker_sec": total_extrap_worker_sec,
@@ -798,10 +1177,13 @@ def main() -> None:
     results: list = []
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
+    full_wall_by_key: Dict[Tuple[int, int], float] = {}
+    batch_stats: List[_BatchStat] = []
     elapsed = 0.0
     eval_start = time.time()
     launched_workers = effective_workers
     overrides: Dict[str, Any] = {}
+    summary: Optional[Dict[str, Any]] = None
 
     try:
         if effective_log_out:
@@ -824,22 +1206,47 @@ def main() -> None:
         print(f"[{_ts()}] Workers effective:  {effective_workers}")
         print(f"[{_ts()}] Profile: debug")
         print(f"[{_ts()}] RPC verbosity: {args.rpc_verbosity}")
+        print(f"[{_ts()}] Host parallelism: process")
+        print(f"[{_ts()}] Container mode: single-seed")
         if overrides:
             print(f"[{_ts()}] Relaxed timeouts: {overrides}")
+        runtime_overrides = _active_runtime_overrides()
+        if runtime_overrides:
+            print(f"[{_ts()}] Runtime overrides: {runtime_overrides}")
         print(f"[{_ts()}] Map types selected: {', '.join(selected_groups)}")
         if effective_log_out:
             print(f"[{_ts()}] Log file: {effective_log_out}")
         print()
 
-        print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
-        type_seeds = _find_seeds(args.seeds_per_group)
+        if args.seed_file is not None:
+            print(f"[{_ts()}] Loading seeds from {args.seed_file}...")
+            type_seeds = _load_type_seeds(args.seed_file)
+        else:
+            if args.seed_search_rng is not None:
+                print(f"[{_ts()}] Seed search RNG: {args.seed_search_rng}")
+                random.seed(args.seed_search_rng)
+            print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
+            type_seeds = _find_seeds(args.seeds_per_group)
+        if args.save_seed_file is not None:
+            _save_type_seeds(args.save_seed_file, type_seeds)
+            print(f"[{_ts()}] Saved seed file: {args.save_seed_file}")
         total_seeds = sum(len(v) for v in type_seeds.values())
         for group, seeds in type_seeds.items():
             print(f"  {group}: {seeds}")
         print(f"  Total: {total_seeds}")
         print()
 
-        task_meta, results, seed_times, seed_wall_by_key, elapsed, eval_start, launched_workers = asyncio.run(
+        (
+            task_meta,
+            results,
+            seed_times,
+            seed_wall_by_key,
+            full_wall_by_key,
+            batch_stats,
+            elapsed,
+            eval_start,
+            launched_workers,
+        ) = asyncio.run(
             _run_benchmark(
                 model_path,
                 uid,
@@ -871,14 +1278,17 @@ def main() -> None:
         if run_error is not None:
             print(f"[{_ts()}] Printing partial results collected before failure.", flush=True)
         try:
-            _print_results(
+            summary = _print_results(
                 task_meta,
                 results,
                 seed_times,
                 seed_wall_by_key,
+                full_wall_by_key,
+                batch_stats,
                 elapsed,
                 eval_start,
                 launched_workers,
+                host_parallelism="process",
             )
         except BaseException as exc:
             report_error = exc
@@ -912,6 +1322,10 @@ def main() -> None:
             pass
         finally:
             log_fh.close()
+
+    if args.summary_json_out is not None and summary is not None:
+        args.summary_json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_json_out.write_text(json.dumps(summary, indent=2, sort_keys=True))
 
     if run_error is not None:
         raise run_error

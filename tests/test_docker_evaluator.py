@@ -139,6 +139,17 @@ def test_check_docker_available_false_on_missing_binary(monkeypatch):
     assert ev._check_docker_available() is False
 
 
+def test_cleanup_env_quietly_closes_env():
+    calls = {"count": 0}
+
+    class _Env:
+        def close(self):
+            calls["count"] += 1
+
+    de._cleanup_env_quietly(_Env())
+    assert calls["count"] == 1
+
+
 def test_get_image_hash_label(monkeypatch):
     ev = _new_evaluator()
     monkeypatch.setattr(
@@ -262,6 +273,24 @@ def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
 
     monkeypatch.setattr(de.subprocess, "run", _run)
     assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+
+
+def test_docker_env_overrides_enable_thread_caps(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_THREAD_CAPS", "1")
+    envs = de.DockerSecureEvaluator._docker_env_overrides()
+    assert envs["OMP_NUM_THREADS"] == "1"
+    assert envs["SWARM_TORCH_NUM_THREADS"] == "1"
+    assert envs["SWARM_TORCH_INTEROP_THREADS"] == "1"
+
+
+def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUS_OVERRIDE", "1.0")
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_MEMORY_OVERRIDE", "4g")
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSETS", "0-1;2-3")
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(worker_id=1)
+    assert limits["cpus"] == "1.0"
+    assert limits["memory"] == "4g"
+    assert limits["cpuset_cpus"] == "2-3"
 
 
 def test_calibrate_rpc_overhead_fallback_on_failures(monkeypatch):

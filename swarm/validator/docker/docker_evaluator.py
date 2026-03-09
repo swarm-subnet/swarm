@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import hashlib
 import os
 import re
@@ -47,6 +48,15 @@ from swarm.core.model_verify import add_to_blacklist
 from swarm.validator.reward import flight_reward
 from gym_pybullet_drones.utils.enums import ActionType
 
+_THREAD_CAP_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+)
+
 
 def _run_multi_seed_rpc_sync_isolated_payload(
     tasks: list, uid: int, rpc_port: int
@@ -68,6 +78,16 @@ def _run_multi_seed_rpc_sync_isolated_payload(
         (int(r.uid), bool(r.success), float(r.time_sec), float(r.score))
         for r in results
     ]
+
+
+def _cleanup_env_quietly(env: object) -> None:
+    try:
+        close_fn = getattr(env, "close", None)
+        if callable(close_fn):
+            close_fn()
+    except Exception:
+        pass
+    gc.collect()
 
 
 class DockerSecureEvaluator:
@@ -107,6 +127,48 @@ class DockerSecureEvaluator:
                 "📖 See installation instructions in swarm/requirements.txt"
             )
             return False
+
+    @staticmethod
+    def _env_truthy(name: str) -> bool:
+        return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _docker_env_overrides(cls) -> dict[str, str]:
+        envs: dict[str, str] = {}
+        if cls._env_truthy("SWARM_DOCKER_THREAD_CAPS"):
+            for key in _THREAD_CAP_ENV_VARS:
+                envs[key] = "1"
+            envs["SWARM_TORCH_NUM_THREADS"] = "1"
+            envs["SWARM_TORCH_INTEROP_THREADS"] = "1"
+
+        for key in (*_THREAD_CAP_ENV_VARS, "SWARM_TORCH_NUM_THREADS", "SWARM_TORCH_INTEROP_THREADS"):
+            value = os.getenv(key)
+            if value is not None and value != "":
+                envs[key] = value
+
+        return envs
+
+    @staticmethod
+    def _split_worker_cpuset_map(raw: str) -> list[str]:
+        return [entry.strip() for entry in re.split(r"[;|]", raw) if entry.strip()]
+
+    @classmethod
+    def _resolve_worker_limits(cls, worker_id: int) -> dict[str, Optional[str]]:
+        cpus_override = os.getenv("SWARM_DOCKER_WORKER_CPUS_OVERRIDE")
+        memory_override = os.getenv("SWARM_DOCKER_WORKER_MEMORY_OVERRIDE")
+        cpuset = os.getenv(f"SWARM_DOCKER_WORKER_CPUSET_CPUS_{worker_id}")
+        if cpuset is None:
+            cpuset_map = os.getenv("SWARM_DOCKER_WORKER_CPUSETS")
+            if cpuset_map:
+                entries = cls._split_worker_cpuset_map(cpuset_map)
+                if worker_id < len(entries):
+                    cpuset = entries[worker_id]
+
+        return {
+            "cpus": cpus_override if cpus_override not in (None, "") else DOCKER_WORKER_CPUS,
+            "memory": memory_override if memory_override not in (None, "") else DOCKER_WORKER_MEMORY,
+            "cpuset_cpus": cpuset if cpuset not in (None, "") else None,
+        }
 
     def _calculate_docker_hash(self) -> str:
         """Calculate hash of all source files that go into the Docker image."""
@@ -1035,10 +1097,7 @@ class DockerSecureEvaluator:
                                 )
 
                         finally:
-                            try:
-                                env.close()
-                            except Exception:
-                                pass
+                            _cleanup_env_quietly(env)
 
                     except Exception as e:
                         try:
@@ -1341,6 +1400,8 @@ class DockerSecureEvaluator:
         try:
             current_uid = os.getuid()
             current_gid = os.getgid()
+            worker_limits = self._resolve_worker_limits(worker_id)
+            docker_envs = self._docker_env_overrides()
 
             tmpdir = tempfile.mkdtemp()
             os.chown(tmpdir, current_uid, current_gid)
@@ -1416,8 +1477,8 @@ class DockerSecureEvaluator:
                     container_name,
                     "--user",
                     f"{current_uid}:{current_gid}",
-                    f"--memory={DOCKER_WORKER_MEMORY}",
-                    f"--cpus={DOCKER_WORKER_CPUS}",
+                    f"--memory={worker_limits['memory']}",
+                    f"--cpus={worker_limits['cpus']}",
                     "--pids-limit=50",
                     "--ulimit",
                     "nofile=256:256",
@@ -1433,10 +1494,18 @@ class DockerSecureEvaluator:
                     f"{host_port}:8000",
                     "-v",
                     f"{submission_dir}:/workspace/submission:rw",
-                    self.base_image,
-                    "bash",
-                    "/workspace/submission/startup.sh",
                 ]
+                if worker_limits["cpuset_cpus"]:
+                    cmd.extend(["--cpuset-cpus", str(worker_limits["cpuset_cpus"])])
+                for key, value in docker_envs.items():
+                    cmd.extend(["-e", f"{key}={value}"])
+                cmd.extend(
+                    [
+                        self.base_image,
+                        "bash",
+                        "/workspace/submission/startup.sh",
+                    ]
+                )
             else:
                 cmd = [
                     "docker",
@@ -1447,8 +1516,8 @@ class DockerSecureEvaluator:
                     container_name,
                     "--user",
                     f"{current_uid}:{current_gid}",
-                    f"--memory={DOCKER_WORKER_MEMORY}",
-                    f"--cpus={DOCKER_WORKER_CPUS}",
+                    f"--memory={worker_limits['memory']}",
+                    f"--cpus={worker_limits['cpus']}",
                     "--pids-limit=20",
                     "--ulimit",
                     "nofile=256:256",
@@ -1464,11 +1533,19 @@ class DockerSecureEvaluator:
                     f"{host_port}:8000",
                     "-v",
                     f"{submission_dir}:/workspace/submission:ro",
-                    self.base_image,
-                    "bash",
-                    "-c",
-                    "sleep infinity",
                 ]
+                if worker_limits["cpuset_cpus"]:
+                    cmd.extend(["--cpuset-cpus", str(worker_limits["cpuset_cpus"])])
+                for key, value in docker_envs.items():
+                    cmd.extend(["-e", f"{key}={value}"])
+                cmd.extend(
+                    [
+                        self.base_image,
+                        "bash",
+                        "-c",
+                        "sleep infinity",
+                    ]
+                )
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 

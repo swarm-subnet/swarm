@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import queue
 import sys
 from collections import deque
 from pathlib import Path
@@ -45,6 +46,23 @@ def test_infer_uid_from_model_path():
     assert bench_full_eval._infer_uid_from_model_path(Path("model/submission.zip")) is None
 
 
+def test_batch_indices_creates_one_seed_per_batch():
+    assert bench_full_eval._batch_indices(5) == [
+        [0],
+        [1],
+        [2],
+        [3],
+        [4],
+    ]
+
+
+def test_save_and_load_type_seeds(tmp_path):
+    seed_file = tmp_path / "seeds.json"
+    payload = {group: [i + 1] for i, group in enumerate(bench_full_eval.BENCH_GROUP_ORDER)}
+    bench_full_eval._save_type_seeds(seed_file, payload)
+    assert bench_full_eval._load_type_seeds(seed_file) == payload
+
+
 def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     model_path = tmp_path / "UID_178.zip"
     model_path.write_bytes(b"zip")
@@ -53,7 +71,7 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -75,7 +93,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -114,6 +132,8 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
             [fake_result],
             [1060.0],
             {(seed, 5): deque([60.0])},
+            {(seed, 5): 61.0},
+            [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
             eval_start,
             1,
@@ -191,6 +211,8 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
             [fake_result],
             [1060.0],
             {(seed, 5): deque([60.0])},
+            {(seed, 5): 61.0},
+            [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
             eval_start,
             3,
@@ -238,32 +260,10 @@ def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_p
 def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
+    captured = {}
 
     class _FakeEvaluator:
         _base_ready = True
-
-        async def evaluate_seeds_batch(
-            self,
-            tasks,
-            uid,
-            model_path,
-            worker_id=0,
-            on_seed_complete=None,
-            task_offset=0,
-            task_total=None,
-        ):
-            _ = uid, model_path, worker_id, task_offset, task_total
-            task = tasks[0]
-            if on_seed_complete is not None:
-                on_seed_complete(
-                    {
-                        "map_seed": task.map_seed,
-                        "challenge_type": task.challenge_type,
-                        "seed_wall_sec": 0.1,
-                    }
-                )
-            await asyncio.sleep(0)
-            return [SimpleNamespace(success=False, score=0.0, time_sec=0.0)]
 
     def _fake_random_task(sim_dt, seed):
         _ = sim_dt
@@ -280,6 +280,25 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
 
     monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
     monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)
+    async def _fake_process_mode(**kwargs):
+        captured["effective_workers"] = kwargs["effective_workers"]
+        kwargs["on_seed_done"](
+            {
+                "map_seed": 123456,
+                "challenge_type": 5,
+                "seed_wall_sec": 0.1,
+            }
+        )
+        kwargs["record_batch_completion"](
+            0,
+            0,
+            [0],
+            [SimpleNamespace(uid=0, success=False, time_sec=0.0, score=0.0)],
+            0.1,
+        )
+        return kwargs["effective_workers"]
+
+    monkeypatch.setattr(bench_full_eval, "_run_benchmark_process_mode", _fake_process_mode)
 
     out = asyncio.run(
         bench_full_eval._run_benchmark(
@@ -292,4 +311,130 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
     )
 
     launched_workers = out[-1]
+    assert captured["effective_workers"] == 30
     assert launched_workers == 30
+
+
+def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+    captured = {}
+
+    class _FakeEvaluator:
+        _base_ready = True
+
+    def _fake_random_task(sim_dt, seed):
+        _ = sim_dt
+        return SimpleNamespace(
+            map_seed=seed,
+            challenge_type=5,
+            horizon=60.0,
+            moving_platform=False,
+            start=(0.0, 0.0, 0.0),
+        )
+
+    async def _fake_process_mode(**kwargs):
+        captured["called"] = True
+        kwargs["on_seed_done"](
+            {
+                "map_seed": 123456,
+                "challenge_type": 5,
+                "seed_wall_sec": 0.25,
+            }
+        )
+        kwargs["record_batch_completion"](
+            1,
+            0,
+            [0],
+            [SimpleNamespace(uid=0, success=True, time_sec=1.0, score=0.5)],
+            0.5,
+        )
+        return kwargs["effective_workers"]
+
+    import swarm.validator.task_gen as task_gen
+    import swarm.validator.docker.docker_evaluator as docker_eval_mod
+
+    monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
+    monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_run_benchmark_process_mode",
+        _fake_process_mode,
+    )
+
+    out = asyncio.run(
+        bench_full_eval._run_benchmark(
+            model_path=model_path,
+            uid=0,
+            type_seeds={"type5_warehouse": [123456]},
+            num_workers=2,
+            run_opts=bench_full_eval._RunOptions(),
+        )
+    )
+
+    assert captured["called"] is True
+    assert out[-1] == 2
+    assert out[1][0].score == 0.5
+    assert out[4][(123456, 5)] == 0.5
+
+
+def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+    task_queue: queue.Queue = queue.Queue()
+    result_queue: queue.Queue = queue.Queue()
+    progress_queue: queue.Queue = queue.Queue()
+
+    class _FakeEvaluator:
+        async def evaluate_seeds_batch(
+            self,
+            tasks,
+            uid,
+            model_path,
+            worker_id=0,
+            on_seed_complete=None,
+            task_offset=0,
+            task_total=None,
+        ):
+            _ = uid, model_path, worker_id, task_offset, task_total
+            for task in tasks:
+                if on_seed_complete is not None:
+                    on_seed_complete(
+                        {
+                            "map_seed": task.map_seed,
+                            "challenge_type": task.challenge_type,
+                            "seed_wall_sec": 0.2,
+                        }
+                    )
+            return [SimpleNamespace(uid=uid, success=False, time_sec=0.0, score=0.0) for _ in tasks]
+
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_create_prepared_benchmark_evaluator",
+        lambda: _FakeEvaluator(),
+    )
+
+    task_queue.put(
+        bench_full_eval._ProcessBatchRequest(
+            batch_index=0,
+            batch_indices=[0, 1],
+            tasks=[
+                SimpleNamespace(map_seed=10, challenge_type=5),
+                SimpleNamespace(map_seed=11, challenge_type=5),
+            ],
+            uid=7,
+            model_path=str(model_path),
+            task_total=2,
+        )
+    )
+    task_queue.put(None)
+
+    bench_full_eval._benchmark_worker_main(0, task_queue, result_queue, progress_queue)
+
+    progress_events = [progress_queue.get_nowait(), progress_queue.get_nowait()]
+    result = result_queue.get_nowait()
+
+    assert [event.seed_meta["map_seed"] for event in progress_events] == [10, 11]
+    assert result.worker_id == 0
+    assert result.batch_index == 0
+    assert len(result.results) == 2
