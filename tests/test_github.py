@@ -114,50 +114,67 @@ def test_required_readme_hash_matches_template():
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Repo ownership (one GitHub repo per UID)
+# Repo ownership (one GitHub repo per hotkey)
 # ──────────────────────────────────────────────────────────────────────────
 
 import swarm.validator.utils as _vu
 
+HK_A = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty"
+HK_B = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+
 
 def test_check_repo_ownership_first_claim(tmp_path, monkeypatch):
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
-    assert _vu.check_repo_ownership("https://github.com/owner/repo", 42) is True
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42) is True
 
 
-def test_check_repo_ownership_same_uid_allowed(tmp_path, monkeypatch):
+def test_check_repo_ownership_same_hotkey_allowed(tmp_path, monkeypatch):
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
-    assert _vu.check_repo_ownership("https://github.com/owner/repo", 42) is True
-    assert _vu.check_repo_ownership("https://github.com/owner/repo", 42) is True
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42) is True
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42) is True
 
 
-def test_check_repo_ownership_different_uid_rejected(tmp_path, monkeypatch):
+def test_check_repo_ownership_different_hotkey_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
-    assert _vu.check_repo_ownership("https://github.com/owner/repo", 42) is True
-    assert _vu.check_repo_ownership("https://github.com/owner/repo", 99) is False
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42) is True
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_B, 99) is False
 
 
 def test_check_repo_ownership_different_repos_allowed(tmp_path, monkeypatch):
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
-    assert _vu.check_repo_ownership("https://github.com/alice/model-a", 1) is True
-    assert _vu.check_repo_ownership("https://github.com/bob/model-b", 2) is True
+    assert _vu.check_repo_ownership("https://github.com/alice/model-a", HK_A, 1) is True
+    assert _vu.check_repo_ownership("https://github.com/bob/model-b", HK_B, 2) is True
 
 
 def test_check_repo_ownership_invalid_url(tmp_path, monkeypatch):
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
-    assert _vu.check_repo_ownership("not-a-url", 1) is False
+    assert _vu.check_repo_ownership("not-a-url", HK_A, 1) is False
 
 
 def test_check_repo_ownership_case_insensitive(tmp_path, monkeypatch):
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
-    assert _vu.check_repo_ownership("https://github.com/Owner/Repo", 10) is True
-    assert _vu.check_repo_ownership("https://github.com/owner/repo", 99) is False
+    assert _vu.check_repo_ownership("https://github.com/Owner/Repo", HK_A, 10) is True
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_B, 99) is False
+
+
+def test_check_repo_ownership_same_hotkey_new_uid(tmp_path, monkeypatch):
+    monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", tmp_path / "claimed_repos.json")
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42) is True
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 99) is True
+
+
+def test_check_repo_ownership_legacy_int_owner(tmp_path, monkeypatch):
+    state_file = tmp_path / "claimed_repos.json"
+    monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", state_file)
+    import json
+    state_file.write_text(json.dumps({"https://github.com/owner/repo": 42}))
+    assert _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42) is False
 
 
 def test_claimed_repos_persists_to_disk(tmp_path, monkeypatch):
     state_file = tmp_path / "claimed_repos.json"
     monkeypatch.setattr(_vu, "CLAIMED_REPOS_FILE", state_file)
-    _vu.check_repo_ownership("https://github.com/owner/repo", 42)
+    _vu.check_repo_ownership("https://github.com/owner/repo", HK_A, 42)
     assert state_file.exists()
     data = _vu.load_claimed_repos()
-    assert data["https://github.com/owner/repo"] == 42
+    assert data["https://github.com/owner/repo"] == HK_A

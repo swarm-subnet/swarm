@@ -233,8 +233,11 @@ def mark_model_hash_processed(uid: int, model_hash: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# GitHub repo ownership (one repo per UID)
+# GitHub repo ownership (one repo per hotkey)
 # ──────────────────────────────────────────────────────────────────────────
+
+_claimed_repos_lock = threading.Lock()
+
 
 def load_claimed_repos() -> dict:
     try:
@@ -246,33 +249,38 @@ def load_claimed_repos() -> dict:
     return {}
 
 
-def save_claimed_repos(claimed: dict) -> None:
+def save_claimed_repos(claimed: dict) -> bool:
     STATE_DIR.mkdir(exist_ok=True)
     temp_file = CLAIMED_REPOS_FILE.with_suffix(".tmp")
     try:
         with open(temp_file, 'w') as f:
             json.dump(claimed, f)
         temp_file.replace(CLAIMED_REPOS_FILE)
+        return True
     except IOError as e:
         bt.logging.error(f"Failed to save claimed repos: {e}")
         temp_file.unlink(missing_ok=True)
+        return False
 
 
-def check_repo_ownership(github_url: str, uid: int) -> bool:
+def check_repo_ownership(github_url: str, hotkey: str, uid: int) -> bool:
     normalized = validate_github_url(github_url)
     if not normalized:
         return False
     key = normalized.lower()
-    claimed = load_claimed_repos()
-    owner = claimed.get(key)
-    if owner is None:
-        claimed[key] = uid
-        save_claimed_repos(claimed)
-        return True
-    if owner == uid:
-        return True
+    with _claimed_repos_lock:
+        claimed = load_claimed_repos()
+        owner = claimed.get(key)
+        if owner is None:
+            claimed[key] = hotkey
+            if not save_claimed_repos(claimed):
+                return False
+            return True
+        owner = str(owner)
+        if owner == hotkey:
+            return True
     bt.logging.warning(
-        f"UID {uid}: repo {normalized} already claimed by UID {owner}"
+        f"UID {uid}: repo {normalized} already claimed by hotkey {owner[:16]}..."
     )
     return False
 
@@ -719,7 +727,8 @@ async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
             bt.logging.warning(f"UID {uid}: no github_url in PolicyRef, skipping")
             return (uid, None)
 
-        if not check_repo_ownership(ref.github_url, uid):
+        hotkey = self.metagraph.hotkeys[uid]
+        if not check_repo_ownership(ref.github_url, hotkey, uid):
             return (uid, None)
 
         ok = await _download_model_from_github(ref.github_url, ref, model_fp, uid)
