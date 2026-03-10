@@ -42,17 +42,18 @@ def test_load_or_create_origin_creates_then_reuses_file(seed_manager_module, mon
     assert second == 7
 
 
-def test_derive_seeds_is_deterministic(seed_manager_module, monkeypatch):
+def test_generate_random_seeds_returns_correct_count(seed_manager_module):
     m = seed_manager_module
-    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 5)
+    seeds = m._generate_random_seeds(100)
+    assert len(seeds) == 100
+    assert all(0 <= s <= m._MAX_SEED for s in seeds)
 
-    seeds_a = m._derive_seeds("secret", 3)
-    seeds_b = m._derive_seeds("secret", 3)
-    seeds_c = m._derive_seeds("different", 3)
 
-    assert len(seeds_a) == 5
-    assert seeds_a == seeds_b
-    assert seeds_a != seeds_c
+def test_generate_random_seeds_are_not_identical_across_calls(seed_manager_module):
+    m = seed_manager_module
+    seeds_a = m._generate_random_seeds(50)
+    seeds_b = m._generate_random_seeds(50)
+    assert seeds_a != seeds_b
 
 
 def test_manager_generates_and_splits_seeds(seed_manager_module, monkeypatch, tmp_path):
@@ -63,7 +64,7 @@ def test_manager_generates_and_splits_seeds(seed_manager_module, monkeypatch, tm
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 100)
     monkeypatch.setattr(m, "_load_or_create_origin", lambda: 100)
 
-    manager = m.BenchmarkSeedManager(secret="abc")
+    manager = m.BenchmarkSeedManager()
     assert manager.epoch_number == 1
     assert len(manager.get_all_seeds()) == 6
     assert len(manager.get_screening_seeds()) == 2
@@ -71,19 +72,38 @@ def test_manager_generates_and_splits_seeds(seed_manager_module, monkeypatch, tm
     assert (seeds_dir / "epoch_1.json").exists()
 
 
+def test_manager_loads_seeds_from_existing_file(seed_manager_module, monkeypatch, tmp_path):
+    m = seed_manager_module
+    seeds_dir, _ = _patch_paths(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
+    monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
+    monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 50)
+    monkeypatch.setattr(m, "_load_or_create_origin", lambda: 50)
+
+    seeds_dir.mkdir(parents=True, exist_ok=True)
+    saved_seeds = [111, 222, 333, 444]
+    (seeds_dir / "epoch_1.json").write_text(json.dumps({
+        "epoch_number": 1,
+        "seeds": saved_seeds,
+    }))
+
+    manager = m.BenchmarkSeedManager()
+    assert manager.get_all_seeds() == saved_seeds
+
+
 def test_pending_publications_and_mark_published(seed_manager_module, monkeypatch, tmp_path):
     m = seed_manager_module
     seeds_dir, _ = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
     monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
-    monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 12)  # epoch 3 when origin=10
+    monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 12)
     monkeypatch.setattr(m, "_load_or_create_origin", lambda: 10)
 
     seeds_dir.mkdir(parents=True, exist_ok=True)
     old_epoch = seeds_dir / "epoch_1.json"
     old_epoch.write_text(json.dumps({"epoch_number": 1, "published": False}))
 
-    manager = m.BenchmarkSeedManager(secret="abc")
+    manager = m.BenchmarkSeedManager()
     pending = manager.get_pending_publications()
     assert any(item.get("epoch_number") == 1 for item in pending)
 
@@ -103,7 +123,7 @@ def test_check_transition_and_advance_epoch(seed_manager_module, monkeypatch, tm
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: current_raw["value"])
     monkeypatch.setattr(m, "_load_or_create_origin", lambda: 20)
 
-    manager = m.BenchmarkSeedManager(secret="abc")
+    manager = m.BenchmarkSeedManager()
     assert manager.epoch_number == 1
     assert manager.check_epoch_transition() is False
 
@@ -121,7 +141,7 @@ def test_epoch_time_range_returns_utc_datetimes(seed_manager_module, monkeypatch
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 50)
     monkeypatch.setattr(m, "_load_or_create_origin", lambda: 50)
 
-    manager = m.BenchmarkSeedManager(secret="abc")
+    manager = m.BenchmarkSeedManager()
     start, end = manager.epoch_time_range(manager.epoch_number)
     assert start.tzinfo == timezone.utc
     assert end.tzinfo == timezone.utc

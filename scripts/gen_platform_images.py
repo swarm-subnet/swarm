@@ -230,7 +230,6 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
     args = _parse_args()
     out_dir = args.out_dir or Path.cwd() / "platform_images"
     out_dir.mkdir(parents=True, exist_ok=True)

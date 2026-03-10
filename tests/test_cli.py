@@ -16,7 +16,6 @@ def test_doctor_json_output_with_mocked_checks(monkeypatch, capsys):
         lambda: [
             cli.DoctorCheck("python", True, "3.10.12", True),
             cli.DoctorCheck("docker_binary", True, "Docker version 26", True),
-            cli.DoctorCheck("SWARM_PRIVATE_BENCHMARK_SECRET", False, "not set", False),
         ],
     )
 
@@ -39,11 +38,11 @@ def test_doctor_optional_failure_does_not_fail_exit_code(monkeypatch, capsys):
     monkeypatch.setattr(
         cli,
         "_run_doctor_checks",
-        lambda: [cli.DoctorCheck("SWARM_PRIVATE_BENCHMARK_SECRET", False, "not set", False)],
+        lambda: [cli.DoctorCheck("WANDB_API_KEY", False, "not set", False)],
     )
 
     assert cli.main(["doctor"]) == 0
-    assert "SWARM_PRIVATE_BENCHMARK_SECRET" in capsys.readouterr().out
+    assert "WANDB_API_KEY" in capsys.readouterr().out
 
 
 def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):

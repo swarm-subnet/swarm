@@ -95,15 +95,12 @@ Create `.env` file in repository root:
 # REQUIRED — Backend API endpoint
 SWARM_BACKEND_API_URL=https://api.example.com
 
-# REQUIRED — Private benchmark secret (contact the team)
-SWARM_PRIVATE_BENCHMARK_SECRET=your_private_secret_here
-
 # Optional: WandB logging
 WANDB_API_KEY=your_wandb_key_here
 VALIDATOR_NAME=my_validator_name
 ```
 
-Both `SWARM_BACKEND_API_URL` and `SWARM_PRIVATE_BENCHMARK_SECRET` are required. Contact the team to obtain values.
+`SWARM_BACKEND_API_URL` is required. Contact the team to obtain the endpoint.
 
 ## 🔑 Wallet & Registration
 
@@ -173,7 +170,7 @@ pm2 start --name auto_update_validator \
    For each miner UID, compare SHA-256 hash to cache. If hash differs, download the new model.
 
 2. **Screening (200 seeds)**
-   New models are first evaluated on 200 private seeds (derived via HMAC-SHA256). Must score within 80% of the top model to proceed.
+   New models are first evaluated on 200 private seeds (randomly generated per validator). Must score within 80% of the top model to proceed.
 
 3. **Full benchmark (800 seeds)**
    Models that pass screening are evaluated on the remaining 800 benchmark seeds across all five map types. Evaluation runs in parallel Docker containers.

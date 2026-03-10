@@ -199,7 +199,6 @@ def _run_doctor_checks() -> list[DoctorCheck]:
         _check_writable_dir(Path(MODEL_DIR), "model_dir"),
         _check_submission_template(),
         _check_benchmark_engine(),
-        _check_env_var("SWARM_PRIVATE_BENCHMARK_SECRET", required=False),
     ]
 
 

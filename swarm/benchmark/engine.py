@@ -42,7 +42,6 @@ except Exception:  # pragma: no cover - fallback path when tqdm is unavailable.
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
-os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")
 
 _UID_RE = re.compile(r"uid[_-]?(\d+)", re.IGNORECASE)
 

@@ -87,17 +87,17 @@ On City, Open, and Mountain maps, the goal platform may move in **circular**, **
 
 ### Epoch-Based Seed Rotation
 
-Benchmark seeds rotate every **7 days**. Each epoch, validators derive 1,000 fresh seeds from a shared secret using HMAC-SHA256 — all validators compute identical seeds independently.
+Benchmark seeds rotate every **7 days**. Each epoch, every validator independently generates 1,000 cryptographically random seeds — with this sample size the statistical variance across validators is negligible.
 
 ```
 Epoch starts (every Monday 16:00 UTC)
   │
-  ├── 1,000 new seeds derived from HMAC(secret, epoch + index)
-  ├── All models evaluated on the same seeds (fair comparison)
+  ├── Each validator generates 1,000 random seeds (random.SystemRandom)
+  ├── All models evaluated on those seeds (fair comparison)
   │
 Epoch ends (7 days later)
   │
-  ├── Seeds published on our website (full transparency)
+  ├── Per-validator seeds published on our website (full transparency)
   ├── Champion re-evaluated on new epoch seeds
   │     └── Score updated — champion keeps title with the new score
   └── Old cache cleaned up, new worlds prebuilt

@@ -1,7 +1,6 @@
-import hashlib
-import hmac
 import json
 import os
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +19,8 @@ from swarm.constants import (
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
 EPOCH_ORIGIN_FILE = EPOCH_SEEDS_DIR / "epoch_origin.json"
+
+_MAX_SEED = 2**32 - 1
 
 
 def _compute_raw_week(ts: Optional[float] = None) -> int:
@@ -50,25 +51,14 @@ def _load_or_create_origin() -> int:
     return raw
 
 
-def _derive_seeds(secret: str, epoch_number: int) -> List[int]:
-    seeds = []
-    key = secret.encode()
-    for i in range(BENCHMARK_TOTAL_SEED_COUNT):
-        msg = f"epoch_{epoch_number}_seed_{i}".encode()
-        h = hmac.new(key, msg, hashlib.sha256)
-        seeds.append(int.from_bytes(h.digest()[:4], "big"))
-    return seeds
+def _generate_random_seeds(count: int) -> List[int]:
+    rng = random.SystemRandom()
+    return [rng.randint(0, _MAX_SEED) for _ in range(count)]
 
 
 class BenchmarkSeedManager:
 
-    def __init__(self, secret: str = None):
-        self.secret = secret or os.getenv("SWARM_PRIVATE_BENCHMARK_SECRET")
-        if not self.secret:
-            raise ValueError(
-                "SWARM_PRIVATE_BENCHMARK_SECRET env var required"
-            )
-
+    def __init__(self) -> None:
         EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
         self._origin = _load_or_create_origin()
         self.epoch_number = self._raw_to_epoch(_compute_raw_week())
@@ -107,9 +97,9 @@ class BenchmarkSeedManager:
             except (json.JSONDecodeError, KeyError):
                 bt.logging.warning(f"Corrupt epoch file {path.name}, regenerating")
 
-        self.seeds = _derive_seeds(self.secret, self.epoch_number)
+        self.seeds = _generate_random_seeds(BENCHMARK_TOTAL_SEED_COUNT)
         self._save_epoch_file(self.epoch_number, self.seeds, published=False)
-        bt.logging.info(f"Generated {len(self.seeds)} seeds for epoch {self.epoch_number}")
+        bt.logging.info(f"Generated {len(self.seeds)} random seeds for epoch {self.epoch_number}")
 
     def _save_epoch_file(self, epoch: int, seeds: List[int], published: bool) -> None:
         start, end = self.epoch_time_range(epoch)
