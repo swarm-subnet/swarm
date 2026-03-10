@@ -192,7 +192,7 @@ SCREENING_BOOTSTRAP_THRESHOLD = 0.1     # Minimum score threshold during bootstr
 # Epoch system — seeds rotate every 7 days (Monday 16:00 UTC)
 EPOCH_DURATION_SECONDS = 7 * 86400
 EPOCH_ANCHOR_UTC = datetime(2025, 1, 6, 16, 0, 0, tzinfo=timezone.utc)
-SCREENING_TOP_MODEL_FACTOR = 0.8        # Must score within this factor of top model
+SCREENING_TOP_MODEL_FACTOR = 1.01       # Must score above 101% of top model to pass
 MAP_CACHE_ENABLED = True                # Enable/disable static world map caching
 MAP_CACHE_SAVE_ON_BUILD = True          # Save static world cache when built during scoring
 MAP_CACHE_PREBUILD_ALL_AT_START = False # True: prebuild all benchmark seeds before scoring
