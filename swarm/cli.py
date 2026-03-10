@@ -51,20 +51,36 @@ REQUIREMENTS_URL_RE = re.compile(r"^(?:https?://|git\+|file:|/|\.\.?/)")
 REPORT_FIELD_PATTERNS = {
     "seeds_evaluated": re.compile(r"Seeds evaluated:\s+(\d+)"),
     "success_rate_pct": re.compile(r"Success rate:\s+\d+/\d+\s+\(([\d.]+)%\)"),
+    "clean_execution_rate_pct": re.compile(
+        r"Clean execution rate:\s+\d+/\d+\s+\(([\d.]+)%\)"
+    ),
     "total_wall_clock_sec": re.compile(r"Total wall-clock:\s+([\d.]+)s"),
     "avg_wall_per_seed_sec": re.compile(r"Avg wall / seed:\s+([\d.]+)s"),
     "median_wall_per_seed_sec": re.compile(r"Median wall / seed:\s+([\d.]+)s"),
     "p90_wall_per_seed_sec": re.compile(r"P90 wall / seed:\s+([\d.]+)s"),
+    "avg_sim_time_per_seed_sec": re.compile(r"Avg sim time / seed:\s+([\d.]+)s"),
+    "total_seed_worker_time_sec": re.compile(r"Total seed-worker time:\s+([\d.]+)s"),
     "throughput_seeds_per_min": re.compile(r"Throughput:\s+([\d.]+)\s+seeds/min"),
     "throughput_per_worker": re.compile(
         r"Throughput per worker:\s+([\d.]+)\s+seeds/min/worker"
     ),
+    "effective_parallelism": re.compile(r"Effective parallelism:\s+([\d.]+)x"),
+    "worker_utilization_pct": re.compile(r"utilization\s+([\d.]+)%\s+of"),
+    "batches_run": re.compile(r"Batches run:\s+(\d+)"),
+    "avg_seeds_per_container": re.compile(r"Avg seeds / container:\s+([\d.]+)"),
+    "total_startup_overhead_sec": re.compile(r"Total startup overhead:\s+([\d.]+)s"),
+    "avg_startup_per_container_sec": re.compile(r"Avg startup / container:\s+([\d.]+)s"),
     "workers_used": re.compile(r"Workers used:\s+(\d+)"),
     "estimated_wall_clock_sec_1000": re.compile(r"Estimated wall-clock:\s+([\d.]+)s"),
+    "estimated_avg_wall_per_seed_sec_1000": re.compile(
+        r"Estimated avg wall / seed:\s+([\d.]+)s"
+    ),
     "estimated_throughput_1000": re.compile(
         r"Estimated throughput:\s+([\d.]+)\s+seeds/min"
     ),
 }
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 @dataclass
@@ -411,14 +427,38 @@ def _cmd_model_test(args: argparse.Namespace) -> int:
     return 1 if failed_required else 0
 
 
+def sanitize_benchmark_log_text(text: str) -> str:
+    text = ANSI_ESCAPE_RE.sub("", text)
+    text = text.replace("\r", "")
+    return text
+
+
+def extract_benchmark_results_block(text: str) -> str | None:
+    clean_text = sanitize_benchmark_log_text(text)
+    start = clean_text.rfind("=== RESULTS ===")
+    if start < 0:
+        return None
+
+    tail = clean_text[start:]
+    for marker in ("=== BENCHMARK COMPLETE ===", "=== BENCHMARK FAILED ==="):
+        marker_index = tail.find(marker)
+        if marker_index >= 0:
+            line_end = tail.find("\n", marker_index)
+            if line_end < 0:
+                return tail.strip()
+            return tail[:line_end].strip()
+    return tail.strip()
+
+
 def parse_benchmark_report_text(text: str) -> dict[str, Any]:
+    text = sanitize_benchmark_log_text(text)
     output: dict[str, Any] = {}
     for field, pattern in REPORT_FIELD_PATTERNS.items():
         match = pattern.search(text)
         if not match:
             continue
         token = match.group(1)
-        if field in {"seeds_evaluated", "workers_used"}:
+        if field in {"seeds_evaluated", "workers_used", "batches_run"}:
             output[field] = int(token)
         else:
             output[field] = float(token)
@@ -436,26 +476,35 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"Report input file not found: {input_path}", file=sys.stderr)
         return 1
     text = input_path.read_text()
+    results_block = extract_benchmark_results_block(text)
     try:
-        summary = parse_benchmark_report_text(text)
+        summary = parse_benchmark_report_text(results_block or text)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     if args.json:
-        print(json.dumps(summary, indent=2, sort_keys=True))
+        payload = dict(summary)
+        if results_block:
+            payload["results_block"] = results_block
+        payload["report_source"] = str(input_path)
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"Report source: {input_path}")
-        print(f"Seeds evaluated: {summary['seeds_evaluated']}")
-        print(f"Workers used: {summary['workers_used']}")
-        print(f"Total wall-clock: {summary['total_wall_clock_sec']:.1f}s")
-        if "throughput_seeds_per_min" in summary:
-            print(f"Throughput: {summary['throughput_seeds_per_min']:.2f} seeds/min")
-        if "estimated_wall_clock_sec_1000" in summary:
-            print(
-                "Estimated wall-clock for 1000 seeds: "
-                f"{summary['estimated_wall_clock_sec_1000']:.1f}s"
-            )
+        if results_block:
+            print()
+            print(results_block)
+        else:
+            print(f"Seeds evaluated: {summary['seeds_evaluated']}")
+            print(f"Workers used: {summary['workers_used']}")
+            print(f"Total wall-clock: {summary['total_wall_clock_sec']:.1f}s")
+            if "throughput_seeds_per_min" in summary:
+                print(f"Throughput: {summary['throughput_seeds_per_min']:.2f} seeds/min")
+            if "estimated_wall_clock_sec_1000" in summary:
+                print(
+                    "Estimated wall-clock for 1000 seeds: "
+                    f"{summary['estimated_wall_clock_sec_1000']:.1f}s"
+                )
 
     return 0
 

@@ -1738,48 +1738,55 @@ def main() -> None:
         sys.stdout = out_stream
         sys.stderr = err_stream
 
-    print(f"\n[{_ts()}] === RESULTS ===", flush=True)
-    if task_meta and results:
-        if run_error is not None:
-            print(f"[{_ts()}] Printing partial results collected before failure.", flush=True)
-        try:
-            summary = _print_results(
-                task_meta,
-                results,
-                seed_times,
-                seed_wall_by_key,
-                seed_status_by_key,
-                full_wall_by_key,
-                batch_stats,
-                elapsed,
-                eval_start,
-                launched_workers,
-                host_parallelism="process",
-            )
-        except BaseException as exc:
-            report_error = exc
-            print(f"[{_ts()}] Report generation failed: {type(exc).__name__}: {exc}", flush=True)
-
-    if run_error is not None:
-        print(
-            f"[{_ts()}] Benchmark failed before report generation: {type(run_error).__name__}: {run_error}",
-            flush=True,
-        )
-        traceback.print_exception(type(run_error), run_error, run_error.__traceback__)
-        if report_error is not None:
-            traceback.print_exception(type(report_error), report_error, report_error.__traceback__)
-        print(f"[{_ts()}] === BENCHMARK FAILED ===", flush=True)
-    elif report_error is not None:
-        traceback.print_exception(type(report_error), report_error, report_error.__traceback__)
-        print(f"[{_ts()}] === BENCHMARK FAILED ===", flush=True)
-    else:
-        print(f"[{_ts()}] === BENCHMARK COMPLETE ===", flush=True)
-
+    final_out_stream = _Tee(out_stream, log_fh) if log_fh else out_stream
+    final_err_stream = _Tee(err_stream, log_fh) if log_fh else err_stream
+    sys.stdout = final_out_stream
+    sys.stderr = final_err_stream
     try:
-        sys.stdout.flush()
-        sys.stderr.flush()
-    except Exception:
-        pass
+        print(f"\n[{_ts()}] === RESULTS ===", flush=True)
+        if task_meta and results:
+            if run_error is not None:
+                print(f"[{_ts()}] Printing partial results collected before failure.", flush=True)
+            try:
+                summary = _print_results(
+                    task_meta,
+                    results,
+                    seed_times,
+                    seed_wall_by_key,
+                    seed_status_by_key,
+                    full_wall_by_key,
+                    batch_stats,
+                    elapsed,
+                    eval_start,
+                    launched_workers,
+                    host_parallelism="process",
+                )
+            except BaseException as exc:
+                report_error = exc
+                print(f"[{_ts()}] Report generation failed: {type(exc).__name__}: {exc}", flush=True)
+
+        if run_error is not None:
+            print(
+                f"[{_ts()}] Benchmark failed before report generation: {type(run_error).__name__}: {run_error}",
+                flush=True,
+            )
+            traceback.print_exception(type(run_error), run_error, run_error.__traceback__)
+            if report_error is not None:
+                traceback.print_exception(type(report_error), report_error, report_error.__traceback__)
+            print(f"[{_ts()}] === BENCHMARK FAILED ===", flush=True)
+        elif report_error is not None:
+            traceback.print_exception(type(report_error), report_error, report_error.__traceback__)
+            print(f"[{_ts()}] === BENCHMARK FAILED ===", flush=True)
+        else:
+            print(f"[{_ts()}] === BENCHMARK COMPLETE ===", flush=True)
+    finally:
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        sys.stdout = out_stream
+        sys.stderr = err_stream
 
     if log_fh:
         try:
