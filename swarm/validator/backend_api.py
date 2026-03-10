@@ -226,33 +226,31 @@ class BackendApiClient:
     # POST /validators/models/new
     # ──────────────────────────────────────────────────────────────────────
     async def post_new_model(
-        self, uid: int, model_hash: str, coldkey: str, validator_hotkey: str
+        self,
+        uid: int,
+        model_hash: str,
+        coldkey: str,
+        validator_hotkey: str,
+        github_url: str = "",
+        miner_hotkey: str = "",
     ) -> Dict[str, Any]:
-        """Notify backend of new model.
-
-        Args:
-            uid: Miner UID
-            model_hash: SHA256 hash of model
-            coldkey: Miner coldkey
-            validator_hotkey: This validator's hotkey (used to get miner hotkey)
-
-        Returns:
-            {"accepted": True, "model_id": 123} or {"accepted": False, "reason": "..."}
-        """
-        miner_hotkey = self._get_miner_hotkey(uid)
+        """Notify backend of new model."""
+        if not miner_hotkey:
+            miner_hotkey = self._get_miner_hotkey(uid)
         if not miner_hotkey:
             bt.logging.warning(f"Cannot register UID {uid}: miner hotkey unavailable")
             return {"accepted": False, "reason": "miner hotkey unavailable"}
 
-        result = await self._post_signed(
-            "/validators/models/new",
-            {
-                "uid": uid,
-                "model_hash": model_hash,
-                "coldkey": coldkey,
-                "hotkey": miner_hotkey,
-            },
-        )
+        payload = {
+            "uid": uid,
+            "model_hash": model_hash,
+            "coldkey": coldkey,
+            "hotkey": miner_hotkey,
+        }
+        if github_url:
+            payload["github_url"] = github_url
+
+        result = await self._post_signed("/validators/models/new", payload)
 
         # Map backend response to expected format
         if "model_id" in result:

@@ -328,12 +328,12 @@ def _schedule_queue_retry(item: Dict[str, Any], reason: str) -> None:
     item["updated_at"] = now
 
 
-def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str]]) -> dict:
+def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str, str]]) -> dict:
     queue = load_normal_model_queue()
     items = queue.setdefault("items", {})
     now = time.time()
 
-    for uid, (model_path, model_hash) in new_models.items():
+    for uid, (model_path, model_hash, github_url) in new_models.items():
         key = _queue_key(uid, model_hash)
 
         stale_keys = [
@@ -347,6 +347,7 @@ def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str]]) -> dict
 
         if key in items:
             items[key]["model_path"] = str(model_path)
+            items[key]["github_url"] = github_url
             items[key]["updated_at"] = now
             continue
 
@@ -354,6 +355,7 @@ def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str]]) -> dict
             "uid": uid,
             "model_hash": model_hash,
             "model_path": str(model_path),
+            "github_url": github_url,
             "status": "pending",
             "registered": False,
             "screening_recorded": False,
@@ -673,7 +675,7 @@ async def _download_model_from_github(
     return True
 
 
-async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
+async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path], str]:
     """Fetch and verify a single miner's model."""
     try:
         axon = self.metagraph.axons[uid]
@@ -687,21 +689,21 @@ async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
             )
 
             if not responses:
-                return (uid, None)
+                return (uid, None, "")
 
             syn = responses[0]
 
             if not syn.ref:
-                return (uid, None)
+                return (uid, None, "")
 
             ref = PolicyRef(**syn.ref)
         except Exception:
-            return (uid, None)
+            return (uid, None, "")
 
         blacklist = load_blacklist()
         if ref.sha256 in blacklist:
             bt.logging.warning(f"Skipping blacklisted model {ref.sha256[:16]}... from UID {uid}")
-            return (uid, None)
+            return (uid, None, "")
 
         model_fp = MODEL_DIR / f"UID_{uid}.zip"
         if model_fp.exists() and model_fp.is_dir():
@@ -719,39 +721,39 @@ async def _process_single_uid(self, uid: int) -> Tuple[int, Optional[Path]]:
                 model_fp.stat().st_size <= MAX_MODEL_BYTES
                 and zip_is_safe(model_fp, max_uncompressed=MAX_MODEL_BYTES)
             ):
-                return (uid, model_fp)
+                return (uid, model_fp, ref.github_url or "")
             else:
                 model_fp.unlink(missing_ok=True)
 
         if not ref.github_url:
             bt.logging.warning(f"UID {uid}: no github_url in PolicyRef, skipping")
-            return (uid, None)
+            return (uid, None, "")
 
         hotkey = self.metagraph.hotkeys[uid]
         if not check_repo_ownership(ref.github_url, hotkey, uid):
-            return (uid, None)
+            return (uid, None, "")
 
         ok = await _download_model_from_github(ref.github_url, ref, model_fp, uid)
         if ok and model_fp.is_file():
-            return (uid, model_fp)
+            return (uid, model_fp, ref.github_url)
         else:
             model_fp.unlink(missing_ok=True)
-            return (uid, None)
+            return (uid, None, "")
 
     except Exception:
-        return (uid, None)
+        return (uid, None, "")
 
 
-async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
+async def _ensure_models(self, uids: List[int]) -> Dict[int, Tuple[Path, str]]:
     """Fetch models from all given UIDs in parallel batches."""
     MODEL_DIR.mkdir(exist_ok=True)
-    paths: Dict[int, Path] = {}
+    paths: Dict[int, Tuple[Path, str]] = {}
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONNECTIONS)
     total_batches = (len(uids) + PARALLEL_BATCH_SIZE - 1) // PARALLEL_BATCH_SIZE
 
     bt.logging.info(f"Starting model fetch for {len(uids)} UIDs in {total_batches} batches")
 
-    async def _limited_process(uid: int) -> Tuple[int, Optional[Path]]:
+    async def _limited_process(uid: int) -> Tuple[int, Optional[Path], str]:
         async with semaphore:
             return await _process_single_uid(self, uid)
 
@@ -768,9 +770,9 @@ async def _ensure_models(self, uids: List[int]) -> Dict[int, Path]:
         for result in results:
             if isinstance(result, Exception):
                 continue
-            uid, path = result
+            uid, path, github_url = result
             if path is not None:
-                paths[uid] = path
+                paths[uid] = (path, github_url)
                 batch_found += 1
 
         if batch_num % 5 == 0 or batch_found > 0:
@@ -944,12 +946,14 @@ def _passes_screening(self, screening_score: float) -> bool:
     return passed
 
 
-def _detect_new_models(self, model_paths: Dict[int, Path]) -> Dict[int, Tuple[Path, str]]:
+def _detect_new_models(
+    self, model_paths: Dict[int, Tuple[Path, str]]
+) -> Dict[int, Tuple[Path, str, str]]:
     """Detect models that have changed (new hash) since last check."""
     tracker = load_model_hash_tracker()
     new_models = {}
 
-    for uid, path in model_paths.items():
+    for uid, (path, github_url) in model_paths.items():
         try:
             current_hash = sha256sum(path)
             uid_str = str(uid)
@@ -963,7 +967,7 @@ def _detect_new_models(self, model_paths: Dict[int, Path]) -> Dict[int, Tuple[Pa
                     )
                 else:
                     bt.logging.info(f"🆕 New model for UID {uid}: {current_hash[:16]}...")
-                new_models[uid] = (path, current_hash)
+                new_models[uid] = (path, current_hash, github_url)
 
         except Exception as e:
             bt.logging.warning(f"Failed to check model hash for UID {uid}: {e}")
@@ -999,6 +1003,8 @@ async def _register_new_model_with_ack(
     uid: int,
     model_hash: str,
     validator_hotkey: str,
+    github_url: str = "",
+    miner_hotkey: str = "",
 ) -> Tuple[bool, bool, str]:
     coldkey = _get_miner_coldkey(self, uid)
     response = await self.backend_api.post_new_model(
@@ -1006,6 +1012,8 @@ async def _register_new_model_with_ack(
         model_hash=model_hash,
         coldkey=coldkey,
         validator_hotkey=validator_hotkey,
+        github_url=github_url,
+        miner_hotkey=miner_hotkey,
     )
 
     if response.get("accepted", False):
@@ -1094,6 +1102,7 @@ async def _process_normal_queue_item(
         uid = int(item.get("uid", -1))
         model_hash = str(item.get("model_hash", ""))
         model_path = Path(str(item.get("model_path", "")))
+        github_url = str(item.get("github_url", ""))
 
         if uid < 0 or not model_hash:
             item["status"] = "terminal_rejected"
@@ -1115,12 +1124,20 @@ async def _process_normal_queue_item(
             item["updated_at"] = time.time()
             return
 
+        miner_hotkey = ""
+        try:
+            miner_hotkey = self.metagraph.hotkeys[uid]
+        except Exception:
+            pass
+
         if not item.get("registered", False):
             accepted, terminal, reason = await _register_new_model_with_ack(
                 self,
                 uid=uid,
                 model_hash=model_hash,
                 validator_hotkey=validator_hotkey,
+                github_url=github_url,
+                miner_hotkey=miner_hotkey,
             )
             if not accepted:
                 if terminal:
