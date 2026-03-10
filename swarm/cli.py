@@ -16,8 +16,7 @@ from typing import Any, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_BENCH_SCRIPT = REPO_ROOT / "debugging" / "bench_full_eval.py"
-DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
+DEFAULT_BENCH_LOG = Path("/tmp/swarm_benchmark.log")
 DEFAULT_MODEL_ZIP = REPO_ROOT / "Submission" / "submission.zip"
 
 MODEL_EXTENSIONS = {
@@ -172,10 +171,11 @@ def _check_submission_template() -> DoctorCheck:
     return DoctorCheck("submission_template", True, str(template_dir), True)
 
 
-def _check_benchmark_script() -> DoctorCheck:
-    if DEFAULT_BENCH_SCRIPT.exists():
-        return DoctorCheck("benchmark_script", True, str(DEFAULT_BENCH_SCRIPT), True)
-    return DoctorCheck("benchmark_script", False, f"missing: {DEFAULT_BENCH_SCRIPT}", True)
+def _check_benchmark_engine() -> DoctorCheck:
+    spec = importlib.util.find_spec("swarm.benchmark.engine")
+    if spec is not None:
+        return DoctorCheck("benchmark_engine", True, "swarm.benchmark.engine", True)
+    return DoctorCheck("benchmark_engine", False, "swarm.benchmark.engine not found", True)
 
 
 def _check_env_var(name: str, required: bool = False) -> DoctorCheck:
@@ -198,7 +198,7 @@ def _run_doctor_checks() -> list[DoctorCheck]:
         _check_writable_dir(Path("state"), "state_dir"),
         _check_writable_dir(Path(MODEL_DIR), "model_dir"),
         _check_submission_template(),
-        _check_benchmark_script(),
+        _check_benchmark_engine(),
         _check_env_var("SWARM_PRIVATE_BENCHMARK_SECRET", required=False),
     ]
 
@@ -222,30 +222,37 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if failed_required else 0
 
 
-def _build_benchmark_command(args: argparse.Namespace) -> list[str]:
-    cmd = [sys.executable, "-u", str(DEFAULT_BENCH_SCRIPT), "--model", str(args.model)]
+def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
+    argv = ["--model", str(args.model)]
     if args.uid is not None:
-        cmd.extend(["--uid", str(args.uid)])
-    cmd.extend(["--seeds-per-group", str(args.seeds_per_group)])
-    cmd.extend(["--workers", str(args.workers)])
+        argv.extend(["--uid", str(args.uid)])
+    argv.extend(["--seeds-per-group", str(args.seeds_per_group)])
+    argv.extend(["--workers", str(args.workers)])
     if args.log_out is not None:
-        cmd.extend(["--log-out", str(args.log_out)])
+        argv.extend(["--log-out", str(args.log_out)])
     if args.relax_timeouts:
-        cmd.append("--relax-timeouts")
-    cmd.extend(["--rpc-verbosity", str(args.rpc_verbosity)])
-    return cmd
+        argv.append("--relax-timeouts")
+    argv.extend(["--rpc-verbosity", str(args.rpc_verbosity)])
+    return argv
 
 
 def _cmd_benchmark(args: argparse.Namespace) -> int:
-    if not DEFAULT_BENCH_SCRIPT.exists():
-        print(f"Benchmark script not found: {DEFAULT_BENCH_SCRIPT}", file=sys.stderr)
-        return 1
     model_path = Path(args.model)
     if not model_path.exists():
         print(f"Model not found: {model_path}", file=sys.stderr)
         return 1
-    command = _build_benchmark_command(args)
-    return subprocess.run(command, check=False).returncode
+
+    from swarm.benchmark.engine import main as benchmark_main
+
+    argv = _build_benchmark_argv(args)
+    try:
+        benchmark_main(argv)
+        return 0
+    except (SystemExit, KeyboardInterrupt):
+        return 1
+    except Exception as exc:
+        print(f"Benchmark failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def _validate_requirements_file(requirements_path: Path) -> list[str]:

@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from debugging.bench_full_eval import _find_seeds
+from swarm.benchmark.engine import _find_seeds
 from swarm.constants import SIM_DT
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env

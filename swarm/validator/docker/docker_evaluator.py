@@ -48,6 +48,13 @@ from swarm.core.model_verify import add_to_blacklist
 from swarm.validator.reward import flight_reward
 from gym_pybullet_drones.utils.enums import ActionType
 
+_HEAVY_CHALLENGE_TYPES = frozenset({3, 5})
+_BACKOFF_STEP = 2
+_BACKOFF_FLOOR = 2
+_MIN_BATCH_SEEDS = 15
+_BATCH_MULTIPLIER = 2
+_BACKOFF_RECOVER_AFTER = 3
+
 _THREAD_CAP_ENV_VARS = (
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
@@ -78,6 +85,35 @@ def _run_multi_seed_rpc_sync_isolated_payload(
         (int(r.uid), bool(r.success), float(r.time_sec), float(r.score))
         for r in results
     ]
+
+
+def _heavy_aware_chunk(
+    tasks: list, num_chunks: int,
+) -> tuple[list[list], list[list[int]]]:
+    """Distribute tasks into chunks with heavy maps spread evenly.
+
+    Returns (chunks, index_map) where index_map[i][j] is the original
+    position of chunks[i][j] in the input *tasks* list.
+    """
+    heavy = [(i, t) for i, t in enumerate(tasks)
+             if getattr(t, "challenge_type", 0) in _HEAVY_CHALLENGE_TYPES]
+    light = [(i, t) for i, t in enumerate(tasks)
+             if getattr(t, "challenge_type", 0) not in _HEAVY_CHALLENGE_TYPES]
+
+    buckets: list[list[tuple[int, object]]] = [[] for _ in range(num_chunks)]
+
+    for k, item in enumerate(heavy):
+        buckets[k % num_chunks].append(item)
+
+    for item in light:
+        target = min(range(num_chunks), key=lambda w: len(buckets[w]))
+        buckets[target].append(item)
+
+    buckets = [b for b in buckets if b]
+
+    chunks = [[t for _, t in bucket] for bucket in buckets]
+    index_map = [[idx for idx, _ in bucket] for bucket in buckets]
+    return chunks, index_map
 
 
 def _cleanup_env_quietly(env: object) -> None:
@@ -2075,15 +2111,16 @@ class DockerSecureEvaluator:
     ) -> list:
         """Evaluate seeds in parallel using multiple Docker containers.
 
-        This is the main entry point for V4 benchmark parallelization.
-        Splits seeds across N_DOCKER_WORKERS containers running in parallel.
+        Features:
+          - Heavy-map scheduling: mountain/warehouse seeds distributed evenly.
+          - Adaptive backoff: gradual worker reduction on batch failures.
 
         Args:
             tasks: List of MapTask objects (one per seed)
             uid: Miner UID
             model_path: Path to model zip file
             num_workers: Number of parallel workers (defaults to N_DOCKER_WORKERS)
-            on_seed_complete: Optional callback called after each seed completes (thread-safe)
+            on_seed_complete: Optional callback called after each seed completes
 
         Returns:
             List of ValidationResult objects (one per seed, in original order)
@@ -2093,47 +2130,117 @@ class DockerSecureEvaluator:
 
         if num_workers is None:
             num_workers = N_DOCKER_WORKERS
-
         num_workers = max(1, min(num_workers, len(tasks)))
 
-        chunks = []
-        chunk_size = len(tasks) // num_workers
-        remainder = len(tasks) % num_workers
+        if len(tasks) >= num_workers * _BATCH_MULTIPLIER * _MIN_BATCH_SEEDS:
+            num_batches = num_workers * _BATCH_MULTIPLIER
+        else:
+            num_batches = num_workers
+        num_batches = max(1, min(num_batches, len(tasks)))
 
-        start = 0
-        for i in range(num_workers):
-            end = start + chunk_size + (1 if i < remainder else 0)
-            chunks.append(tasks[start:end])
-            start = end
+        chunks, index_map = _heavy_aware_chunk(tasks, num_batches)
 
         bt.logging.info(
-            f"Evaluating {len(tasks)} seeds with {num_workers} parallel workers"
+            f"Evaluating {len(tasks)} seeds: {len(chunks)} batches, "
+            f"{num_workers} max concurrent workers (heavy-map aware)"
         )
 
-        worker_tasks = [
-            self.evaluate_seeds_batch(
-                chunk, uid, model_path, worker_id=i, on_seed_complete=on_seed_complete
-            )
-            for i, chunk in enumerate(chunks)
-        ]
+        active_cap = num_workers
+        pending = list(range(len(chunks)))
+        in_flight: dict[int, asyncio.Task] = {}
+        chunk_results: list[list | None] = [None] * len(chunks)
+        consecutive_ok = 0
 
-        chunk_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
-
-        results = []
-        for i, chunk_result in enumerate(chunk_results):
-            if isinstance(chunk_result, Exception):
-                bt.logging.warning(f"Worker {i} failed with exception: {chunk_result}")
-                if on_seed_complete:
-                    for _ in chunks[i]:
-                        try:
-                            on_seed_complete()
-                        except Exception:
-                            pass
-                results.extend(
-                    [ValidationResult(uid, False, 0.0, 0.0) for _ in chunks[i]]
+        while pending or in_flight:
+            while pending and len(in_flight) < active_cap:
+                batch_idx = pending.pop(0)
+                coro = self.evaluate_seeds_batch(
+                    chunks[batch_idx], uid, model_path,
+                    worker_id=batch_idx, on_seed_complete=on_seed_complete,
                 )
-            else:
-                results.extend(chunk_result)
+                in_flight[batch_idx] = asyncio.create_task(coro)
+
+            if not in_flight:
+                break
+
+            done, _ = await asyncio.wait(
+                in_flight.values(), return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for completed_task in done:
+                batch_idx = next(
+                    bi for bi, t in in_flight.items() if t is completed_task
+                )
+                del in_flight[batch_idx]
+
+                try:
+                    result = completed_task.result()
+                    chunk_results[batch_idx] = result
+
+                    all_failed = not result or all(
+                        getattr(r, "score", 0.0) <= 0.0 for r in result
+                    )
+                    if all_failed:
+                        consecutive_ok = 0
+                        old_cap = active_cap
+                        active_cap = min(
+                            num_workers,
+                            max(_BACKOFF_FLOOR, active_cap - _BACKOFF_STEP),
+                        )
+                        if active_cap < old_cap:
+                            bt.logging.warning(
+                                f"Adaptive backoff: batch {batch_idx} fully failed, "
+                                f"workers {old_cap} → {active_cap}"
+                            )
+                    else:
+                        consecutive_ok += 1
+                        if (
+                            consecutive_ok >= _BACKOFF_RECOVER_AFTER
+                            and active_cap < num_workers
+                        ):
+                            old_cap = active_cap
+                            active_cap = min(num_workers, active_cap + _BACKOFF_STEP)
+                            consecutive_ok = 0
+                            if active_cap > old_cap:
+                                bt.logging.info(
+                                    f"Adaptive backoff recovery: workers "
+                                    f"{old_cap} → {active_cap}"
+                                )
+
+                except Exception as exc:
+                    bt.logging.warning(
+                        f"Worker for batch {batch_idx} failed: {exc}"
+                    )
+                    if on_seed_complete:
+                        for _ in chunks[batch_idx]:
+                            try:
+                                on_seed_complete()
+                            except Exception:
+                                pass
+                    chunk_results[batch_idx] = [
+                        ValidationResult(uid, False, 0.0, 0.0)
+                        for _ in chunks[batch_idx]
+                    ]
+                    consecutive_ok = 0
+                    old_cap = active_cap
+                    active_cap = min(
+                        num_workers,
+                        max(_BACKOFF_FLOOR, active_cap - _BACKOFF_STEP),
+                    )
+                    if active_cap < old_cap:
+                        bt.logging.warning(
+                            f"Adaptive backoff: worker exception, "
+                            f"workers {old_cap} → {active_cap}"
+                        )
+
+        results: list = [ValidationResult(uid, False, 0.0, 0.0)] * len(tasks)
+        for i, indices in enumerate(index_map):
+            batch_result = chunk_results[i]
+            if batch_result is None:
+                continue
+            for j, orig_idx in enumerate(indices):
+                if j < len(batch_result):
+                    results[orig_idx] = batch_result[j]
 
         return results
 

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from debugging import bench_full_eval as bench_full_eval
+from swarm.benchmark import engine as bench_full_eval
 
 
 def _argv_for_model(model_path, *extra: str) -> list[str]:

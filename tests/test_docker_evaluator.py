@@ -398,6 +398,96 @@ def test_evaluate_seeds_parallel_handles_worker_exception(monkeypatch, tmp_path)
     assert callback_calls["n"] == 2
 
 
+def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
+    tasks = [
+        SimpleNamespace(challenge_type=3),
+        SimpleNamespace(challenge_type=5),
+        SimpleNamespace(challenge_type=3),
+        SimpleNamespace(challenge_type=5),
+        SimpleNamespace(challenge_type=1),
+        SimpleNamespace(challenge_type=2),
+        SimpleNamespace(challenge_type=1),
+        SimpleNamespace(challenge_type=4),
+    ]
+
+    chunks, index_map = de._heavy_aware_chunk(tasks, 4)
+
+    assert len(chunks) == 4
+    assert sum(len(c) for c in chunks) == 8
+    assert set(idx for indices in index_map for idx in indices) == set(range(8))
+
+    for chunk in chunks:
+        heavy_count = sum(
+            1 for t in chunk if t.challenge_type in de._HEAVY_CHALLENGE_TYPES
+        )
+        assert heavy_count <= 1
+
+
+def test_evaluate_seeds_parallel_backoff_on_total_failure(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+
+    tasks = [SimpleNamespace(challenge_type=1) for _ in range(120)]
+    backoff_triggered = {"yes": False}
+
+    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
+        _ = model_path, on_seed_complete
+        if worker_id < 2:
+            return [ValidationResult(uid, False, 0.0, 0.0) for _ in chunk]
+        return [ValidationResult(uid, True, 1.0, 0.8) for _ in chunk]
+
+    def _fake_warning(msg, *args, **kwargs):
+        if "Adaptive backoff" in str(msg):
+            backoff_triggered["yes"] = True
+
+    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
+    import bittensor as bt
+    monkeypatch.setattr(bt.logging, "warning", _fake_warning)
+
+    results = asyncio.run(
+        ev.evaluate_seeds_parallel(
+            tasks, uid=7, model_path=model_path, num_workers=4,
+        )
+    )
+
+    assert len(results) == 120
+    failed = sum(1 for r in results if r.score == 0.0)
+    passed = sum(1 for r in results if r.score > 0.0)
+    assert failed > 0
+    assert passed > 0
+    assert backoff_triggered["yes"]
+
+
+def test_evaluate_seeds_parallel_preserves_order_with_heavy_tasks(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+
+    tasks = [
+        SimpleNamespace(challenge_type=3, seed_id=0),
+        SimpleNamespace(challenge_type=1, seed_id=1),
+        SimpleNamespace(challenge_type=5, seed_id=2),
+        SimpleNamespace(challenge_type=2, seed_id=3),
+        SimpleNamespace(challenge_type=3, seed_id=4),
+        SimpleNamespace(challenge_type=1, seed_id=5),
+    ]
+
+    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
+        _ = model_path, on_seed_complete
+        return [
+            ValidationResult(uid, True, float(t.seed_id), 0.5) for t in chunk
+        ]
+
+    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
+    results = asyncio.run(
+        ev.evaluate_seeds_parallel(tasks, uid=5, model_path=model_path, num_workers=3)
+    )
+
+    assert len(results) == 6
+    assert [r.time_sec for r in results] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+
+
 def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):
     ev = _new_evaluator()
     de.DockerSecureEvaluator._base_ready = True

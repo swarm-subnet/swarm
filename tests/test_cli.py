@@ -46,16 +46,15 @@ def test_doctor_optional_failure_does_not_fail_exit_code(monkeypatch, capsys):
     assert "SWARM_PRIVATE_BENCHMARK_SECRET" in capsys.readouterr().out
 
 
-def test_benchmark_invokes_bench_script(monkeypatch, tmp_path):
+def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
     model_path = tmp_path / "UID_178.zip"
     model_path.write_bytes(b"zip")
     captured: dict[str, list[str]] = {}
 
-    def _fake_run(command, check=False):  # noqa: ARG001
-        captured["command"] = list(command)
-        return SimpleNamespace(returncode=0)
+    def _fake_benchmark_main(argv):
+        captured["argv"] = list(argv)
 
-    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+    monkeypatch.setattr("swarm.benchmark.engine.main", _fake_benchmark_main)
     rc = cli.main(
         [
             "benchmark",
@@ -69,19 +68,11 @@ def test_benchmark_invokes_bench_script(monkeypatch, tmp_path):
         ]
     )
     assert rc == 0
-    assert "debugging/bench_full_eval.py" in " ".join(captured["command"])
-    assert "--workers" in captured["command"]
-
-
-def test_benchmark_fails_if_bench_script_missing(monkeypatch, tmp_path, capsys):
-    model_path = tmp_path / "UID_178.zip"
-    model_path.write_bytes(b"zip")
-    monkeypatch.setattr(cli, "DEFAULT_BENCH_SCRIPT", tmp_path / "missing.py")
-
-    rc = cli.main(["benchmark", "--model", str(model_path)])
-
-    assert rc == 1
-    assert "Benchmark script not found" in capsys.readouterr().err
+    assert "--model" in captured["argv"]
+    assert "--workers" in captured["argv"]
+    assert "3" in captured["argv"]
+    assert "--rpc-verbosity" in captured["argv"]
+    assert "low" in captured["argv"]
 
 
 def test_benchmark_fails_if_model_missing(capsys, tmp_path):
