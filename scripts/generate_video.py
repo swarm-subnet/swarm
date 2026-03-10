@@ -19,9 +19,9 @@ The script is designed for two use-cases:
 
 Examples
 --------
-    python3 generate_video.py --model UID_178.zip --seed 42 --type 1 --mode chase
-    python3 generate_video.py --model UID_178.zip --seed 42 --type 5 --mode all --out ./videos
-    python3 generate_video.py --model UID_178.zip --seed 42 --type 1 --mode depth,fpv --width 1920 --height 1080
+    python3 scripts/generate_video.py --model UID_178.zip --seed 42 --type 1 --mode chase
+    python3 scripts/generate_video.py --model UID_178.zip --seed 42 --type 5 --mode all --out ./videos
+    python3 scripts/generate_video.py --model UID_178.zip --seed 42 --type 1 --mode depth,fpv --width 1920 --height 1080
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ import numpy as np
 # without requiring a global install.
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _SCRIPT_DIR / "swarm-repo"
+_REPO_ROOT = _SCRIPT_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 os.environ.setdefault("SWARM_PRIVATE_BENCHMARK_SECRET", "bench_test_key_2026")

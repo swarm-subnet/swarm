@@ -6,7 +6,7 @@ Measures each isolated component of env.step() across all five
 challenge types: rendering, physics, clearance, and overhead.
 
 Usage:
-    python3 test_timings.py
+    python3 scripts/test_timings.py
 
 Output:
     Per-scene breakdown: bodies checked, ms per component, % of total step.

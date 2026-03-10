@@ -16,7 +16,7 @@ from typing import Any, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_BENCH_LOG = Path("/tmp/swarm_benchmark.log")
+DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
 DEFAULT_MODEL_ZIP = REPO_ROOT / "Submission" / "submission.zip"
 
 MODEL_EXTENSIONS = {

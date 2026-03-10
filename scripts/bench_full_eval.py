@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Redirect — benchmark engine moved to swarm.benchmark.engine."""
+"""Standalone script wrapper for ``swarm.benchmark.engine``.
+
+Usage:
+    python3 scripts/bench_full_eval.py --model path/to/model.zip
+    python3 scripts/bench_full_eval.py --model path/to/model.zip --workers 4 --seeds-per-group 5
+"""
+
+from __future__ import annotations
+
 import sys as _sys
 from pathlib import Path as _Path
 

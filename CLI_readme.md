@@ -45,7 +45,7 @@ swarm doctor --json
 
 ### `swarm benchmark`
 
-Runs the full benchmark workflow by delegating to `debugging/bench_full_eval.py`.
+Runs the full benchmark workflow by delegating to `scripts/bench_full_eval.py`.
 
 Examples:
 

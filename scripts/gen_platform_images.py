@@ -13,9 +13,9 @@ Five camera views per seed:
   - top:          near-orthographic top-down
 
 Usage:
-    python3 gen_platform_images.py --per-type 2
-    python3 gen_platform_images.py --per-type 1 --width 1920 --height 1080
-    python3 gen_platform_images.py --per-type 3 --out-dir ./renders --seeds 442893 442884 442894
+    python3 scripts/gen_platform_images.py --per-type 2
+    python3 scripts/gen_platform_images.py --per-type 1 --width 1920 --height 1080
+    python3 scripts/gen_platform_images.py --per-type 3 --out-dir ./renders --seeds 442893 442884 442894
 """
 from __future__ import annotations
 
