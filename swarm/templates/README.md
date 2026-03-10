@@ -1,74 +1,155 @@
-<div align="center">
+<a id="readme-top"></a>
 
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm — Decentralized Drone Intelligence" width="60%">
+<p align="center">
+  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm" width="60%" />
+</p>
 
-# Swarm Subnet 124 — Drone Navigation Model
+<h1 align="center">Autonomous Drone Navigation</h1>
 
-**Autonomous drone intelligence, competing on the Bittensor network.**
+<p align="center">
+  <i>No hand-crafted rules. No pre-built maps. No shortcuts.<br/>
+  A neural network that learned to fly — from scratch.</i>
+</p>
 
-[![Subnet](https://img.shields.io/badge/Bittensor-Subnet_124-black?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIgZmlsbD0iI2ZmZDcwMCIvPjwvc3ZnPg==)](https://bittensor.com)
-[![GitHub](https://img.shields.io/badge/Swarm-Repository-yellow?style=for-the-badge&logo=github)](https://github.com/swarm-subnet/swarm)
-[![Discord](https://img.shields.io/badge/Join-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/swarm-subnet)
-
-</div>
+<p align="center">
+  <a href="https://swarm124.com">swarm124.com</a> · <a href="https://swarm124.com/benchmark">Leaderboard</a> · <a href="https://discord.gg/swarm-subnet">Discord</a> · <a href="https://github.com/swarm-subnet/swarm">GitHub</a>
+</p>
 
 ---
 
-This repository contains a trained **drone navigation model** submitted to [Swarm (Bittensor Subnet 124)](https://github.com/swarm-subnet/swarm) — a decentralized AI competition where miners build autonomous agents that navigate complex 3D environments.
+This model was trained on the [Swarm](https://swarm124.com) open benchmark — a competition where AI agents learn to pilot drones through procedurally generated 3D worlds using nothing but a depth camera and their own state. **No hand-tuned rules. Pure learned navigation.**
 
-## What is Swarm?
+<!-- TABLE OF CONTENTS -->
+<details>
+  <summary><b>Table of Contents</b></summary>
+  <ol>
+    <li><a href="#see-it-fly">See It Fly</a></li>
+    <li><a href="#about-swarm">About Swarm</a></li>
+    <li><a href="#from-simulation-to-reality">From Simulation to Reality</a></li>
+    <li><a href="#how-it-works">How It Works</a></li>
+    <li><a href="#run-this-model">Run This Model</a></li>
+    <li><a href="#scoring">Scoring</a></li>
+    <li><a href="#train-your-own">Train Your Own</a></li>
+    <li><a href="#community">Community</a></li>
+  </ol>
+</details>
 
-Swarm is the **first decentralized drone intelligence competition** running on the [Bittensor](https://bittensor.com) network. Miners train reinforcement learning agents to pilot drones through procedurally generated environments. Models are evaluated on **speed**, **reliability**, and **obstacle avoidance** — with TAO rewards distributed to top performers every epoch.
-
-The drone receives only a **depth camera feed** and its own state vector — no GPS, no map, no cheating. Pure learned navigation.
-
-## Challenge Environments
-
-Models are tested across **diverse environment types**, each requiring different navigation strategies:
+<!-- SEE IT FLY -->
+## See It Fly
 
 <table>
 <tr>
 <td align="center" width="50%">
 <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type1_sub2.png" alt="City Navigation" width="100%">
 <br><b>City Navigation</b><br>
-<em>Navigate between buildings, streets and urban obstacles</em>
+<em>Buildings, streets, and tight urban corridors</em>
 </td>
 <td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3.png" alt="Mountain Terrain" width="100%">
-<br><b>Mountain Terrain</b><br>
-<em>Fly through peaks and valleys with elevation changes</em>
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type4_2.png" alt="Warehouse Interior" width="100%">
+<br><b>Warehouse Interior</b><br>
+<em>Shelves, forklifts, conveyors — precision flying</em>
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type4_2.png" alt="Warehouse Interior" width="100%">
-<br><b>Warehouse Interior</b><br>
-<em>Indoor navigation among shelves, forklifts and conveyors</em>
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3.png" alt="Mountain Terrain" width="100%">
+<br><b>Mountain Terrain</b><br>
+<em>Peaks, valleys, and unpredictable elevation</em>
 </td>
 <td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/landing_pad.png" alt="Drone on Landing Pad" width="100%">
-<br><b>Precision Landing</b><br>
-<em>Reach the target landing pad to complete the mission</em>
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type2.png" alt="Open Field" width="100%">
+<br><b>Open Field</b><br>
+<em>High-speed flight across open terrain</em>
 </td>
 </tr>
 </table>
 
+<p align="center">
+  <sub>Every model is evaluated across <b>1,000 deterministic seeds</b> spanning all environment types.</sub>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- ABOUT SWARM -->
+## About Swarm
+
+[Swarm](https://swarm124.com) is the **open benchmark for autonomous drone navigation**. Real AI agents learn to fly through complex 3D worlds from raw sensor input — no shortcuts, no privileged information, no handholding.
+
+* **Hard problem, real skills** — depth camera + state vector in, velocity commands out
+* **No memorization** — 1,000 procedurally generated environments, every seed is unique
+* **Fully reproducible** — deterministic seeds, containerized evaluation, public leaderboard
+* **Open to everyone** — train, submit, compete — the best model wins
+
+Autonomous navigation shouldn't live in closed labs. Swarm makes drone AI **measurable**, **comparable**, and **open** — pushing the frontier of what learned flight can do. Powered by the [Bittensor](https://bittensor.com) network (Subnet 124).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- FROM SIMULATION TO REALITY -->
+## From Simulation to Reality
+
+Models trained on the Swarm benchmark don't stay in simulation — **they fly on real hardware.**
+
+<p align="center">
+  <a href="https://github.com/swarm-subnet/Langostino">
+    <img src="https://raw.githubusercontent.com/swarm-subnet/Langostino/main/assets/banner_section_1.png" alt="Langostino — The Swarm Drone" width="80%" />
+  </a>
+</p>
+
+<p align="center">
+  <b><a href="https://github.com/swarm-subnet/Langostino">Langostino</a></b> is our open-source autonomous drone — built from scratch with ROS2, Raspberry Pi, and INAV.<br/>
+  Full assembly guide, bill of materials, and 3D-printable parts included. Build it yourself.
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.youtube.com/vi/gf9mxroeurU/maxresdefault.jpg" alt="Langostino autonomous flight" width="560" loading="lazy" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Watch-Autonomous%20Flight-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch on YouTube" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/swarm-subnet/Langostino">
+    <img src="https://img.shields.io/badge/Build%20Your%20Own-Langostino-111111?style=for-the-badge&logo=github" alt="Build your own" />
+  </a>
+</p>
+
+<p align="center">
+  <b>Train in Simulation</b> &nbsp;→&nbsp; <b>Compete on the Leaderboard</b> &nbsp;→&nbsp; <b>Deploy on Real Hardware</b><br/>
+  <sub><a href="https://github.com/swarm-subnet/swarm">Swarm</a> · <a href="https://swarm124.com/benchmark">swarm124.com</a> · <a href="https://github.com/swarm-subnet/Langostino">Langostino</a></sub>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- HOW IT WORKS -->
 ## How It Works
 
-```
-Depth Camera (128x128) ──┐
-                         ├──▶ Neural Network ──▶ Velocity Commands ──▶ Drone
-Drone State Vector ──────┘
-```
+<table align="center">
+<tr>
+<td align="center"><b>Depth Camera</b><br><sub>128×128 image</sub></td>
+<td align="center" rowspan="2"><b>&nbsp;→&nbsp; Neural Network &nbsp;→&nbsp;</b></td>
+<td align="center" rowspan="2"><b>Velocity Commands</b><br><sub>3D movement</sub></td>
+<td align="center" rowspan="2"><b>&nbsp;→&nbsp; Drone</b></td>
+</tr>
+<tr>
+<td align="center"><b>State Vector</b><br><sub>position · velocity · orientation</sub></td>
+</tr>
+</table>
 
-1. The drone observes the world through a **128x128 depth camera** and its own state (position, velocity, orientation)
-2. A neural network processes these inputs and outputs **velocity commands**
-3. The drone navigates toward the goal while avoiding obstacles
-4. Performance is scored on **completion time**, **success rate**, and **flight safety**
+<br/>
 
-## Running This Model
+The drone sees the world through a **128×128 depth image** and knows its own position, velocity, and orientation. A neural network maps these raw inputs directly to **3D velocity commands** — steering toward the goal while avoiding every obstacle in its path.
 
-Clone the [Swarm repository](https://github.com/swarm-subnet/swarm) and install dependencies:
+**No pre-built maps. No obstacle positions. Everything is learned from experience.**
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- RUN THIS MODEL -->
+## Run This Model
+
+**1. Clone and install**
 
 ```bash
 git clone https://github.com/swarm-subnet/swarm.git
@@ -76,49 +157,97 @@ cd swarm
 pip install -e .
 ```
 
-Run a full benchmark evaluation across all environment types:
+**2. Run the full benchmark** (1,000 seeds across all environments)
 
 ```bash
-python debugging/bench_full_eval.py --model submission.zip --workers 2
+python debugging/bench_full_eval.py --model submission.zip --workers 4
 ```
 
-Or test on a specific seed:
+**3. Quick test** (one seed per environment type)
 
 ```bash
 python debugging/bench_full_eval.py --model submission.zip --seeds-per-group 1
 ```
 
-## Repository Structure
+<details>
+  <summary><b>What's in this repo?</b></summary>
 
 ```
-submission.zip   # Trained model (zipped agent code + weights)
-README.md        # This file (required by the Swarm validator)
+submission.zip   # Trained agent — neural network weights + inference code
+README.md        # This file
 ```
 
+The `.zip` contains the agent's `DroneAgent` class and trained weights. The Swarm benchmark runner loads the agent, places it in a procedurally generated environment, and measures its performance.
+
+</details>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- SCORING -->
 ## Scoring
 
-| Component | Weight | Description |
-|-----------|--------|-------------|
-| Success   | 45%    | Did the drone reach the goal? |
-| Speed     | 45%    | How fast relative to the time limit? |
-| Safety    | 10%    | Minimum clearance from obstacles |
+| Component | Weight | What It Measures |
+|-----------|--------|-----------------|
+| **Success** | 45% | Did the drone reach the goal? |
+| **Speed** | 45% | How fast relative to the time limit? |
+| **Safety** | 10% | Minimum clearance from obstacles |
 
-Final score: `0.45 * success + 0.45 * time_bonus + 0.10 * safety_bonus`
+```
+Final score = 0.45 × success + 0.45 × time_bonus + 0.10 × safety_bonus
+```
 
-## Links
+Models are ranked by **median score across 1,000 seeds** — consistency matters more than lucky runs. To take the crown, a new model must beat the reigning champion by at least **1%**.
 
-- **Swarm Repository** — [github.com/swarm-subnet/swarm](https://github.com/swarm-subnet/swarm)
-- **Bittensor Network** — [bittensor.com](https://bittensor.com)
-- **Subnet ID** — 124
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- TRAIN YOUR OWN -->
+## Train Your Own
+
+Think you can build a better pilot? The benchmark is open — **prove it.**
+
+1. **Read the docs** — [Miner guide](https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md) covers observations, actions, training tips, and submission format
+2. **Study the baseline** — [Agent template](https://github.com/swarm-subnet/swarm/blob/main/swarm/submission_templates/drone_agent.py) shows the exact interface your model needs
+3. **Train and iterate** — Test locally against all environment types, push your score higher
+4. **Submit and compete** — Push to a public GitHub repo and climb the [leaderboard](https://swarm124.com/benchmark)
+
+<p align="center">
+  <a href="https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md">
+    <img alt="Start training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-111111?style=for-the-badge" />
+  </a>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- COMMUNITY -->
+## Community
+
+Swarm is built by researchers, engineers, and drone builders from around the world. **Join us.**
+
+<p align="center">
+  <a href="https://discord.gg/swarm-subnet">
+    <img alt="Join Discord" src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/swarm-subnet"><b>Discord</b></a>
+  &nbsp;•&nbsp;
+  <a href="https://x.com/SwarmSubnet"><b>X / Twitter</b></a>
+  &nbsp;•&nbsp;
+  <a href="https://github.com/swarm-subnet"><b>GitHub</b></a>
+  &nbsp;•&nbsp;
+  <a href="https://swarm124.com"><b>swarm124.com</b></a>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-<div align="center">
+<p align="center">
+  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm.png" alt="Swarm" width="60">
+</p>
 
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm.png" alt="Swarm Logo" width="80">
-
-**Built for [Swarm Subnet 124](https://github.com/swarm-subnet/swarm) on the [Bittensor](https://bittensor.com) network.**
-
-*This README is required by the Swarm validator. Do not modify it.*
-
-</div>
+<p align="center">
+  <b><a href="https://swarm124.com">Swarm</a> — where AI learns to fly.</b><br/>
+  <sub>Subnet 124 on <a href="https://bittensor.com">Bittensor</a></sub>
+</p>
