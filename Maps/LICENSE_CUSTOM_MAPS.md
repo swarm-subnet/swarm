@@ -10,7 +10,10 @@ Permission is granted to use, copy, modify, distribute, and share this project f
 
 This license applies to:
 
-- Project maps  
+- `City_Generator_Prototype`
+- `Forest_Prototype`
+- `ski-resort based map prototype`
+- `Warehouse_Prototype`
 - Custom assets created or modified by Abdulla Alnasser under `assets/custom/*`
 
 ---
@@ -26,6 +29,7 @@ You are granted broad usage rights under this license, but ownership is not tran
 ## Third-Party / Open-Source Assets
 
 - Assets under `assets/other_sources/*` remain under their original respective licenses.
+- Assets under `assets/quaternius_ultimate_nature/*` are third-party assets from Quaternius and remain under their original license.
 - These assets are not claimed as authored by Abdulla Alnasser.
 - Users are responsible for complying with the original terms of those assets.
 
