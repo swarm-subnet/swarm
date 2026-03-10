@@ -463,7 +463,9 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         forward_mod,
         "_ensure_models",
-        lambda self_obj, uids: asyncio.sleep(0, result={1: model_path}),
+        lambda self_obj, uids: asyncio.sleep(
+            0, result={1: (model_path, "https://github.com/owner/repo")}
+        ),
     )
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fake_evaluate_seeds)
     monkeypatch.setattr(forward_mod, "set_map_cache_epoch", lambda epoch: None)
