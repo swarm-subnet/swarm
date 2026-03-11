@@ -51,6 +51,7 @@ BENCH_GROUP_ORDER = [
     "type3_mountain",
     "type4_village",
     "type5_warehouse",
+    "type6_forest",
 ]
 BENCH_GROUP_TO_TYPE = {
     "type1_city": 1,
@@ -58,6 +59,7 @@ BENCH_GROUP_TO_TYPE = {
     "type3_mountain": 3,
     "type4_village": 4,
     "type5_warehouse": 5,
+    "type6_forest": 6,
 }
 
 
@@ -390,7 +392,7 @@ def _apply_relaxed_overrides() -> Dict[str, Any]:
 
 
 def _infer_bench_group(challenge_type: int, seed: int) -> Optional[str]:
-    """Map internal task challenge IDs to benchmark map groups (5-way)."""
+    """Map internal task challenge IDs to benchmark map groups."""
     if challenge_type == 1:
         return "type1_city"
     if challenge_type == 2:
@@ -401,6 +403,8 @@ def _infer_bench_group(challenge_type: int, seed: int) -> Optional[str]:
         return "type4_village"
     if challenge_type == 5:
         return "type5_warehouse"
+    if challenge_type == 6:
+        return "type6_forest"
     return None
 
 
@@ -507,6 +511,7 @@ _GROUP_DISPATCH_WEIGHTS = {
     "type3_mountain": 4,
     "type4_village": 2,
     "type5_warehouse": 3,
+    "type6_forest": 2,
 }
 _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 1,
@@ -1530,13 +1535,14 @@ def _print_results(
             base[order[i % len(order)]] += 1
         return base
 
-    type_counts = _allocate(1000, CHALLENGE_TYPE_DISTRIBUTION, [1, 2, 3, 4, 5])
+    type_counts = _allocate(1000, CHALLENGE_TYPE_DISTRIBUTION, [1, 2, 3, 4, 5, 6])
     DIST = {
         "type1_city": type_counts[1],
         "type2_open": type_counts[2],
         "type3_mountain": type_counts[3],
         "type4_village": type_counts[4],
         "type5_warehouse": type_counts[5],
+        "type6_forest": type_counts[6],
     }
 
     total_extrap_worker_sec = 0.0

@@ -26,6 +26,8 @@ from swarm.constants import (
     TYPE_4_WORLD_RANGE_X, TYPE_4_WORLD_RANGE_Y,
     TYPE_4_R_MIN, TYPE_4_R_MAX, TYPE_4_H_MIN, TYPE_4_H_MAX,
     TYPE_4_START_H_MIN, TYPE_4_START_H_MAX, TYPE_4_HORIZON,
+    TYPE_6_WORLD_RANGE, TYPE_6_R_MIN, TYPE_6_R_MAX, TYPE_6_H_MIN, TYPE_6_H_MAX,
+    TYPE_6_START_H_MIN, TYPE_6_START_H_MAX, TYPE_6_HORIZON,
 )
 from swarm.core.mountain_generator import get_terrain_z, get_global_scale
 
@@ -52,6 +54,13 @@ TYPE_PARAMS = {
         'h_min': TYPE_4_H_MIN, 'h_max': TYPE_4_H_MAX,
         'start_h_min': TYPE_4_START_H_MIN, 'start_h_max': TYPE_4_START_H_MAX,
         'horizon': TYPE_4_HORIZON,
+    },
+    6: {
+        'world_range': TYPE_6_WORLD_RANGE,
+        'r_min': TYPE_6_R_MIN, 'r_max': TYPE_6_R_MAX,
+        'h_min': TYPE_6_H_MIN, 'h_max': TYPE_6_H_MAX,
+        'start_h_min': TYPE_6_START_H_MIN, 'start_h_max': TYPE_6_START_H_MAX,
+        'horizon': TYPE_6_HORIZON,
     },
 }
 

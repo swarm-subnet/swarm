@@ -183,7 +183,7 @@ SAFETY_DISTANCE_DANGER = 0.2            # Zero safety score at this clearance (m
 # BENCHMARK SYSTEM
 # =============================================================================
 
-BENCHMARK_VERSION = "SB1.0"             # Current benchmark version identifier
+BENCHMARK_VERSION = "SB1.1"             # Current benchmark version identifier
 BENCHMARK_TOTAL_SEED_COUNT = 1000       # Total seeds per epoch
 BENCHMARK_SCREENING_SEED_COUNT = 200    # Seeds used for screening phase
 BENCHMARK_FULL_SEED_COUNT = 800         # Seeds used for full benchmark phase
@@ -204,11 +204,12 @@ MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES = 2 # Maximum warmup seed failures logged p
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.40,  # City navigation (procedural roads)
-    2: 0.15,  # Open flight (no obstacles)
-    3: 0.1875,  # Mountain navigation
-    4: 0.0625,  # Village navigation
-    5: 0.20,    # Warehouse navigation
+    1: 0.35,   # City navigation (procedural roads)
+    2: 0.12,   # Open flight (no obstacles)
+    3: 0.16,   # Mountain navigation
+    4: 0.05,   # Village navigation
+    5: 0.17,   # Warehouse navigation
+    6: 0.15,   # Forest navigation
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"
@@ -266,6 +267,28 @@ TYPE_4_PLATFORM_CLEARANCE = 1.0                     # Minimum clearance from war
 TYPE_4_PLATFORM_MAX_ATTEMPTS = 200                  # Max attempts to find collision-free platform position
 TYPE_4_MIN_PLATFORM_DISTANCE = 10.0                 # Minimum 3D distance between start and goal platforms (meters)
 
+# Type 6: Forest Navigation (100×100m ground, 96×96m playable with 2m edge margin)
+TYPE_6_WORLD_RANGE = 42                             # ±42m playable XY (96m total with margin)
+TYPE_6_R_MIN, TYPE_6_R_MAX = 10, 45
+TYPE_6_H_MIN, TYPE_6_H_MAX = 0.2, 3.0
+TYPE_6_START_H_MIN, TYPE_6_START_H_MAX = 0.2, 3.0
+TYPE_6_HORIZON = HORIZON_SEC
+TYPE_6_SAFETY_DISTANCE_SAFE = 0.6                   # Tighter safety for dense forest (meters)
+
+FOREST_MODE_DISTRIBUTION = {
+    1: 0.25,   # Normal (green foliage)
+    2: 0.25,   # Autumn (orange/yellow)
+    3: 0.25,   # Snow (white, bare + snow-covered)
+    4: 0.25,   # Dead (no leaves, bare branches)
+}
+FOREST_DIFFICULTY_DISTRIBUTION = {
+    1: 0.45,   # Easy  (130 trees, loose spacing)
+    2: 0.35,   # Normal (170 trees, medium spacing)
+    3: 0.20,   # Hard  (210 trees, tight spacing)
+}
+assert abs(sum(FOREST_MODE_DISTRIBUTION.values()) - 1.0) < 0.001
+assert abs(sum(FOREST_DIFFICULTY_DISTRIBUTION.values()) - 1.0) < 0.001
+
 # =============================================================================
 # MOVING PLATFORM (challenge variant, applies to any map type)
 # =============================================================================
@@ -276,6 +299,7 @@ MOVING_PLATFORM_PROB = {
     3: 0.25,
     4: 0.25,
     5: 0.00,
+    6: 0.00,
 }
 MOVING_PLATFORM_SEED_OFFSET = 555555
 

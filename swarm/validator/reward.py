@@ -26,7 +26,12 @@ from swarm.constants import (
     SPEED_LIMIT, HOVER_SEC,
     REWARD_W_SUCCESS, REWARD_W_TIME, REWARD_W_SAFETY,
     SAFETY_DISTANCE_SAFE, SAFETY_DISTANCE_DANGER,
+    TYPE_6_SAFETY_DISTANCE_SAFE,
 )
+
+SAFETY_DISTANCE_SAFE_BY_TYPE = {
+    6: TYPE_6_SAFETY_DISTANCE_SAFE,
+}
 
 __all__ = ["flight_reward"]
 
@@ -46,15 +51,18 @@ def _calculate_target_time(task: "MapTask") -> float:
     return min_time * 1.06
 
 
-def _calculate_safety_term(min_clearance: float, collision: bool) -> float:
+def _calculate_safety_term(
+    min_clearance: float, collision: bool, challenge_type: int = 0
+) -> float:
     """Calculate safety term based on minimum obstacle clearance."""
     if collision:
         return 0.0
-    if min_clearance >= SAFETY_DISTANCE_SAFE:
+    safe = SAFETY_DISTANCE_SAFE_BY_TYPE.get(challenge_type, SAFETY_DISTANCE_SAFE)
+    if min_clearance >= safe:
         return 1.0
     if min_clearance <= SAFETY_DISTANCE_DANGER:
         return 0.0
-    return (min_clearance - SAFETY_DISTANCE_DANGER) / (SAFETY_DISTANCE_SAFE - SAFETY_DISTANCE_DANGER)
+    return (min_clearance - SAFETY_DISTANCE_DANGER) / (safe - SAFETY_DISTANCE_DANGER)
 
 
 def flight_reward(
@@ -126,8 +134,9 @@ def flight_reward(
     else:
         time_term = _clamp(1.0 - t / horizon)
 
+    challenge_type = getattr(task, "challenge_type", 0) if task is not None else 0
     if min_clearance is not None:
-        safety_term = _calculate_safety_term(min_clearance, collision)
+        safety_term = _calculate_safety_term(min_clearance, collision, challenge_type)
     else:
         safety_term = 1.0 if not collision else 0.0
 

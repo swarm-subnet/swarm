@@ -55,9 +55,13 @@ from swarm.constants import (
     TYPE_4_WORLD_RANGE_Y,
     TYPE_4_H_MIN,
     TYPE_4_H_MAX,
+    TYPE_6_WORLD_RANGE,
+    TYPE_6_H_MIN,
+    TYPE_6_H_MAX,
     GOAL_COLOR_PALETTE,
 )
 from swarm.core.city_generator import build_city as build_city_map
+from swarm.core.forest_generator import build_forest
 from swarm.core.mountain_generator import build_mountains
 from swarm.core.warehouse import build_warehouse_map
 
@@ -391,6 +395,9 @@ def _build_static_world(
     elif challenge_type == 5:
         build_warehouse_map(seed=seed, cli=cli, start=start, goal=goal)
 
+    elif challenge_type == 6:
+        build_forest(cli, seed, [], 0.0, hills_enabled=True)
+
 
 def prebuild_static_world_cache(
     seed: int,
@@ -530,7 +537,7 @@ def _try_load_static_world_cache(
             )
         )
 
-        if challenge_type in (1, 3, 4) and loaded_map_bodies <= 0:
+        if challenge_type in (1, 3, 4, 6) and loaded_map_bodies <= 0:
             _invalidate_static_world_cache(cache_file, meta_file)
             return False
 
@@ -729,6 +736,7 @@ def build_world(
         1: (TYPE_1_WORLD_RANGE, TYPE_1_WORLD_RANGE, TYPE_1_H_MIN, TYPE_1_H_MAX),
         4: (TYPE_3_VILLAGE_RANGE, TYPE_3_VILLAGE_RANGE, 0.0, 0.0),
         5: (TYPE_4_WORLD_RANGE_X, TYPE_4_WORLD_RANGE_Y, TYPE_4_H_MIN, TYPE_4_H_MAX),
+        6: (TYPE_6_WORLD_RANGE, TYPE_6_WORLD_RANGE, TYPE_6_H_MIN, TYPE_6_H_MAX),
     }
 
     if (
@@ -786,7 +794,7 @@ def build_world(
         # Calculate platform surface height (random or fixed)
         if challenge_type in (3, 4):
             surface_z = float(_raycast_surface_z(cli, sx, sy))
-        elif challenge_type in (1, 5) and start_platform_surface_z is not None:
+        elif challenge_type in (1, 5, 6) and start_platform_surface_z is not None:
             surface_z = start_platform_surface_z
         elif START_PLATFORM_RANDOMIZE:
             surface_z = get_platform_height_for_seed(seed, challenge_type)
