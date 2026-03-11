@@ -185,6 +185,10 @@ def _check_env_var(name: str, required: bool = False) -> DoctorCheck:
     return DoctorCheck(name, False, "not set", required)
 
 
+def _runtime_state_dir() -> Path:
+    return REPO_ROOT / "swarm" / "state"
+
+
 def _run_doctor_checks() -> list[DoctorCheck]:
     from swarm.constants import MODEL_DIR
 
@@ -195,7 +199,7 @@ def _run_doctor_checks() -> list[DoctorCheck]:
         _check_module_available("capnp"),
         _check_module_available("pybullet"),
         _check_module_available("gym_pybullet_drones"),
-        _check_writable_dir(Path("state"), "state_dir"),
+        _check_writable_dir(_runtime_state_dir(), "state_dir"),
         _check_writable_dir(Path(MODEL_DIR), "model_dir"),
         _check_submission_template(),
         _check_benchmark_engine(),

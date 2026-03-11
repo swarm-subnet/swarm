@@ -45,6 +45,28 @@ def test_doctor_optional_failure_does_not_fail_exit_code(monkeypatch, capsys):
     assert "WANDB_API_KEY" in capsys.readouterr().out
 
 
+def test_doctor_checks_runtime_state_dir(monkeypatch):
+    captured: list[tuple[object, object]] = []
+
+    def _fake_check_writable_dir(path, name):
+        captured.append((path, name))
+        return cli.DoctorCheck(name, True, str(path), True)
+
+    monkeypatch.setattr(cli, "_check_python_version", lambda: cli.DoctorCheck("python", True, "3.10.12", True))
+    monkeypatch.setattr(cli, "_check_docker_binary", lambda: cli.DoctorCheck("docker_binary", True, "ok", True))
+    monkeypatch.setattr(cli, "_check_docker_daemon", lambda: cli.DoctorCheck("docker_daemon", True, "ok", True))
+    monkeypatch.setattr(cli, "_check_module_available", lambda module: cli.DoctorCheck(f"module:{module}", True, "ok", True))
+    monkeypatch.setattr(cli, "_check_writable_dir", _fake_check_writable_dir)
+    monkeypatch.setattr(cli, "_check_submission_template", lambda: cli.DoctorCheck("submission_template", True, "ok", True))
+    monkeypatch.setattr(cli, "_check_benchmark_engine", lambda: cli.DoctorCheck("benchmark_engine", True, "ok", True))
+
+    cli._run_doctor_checks()
+
+    assert captured[0] == (cli.REPO_ROOT / "swarm" / "state", "state_dir")
+    assert captured[1][1] == "model_dir"
+    assert cli._runtime_state_dir() == cli.REPO_ROOT / "swarm" / "state"
+
+
 def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
     model_path = tmp_path / "UID_178.zip"
     model_path.write_bytes(b"zip")
