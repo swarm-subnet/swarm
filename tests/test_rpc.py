@@ -28,13 +28,14 @@ except ImportError:
     print("ERROR: pycapnp not installed. Install with: pip install pycapnp")
     sys.exit(1)
 
+from gym_pybullet_drones.utils.enums import ActionType
+
 from swarm.constants import SIM_DT, SPEED_LIMIT
 from swarm.core.drone import track_drone
-from swarm.protocol import ValidationResult, MapTask
+from swarm.protocol import MapTask, ValidationResult
 from swarm.utils.env_factory import make_env
 from swarm.validator.reward import flight_reward
 from swarm.validator.task_gen import random_task
-from gym_pybullet_drones.utils.enums import ActionType
 
 
 def _check_folder_structure(folder: Path):

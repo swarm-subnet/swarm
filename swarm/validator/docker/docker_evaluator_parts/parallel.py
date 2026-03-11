@@ -1,0 +1,479 @@
+"""Process-based parallel seed evaluation for the regular validator path.
+
+This mirrors the benchmark scheduler:
+- one seed per batch
+- dynamic weighted dispatch
+- adaptive backoff on unhealthy execution
+- parent-side worker stall detection and replacement
+
+The main difference is that validator evaluation degrades failed batches into
+per-seed failures and keeps going, instead of aborting the full run.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import queue as queue_mod
+import time
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional
+
+import bittensor as bt
+
+from swarm.constants import N_DOCKER_WORKERS
+from swarm.protocol import ValidationResult
+
+from ._shared import _docker_evaluator_facade
+
+
+def _benchmark_engine():
+    import swarm.benchmark.engine as bench_engine
+
+    return bench_engine
+
+
+def _task_seed(task: Any, index: int) -> int:
+    try:
+        return int(getattr(task, "map_seed", index))
+    except Exception:
+        return int(index)
+
+
+def _task_challenge_type(task: Any) -> int:
+    try:
+        return int(getattr(task, "challenge_type", 0))
+    except Exception:
+        return 0
+
+
+def _task_group_name(task: Any, index: int) -> str:
+    bench_engine = _benchmark_engine()
+    seed = _task_seed(task, index)
+    challenge_type = _task_challenge_type(task)
+    group_name = bench_engine._infer_bench_group(challenge_type, seed)
+    if group_name:
+        return str(group_name)
+    return f"type{challenge_type}_unknown"
+
+
+def _emit_seed_complete(
+    on_seed_complete: Optional[Callable[..., None]],
+    seed_meta: Optional[Dict[str, Any]],
+) -> None:
+    if on_seed_complete is None:
+        return
+    try:
+        on_seed_complete(seed_meta)
+    except TypeError:
+        try:
+            on_seed_complete()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _failure_seed_meta(
+    task: Any,
+    *,
+    uid: int,
+    status: str,
+    error: str,
+    elapsed_sec: float = 0.0,
+) -> Dict[str, Any]:
+    return {
+        "uid": int(uid),
+        "map_seed": _task_seed(task, -1),
+        "challenge_type": _task_challenge_type(task),
+        "horizon_sec": float(getattr(task, "horizon", 0.0)),
+        "moving_platform": bool(getattr(task, "moving_platform", False)),
+        "status": status,
+        "success": False,
+        "sim_time_sec": 0.0,
+        "seed_wall_sec": max(0.0, float(elapsed_sec)),
+        "step_idx": 0,
+        "error": error,
+    }
+
+
+def _log_scheduler_note(note: str) -> None:
+    if "Adaptive backoff active" in note or "Adaptive backoff extended" in note:
+        bt.logging.warning(note)
+    else:
+        bt.logging.info(note)
+
+
+async def _run_process_parallel(
+    *,
+    all_tasks: list,
+    task_meta: list[dict[str, Any]],
+    batch_plan: list[list[int]],
+    uid: int,
+    model_path: Path,
+    effective_workers: int,
+    on_seed_complete: Optional[Callable[..., None]] = None,
+    heartbeat_sec: float = 30.0,
+) -> list:
+    bench_engine = _benchmark_engine()
+    ctx = bench_engine._benchmark_mp_context()
+    result_queue = ctx.Queue()
+    progress_queue = ctx.Queue()
+    worker_queues: dict[int, Any] = {}
+    workers: dict[int, Any] = {}
+    worker_active_requests: dict[int, Any] = {}
+    worker_last_heartbeat: dict[int, float] = {}
+    worker_started_at: dict[int, float] = {}
+    results: list[Optional[ValidationResult]] = [None] * len(all_tasks)
+    scheduler = bench_engine._AdaptiveBackoffController(requested_workers=effective_workers)
+    pending_batch_ids = list(range(len(batch_plan)))
+    stall_timeout_sec = max(
+        bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
+        max(0.0, float(heartbeat_sec)) * 2.0,
+    )
+
+    bt.logging.info(
+        f"Evaluating {len(all_tasks)} seeds with {effective_workers} "
+        f"process worker(s) using dynamic weighted scheduling"
+    )
+    if scheduler.enabled:
+        bt.logging.info(
+            "Adaptive backoff enabled for validator evaluation "
+            f"(fallback cap=2/{effective_workers} workers)"
+        )
+    else:
+        bt.logging.info("Adaptive backoff disabled (requested workers <= 2)")
+    bt.logging.info(
+        "Parent worker stall watchdog enabled: "
+        f"{stall_timeout_sec:.1f}s without heartbeat"
+    )
+
+    def _spawn_worker(worker_slot: int) -> None:
+        task_queue = ctx.Queue()
+        worker = ctx.Process(
+            target=bench_engine._benchmark_worker_main,
+            args=(worker_slot, task_queue, result_queue, progress_queue),
+            name=f"validator_host_worker_{worker_slot}",
+            daemon=True,
+        )
+        worker.start()
+        worker_queues[worker_slot] = task_queue
+        workers[worker_slot] = worker
+
+    def _close_queue(queue_obj: Any) -> None:
+        try:
+            queue_obj.close()
+        except Exception:
+            pass
+
+    def _restart_worker(worker_slot: int) -> None:
+        worker = workers.get(worker_slot)
+        if worker is not None:
+            try:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=2.0)
+            except Exception:
+                pass
+        queue_obj = worker_queues.pop(worker_slot, None)
+        if queue_obj is not None:
+            _close_queue(queue_obj)
+        workers.pop(worker_slot, None)
+        worker_last_heartbeat.pop(worker_slot, None)
+        worker_started_at.pop(worker_slot, None)
+        worker_active_requests.pop(worker_slot, None)
+        _spawn_worker(worker_slot)
+
+    def _dispatch_available_batches() -> None:
+        while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
+            idle_worker_slots = [
+                slot
+                for slot in range(effective_workers)
+                if slot not in worker_active_requests
+                and slot in workers
+                and workers[slot].is_alive()
+            ]
+            if not idle_worker_slots:
+                return
+            batch_index = bench_engine._select_next_batch_index(
+                pending_batch_ids=pending_batch_ids,
+                batch_plan=batch_plan,
+                task_meta=task_meta,
+                active_batch_ids=[
+                    int(request.batch_index) for request in worker_active_requests.values()
+                ],
+                active_worker_cap=scheduler.active_worker_cap,
+            )
+            if batch_index is None:
+                return
+            pending_batch_ids.remove(batch_index)
+            batch_indices = list(batch_plan[batch_index])
+            batch_meta = [task_meta[idx] for idx in batch_indices]
+            worker_slot = min(idle_worker_slots)
+            request = bench_engine._ProcessBatchRequest(
+                batch_index=batch_index,
+                batch_indices=batch_indices,
+                tasks=[all_tasks[idx] for idx in batch_indices],
+                uid=uid,
+                model_path=str(model_path),
+                task_total=len(all_tasks),
+            )
+            worker_active_requests[worker_slot] = request
+            now = time.time()
+            worker_started_at[worker_slot] = now
+            worker_last_heartbeat[worker_slot] = now
+            worker_queues[worker_slot].put(request)
+            group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
+            seed_list = [int(meta["seed"]) for meta in batch_meta]
+            bt.logging.info(
+                f"[Validator eval] dispatch batch {batch_index + 1}/{len(batch_plan)} "
+                f"to worker {worker_slot} | group={group_name} | "
+                f"seed={seed_list[0]} | active_limit={scheduler.active_worker_cap}"
+            )
+
+    def _observe_seed(seed_meta: Optional[Dict[str, Any]]) -> None:
+        _emit_seed_complete(on_seed_complete, seed_meta)
+        note = scheduler.observe_seed(seed_meta)
+        if note:
+            _log_scheduler_note(note)
+
+    def _drain_progress_events() -> None:
+        while True:
+            try:
+                event = progress_queue.get_nowait()
+            except queue_mod.Empty:
+                return
+            if isinstance(event, bench_engine._ProcessWorkerHeartbeat):
+                worker_slot = int(event.worker_id)
+                worker_last_heartbeat[worker_slot] = float(event.ts)
+                if event.event_type == "batch_started":
+                    worker_started_at[worker_slot] = float(event.ts)
+                continue
+            _observe_seed(getattr(event, "seed_meta", None))
+
+    def _complete_failed_request(
+        worker_slot: int,
+        *,
+        request: Any,
+        status: str,
+        error: str,
+        elapsed_sec: float,
+    ) -> None:
+        bt.logging.warning(
+            f"[Validator eval] worker {worker_slot} failed batch {request.batch_index + 1}/{len(batch_plan)} "
+            f"with status={status}: {error}"
+        )
+        for task in request.tasks:
+            if status == "worker_stall_timeout":
+                seed_meta = bench_engine._build_worker_stall_seed_meta(
+                    task,
+                    uid=request.uid,
+                    elapsed_sec=elapsed_sec,
+                    error=error,
+                )
+            else:
+                seed_meta = _failure_seed_meta(
+                    task,
+                    uid=request.uid,
+                    status=status,
+                    error=error,
+                    elapsed_sec=elapsed_sec,
+                )
+            _observe_seed(seed_meta)
+
+        for idx in request.batch_indices:
+            results[idx] = ValidationResult(int(uid), False, 0.0, 0.0)
+
+        worker_active_requests.pop(worker_slot, None)
+        worker_last_heartbeat.pop(worker_slot, None)
+        worker_started_at.pop(worker_slot, None)
+
+    def _check_for_stalled_workers() -> int:
+        completed_now = 0
+        now = time.time()
+        for worker_slot, request in list(worker_active_requests.items()):
+            last_hb = worker_last_heartbeat.get(worker_slot)
+            if last_hb is None or (now - last_hb) < stall_timeout_sec:
+                continue
+            elapsed_sec = max(0.0, now - worker_started_at.get(worker_slot, now))
+            _complete_failed_request(
+                worker_slot,
+                request=request,
+                status="worker_stall_timeout",
+                error=f"worker {worker_slot} heartbeat stalled for {elapsed_sec:.1f}s",
+                elapsed_sec=elapsed_sec,
+            )
+            completed_now += 1
+            _restart_worker(worker_slot)
+            _dispatch_available_batches()
+        return completed_now
+
+    try:
+        for worker_slot in range(effective_workers):
+            _spawn_worker(worker_slot)
+        _dispatch_available_batches()
+
+        completed_batches = 0
+        while completed_batches < len(batch_plan):
+            _drain_progress_events()
+            completed_batches += _check_for_stalled_workers()
+            if completed_batches >= len(batch_plan):
+                break
+
+            try:
+                payload = result_queue.get(timeout=0.2)
+            except queue_mod.Empty:
+                now = time.time()
+                for worker_slot, worker in list(workers.items()):
+                    if worker.is_alive() or worker.exitcode in (0, None):
+                        continue
+                    request = worker_active_requests.get(worker_slot)
+                    if request is None:
+                        bt.logging.warning(
+                            f"[Validator eval] idle worker {worker_slot} crashed "
+                            f"(exitcode={worker.exitcode}); restarting"
+                        )
+                        _restart_worker(worker_slot)
+                        continue
+                    elapsed_sec = max(0.0, now - worker_started_at.get(worker_slot, now))
+                    _complete_failed_request(
+                        worker_slot,
+                        request=request,
+                        status="batch_exception",
+                        error=f"worker crashed (exitcode={worker.exitcode})",
+                        elapsed_sec=elapsed_sec,
+                    )
+                    completed_batches += 1
+                    _restart_worker(worker_slot)
+                    _dispatch_available_batches()
+                await asyncio.sleep(0)
+                continue
+
+            _drain_progress_events()
+            completed_batches += _check_for_stalled_workers()
+            if completed_batches >= len(batch_plan):
+                break
+
+            worker_slot = int(payload.worker_id)
+            request = worker_active_requests.get(worker_slot)
+            if request is None or int(payload.batch_index) != int(request.batch_index):
+                bt.logging.warning(
+                    f"[Validator eval] ignoring late result from worker {worker_slot} "
+                    f"for batch {int(payload.batch_index) + 1}"
+                )
+                continue
+
+            if payload.error:
+                _complete_failed_request(
+                    worker_slot,
+                    request=request,
+                    status="batch_exception",
+                    error=str(payload.error),
+                    elapsed_sec=float(payload.elapsed_sec),
+                )
+                completed_batches += 1
+                _restart_worker(worker_slot)
+                _dispatch_available_batches()
+                continue
+
+            if len(payload.results) != len(request.batch_indices):
+                _complete_failed_request(
+                    worker_slot,
+                    request=request,
+                    status="batch_exception",
+                    error=(
+                        f"unexpected result count {len(payload.results)} "
+                        f"for batch of {len(request.batch_indices)} seeds"
+                    ),
+                    elapsed_sec=float(payload.elapsed_sec),
+                )
+                completed_batches += 1
+                _restart_worker(worker_slot)
+                _dispatch_available_batches()
+                continue
+
+            for idx, packed in zip(request.batch_indices, payload.results):
+                results[idx] = ValidationResult(*packed)
+
+            worker_active_requests.pop(worker_slot, None)
+            worker_last_heartbeat.pop(worker_slot, None)
+            worker_started_at.pop(worker_slot, None)
+            completed_batches += 1
+            _dispatch_available_batches()
+
+        _drain_progress_events()
+        return [
+            result if result is not None else ValidationResult(int(uid), False, 0.0, 0.0)
+            for result in results
+        ]
+    finally:
+        for worker_slot, queue_obj in list(worker_queues.items()):
+            try:
+                queue_obj.put(None)
+            except Exception:
+                pass
+        for worker in workers.values():
+            try:
+                worker.join(timeout=5.0)
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=2.0)
+            except Exception:
+                pass
+        for queue_obj in worker_queues.values():
+            _close_queue(queue_obj)
+        for queue_obj in (result_queue, progress_queue):
+            _close_queue(queue_obj)
+
+
+async def evaluate_seeds_parallel(
+    self,
+    tasks: list,
+    uid: int,
+    model_path: Path,
+    num_workers: int = None,
+    on_seed_complete: Optional[Callable[..., None]] = None,
+) -> list:
+    """Evaluate validator seeds using the benchmark-grade process scheduler."""
+    if not tasks:
+        return []
+
+    if num_workers is None:
+        num_workers = N_DOCKER_WORKERS
+    effective_workers = max(1, min(int(num_workers), len(tasks)))
+
+    if not _docker_evaluator_facade().DockerSecureEvaluator._base_ready:
+        return await self.evaluate_seeds_batch(
+            tasks,
+            uid,
+            model_path,
+            worker_id=0,
+            on_seed_complete=on_seed_complete,
+            task_offset=0,
+            task_total=len(tasks),
+        )
+
+    task_meta = [
+        {
+            "group": _task_group_name(task, index),
+            "seed": _task_seed(task, index),
+            "challenge_type": _task_challenge_type(task),
+            "horizon": float(getattr(task, "horizon", 0.0)),
+            "moving_platform": bool(getattr(task, "moving_platform", False)),
+        }
+        for index, task in enumerate(tasks)
+    ]
+    batch_plan = _benchmark_engine()._batch_indices(len(tasks))
+
+    return await _run_process_parallel(
+        all_tasks=list(tasks),
+        task_meta=task_meta,
+        batch_plan=batch_plan,
+        uid=uid,
+        model_path=model_path,
+        effective_workers=effective_workers,
+        on_seed_complete=on_seed_complete,
+        heartbeat_sec=30.0,
+    )
+
+
+__all__ = [name for name in globals() if not name.startswith("__")]

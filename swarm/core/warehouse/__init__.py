@@ -46,8 +46,10 @@ from .operations import (
 )
 from .shared import (
     MeshKitLoader,
-    first_existing_path as first_existing_path,
     normalize_mtl_texture_paths,
+)
+from .shared import (
+    first_existing_path as first_existing_path,
 )
 from .storage import build_storage_racks
 from .structure import (
@@ -58,7 +60,6 @@ from .structure import (
     build_roof_truss_system,
     build_walls,
 )
-
 
 # ---------------------------------------------------------------------------
 # Asset resolution helpers

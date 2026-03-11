@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import importlib
+import multiprocessing as mp
 import os
 import queue
 import sys
 import types
-import multiprocessing as mp
 from pathlib import Path
 from typing import Any
 
 import pytest
+
 
 def _make_bittensor_stub() -> types.ModuleType:
     bt = types.ModuleType("bittensor")

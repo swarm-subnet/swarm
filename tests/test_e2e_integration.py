@@ -29,7 +29,6 @@ from swarm.validator.backend_api import BackendApiClient
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.task_gen import random_task
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SUBMISSION_TEMPLATE = REPO_ROOT / "swarm" / "submission_template"
 

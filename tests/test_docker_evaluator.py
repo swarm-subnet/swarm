@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -22,6 +23,7 @@ def _new_evaluator() -> de.DockerSecureEvaluator:
     ev = de.DockerSecureEvaluator.__new__(de.DockerSecureEvaluator)
     ev.base_image = "swarm_evaluator_base:latest"
     ev.base_ready = True
+    de.DockerSecureEvaluator._base_ready = True
     return ev
 
 
@@ -150,6 +152,12 @@ def test_cleanup_env_quietly_closes_env():
     assert calls["count"] == 1
 
 
+def test_submission_template_dir_points_to_swarm_template():
+    template_dir = de._submission_template_dir()
+    assert template_dir == Path("swarm/submission_template").resolve()
+    assert (template_dir / "agent.capnp").is_file()
+
+
 def test_get_image_hash_label(monkeypatch):
     ev = _new_evaluator()
     monkeypatch.setattr(
@@ -193,6 +201,31 @@ def test_should_rebuild_base_image_true_when_hash_differs(monkeypatch):
         lambda cmd, **k: _ProcResult(returncode=0, stdout="imageid\n"),
     )
     assert ev._should_rebuild_base_image() is True
+
+
+def test_setup_base_container_uses_real_docker_paths_after_split(monkeypatch):
+    ev = _new_evaluator()
+    build_cmds = []
+
+    monkeypatch.setattr(ev, "_check_docker_available", lambda: True)
+    monkeypatch.setattr(ev, "_should_rebuild_base_image", lambda: True)
+    monkeypatch.setattr(ev, "_calculate_docker_hash", lambda: "hash1")
+
+    def _run(cmd, **kwargs):
+        _ = kwargs
+        if isinstance(cmd, list) and cmd[:2] == ["docker", "build"]:
+            build_cmds.append(cmd)
+        return _ProcResult(returncode=0, stdout="")
+
+    monkeypatch.setattr(de.subprocess, "run", _run)
+    de.DockerSecureEvaluator._base_ready = False
+
+    ev._setup_base_container()
+
+    assert ev.base_ready is True
+    assert len(build_cmds) == 1
+    dockerfile_path = Path("swarm/validator/docker/Dockerfile").resolve()
+    assert build_cmds[0][build_cmds[0].index("-f") + 1] == str(dockerfile_path)
 
 
 def test_check_rpc_ready(monkeypatch):
@@ -348,54 +381,83 @@ def test_calibrate_rpc_overhead_success(monkeypatch):
     assert cpu_factor == pytest.approx(2.0, abs=1e-9)
 
 
-def test_evaluate_seeds_parallel_splits_and_aggregates(monkeypatch, tmp_path):
+def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
     ev = _new_evaluator()
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
-    tasks = [1, 2, 3, 4, 5]
+    tasks = [
+        SimpleNamespace(challenge_type=3, map_seed=1001, seed_id=0),
+        SimpleNamespace(challenge_type=2, map_seed=1002, seed_id=1),
+        SimpleNamespace(challenge_type=6, map_seed=1003, seed_id=2),
+    ]
+    callback_payloads = []
+    captured = {}
 
-    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
-        _ = model_path, on_seed_complete
+    async def _fake_run_process_parallel(**kwargs):
+        captured["batch_plan"] = kwargs["batch_plan"]
+        captured["effective_workers"] = kwargs["effective_workers"]
+        captured["task_meta"] = kwargs["task_meta"]
+        for task in kwargs["all_tasks"]:
+            kwargs["on_seed_complete"](
+                {
+                    "map_seed": int(task.map_seed),
+                    "challenge_type": int(task.challenge_type),
+                    "status": "seed_done",
+                }
+            )
         return [
-            ValidationResult(uid, True, float(t), 0.5 + worker_id * 0.1) for t in chunk
+            ValidationResult(kwargs["uid"], True, float(task.seed_id), 0.5)
+            for task in kwargs["all_tasks"]
         ]
 
-    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
-    results = asyncio.run(
-        ev.evaluate_seeds_parallel(tasks, uid=11, model_path=model_path, num_workers=2)
-    )
-    assert len(results) == 5
-    assert [r.time_sec for r in results] == [1.0, 2.0, 3.0, 4.0, 5.0]
-
-
-def test_evaluate_seeds_parallel_handles_worker_exception(monkeypatch, tmp_path):
-    ev = _new_evaluator()
-    model_path = tmp_path / "model.zip"
-    model_path.write_bytes(b"x")
-    tasks = [1, 2, 3, 4]
-    callback_calls = {"n": 0}
-
-    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
-        _ = chunk, uid, model_path, on_seed_complete
-        if worker_id == 1:
-            raise RuntimeError("worker boom")
-        return [ValidationResult(uid, True, 1.0, 0.9) for _ in chunk]
-
-    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
+    monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
     results = asyncio.run(
         ev.evaluate_seeds_parallel(
             tasks,
-            uid=9,
+            uid=11,
             model_path=model_path,
-            num_workers=2,
-            on_seed_complete=lambda *_: callback_calls.__setitem__(
-                "n", callback_calls["n"] + 1
-            ),
+            num_workers=3,
+            on_seed_complete=lambda payload=None: callback_payloads.append(payload),
         )
     )
-    assert len(results) == 4
-    assert sum(1 for r in results if r.score == 0.0) == 2
-    assert callback_calls["n"] == 2
+    assert len(results) == 3
+    assert [r.time_sec for r in results] == [0.0, 1.0, 2.0]
+    assert captured["batch_plan"] == [[0], [1], [2]]
+    assert captured["effective_workers"] == 3
+    assert [meta["group"] for meta in captured["task_meta"]] == [
+        "type3_mountain",
+        "type2_open",
+        "type6_forest",
+    ]
+    assert [payload["status"] for payload in callback_payloads] == [
+        "seed_done",
+        "seed_done",
+        "seed_done",
+    ]
+
+
+def test_evaluate_seeds_parallel_uses_default_worker_count_of_three(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [
+        SimpleNamespace(challenge_type=1, map_seed=2001),
+        SimpleNamespace(challenge_type=2, map_seed=2002),
+        SimpleNamespace(challenge_type=3, map_seed=2003),
+        SimpleNamespace(challenge_type=4, map_seed=2004),
+        SimpleNamespace(challenge_type=5, map_seed=2005),
+    ]
+    captured = {}
+
+    async def _fake_run_process_parallel(**kwargs):
+        captured["effective_workers"] = kwargs["effective_workers"]
+        return [ValidationResult(kwargs["uid"], True, 1.0, 0.5) for _ in kwargs["all_tasks"]]
+
+    monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
+    results = asyncio.run(ev.evaluate_seeds_parallel(tasks, uid=17, model_path=model_path))
+
+    assert len(results) == 5
+    assert captured["effective_workers"] == 3
 
 
 def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
@@ -423,69 +485,46 @@ def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
         assert heavy_count <= 1
 
 
-def test_evaluate_seeds_parallel_backoff_on_total_failure(monkeypatch, tmp_path):
+def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monkeypatch, tmp_path):
     ev = _new_evaluator()
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
-
-    tasks = [SimpleNamespace(challenge_type=1) for _ in range(120)]
-    backoff_triggered = {"yes": False}
-
-    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
-        _ = model_path, on_seed_complete
-        if worker_id < 2:
-            return [ValidationResult(uid, False, 0.0, 0.0) for _ in chunk]
-        return [ValidationResult(uid, True, 1.0, 0.8) for _ in chunk]
-
-    def _fake_warning(msg, *args, **kwargs):
-        if "Adaptive backoff" in str(msg):
-            backoff_triggered["yes"] = True
-
-    monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
-    import bittensor as bt
-    monkeypatch.setattr(bt.logging, "warning", _fake_warning)
-
-    results = asyncio.run(
-        ev.evaluate_seeds_parallel(
-            tasks, uid=7, model_path=model_path, num_workers=4,
-        )
-    )
-
-    assert len(results) == 120
-    failed = sum(1 for r in results if r.score == 0.0)
-    passed = sum(1 for r in results if r.score > 0.0)
-    assert failed > 0
-    assert passed > 0
-    assert backoff_triggered["yes"]
-
-
-def test_evaluate_seeds_parallel_preserves_order_with_heavy_tasks(monkeypatch, tmp_path):
-    ev = _new_evaluator()
-    model_path = tmp_path / "model.zip"
-    model_path.write_bytes(b"x")
-
     tasks = [
-        SimpleNamespace(challenge_type=3, seed_id=0),
-        SimpleNamespace(challenge_type=1, seed_id=1),
-        SimpleNamespace(challenge_type=5, seed_id=2),
-        SimpleNamespace(challenge_type=2, seed_id=3),
-        SimpleNamespace(challenge_type=3, seed_id=4),
-        SimpleNamespace(challenge_type=1, seed_id=5),
+        SimpleNamespace(challenge_type=3, map_seed=3001),
+        SimpleNamespace(challenge_type=1, map_seed=3002),
     ]
+    captured = {}
 
-    async def _fake_batch(chunk, uid, model_path, worker_id=0, on_seed_complete=None):
+    async def _fake_batch(
+        chunk,
+        uid,
+        model_path,
+        worker_id=0,
+        on_seed_complete=None,
+        task_offset=0,
+        task_total=None,
+    ):
+        captured["chunk"] = list(chunk)
+        captured["worker_id"] = worker_id
+        captured["task_offset"] = task_offset
+        captured["task_total"] = task_total
         _ = model_path, on_seed_complete
-        return [
-            ValidationResult(uid, True, float(t.seed_id), 0.5) for t in chunk
-        ]
+        return [ValidationResult(uid, False, 0.0, 0.0) for _ in chunk]
 
+    monkeypatch.setattr(de.DockerSecureEvaluator, "_base_ready", False)
     monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
-    results = asyncio.run(
-        ev.evaluate_seeds_parallel(tasks, uid=5, model_path=model_path, num_workers=3)
-    )
+    try:
+        results = asyncio.run(
+            ev.evaluate_seeds_parallel(tasks, uid=5, model_path=model_path, num_workers=3)
+        )
+    finally:
+        monkeypatch.setattr(de.DockerSecureEvaluator, "_base_ready", True)
 
-    assert len(results) == 6
-    assert [r.time_sec for r in results] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    assert len(results) == 2
+    assert captured["chunk"] == tasks
+    assert captured["worker_id"] == 0
+    assert captured["task_offset"] == 0
+    assert captured["task_total"] == 2
 
 
 def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):
@@ -541,3 +580,16 @@ def test_run_multi_seed_rpc_sync_isolated_payload_transforms_results(monkeypatch
         tasks=[1, 2], uid=1, rpc_port=9000
     )
     assert payload == [(1, True, 2.5, 0.7), (1, False, 1.0, 0.0)]
+
+
+def test_constructor_uses_class_state_without_module_global(monkeypatch):
+    monkeypatch.setattr(
+        de.DockerSecureEvaluator, "_check_docker_available", lambda self: False
+    )
+    de.DockerSecureEvaluator._instance = None
+    de.DockerSecureEvaluator._base_ready = False
+
+    evaluator = de.DockerSecureEvaluator()
+
+    assert evaluator.base_ready is False
+    assert de.DockerSecureEvaluator._base_ready is False

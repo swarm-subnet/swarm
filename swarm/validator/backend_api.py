@@ -27,15 +27,15 @@ Scoring Thresholds (calculated by backend):
 
 import hashlib
 import json
-import os
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-import httpx
 import bittensor as bt
+import httpx
 
+from swarm.config import BackendApiSettings
 from swarm.constants import BENCHMARK_VERSION
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
@@ -147,7 +147,7 @@ class BackendApiClient:
         Raises:
             ValueError: If SWARM_BACKEND_API_URL is not set.
         """
-        self.base_url = base_url or os.getenv("SWARM_BACKEND_API_URL")
+        self.base_url = base_url or BackendApiSettings.from_env().base_url
         if not self.base_url:
             raise ValueError(
                 "SWARM_BACKEND_API_URL env var required for v4 benchmark. "

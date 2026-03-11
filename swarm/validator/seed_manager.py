@@ -9,11 +9,11 @@ from typing import List, Optional
 import bittensor as bt
 
 from swarm.constants import (
-    BENCHMARK_VERSION,
-    BENCHMARK_TOTAL_SEED_COUNT,
     BENCHMARK_SCREENING_SEED_COUNT,
-    EPOCH_DURATION_SECONDS,
+    BENCHMARK_TOTAL_SEED_COUNT,
+    BENCHMARK_VERSION,
     EPOCH_ANCHOR_UTC,
+    EPOCH_DURATION_SECONDS,
 )
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"

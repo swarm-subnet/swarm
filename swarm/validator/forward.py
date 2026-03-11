@@ -12,32 +12,33 @@ import numpy as np
 from swarm.constants import (
     FORWARD_SLEEP_SEC,
     MAP_CACHE_PREBUILD_ALL_AT_START,
-    SAMPLE_K,
     MODEL_DIR,
+    SAMPLE_K,
 )
-from swarm.utils.uids import get_random_uids
+from swarm.core.env_builder import cleanup_old_epoch_cache, set_map_cache_epoch
 from swarm.utils.hash import sha256sum
-from swarm.core.env_builder import set_map_cache_epoch, cleanup_old_epoch_cache
+from swarm.utils.uids import get_random_uids
+
 from .backend_api import BackendApiClient
 from .docker.docker_evaluator import DockerSecureEvaluator
 from .seed_manager import BenchmarkSeedManager
 from .utils import (
-    _get_validator_stake,
-    _ensure_models,
+    NORMAL_MODEL_QUEUE_PROCESS_LIMIT,
+    _apply_backend_weights_to_scores,
     _detect_new_models,
+    _ensure_models,
+    _get_processable_queue_keys,
+    _get_validator_stake,
+    _process_normal_queue_item,
+    _refresh_normal_model_queue,
+    _run_full_benchmark,
     _run_map_cache_prebuild_all_once,
     _run_map_cache_warmup_step,
-    _apply_backend_weights_to_scores,
     _run_screening,
-    _run_full_benchmark,
     _submit_score_with_ack,
-    set_cached_score,
-    _refresh_normal_model_queue,
     load_normal_model_queue,
     save_normal_model_queue,
-    _get_processable_queue_keys,
-    _process_normal_queue_item,
-    NORMAL_MODEL_QUEUE_PROCESS_LIMIT,
+    set_cached_score,
 )
 
 

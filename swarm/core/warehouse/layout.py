@@ -16,11 +16,11 @@ from .constants import (
     AREA_LAYOUT_TILE_HALF_Z,
     AREA_LAYOUT_WALL_ATTACH_THICKNESS_FACTOR,
     CONVEYOR_ASSETS,
-    ENABLE_FACTORY_BARRIER_RING,
-    ENABLE_FORKLIFT_PARKING,
-    ENABLE_FORKLIFT_PARK_SLOT_LINES,
-    ENABLE_MACHINING_CELL_LAYOUT,
     ENABLE_EMBEDDED_OFFICE_MAP,
+    ENABLE_FACTORY_BARRIER_RING,
+    ENABLE_FORKLIFT_PARK_SLOT_LINES,
+    ENABLE_FORKLIFT_PARKING,
+    ENABLE_MACHINING_CELL_LAYOUT,
     PERSONNEL_DOOR_CLEAR_DEPTH,
     PERSONNEL_DOOR_CLEAR_EXTRA_ALONG,
     SHOW_AREA_LAYOUT_MARKERS,
@@ -45,6 +45,7 @@ from .helpers import (
     dock_inward_yaw_for_slot,
     oriented_xy_size,
 )
+from .layout_parts.core_helpers import make_core_layout_helpers
 
 
 def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
@@ -179,289 +180,35 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
             "rgba": (0.0, 0.0, 0.0, 0.0),
         }
 
-    def _scaled_dims_for_zone(name, base_sx, base_sy, shrink):
-        sx0 = float(base_sx)
-        sy0 = float(base_sy)
-        k = max(0.01, float(shrink))
-        zone_key = str(name).upper()
-        fixed_short = major_zone_fixed_short_side_m.get(zone_key)
-        if fixed_short is None:
-            return sx0 * k, sy0 * k
-        long_base = max(sx0, sy0)
-        long_try = max(fixed_short, long_base * k)
-        if sx0 <= sy0:
-            return fixed_short, long_try
-        return long_try, fixed_short
-
-    def _candidate_attached_wall(candidate):
-        cached = candidate.get("_attached_wall")
-        if cached is not None:
-            return cached
-        attached_wall = _attached_wall_from_area_bounds(
-            float(candidate.get("sx", 0.0)),
-            float(candidate.get("sy", 0.0)),
-            float(candidate.get("cx", 0.0)),
-            float(candidate.get("cy", 0.0)),
-        )
-        candidate["_attached_wall"] = attached_wall
-        return attached_wall
-
-    def _make_candidate(name, sx, sy, cx, cy, color):
-        sx_f = float(sx)
-        sy_f = float(sy)
-        cx_f = float(cx)
-        cy_f = float(cy)
-        fits_attach_span = _size_fits_half_span(
-            sx_f, sy_f, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
-        cand = {
-            "name": name,
-            "sx": sx_f, "sy": sy_f,
-            "cx": cx_f, "cy": cy_f,
-            "rgba": color,
-            "_fits_attach_span": fits_attach_span,
-        }
-        cand["_rect_bounds"] = _rect_bounds(cx_f, cy_f, sx_f, sy_f)
-        cand["_attached_wall"] = _attached_wall_from_area_bounds(sx_f, sy_f, cx_f, cy_f)
-        return cand
-
-    def _is_far_from_personnel_door_on_same_wall(candidate):
-        if personnel_side not in WALL_SLOTS:
-            return True
-        attached_wall = _candidate_attached_wall(candidate)
-        if attached_wall != personnel_side:
-            return True
-        if attached_wall in ("north", "south"):
-            cand_along = float(candidate.get("cx", 0.0))
-            cand_span = float(candidate.get("sx", 0.0))
-        else:
-            cand_along = float(candidate.get("cy", 0.0))
-            cand_span = float(candidate.get("sy", 0.0))
-        door_half = (personnel_span * 0.5) + PERSONNEL_DOOR_CLEAR_EXTRA_ALONG + 1.0
-        zone_half = cand_span * 0.5
-        min_center_distance = door_half + zone_half
-        return abs(cand_along - personnel_along) >= (min_center_distance - 1e-6)
-
-    def _opposite_wall_end_targets(wall, sx, sy):
-        lo, hi = _wall_along_limits(
-            wall, float(sx), float(sy),
-            attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
-        if hi < lo:
-            return None
-        return float(lo), float(hi)
-
-    def _is_at_preferred_opposite_end(candidate):
-        if opposite_personnel_side not in WALL_SLOTS:
-            return True
-        attached_wall = _candidate_attached_wall(candidate)
-        if attached_wall != opposite_personnel_side:
-            return False
-        if attached_wall in ("north", "south"):
-            cand_along = float(candidate.get("cx", 0.0))
-            cand_span = float(candidate.get("sx", 0.0))
-        else:
-            cand_along = float(candidate.get("cy", 0.0))
-            cand_span = float(candidate.get("sy", 0.0))
-        end_targets = _opposite_wall_end_targets(
-            attached_wall,
-            float(candidate.get("sx", 0.0)),
-            float(candidate.get("sy", 0.0)),
-        )
-        if end_targets is None:
-            return False
-        target_lo, target_hi = end_targets
-        end_tol = max(0.45, min(2.6, cand_span * 0.12))
-        return abs(cand_along - target_lo) <= end_tol or abs(cand_along - target_hi) <= end_tol
-
-    def _is_at_wall_end(candidate, end_tol_factor=0.16):
-        attached_wall = _candidate_attached_wall(candidate)
-        if attached_wall in ("north", "south"):
-            cand_along = float(candidate.get("cx", 0.0))
-            cand_span = float(candidate.get("sx", 0.0))
-        else:
-            cand_along = float(candidate.get("cy", 0.0))
-            cand_span = float(candidate.get("sy", 0.0))
-        lo, hi = _wall_along_limits(
-            attached_wall,
-            float(candidate.get("sx", 0.0)),
-            float(candidate.get("sy", 0.0)),
-            attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
-        if hi < lo:
-            return False
-        end_tol = max(0.9, min(4.2, cand_span * float(end_tol_factor)))
-        return abs(cand_along - lo) <= end_tol or abs(cand_along - hi) <= end_tol
-
-    def _can_place_static(candidate, gap):
-        fits_attach_span = candidate.get("_fits_attach_span")
-        if fits_attach_span is None:
-            fits_attach_span = _size_fits_half_span(
-                candidate["sx"], candidate["sy"],
-                attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-            )
-            candidate["_fits_attach_span"] = fits_attach_span
-        if not fits_attach_span:
-            return False
-        name = str(candidate.get("name", ""))
-        if name not in critical_door_blocking_zones:
-            return True
-        attached_wall = _candidate_attached_wall(candidate)
-        if transverse_end_only_strip is not None and name != transverse_major_zone:
-            if _rects_overlap(candidate, transverse_end_only_strip, 0.0):
-                return False
-        if name == transverse_major_zone:
-            if opposite_personnel_side in WALL_SLOTS and attached_wall != opposite_personnel_side:
-                return False
-        elif name in longitudinal_major_zones and longitudinal_side_walls:
-            if attached_wall not in longitudinal_side_walls:
-                return False
-        if critical_zone_keepout_rect is not None and _rects_overlap(candidate, critical_zone_keepout_rect, 0.0):
-            if attached_wall in (personnel_side, opposite_personnel_side):
-                return False
-        if attached_wall in (personnel_side, opposite_personnel_side):
-            if not _is_far_from_personnel_door_on_same_wall(candidate):
-                return False
-        return True
-
-    def _can_place(candidate, gap):
-        fits_attach_span = candidate.get("_fits_attach_span")
-        if fits_attach_span is None:
-            fits_attach_span = _size_fits_half_span(
-                candidate["sx"], candidate["sy"],
-                attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-            )
-            candidate["_fits_attach_span"] = fits_attach_span
-        if not fits_attach_span:
-            return False
-        cand_bounds = candidate.get("_rect_bounds")
-        if cand_bounds is None:
-            cand_bounds = _candidate_rect_bounds(candidate)
-        cand_min_x, cand_max_x, cand_min_y, cand_max_y = cand_bounds
-        for prev in placed:
-            prev_bounds = prev.get("_rect_bounds")
-            if prev_bounds is None:
-                prev_bounds = _candidate_rect_bounds(prev)
-            prev_min_x, prev_max_x, prev_min_y, prev_max_y = prev_bounds
-            if not (
-                (cand_max_x + gap) <= prev_min_x
-                or (prev_max_x + gap) <= cand_min_x
-                or (cand_max_y + gap) <= prev_min_y
-                or (prev_max_y + gap) <= cand_min_y
-            ):
-                return False
-        name = str(candidate.get("name", ""))
-        if name in critical_door_blocking_zones:
-            attached_wall = _candidate_attached_wall(candidate)
-            if transverse_end_only_strip is not None and name != transverse_major_zone:
-                if _rects_overlap(candidate, transverse_end_only_strip, 0.0):
-                    return False
-            if name == transverse_major_zone:
-                if opposite_personnel_side in WALL_SLOTS and attached_wall != opposite_personnel_side:
-                    return False
-            elif name in longitudinal_major_zones and longitudinal_side_walls:
-                if attached_wall not in longitudinal_side_walls:
-                    return False
-                for prev in placed:
-                    prev_name = str(prev.get("name", ""))
-                    if prev_name not in longitudinal_major_zones or prev_name == name:
-                        continue
-                    prev_wall = _candidate_attached_wall(prev)
-                    if prev_wall == attached_wall:
-                        return False
-            if critical_zone_keepout_rect is not None and _rects_overlap(candidate, critical_zone_keepout_rect, 0.0):
-                if attached_wall in (personnel_side, opposite_personnel_side):
-                    return False
-            if attached_wall in (personnel_side, opposite_personnel_side):
-                if not _is_far_from_personnel_door_on_same_wall(candidate):
-                    return False
-        return True
-
-    def _place_on_wall(
-        name, sx, sy, wall, color,
-        along_pref=None, tries=600, gap=AREA_LAYOUT_MIN_GAP,
-        validator=None, deterministic_first=True,
-    ):
-        sx, sy = float(sx), float(sy)
-        sx, sy = _orient_dims_long_side_on_wall(wall, sx, sy)
-        if not _size_fits_half_span(sx, sy, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN):
-            return None
-        lo, hi = _wall_along_limits(wall, sx, sy, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN)
-        if hi < lo:
-            return None
-        anchors = [lo, hi, 0.5 * (lo + hi), max(lo, min(hi, 0.0))]
-        if along_pref is not None:
-            anchors.append(max(lo, min(hi, along_pref)))
-
-        def _try_along(along_value):
-            cx, cy = _wall_attached_center(
-                wall, along_value, sx, sy,
-                attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-            )
-            cand = _make_candidate(name, sx, sy, cx, cy, color)
-            if not _can_place(cand, gap):
-                return None
-            if validator is not None and not validator(cand):
-                return None
-            return cand
-
-        if deterministic_first:
-            for along in anchors:
-                cand = _try_along(along)
-                if cand is not None:
-                    return cand
-            for _ in range(max(0, int(tries))):
-                cand = _try_along(rng.uniform(lo, hi))
-                if cand is not None:
-                    return cand
-        else:
-            for _ in range(max(0, int(tries))):
-                cand = _try_along(rng.uniform(lo, hi))
-                if cand is not None:
-                    return cand
-            for along in anchors:
-                cand = _try_along(along)
-                if cand is not None:
-                    return cand
-        return None
-
-    def _place_anywhere(name, sx, sy, color, tries=1200, gap=AREA_LAYOUT_MIN_GAP, validator=None):
-        sx, sy = float(sx), float(sy)
-        if not _size_fits_half_span(sx, sy, floor_half_x, floor_half_y, AREA_LAYOUT_EDGE_MARGIN):
-            return None
-        for _ in range(max(1, tries)):
-            cx, cy = _sample_random_center(
-                rng, sx, sy, floor_half_x, floor_half_y, AREA_LAYOUT_EDGE_MARGIN,
-            )
-            cand = _make_candidate(name, sx, sy, cx, cy, color)
-            if _can_place(cand, gap):
-                if validator is not None and not validator(cand):
-                    continue
-                return cand
-        return None
-
-    def _force_place_zone(name, base_sx, base_sy, color, preferred_walls=None, along_pref=None, validator=None):
-        if preferred_walls is None:
-            preferred_walls = list(WALL_SLOTS)
-        sx = float(base_sx)
-        sy = float(base_sy)
-        for gap in (AREA_LAYOUT_MIN_GAP, 0.0):
-            for wall in preferred_walls:
-                picked = _place_on_wall(
-                    name=name, sx=sx, sy=sy, wall=wall, color=color,
-                    along_pref=along_pref, tries=320, gap=gap, validator=validator,
-                )
-                if picked is not None:
-                    return picked
-            picked = _place_anywhere(
-                name=name, sx=sx, sy=sy, color=color, tries=600, gap=gap, validator=validator,
-            )
-            if picked is not None:
-                return picked
-        raise ValueError(
-            f"Unable to place zone '{name}' at fixed size {sx:.2f} x {sy:.2f} m "
-            f"without overlap/out-of-bounds."
-        )
+    _core_helpers = make_core_layout_helpers(
+        area_defs=area_defs,
+        attach_half_x=attach_half_x,
+        attach_half_y=attach_half_y,
+        major_zone_fixed_short_side_m=major_zone_fixed_short_side_m,
+        placed=placed,
+        personnel_side=personnel_side,
+        personnel_span=personnel_span,
+        personnel_along=personnel_along,
+        opposite_personnel_side=opposite_personnel_side,
+        critical_zone_keepout_rect=critical_zone_keepout_rect,
+        critical_door_blocking_zones=critical_door_blocking_zones,
+        rng=rng,
+    )
+    _scaled_dims_for_zone = _core_helpers.scaled_dims_for_zone
+    _candidate_attached_wall = _core_helpers.candidate_attached_wall
+    _make_candidate = _core_helpers.make_candidate
+    _is_far_from_personnel_door_on_same_wall = (
+        _core_helpers.is_far_from_personnel_door_on_same_wall
+    )
+    _opposite_wall_end_targets = _core_helpers.opposite_wall_end_targets
+    _is_at_preferred_opposite_end = _core_helpers.is_at_preferred_opposite_end
+    _is_at_wall_end = _core_helpers.is_at_wall_end
+    _can_place_static = _core_helpers.can_place_static
+    _can_place = _core_helpers.can_place
+    _place_on_wall = _core_helpers.place_on_wall
+    _place_anywhere = _core_helpers.place_anywhere
+    _force_place_zone = _core_helpers.force_place_zone
+    _loading_zone_covers_doors = _core_helpers.loading_zone_covers_doors
 
     # --- LOADING zone placement ---
     loading_def = area_defs["LOADING"]

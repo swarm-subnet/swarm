@@ -4,7 +4,12 @@ import math
 
 import pytest
 
-from swarm.constants import HOVER_SEC, SAFETY_DISTANCE_DANGER, SAFETY_DISTANCE_SAFE, SPEED_LIMIT
+from swarm.constants import (
+    HOVER_SEC,
+    SAFETY_DISTANCE_DANGER,
+    SAFETY_DISTANCE_SAFE,
+    SPEED_LIMIT,
+)
 from swarm.protocol import MapTask
 from swarm.validator.reward import (
     _calculate_safety_term,

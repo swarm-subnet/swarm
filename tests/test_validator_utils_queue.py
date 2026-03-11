@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from swarm.protocol import ValidationResult
 from swarm.validator import utils as validator_utils
+from swarm.validator.utils_parts import evaluation as validator_evaluation
 
 
 def _queue_item(model_path: Path, model_hash: str = "hash1", uid: int = 1) -> dict:
@@ -344,3 +346,44 @@ def test_process_normal_queue_item_uses_cached_scores(monkeypatch, tmp_path: Pat
     assert item["score_recorded"] is True
     assert item["total_score"] == pytest.approx(0.85)
     assert marked == [(1, "hash1")]
+
+
+def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
+    model_path = tmp_path / "UID_9.zip"
+    model_path.write_bytes(b"zip-bytes")
+
+    tasks = [
+        SimpleNamespace(challenge_type=6, moving_platform=False),
+        SimpleNamespace(challenge_type=6, moving_platform=True),
+    ]
+
+    def _fake_random_task(*args, **kwargs):
+        _ = args, kwargs
+        return tasks.pop(0)
+
+    async def _fake_parallel(*args, **kwargs):
+        _ = args, kwargs
+        return [
+            ValidationResult(9, False, 1.0, 0.25),
+            ValidationResult(9, True, 2.0, 0.75),
+        ]
+
+    validator = SimpleNamespace(
+        docker_evaluator=SimpleNamespace(evaluate_seeds_parallel=_fake_parallel),
+    )
+
+    monkeypatch.setattr(validator_evaluation, "random_task", _fake_random_task)
+
+    all_scores, per_type_scores = asyncio.run(
+        validator_utils._evaluate_seeds(
+            validator,
+            uid=9,
+            model_path=model_path,
+            seeds=[600001, 600002],
+            description="forest check",
+        )
+    )
+
+    assert all_scores == [0.25, 0.75]
+    assert per_type_scores["forest"] == [0.25]
+    assert per_type_scores["moving_platform"] == [0.75]

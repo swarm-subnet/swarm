@@ -441,8 +441,8 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
             start=(0.0, 0.0, 0.0),
         )
 
-    import swarm.validator.task_gen as task_gen
     import swarm.validator.docker.docker_evaluator as docker_eval_mod
+    import swarm.validator.task_gen as task_gen
 
     monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
     monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)
@@ -519,8 +519,8 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
         )
         return kwargs["effective_workers"]
 
-    import swarm.validator.task_gen as task_gen
     import swarm.validator.docker.docker_evaluator as docker_eval_mod
+    import swarm.validator.task_gen as task_gen
 
     monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
     monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)

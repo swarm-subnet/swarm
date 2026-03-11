@@ -54,8 +54,8 @@ PROP_EFF = 0.60                         # Propeller efficiency coefficient
 MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
 EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
 
-# Docker parallel workers for benchmark evaluation
-N_DOCKER_WORKERS = 4                    # Number of parallel Docker containers for benchmark
+# Docker parallel workers for validator and benchmark evaluation
+N_DOCKER_WORKERS = 3                    # Number of parallel Docker workers by default
 DOCKER_WORKER_MEMORY = "6g"             # Memory limit per Docker worker container
 DOCKER_WORKER_CPUS = "2"                # CPU limit per Docker worker container
 

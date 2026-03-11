@@ -15,7 +15,8 @@ where
 All weights sum to one. The final score is clamped to ``[0, 1]``.
 """
 from __future__ import annotations
-from typing import Optional, TYPE_CHECKING
+
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -23,9 +24,13 @@ if TYPE_CHECKING:
     from swarm.protocol import MapTask
 
 from swarm.constants import (
-    SPEED_LIMIT, HOVER_SEC,
-    REWARD_W_SUCCESS, REWARD_W_TIME, REWARD_W_SAFETY,
-    SAFETY_DISTANCE_SAFE, SAFETY_DISTANCE_DANGER,
+    HOVER_SEC,
+    REWARD_W_SAFETY,
+    REWARD_W_SUCCESS,
+    REWARD_W_TIME,
+    SAFETY_DISTANCE_DANGER,
+    SAFETY_DISTANCE_SAFE,
+    SPEED_LIMIT,
     TYPE_6_SAFETY_DISTANCE_SAFE,
 )
 
