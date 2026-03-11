@@ -7,6 +7,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.obj.meshcache.pkl
+Maps/assets/custom/terrain_cache/*.obj
 
 validator_env
 validator_env/

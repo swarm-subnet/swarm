@@ -1,0 +1,31 @@
+{
+"version": 1,
+"model_sig": {
+"size": 56415,
+"mtime_ns": 1771245995943430400
+},
+"parts": [
+{
+"path": "Container.obj",
+"material": "Container",
+"rgba": [
+0.207916,
+0.024687,
+0.02307,
+1.0
+],
+"texture_path": ""
+},
+{
+"path": "metal_bars.obj",
+"material": "metal_bars",
+"rgba": [
+0.8,
+0.8,
+0.8,
+1.0
+],
+"texture_path": ""
+}
+]
+}

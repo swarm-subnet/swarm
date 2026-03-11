@@ -1,0 +1,20 @@
+{
+"version": 1,
+"model_sig": {
+"size": 8200,
+"mtime_ns": 1771199989978763300
+},
+"parts": [
+{
+"path": "wood_pallet.obj",
+"material": "wood_pallet",
+"rgba": [
+0.603815,
+0.362728,
+0.278001,
+1.0
+],
+"texture_path": ""
+}
+]
+}
