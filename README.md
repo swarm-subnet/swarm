@@ -178,6 +178,12 @@ Develop, test, and benchmark your model without ever leaving the terminal.
 pip install -e .
 ```
 
+Once published on PyPI:
+
+```bash
+pip install swarm-benchmark
+```
+
 ```bash
 swarm doctor                                          # Check environment readiness
 swarm model test --source my_agent/                   # Validate source folder

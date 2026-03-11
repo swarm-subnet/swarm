@@ -1,15 +1,12 @@
-# VALIDATORS: Install Docker manually before running
-# Ubuntu: sudo apt-get install docker.io && sudo usermod -aG docker $USER
+# Runtime dependencies for the published package.
+# Docker itself must still be installed separately on validator/benchmark hosts.
 
 pydantic
 rich
-pytest
 numpy>=1.24,<2.0
-setuptools
 loguru
 xmldiff
 filelock
-git+https://github.com/swarm-subnet/bullet3-swarmfork.git@24fbc77b7
 bittensor
 msgpack
 importlib-metadata
@@ -24,4 +21,5 @@ gymnasium
 requests
 httpx
 pycapnp
-git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git
+pybullet
+gym-pybullet-drones==2.0.0

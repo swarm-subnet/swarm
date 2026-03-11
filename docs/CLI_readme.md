@@ -10,6 +10,12 @@ Command-line interface for benchmarking, testing, and packaging drone navigation
 pip install -e .
 ```
 
+Once published on PyPI:
+
+```bash
+pip install swarm-benchmark
+```
+
 Then use `swarm <command>` directly. Alternatively, run without installation:
 
 ```bash
