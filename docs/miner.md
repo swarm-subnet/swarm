@@ -308,7 +308,7 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 |------|--------|-------------|
 | **Success** | 0.45 | 1.0 if valid landing, 0.0 otherwise |
 | **Time** | 0.45 | 1.0 if within target time, decays linearly to 0.0 at horizon |
-| **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0m, 0.0 if ≤ 0.2m, linear between |
+| **Safety** | 0.10 | 1.0 if min clearance ≥ safe distance, 0.0 if ≤ 0.2m, linear between (safe = 1.0m default, 0.6m for Forest) |
 
 Collision with any obstacle sets the score to **0.01** (grace for legitimate models).
 
@@ -322,7 +322,7 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 | Horizontal velocity | ≤ 0.6 m/s (relative to platform) |
 | Tilt (roll / pitch) | ≤ 15° |
 
-**Moving platforms** — some maps have landing platforms that move in circular, linear, or figure-8 patterns. For these, contact with the platform counts as success (no stable hold needed). Your model should be prepared for both static and moving targets.
+**Moving platforms** — City, Open, Mountain, and Village maps have a chance of spawning a moving landing platform (circular, linear, or figure-8 patterns). Warehouse and Forest maps always use static platforms. For moving targets, contact with the platform counts as success (no stable hold needed). Your model should be prepared for both.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -337,7 +337,7 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 3. **Validator** verifies your README hash (SHA-256 must match template exactly)
 4. **Validator** runs your agent in a sandboxed Docker container:
    - **Screening** (200 seeds) — quick filter, must score > **101%** of the current champion
-   - **Full benchmark** (800 seeds) — complete evaluation across all environment types
+   - **Full benchmark** (800 seeds) — complete evaluation across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
 5. **Final score** = median of all 1,000 seed results
 6. **Winner-take-all** — #1 scorer receives emissions
 

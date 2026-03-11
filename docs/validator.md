@@ -1,6 +1,6 @@
 # 🔐 Swarm Validator Guide
 
-This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models on procedurally generated maps — cities, mountains, warehouses, and open terrain. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
+This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models on procedurally generated maps — cities, open terrain, mountains, villages, warehouses, and forests. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
 
 Run `swarm doctor` after installation to verify your environment is ready.
 

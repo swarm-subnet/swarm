@@ -64,7 +64,7 @@ The rules are simple:
 - Your model gets a **128×128 depth image** and a **state vector**
 - It outputs **velocity commands** to fly the drone
 - It has **60 seconds** to navigate to a landing platform
-- It must do this across **cities, mountains, warehouses, open terrain, and more** — environments it has never seen before
+- It must do this across **cities, mountains, warehouses, forests, open terrain, and more** — environments it has never seen before
 
 The best model wins. That's it. Powered by the [Bittensor](https://bittensor.com) network (Subnet 124).
 
@@ -99,7 +99,7 @@ The best model wins. That's it. Powered by the [Bittensor](https://bittensor.com
 <!-- ENVIRONMENTS -->
 ## Environments
 
-Every benchmark run generates unique worlds. Five environment types test completely different navigation skills — tight urban corridors, open-air precision, mountain terrain, and indoor obstacle courses.
+Every benchmark run generates unique worlds. Six environment types test completely different navigation skills — tight urban corridors, open-air precision, mountain terrain, village streets, indoor obstacle courses, and dense forests.
 
 <table>
 <tr>
@@ -124,8 +124,35 @@ Every benchmark run generates unique worlds. Five environment types test complet
 </tr>
 </table>
 
+<br>
+
+<h3 align="center">Forest — 4 Seasonal Modes</h3>
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub1.png" alt="Forest Normal" width="100%">
+<br><b>Normal</b> — green canopy, full foliage
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub2.png" alt="Forest Autumn" width="100%">
+<br><b>Autumn</b> — orange and brown tones
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub3.png" alt="Forest Snow" width="100%">
+<br><b>Snow</b> — white terrain, bare branches
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub4.png" alt="Forest Dead" width="100%">
+<br><b>Dead</b> — no leaves, dark ground
+</td>
+</tr>
+</table>
+
 <p align="center">
-  <sub>1,000 unique seeds per epoch. These are just a few — there are more environment types beyond what's shown here.</sub>
+  <sub>1,000 unique seeds per epoch — 6 environment types, each procedurally generated with unique layouts every run.</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

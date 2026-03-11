@@ -137,10 +137,30 @@ Models trained on the Swarm benchmark don't stay in simulation — **they fly on
 <br><b>Warehouse</b>
 </td>
 </tr>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub1.png" alt="Forest Normal" width="100%">
+<br><b>Forest — Normal</b>
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub2.png" alt="Forest Autumn" width="100%">
+<br><b>Forest — Autumn</b>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub3.png" alt="Forest Snow" width="100%">
+<br><b>Forest — Snow</b>
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub4.png" alt="Forest Dead" width="100%">
+<br><b>Forest — Dead</b>
+</td>
+</tr>
 </table>
 
 <p align="center">
-  <sub>These are just a few — every run uses <b>procedurally generated</b> environments across <b>1,000 unique seeds</b>.</sub>
+  <sub>6 environment types, each <b>procedurally generated</b> across <b>1,000 unique seeds</b> per epoch.</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

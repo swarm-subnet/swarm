@@ -38,7 +38,7 @@ Verifies: Python version, Docker (binary + daemon), required Python modules (`ca
 
 ### `swarm benchmark`
 
-Runs a local benchmark — evaluates a model across procedurally generated environments. The `--seeds-per-group` flag controls seeds per environment type (default: 3). Validators run 1,000 seeds total.
+Runs a local benchmark — evaluates a model across 6 procedurally generated environment types (City, Open, Mountain, Village, Warehouse, Forest). The `--seeds-per-group` flag controls seeds per environment type (default: 3). Validators run 1,000 seeds total.
 
 ```bash
 # Default benchmark (3 seeds per environment group)
