@@ -201,9 +201,5 @@ swarm_venv/
 /swarm/state/
 /stats/
 
-# Generated asset preprocessing metadata
-swarm/assets/maps/**/.mtl_normalize_stamp_v1.json
-swarm/assets/maps/**/_parts_manifest.json
-
 # Accidental shell artifacts from malformed multiline CLI commands (repo root).
 /--*
