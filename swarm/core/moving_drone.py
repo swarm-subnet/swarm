@@ -401,7 +401,7 @@ class MovingDroneAviary(BaseRLAviary):
         forward = forward / np.linalg.norm(forward)
         up = rot_mat @ np.array([0.0, 0.0, 1.0])
         
-        camera_offset = 0.35
+        camera_offset = 0.13
         camera_pos = drone_pos + forward * camera_offset + up * 0.05
         
         target = camera_pos + forward * 20.0
