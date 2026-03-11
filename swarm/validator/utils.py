@@ -941,7 +941,7 @@ def _passes_screening(self, screening_score: float) -> bool:
     passed = screening_score >= threshold
     bt.logging.info(
         f"Screening: {screening_score:.4f} >= {threshold:.4f} "
-        f"(80% of top {top_score:.4f}) = {passed}"
+        f"({SCREENING_TOP_MODEL_FACTOR:.0%} of top {top_score:.4f}) = {passed}"
     )
     return passed
 

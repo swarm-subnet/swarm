@@ -20,7 +20,7 @@ Rate Limiting:
 - Backend tracks this and rejects duplicate submissions
 
 Scoring Thresholds (calculated by backend):
-- Screening pass: score >= 0.1 OR score >= 80% of current top model
+- Screening pass: score >= 0.1 OR score >= 101% of current top model
 - Full benchmark: 51% stake must report before score is finalized
 - Champion: highest benchmark score after 51% threshold met
 """

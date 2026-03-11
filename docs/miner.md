@@ -1,118 +1,97 @@
-# ⛏️ Swarm Miner Guide
+<a id="miner-top"></a>
 
-The Swarm subnet tasks your miner with developing pre-trained flight-control policies for a simulated drone. Your model is benchmarked across procedurally generated 3D environments — cities, mountains, warehouses, forests, and open terrain.
+# Swarm Miner Guide
 
-This guide shows how to install, configure, and run a Swarm miner.
+Train an autonomous drone pilot, benchmark it against 1,000 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
 
-## 🔒 RPC Submission
+---
 
-All submissions must be RPC agents. Miner code runs in isolated Docker containers while evaluation executes on the validator host. See [Creating Your Agent](#️-creating-your-agent) for full details on structure, templates, and examples.
+<details>
+  <summary><b>Table of Contents</b></summary>
+  <ol>
+    <li><a href="#system-requirements">System Requirements</a></li>
+    <li><a href="#installation">Installation</a></li>
+    <li><a href="#workflow">Workflow</a></li>
+    <li><a href="#creating-your-agent">Creating Your Agent</a></li>
+    <li><a href="#observations--actions">Observations & Actions</a></li>
+    <li><a href="#cli">CLI</a></li>
+    <li><a href="#github-repo-setup">GitHub Repo Setup</a></li>
+    <li><a href="#running-the-miner">Running the Miner</a></li>
+    <li><a href="#scoring">Scoring</a></li>
+    <li><a href="#benchmark-system">Benchmark System</a></li>
+    <li><a href="#docker-whitelist">Docker Whitelist</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
+    <li><a href="#support">Support</a></li>
+  </ol>
+</details>
 
-## 💻 System Requirements
+---
 
-Mining (serving your model) requires minimal resources. Training is up to you — use whatever hardware fits your approach.
+## System Requirements
 
-| Component | Mining (Minimal) | Training | Notes |
-|-----------|-----------------|----------|-------|
-| CPU | 2 cores | 4+ cores | Mining is lightweight |
-| RAM | 4 GB | 16 GB+ | Training depends on your setup |
-| Disk | 20 GB | 100 GB+ | Repository + venv + models |
-| GPU | None | Optional | Training only, depends on your approach |
-| Python | 3.8+ | 3.10+ | SB3 and PyTorch compatibility |
-| OS | Linux / macOS / WSL2 | Ubuntu 22.04+ | Scripts optimized for Ubuntu |
+Mining is extremely lightweight — your miner only serves a GitHub URL pointing to your model, so any machine with **Python 3.10+** and a network connection will do. Training hardware depends entirely on your approach (SB3, PyTorch, custom RL — your choice).
 
-## 🚀 Installation
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Installation
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/swarm-subnet/swarm
 cd swarm
 
-# 2. Install dependencies
 chmod +x scripts/miner/install_dependencies.sh
 ./scripts/miner/install_dependencies.sh
 
-# 3. Miner setup
 chmod +x scripts/miner/setup.sh
 ./scripts/miner/setup.sh
 
-# 4. Activate virtual env
 source miner_env/bin/activate
+pip install -e .
 ```
 
-## 🔧 Configuration
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
 
-All runtime parameters are passed via CLI flags.
+---
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--netuid` | Subnet netuid | `--netuid 124` |
-| `--wallet.name` | Your coldkey name | `--wallet.name my_cold` |
-| `--wallet.hotkey` | Hotkey used for mining | `--wallet.hotkey my_hot` |
-| `--subtensor.network` | Network (finney, test) | `--subtensor.network finney` |
-| `--axon.port` | TCP port your miner listens on | `--axon.port 8091` |
+## Workflow
 
-Create keys if you haven't:
+The full miner workflow — from first install to competing on the leaderboard:
+
+```
+1. swarm doctor              ← Check environment readiness
+2. Train your model           ← SB3, PyTorch, custom — your choice
+3. swarm model test           ← Validate source folder before packaging
+4. swarm model package        ← Bundle into Submission/submission.zip
+5. swarm model verify         ← Verify compliance (size, structure)
+6. swarm benchmark            ← Run local benchmark
+7. Push to GitHub             ← Public repo with submission.zip + README
+8. Start miner                ← Serve your model to validators
+```
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Creating Your Agent
+
+### Start from the Template
 
 ```bash
-btcli wallet new_coldkey --wallet.name my_cold
-btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
+cp -r swarm/submission_template/ my_agent/
+cd my_agent/
+# Edit drone_agent.py with your controller
 ```
 
-## 🏃‍♂️ Running the Miner
+### Agent Structure
 
-### PM2 Launch
-
-```bash
-source miner_env/bin/activate
-
-pm2 start neurons/miner.py --name swarm_miner -- \
-     --netuid 124 \
-     --subtensor.network finney \
-     --wallet.name my_cold \
-     --wallet.hotkey my_hot \
-     --axon.port 8091
-```
-
-### Logs
-
-```bash
-pm2 logs swarm_miner
-```
-
-### Stop / Restart
-
-```bash
-pm2 restart swarm_miner
-pm2 stop    swarm_miner
-```
-
-## 🛠️ Creating Your Agent
-
-### Using the Submission Template
-
-```bash
-cp swarm/submission_template/drone_agent.py your_agent/
-cd your_agent
-# Customize drone_agent.py with your controller
-```
-
-**What you need:**
-- `drone_agent.py` — Customize this file with your controller (REQUIRED)
-- `requirements.txt` — Optional: additional dependencies
-- Your model files — SB3, PyTorch, etc.
-
-**Template files (auto-provided, no need to include):**
-- `main.py` — Automatically injected during evaluation
-- `agent.capnp` — Automatically injected during evaluation
-- `agent_server.py` — Automatically injected during evaluation
-
-### Basic Agent Structure
+Your agent must implement a `DroneFlightController` class:
 
 ```python
 class DroneFlightController:
     def __init__(self):
-        # Load your model here (SB3, PyTorch, JAX, etc.)
+        # Load your model (SB3, PyTorch, ONNX, etc.)
         from stable_baselines3 import PPO
         self.model = PPO.load("./my_model.zip")
 
@@ -123,49 +102,34 @@ class DroneFlightController:
         return action
 
     def reset(self):
-        # Reset state between missions
+        # Reset internal state between missions
         pass
 ```
 
-### Custom PyTorch Example
+**Required files:**
+- `drone_agent.py` — Your controller class (REQUIRED)
+- `requirements.txt` — Additional pip packages (optional, must be on the [whitelist](#docker-whitelist))
+- Model files — weights, configs, etc.
 
-```python
-import torch
+**Auto-injected (do not include):**
+- `main.py`, `agent.capnp`, `agent_server.py` — provided by the evaluation system
 
-class DroneFlightController:
-    def __init__(self):
-        self.model = torch.load("my_model.pt")
-        self.model.eval()
+Submissions must be ≤ **50 MiB** compressed.
 
-    def act(self, observation):
-        with torch.no_grad():
-            obs_tensor = torch.FloatTensor(observation)
-            action = self.model(obs_tensor).numpy()
-        return action
-```
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
 
-### Deploy Your Agent
+---
 
-```bash
-# Create ZIP with only drone_agent.py + model files
-zip -r agent_submission.zip drone_agent.py [your_model_files]
+## Observations & Actions
 
-# Optional: include requirements.txt
-zip -r agent_submission.zip requirements.txt
-
-# Place in Submission directory
-mkdir -p Submission
-cp agent_submission.zip Submission/submission.zip
-```
-
-## 🔍 Observations
+### Observation Space
 
 | Field | Shape | Description |
 |-------|-------|-------------|
 | `depth` | (128, 128, 1) | Normalized depth map (0.5m – 20m range) |
 | `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
-The search area gives a direction toward the goal with up to ±10m noise — sometimes close, sometimes off. The drone must use its depth sensor to find the actual landing platform.
+The search area provides a direction toward the goal with up to ±10m noise. The drone must use its depth sensor to find the actual landing platform.
 
 ### Action Space
 
@@ -180,9 +144,161 @@ The search area gives a direction toward the goal with up to ±10m noise — som
 **Constraints:**
 - Max velocity: 3.0 m/s
 - Max yaw rate: 3.141 rad/s (180°/s)
-- Simulation rate: 50 Hz
+- Simulation rate: 50 Hz (dt = 1/50)
+- Episode horizon: 60 seconds
 
-## 🏆 Scoring
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## CLI
+
+Swarm includes a CLI for the full development workflow. Install with `pip install -e .`, then use `swarm <command>`.
+
+### Check Environment
+
+```bash
+swarm doctor
+```
+
+Verifies Python version, Docker, required dependencies, writable directories, and environment setup.
+
+### Test Your Agent
+
+```bash
+swarm model test --source my_agent/
+```
+
+Validates your source folder — checks `drone_agent.py` exists and compiles, `requirements.txt` format, and estimated package size.
+
+### Package Your Agent
+
+```bash
+swarm model package --source my_agent/
+```
+
+Bundles your `drone_agent.py`, model files, and optional `requirements.txt` into `Submission/submission.zip` (default path).
+
+### Verify Submission
+
+```bash
+swarm model verify --model Submission/submission.zip
+```
+
+Checks structure, file sizes, and compliance before uploading.
+
+### Run Benchmark
+
+```bash
+# Default benchmark (3 seeds per environment group)
+swarm benchmark --model Submission/submission.zip --workers 4
+
+# Quick test (1 seed per environment type)
+swarm benchmark --model Submission/submission.zip --seeds-per-group 1
+```
+
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds total (200 screening + 800 full).
+
+### View Results
+
+```bash
+swarm report
+```
+
+`doctor`, `model verify`, `model test`, and `report` support `--json` for machine-readable output.
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## GitHub Repo Setup
+
+Validators download models from your **public GitHub repository**. You must set up a repo with the correct structure.
+
+### 1. Create Your Repo
+
+Create a public GitHub repository (e.g., `github.com/YOUR_USER/any-name`). Each repo is bound to a single hotkey — validators reject a repo already claimed by a different miner.
+
+### 2. Copy the Template README
+
+Your repo **must** contain the exact Swarm template README. This is enforced by SHA-256 hash — any modification will cause validators to reject your model.
+
+```bash
+cp swarm/templates/README.md YOUR_REPO/README.md
+```
+
+Do not edit this file. The hash is checked on every download.
+
+### 3. Add Your Submission
+
+```bash
+cp Submission/submission.zip YOUR_REPO/submission.zip
+git add README.md submission.zip
+git commit -m "Add submission"
+git push
+```
+
+### 4. Set the Environment Variable
+
+Before starting your miner, export your repo URL:
+
+```bash
+export GITHUB_URL="https://github.com/YOUR_USER/YOUR_REPO"
+```
+
+Validators will use this URL to download your `submission.zip` and verify your `README.md`.
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Running the Miner
+
+### Configuration
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--netuid` | Subnet netuid | `--netuid 124` |
+| `--wallet.name` | Your coldkey name | `--wallet.name my_cold` |
+| `--wallet.hotkey` | Hotkey used for mining | `--wallet.hotkey my_hot` |
+| `--subtensor.network` | Network (finney, test) | `--subtensor.network finney` |
+| `--axon.port` | TCP port your miner listens on | `--axon.port 8091` |
+
+### Create Keys
+
+```bash
+btcli wallet new_coldkey --wallet.name my_cold
+btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
+```
+
+### PM2 Launch
+
+```bash
+source miner_env/bin/activate
+
+export GITHUB_URL="https://github.com/YOUR_USER/YOUR_REPO"
+
+pm2 start neurons/miner.py --name swarm_miner -- \
+     --netuid 124 \
+     --subtensor.network finney \
+     --wallet.name my_cold \
+     --wallet.hotkey my_hot \
+     --axon.port 8091
+```
+
+### Logs / Stop / Restart
+
+```bash
+pm2 logs swarm_miner
+pm2 restart swarm_miner
+pm2 stop swarm_miner
+```
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Scoring
 
 ```
 score = 0.45 × success + 0.45 × time + 0.10 × safety
@@ -192,13 +308,13 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 |------|--------|-------------|
 | **Success** | 0.45 | 1.0 if valid landing, 0.0 otherwise |
 | **Time** | 0.45 | 1.0 if within target time, decays linearly to 0.0 at horizon |
-| **Safety** | 0.10 | Based on minimum clearance from obstacles during flight |
+| **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0m, 0.0 if ≤ 0.2m, linear between |
 
-Collision with any obstacle sets the score to **0.01**.
+Collision with any obstacle sets the score to **0.01** (grace for legitimate models).
 
-### Landing
+### Landing Requirements
 
-For **static platforms**, touching is not enough — the drone must hold a **stable landing** for 0.5 seconds:
+**Static platforms** — hold stable for 0.5 seconds:
 
 | Condition | Threshold |
 |-----------|-----------|
@@ -206,63 +322,67 @@ For **static platforms**, touching is not enough — the drone must hold a **sta
 | Horizontal velocity | ≤ 0.6 m/s (relative to platform) |
 | Tilt (roll / pitch) | ≤ 15° |
 
-For **moving platforms**, contact with the platform is enough to count as success.
+**Moving platforms** — some maps have landing platforms that move in circular, linear, or figure-8 patterns. For these, contact with the platform counts as success (no stable hold needed). Your model should be prepared for both static and moving targets.
 
-## ✈️ How the Miner Works
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
 
-| Step | Direction | What happens |
-|------|-----------|--------------|
-| 1 | Validator → Miner | Empty `PolicySynapse` — "Send me your manifest." |
-| 2 | Miner → Validator | `PolicyRef` with SHA-256 hash, file size, framework tag (`rpc-agent`). |
-| 3 | Validator | Compares hash to cache. If identical → done. If different → proceed. |
-| 4 | Validator → Miner | `need_blob=True` — "Stream me the new zip." |
-| 5 | Miner → Validator | Series of `PolicyChunk` messages until EOF. |
-| 6 | Validator | Stores agent, runs in Docker, evaluates on benchmark seeds. |
+---
 
-Miners never see the evaluation maps — only the RPC agent is tested.
+## Benchmark System
 
-### Required Folder Layout
+### How Your Model Is Evaluated
+
+1. **Validator** queries your miner for a `PolicyRef` (model hash + metadata)
+2. **Validator** downloads your `submission.zip` from your GitHub repo
+3. **Validator** verifies your README hash (SHA-256 must match template exactly)
+4. **Validator** runs your agent in a sandboxed Docker container:
+   - **Screening** (200 seeds) — quick filter, must score > **101%** of the current champion
+   - **Full benchmark** (800 seeds) — complete evaluation across all environment types
+5. **Final score** = median of all 1,000 seed results
+6. **Winner-take-all** — #1 scorer receives emissions
+
+### Epoch Rotation
+
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates 1,000 cryptographically random seeds per epoch using `random.SystemRandom()` — there is no shared secret.
+
+Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
+
+### Key Numbers
+
+| Parameter | Value |
+|-----------|-------|
+| Total seeds per epoch | 1,000 |
+| Screening seeds | 200 |
+| Full benchmark seeds | 800 |
+| Screening threshold | > 101% of champion score |
+| Max submission size | 50 MiB (compressed) |
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Docker Whitelist
+
+Your `requirements.txt` can only include packages from the approved whitelist. Anything else will be rejected.
+
+**Approved packages:**
 
 ```
-swarm/
-└── Submission/
-    └── submission.zip
-        ├── drone_agent.py       ← Your controller (REQUIRED)
-        ├── requirements.txt     ← Optional
-        └── [your model files]   ← Optional
+torch, torchvision, torchaudio, onnx, onnxruntime, onnxruntime-gpu,
+stable-baselines3, sb3-contrib, gymnasium, gym, numpy, scipy,
+scikit-learn, opencv-python, opencv-python-headless, pillow, imageio,
+matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack
 ```
 
-**`drone_agent.py` is mandatory** — missing it results in automatic rejection. Submissions must be ≤ **50 MiB** compressed.
+Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC).
 
-## 🔄 Updating Your Agent
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
 
-```bash
-# Create ZIP with your files
-zip -r agent_submission.zip drone_agent.py [your_model_files]
+---
 
-# Place in Submission directory
-mkdir -p Submission
-cp agent_submission.zip Submission/submission.zip
+## Troubleshooting
 
-# Restart miner to serve new hash
-pm2 restart swarm_miner
-```
-
-The miner computes SHA-256 at startup. Validators fetch new agents automatically at the next handshake.
-
-## 🧪 Local Testing
-
-```bash
-# Test your agent locally
-python tests/test_rpc.py swarm/submission_template/ --seed 42
-
-# Test and create submission.zip automatically
-python tests/test_rpc.py swarm/submission_template/ --zip
-```
-
-## 🔧 Troubleshooting
-
-**"Missing drone_agent.py"** — Ensure your ZIP contains `drone_agent.py`. Template files are auto-injected.
+**"Missing drone_agent.py"** — Your ZIP must contain `drone_agent.py` at the root level. Template files are auto-injected.
 
 **"Dangerous executable files detected"** — Remove `.exe`, `.so`, `.dll` files. Only Python code and model files allowed.
 
@@ -270,9 +390,18 @@ python tests/test_rpc.py swarm/submission_template/ --zip
 
 **"RPC connection failed"** — Ensure your agent starts correctly and responds to ping requests.
 
-## 🆘 Support
+**"README hash mismatch"** — Your GitHub repo's README.md must be the exact copy from `swarm/templates/README.md`. Any edit will cause rejection.
 
-- Discord — ping @Miguelikk or @AliSaaf
-- GitHub issues — open a ticket with logs & error trace
+**Environment issues** — Run `swarm doctor` to diagnose.
 
-Happy mining, and may your drones fly far 🚀
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Support
+
+- **Discord** — [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
+- **GitHub Issues** — open a ticket with logs & error trace
+- **Website** — [swarm124.com](https://swarm124.com)
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>

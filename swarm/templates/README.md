@@ -12,7 +12,10 @@
 </p>
 
 <p align="center">
-  <a href="https://swarm124.com">swarm124.com</a> · <a href="https://swarm124.com/benchmark">Leaderboard</a> · <a href="https://discord.gg/8dPqPDw7GC">Discord</a> · <a href="https://github.com/swarm-subnet/swarm">GitHub</a>
+  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v4.0.0-green?style=flat-square" /></a>
+  <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
+  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white" /></a>
+  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=flat-square&logo=googlechrome&logoColor=white" /></a>
 </p>
 
 ---
@@ -91,12 +94,21 @@ Models trained on the Swarm benchmark don't stay in simulation — **they fly on
 <!-- SEE IT FLY -->
 ## See It Fly
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying.gif" alt="Drone flying through a city" width="80%" />
-</p>
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying.gif" alt="Drone navigating a procedural city" width="100%">
+<br><sub>Third-person view</sub>
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying_FPV.gif" alt="Drone FPV view" width="100%">
+<br><sub>FPV — what the drone sees</sub>
+</td>
+</tr>
+</table>
 
 <p align="center">
-  <sub>Trained model navigating a procedurally generated city environment.</sub>
+  <sub>No GPS. No pre-built map. Just a depth camera and learned instincts.</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -167,16 +179,16 @@ cd swarm
 pip install -e .
 ```
 
-**2. Run the full benchmark** (1,000 seeds across all environments)
+**2. Run a benchmark** (3 seeds per environment type by default)
 
 ```bash
-python -m swarm.bench --model submission.zip --workers 4
+swarm benchmark --model submission.zip --workers 4
 ```
 
 **3. Quick test** (one seed per environment type)
 
 ```bash
-python -m swarm.bench --model submission.zip --seeds-per-group 1
+swarm benchmark --model submission.zip --seeds-per-group 1
 ```
 
 <details>
@@ -187,7 +199,7 @@ submission.zip   # Trained agent — neural network weights + inference code
 README.md        # This file
 ```
 
-The `.zip` contains the agent's `DroneAgent` class and trained weights. The Swarm benchmark runner loads the agent, places it in a procedurally generated environment, and measures its performance.
+The `.zip` contains the agent's `DroneFlightController` class and trained weights. The Swarm benchmark runner loads the agent, places it in a procedurally generated environment, and measures its performance.
 
 </details>
 
@@ -234,19 +246,13 @@ Think you can build a better pilot? The benchmark is open — **prove it.**
 Swarm is built by researchers, engineers, and drone builders. **Join us.**
 
 <p align="center">
-  <a href="https://discord.gg/8dPqPDw7GC">
-    <img alt="Join Discord" src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/8dPqPDw7GC"><b>Discord</b></a>
-  &nbsp;•&nbsp;
-  <a href="https://x.com/SwarmSubnet"><b>X / Twitter</b></a>
-  &nbsp;•&nbsp;
-  <a href="https://github.com/swarm-subnet"><b>GitHub</b></a>
-  &nbsp;•&nbsp;
-  <a href="https://swarm124.com"><b>swarm124.com</b></a>
+  <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
+  &nbsp;
+  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/Follow-000000?style=for-the-badge&logo=x&logoColor=white" /></a>
+  &nbsp;
+  <a href="https://github.com/swarm-subnet"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white" /></a>
+  &nbsp;
+  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=for-the-badge&logo=googlechrome&logoColor=white" /></a>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

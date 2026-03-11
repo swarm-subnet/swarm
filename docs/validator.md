@@ -1,13 +1,15 @@
 # 🔐 Swarm Validator Guide
 
-This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models on procedurally generated maps — cities, mountains, warehouses, open terrain, and forests. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
+This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models on procedurally generated maps — cities, mountains, warehouses, and open terrain. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
+
+Run `swarm doctor` after installation to verify your environment is ready.
 
 ## 🖥️ System Requirements
 
 | Resource | Minimal | Notes |
 |----------|---------|-------|
-| CPU | 3 cores | |
-| RAM | 8 GB | |
+| CPU | 12 cores | |
+| RAM | 48 GB | |
 | Disk | 50 GB | Environment + model cache |
 | GPU | None | |
 
@@ -93,14 +95,14 @@ Create `.env` file in repository root:
 
 ```bash
 # REQUIRED — Backend API endpoint
-SWARM_BACKEND_API_URL=https://api.example.com
+SWARM_BACKEND_API_URL=<contact the team>
 
-# Optional: WandB logging
-WANDB_API_KEY=your_wandb_key_here
+# REQUIRED — WandB logging
+WANDB_API_KEY=<contact the team>
 VALIDATOR_NAME=my_validator_name
 ```
 
-`SWARM_BACKEND_API_URL` is required. Contact the team to obtain the endpoint.
+Contact the team on [Discord](https://discord.gg/8dPqPDw7GC) to obtain `SWARM_BACKEND_API_URL` and `WANDB_API_KEY`.
 
 ## 🔑 Wallet & Registration
 
@@ -169,23 +171,32 @@ pm2 start --name auto_update_validator \
 1. **Detect new models**
    For each miner UID, compare SHA-256 hash to cache. If hash differs, download the new model.
 
-2. **Screening (200 seeds)**
-   New models are first evaluated on 200 private seeds (randomly generated per validator). Must score within 80% of the top model to proceed.
+2. **Download from GitHub**
+   Validators download models from miners' public GitHub repositories. The miner's `README.md` hash is verified (SHA-256) before downloading — it must match the official template exactly.
 
-3. **Full benchmark (800 seeds)**
-   Models that pass screening are evaluated on the remaining 800 benchmark seeds across all five map types. Evaluation runs in parallel Docker containers.
+3. **Screening (200 seeds)**
+   New models are first evaluated on 200 seeds. Must score > **101%** of the current champion to proceed (`SCREENING_TOP_MODEL_FACTOR = 1.01`).
 
-4. **Submit scores to backend**
+4. **Full benchmark (800 seeds)**
+   Models that pass screening are evaluated on the remaining 800 benchmark seeds across all environment types. Evaluation runs in parallel Docker containers.
+
+5. **Submit scores to backend**
    Final score (median of all 1,000 seeds) is submitted to the backend.
 
-5. **Backend aggregation**
+6. **Backend aggregation**
    Backend aggregates scores from all validators (51% stake consensus).
 
-6. **Apply weights**
+7. **Apply weights**
    Validators fetch final weights from the backend and apply them on-chain.
 
-7. **Caching**
-   Results are cached by model hash + benchmark version. Same model is never re-evaluated within the same epoch.
+8. **Caching**
+   Results are cached by model hash + benchmark version + epoch. Same model is never re-evaluated within the same epoch.
+
+### Per-Validator Seeds
+
+Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. With 1,000 seeds, the statistical variance across validators is negligible.
+
+Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 
 ## 🔧 Troubleshooting
 
@@ -236,6 +247,8 @@ docker system prune -f
 
 ## 🆘 Support
 
-- Discord — ping @Miguelikk or @AliSaaf
+- **Discord** — [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
+- **GitHub Issues** — open a ticket with logs & error trace
+- **Website** — [swarm124.com](https://swarm124.com)
 
-Happy validating! 🚀
+Happy validating!
