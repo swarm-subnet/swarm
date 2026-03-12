@@ -402,7 +402,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         )
     )
     if not office_candidates:
-        raise ValueError("Unable to place OFFICE near personnel door side without overlap/out-of-bounds.")
+        pass
 
     # --- Utility zone placement (FACTORY, STORAGE, etc.) ---
     utility_zones = ["FACTORY", "STORAGE"]
@@ -650,9 +650,118 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
                 break
 
     if not office_and_utilities_placed:
-        raise ValueError(
-            "Unable to place OFFICE + required utility zones while keeping OFFICE near personnel door side."
-        )
+        relaxed_office_candidates = []
+        relaxed_seen = set()
+        all_walls = list(WALL_SLOTS)
+        rng.shuffle(all_walls)
+        for gap in (AREA_LAYOUT_MIN_GAP, 0.0):
+            for wall in all_walls:
+                for ap in list(_office_sweep_alongs_for_wall(wall)) + [None]:
+                    cand = _place_on_wall(
+                        name="OFFICE", sx=fit_sx, sy=fit_sy, wall=wall,
+                        color=office_def["rgba"], along_pref=ap, tries=320,
+                        gap=gap, deterministic_first=False,
+                    )
+                    if cand is not None:
+                        key = (
+                            round(float(cand["cx"]), 4), round(float(cand["cy"]), 4),
+                            round(float(cand["sx"]), 4), round(float(cand["sy"]), 4),
+                        )
+                        if key not in relaxed_seen:
+                            relaxed_seen.add(key)
+                            relaxed_office_candidates.append(cand)
+            cand = _place_anywhere(
+                name="OFFICE", sx=fit_sx, sy=fit_sy,
+                color=office_def["rgba"], tries=600, gap=gap,
+            )
+            if cand is not None:
+                key = (
+                    round(float(cand["cx"]), 4), round(float(cand["cy"]), 4),
+                    round(float(cand["sx"]), 4), round(float(cand["sy"]), 4),
+                )
+                if key not in relaxed_seen:
+                    relaxed_seen.add(key)
+                    relaxed_office_candidates.append(cand)
+
+        for office_candidate in relaxed_office_candidates:
+            snapshot = len(placed)
+            placed.append(office_candidate)
+            if _place_all_utilities_for_current_state():
+                office_and_utilities_placed = True
+                break
+            del placed[snapshot:]
+
+        if not office_and_utilities_placed:
+            for strict_storage_shape in (True, False):
+                for office_candidate in relaxed_office_candidates:
+                    snapshot = len(placed)
+                    placed.append(office_candidate)
+                    salvage_ok = True
+                    for name in utility_zones:
+                        if any(a.get("name") == name for a in placed):
+                            continue
+                        area = area_defs[name]
+                        base_sx = float(area["size_m"][0])
+                        base_sy = float(area["size_m"][1])
+                        picked = None
+                        if str(name).upper() == "STORAGE":
+                            if strict_storage_shape:
+                                shrink_steps = (1.0, 0.97, 0.94, 0.90, 0.86, 0.82)
+                            else:
+                                shrink_steps = (1.0, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30)
+                        else:
+                            shrink_steps = (1.0, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30)
+                        for shrink in shrink_steps:
+                            sx_try, sy_try = _scaled_dims_for_zone(name, base_sx, base_sy, shrink)
+                            for gap in (AREA_LAYOUT_MIN_GAP, 0.0):
+                                for wall in all_walls:
+                                    picked = _place_on_wall(
+                                        name=name, sx=sx_try, sy=sy_try, wall=wall,
+                                        color=area["rgba"], along_pref=None, tries=320,
+                                        gap=gap, deterministic_first=False,
+                                    )
+                                    if picked is not None:
+                                        break
+                                if picked is not None:
+                                    break
+                                picked = _place_anywhere(
+                                    name=name, sx=sx_try, sy=sy_try,
+                                    color=area["rgba"], tries=600, gap=gap,
+                                )
+                                if picked is not None:
+                                    break
+                            if picked is not None:
+                                break
+                        if picked is None:
+                            salvage_ok = False
+                            break
+                        placed.append(picked)
+                    if salvage_ok:
+                        office_and_utilities_placed = True
+                        break
+                    del placed[snapshot:]
+                if office_and_utilities_placed:
+                    break
+
+    if not office_and_utilities_placed:
+        _force_place_zone("OFFICE", fit_sx, fit_sy, office_def["rgba"])
+        for name in utility_zones:
+            if any(a.get("name") == name for a in placed):
+                continue
+            area = area_defs[name]
+            bsx, bsy = float(area["size_m"][0]), float(area["size_m"][1])
+            for shrink in (1.0, 0.80, 0.60, 0.40, 0.25):
+                sx_try, sy_try = _scaled_dims_for_zone(name, bsx, bsy, shrink)
+                cand = _place_anywhere(
+                    name=name, sx=sx_try, sy=sy_try,
+                    color=area["rgba"], tries=800, gap=0.0,
+                )
+                if cand is not None:
+                    placed.append(cand)
+                    break
+            else:
+                _force_place_zone(name, bsx * 0.25, bsy * 0.25, area["rgba"])
+        office_and_utilities_placed = True
 
     # --- Optional utility zones ---
     for name in optional_utility_zones:
