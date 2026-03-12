@@ -850,6 +850,13 @@ class MovingDroneAviary(BaseRLAviary):
             physicsClientId=cli,
         )
 
+        if getattr(self.task, "challenge_type", 0) == 6:
+            plane_id = getattr(self, "PLANE_ID", None)
+            if plane_id is not None:
+                p.changeVisualShape(
+                    plane_id, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli,
+                )
+
         self._build_cull_targets()
 
     # -------- reward ----------------------------------------------------- #
