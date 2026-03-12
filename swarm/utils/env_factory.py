@@ -7,9 +7,9 @@ according to the supplied MapTask, so it can be used immediately.
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import time
-import contextlib
 
 import gymnasium.spaces as spaces
 import numpy as np
@@ -23,6 +23,38 @@ from swarm.protocol                import MapTask
 from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE
 
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+@contextlib.contextmanager
+def _hide_gui_rendering(cli: int, enabled: bool):
+    if not enabled:
+        yield
+        return
+
+    p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0, physicsClientId=cli)
+    try:
+        yield
+    finally:
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=cli)
+
+
+def _configure_gui_visualizer(cli: int) -> None:
+    """Disable PyBullet GUI overlays that make procedural scenes look noisy."""
+    for name in (
+        "COV_ENABLE_SHADOWS",
+        "COV_ENABLE_GUI",
+        "COV_ENABLE_RGB_BUFFER_PREVIEW",
+        "COV_ENABLE_DEPTH_BUFFER_PREVIEW",
+        "COV_ENABLE_SEGMENTATION_MARK_PREVIEW",
+        "COV_ENABLE_WIREFRAME",
+    ):
+        flag = getattr(p, name, None)
+        if flag is None:
+            continue
+        p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
+        time.sleep(0.05)
+
+
 def make_env(
     task: MapTask,
     *,
@@ -66,25 +98,24 @@ def make_env(
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
     if gui:
-        for flag in (p.COV_ENABLE_SHADOWS, p.COV_ENABLE_GUI):
-            p.configureDebugVisualizer(flag, 0, physicsClientId=cli)
-            time.sleep(0.1)
+        _configure_gui_visualizer(cli)
 
-    with contextlib.redirect_stdout(io.StringIO()):
-        obs, _ = env.reset(seed=task.map_seed)
+    with _hide_gui_rendering(cli, gui):
+        with contextlib.redirect_stdout(io.StringIO()):
+            obs, _ = env.reset(seed=task.map_seed)
 
-        if obs is not None and "state" in obs:
-            actual_state_dim = obs["state"].shape[0]
-            if actual_state_dim != env._state_dim:
-                env._state_dim = actual_state_dim
-                env.observation_space = spaces.Dict({
-                    "depth": env.observation_space["depth"],
-                    "state": spaces.Box(
-                        low=-np.inf,
-                        high=np.inf,
-                        shape=(actual_state_dim,),
-                        dtype=np.float32
-                    ),
-                })
+            if obs is not None and "state" in obs:
+                actual_state_dim = obs["state"].shape[0]
+                if actual_state_dim != env._state_dim:
+                    env._state_dim = actual_state_dim
+                    env.observation_space = spaces.Dict({
+                        "depth": env.observation_space["depth"],
+                        "state": spaces.Box(
+                            low=-np.inf,
+                            high=np.inf,
+                            shape=(actual_state_dim,),
+                            dtype=np.float32
+                        ),
+                    })
 
     return env

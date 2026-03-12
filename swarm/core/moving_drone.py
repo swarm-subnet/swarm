@@ -626,10 +626,14 @@ class MovingDroneAviary(BaseRLAviary):
         self._cull_vis_hidden = set()
         self._cull_phys_disabled = set()
         self._cull_step_counter = 0
-        self._cull_enabled = total_faces >= CULL_MIN_TOTAL_FACES
+        self._cull_enabled = (not getattr(self, "GUI", False)) and total_faces >= CULL_MIN_TOTAL_FACES
 
     def _apply_distance_cull(self) -> None:
         """Toggle visual/physics state for bodies beyond camera range."""
+        if getattr(self, "GUI", False):
+            if self._cull_vis_hidden or self._cull_phys_disabled:
+                self._restore_culled_bodies()
+            return
         if not self._cull_enabled:
             return
         self._cull_step_counter += 1
