@@ -224,8 +224,20 @@ def _advance_free_fly(
     dt: float,
 ) -> None:
     position, yaw = _get_drone_pose(env, pybullet_module)
-    yaw += yaw_input * 1.8 * dt
+    next_position, next_yaw = _advance_free_fly_pose(
+        position, yaw, translation, yaw_input, dt
+    )
+    _set_drone_pose(env, pybullet_module, next_position, next_yaw)
 
+
+def _advance_free_fly_pose(
+    position: np.ndarray,
+    yaw: float,
+    translation: np.ndarray,
+    yaw_input: float,
+    dt: float,
+) -> Tuple[np.ndarray, float]:
+    yaw += yaw_input * 1.8 * dt
     cos_yaw = float(np.cos(yaw))
     sin_yaw = float(np.sin(yaw))
     forward = np.array([cos_yaw, sin_yaw, 0.0], dtype=np.float32)
@@ -240,7 +252,7 @@ def _advance_free_fly(
 
     next_position = position + world_delta
     next_position[2] = max(0.15, float(next_position[2]))
-    _set_drone_pose(env, pybullet_module, next_position, yaw)
+    return next_position, yaw
 
 
 def _camera_eye_and_target(
@@ -257,7 +269,7 @@ def _camera_eye_and_target(
         return eye.tolist(), target.tolist()
 
     target = position + forward * 1.25 + np.array([0.0, 0.0, 0.20], dtype=np.float32)
-    eye = position - forward * 0.55 + np.array([0.0, 0.0, 0.28], dtype=np.float32)
+    eye = position - forward * 1.55 + np.array([0.0, 0.0, 0.28], dtype=np.float32)
     return eye.tolist(), target.tolist()
 
 
@@ -549,6 +561,7 @@ def main() -> None:
     last_cull_update_at: float | None = None
     last_tick_at = time.perf_counter()
     sim_accumulator = 0.0
+    visualizer_position, visualizer_yaw = _get_drone_pose(env, p)
 
     try:
         while True:
@@ -570,6 +583,7 @@ def main() -> None:
                         env._restore_culled_bodies()
                     except Exception:
                         pass
+                visualizer_position, visualizer_yaw = _get_drone_pose(env, p)
                 cached_frame = None
                 last_render_at = None
                 last_render_pose = None
@@ -584,8 +598,15 @@ def main() -> None:
 
             while sim_accumulator >= task.sim_dt:
                 if moving:
-                    _advance_free_fly(env, p, translation, yaw_input, task.sim_dt)
+                    visualizer_position, visualizer_yaw = _advance_free_fly_pose(
+                        visualizer_position,
+                        visualizer_yaw,
+                        translation,
+                        yaw_input,
+                        task.sim_dt,
+                    )
                 p.stepSimulation(physicsClientId=env.getPyBulletClient())
+                _set_drone_pose(env, p, visualizer_position, visualizer_yaw)
                 sim_accumulator -= task.sim_dt
 
             current_pose = _capture_pose_snapshot(env, p)

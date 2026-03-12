@@ -225,6 +225,20 @@ def test_advance_free_fly_moves_drone_and_updates_yaw() -> None:
     assert moved_quat[2] > 0.0
 
 
+def test_advance_free_fly_pose_keeps_hover_when_no_motion() -> None:
+    position = np.array([1.0, 2.0, 0.5], dtype=np.float32)
+    next_position, next_yaw = vis_mod._advance_free_fly_pose(
+        position.copy(),
+        yaw=0.3,
+        translation=np.zeros(3, dtype=np.float32),
+        yaw_input=0.0,
+        dt=0.5,
+    )
+
+    assert np.allclose(next_position, position)
+    assert next_yaw == 0.3
+
+
 def test_camera_eye_and_target_follow_is_close_to_drone() -> None:
     class _DummyBullet:
         def getBasePositionAndOrientation(self, _body_id, physicsClientId=None):
@@ -242,7 +256,7 @@ def test_camera_eye_and_target_follow_is_close_to_drone() -> None:
 
     eye, target = vis_mod._camera_eye_and_target(env, _DummyBullet(), "follow")
 
-    assert eye[0] < 10.0
+    assert eye[0] < 9.0
     assert target[0] > 10.0
     assert eye[2] > 1.0
 
@@ -258,3 +272,4 @@ def test_fps_tracker_reports_after_interval(monkeypatch) -> None:
     assert msg is not None
     assert "FPS" in msg
     assert math.isclose(tracker.last_fps, 2.0 / 1.3, rel_tol=1e-6)
+
