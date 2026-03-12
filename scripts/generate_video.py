@@ -61,6 +61,7 @@ TYPE_LABELS: Dict[int, str] = {
     3: "mountain",
     4: "village",
     5: "warehouse",
+    6: "forest",
 }
 
 # --- output defaults ---
@@ -95,7 +96,7 @@ DEPTH_COLORMAP_NAME = "inferno"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class FlightTask:
     """Lightweight stand-in for ``swarm.protocol.MapTask``.
 
@@ -110,6 +111,8 @@ class FlightTask:
     sim_dt: float
     horizon: float
     challenge_type: int
+    search_radius: float = 10.0
+    moving_platform: bool = False
     version: str = "1"
 
 
@@ -131,8 +134,23 @@ class VideoResult:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _load_type_params(challenge_type: int) -> Dict[str, float]:
-    """Return map-generation parameters for *challenge_type* from ``swarm.constants``."""
+def _get_type3_world_range(seed: int) -> float:
+    from swarm.constants import TYPE_3_WORLD_RANGE_RATIO
+    from swarm.core.mountain_generator import get_global_scale
+
+    gs = get_global_scale(seed)
+    return (250.0 * gs) * TYPE_3_WORLD_RANGE_RATIO
+
+
+def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
+    from swarm.core.mountain_generator import get_global_scale, get_terrain_z
+
+    gs = get_global_scale(seed)
+    return get_terrain_z(x, y, seed, gs)
+
+
+def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
+    """Return current map-generation parameters for *challenge_type*."""
     from swarm import constants as C
 
     _MAP = {
@@ -157,7 +175,7 @@ def _load_type_params(challenge_type: int) -> Dict[str, float]:
             horizon=C.TYPE_2_HORIZON,
         ),
         3: dict(
-            world_range=C.TYPE_3_WORLD_RANGE,
+            world_range=_get_type3_world_range(seed),
             r_min=C.TYPE_3_R_MIN,
             r_max=C.TYPE_3_R_MAX,
             h_min=C.TYPE_3_H_MIN,
@@ -167,7 +185,18 @@ def _load_type_params(challenge_type: int) -> Dict[str, float]:
             horizon=C.TYPE_3_HORIZON,
         ),
         4: dict(
-            world_range=C.TYPE_4_WORLD_RANGE,
+            world_range=C.TYPE_3_VILLAGE_RANGE,
+            r_min=C.TYPE_3_R_MIN,
+            r_max=C.TYPE_3_R_MAX,
+            h_min=C.TYPE_3_H_MIN,
+            h_max=C.TYPE_3_H_MAX,
+            start_h_min=C.TYPE_3_START_H_MIN,
+            start_h_max=C.TYPE_3_START_H_MAX,
+            horizon=C.TYPE_3_HORIZON,
+        ),
+        5: dict(
+            world_range_x=C.TYPE_4_WORLD_RANGE_X,
+            world_range_y=C.TYPE_4_WORLD_RANGE_Y,
             r_min=C.TYPE_4_R_MIN,
             r_max=C.TYPE_4_R_MAX,
             h_min=C.TYPE_4_H_MIN,
@@ -176,28 +205,41 @@ def _load_type_params(challenge_type: int) -> Dict[str, float]:
             start_h_max=C.TYPE_4_START_H_MAX,
             horizon=C.TYPE_4_HORIZON,
         ),
-        5: dict(
-            world_range=C.TYPE_5_WORLD_RANGE,
-            r_min=C.TYPE_5_R_MIN,
-            r_max=C.TYPE_5_R_MAX,
-            h_min=C.TYPE_5_H_MIN,
-            h_max=C.TYPE_5_H_MAX,
-            start_h_min=C.TYPE_5_START_H_MIN,
-            start_h_max=C.TYPE_5_START_H_MAX,
-            horizon=C.TYPE_5_HORIZON,
+        6: dict(
+            world_range=C.TYPE_6_WORLD_RANGE,
+            r_min=C.TYPE_6_R_MIN,
+            r_max=C.TYPE_6_R_MAX,
+            h_min=C.TYPE_6_H_MIN,
+            h_max=C.TYPE_6_H_MAX,
+            start_h_min=C.TYPE_6_START_H_MIN,
+            start_h_max=C.TYPE_6_START_H_MAX,
+            horizon=C.TYPE_6_HORIZON,
         ),
     }
     raw = _MAP.get(challenge_type, _MAP[1])
     return {k: float(v) for k, v in raw.items()}
 
 
-def _sample_start(rng, params: Dict[str, float]) -> Tuple[float, float, float]:
+def _sample_start(
+    rng, params: Dict[str, float], challenge_type: int, seed: int
+) -> Tuple[float, float, float]:
     from swarm import constants as C
+
+    if challenge_type == 5:
+        x = rng.uniform(-params["world_range_x"], params["world_range_x"])
+        y = rng.uniform(-params["world_range_y"], params["world_range_y"])
+        pz = rng.uniform(params["start_h_min"], params["start_h_max"])
+        return float(x), float(y), float(pz + float(C.START_PLATFORM_TAKEOFF_BUFFER))
 
     wr = params["world_range"]
     x = rng.uniform(-wr, wr)
     y = rng.uniform(-wr, wr)
-    if getattr(C, "START_PLATFORM", False):
+    if challenge_type == 3:
+        rng.uniform(0, 1)
+        z = _get_type3_surface_z(x, y, seed) + float(C.START_PLATFORM_TAKEOFF_BUFFER)
+    elif challenge_type == 4:
+        z = float(C.START_PLATFORM_TAKEOFF_BUFFER)
+    elif getattr(C, "START_PLATFORM", False):
         if getattr(C, "START_PLATFORM_RANDOMIZE", False):
             pz = rng.uniform(
                 float(C.START_PLATFORM_MIN_Z), float(C.START_PLATFORM_MAX_Z)
@@ -210,43 +252,114 @@ def _sample_start(rng, params: Dict[str, float]) -> Tuple[float, float, float]:
     return float(x), float(y), float(z)
 
 
-def _sample_goal(
+def _sample_goal_warehouse(
     rng, start: Tuple[float, float, float], params: Dict[str, float]
 ) -> Tuple[float, float, float]:
     sx, sy, _ = start
-    wr = params["world_range"]
-    for _ in range(200):
+    wx, wy = params["world_range_x"], params["world_range_y"]
+    for _ in range(100):
         angle = rng.uniform(0, 2 * math.pi)
         ca, sa = math.cos(angle), math.sin(angle)
-        max_r_x = abs((wr - sx) / ca) if abs(ca) > 1e-8 else float("inf")
-        max_r_y = abs((wr - sy) / sa) if abs(sa) > 1e-8 else float("inf")
-        max_r = min(max_r_x, max_r_y, params["r_max"])
+
+        max_rx = float("inf")
+        max_ry = float("inf")
+        if abs(ca) > 1e-8:
+            max_rx = ((wx if ca > 0 else -wx) - sx) / ca
+        if abs(sa) > 1e-8:
+            max_ry = ((wy if sa > 0 else -wy) - sy) / sa
+
+        max_r = min(max_rx, max_ry, params["r_max"])
         if max_r < params["r_min"]:
             continue
+
         r = rng.uniform(params["r_min"], min(max_r * 0.999, params["r_max"]))
         gx = sx + r * ca
         gy = sy + r * sa
         gz = rng.uniform(params["h_min"], params["h_max"])
-        if -wr <= gx <= wr and -wr <= gy <= wr:
+
+        if -wx <= gx <= wx and -wy <= gy <= wy:
             return float(gx), float(gy), float(gz)
-    # fallback — clamp
+
+    angle = rng.uniform(0, 2 * math.pi)
+    r = rng.uniform(params["r_min"], params["r_max"])
+    gx = max(-wx, min(wx, sx + r * math.cos(angle)))
+    gy = max(-wy, min(wy, sy + r * math.sin(angle)))
+    gz = rng.uniform(params["h_min"], params["h_max"])
+    return float(gx), float(gy), float(gz)
+
+
+def _sample_goal(
+    rng, start: Tuple[float, float, float], params: Dict[str, float], challenge_type: int, seed: int
+) -> Tuple[float, float, float]:
+    from swarm import constants as C
+
+    if challenge_type == 5:
+        return _sample_goal_warehouse(rng, start, params)
+
+    sx, sy, sz = start
+    wr = params["world_range"]
+    start_surface_z = (
+        sz - float(C.START_PLATFORM_TAKEOFF_BUFFER) if challenge_type in (3, 4) else sz
+    )
+
+    for _ in range(100):
+        angle = rng.uniform(0, 2 * math.pi)
+        ca, sa = math.cos(angle), math.sin(angle)
+
+        max_rx = float("inf")
+        max_ry = float("inf")
+        if abs(ca) > 1e-8:
+            max_rx = ((wr if ca > 0 else -wr) - sx) / ca
+        if abs(sa) > 1e-8:
+            max_ry = ((wr if sa > 0 else -wr) - sy) / sa
+
+        max_r = min(max_rx, max_ry, params["r_max"])
+        if max_r < params["r_min"]:
+            continue
+
+        r = rng.uniform(params["r_min"], min(max_r * 0.999, params["r_max"]))
+        gx = sx + r * ca
+        gy = sy + r * sa
+
+        if challenge_type in (3, 4):
+            gz = _get_type3_surface_z(gx, gy, seed) if challenge_type == 3 else 0.0
+            dist_3d = math.sqrt((gx - sx) ** 2 + (gy - sy) ** 2 + (gz - start_surface_z) ** 2)
+            if params["r_min"] <= dist_3d <= params["r_max"] and -wr <= gx <= wr and -wr <= gy <= wr:
+                return float(gx), float(gy), float(gz)
+        else:
+            gz = rng.uniform(params["h_min"], params["h_max"])
+            if -wr <= gx <= wr and -wr <= gy <= wr:
+                return float(gx), float(gy), float(gz)
+
     angle = rng.uniform(0, 2 * math.pi)
     r = rng.uniform(params["r_min"], params["r_max"])
     gx = max(-wr, min(wr, sx + r * math.cos(angle)))
     gy = max(-wr, min(wr, sy + r * math.sin(angle)))
-    gz = rng.uniform(params["h_min"], params["h_max"])
+    if challenge_type in (3, 4):
+        gz = _get_type3_surface_z(gx, gy, seed) if challenge_type == 3 else 0.0
+    else:
+        gz = rng.uniform(params["h_min"], params["h_max"])
     return float(gx), float(gy), float(gz)
 
 
 def build_task(seed: int, challenge_type: int) -> FlightTask:
     """Deterministically build a :class:`FlightTask` for *seed* / *challenge_type*."""
     import random as _random
-    from swarm.constants import SIM_DT
+    from swarm.constants import (
+        MOVING_PLATFORM_PROB,
+        MOVING_PLATFORM_SEED_OFFSET,
+        SEARCH_RADIUS_MAX,
+        SEARCH_RADIUS_MIN,
+        SIM_DT,
+    )
 
-    params = _load_type_params(challenge_type)
+    params = _load_type_params(challenge_type, seed)
     rng = _random.Random(seed)
-    start = _sample_start(rng, params)
-    goal = _sample_goal(rng, start, params)
+    search_rng = _random.Random(seed + 888888)
+    platform_rng = _random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
+
+    start = _sample_start(rng, params, challenge_type, seed)
+    goal = _sample_goal(rng, start, params, challenge_type, seed)
     return FlightTask(
         map_seed=seed,
         start=start,
@@ -254,6 +367,10 @@ def build_task(seed: int, challenge_type: int) -> FlightTask:
         sim_dt=float(SIM_DT),
         horizon=float(params["horizon"]),
         challenge_type=int(challenge_type),
+        search_radius=float(search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)),
+        moving_platform=bool(
+            platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
+        ),
     )
 
 
@@ -274,10 +391,14 @@ def _extract_zip(zip_path: Path, dest: Path) -> Path:
 
 
 def _link_workspace(extracted: Path) -> None:
-    """Symlink ONNX files into /workspace/submission/ (many agents hardcode that path)."""
-    ws = Path("/workspace/submission")
+    """Expose ONNX assets under a Docker-like workspace path when needed."""
+    onnx_files = list(extracted.glob("*.onnx"))
+    if not onnx_files:
+        return
+
+    ws = Path(os.environ.get("SWARM_VIDEO_WORKSPACE", "/workspace/submission"))
     ws.mkdir(parents=True, exist_ok=True)
-    for onnx in extracted.glob("*.onnx"):
+    for onnx in onnx_files:
         dst = ws / onnx.name
         if dst.exists() or dst.is_symlink():
             dst.unlink()
@@ -554,6 +675,44 @@ class OverviewCamera(_CameraBase):
         )
 
 
+class _Cv2VideoWriter:
+    """Small adapter matching the `imageio` writer API used below."""
+
+    def __init__(self, path: Path, fps: int, width: int, height: int):
+        import cv2
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self._cv2 = cv2
+        self._writer = cv2.VideoWriter(str(path), fourcc, float(fps), (width, height))
+        if not self._writer.isOpened():
+            raise RuntimeError(f"OpenCV failed to open video writer for {path}")
+
+    def append_data(self, frame: np.ndarray) -> None:
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame, 0, 255).astype(np.uint8)
+        if frame.ndim == 2:
+            frame = np.repeat(frame[..., None], 3, axis=2)
+        self._writer.write(self._cv2.cvtColor(frame, self._cv2.COLOR_RGB2BGR))
+
+    def close(self) -> None:
+        self._writer.release()
+
+
+def _open_video_writer(path: Path, fps: int, width: int, height: int) -> Any:
+    try:
+        import imageio
+
+        return imageio.get_writer(str(path), fps=fps)
+    except ModuleNotFoundError:
+        return _Cv2VideoWriter(path, fps=fps, width=width, height=height)
+
+
+def _ensure_local_ansible_temp() -> None:
+    ansible_tmp = Path(os.environ.get("ANSIBLE_LOCAL_TEMP", "/tmp/swarm_ansible"))
+    ansible_tmp.mkdir(parents=True, exist_ok=True)
+    os.environ["ANSIBLE_LOCAL_TEMP"] = str(ansible_tmp)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Core recording function  (importable by validators)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -581,7 +740,7 @@ def record_flight(
     ----------
     model_path     : path to the miner's ``submission.zip``
     seed           : map seed (deterministic world generation)
-    challenge_type : 1-5  (city / open / mountain / village / warehouse)
+    challenge_type : 1-6  (city / open / mountain / village / warehouse / forest)
     modes          : subset of ``VALID_MODES``
     out_dir        : directory where ``.mp4`` files will be written
 
@@ -590,7 +749,6 @@ def record_flight(
     list[VideoResult] — one entry per requested mode.
     """
     import pybullet as p
-    import imageio
     from gym_pybullet_drones.utils.enums import ActionType
     from swarm.constants import SIM_DT, SPEED_LIMIT
 
@@ -606,6 +764,7 @@ def record_flight(
 
     # --- environment ----------------------------------------------------
     task = build_task(seed, challenge_type)
+    _ensure_local_ansible_temp()
     from swarm.utils.env_factory import make_env
 
     env = make_env(task, gui=False)
@@ -639,7 +798,7 @@ def record_flight(
         fname = f"seed{seed}_{type_label}_{mode}.mp4"
         out_paths[mode] = out_dir / fname
         tmp_paths[mode] = out_dir / f".tmp_{fname}"
-        writers[mode] = imageio.get_writer(str(tmp_paths[mode]), fps=fps)
+        writers[mode] = _open_video_writer(tmp_paths[mode], fps=fps, width=width, height=height)
 
     # --- simulation loop ------------------------------------------------
     frame_dt = 1.0 / fps
@@ -789,9 +948,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         required=True,
-        choices=[1, 2, 3, 4, 5],
+        choices=[1, 2, 3, 4, 5, 6],
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse)",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest)",
     )
 
     vid = ap.add_argument_group("video options")
