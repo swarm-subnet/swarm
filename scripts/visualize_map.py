@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import sys
 import time
 from dataclasses import dataclass
@@ -56,8 +57,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--seed",
         type=int,
-        required=True,
-        help="Map seed for deterministic generation.",
+        default=None,
+        help="Map seed for deterministic generation. If omitted, a random valid seed is chosen.",
     )
     parser.add_argument(
         "--speed",
@@ -188,6 +189,31 @@ def _resolve_visual_profile(args) -> _MapVisualProfile:
         if args.render_fps is not None
         else defaults.render_fps,
     )
+
+
+def _choose_random_seed(challenge_type: int, max_attempts: int = 128) -> int:
+    from scripts.generate_video import build_task
+
+    rng = random.SystemRandom()
+    last_error: Exception | None = None
+    for _ in range(max_attempts):
+        candidate = int(rng.randrange(1, 1_000_000))
+        try:
+            build_task(candidate, challenge_type)
+            return candidate
+        except Exception as exc:  # pragma: no cover - depends on generator edge cases.
+            last_error = exc
+            continue
+    raise RuntimeError(
+        f"Could not find a valid random seed for challenge type {challenge_type}"
+        + (f": {last_error}" if last_error is not None else "")
+    )
+
+
+def _resolve_seed(seed: int | None, challenge_type: int) -> int:
+    if seed is not None:
+        return int(seed)
+    return _choose_random_seed(int(challenge_type))
 
 
 def _get_drone_pose(env, pybullet_module) -> Tuple[np.ndarray, float]:
@@ -518,8 +544,8 @@ class _TkViewer:
             pass
 
 
-def main() -> None:
-    args = _build_parser().parse_args()
+def main(argv: Iterable[str] | None = None) -> None:
+    args = _build_parser().parse_args(list(argv) if argv is not None else None)
 
     import pybullet as p
 
@@ -527,7 +553,8 @@ def main() -> None:
     from swarm.utils.env_factory import make_env
 
     _ensure_local_ansible_temp()
-    task = build_task(seed=args.seed, challenge_type=args.type)
+    resolved_seed = _resolve_seed(args.seed, args.type)
+    task = build_task(seed=resolved_seed, challenge_type=args.type)
     env = make_env(task, gui=False)
     profile = _resolve_visual_profile(args)
     render_width, render_height = _compute_render_size(
@@ -547,8 +574,8 @@ def main() -> None:
             pass
 
     type_label = TYPE_LABELS.get(args.type, f"type{args.type}")
-    window_name = f"Swarm Visualizer - {type_label} - seed {args.seed}"
-    _print_controls(type_label, args.seed)
+    window_name = f"Swarm Visualizer - {type_label} - seed {resolved_seed}"
+    _print_controls(type_label, resolved_seed)
     print(
         f" Window: {args.width}x{args.height} | Render: {render_width}x{render_height} | Renderer: cpu-tiny | Distance: {profile.render_distance:.0f}m | Target FPS: {render_fps:.1f}",
         flush=True,

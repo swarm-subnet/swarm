@@ -258,6 +258,37 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         return 1
 
 
+def _build_visualize_argv(args: argparse.Namespace) -> list[str]:
+    argv = ["--type", str(args.type)]
+    if args.seed is not None:
+        argv.extend(["--seed", str(args.seed)])
+    argv.extend(["--speed", str(args.speed)])
+    argv.extend(["--boost", str(args.boost)])
+    argv.extend(["--camera", str(args.camera)])
+    argv.extend(["--width", str(args.width)])
+    argv.extend(["--height", str(args.height)])
+    if args.render_scale is not None:
+        argv.extend(["--render-scale", str(args.render_scale)])
+    if args.render_distance is not None:
+        argv.extend(["--render-distance", str(args.render_distance)])
+    if args.render_fps is not None:
+        argv.extend(["--render-fps", str(args.render_fps)])
+    return argv
+
+
+def _cmd_visualize(args: argparse.Namespace) -> int:
+    try:
+        from scripts.visualize_map import main as visualize_main
+
+        visualize_main(_build_visualize_argv(args))
+        return 0
+    except (SystemExit, KeyboardInterrupt):
+        return 1
+    except Exception as exc:
+        print(f"Visualizer failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def _validate_requirements_file(requirements_path: Path) -> list[str]:
     issues: list[str] = []
     for idx, raw_line in enumerate(requirements_path.read_text().splitlines(), start=1):
@@ -580,6 +611,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="RPC tracing verbosity.",
     )
     benchmark_parser.set_defaults(func=_cmd_benchmark)
+
+    visualize_parser = subparsers.add_parser(
+        "visualize",
+        help="Open an interactive visualizer for a specific map type and seed.",
+    )
+    visualize_parser.add_argument(
+        "--type",
+        type=int,
+        required=True,
+        choices=[1, 2, 3, 4, 5, 6],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest).",
+    )
+    visualize_parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Map seed. If omitted, a random valid seed is chosen.",
+    )
+    visualize_parser.add_argument(
+        "--speed",
+        type=float,
+        default=4.0,
+        help="Base flight speed in metres per second.",
+    )
+    visualize_parser.add_argument(
+        "--boost",
+        type=float,
+        default=2.0,
+        help="Multiplier for shifted movement.",
+    )
+    visualize_parser.add_argument(
+        "--camera",
+        choices=["follow", "fixed"],
+        default="follow",
+        help="Viewer camera mode.",
+    )
+    visualize_parser.add_argument(
+        "--width",
+        type=int,
+        default=960,
+        help="Window width.",
+    )
+    visualize_parser.add_argument(
+        "--height",
+        type=int,
+        default=540,
+        help="Window height.",
+    )
+    visualize_parser.add_argument(
+        "--render-scale",
+        type=float,
+        default=None,
+        help="Internal render scale. Defaults depend on map type.",
+    )
+    visualize_parser.add_argument(
+        "--render-distance",
+        type=float,
+        default=None,
+        help="Maximum camera/render distance in metres. Defaults depend on map type.",
+    )
+    visualize_parser.add_argument(
+        "--render-fps",
+        type=float,
+        default=None,
+        help="Maximum render FPS. Defaults depend on map type.",
+    )
+    visualize_parser.set_defaults(func=_cmd_visualize)
 
     model_parser = subparsers.add_parser("model", help="Model packaging and validation.")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)

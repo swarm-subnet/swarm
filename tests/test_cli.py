@@ -103,6 +103,45 @@ def test_benchmark_fails_if_model_missing(capsys, tmp_path):
     assert "Model not found" in capsys.readouterr().err
 
 
+def test_visualize_invokes_visualizer_main(monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    def _fake_visualize_main(argv):
+        captured["argv"] = list(argv)
+
+    monkeypatch.setattr("scripts.visualize_map.main", _fake_visualize_main)
+
+    rc = cli.main(
+        [
+            "visualize",
+            "--type",
+            "1",
+            "--width",
+            "960",
+            "--height",
+            "540",
+        ]
+    )
+
+    assert rc == 0
+    assert captured["argv"][:2] == ["--type", "1"]
+    assert "--seed" not in captured["argv"]
+    assert "--width" in captured["argv"]
+    assert "--height" in captured["argv"]
+
+
+def test_visualize_reports_failure(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "scripts.visualize_map.main",
+        lambda argv: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    rc = cli.main(["visualize", "--type", "1"])
+
+    assert rc == 1
+    assert "Visualizer failed: boom" in capsys.readouterr().err
+
+
 def test_model_verify_passes_for_valid_rpc_submission(tmp_path, capsys):
     model_zip = tmp_path / "submission.zip"
     with zipfile.ZipFile(model_zip, "w", zipfile.ZIP_DEFLATED) as zf:

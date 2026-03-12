@@ -13,6 +13,12 @@ def test_parser_accepts_all_map_types() -> None:
     assert args.seed == 431623
 
 
+def test_parser_accepts_missing_seed() -> None:
+    args = vis_mod._build_parser().parse_args(["--type", "1"])
+    assert args.type == 1
+    assert args.seed is None
+
+
 def test_motion_from_pressed_keys_maps_forward_and_boosted() -> None:
     translation, yaw = vis_mod._motion_from_pressed_keys(
         {"w", "shift"}, speed=4.0, boost=2.0
@@ -72,6 +78,30 @@ def test_resolve_visual_profile_honors_explicit_overrides() -> None:
     assert profile.render_scale == 0.8
     assert profile.render_distance == 44.0
     assert profile.render_fps == 9.0
+
+
+def test_resolve_seed_returns_explicit_seed() -> None:
+    assert vis_mod._resolve_seed(12345, 1) == 12345
+
+
+def test_choose_random_seed_retries_until_valid(monkeypatch) -> None:
+    candidates = iter([111, 222])
+
+    class _DummyRandom:
+        def randrange(self, start, stop):
+            _ = start, stop
+            return next(candidates)
+
+    def _fake_build_task(seed: int, challenge_type: int):
+        _ = challenge_type
+        if seed == 111:
+            raise ValueError("bad seed")
+        return object()
+
+    monkeypatch.setattr(vis_mod.random, "SystemRandom", lambda: _DummyRandom())
+    monkeypatch.setattr("scripts.generate_video.build_task", _fake_build_task)
+
+    assert vis_mod._choose_random_seed(1) == 222
 
 
 def test_should_render_frame_respects_motion_and_idle_rates() -> None:
@@ -272,4 +302,3 @@ def test_fps_tracker_reports_after_interval(monkeypatch) -> None:
     assert msg is not None
     assert "FPS" in msg
     assert math.isclose(tracker.last_fps, 2.0 / 1.3, rel_tol=1e-6)
-
