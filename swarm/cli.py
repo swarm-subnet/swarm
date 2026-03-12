@@ -273,6 +273,10 @@ def _build_visualize_argv(args: argparse.Namespace) -> list[str]:
         argv.extend(["--render-distance", str(args.render_distance)])
     if args.render_fps is not None:
         argv.extend(["--render-fps", str(args.render_fps)])
+    if args.sim_fps is not None:
+        argv.extend(["--sim-fps", str(args.sim_fps)])
+    if args.gpu:
+        argv.append("--gpu")
     return argv
 
 
@@ -676,6 +680,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Maximum render FPS. Defaults depend on map type.",
+    )
+    visualize_parser.add_argument(
+        "--sim-fps",
+        type=float,
+        default=None,
+        help="Maximum world simulation FPS for the viewer. Defaults depend on map type.",
+    )
+    visualize_parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Enable Bullet EGL hardware rendering for the visualizer if available.",
     )
     visualize_parser.set_defaults(func=_cmd_visualize)
 

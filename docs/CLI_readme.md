@@ -63,7 +63,10 @@ swarm visualize --type 1
 swarm visualize --type 5 --seed 323518
 
 # Override viewer tuning
-swarm visualize --type 1 --width 960 --height 540 --render-scale 0.7 --render-distance 100 --render-fps 8
+swarm visualize --type 1 --width 960 --height 540 --render-scale 0.7 --render-distance 100 --render-fps 8 --sim-fps 10
+
+# Try GPU-backed rendering through Bullet EGL
+swarm visualize --type 1 --gpu
 ```
 
 Controls:

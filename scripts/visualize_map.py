@@ -20,8 +20,12 @@ Esc          quit
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
+import pkgutil
 import random
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -29,6 +33,7 @@ from pathlib import Path
 from typing import Iterable, Tuple
 
 import numpy as np
+import gymnasium.spaces as spaces
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
@@ -41,6 +46,14 @@ class _MapVisualProfile:
     render_scale: float
     render_distance: float
     render_fps: float
+    sim_fps: float
+
+
+@dataclass(frozen=True)
+class _RenderBackend:
+    label: str
+    renderer_id: int
+    plugin_id: int | None = None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -108,6 +121,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum render FPS. Defaults depend on map type.",
     )
+    parser.add_argument(
+        "--sim-fps",
+        type=float,
+        default=None,
+        help="Maximum world simulation FPS for the viewer. Defaults depend on map type.",
+    )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Enable Bullet EGL hardware rendering for the visualizer if available.",
+    )
     return parser
 
 
@@ -115,6 +139,43 @@ def _ensure_local_ansible_temp() -> None:
     ansible_tmp = Path(os.environ.get("ANSIBLE_LOCAL_TEMP", "/tmp/swarm_ansible"))
     ansible_tmp.mkdir(parents=True, exist_ok=True)
     os.environ["ANSIBLE_LOCAL_TEMP"] = str(ansible_tmp)
+
+
+def _default_gpu_adapter_name() -> str | None:
+    if os.environ.get("MESA_D3D12_DEFAULT_ADAPTER_NAME"):
+        return None
+    if sys.platform.startswith("linux") and shutil.which("nvidia-smi"):
+        return "NVIDIA"
+    return None
+
+
+def _prepare_gpu_env(enabled: bool) -> str | None:
+    if not enabled:
+        return None
+    adapter_name = _default_gpu_adapter_name()
+    if adapter_name is not None:
+        os.environ["MESA_D3D12_DEFAULT_ADAPTER_NAME"] = adapter_name
+    return os.environ.get("MESA_D3D12_DEFAULT_ADAPTER_NAME")
+
+
+def _sync_observation_space(env, obs) -> None:
+    if obs is None or "state" not in obs:
+        return
+    actual_state_dim = obs["state"].shape[0]
+    if actual_state_dim == env._state_dim:
+        return
+    env._state_dim = actual_state_dim
+    env.observation_space = spaces.Dict(
+        {
+            "depth": env.observation_space["depth"],
+            "state": spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(actual_state_dim,),
+                dtype=np.float32,
+            ),
+        }
+    )
 
 
 def _motion_from_pressed_keys(
@@ -166,12 +227,42 @@ def _compute_render_size(width: int, height: int, scale: float) -> Tuple[int, in
 
 def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
     profiles = {
-        1: _MapVisualProfile(render_scale=0.65, render_distance=100.0, render_fps=8.0),
-        2: _MapVisualProfile(render_scale=0.72, render_distance=100.0, render_fps=8.0),
-        3: _MapVisualProfile(render_scale=0.68, render_distance=100.0, render_fps=6.0),
-        4: _MapVisualProfile(render_scale=0.66, render_distance=100.0, render_fps=8.0),
-        5: _MapVisualProfile(render_scale=0.60, render_distance=100.0, render_fps=8.0),
-        6: _MapVisualProfile(render_scale=0.65, render_distance=100.0, render_fps=7.0),
+        1: _MapVisualProfile(
+            render_scale=0.65,
+            render_distance=100.0,
+            render_fps=8.0,
+            sim_fps=10.0,
+        ),
+        2: _MapVisualProfile(
+            render_scale=0.72,
+            render_distance=100.0,
+            render_fps=8.0,
+            sim_fps=10.0,
+        ),
+        3: _MapVisualProfile(
+            render_scale=0.68,
+            render_distance=100.0,
+            render_fps=6.0,
+            sim_fps=8.0,
+        ),
+        4: _MapVisualProfile(
+            render_scale=0.66,
+            render_distance=100.0,
+            render_fps=8.0,
+            sim_fps=10.0,
+        ),
+        5: _MapVisualProfile(
+            render_scale=0.60,
+            render_distance=100.0,
+            render_fps=8.0,
+            sim_fps=8.0,
+        ),
+        6: _MapVisualProfile(
+            render_scale=0.65,
+            render_distance=100.0,
+            render_fps=7.0,
+            sim_fps=8.0,
+        ),
     }
     return profiles[int(challenge_type)]
 
@@ -188,6 +279,7 @@ def _resolve_visual_profile(args) -> _MapVisualProfile:
         render_fps=float(args.render_fps)
         if args.render_fps is not None
         else defaults.render_fps,
+        sim_fps=float(args.sim_fps) if args.sim_fps is not None else defaults.sim_fps,
     )
 
 
@@ -306,6 +398,7 @@ def _render_frame(
     width: int,
     height: int,
     render_distance: float,
+    backend: _RenderBackend,
 ) -> np.ndarray:
     cli = env.getPyBulletClient()
     eye, target = _camera_eye_and_target(env, pybullet_module, mode)
@@ -325,7 +418,7 @@ def _render_frame(
         height=height,
         viewMatrix=view,
         projectionMatrix=projection,
-        renderer=pybullet_module.ER_TINY_RENDERER,
+        renderer=backend.renderer_id,
         shadow=0,
         lightDirection=[0.4, 0.4, 1.0],
         physicsClientId=cli,
@@ -422,6 +515,23 @@ def _should_render_frame(
     return elapsed >= (1.0 / max(idle_fps, 0.1))
 
 
+def _resolve_idle_render_fps(render_fps: float, backend: _RenderBackend) -> float:
+    if backend.label == "gpu-egl":
+        return float(render_fps)
+    return max(1.0, min(2.0, float(render_fps) / 3.0))
+
+
+def _should_step_world(
+    now: float,
+    last_step_at: float | None,
+    sim_fps: float,
+    force: bool = False,
+) -> bool:
+    if force or last_step_at is None:
+        return True
+    return (now - last_step_at) >= (1.0 / max(sim_fps, 0.1))
+
+
 def _print_controls(type_label: str, seed: int) -> None:
     print("=" * 72)
     print(" Swarm Map Visualizer")
@@ -461,69 +571,83 @@ class _FpsTracker:
         return message
 
 
-class _TkViewer:
+class _PygameViewer:
     def __init__(self, width: int, height: int, title: str):
-        import tkinter as tk
-        from PIL import Image, ImageTk
+        import pygame
 
-        self._image_mod = Image
-        self._imagetk_mod = ImageTk
+        self._pygame = pygame
         self._pressed: set[str] = set()
         self.reset_requested = False
         self.quit_requested = False
-
-        self.root = tk.Tk()
-        self.root.title(title)
-        self.root.geometry(f"{width}x{height}")
-        self.root.minsize(640, 360)
-        self.root.protocol("WM_DELETE_WINDOW", self._request_quit)
-        self.root.bind("<KeyPress>", self._on_press)
-        self.root.bind("<KeyRelease>", self._on_release)
-
-        self.label = tk.Label(self.root)
-        self.label.pack(fill="both", expand=True)
-        self.label.focus_set()
-        self._photo = None
+        self._size = (int(width), int(height))
+        pygame.init()
+        self.screen = pygame.display.set_mode(self._size, pygame.RESIZABLE)
+        pygame.display.set_caption(title)
+        self._title = title
 
     @property
     def pressed(self) -> set[str]:
         return set(self._pressed)
 
-    def _request_quit(self) -> None:
-        self.quit_requested = True
+    def _key_name(self, key: int) -> str:
+        pygame = self._pygame
+        mapping = {
+            pygame.K_w: "w",
+            pygame.K_s: "s",
+            pygame.K_a: "a",
+            pygame.K_d: "d",
+            pygame.K_q: "q",
+            pygame.K_e: "e",
+            pygame.K_UP: "up",
+            pygame.K_DOWN: "down",
+            pygame.K_ESCAPE: "escape",
+            pygame.K_r: "r",
+            pygame.K_LSHIFT: "shift",
+            pygame.K_RSHIFT: "shift",
+        }
+        return mapping.get(key, "")
 
-    def _on_press(self, event) -> None:
-        key = _normalise_keysym(getattr(event, "keysym", ""))
-        if not key:
+    def _handle_keydown(self, key: int) -> None:
+        name = self._key_name(key)
+        if not name:
             return
-        if key == "escape":
+        if name == "escape":
             self.quit_requested = True
             return
-        if key == "r":
+        if name == "r":
             self.reset_requested = True
             return
-        self._pressed.add(key)
+        self._pressed.add(name)
 
-    def _on_release(self, event) -> None:
-        key = _normalise_keysym(getattr(event, "keysym", ""))
-        if not key:
+    def _handle_keyup(self, key: int) -> None:
+        name = self._key_name(key)
+        if not name:
             return
-        self._pressed.discard(key)
+        self._pressed.discard(name)
 
     def draw(self, frame: np.ndarray) -> None:
-        image = self._image_mod.fromarray(frame)
-        current_w = max(1, self.label.winfo_width())
-        current_h = max(1, self.label.winfo_height())
-        if (current_w, current_h) != image.size:
-            image = image.resize(
-                (current_w, current_h), self._image_mod.Resampling.BILINEAR
-            )
-        self._photo = self._imagetk_mod.PhotoImage(image=image)
-        self.label.configure(image=self._photo)
+        pygame = self._pygame
+        frame_surface = pygame.image.frombuffer(
+            frame.tobytes(),
+            (frame.shape[1], frame.shape[0]),
+            "RGB",
+        )
+        frame_surface = pygame.transform.scale(frame_surface, self._size)
+        self.screen.blit(frame_surface, (0, 0))
+        pygame.display.flip()
 
     def pump(self) -> None:
-        self.root.update_idletasks()
-        self.root.update()
+        pygame = self._pygame
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.quit_requested = True
+            elif event.type == pygame.KEYDOWN:
+                self._handle_keydown(event.key)
+            elif event.type == pygame.KEYUP:
+                self._handle_keyup(event.key)
+            elif event.type == pygame.VIDEORESIZE:
+                self._size = (max(320, event.w), max(180, event.h))
+                self.screen = pygame.display.set_mode(self._size, pygame.RESIZABLE)
 
     def consume_reset(self) -> bool:
         if self.reset_requested:
@@ -533,29 +657,97 @@ class _TkViewer:
 
     def close(self) -> None:
         try:
-            self.root.destroy()
+            self._pygame.quit()
         except Exception:
             pass
 
     def set_title(self, title: str) -> None:
         try:
-            self.root.title(title)
+            self._title = title
+            self._pygame.display.set_caption(title)
         except Exception:
             pass
 
 
+def _enable_gpu_backend(pybullet_module, physics_client_id: int) -> _RenderBackend:
+    egl = pkgutil.get_loader("eglRenderer")
+    if egl:
+        plugin_id = pybullet_module.loadPlugin(
+            egl.get_filename(),
+            "_eglRendererPlugin",
+            physicsClientId=physics_client_id,
+        )
+    else:
+        plugin_id = pybullet_module.loadPlugin(
+            "eglRendererPlugin",
+            physicsClientId=physics_client_id,
+        )
+    if plugin_id < 0:
+        raise RuntimeError("Bullet EGL plugin failed to load")
+    return _RenderBackend(
+        label="gpu-egl",
+        renderer_id=pybullet_module.ER_BULLET_HARDWARE_OPENGL,
+        plugin_id=plugin_id,
+    )
+
+
+def _build_visualizer_env(task, prefer_gpu: bool):
+    import pybullet as p
+    import pybullet_data
+    from gym_pybullet_drones.utils.enums import ActionType, ObservationType
+
+    from swarm.constants import MAX_YAW_RATE, SPEED_LIMIT
+    from swarm.core.moving_drone import MovingDroneAviary
+
+    ctrl_freq = int(round(1.0 / task.sim_dt))
+    common_kwargs = dict(
+        gui=False,
+        record=False,
+        obs=ObservationType.RGB,
+        ctrl_freq=ctrl_freq,
+        pyb_freq=ctrl_freq,
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        env = MovingDroneAviary(task, act=ActionType.VEL, **common_kwargs)
+
+    env.SPEED_LIMIT = SPEED_LIMIT
+    env.MAX_YAW_RATE = MAX_YAW_RATE
+    env.ACT_TYPE = ActionType.VEL
+
+    cli = env.getPyBulletClient()
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+    backend = _RenderBackend(
+        label="cpu-tiny",
+        renderer_id=p.ER_TINY_RENDERER,
+    )
+    if prefer_gpu:
+        try:
+            backend = _enable_gpu_backend(p, cli)
+        except Exception as exc:
+            print(
+                f"[visualizer] GPU render unavailable, falling back to CPU: {exc}",
+                flush=True,
+            )
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        obs, _ = env.reset(seed=task.map_seed)
+    _sync_observation_space(env, obs)
+    return env, backend
+
+
 def main(argv: Iterable[str] | None = None) -> None:
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
+    adapter_name = _prepare_gpu_env(args.gpu)
 
     import pybullet as p
 
     from scripts.generate_video import TYPE_LABELS, build_task
-    from swarm.utils.env_factory import make_env
 
     _ensure_local_ansible_temp()
     resolved_seed = _resolve_seed(args.seed, args.type)
     task = build_task(seed=resolved_seed, challenge_type=args.type)
-    env = make_env(task, gui=False)
+    env, backend = _build_visualizer_env(task, prefer_gpu=args.gpu)
     profile = _resolve_visual_profile(args)
     render_width, render_height = _compute_render_size(
         args.width, args.height, profile.render_scale
@@ -565,7 +757,8 @@ def main(argv: Iterable[str] | None = None) -> None:
         visual_cull_radius + 10.0, float(profile.render_distance) + 10.0
     )
     render_fps = max(2.0, float(profile.render_fps))
-    idle_render_fps = max(1.0, min(2.0, render_fps / 3.0))
+    sim_fps = max(1.0, float(profile.sim_fps))
+    idle_render_fps = _resolve_idle_render_fps(render_fps, backend)
 
     if hasattr(env, "_restore_culled_bodies"):
         try:
@@ -576,18 +769,19 @@ def main(argv: Iterable[str] | None = None) -> None:
     type_label = TYPE_LABELS.get(args.type, f"type{args.type}")
     window_name = f"Swarm Visualizer - {type_label} - seed {resolved_seed}"
     _print_controls(type_label, resolved_seed)
+    adapter_suffix = f" | Adapter: {adapter_name}" if adapter_name else ""
     print(
-        f" Window: {args.width}x{args.height} | Render: {render_width}x{render_height} | Renderer: cpu-tiny | Distance: {profile.render_distance:.0f}m | Target FPS: {render_fps:.1f}",
+        f" Window: {args.width}x{args.height} | Render: {render_width}x{render_height} | Renderer: {backend.label} | Distance: {profile.render_distance:.0f}m | Target FPS: {render_fps:.1f} | Sim FPS: {sim_fps:.1f}{adapter_suffix}",
         flush=True,
     )
-    viewer = _TkViewer(args.width, args.height, window_name)
+    viewer = _PygameViewer(args.width, args.height, window_name)
     fps = _FpsTracker()
     cached_frame: np.ndarray | None = None
     last_render_at: float | None = None
     last_render_pose: Tuple[float, float, float, float] | None = None
     last_cull_update_at: float | None = None
+    last_step_at: float | None = None
     last_tick_at = time.perf_counter()
-    sim_accumulator = 0.0
     visualizer_position, visualizer_yaw = _get_drone_pose(env, p)
 
     try:
@@ -596,7 +790,6 @@ def main(argv: Iterable[str] | None = None) -> None:
             loop_now = time.perf_counter()
             loop_dt = min(0.1, max(0.0, loop_now - last_tick_at))
             last_tick_at = loop_now
-            sim_accumulator += loop_dt
 
             if viewer.quit_requested:
                 break
@@ -615,7 +808,7 @@ def main(argv: Iterable[str] | None = None) -> None:
                 last_render_at = None
                 last_render_pose = None
                 last_cull_update_at = None
-                sim_accumulator = 0.0
+                last_step_at = None
                 continue
 
             translation, yaw_input = _motion_from_pressed_keys(
@@ -623,18 +816,20 @@ def main(argv: Iterable[str] | None = None) -> None:
             )
             moving = bool(np.any(translation) or yaw_input)
 
-            while sim_accumulator >= task.sim_dt:
-                if moving:
-                    visualizer_position, visualizer_yaw = _advance_free_fly_pose(
-                        visualizer_position,
-                        visualizer_yaw,
-                        translation,
-                        yaw_input,
-                        task.sim_dt,
-                    )
+            if moving:
+                visualizer_position, visualizer_yaw = _advance_free_fly_pose(
+                    visualizer_position,
+                    visualizer_yaw,
+                    translation,
+                    yaw_input,
+                    loop_dt,
+                )
+            _set_drone_pose(env, p, visualizer_position, visualizer_yaw)
+
+            if _should_step_world(loop_now, last_step_at, sim_fps):
                 p.stepSimulation(physicsClientId=env.getPyBulletClient())
                 _set_drone_pose(env, p, visualizer_position, visualizer_yaw)
-                sim_accumulator -= task.sim_dt
+                last_step_at = loop_now
 
             current_pose = _capture_pose_snapshot(env, p)
             pose_changed = _pose_changed(last_render_pose, current_pose)
@@ -662,6 +857,7 @@ def main(argv: Iterable[str] | None = None) -> None:
                     )
                     last_cull_update_at = loop_now
 
+                render_started_at = loop_now
                 cached_frame = _render_frame(
                     env,
                     p,
@@ -669,9 +865,10 @@ def main(argv: Iterable[str] | None = None) -> None:
                     render_width,
                     render_height,
                     profile.render_distance,
+                    backend,
                 )
                 viewer.draw(cached_frame)
-                last_render_at = time.perf_counter()
+                last_render_at = render_started_at
                 last_render_pose = current_pose
 
                 fps_msg = fps.tick()
@@ -682,6 +879,11 @@ def main(argv: Iterable[str] | None = None) -> None:
             time.sleep(0.002 if moving else 0.005)
     finally:
         viewer.close()
+        if backend.plugin_id is not None:
+            try:
+                p.unloadPlugin(backend.plugin_id, physicsClientId=env.getPyBulletClient())
+            except Exception:
+                pass
         try:
             env.close()
         except Exception:

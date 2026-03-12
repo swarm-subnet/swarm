@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from gymnasium import spaces
 
 from scripts import visualize_map as vis_mod
 
@@ -17,6 +18,11 @@ def test_parser_accepts_missing_seed() -> None:
     args = vis_mod._build_parser().parse_args(["--type", "1"])
     assert args.type == 1
     assert args.seed is None
+
+
+def test_parser_accepts_gpu_flag() -> None:
+    args = vis_mod._build_parser().parse_args(["--type", "1", "--gpu"])
+    assert args.gpu is True
 
 
 def test_motion_from_pressed_keys_maps_forward_and_boosted() -> None:
@@ -54,8 +60,10 @@ def test_default_visual_profile_uses_map_specific_values() -> None:
     warehouse = vis_mod._default_visual_profile(5)
 
     assert city.render_distance == 100.0
+    assert city.sim_fps == 10.0
     assert warehouse.render_scale == 0.60
     assert warehouse.render_fps == 8.0
+    assert warehouse.sim_fps == 8.0
 
 
 def test_resolve_visual_profile_honors_explicit_overrides() -> None:
@@ -71,6 +79,8 @@ def test_resolve_visual_profile_honors_explicit_overrides() -> None:
             "44",
             "--render-fps",
             "9",
+            "--sim-fps",
+            "11",
         ]
     )
 
@@ -78,10 +88,28 @@ def test_resolve_visual_profile_honors_explicit_overrides() -> None:
     assert profile.render_scale == 0.8
     assert profile.render_distance == 44.0
     assert profile.render_fps == 9.0
+    assert profile.sim_fps == 11.0
 
 
 def test_resolve_seed_returns_explicit_seed() -> None:
     assert vis_mod._resolve_seed(12345, 1) == 12345
+
+
+def test_prepare_gpu_env_uses_existing_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("MESA_D3D12_DEFAULT_ADAPTER_NAME", "AMD")
+    assert vis_mod._prepare_gpu_env(True) == "AMD"
+
+
+def test_prepare_gpu_env_defaults_to_nvidia_when_available(monkeypatch) -> None:
+    monkeypatch.delenv("MESA_D3D12_DEFAULT_ADAPTER_NAME", raising=False)
+    monkeypatch.setattr(vis_mod.sys, "platform", "linux")
+    monkeypatch.setattr(vis_mod.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    assert vis_mod._prepare_gpu_env(True) == "NVIDIA"
+
+
+def test_prepare_gpu_env_disabled_returns_none(monkeypatch) -> None:
+    monkeypatch.delenv("MESA_D3D12_DEFAULT_ADAPTER_NAME", raising=False)
+    assert vis_mod._prepare_gpu_env(False) is None
 
 
 def test_choose_random_seed_retries_until_valid(monkeypatch) -> None:
@@ -141,6 +169,38 @@ def test_should_render_frame_respects_motion_and_idle_rates() -> None:
         target_fps=8.0,
         idle_fps=2.0,
     )
+
+
+def test_resolve_idle_render_fps_depends_on_backend() -> None:
+    cpu_backend = vis_mod._RenderBackend(label="cpu-tiny", renderer_id=1)
+    gpu_backend = vis_mod._RenderBackend(label="gpu-egl", renderer_id=2, plugin_id=4)
+
+    assert vis_mod._resolve_idle_render_fps(8.0, cpu_backend) == 2.0
+    assert vis_mod._resolve_idle_render_fps(8.0, gpu_backend) == 8.0
+
+
+def test_should_step_world_respects_capped_rate() -> None:
+    assert vis_mod._should_step_world(1.0, None, 10.0)
+    assert not vis_mod._should_step_world(1.05, 1.0, 10.0)
+    assert vis_mod._should_step_world(1.11, 1.0, 10.0)
+
+
+def test_sync_observation_space_updates_dimension() -> None:
+    depth_space = spaces.Box(low=0.0, high=1.0, shape=(4, 4), dtype=np.float32)
+    env = type(
+        "DummyEnv",
+        (),
+        {
+            "_state_dim": 2,
+            "observation_space": {"depth": depth_space},
+        },
+    )()
+    obs = {"state": np.zeros(5, dtype=np.float32)}
+
+    vis_mod._sync_observation_space(env, obs)
+
+    assert env._state_dim == 5
+    assert env.observation_space["state"].shape == (5,)
 
 
 def test_pose_changed_detects_motion_and_yaw() -> None:

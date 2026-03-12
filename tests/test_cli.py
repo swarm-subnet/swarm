@@ -120,6 +120,9 @@ def test_visualize_invokes_visualizer_main(monkeypatch):
             "960",
             "--height",
             "540",
+            "--sim-fps",
+            "10",
+            "--gpu",
         ]
     )
 
@@ -128,6 +131,8 @@ def test_visualize_invokes_visualizer_main(monkeypatch):
     assert "--seed" not in captured["argv"]
     assert "--width" in captured["argv"]
     assert "--height" in captured["argv"]
+    assert "--sim-fps" in captured["argv"]
+    assert "--gpu" in captured["argv"]
 
 
 def test_visualize_reports_failure(monkeypatch, capsys):
