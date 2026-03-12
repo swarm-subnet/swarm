@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 import numpy as np
 import gymnasium.spaces as spaces
 import pybullet as p
@@ -31,6 +32,8 @@ from swarm.constants import (
     SAFETY_DISTANCE_SAFE,
     START_PLATFORM_TAKEOFF_BUFFER,
     LANDING_MAX_VZ, LANDING_MAX_VXY_REL, LANDING_MAX_TILT_RAD, LANDING_STABLE_SEC,
+    CULL_VISUAL_RADIUS, CULL_PHYSICS_RADIUS, CULL_INTERVAL_STEPS,
+    CULL_MIN_AABB_SPAN, CULL_MIN_FACES, CULL_MIN_TOTAL_FACES,
 )
 
 
@@ -159,6 +162,12 @@ class MovingDroneAviary(BaseRLAviary):
                 dtype=np.float32
             ),
         })
+
+        self._cull_targets = []
+        self._cull_vis_hidden = set()
+        self._cull_phys_disabled = set()
+        self._cull_step_counter = 0
+        self._cull_enabled = False
 
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
@@ -562,6 +571,108 @@ class MovingDroneAviary(BaseRLAviary):
         else:
             self._landing_stable_time = 0.0
 
+    # --------------------------------------------------------------------- #
+    # distance-based culling
+    # --------------------------------------------------------------------- #
+    @staticmethod
+    def _count_mesh_faces(path: str) -> int:
+        if not os.path.exists(path):
+            return 0
+        count = 0
+        with open(path) as f:
+            for line in f:
+                if line[0:2] == "f ":
+                    count += 1
+        return count
+
+    def _build_cull_targets(self) -> None:
+        """Scan scene bodies and build the cull-target list."""
+        cli = getattr(self, "CLIENT", 0)
+        drone_id = self.DRONE_IDS[0]
+        ground_id = getattr(self, "PLANE_ID", 0)
+        end_uids = set(getattr(self, "_end_platform_uids", []))
+        start_uids = set(getattr(self, "_start_platform_uids", []))
+        protected = {drone_id, ground_id} | end_uids | start_uids
+
+        targets = []
+        total_faces = 0
+        n = p.getNumBodies(physicsClientId=cli)
+
+        for i in range(n):
+            uid = p.getBodyUniqueId(i, physicsClientId=cli)
+            if uid in protected:
+                continue
+            mn, mx = p.getAABB(uid, physicsClientId=cli)
+            span = max(mx[0] - mn[0], mx[1] - mn[1])
+            if span < CULL_MIN_AABB_SPAN:
+                continue
+            vdata = p.getVisualShapeData(uid, physicsClientId=cli)
+            if not vdata:
+                continue
+            faces = 0
+            for v in vdata:
+                if v[2] == p.GEOM_MESH:
+                    fname = v[4].decode() if isinstance(v[4], bytes) else str(v[4])
+                    faces += self._count_mesh_faces(fname)
+            if faces < CULL_MIN_FACES:
+                continue
+            cx = (mn[0] + mx[0]) * 0.5
+            cy = (mn[1] + mx[1]) * 0.5
+            rgba_orig = list(vdata[0][7])
+            targets.append((uid, cx, cy, span / 2.0, rgba_orig))
+            total_faces += faces
+
+        self._cull_targets = targets
+        self._cull_vis_hidden = set()
+        self._cull_phys_disabled = set()
+        self._cull_step_counter = 0
+        self._cull_enabled = total_faces >= CULL_MIN_TOTAL_FACES
+
+    def _apply_distance_cull(self) -> None:
+        """Toggle visual/physics state for bodies beyond camera range."""
+        if not self._cull_enabled:
+            return
+        self._cull_step_counter += 1
+        if self._cull_step_counter % CULL_INTERVAL_STEPS != 0:
+            return
+
+        cli = getattr(self, "CLIENT", 0)
+        dp = p.getBasePositionAndOrientation(self.DRONE_IDS[0], physicsClientId=cli)[0]
+        dx, dy = dp[0], dp[1]
+        vis_hidden = self._cull_vis_hidden
+        phys_disabled = self._cull_phys_disabled
+
+        for uid, cx, cy, hs, rgba in self._cull_targets:
+            dist = math.sqrt((cx - dx) ** 2 + (cy - dy) ** 2)
+            surface_dist = dist - hs
+
+            if surface_dist > CULL_VISUAL_RADIUS:
+                if uid not in vis_hidden:
+                    p.changeVisualShape(uid, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli)
+                    vis_hidden.add(uid)
+            elif uid in vis_hidden:
+                p.changeVisualShape(uid, -1, rgbaColor=rgba, physicsClientId=cli)
+                vis_hidden.discard(uid)
+
+            if surface_dist > CULL_PHYSICS_RADIUS:
+                if uid not in phys_disabled:
+                    p.setCollisionFilterGroupMask(uid, -1, 0, 0, physicsClientId=cli)
+                    phys_disabled.add(uid)
+            elif uid in phys_disabled:
+                p.setCollisionFilterGroupMask(uid, -1, 1, 0xFF, physicsClientId=cli)
+                phys_disabled.discard(uid)
+
+    def _restore_culled_bodies(self) -> None:
+        """Restore all culled bodies to their original state."""
+        cli = getattr(self, "CLIENT", 0)
+        for uid, _, _, _, rgba in self._cull_targets:
+            if uid in self._cull_vis_hidden:
+                p.changeVisualShape(uid, -1, rgbaColor=rgba, physicsClientId=cli)
+            if uid in self._cull_phys_disabled:
+                p.setCollisionFilterGroupMask(uid, -1, 1, 0xFF, physicsClientId=cli)
+        self._cull_vis_hidden.clear()
+        self._cull_phys_disabled.clear()
+
     def _update_min_clearance(self) -> None:
         """Update minimum obstacle clearance for the episode."""
         if self._collision:
@@ -673,6 +784,7 @@ class MovingDroneAviary(BaseRLAviary):
         platform_hit, _ = self._check_collision()
         self._update_landing_state(platform_hit)
         self._update_min_clearance()
+        self._apply_distance_cull()
 
     def _spawn_task_world(self):
         """Rebuild the procedural world defined by self.task."""
@@ -737,6 +849,8 @@ class MovingDroneAviary(BaseRLAviary):
             start_quat,
             physicsClientId=cli,
         )
+
+        self._build_cull_targets()
 
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:

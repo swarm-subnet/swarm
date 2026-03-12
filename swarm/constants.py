@@ -313,3 +313,14 @@ PLATFORM_LINEAR_DIRECTIONS = ["x", "y", "xy"]
 PLATFORM_AVOIDANCE_ENABLED = True
 PLATFORM_STEER_ANGLES = [20, -20, 40, -40, 60, -60, 80, -80, 120, -120, 160, -160, 180]
 PLATFORM_MIN_STEP_M = 0.05
+
+# =============================================================================
+# DISTANCE-BASED CULLING
+# =============================================================================
+
+CULL_VISUAL_RADIUS = 35.0               # Hide visuals beyond this distance (meters)
+CULL_PHYSICS_RADIUS = 50.0              # Disable collision beyond this distance (meters)
+CULL_INTERVAL_STEPS = 5                 # Re-evaluate cull state every N steps
+CULL_MIN_AABB_SPAN = 5.0                # Minimum AABB XY span to be a cull target (meters)
+CULL_MIN_FACES = 100                    # Minimum mesh face count to be a cull target
+CULL_MIN_TOTAL_FACES = 100_000          # Auto-enable threshold (total faces across targets)
