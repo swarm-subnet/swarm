@@ -14,7 +14,7 @@ GITHUB_CONNECT_TIMEOUT_SEC = 10.0
 GITHUB_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 GITHUB_MAX_README_BYTES = 64 * 1024
 
-REQUIRED_README_HASH = "c8a33e412e6f8d990fa5faacac6122cec0ad13dbeeb5426467d38cda012dce38"
+REQUIRED_README_HASH = "8aaff7c6edb180707ac8b1431983eedc5b5e13acf8d3ee8d10f26b085c692655"
 
 
 def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[str]:

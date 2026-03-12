@@ -744,7 +744,9 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
                     break
 
     if not office_and_utilities_placed:
-        _force_place_zone("OFFICE", fit_sx, fit_sy, office_def["rgba"])
+        forced_office = _force_place_zone("OFFICE", fit_sx, fit_sy, office_def["rgba"])
+        if forced_office is not None:
+            placed.append(forced_office)
         for name in utility_zones:
             if any(a.get("name") == name for a in placed):
                 continue
@@ -760,7 +762,9 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
                     placed.append(cand)
                     break
             else:
-                _force_place_zone(name, bsx * 0.25, bsy * 0.25, area["rgba"])
+                forced_util = _force_place_zone(name, bsx * 0.25, bsy * 0.25, area["rgba"])
+                if forced_util is not None:
+                    placed.append(forced_util)
         office_and_utilities_placed = True
 
     # --- Optional utility zones ---
