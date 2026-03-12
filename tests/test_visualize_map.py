@@ -60,10 +60,11 @@ def test_default_visual_profile_uses_map_specific_values() -> None:
     warehouse = vis_mod._default_visual_profile(5)
 
     assert city.render_distance == 100.0
-    assert city.sim_fps == 10.0
+    assert city.render_fps == 20.0
+    assert city.sim_fps == 20.0
     assert warehouse.render_scale == 0.60
-    assert warehouse.render_fps == 8.0
-    assert warehouse.sim_fps == 8.0
+    assert warehouse.render_fps == 20.0
+    assert warehouse.sim_fps == 20.0
 
 
 def test_resolve_visual_profile_honors_explicit_overrides() -> None:
@@ -179,10 +180,33 @@ def test_resolve_idle_render_fps_depends_on_backend() -> None:
     assert vis_mod._resolve_idle_render_fps(8.0, gpu_backend) == 8.0
 
 
+def test_task_requires_live_simulation_only_for_moving_platform() -> None:
+    static_task = type("Task", (), {"moving_platform": False})()
+    dynamic_task = type("Task", (), {"moving_platform": True})()
+
+    assert not vis_mod._task_requires_live_simulation(static_task)
+    assert vis_mod._task_requires_live_simulation(dynamic_task)
+
+
+def test_effective_sim_fps_disables_static_world_stepping() -> None:
+    profile = vis_mod._MapVisualProfile(
+        render_scale=0.65,
+        render_distance=100.0,
+        render_fps=20.0,
+        sim_fps=20.0,
+    )
+    static_task = type("Task", (), {"moving_platform": False})()
+    dynamic_task = type("Task", (), {"moving_platform": True})()
+
+    assert vis_mod._effective_sim_fps(static_task, profile) == 0.0
+    assert vis_mod._effective_sim_fps(dynamic_task, profile) == 20.0
+
+
 def test_should_step_world_respects_capped_rate() -> None:
     assert vis_mod._should_step_world(1.0, None, 10.0)
     assert not vis_mod._should_step_world(1.05, 1.0, 10.0)
     assert vis_mod._should_step_world(1.11, 1.0, 10.0)
+    assert not vis_mod._should_step_world(1.5, None, 0.0)
 
 
 def test_sync_observation_space_updates_dimension() -> None:

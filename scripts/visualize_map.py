@@ -40,6 +40,8 @@ _REPO_ROOT = _SCRIPT_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+_FOLLOW_CAMERA_FOV = 45.0
+
 
 @dataclass(frozen=True)
 class _MapVisualProfile:
@@ -230,38 +232,38 @@ def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
         1: _MapVisualProfile(
             render_scale=0.65,
             render_distance=100.0,
-            render_fps=8.0,
-            sim_fps=10.0,
+            render_fps=20.0,
+            sim_fps=20.0,
         ),
         2: _MapVisualProfile(
             render_scale=0.72,
             render_distance=100.0,
-            render_fps=8.0,
-            sim_fps=10.0,
+            render_fps=20.0,
+            sim_fps=20.0,
         ),
         3: _MapVisualProfile(
             render_scale=0.68,
             render_distance=100.0,
-            render_fps=6.0,
-            sim_fps=8.0,
+            render_fps=20.0,
+            sim_fps=20.0,
         ),
         4: _MapVisualProfile(
             render_scale=0.66,
             render_distance=100.0,
-            render_fps=8.0,
-            sim_fps=10.0,
+            render_fps=20.0,
+            sim_fps=20.0,
         ),
         5: _MapVisualProfile(
             render_scale=0.60,
             render_distance=100.0,
-            render_fps=8.0,
-            sim_fps=8.0,
+            render_fps=20.0,
+            sim_fps=20.0,
         ),
         6: _MapVisualProfile(
             render_scale=0.65,
             render_distance=100.0,
-            render_fps=7.0,
-            sim_fps=8.0,
+            render_fps=20.0,
+            sim_fps=20.0,
         ),
     }
     return profiles[int(challenge_type)]
@@ -408,11 +410,14 @@ def _render_frame(
         cameraUpVector=[0.0, 0.0, 1.0],
     )
     projection = pybullet_module.computeProjectionMatrixFOV(
-        fov=52.0,
+        fov=_FOLLOW_CAMERA_FOV,
         aspect=width / height,
         nearVal=0.05,
         farVal=max(10.0, float(render_distance)),
     )
+    camera_flags = 0
+    if hasattr(pybullet_module, "ER_NO_SEGMENTATION_MASK"):
+        camera_flags |= int(pybullet_module.ER_NO_SEGMENTATION_MASK)
     _, _, rgba, _, _ = pybullet_module.getCameraImage(
         width=width,
         height=height,
@@ -421,6 +426,7 @@ def _render_frame(
         renderer=backend.renderer_id,
         shadow=0,
         lightDirection=[0.4, 0.4, 1.0],
+        flags=camera_flags,
         physicsClientId=cli,
     )
     return np.asarray(rgba, dtype=np.uint8).reshape(height, width, 4)[:, :, :3]
@@ -521,12 +527,24 @@ def _resolve_idle_render_fps(render_fps: float, backend: _RenderBackend) -> floa
     return max(1.0, min(2.0, float(render_fps) / 3.0))
 
 
+def _task_requires_live_simulation(task) -> bool:
+    return bool(getattr(task, "moving_platform", False))
+
+
+def _effective_sim_fps(task, profile: _MapVisualProfile) -> float:
+    if not _task_requires_live_simulation(task):
+        return 0.0
+    return max(1.0, float(profile.sim_fps))
+
+
 def _should_step_world(
     now: float,
     last_step_at: float | None,
     sim_fps: float,
     force: bool = False,
 ) -> bool:
+    if sim_fps <= 0.0:
+        return False
     if force or last_step_at is None:
         return True
     return (now - last_step_at) >= (1.0 / max(sim_fps, 0.1))
@@ -757,7 +775,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         visual_cull_radius + 10.0, float(profile.render_distance) + 10.0
     )
     render_fps = max(2.0, float(profile.render_fps))
-    sim_fps = max(1.0, float(profile.sim_fps))
+    sim_fps = _effective_sim_fps(task, profile)
     idle_render_fps = _resolve_idle_render_fps(render_fps, backend)
 
     if hasattr(env, "_restore_culled_bodies"):
