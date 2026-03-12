@@ -5,7 +5,7 @@ setuptools
 loguru
 xmldiff
 filelock
-pybullet
+pybullet @ git+https://github.com/swarm-subnet/bullet3-swarmfork.git@24fbc77b7
 bittensor
 msgpack
 importlib-metadata
@@ -20,3 +20,4 @@ gymnasium
 requests
 httpx
 pycapnp
+swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git

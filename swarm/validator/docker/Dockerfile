@@ -25,7 +25,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/docker-requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git && \
     pip install --upgrade "numpy>=2.0.0"
 
 WORKDIR /app

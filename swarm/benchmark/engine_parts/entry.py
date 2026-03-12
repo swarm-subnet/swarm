@@ -32,10 +32,10 @@ from .seeds import (
 from .workers import _run_benchmark
 
 
-def main() -> None:
+def main(argv: Optional[List[str]] = None) -> None:
     import swarm.benchmark.engine as engine
 
-    args = _parse_args()
+    args = _parse_args(argv)
     run_opts = _resolve_run_options(args)
 
     requested_workers = max(1, int(args.workers))

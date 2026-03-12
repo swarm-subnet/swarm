@@ -145,7 +145,7 @@ def _temporary_env(overrides: Dict[str, Optional[str]]):
                 os.environ[key] = value
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Full Docker evaluation benchmark across all challenge types.",
     )
@@ -203,7 +203,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Write benchmark summary JSON to this path.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
