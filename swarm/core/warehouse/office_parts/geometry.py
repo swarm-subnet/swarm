@@ -4,15 +4,15 @@ from ._shared import *
 def build_floor(loader):
     tile_model = ASSETS["floor_tile"]
     tile_x, tile_y, _ = loader.model_size(tile_model)
-    nx = round(FLOOR_SIZE / tile_x)
-    ny = round(FLOOR_SIZE / tile_y)
-    if abs(nx * tile_x - FLOOR_SIZE) > 1e-6 or abs(ny * tile_y - FLOOR_SIZE) > 1e-6:
+    nx = round(FLOOR_SIZE[0] / tile_x)
+    ny = round(FLOOR_SIZE[0] / tile_y)
+    if abs(nx * tile_x - FLOOR_SIZE[0]) > 1e-6 or abs(ny * tile_y - FLOOR_SIZE[0]) > 1e-6:
         raise ValueError(
-            f"Uniform scale {UNIFORM_SCALE} does not tile {FLOOR_SIZE}x{FLOOR_SIZE} exactly "
+            f"Uniform scale {UNIFORM_SCALE} does not tile {FLOOR_SIZE[0]}x{FLOOR_SIZE[0]} exactly "
             f"with {tile_model} (tile {tile_x:.3f}x{tile_y:.3f})."
         )
-    start_x = -FLOOR_SIZE / 2.0 + tile_x / 2.0
-    start_y = -FLOOR_SIZE / 2.0 + tile_y / 2.0
+    start_x = -FLOOR_SIZE[0] / 2.0 + tile_x / 2.0
+    start_y = -FLOOR_SIZE[0] / 2.0 + tile_y / 2.0
     for ix in range(nx):
         for iy in range(ny):
             x = start_x + ix * tile_x
@@ -70,7 +70,7 @@ def slot_xy(slot, along, inward):
     cfg = slot_config(slot)
     nx, ny = cfg["normal"]
     tx, ty = cfg["tangent"]
-    edge = FLOOR_SIZE / 2.0
+    edge = FLOOR_SIZE[0] / 2.0
     cx0, cy0 = ROOM_CENTER
     if slot == "north":
         bx, by = cx0, cy0 + edge
@@ -86,10 +86,10 @@ def slot_xy(slot, along, inward):
 def corner_points():
     cx0, cy0 = ROOM_CENTER
     return [
-        (cx0 - FLOOR_SIZE / 2.0 + 1.05, cy0 + FLOOR_SIZE / 2.0 - 1.05),
-        (cx0 + FLOOR_SIZE / 2.0 - 1.05, cy0 + FLOOR_SIZE / 2.0 - 1.05),
-        (cx0 - FLOOR_SIZE / 2.0 + 1.05, cy0 - FLOOR_SIZE / 2.0 + 1.05),
-        (cx0 + FLOOR_SIZE / 2.0 - 1.05, cy0 - FLOOR_SIZE / 2.0 + 1.05),
+        (cx0 - FLOOR_SIZE[0] / 2.0 + 1.05, cy0 + FLOOR_SIZE[0] / 2.0 - 1.05),
+        (cx0 + FLOOR_SIZE[0] / 2.0 - 1.05, cy0 + FLOOR_SIZE[0] / 2.0 - 1.05),
+        (cx0 - FLOOR_SIZE[0] / 2.0 + 1.05, cy0 - FLOOR_SIZE[0] / 2.0 + 1.05),
+        (cx0 + FLOOR_SIZE[0] / 2.0 - 1.05, cy0 - FLOOR_SIZE[0] / 2.0 + 1.05),
     ]
 
 
@@ -150,18 +150,18 @@ def _wall_segment_plan(loader):
     if wall_len <= 1e-6:
         raise ValueError("Invalid wall length from wall.obj")
     if not ENABLE_PERIMETER_WALL_CORNERS:
-        nseg = round(FLOOR_SIZE / wall_len)
-        if abs(nseg * wall_len - FLOOR_SIZE) > 1e-6:
+        nseg = round(FLOOR_SIZE[0] / wall_len)
+        if abs(nseg * wall_len - FLOOR_SIZE[0]) > 1e-6:
             raise ValueError(
-                f"Wall model does not tile {FLOOR_SIZE:.2f}m exactly at scale {UNIFORM_SCALE}."
+                f"Wall model does not tile {FLOOR_SIZE[0]:.2f}m exactly at scale {UNIFORM_SCALE}."
             )
-        start = -FLOOR_SIZE / 2.0 + wall_len / 2.0
+        start = -FLOOR_SIZE[0] / 2.0 + wall_len / 2.0
         return [
             (start + i * wall_len, float(PERIMETER_WALL_ALONG_SCALE))
             for i in range(int(nseg))
         ]
     trim = _corner_trim_from_model(loader)
-    inner_span = FLOOR_SIZE - (2.0 * trim)
+    inner_span = FLOOR_SIZE[0] - (2.0 * trim)
     if inner_span <= 0.2:
         raise ValueError("Corner trim too large for office wall span.")
     nseg = max(1, round(inner_span / wall_len))
@@ -206,7 +206,7 @@ def spawn_wall_corners(loader, floor_top_z):
     anchor_local_y = float(max_v[1]) - (wall_thickness * 0.5)
     anchor_off_x = anchor_local_x - cx_local
     anchor_off_y = anchor_local_y - cy_local
-    edge = (FLOOR_SIZE * 0.5) + float(PERIMETER_WALL_CORNER_OUTWARD_EPS)
+    edge = (FLOOR_SIZE[0] * 0.5) + float(PERIMETER_WALL_CORNER_OUTWARD_EPS)
     cx0, cy0 = ROOM_CENTER
     corner_specs = (
         ("nw", -1.0, 1.0, 0.0),

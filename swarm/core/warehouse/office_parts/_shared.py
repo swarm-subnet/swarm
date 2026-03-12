@@ -34,9 +34,9 @@ from ..helpers import slot_point
 
 _SWARM_ASSETS_DIR = os.path.normpath(os.path.join(ASSETS_DIR, os.pardir))
 
-FLOOR_SIZE = 12.0
+FLOOR_SIZE = [12.0]
 UNIFORM_SCALE = 2.0
-ROOM_CENTER = (0.0, 0.0)
+ROOM_CENTER = [0.0, 0.0]
 SCREEN_BRANDING_ENABLED = True
 SCREEN_BRANDING_LABEL = "SWARM"
 SCREEN_TEXTURE_ROTATE_DEG = 180

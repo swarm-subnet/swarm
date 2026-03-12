@@ -66,7 +66,7 @@ def place_workstations_wall(loader, floor_top_z, slot, seed):
         ]
     widths = [loader.model_size(m)[0] for m in row_models]
     gap = 0.14
-    max_span = FLOOR_SIZE - 1.9
+    max_span = FLOOR_SIZE[0] - 1.9
     row_span = sum(widths) + gap * (len(widths) - 1)
     if row_span > max_span:
         gap = max(0.08, (max_span - sum(widths)) / (len(widths) - 1))

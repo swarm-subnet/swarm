@@ -70,7 +70,6 @@ def _embedded_office_role_map(seed, office_center_xy, entry_target_xy=None):
 
 
 def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
-    global FLOOR_SIZE, ROOM_CENTER
     if not ENABLE_EMBEDDED_OFFICE_MAP:
         return {"office_map_embedded": False}
     office_area = (area_layout or {}).get("OFFICE")
@@ -81,11 +80,12 @@ def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
             "office_map_embedded": False,
             "office_map_reason": f"Missing furniture assets: {ASSET_PATH}",
         }
-    old_floor_size = FLOOR_SIZE
-    old_room_center = ROOM_CENTER
+    old_floor_size = FLOOR_SIZE[0]
+    old_room_center = (ROOM_CENTER[0], ROOM_CENTER[1])
     try:
-        FLOOR_SIZE = min(float(office_area["sx"]), float(office_area["sy"]))
-        ROOM_CENTER = (float(office_area["cx"]), float(office_area["cy"]))
+        FLOOR_SIZE[0] = min(float(office_area["sx"]), float(office_area["sy"]))
+        ROOM_CENTER[0] = float(office_area["cx"])
+        ROOM_CENTER[1] = float(office_area["cy"])
         loader = AssetLoader(ASSET_PATH, TEMP_URDF_DIR, UNIFORM_SCALE, cli=cli)
         entry_target_xy = None
         personnel_side = (
@@ -175,8 +175,8 @@ def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
         build_center_meeting(loader, floor_top_z, int(seed))
         return {
             "office_map_embedded": True,
-            "office_map_center_xy": ROOM_CENTER,
-            "office_map_size_m": FLOOR_SIZE,
+            "office_map_center_xy": (ROOM_CENTER[0], ROOM_CENTER[1]),
+            "office_map_size_m": FLOOR_SIZE[0],
             "office_map_roles": role_by_slot,
             "office_walls_enabled": office_walls_enabled,
             "office_entry_slot": entry_slot,
@@ -185,5 +185,6 @@ def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
     except Exception as exc:
         return {"office_map_embedded": False, "office_map_reason": str(exc)}
     finally:
-        FLOOR_SIZE = old_floor_size
-        ROOM_CENTER = old_room_center
+        FLOOR_SIZE[0] = old_floor_size
+        ROOM_CENTER[0] = old_room_center[0]
+        ROOM_CENTER[1] = old_room_center[1]
