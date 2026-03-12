@@ -13,7 +13,11 @@ import pybullet as p
 # ---------------------------------------------------------------------------
 ASSETS_DIR = os.path.normpath(
     os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), os.pardir, "assets", "maps"
+        os.path.dirname(os.path.abspath(__file__)),
+        os.pardir,
+        os.pardir,
+        "assets",
+        "maps",
     )
 )
 FOREST_ASSET_DIR = os.path.join(ASSETS_DIR, "forest", "quaternius_ultimate_nature")
