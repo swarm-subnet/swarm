@@ -26,6 +26,9 @@ class _DummyPyBullet:
     def configureDebugVisualizer(self, flag: int, value: int, physicsClientId: int) -> None:
         self.calls.append((flag, value, physicsClientId))
 
+    def setPhysicsEngineParameter(self, **_kwargs) -> None:
+        return None
+
 
 class _DummyEnv:
     def __init__(self, task, **_kwargs) -> None:

@@ -34,6 +34,7 @@ from swarm.constants import (
     LANDING_MAX_VZ, LANDING_MAX_VXY_REL, LANDING_MAX_TILT_RAD, LANDING_STABLE_SEC,
     CULL_VISUAL_RADIUS, CULL_PHYSICS_RADIUS, CULL_INTERVAL_STEPS,
     CULL_MIN_AABB_SPAN, CULL_MIN_FACES, CULL_MIN_TOTAL_FACES,
+    SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE,
 )
 
 
@@ -769,6 +770,13 @@ class MovingDroneAviary(BaseRLAviary):
                 })
         else:
             obs_after = obs
+
+        cli = getattr(self, "CLIENT", 0)
+        p.setPhysicsEngineParameter(
+            numSolverIterations=SOLVER_ITERATIONS,
+            minimumSolverIslandSize=SOLVER_MIN_ISLAND_SIZE,
+            physicsClientId=cli,
+        )
 
         return obs_after, info
 

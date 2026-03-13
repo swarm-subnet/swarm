@@ -25,6 +25,8 @@ BATCH_DELAY_SEC = 0.15                  # Delay between batches to prevent resou
 
 # Core simulation parameters
 SIM_DT = 1/50                           # Physics simulation timestep (50 Hz)
+SOLVER_ITERATIONS = 4                   # PyBullet constraint solver iterations (default 50, reduced for speed)
+SOLVER_MIN_ISLAND_SIZE = 128            # Minimum solver island size (reduces per-island overhead)
 HORIZON_SEC = 60                       # Maximum simulated flight duration (seconds)
 # World generation parameters
 HEIGHT_SCALE = 1.5                      # Obstacle height scale factor

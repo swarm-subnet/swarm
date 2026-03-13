@@ -20,7 +20,7 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 # ─── project‑level imports ────────────────────────────────────────────────────
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.protocol                import MapTask
-from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE
+from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE, SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -117,5 +117,11 @@ def make_env(
                             dtype=np.float32
                         ),
                     })
+
+    p.setPhysicsEngineParameter(
+        numSolverIterations=SOLVER_ITERATIONS,
+        minimumSolverIslandSize=SOLVER_MIN_ISLAND_SIZE,
+        physicsClientId=cli,
+    )
 
     return env
