@@ -747,9 +747,18 @@ def _build_visualizer_env(task, prefer_gpu: bool):
                 f"[visualizer] GPU render unavailable, falling back to CPU: {exc}",
                 flush=True,
             )
-
-    with contextlib.redirect_stdout(io.StringIO()):
-        obs, _ = env.reset(seed=task.map_seed)
+    original_forest_visuals = os.environ.get("SWARM_FOREST_FILE_VISUALS_ONLY")
+    if prefer_gpu and int(getattr(task, "challenge_type", 0)) == 6:
+        os.environ["SWARM_FOREST_FILE_VISUALS_ONLY"] = "1"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            obs, _ = env.reset(seed=task.map_seed)
+    finally:
+        if prefer_gpu and int(getattr(task, "challenge_type", 0)) == 6:
+            if original_forest_visuals is None:
+                os.environ.pop("SWARM_FOREST_FILE_VISUALS_ONLY", None)
+            else:
+                os.environ["SWARM_FOREST_FILE_VISUALS_ONLY"] = original_forest_visuals
     _sync_observation_space(env, obs)
     return env, backend
 
@@ -765,7 +774,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     _ensure_local_ansible_temp()
     resolved_seed = _resolve_seed(args.seed, args.type)
     task = build_task(seed=resolved_seed, challenge_type=args.type)
-    env, backend = _build_visualizer_env(task, prefer_gpu=args.gpu)
+    env, backend = _build_visualizer_env(task, prefer_gpu=bool(args.gpu))
     profile = _resolve_visual_profile(args)
     render_width, render_height = _compute_render_size(
         args.width, args.height, profile.render_scale

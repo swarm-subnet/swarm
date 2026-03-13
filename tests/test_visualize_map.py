@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import os
+import sys
 
 import numpy as np
 from gymnasium import spaces
@@ -281,6 +283,72 @@ def test_apply_visualizer_cull_hides_and_restores() -> None:
 
     assert (2, (0.0, 1.0, 0.0, 1.0)) in bullet.visual_calls
     assert (2, 1, 0xFF) in bullet.collision_calls
+
+
+def test_build_visualizer_env_enables_forest_file_visuals_for_gpu(monkeypatch) -> None:
+    calls: list[str | None] = []
+
+    class _DummyEnv:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+            self.SPEED_LIMIT = None
+            self.MAX_YAW_RATE = None
+            self.ACT_TYPE = None
+            self.DRONE_IDS = [1]
+            self._state_dim = 2
+            self.observation_space = {
+                "depth": spaces.Box(low=0.0, high=1.0, shape=(4, 4), dtype=np.float32)
+            }
+
+        def getPyBulletClient(self):
+            return 11
+
+        def reset(self, seed=None):
+            _ = seed
+            calls.append(os.environ.get("SWARM_FOREST_FILE_VISUALS_ONLY"))
+            return {"state": np.zeros(4, dtype=np.float32)}, {}
+
+    class _DummyP:
+        ER_TINY_RENDERER = 1
+        ER_BULLET_HARDWARE_OPENGL = 2
+
+        def setAdditionalSearchPath(self, path):
+            _ = path
+
+        def getBasePositionAndOrientation(self, *args, **kwargs):
+            _ = args, kwargs
+            return ([0.0, 0.0, 1.0], (0.0, 0.0, 0.0, 1.0))
+
+        def getEulerFromQuaternion(self, quat):
+            _ = quat
+            return (0.0, 0.0, 0.0)
+
+    monkeypatch.setenv("SWARM_FOREST_FILE_VISUALS_ONLY", "0")
+    monkeypatch.setitem(sys.modules, "pybullet", _DummyP())
+    monkeypatch.setitem(sys.modules, "pybullet_data", type("PD", (), {"getDataPath": staticmethod(lambda: "/tmp")})())
+    monkeypatch.setitem(
+        sys.modules,
+        "gym_pybullet_drones.utils.enums",
+        type(
+            "Enums",
+            (),
+            {"ActionType": type("A", (), {"VEL": "vel"}), "ObservationType": type("O", (), {"RGB": "rgb"})},
+        )(),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "swarm.core.moving_drone",
+        type("MD", (), {"MovingDroneAviary": _DummyEnv})(),
+    )
+    monkeypatch.setattr(vis_mod, "_enable_gpu_backend", lambda *_args, **_kwargs: vis_mod._RenderBackend(label="gpu-egl", renderer_id=2, plugin_id=4))
+
+    task = type("Task", (), {"sim_dt": 0.1, "map_seed": 123, "challenge_type": 6})()
+    env, backend = vis_mod._build_visualizer_env(task, prefer_gpu=True)
+
+    assert backend.label == "gpu-egl"
+    assert calls == ["1"]
+    assert os.environ.get("SWARM_FOREST_FILE_VISUALS_ONLY") == "0"
+    assert env is not None
 
 
 def test_advance_free_fly_moves_drone_and_updates_yaw() -> None:

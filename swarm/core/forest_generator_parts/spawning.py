@@ -33,7 +33,13 @@ def _spawn_colored_obj(
     cli: int, *, obj_path: str, scale: float, double_sided_flags: int,
 ) -> List[int]:
     cli_cache = _CLI_VIS_CACHE.setdefault(cli, {})
-    cache_key = (obj_path, round(scale, 4), int(double_sided_flags))
+    use_file_visuals_only = os.environ.get("SWARM_FOREST_FILE_VISUALS_ONLY", "0") == "1"
+    cache_key = (
+        obj_path,
+        round(scale, 4),
+        int(double_sided_flags),
+        int(use_file_visuals_only),
+    )
     vis_ids = cli_cache.get(cache_key)
     if vis_ids is None:
         material_meshes = _parse_obj_material_meshes(obj_path)
@@ -41,21 +47,38 @@ def _spawn_colored_obj(
         default_rgba = [0.7, 0.7, 0.7, 1.0]
         vis_ids = []
         if material_meshes:
-            for mat_name, (verts, indices, normals) in material_meshes.items():
-                rgba = mtl_colors.get(mat_name, default_rgba)
-                kwargs = {
-                    "vertices": verts, "indices": indices, "normals": normals,
-                    "meshScale": [scale, scale, scale],
-                    "rgbaColor": rgba,
-                    "specularColor": [0.0, 0.0, 0.0],
-                }
-                if double_sided_flags:
-                    kwargs["flags"] = double_sided_flags
-                vis = p.createVisualShape(
-                    p.GEOM_MESH, physicsClientId=cli, **kwargs
-                )
-                if vis >= 0:
-                    vis_ids.append(vis)
+            if use_file_visuals_only:
+                for mat_name, split_obj_path in _material_visual_obj_paths(obj_path).items():
+                    rgba = mtl_colors.get(mat_name, default_rgba)
+                    kwargs = {
+                        "fileName": split_obj_path,
+                        "meshScale": [scale, scale, scale],
+                        "rgbaColor": rgba,
+                        "specularColor": [0.0, 0.0, 0.0],
+                    }
+                    if double_sided_flags:
+                        kwargs["flags"] = double_sided_flags
+                    vis = p.createVisualShape(
+                        p.GEOM_MESH, physicsClientId=cli, **kwargs
+                    )
+                    if vis >= 0:
+                        vis_ids.append(vis)
+            else:
+                for mat_name, (verts, indices, normals) in material_meshes.items():
+                    rgba = mtl_colors.get(mat_name, default_rgba)
+                    kwargs = {
+                        "vertices": verts, "indices": indices, "normals": normals,
+                        "meshScale": [scale, scale, scale],
+                        "rgbaColor": rgba,
+                        "specularColor": [0.0, 0.0, 0.0],
+                    }
+                    if double_sided_flags:
+                        kwargs["flags"] = double_sided_flags
+                    vis = p.createVisualShape(
+                        p.GEOM_MESH, physicsClientId=cli, **kwargs
+                    )
+                    if vis >= 0:
+                        vis_ids.append(vis)
         if not vis_ids:
             kwargs = {
                 "fileName": obj_path,
