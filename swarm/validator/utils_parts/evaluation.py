@@ -5,7 +5,14 @@ from typing import Callable, Dict, List, Optional, Tuple
 import bittensor as bt
 import numpy as np
 
-from swarm.constants import SCREENING_BOOTSTRAP_THRESHOLD, SCREENING_TOP_MODEL_FACTOR, SIM_DT
+from swarm.constants import (
+    SCREENING_BOOTSTRAP_THRESHOLD,
+    SCREENING_CHECKPOINT_SIZE,
+    SCREENING_EARLY_FAIL_FACTORS,
+    SCREENING_EARLY_PASS_FACTORS,
+    SCREENING_TOP_MODEL_FACTOR,
+    SIM_DT,
+)
 from swarm.validator.task_gen import random_task
 
 from .heartbeat import HeartbeatManager
@@ -89,27 +96,78 @@ async def _evaluate_seeds(
     return all_scores, per_type_scores
 
 
+def _get_screening_threshold(self) -> float:
+    """Compute the screening pass/fail threshold from the current top model."""
+    current_top = getattr(self, '_current_top', None)
+    if not current_top or not current_top.get('score'):
+        return float(SCREENING_BOOTSTRAP_THRESHOLD)
+    return float(current_top.get('score', 0.0)) * SCREENING_TOP_MODEL_FACTOR
+
+
 async def _run_screening(self, uid: int, model_path: Path) -> Tuple[float, List[float]]:
-    """Run screening benchmark with private seeds."""
+    """Run screening benchmark with early termination on clearly failing/passing models.
+
+    Seeds are evaluated in checkpoint batches. After each batch the running
+    median is compared against conservative thresholds to decide whether the
+    remaining seeds can be skipped.
+    """
     screening_seeds = self.seed_manager.get_screening_seeds()
+    threshold = _get_screening_threshold(self)
+    total_seeds = len(screening_seeds)
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
-    hb.start("evaluating_screening", uid, len(screening_seeds))
+    hb.start("evaluating_screening", uid, total_seeds)
 
     try:
-        all_scores, _ = await _utils_facade()._evaluate_seeds(
-            self, uid, model_path, screening_seeds, "screening",
-            on_seed_complete=hb.on_seed_complete
-        )
+        all_scores: List[float] = []
+        checkpoints = list(range(
+            SCREENING_CHECKPOINT_SIZE, total_seeds + 1, SCREENING_CHECKPOINT_SIZE
+        ))
+        if not checkpoints or checkpoints[-1] < total_seeds:
+            checkpoints.append(total_seeds)
+        for checkpoint in checkpoints:
+            batch_seeds = screening_seeds[len(all_scores):checkpoint]
+            if not batch_seeds:
+                break
+
+            batch_scores, _ = await _utils_facade()._evaluate_seeds(
+                self, uid, model_path, batch_seeds,
+                f"screening [{len(all_scores) + 1}..{checkpoint}]",
+                on_seed_complete=hb.on_seed_complete,
+            )
+            all_scores.extend(batch_scores)
+
+            evaluated = len(all_scores)
+            if evaluated < SCREENING_CHECKPOINT_SIZE:
+                continue
+
+            running_median = float(np.median(all_scores))
+
+            fail_factor = SCREENING_EARLY_FAIL_FACTORS.get(evaluated)
+            if fail_factor is not None and running_median < threshold * fail_factor:
+                bt.logging.info(
+                    f"⏩ Screening early fail for UID {uid}: "
+                    f"median={running_median:.4f} < {threshold * fail_factor:.4f} "
+                    f"after {evaluated}/{total_seeds} seeds"
+                )
+                break
+
+            pass_factor = SCREENING_EARLY_PASS_FACTORS.get(evaluated)
+            if pass_factor is not None and running_median > threshold * pass_factor:
+                bt.logging.info(
+                    f"⏩ Screening early pass for UID {uid}: "
+                    f"median={running_median:.4f} > {threshold * pass_factor:.4f} "
+                    f"after {evaluated}/{total_seeds} seeds"
+                )
+                break
     finally:
         hb.finish()
 
-    if all_scores:
-        median_score = float(np.median(all_scores))
-    else:
-        median_score = 0.0
-
-    bt.logging.info(f"📊 Screening result for UID {uid}: median={median_score:.4f}")
+    median_score = float(np.median(all_scores)) if all_scores else 0.0
+    bt.logging.info(
+        f"📊 Screening result for UID {uid}: "
+        f"median={median_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
+    )
     return median_score, all_scores
 
 
