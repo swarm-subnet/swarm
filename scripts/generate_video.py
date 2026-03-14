@@ -412,22 +412,27 @@ def _load_agent(extracted: Path):
     """Import ``DroneFlightController`` from the extracted submission."""
     if str(extracted) not in sys.path:
         sys.path.insert(0, str(extracted))
-    spec = importlib.util.spec_from_file_location(
-        "drone_agent", str(extracted / "drone_agent.py")
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load drone_agent.py from submission")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    agent = mod.DroneFlightController()
-    for init_method in ("_ensure_loaded", "reset"):
-        fn = getattr(agent, init_method, None)
-        if callable(fn):
-            try:
-                fn()
-            except Exception:
-                pass
-    return agent
+    prev_cwd = os.getcwd()
+    os.chdir(str(extracted))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "drone_agent", str(extracted / "drone_agent.py")
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Could not load drone_agent.py from submission")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        agent = mod.DroneFlightController()
+        for init_method in ("_ensure_loaded", "reset"):
+            fn = getattr(agent, init_method, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
+        return agent
+    finally:
+        os.chdir(prev_cwd)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -436,7 +441,7 @@ def _load_agent(extracted: Path):
 
 
 def _render_rgb(cli: int, view, proj, w: int, h: int) -> np.ndarray:
-    """Full-quality RGB render (shadows enabled, no depth-only shortcut)."""
+    """RGB render with shadows disabled for performance."""
     import pybullet as p
 
     _, _, rgba, _, _ = p.getCameraImage(
@@ -445,7 +450,7 @@ def _render_rgb(cli: int, view, proj, w: int, h: int) -> np.ndarray:
         viewMatrix=view,
         projectionMatrix=proj,
         renderer=p.ER_TINY_RENDERER,
-        shadow=1,
+        shadow=0,
         lightDirection=[0.4, 0.4, 1.0],
         physicsClientId=cli,
     )
@@ -718,6 +723,19 @@ def _ensure_local_ansible_temp() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _write_progress(progress_file: Optional[Path], data: dict) -> None:
+    if not progress_file:
+        return
+    try:
+        import json as _json
+        tmp = str(progress_file) + ".tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f)
+        os.replace(tmp, str(progress_file))
+    except Exception:
+        pass
+
+
 def record_flight(
     model_path: Path,
     seed: int,
@@ -733,6 +751,7 @@ def record_flight(
     chase_fov: float = CHASE_FOV_DEG,
     fpv_fov: float = FPV_FOV_DEG,
     overview_fov: float = OVERVIEW_FOV_DEG,
+    progress_file: Optional[Path] = None,
 ) -> List[VideoResult]:
     """Record one flight and return metadata for each requested camera mode.
 
@@ -743,6 +762,7 @@ def record_flight(
     challenge_type : 1-6  (city / open / mountain / village / warehouse / forest)
     modes          : subset of ``VALID_MODES``
     out_dir        : directory where ``.mp4`` files will be written
+    progress_file  : optional path to write JSON progress updates
 
     Returns
     -------
@@ -804,9 +824,18 @@ def record_flight(
     frame_dt = 1.0 / fps
     next_frame_t = 0.0
     frame_count = 0
+    total_frames = int(task.horizon * fps)
     t_sim = 0.0
     success = False
     t_wall_start = time.time()
+
+    if progress_file:
+        progress_file = Path(progress_file)
+        _write_progress(progress_file, {
+            "status": "generating", "frames_rendered": 0,
+            "total_frames": total_frames, "start_time": t_wall_start,
+            "last_update": t_wall_start,
+        })
 
     dist_m = math.dist(task.start, task.goal)
     print(
@@ -845,6 +874,15 @@ def record_flight(
 
                 frame_count += 1
                 next_frame_t += frame_dt
+
+                if progress_file and frame_count % 20 == 0:
+                    _write_progress(progress_file, {
+                        "status": "generating",
+                        "frames_rendered": frame_count,
+                        "total_frames": total_frames,
+                        "start_time": t_wall_start,
+                        "last_update": time.time(),
+                    })
 
             if terminated or truncated:
                 success = bool(info.get("success", False))
@@ -1022,6 +1060,14 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="DEG",
         help="overview: field of view",
     )
+
+    ap.add_argument(
+        "--progress-file",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="write JSON progress to this file (for API integration)",
+    )
     return ap
 
 
@@ -1074,6 +1120,7 @@ def main() -> None:
         chase_fov=args.chase_fov,
         fpv_fov=args.fpv_fov,
         overview_fov=args.overview_fov,
+        progress_file=args.progress_file,
     )
 
     print()
