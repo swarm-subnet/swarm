@@ -554,6 +554,82 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_champion(args: argparse.Namespace) -> int:
+    import httpx
+
+    base_url = args.backend_url
+    if not base_url:
+        print("Backend URL required. Set --backend-url or SWARM_BACKEND_API_URL.", file=sys.stderr)
+        return 1
+    base_url = base_url.rstrip("/")
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(f"{base_url}/leaderboard?page_size=1")
+            if resp.status_code != 200:
+                print(f"Failed to fetch leaderboard: HTTP {resp.status_code}", file=sys.stderr)
+                return 1
+
+            data = resp.json()
+            entries = data.get("entries", [])
+            if not entries:
+                print("No evaluated models on the leaderboard yet.", file=sys.stderr)
+                return 1
+
+            champ = None
+            for entry in entries:
+                if entry.get("is_champion"):
+                    champ = entry
+                    break
+            if champ is None:
+                champ = entries[0]
+
+            uid = champ["uid"]
+            score = champ.get("benchmark_score", 0)
+            released = champ.get("is_released", False)
+            per_type = champ.get("per_type_scores") or {}
+
+            if args.json:
+                print(json.dumps(champ, indent=2))
+                if not released:
+                    return 0
+
+            if not released:
+                print(f"Champion: UID {uid}  Score: {score:.4f}")
+                print("Model is not released for download yet.")
+                return 0
+
+            output = args.output or Path(f"champion_UID_{uid}.zip")
+            print(f"Champion: UID {uid}  Score: {score:.4f}")
+            if per_type:
+                parts = [f"{k}: {v:.3f}" for k, v in sorted(per_type.items()) if v]
+                if parts:
+                    print(f"Per-map:  {', '.join(parts)}")
+            print(f"Downloading to {output} ...")
+
+            dl = client.get(f"{base_url}/models/{uid}/download")
+            if dl.status_code == 403:
+                print("Model not released for public download.", file=sys.stderr)
+                return 1
+            if dl.status_code != 200:
+                print(f"Download failed: HTTP {dl.status_code}", file=sys.stderr)
+                return 1
+
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(dl.content)
+
+            size_mb = len(dl.content) / (1024 * 1024)
+            print(f"Saved: {output} ({size_mb:.1f} MB)")
+            return 0
+
+    except httpx.ConnectError:
+        print(f"Cannot connect to backend at {base_url}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="swarm", description="Swarm CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -764,6 +840,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     report_parser.set_defaults(func=_cmd_report)
+
+    champion_parser = subparsers.add_parser(
+        "champion",
+        help="Download the current champion model.",
+    )
+    champion_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output file path. Defaults to champion_UID_{uid}.zip in current directory.",
+    )
+    champion_parser.add_argument(
+        "--backend-url",
+        type=str,
+        default=os.environ.get("SWARM_BACKEND_API_URL", ""),
+        help="Backend API URL (or set SWARM_BACKEND_API_URL env var).",
+    )
+    champion_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
+    champion_parser.set_defaults(func=_cmd_champion)
 
     return parser
 
