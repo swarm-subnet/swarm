@@ -689,7 +689,7 @@ def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache, rng: random.Rand
     # Inner ring: 6 hills
     for i in range(6):
         angle = (2 * math.pi / 6) * i
-        r = 165.0 + rng.uniform(-5, 5)
+        r = 220.0 + rng.uniform(-5, 5)
         x, y = r * math.cos(angle), r * math.sin(angle)
         s = round(rng.uniform(10.0, 16.0) * 2) / 2
         hill_path = rng.choice(hills)

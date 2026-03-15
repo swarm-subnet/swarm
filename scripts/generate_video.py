@@ -48,6 +48,9 @@ _REPO_ROOT = _SCRIPT_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from swarm.core.env_builder import _shared as _eb_shared
+_eb_shared.MAP_CACHE_ENABLED = False
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Constants
@@ -486,7 +489,7 @@ def _colourise_depth(
     try:
         import matplotlib.cm as cm
 
-        cmap = cm.get_cmap(DEPTH_COLORMAP_NAME)
+        cmap = cm.colormaps.get_cmap(DEPTH_COLORMAP_NAME)
         rgb = cmap(1.0 - normalised)[:, :, :3]  # invert → close = bright
         return (rgb * 255).astype(np.uint8)
     except Exception:  # matplotlib unavailable
