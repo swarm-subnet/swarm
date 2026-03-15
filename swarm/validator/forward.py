@@ -13,11 +13,9 @@ from swarm.constants import (
     FORWARD_SLEEP_SEC,
     MAP_CACHE_PREBUILD_ALL_AT_START,
     MODEL_DIR,
-    SAMPLE_K,
 )
 from swarm.core.env_builder import cleanup_old_epoch_cache, set_map_cache_epoch
 from swarm.utils.hash import sha256sum
-from swarm.utils.uids import get_random_uids
 
 from .backend_api import BackendApiClient
 from .docker.docker_evaluator import DockerSecureEvaluator
@@ -26,7 +24,7 @@ from .utils import (
     NORMAL_MODEL_QUEUE_PROCESS_LIMIT,
     _apply_backend_weights_to_scores,
     _detect_new_models,
-    _ensure_models,
+    _ensure_models_from_backend,
     _get_processable_queue_keys,
     _get_validator_stake,
     _process_normal_queue_item,
@@ -225,14 +223,15 @@ async def forward(self) -> None:
                 )
 
         # ──────────────────────────────────────────────────────────────
-        # STEP 4: Discovery refresh (normal-model queue producer)
+        # STEP 4: Discovery from backend (no axon polling)
         # ──────────────────────────────────────────────────────────────
-        uids = get_random_uids(self, k=SAMPLE_K)
-        bt.logging.info(f"Checking {len(uids)} miners for model updates...")
+        pending = sync_data.get("pending_models", [])
+        if pending:
+            bt.logging.info(f"Backend reports {len(pending)} pending model(s)")
 
-        model_paths = await _ensure_models(self, uids)
+        model_paths = await _ensure_models_from_backend(self, pending)
         if not model_paths:
-            bt.logging.info("No models found this cycle")
+            bt.logging.info("No models to process this cycle")
             new_models = {}
         else:
             new_models = _detect_new_models(self, model_paths)

@@ -12,7 +12,6 @@ import bittensor as bt
 import numpy as np
 
 from swarm.constants import (
-    BATCH_DELAY_SEC,
     BENCHMARK_VERSION,
     BURN_EMISSIONS,
     BURN_FRACTION,
@@ -20,11 +19,8 @@ from swarm.constants import (
     MAP_CACHE_ENABLED,
     MAP_CACHE_WARMUP_BATCH_SIZE,
     MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES,
-    MAX_CONCURRENT_CONNECTIONS,
     MAX_MODEL_BYTES,
     MODEL_DIR,
-    PARALLEL_BATCH_SIZE,
-    QUERY_REF_TIMEOUT,
     SCREENING_BOOTSTRAP_THRESHOLD,
     SCREENING_TOP_MODEL_FACTOR,
     SIM_DT,
@@ -36,7 +32,7 @@ from swarm.core.model_verify import (
     verify_new_model_with_docker,
     zip_is_safe,
 )
-from swarm.protocol import PolicyRef, PolicySynapse
+from swarm.protocol import PolicyRef
 from swarm.utils.github import (
     build_raw_urls,
     check_readme_matches,
@@ -54,7 +50,6 @@ MAP_CACHE_WARMUP_STATE_FILE = STATE_DIR / "map_cache_warmup_state.json"
 CACHE_FILE = STATE_DIR / "benchmark_cache.json"
 CLAIMED_REPOS_FILE = STATE_DIR / "claimed_repos.json"
 
-_claimed_repos_lock = threading.Lock()
 _readme_ok_cache: set[str] = set()
 
 

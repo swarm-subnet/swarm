@@ -103,35 +103,6 @@ class HeartbeatManager:
             pass
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Dendrite RPC helper
-# ──────────────────────────────────────────────────────────────────────────
-
-async def send_with_fresh_uuid(
-    wallet: "bt.Wallet",
-    synapse: "bt.Synapse",
-    axon,
-    *,
-    timeout: float,
-    deserialize: bool = True,
-):
-    """Create a transient Dendrite client so every RPC gets a unique UUID."""
-    async with bt.Dendrite(wallet=wallet) as dend:
-        responses = await dend(
-            axons=[axon],
-            synapse=synapse,
-            deserialize=deserialize,
-            timeout=timeout,
-        )
-
-    bt.logging.warning(
-        f"➡️  sending: nonce={synapse.dendrite.nonce} "
-        f"timeout={synapse.timeout} uuid={synapse.dendrite.uuid} "
-        f"computed_body_hash={synapse.computed_body_hash} "
-        f"axon={axon} dendrite"
-    )
-    return responses
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Model hash tracker (UID → hash persistence)

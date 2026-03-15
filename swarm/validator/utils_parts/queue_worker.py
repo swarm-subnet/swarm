@@ -52,30 +52,35 @@ async def _process_normal_queue_item(
             pass
 
         if not item.get("registered", False):
-            accepted, terminal, reason = await _utils_facade()._register_new_model_with_ack(
-                self,
-                uid=uid,
-                model_hash=model_hash,
-                validator_hotkey=validator_hotkey,
-                github_url=github_url,
-                miner_hotkey=miner_hotkey,
-            )
-            if not accepted:
-                if terminal:
-                    item["status"] = "terminal_rejected"
-                    item["last_error"] = reason
-                    item["updated_at"] = time.time()
-                    _utils_facade().mark_model_hash_processed(uid, model_hash)
-                else:
-                    _utils_facade()._schedule_queue_retry(item, f"register failed: {reason}")
-                return
+            if item.get("from_backend", False):
+                item["registered"] = True
+                item["status"] = "registered"
+                item["updated_at"] = time.time()
+            else:
+                accepted, terminal, reason = await _utils_facade()._register_new_model_with_ack(
+                    self,
+                    uid=uid,
+                    model_hash=model_hash,
+                    validator_hotkey=validator_hotkey,
+                    github_url=github_url,
+                    miner_hotkey=miner_hotkey,
+                )
+                if not accepted:
+                    if terminal:
+                        item["status"] = "terminal_rejected"
+                        item["last_error"] = reason
+                        item["updated_at"] = time.time()
+                        _utils_facade().mark_model_hash_processed(uid, model_hash)
+                    else:
+                        _utils_facade()._schedule_queue_retry(item, f"register failed: {reason}")
+                    return
 
-            item["registered"] = True
-            item["status"] = "registered"
-            item["retry_attempts"] = 0
-            item["next_retry_at"] = 0
-            item["last_error"] = ""
-            item["updated_at"] = time.time()
+                item["registered"] = True
+                item["status"] = "registered"
+                item["retry_attempts"] = 0
+                item["next_retry_at"] = 0
+                item["last_error"] = ""
+                item["updated_at"] = time.time()
 
         epoch = self.seed_manager.epoch_number
         cached = (

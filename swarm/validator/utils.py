@@ -14,7 +14,6 @@ from swarm.validator.utils_parts import (
 )
 from swarm.validator.utils_parts._shared import (
     CACHE_FILE,
-    CLAIMED_REPOS_FILE,
     MAP_CACHE_WARMUP_STATE_FILE,
     NORMAL_MODEL_QUEUE_FILE,
     NORMAL_MODEL_QUEUE_PROCESS_LIMIT,
@@ -40,7 +39,6 @@ del _module, _name
 
 __all__ = [
     "CACHE_FILE",
-    "CLAIMED_REPOS_FILE",
     "MAP_CACHE_WARMUP_STATE_FILE",
     "NORMAL_MODEL_QUEUE_FILE",
     "NORMAL_MODEL_QUEUE_PROCESS_LIMIT",

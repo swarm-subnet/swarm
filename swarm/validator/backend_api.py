@@ -369,14 +369,18 @@ class BackendApiClient:
                 self._runtime_state["current_top"] = current_top
                 _save_runtime_state(self._runtime_state)
 
+                pending_models = data.get("pending_models", [])
+
                 bt.logging.info(
-                    f"Backend sync successful: leaderboard v{data.get('leaderboard_version', '?')}"
+                    f"Backend sync successful: leaderboard v{data.get('leaderboard_version', '?')}, "
+                    f"{len(pending_models)} pending model(s)"
                 )
                 return {
                     "current_top": current_top,
                     "weights": data.get("weights", {}),
                     "reeval_queue": reeval_queue,
                     "leaderboard_version": data.get("leaderboard_version", 0),
+                    "pending_models": pending_models,
                 }
 
             raise Exception(data.get("error", "Unknown error"))
@@ -391,6 +395,7 @@ class BackendApiClient:
                 "weights": self._runtime_state.get("last_weights", {}),
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
+                "pending_models": [],
                 "fallback": True,
                 "error": str(e),
             }

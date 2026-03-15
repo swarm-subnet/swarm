@@ -192,6 +192,7 @@ def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str, str]]) ->
             "github_url": github_url,
             "status": "pending",
             "registered": False,
+            "from_backend": True,
             "screening_recorded": False,
             "screening_passed": None,
             "score_recorded": False,
