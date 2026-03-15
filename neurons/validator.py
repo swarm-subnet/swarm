@@ -316,8 +316,6 @@ class Validator(BaseValidatorNeuron):
         except Exception as e:
             bt.logging.debug(f"Wandb initialization failed: {e}")
             self.wandb_helper = None
-        else:
-            bt.logging.debug("Wandb not available")
 
         # Initialize Docker evaluator at startup
         bt.logging.info("Initializing Docker secure evaluator...")

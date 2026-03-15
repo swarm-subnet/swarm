@@ -52,7 +52,6 @@ def check_config(cls, config: "bt.Config"):
             config.neuron.name,
         )
     )
-    print("full path:", full_path)
     config.neuron.full_path = os.path.expanduser(full_path)
     if not os.path.exists(config.neuron.full_path):
         os.makedirs(config.neuron.full_path, exist_ok=True)
