@@ -10,6 +10,7 @@ import bittensor as bt
 import numpy as np
 
 from swarm.constants import (
+    EPOCH_FREEZE_SECONDS,
     FORWARD_SLEEP_SEC,
     MAP_CACHE_PREBUILD_ALL_AT_START,
     MODEL_DIR,
@@ -34,6 +35,8 @@ from .utils import (
     _run_map_cache_warmup_step,
     _run_screening,
     _submit_score_with_ack,
+    clear_benchmark_cache,
+    clear_normal_model_queue,
     load_normal_model_queue,
     save_normal_model_queue,
     set_cached_score,
@@ -124,6 +127,12 @@ async def forward(self) -> None:
 
             cleanup_old_epoch_cache(keep_epoch=self.seed_manager.epoch_number)
 
+            self.docker_evaluator.cleanup()
+            clear_normal_model_queue()
+            clear_benchmark_cache()
+            self._epoch_just_transitioned = True
+            bt.logging.info("Epoch transition: killed Docker, cleared queue and cache")
+
         if MAP_CACHE_PREBUILD_ALL_AT_START:
             await _run_map_cache_prebuild_all_once(self)
         else:
@@ -140,6 +149,13 @@ async def forward(self) -> None:
 
         self._current_top = sync_data.get("current_top", {})
         reeval_queue = sync_data.get("reeval_queue", [])
+
+        epoch_just_transitioned = getattr(self, '_epoch_just_transitioned', False)
+        self._epoch_just_transitioned = False
+        if epoch_just_transitioned and self._current_top.get("uid") is not None:
+            champion_uid = self._current_top["uid"]
+            reeval_queue.insert(0, {"uid": champion_uid, "reason": "epoch_transition"})
+            bt.logging.info(f"👑 Champion UID {champion_uid} queued for epoch re-evaluation")
 
         # ──────────────────────────────────────────────────────────────
         # STEP 2: Apply weights from backend
@@ -171,14 +187,22 @@ async def forward(self) -> None:
 
                 model_hash = sha256sum(model_path)
 
-                screening_score, screening_scores = await _run_screening(
-                    self, uid, model_path
-                )
-                full_score, per_type_scores, full_scores = await _run_full_benchmark(
-                    self, uid, model_path
-                )
-
-                combined_scores = screening_scores + full_scores
+                if reason == "epoch_transition":
+                    bt.logging.info(f"👑 Champion UID {uid}: 1000 seeds directly (no screening)")
+                    full_score, per_type_scores, full_scores = await _run_full_benchmark(
+                        self, uid, model_path
+                    )
+                    screening_score = full_score
+                    screening_scores = []
+                    combined_scores = full_scores
+                else:
+                    screening_score, screening_scores = await _run_screening(
+                        self, uid, model_path
+                    )
+                    full_score, per_type_scores, full_scores = await _run_full_benchmark(
+                        self, uid, model_path
+                    )
+                    combined_scores = screening_scores + full_scores
                 all_seeds_count = len(combined_scores)
                 total_score = (
                     float(np.median(combined_scores)) if combined_scores else 0.0
@@ -225,9 +249,19 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         # STEP 4: Discovery from backend (no axon polling)
         # ──────────────────────────────────────────────────────────────
-        pending = sync_data.get("pending_models", [])
-        if pending:
-            bt.logging.info(f"Backend reports {len(pending)} pending model(s)")
+        remaining = self.seed_manager.seconds_until_epoch_end()
+        in_freeze = remaining < EPOCH_FREEZE_SECONDS
+
+        if in_freeze:
+            bt.logging.info(
+                f"⏸️ Epoch freeze active — {remaining / 60:.0f} min remaining. "
+                "Skipping new model discovery and evaluation."
+            )
+            pending = []
+        else:
+            pending = sync_data.get("pending_models", [])
+            if pending:
+                bt.logging.info(f"Backend reports {len(pending)} pending model(s)")
 
         model_paths = await _ensure_models_from_backend(self, pending)
         if not model_paths:
@@ -251,9 +285,12 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         # STEP 5: Queue worker (normal-model pipeline consumer)
         # ──────────────────────────────────────────────────────────────
-        processable_keys = _get_processable_queue_keys(
-            queue, NORMAL_MODEL_QUEUE_PROCESS_LIMIT
-        )
+        if in_freeze:
+            processable_keys = []
+        else:
+            processable_keys = _get_processable_queue_keys(
+                queue, NORMAL_MODEL_QUEUE_PROCESS_LIMIT
+            )
         if not processable_keys:
             bt.logging.info("No normal-model queue items ready this cycle")
         else:

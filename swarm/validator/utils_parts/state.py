@@ -120,6 +120,16 @@ def check_repo_ownership(github_url: str, hotkey: str, uid: int) -> bool:
 # Normal-model processing queue (persistent)
 # ──────────────────────────────────────────────────────────────────────────
 
+def clear_normal_model_queue() -> None:
+    save_normal_model_queue({"items": {}})
+    bt.logging.info("Cleared normal model queue (epoch transition)")
+
+
+def clear_benchmark_cache() -> None:
+    save_benchmark_cache({})
+    bt.logging.info("Cleared benchmark cache (epoch transition)")
+
+
 def load_normal_model_queue() -> dict:
     normal_model_queue_file = _normal_model_queue_file()
     try:

@@ -74,10 +74,10 @@ class BenchmarkSeedManager:
         )
 
     def _raw_to_epoch(self, raw_week: int) -> int:
-        return raw_week - self._origin + 1
+        return raw_week + 1
 
     def _epoch_to_raw(self, epoch: int) -> int:
-        return self._origin + epoch - 1
+        return epoch - 1
 
     def _epoch_file(self, epoch: int) -> Path:
         return EPOCH_SEEDS_DIR / f"epoch_{epoch}.json"
@@ -180,6 +180,10 @@ class BenchmarkSeedManager:
         start = datetime.fromtimestamp(start_ts, tz=timezone.utc)
         end = datetime.fromtimestamp(end_ts, tz=timezone.utc)
         return start, end
+
+    def seconds_until_epoch_end(self) -> float:
+        _, end = self.epoch_time_range(self.epoch_number)
+        return max(0.0, end.timestamp() - time.time())
 
     def get_screening_seeds(self) -> List[int]:
         return self.seeds[:BENCHMARK_SCREENING_SEED_COUNT]
