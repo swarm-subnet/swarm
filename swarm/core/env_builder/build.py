@@ -126,7 +126,7 @@ def build_world(
 
         if challenge_type in (3, 4):
             surface_z = float(_raycast_surface_z(cli, sx, sy))
-        elif challenge_type in (1, 5) and start_platform_surface_z is not None:
+        elif challenge_type in (1, 5, 6) and start_platform_surface_z is not None:
             surface_z = start_platform_surface_z
         elif shared.START_PLATFORM_RANDOMIZE:
             surface_z = shared.get_platform_height_for_seed(seed, challenge_type)
