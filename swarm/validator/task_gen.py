@@ -101,6 +101,74 @@ def get_type_params(challenge_type: int) -> dict:
     return TYPE_PARAMS.get(challenge_type, TYPE_PARAMS[1])
 
 
+def _build_task_for_type(
+    sim_dt: float,
+    seed: int,
+    *,
+    challenge_type: int,
+    moving_platform: Optional[bool],
+) -> MapTask:
+    if challenge_type == 3:
+        params = {
+            'world_range': _get_type3_world_range(seed),
+            'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
+            'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
+            'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
+            'horizon': TYPE_3_HORIZON,
+        }
+    elif challenge_type == 4:
+        params = {
+            'world_range': TYPE_3_VILLAGE_RANGE,
+            'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
+            'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
+            'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
+            'horizon': TYPE_3_HORIZON,
+        }
+    else:
+        params = get_type_params(challenge_type)
+
+    rng = random.Random(seed)
+    search_rng = random.Random(seed + 888888)
+    search_radius = search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
+
+    if moving_platform is None:
+        platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
+        resolved_moving_platform = (
+            platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
+        )
+    else:
+        resolved_moving_platform = bool(moving_platform)
+
+    if RANDOM_START:
+        start = _random_start(rng, params, challenge_type=challenge_type, seed=seed)
+        goal = _goal_from_start(
+            rng,
+            start,
+            params,
+            challenge_type=challenge_type,
+            seed=seed,
+        )
+    else:
+        if START_PLATFORM:
+            start_z = START_PLATFORM_SURFACE_Z + START_PLATFORM_TAKEOFF_BUFFER
+        else:
+            start_z = 1.5
+        start = (0.0, 0.0, start_z)
+        goal = _goal_from_origin(rng, params)
+
+    return MapTask(
+        map_seed=seed,
+        start=start,
+        goal=goal,
+        sim_dt=sim_dt,
+        horizon=params['horizon'],
+        challenge_type=challenge_type,
+        search_radius=search_radius,
+        moving_platform=resolved_moving_platform,
+        version="1",
+    )
+
+
 def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
     if challenge_type in (3, 4):
         return 0.0
@@ -373,57 +441,31 @@ def _goal_from_origin(seed_rng: random.Random, params: dict) -> Tuple[float, flo
 def random_task(sim_dt: float, seed: Optional[int] = None) -> MapTask:
     if seed is None:
         seed = random.randrange(2**32)
-    rng = random.Random(seed)
-
     challenge_types = list(CHALLENGE_TYPE_DISTRIBUTION.keys())
     probabilities = list(CHALLENGE_TYPE_DISTRIBUTION.values())
     type_rng = random.Random(seed + 999999)
     chosen_type = type_rng.choices(challenge_types, weights=probabilities, k=1)[0]
 
-    if chosen_type == 3:
-        params = {
-            'world_range': _get_type3_world_range(seed),
-            'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
-            'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
-            'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
-            'horizon': TYPE_3_HORIZON,
-        }
-    elif chosen_type == 4:
-        params = {
-            'world_range': TYPE_3_VILLAGE_RANGE,
-            'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
-            'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
-            'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
-            'horizon': TYPE_3_HORIZON,
-        }
-    else:
-        params = get_type_params(chosen_type)
-
-    search_rng = random.Random(seed + 888888)
-    search_radius = search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
-
-    platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
-    moving_platform = platform_rng.random() < MOVING_PLATFORM_PROB.get(chosen_type, 0.0)
-
-    if RANDOM_START:
-        start = _random_start(rng, params, challenge_type=chosen_type, seed=seed)
-        goal = _goal_from_start(rng, start, params, challenge_type=chosen_type, seed=seed)
-    else:
-        if START_PLATFORM:
-            start_z = START_PLATFORM_SURFACE_Z + START_PLATFORM_TAKEOFF_BUFFER
-        else:
-            start_z = 1.5
-        start = (0.0, 0.0, start_z)
-        goal = _goal_from_origin(rng, params)
-
-    return MapTask(
-        map_seed=seed,
-        start=start,
-        goal=goal,
+    return _build_task_for_type(
         sim_dt=sim_dt,
-        horizon=params['horizon'],
+        seed=seed,
         challenge_type=chosen_type,
-        search_radius=search_radius,
+        moving_platform=None,
+    )
+
+
+def task_for_seed_and_type(
+    sim_dt: float,
+    *,
+    seed: int,
+    challenge_type: int,
+    moving_platform: Optional[bool] = None,
+) -> MapTask:
+    if challenge_type not in {1, 2, 3, 4, 5, 6}:
+        raise ValueError(f"Unsupported challenge type: {challenge_type}")
+    return _build_task_for_type(
+        sim_dt=sim_dt,
+        seed=seed,
+        challenge_type=challenge_type,
         moving_platform=moving_platform,
-        version="1",
     )

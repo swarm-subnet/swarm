@@ -6,6 +6,8 @@ This directory contains repository-level executable utilities.
 
 - `bench_full_eval.py`
   - Full benchmark entrypoint used by the CLI and manual benchmark runs.
+- `debug_idempotency_report.py`
+  - Debug-only repeated-seed runner that replays one exact seed per map type multiple times and prints a grouped idempotency report.
 - `generate_video.py`
   - Replay/video rendering utility for a model + seed.
 - `gen_platform_images.py`

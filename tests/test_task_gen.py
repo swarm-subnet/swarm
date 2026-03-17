@@ -66,6 +66,26 @@ def test_random_task_is_deterministic_for_fixed_seed():
     assert t1 == t2
 
 
+def test_task_for_seed_and_type_is_deterministic():
+    t1 = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=12345, challenge_type=6)
+    t2 = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=12345, challenge_type=6)
+
+    assert t1 == t2
+    assert t1.challenge_type == 6
+
+
+def test_task_for_seed_and_type_respects_moving_platform_override():
+    task = task_gen.task_for_seed_and_type(
+        sim_dt=0.02,
+        seed=12345,
+        challenge_type=5,
+        moving_platform=True,
+    )
+
+    assert task.challenge_type == 5
+    assert task.moving_platform is True
+
+
 def test_random_task_can_be_forced_to_warehouse(monkeypatch):
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {5: 1.0})
     monkeypatch.setattr(task_gen, "MOVING_PLATFORM_PROB", {5: 0.0})
