@@ -27,10 +27,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade "numpy>=2.0.0"
 
-WORKDIR /app
-
-COPY --chown=evaluator:evaluator swarm/ /app/swarm/
-
 USER evaluator
 
 WORKDIR /workspace
