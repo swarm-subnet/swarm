@@ -250,6 +250,7 @@ async def _process_normal_queue_item(
         })
 
         item.pop("screening_scores", None)
+        item.pop("screening_per_type", None)
         _utils_facade().mark_model_hash_processed(uid, model_hash)
 
     except Exception as e:
