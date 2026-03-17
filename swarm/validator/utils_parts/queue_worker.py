@@ -1,4 +1,8 @@
+import math
+
 from ._shared import *
+
+from swarm.constants import N_DOCKER_WORKERS
 
 
 def _utils_facade():
@@ -161,25 +165,50 @@ async def _process_normal_queue_item(
                 item["per_type_scores"] = per_type_scores
                 item["seeds_evaluated"] = int(cached.get("seeds_evaluated", 1200))
             else:
-                full_score, _, full_scores, bench_per_type = await _utils_facade()._run_full_benchmark(
-                    self, uid, model_path
-                )
+                all_benchmark_seeds = self.seed_manager.get_benchmark_seeds()
+                partial_scores = item.get("benchmark_partial_scores", [])
+                partial_per_type = item.get("benchmark_partial_per_type", {})
+                done = len(partial_scores)
+                remaining_seeds = all_benchmark_seeds[done:]
+
+                if remaining_seeds:
+                    round_size = max(1, math.ceil(len(all_benchmark_seeds) / N_DOCKER_WORKERS))
+                    for i in range(0, len(remaining_seeds), round_size):
+                        chunk = remaining_seeds[i:i + round_size]
+                        chunk_scores, chunk_per_type = await _utils_facade()._evaluate_seeds(
+                            self, uid, model_path, chunk,
+                            f"benchmark [{done + 1}..{done + len(chunk)}]",
+                        )
+                        partial_scores.extend(chunk_scores)
+                        for tname, tscores in chunk_per_type.items():
+                            partial_per_type.setdefault(tname, []).extend(tscores)
+                        done = len(partial_scores)
+                        item["benchmark_partial_scores"] = partial_scores
+                        item["benchmark_partial_per_type"] = partial_per_type
+                        item["updated_at"] = time.time()
+                        _utils_facade().save_normal_model_queue(queue)
+
                 screening_scores = item.get("screening_scores", [])
                 if not isinstance(screening_scores, list):
                     screening_scores = []
-                combined_scores = screening_scores + full_scores
-                total_score = float(np.median(combined_scores)) if combined_scores else 0.0
-
                 scr_per_type = item.get("screening_per_type", {})
+
+                combined_scores = screening_scores + partial_scores
+                total_score = float(np.median(combined_scores)) if combined_scores else 0.0
+                full_score = float(np.median(partial_scores)) if partial_scores else 0.0
+
                 merged_per_type = {}
-                for key in set(scr_per_type) | set(bench_per_type):
-                    combined = scr_per_type.get(key, []) + bench_per_type.get(key, [])
+                all_keys = set(scr_per_type) | set(partial_per_type)
+                for key in all_keys:
+                    combined = scr_per_type.get(key, []) + partial_per_type.get(key, [])
                     merged_per_type[key] = float(np.median(combined)) if combined else 0.0
 
-                item["full_score"] = float(full_score)
+                item["full_score"] = full_score
                 item["total_score"] = total_score
                 item["per_type_scores"] = merged_per_type
                 item["seeds_evaluated"] = len(combined_scores)
+                item.pop("benchmark_partial_scores", None)
+                item.pop("benchmark_partial_per_type", None)
             item["updated_at"] = time.time()
 
         if not item.get("score_recorded", False):
