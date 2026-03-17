@@ -20,4 +20,4 @@ gymnasium
 requests
 httpx
 pycapnp
-swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git
+gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git
