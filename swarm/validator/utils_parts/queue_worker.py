@@ -93,11 +93,14 @@ async def _process_normal_queue_item(
             if cached:
                 item["screening_score"] = float(cached.get("screening_score", 0.0))
             else:
-                screening_score, screening_scores = await _utils_facade()._run_screening(
-                    self, uid, model_path
+                screening_score, screening_scores, screening_per_type = (
+                    await _utils_facade()._run_screening(self, uid, model_path)
                 )
                 item["screening_score"] = float(screening_score)
                 item["screening_scores"] = screening_scores
+                item["screening_per_type"] = {
+                    k: v for k, v in screening_per_type.items() if v
+                }
             item["updated_at"] = time.time()
 
         if item.get("screening_passed") is None:
@@ -158,7 +161,7 @@ async def _process_normal_queue_item(
                 item["per_type_scores"] = per_type_scores
                 item["seeds_evaluated"] = int(cached.get("seeds_evaluated", 1200))
             else:
-                full_score, per_type_scores, full_scores = await _utils_facade()._run_full_benchmark(
+                full_score, _, full_scores, bench_per_type = await _utils_facade()._run_full_benchmark(
                     self, uid, model_path
                 )
                 screening_scores = item.get("screening_scores", [])
@@ -166,9 +169,16 @@ async def _process_normal_queue_item(
                     screening_scores = []
                 combined_scores = screening_scores + full_scores
                 total_score = float(np.median(combined_scores)) if combined_scores else 0.0
+
+                scr_per_type = item.get("screening_per_type", {})
+                merged_per_type = {}
+                for key in set(scr_per_type) | set(bench_per_type):
+                    combined = scr_per_type.get(key, []) + bench_per_type.get(key, [])
+                    merged_per_type[key] = float(np.median(combined)) if combined else 0.0
+
                 item["full_score"] = float(full_score)
                 item["total_score"] = total_score
-                item["per_type_scores"] = per_type_scores
+                item["per_type_scores"] = merged_per_type
                 item["seeds_evaluated"] = len(combined_scores)
             item["updated_at"] = time.time()
 

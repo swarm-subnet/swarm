@@ -104,12 +104,12 @@ def _get_screening_threshold(self) -> float:
     return float(current_top.get('score', 0.0)) * SCREENING_TOP_MODEL_FACTOR
 
 
-async def _run_screening(self, uid: int, model_path: Path) -> Tuple[float, List[float]]:
+async def _run_screening(
+    self, uid: int, model_path: Path
+) -> Tuple[float, List[float], Dict[str, List[float]]]:
     """Run screening benchmark with early termination on clearly failing/passing models.
 
-    Seeds are evaluated in checkpoint batches. After each batch the running
-    median is compared against conservative thresholds to decide whether the
-    remaining seeds can be skipped.
+    Returns (median_score, all_scores, per_type_scores).
     """
     screening_seeds = self.seed_manager.get_screening_seeds()
     threshold = _get_screening_threshold(self)
@@ -117,6 +117,11 @@ async def _run_screening(self, uid: int, model_path: Path) -> Tuple[float, List[
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb.start("evaluating_screening", uid, total_seeds)
+
+    all_per_type: Dict[str, List[float]] = {
+        "city": [], "open": [], "mountain": [],
+        "village": [], "warehouse": [], "forest": [], "moving_platform": [],
+    }
 
     try:
         all_scores: List[float] = []
@@ -130,12 +135,15 @@ async def _run_screening(self, uid: int, model_path: Path) -> Tuple[float, List[
             if not batch_seeds:
                 break
 
-            batch_scores, _ = await _utils_facade()._evaluate_seeds(
+            batch_scores, batch_per_type = await _utils_facade()._evaluate_seeds(
                 self, uid, model_path, batch_seeds,
                 f"screening [{len(all_scores) + 1}..{checkpoint}]",
                 on_seed_complete=hb.on_seed_complete,
             )
             all_scores.extend(batch_scores)
+            for type_name, scores in batch_per_type.items():
+                if type_name in all_per_type:
+                    all_per_type[type_name].extend(scores)
 
             evaluated = len(all_scores)
             if evaluated < SCREENING_CHECKPOINT_SIZE:
@@ -168,20 +176,23 @@ async def _run_screening(self, uid: int, model_path: Path) -> Tuple[float, List[
         f"📊 Screening result for UID {uid}: "
         f"median={median_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
     )
-    return median_score, all_scores
+    return median_score, all_scores, all_per_type
 
 
 async def _run_full_benchmark(
     self, uid: int, model_path: Path, seeds: Optional[List[int]] = None
-) -> Tuple[float, Dict[str, float], List[float]]:
-    """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided."""
+) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]]]:
+    """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
+
+    Returns (median_score, per_type_medians, all_scores, per_type_raw).
+    """
     benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
 
     try:
-        all_scores, per_type_scores = await _utils_facade()._evaluate_seeds(
+        all_scores, per_type_raw = await _utils_facade()._evaluate_seeds(
             self, uid, model_path, benchmark_seeds, "full benchmark",
             on_seed_complete=hb.on_seed_complete
         )
@@ -194,14 +205,14 @@ async def _run_full_benchmark(
         median_score = 0.0
 
     per_type_medians = {}
-    for type_name, scores in per_type_scores.items():
+    for type_name, scores in per_type_raw.items():
         if scores:
             per_type_medians[type_name] = float(np.median(scores))
         else:
             per_type_medians[type_name] = 0.0
 
     bt.logging.info(f"📊 Full benchmark result for UID {uid}: median={median_score:.4f}")
-    return median_score, per_type_medians, all_scores
+    return median_score, per_type_medians, all_scores, per_type_raw
 
 
 # ──────────────────────────────────────────────────────────────────────────

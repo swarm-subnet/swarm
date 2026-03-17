@@ -9,6 +9,8 @@ import traceback
 import bittensor as bt
 import numpy as np
 
+from typing import Dict, List
+
 from swarm.constants import (
     EPOCH_FREEZE_SECONDS,
     FORWARD_SLEEP_SEC,
@@ -17,6 +19,17 @@ from swarm.constants import (
 )
 from swarm.core.env_builder import cleanup_old_epoch_cache, set_map_cache_epoch
 from swarm.utils.hash import sha256sum
+
+
+def _merge_per_type_medians(
+    a: Dict[str, List[float]], b: Dict[str, List[float]]
+) -> Dict[str, float]:
+    merged: Dict[str, float] = {}
+    all_keys = set(a) | set(b)
+    for key in all_keys:
+        combined = a.get(key, []) + b.get(key, [])
+        merged[key] = float(np.median(combined)) if combined else 0.0
+    return merged
 
 from .backend_api import BackendApiClient
 from .docker.docker_evaluator import DockerSecureEvaluator
@@ -192,20 +205,21 @@ async def forward(self) -> None:
                     bt.logging.info(
                         f"👑 Champion UID {uid}: {len(all_seeds)} seeds directly (no screening)"
                     )
-                    full_score, per_type_scores, full_scores = await _run_full_benchmark(
+                    full_score, per_type_scores, full_scores, _ = await _run_full_benchmark(
                         self, uid, model_path, seeds=all_seeds
                     )
                     screening_score = full_score
                     screening_scores = []
                     combined_scores = full_scores
                 else:
-                    screening_score, screening_scores = await _run_screening(
+                    screening_score, screening_scores, scr_per_type = await _run_screening(
                         self, uid, model_path
                     )
-                    full_score, per_type_scores, full_scores = await _run_full_benchmark(
+                    full_score, _, full_scores, bench_per_type = await _run_full_benchmark(
                         self, uid, model_path
                     )
                     combined_scores = screening_scores + full_scores
+                    per_type_scores = _merge_per_type_medians(scr_per_type, bench_per_type)
                 all_seeds_count = len(combined_scores)
                 total_score = (
                     float(np.median(combined_scores)) if combined_scores else 0.0
