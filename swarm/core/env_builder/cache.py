@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from . import _shared as shared
 
-STATIC_WORLD_CACHE_VERSION = 2
+STATIC_WORLD_CACHE_VERSION = 5
 
 
 def set_map_cache_epoch(epoch: int) -> None:
@@ -192,34 +192,15 @@ def _save_static_world_cache_from_client(
     challenge_type: int,
     base_body_count: int = 0,
 ) -> None:
-    if challenge_type == 2:
-        return
-
-    cache_file = _static_world_cache_file(seed, challenge_type, start, goal)
-    meta_file = _static_world_cache_meta_file(seed, challenge_type, start, goal)
-    if cache_file.exists() and meta_file.exists():
-        return
-    if cache_file.exists() or meta_file.exists():
-        _invalidate_static_world_cache(cache_file, meta_file)
-
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = cache_file.with_suffix(".tmp")
-    tmp_file.unlink(missing_ok=True)
-
-    try:
-        shared.p.saveBullet(str(tmp_file), physicsClientId=cli)
-        tmp_file.replace(cache_file)
-        meta = _build_static_world_cache_meta(
-            cli,
-            start=start,
-            goal=goal,
-            challenge_type=challenge_type,
-            base_body_count=base_body_count,
-        )
-        _write_static_world_cache_meta(meta_file, meta)
-    except Exception:
-        tmp_file.unlink(missing_ok=True)
-        _invalidate_static_world_cache(cache_file, meta_file)
+    _ = cli, base_body_count
+    # Never snapshot a live evaluator client directly: it already contains the
+    # plane and drone body, so saveBullet() would persist polluted cache files.
+    prebuild_static_world_cache(
+        seed,
+        challenge_type,
+        start=start,
+        goal=goal,
+    )
 
 
 def _try_load_static_world_cache(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from swarm.constants import START_PLATFORM_TAKEOFF_BUFFER
 from swarm.core.env_builder import build as build_mod
+from swarm.core.env_builder import cache as cache_mod
 
 
 class _DummyPyBullet:
@@ -69,3 +70,32 @@ def test_build_world_reuses_cleared_forest_start_surface(monkeypatch) -> None:
     assert len(start_platform_uids) == 3
     assert start_surface_z == cleared_surface_z
     assert adjusted_start == (7.0, 8.0, cleared_surface_z + START_PLATFORM_TAKEOFF_BUFFER)
+
+
+def test_save_static_world_cache_from_client_uses_clean_prebuild(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _capture_prebuild(seed, challenge_type, *, start, goal):
+        captured["seed"] = seed
+        captured["challenge_type"] = challenge_type
+        captured["start"] = start
+        captured["goal"] = goal
+        return "ignored"
+
+    monkeypatch.setattr(cache_mod, "prebuild_static_world_cache", _capture_prebuild)
+
+    cache_mod._save_static_world_cache_from_client(
+        seed=123,
+        cli=7,
+        start=(1.0, 2.0, 3.0),
+        goal=(4.0, 5.0, 6.0),
+        challenge_type=6,
+        base_body_count=2,
+    )
+
+    assert captured == {
+        "seed": 123,
+        "challenge_type": 6,
+        "start": (1.0, 2.0, 3.0),
+        "goal": (4.0, 5.0, 6.0),
+    }

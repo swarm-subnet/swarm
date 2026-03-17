@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from swarm.core.env_builder import generation as generation_mod
+from swarm.core.forest_generator_parts import hills as hills_mod
 from swarm.core.forest_generator_parts import placement as placement_mod
 
 
@@ -28,7 +29,8 @@ def test_build_static_world_passes_safe_zones_to_forest(monkeypatch) -> None:
     assert captured["cli"] == 7
     assert captured["seed"] == 123
     assert captured["safe_zones"] == [start, goal]
-    assert captured["safe_zone_radius"] == (
+    assert captured["safe_zone_radius"] == max(
+        8.0,
         generation_mod.shared.SAFE_ZONE_RADIUS
         + max(
             generation_mod.shared.START_PLATFORM_RADIUS,
@@ -90,3 +92,38 @@ def test_pick_tree_instances_avoids_safe_zone(monkeypatch) -> None:
 
     assert len(placed) == 1
     assert placed[0][0:2] == (10.0, 10.0)
+
+
+def test_spawn_hills_is_visual_only(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(hills_mod, "_ensure_merged_hills_obj", lambda: "/tmp/fake_hills.obj")
+    monkeypatch.setattr(hills_mod, "_ground_texture_id", lambda _cli: None)
+
+    def _fake_create_visual_shape(*_args, **_kwargs):
+        calls["visual"] = True
+        return 11
+
+    def _fake_create_multi_body(*, baseMass, baseCollisionShapeIndex, baseVisualShapeIndex, basePosition, physicsClientId):
+        calls["multibody"] = {
+            "baseMass": baseMass,
+            "baseCollisionShapeIndex": baseCollisionShapeIndex,
+            "baseVisualShapeIndex": baseVisualShapeIndex,
+            "basePosition": basePosition,
+            "physicsClientId": physicsClientId,
+        }
+        return 22
+
+    monkeypatch.setattr(hills_mod.p, "createVisualShape", _fake_create_visual_shape)
+    monkeypatch.setattr(hills_mod.p, "createMultiBody", _fake_create_multi_body)
+
+    hills_mod._spawn_hills(cli=5, rgba=[1.0, 1.0, 1.0, 1.0], apply_texture=False)
+
+    assert calls["visual"] is True
+    assert calls["multibody"] == {
+        "baseMass": 0.0,
+        "baseCollisionShapeIndex": -1,
+        "baseVisualShapeIndex": 11,
+        "basePosition": [0.0, 0.0, 0.0],
+        "physicsClientId": 5,
+    }

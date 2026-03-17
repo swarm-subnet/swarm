@@ -185,15 +185,11 @@ def _spawn_hills(
         specularColor=[0.0, 0.0, 0.0],
         physicsClientId=cli,
     )
-    terrain_col = p.createCollisionShape(
-        p.GEOM_MESH,
-        fileName=merged_obj,
-        meshScale=[1.0, 1.0, 1.0],
-        physicsClientId=cli,
-    )
     terrain_body = p.createMultiBody(
         baseMass=0.0,
-        baseCollisionShapeIndex=terrain_col,
+        # The merged hills mesh is decorative. Using it as a collision mesh
+        # creates an invalid solid volume that can engulf the spawn area.
+        baseCollisionShapeIndex=-1,
         baseVisualShapeIndex=terrain_vis,
         basePosition=[0.0, 0.0, 0.0],
         physicsClientId=cli,

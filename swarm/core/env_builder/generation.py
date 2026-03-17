@@ -70,9 +70,15 @@ def _build_static_world(
             safe_zones.append(start)
         if goal is not None:
             safe_zones.append(goal)
-        forest_safe_zone_radius = shared.SAFE_ZONE_RADIUS + max(
-            shared.START_PLATFORM_RADIUS,
-            shared.LANDING_PLATFORM_RADIUS,
+        # Forest maps need a much larger reserved XY clearing than other maps.
+        # A small radius removes the trunk base but can still leave canopy or
+        # adjacent tree meshes close enough to destabilize the first step.
+        forest_safe_zone_radius = max(
+            8.0,
+            shared.SAFE_ZONE_RADIUS + max(
+                shared.START_PLATFORM_RADIUS,
+                shared.LANDING_PLATFORM_RADIUS,
+            ),
         )
         shared.build_forest_map(cli, seed, safe_zones, forest_safe_zone_radius)
 

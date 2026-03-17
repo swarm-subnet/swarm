@@ -29,6 +29,31 @@ def _collision_shape_for_obj(cli: int, obj_path: str, scale: float) -> int:
     return shape
 
 
+def _tree_trunk_collision_shape(
+    cli: int, *, obj_path: str, scale: float, occupancy_radius: float,
+) -> tuple[int, float]:
+    cli_cache = _CLI_COL_CACHE.setdefault(cli, {})
+    min_x, min_y, min_z, max_x, max_y, max_z = _obj_bounds_cached(obj_path)
+    total_height = max(1.0, (max_y - min_y) * scale)
+    trunk_height = max(2.0, min(total_height * 0.55, total_height))
+    trunk_radius = max(0.18, min(0.55, occupancy_radius * 0.18))
+    key = (
+        "tree_trunk",
+        round(trunk_radius, 3),
+        round(trunk_height, 3),
+    )
+    cached = cli_cache.get(key)
+    if cached is None:
+        cached = p.createCollisionShape(
+            p.GEOM_CYLINDER,
+            radius=trunk_radius,
+            height=trunk_height,
+            physicsClientId=cli,
+        )
+        cli_cache[key] = cached
+    return cached, trunk_height
+
+
 def _spawn_colored_obj(
     cli: int, *, obj_path: str, scale: float, double_sided_flags: int,
 ) -> List[int]:
@@ -290,6 +315,57 @@ def _spawn_instances_as_single_multibody(
     return placed_count
 
 
+def _spawn_tree_trunk_colliders(
+    cli: int, *, instances: List[Tuple[float, float, str, str, float, float]],
+) -> int:
+    placed_count = 0
+    for x, y, category, obj_name, scale, occupancy_radius in instances:
+        obj_path = os.path.join(FOREST_ASSET_DIR, category, obj_name)
+        if not os.path.exists(obj_path):
+            continue
+        effective_scale = scale
+        if FAST_BUILD_MODE and FAST_SCALE_STEP > 0.0:
+            effective_scale = max(
+                0.01, round(scale / FAST_SCALE_STEP) * FAST_SCALE_STEP
+            )
+        col_shape, trunk_height = _tree_trunk_collision_shape(
+            cli,
+            obj_path=obj_path,
+            scale=effective_scale,
+            occupancy_radius=occupancy_radius,
+        )
+        p.createMultiBody(
+            baseMass=0.0,
+            baseCollisionShapeIndex=col_shape,
+            baseVisualShapeIndex=-1,
+            basePosition=[x, y, trunk_height * 0.5],
+            baseOrientation=[0.0, 0.0, 0.0, 1.0],
+            physicsClientId=cli,
+        )
+        placed_count += 1
+    return placed_count
+
+
+def _spawn_tree_visuals_individually(
+    cli: int, *, instances: List[Tuple[float, float, str, str, float, float]], yaw_deg: float, flags: int,
+) -> int:
+    placed_count = 0
+    for x, y, category, obj_name, scale, _ in instances:
+        if _spawn_asset_instance(
+            cli,
+            category=category,
+            obj_name=obj_name,
+            x=x,
+            y=y,
+            yaw_deg=yaw_deg,
+            scale=scale,
+            flags=flags,
+            enable_collision=False,
+        ):
+            placed_count += 1
+    return placed_count
+
+
 # ---------------------------------------------------------------------------
 # SECTION 12: Main forest builder
 # ---------------------------------------------------------------------------
@@ -471,10 +547,10 @@ def _spawn_forest_assets(
     )
 
     tree_yaw = 0.0
-    _spawn_instances_as_single_multibody(
-        cli, instances=tree_instances, rng=rng, flags=flags,
-        class_name="trees", enable_collision=True, fixed_yaw_deg=tree_yaw,
+    _spawn_tree_visuals_individually(
+        cli, instances=tree_instances, yaw_deg=tree_yaw, flags=flags,
     )
+    _spawn_tree_trunk_colliders(cli, instances=tree_instances)
     for cls, inst_list in [
         ("bushes", bush_instances),
         ("rocks", rock_instances),
