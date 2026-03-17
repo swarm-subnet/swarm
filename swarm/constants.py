@@ -95,9 +95,10 @@ MINER_COMPUTE_BUDGET_SEC = 0.350        # Guaranteed pure-compute budget per ste
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
-CALIBRATION_BENCHMARK_REF_NS = 6_000_000  # Reference CPU benchmark time (ns) for a standard VPS
+CALIBRATION_BENCHMARK_REF_NS = 15_000_000 # Reference CPU benchmark time (ns) — 3×(512×512) matmul, single-thread
 CALIBRATION_CPU_FACTOR_CAP = 2.0        # Max CPU scaling factor (prevents abuse on very slow HW)
 CALIBRATION_MARGIN_SEC = 0.015          # Safety margin for response deserialization jitter (seconds)
+CALIBRATION_RECAL_INTERVAL = 100        # Re-calibrate every N seeds to catch thermal throttling
 
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files

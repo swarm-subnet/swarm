@@ -56,9 +56,9 @@ class AgentServer(agent_capnp.Agent.Server):
                 entry.tensor.data, dtype=np.dtype(entry.tensor.dtype)
             ).reshape(tuple(entry.tensor.shape))
 
+        a = np.random.randn(512, 512).astype(np.float32)
+        b = np.random.randn(512, 512).astype(np.float32)
         t0 = time.perf_counter_ns()
-        a = np.random.randn(256, 256).astype(np.float32)
-        b = np.random.randn(256, 256).astype(np.float32)
         for _ in range(3):
             np.dot(a, b)
         benchmark_ns = time.perf_counter_ns() - t0

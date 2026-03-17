@@ -11,6 +11,7 @@ from gym_pybullet_drones.utils.enums import ActionType
 
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
+    CALIBRATION_RECAL_INTERVAL,
     MINER_COMPUTE_BUDGET_SEC,
     RPC_FIRST_STEP_TIMEOUT_SEC,
     RPC_MAX_STRIKES_PER_SEED,
@@ -334,9 +335,15 @@ def _run_multi_seed_rpc_sync(
                         reset_ms = (time.time() - t_reset_start) * 1000.0
                         _trace(f"{task_label} reset ok in {reset_ms:.1f}ms")
 
-                        if not calibrated:
+                        should_calibrate = not calibrated or (
+                            CALIBRATION_RECAL_INTERVAL > 0
+                            and task_idx > 0
+                            and task_idx % CALIBRATION_RECAL_INTERVAL == 0
+                        )
+                        if should_calibrate:
+                            phase_label = "rpc_recalibration" if calibrated else "rpc_calibration"
                             _set_phase(
-                                "rpc_calibration",
+                                phase_label,
                                 task=task_label,
                                 step=0,
                                 sim_t=0.0,
@@ -352,13 +359,19 @@ def _run_multi_seed_rpc_sync(
                                 + rpc_overhead_sec
                                 + CALIBRATION_MARGIN_SEC
                             )
+                            if not calibrated:
+                                bt.logging.info(
+                                    f"UID {uid}: calibrated timeout = {calibrated_timeout*1000:.1f}ms "
+                                    f"(budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms x {cpu_factor:.2f} + overhead={rpc_overhead_sec*1000:.1f}ms + margin={CALIBRATION_MARGIN_SEC*1000:.0f}ms)"
+                                )
+                            else:
+                                bt.logging.info(
+                                    f"UID {uid}: recalibrated at seed {task_idx} — timeout = {calibrated_timeout*1000:.1f}ms "
+                                    f"(cpu_factor={cpu_factor:.2f}x, overhead={rpc_overhead_sec*1000:.1f}ms)"
+                                )
                             calibrated = True
-                            bt.logging.info(
-                                f"UID {uid}: calibrated timeout = {calibrated_timeout*1000:.1f}ms "
-                                f"(budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms x {cpu_factor:.2f} + overhead={rpc_overhead_sec*1000:.1f}ms + margin={CALIBRATION_MARGIN_SEC*1000:.0f}ms)"
-                            )
                             _trace(
-                                f"calibrated step timeout={calibrated_timeout*1000:.1f}ms "
+                                f"{phase_label} step timeout={calibrated_timeout*1000:.1f}ms "
                                 f"(overhead={rpc_overhead_sec*1000:.1f}ms cpu_factor={cpu_factor:.2f}x)"
                             )
 
