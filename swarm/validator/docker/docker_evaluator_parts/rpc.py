@@ -649,9 +649,14 @@ def _run_multi_seed_rpc_sync(
         loop.close()
 
 async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
-    """Measure RPC pipeline overhead and CPU speed factor."""
+    """Measure RPC pipeline overhead and CPU speed factor.
+
+    The round-trip time includes both network overhead and benchmark compute.
+    We subtract the benchmark compute to isolate pure network/serialization cost,
+    so the timeout formula doesn't double-count compute via both cpu_factor and overhead.
+    """
     docker_evaluator_mod = _docker_evaluator_facade()
-    round_trips = []
+    pure_overheads = []
     benchmark_times_ns = []
 
     for r in range(docker_evaluator_mod.CALIBRATION_ROUNDS):
@@ -660,12 +665,13 @@ async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int)
         try:
             t0 = time.time()
             cal_response = await asyncio.wait_for(
-                    agent.calibrate(cal_obs),
-                    timeout=docker_evaluator_mod.CALIBRATION_TIMEOUT_SEC,
-                )
+                agent.calibrate(cal_obs),
+                timeout=docker_evaluator_mod.CALIBRATION_TIMEOUT_SEC,
+            )
             dt = time.time() - t0
             bench_ns = cal_response.benchmarkNs
-            round_trips.append(dt)
+            bench_sec = bench_ns / 1e9 if bench_ns > 0 else 0.0
+            pure_overheads.append(max(0.001, dt - bench_sec))
             if bench_ns > 0:
                 benchmark_times_ns.append(bench_ns)
         except (asyncio.TimeoutError, Exception) as e:
@@ -673,21 +679,21 @@ async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int)
                 f"UID {uid}: calibration round {r+1}/{docker_evaluator_mod.CALIBRATION_ROUNDS} failed: {e}"
             )
 
-    if len(round_trips) < 3:
+    if len(pure_overheads) < 3:
         fallback = max(
             docker_evaluator_mod.RPC_STEP_TIMEOUT_SEC
             - docker_evaluator_mod.MINER_COMPUTE_BUDGET_SEC,
             0.010,
         )
         bt.logging.warning(
-            f"UID {uid}: calibration mostly failed ({len(round_trips)}/{docker_evaluator_mod.CALIBRATION_ROUNDS} ok), "
+            f"UID {uid}: calibration mostly failed ({len(pure_overheads)}/{docker_evaluator_mod.CALIBRATION_ROUNDS} ok), "
             f"using fallback overhead={fallback*1000:.0f}ms, cpu_factor=1.0"
         )
         return fallback, 1.0
 
-    round_trips.sort()
-    trimmed_rt = round_trips[1:-1] if len(round_trips) > 4 else round_trips
-    median_overhead = statistics.median(trimmed_rt)
+    pure_overheads.sort()
+    trimmed = pure_overheads[1:-1] if len(pure_overheads) > 4 else pure_overheads
+    median_overhead = statistics.median(trimmed)
 
     if median_overhead > docker_evaluator_mod.CALIBRATION_OVERHEAD_CAP_SEC:
         bt.logging.warning(
@@ -718,10 +724,10 @@ async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int)
     )
     bt.logging.info(
         f"UID {uid}: calibration results — "
-        f"overhead={median_overhead*1000:.1f}ms, "
+        f"overhead={median_overhead*1000:.1f}ms (pure network), "
         f"cpu_factor={cpu_factor:.2f}x, "
         f"benchmark_median={bench_median_ms:.1f}ms, "
-        f"rtt=[{', '.join(f'{t*1000:.1f}' for t in round_trips)}]ms"
+        f"rtt=[{', '.join(f'{t*1000:.1f}' for t in pure_overheads)}]ms"
     )
 
     return median_overhead, cpu_factor
