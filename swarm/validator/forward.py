@@ -188,9 +188,12 @@ async def forward(self) -> None:
                 model_hash = sha256sum(model_path)
 
                 if reason == "epoch_transition":
-                    bt.logging.info(f"👑 Champion UID {uid}: 1000 seeds directly (no screening)")
+                    all_seeds = self.seed_manager.get_all_seeds()
+                    bt.logging.info(
+                        f"👑 Champion UID {uid}: {len(all_seeds)} seeds directly (no screening)"
+                    )
                     full_score, per_type_scores, full_scores = await _run_full_benchmark(
-                        self, uid, model_path
+                        self, uid, model_path, seeds=all_seeds
                     )
                     screening_score = full_score
                     screening_scores = []

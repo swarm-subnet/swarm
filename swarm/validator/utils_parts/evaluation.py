@@ -172,10 +172,10 @@ async def _run_screening(self, uid: int, model_path: Path) -> Tuple[float, List[
 
 
 async def _run_full_benchmark(
-    self, uid: int, model_path: Path
+    self, uid: int, model_path: Path, seeds: Optional[List[int]] = None
 ) -> Tuple[float, Dict[str, float], List[float]]:
-    """Run full benchmark with public seeds."""
-    benchmark_seeds = self.seed_manager.get_benchmark_seeds()
+    """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided."""
+    benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
