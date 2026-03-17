@@ -96,6 +96,49 @@ def _small_asset_half_extent() -> float:
     return _map_half_extent() - max(FOREST_EDGE_MARGIN_M, SMALL_ASSET_EDGE_MARGIN_M)
 
 
+def _normalize_safe_zone_circles(
+    safe_zones: Optional[List[Tuple[float, float, float]]],
+    safe_zone_radius: float,
+) -> List[Tuple[float, float, float]]:
+    if not safe_zones or safe_zone_radius <= 0.0:
+        return []
+
+    circles: List[Tuple[float, float, float]] = []
+    for zone in safe_zones:
+        if zone is None or len(zone) < 2:
+            continue
+        circles.append((float(zone[0]), float(zone[1]), float(safe_zone_radius)))
+    return circles
+
+
+def _safe_zone_rects(
+    safe_zone_circles: List[Tuple[float, float, float]]
+) -> List[Tuple[float, float, float, float]]:
+    return [_circle_bounds_rect(x, y, radius) for x, y, radius in safe_zone_circles]
+
+
+def _circle_conflicts_safe_zones(
+    x: float,
+    y: float,
+    radius: float,
+    safe_zone_circles: List[Tuple[float, float, float]],
+) -> bool:
+    for zx, zy, zradius in safe_zone_circles:
+        dx = x - zx
+        dy = y - zy
+        min_dist = radius + zradius
+        if (dx * dx + dy * dy) < (min_dist * min_dist):
+            return True
+    return False
+
+
+def _rect_conflicts_safe_zones(
+    rect: Tuple[float, float, float, float],
+    safe_zone_rects: List[Tuple[float, float, float, float]],
+) -> bool:
+    return any(_rect_overlap(rect, safe_rect) for safe_rect in safe_zone_rects)
+
+
 def _extend_small_asset_candidates(
     rng: random.Random,
     candidates: List[Tuple[float, float]],
@@ -129,6 +172,8 @@ def _scaled_occupied_instances(
 def _pick_tree_instances(
     rng: random.Random, *, count: int,
     assets: List[Tuple[str, str]], clearance_m: float, difficulty_id: int,
+    safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
+    safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
     if not assets or count <= 0:
         return []
@@ -150,6 +195,11 @@ def _pick_tree_instances(
     canopy_overlap_scale = TREE_CANOPY_OVERLAP_SCALE_BY_DIFFICULTY.get(
         difficulty_id, 1.0
     )
+    safe_zone_circles = safe_zone_circles or []
+    safe_zone_rects = safe_zone_rects or []
+
+    for zx, zy, zradius in safe_zone_circles:
+        grid.insert(zx, zy, zradius)
 
     for relax in (1.0, 0.85, 0.72):
         for x, y in candidates:
@@ -193,6 +243,11 @@ def _pick_tree_instances(
                         or base_world[2] < -half or base_world[3] > half
                     ):
                         continue
+                    if safe_zone_rects and (
+                        _rect_conflicts_safe_zones(base_world, safe_zone_rects)
+                        or _rect_conflicts_safe_zones(span_world, safe_zone_rects)
+                    ):
+                        continue
                     if (
                         difficulty_id in (2, 3)
                         and obj_name in LOW_CANOPY_PROTECTED_TREE_NAMES
@@ -217,6 +272,13 @@ def _pick_tree_instances(
                     if (
                         (x - occupancy_r) < -half or (x + occupancy_r) > half
                         or (y - occupancy_r) < -half or (y + occupancy_r) > half
+                    ):
+                        continue
+                    if _circle_conflicts_safe_zones(
+                        x,
+                        y,
+                        max(occupancy_r, spacing_r),
+                        safe_zone_circles,
                     ):
                         continue
                     clearance_factor = TREE_TREE_CLEARANCE_FACTOR_BY_DIFFICULTY.get(
@@ -260,6 +322,8 @@ def _pick_shrub_instances(
     occupied_instances: Optional[List[Tuple[float, float, str, str, float, float]]] = None,
     tree_occupancy_scale: float = 1.0,
     tree_occupancy_cap_m: Optional[float] = None,
+    safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
+    safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
     if not assets or count <= 0:
         return []
@@ -298,6 +362,8 @@ def _pick_shrub_instances(
         occupied.append((ox, oy, tr))
     if occupied_instances:
         occupied.extend((ox, oy, orad) for ox, oy, _, _, _, orad in occupied_instances)
+    if safe_zone_circles:
+        occupied.extend(safe_zone_circles)
     grid = _SpatialGrid()
     for ox, oy, orad in occupied:
         grid.insert(ox, oy, orad)
@@ -331,6 +397,8 @@ def _pick_shrub_instances(
             if (x - radius) < -half or (x + radius) > half or (y - radius) < -half or (y + radius) > half:
                 continue
             cr = _circle_bounds_rect(x, y, radius)
+            if safe_zone_rects and _rect_conflicts_safe_zones(cr, safe_zone_rects):
+                continue
             if tree_base_rects and any(_rect_overlap(cr, r) for r in tree_base_rects):
                 continue
             if protected_tree_span_rects and any(
@@ -354,6 +422,8 @@ def _pick_rock_stump_instances(
     occupied_instances: List[Tuple[float, float, str, str, float, float]],
     tree_base_rects: Optional[List[tuple]] = None,
     protected_tree_span_rects: Optional[List[tuple]] = None,
+    safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
+    safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
     if not assets or count <= 0:
         return []
@@ -380,6 +450,8 @@ def _pick_rock_stump_instances(
     occupied: List[Tuple[float, float, float]] = [
         (ox, oy, orad) for ox, oy, _, _, _, orad in occupied_instances
     ]
+    if safe_zone_circles:
+        occupied.extend(safe_zone_circles)
     grid = _SpatialGrid()
     for ox, oy, orad in occupied:
         grid.insert(ox, oy, orad)
@@ -409,6 +481,8 @@ def _pick_rock_stump_instances(
             if (x - radius) < -half or (x + radius) > half or (y - radius) < -half or (y + radius) > half:
                 continue
             cr = _circle_bounds_rect(x, y, radius)
+            if safe_zone_rects and _rect_conflicts_safe_zones(cr, safe_zone_rects):
+                continue
             if tree_base_rects and any(_rect_overlap(cr, r) for r in tree_base_rects):
                 continue
             if protected_tree_span_rects and any(
@@ -443,6 +517,8 @@ def _pick_rock_stump_instances(
             if (x - radius) < -half or (x + radius) > half or (y - radius) < -half or (y + radius) > half:
                 continue
             cr = _circle_bounds_rect(x, y, radius)
+            if safe_zone_rects and _rect_conflicts_safe_zones(cr, safe_zone_rects):
+                continue
             if tree_base_rects and any(_rect_overlap(cr, r) for r in tree_base_rects):
                 continue
             if protected_tree_span_rects and any(
@@ -465,6 +541,8 @@ def _pick_log_instances(
     occupied_instances: List[Tuple[float, float, str, str, float, float]],
     tree_base_rects: Optional[List[tuple]] = None,
     protected_tree_span_rects: Optional[List[tuple]] = None,
+    safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
+    safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
     if not assets or count <= 0:
         return []
@@ -477,6 +555,8 @@ def _pick_log_instances(
     rng.shuffle(candidates)
 
     occupied = [(ox, oy, orad) for ox, oy, _, _, _, orad in occupied_instances]
+    if safe_zone_circles:
+        occupied.extend(safe_zone_circles)
     grid = _SpatialGrid()
     for ox, oy, orad in occupied:
         grid.insert(ox, oy, orad)
@@ -496,6 +576,8 @@ def _pick_log_instances(
             if (x - radius) < -half or (x + radius) > half or (y - radius) < -half or (y + radius) > half:
                 continue
             cr = _circle_bounds_rect(x, y, radius)
+            if safe_zone_rects and _rect_conflicts_safe_zones(cr, safe_zone_rects):
+                continue
             if tree_base_rects and any(_rect_overlap(cr, r) for r in tree_base_rects):
                 continue
             if protected_tree_span_rects and any(
@@ -519,6 +601,8 @@ def _pick_ground_cover_instances(
     tree_base_rects: Optional[List[tuple]] = None,
     tree_span_rects: Optional[List[tuple]] = None,
     protected_tree_span_rects: Optional[List[tuple]] = None,
+    safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
+    safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
     if not assets or count <= 0:
         return []
@@ -545,6 +629,8 @@ def _pick_ground_cover_instances(
     occupied: List[Tuple[float, float, float]] = [
         (ox, oy, orad) for ox, oy, _, _, _, orad in occupied_instances
     ]
+    if safe_zone_circles:
+        occupied.extend(safe_zone_circles)
     placed: List[Tuple[float, float, str, str, float, float]] = []
     placed_by_name: Dict[str, int] = {}
 
@@ -573,6 +659,8 @@ def _pick_ground_cover_instances(
             if name in NORMAL_ONLY_SINGLE_SPAWN_GROUND_COVER and placed_by_name.get(name, 0) >= 1:
                 continue
             cr = _circle_bounds_rect(x, y, radius)
+            if safe_zone_rects and _rect_conflicts_safe_zones(cr, safe_zone_rects):
+                continue
             if tree_base_rects and any(_rect_overlap(cr, r) for r in tree_base_rects):
                 continue
             if protected_tree_span_rects and any(
@@ -621,6 +709,8 @@ def _pick_ground_cover_instances(
             if name in NORMAL_ONLY_SINGLE_SPAWN_GROUND_COVER and placed_by_name.get(name, 0) >= 1:
                 continue
             cr = _circle_bounds_rect(x, y, radius)
+            if safe_zone_rects and _rect_conflicts_safe_zones(cr, safe_zone_rects):
+                continue
             if tree_base_rects and any(_rect_overlap(cr, r) for r in tree_base_rects):
                 continue
             if protected_tree_span_rects and any(

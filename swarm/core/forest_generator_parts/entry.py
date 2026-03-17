@@ -40,7 +40,6 @@ def build_forest(
     Mode and difficulty are deterministic per seed via get_forest_subtype().
     Use forced_mode / forced_difficulty to override.
     """
-    _ = safe_zones, safe_zone_radius
     sub_mode, sub_diff = get_forest_subtype(seed)
     mode_id = _clamp_mode_id(forced_mode) if forced_mode is not None else sub_mode
     difficulty_id = (
@@ -55,7 +54,14 @@ def build_forest(
     if hills_enabled:
         rgba = _ground_rgba_for_mode(mode_id)
         _spawn_hills(cli, rgba=rgba, apply_texture=(mode_id == 1))
-    _spawn_forest_assets(cli, seed, mode_id=mode_id, difficulty_id=difficulty_id)
+    _spawn_forest_assets(
+        cli,
+        seed,
+        mode_id=mode_id,
+        difficulty_id=difficulty_id,
+        safe_zones=safe_zones,
+        safe_zone_radius=safe_zone_radius,
+    )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

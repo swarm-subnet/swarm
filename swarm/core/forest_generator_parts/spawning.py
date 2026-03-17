@@ -296,6 +296,8 @@ def _spawn_instances_as_single_multibody(
 def _spawn_forest_assets(
     cli: int, seed: int, mode_id: int = SCORING_MODE_ID,
     difficulty_id: int = SCORING_DIFFICULTY_ID,
+    safe_zones: Optional[List[Tuple[float, float, float]]] = None,
+    safe_zone_radius: float = 0.0,
 ) -> None:
     diff_cfg = DIFFICULTY_CONFIG[difficulty_id]
     flags = (
@@ -305,6 +307,8 @@ def _spawn_forest_assets(
     )
     rng = random.Random(seed)
     assets = _resolve_assets_for_class(mode_id)
+    safe_zone_circles = _normalize_safe_zone_circles(safe_zones, safe_zone_radius)
+    safe_zone_rects = _safe_zone_rects(safe_zone_circles)
 
     def _scaled_count(cls: str, base: int) -> int:
         mul = CLASS_DENSITY_MULTIPLIER.get(cls, 1.0)
@@ -359,6 +363,8 @@ def _spawn_forest_assets(
     tree_instances = _pick_tree_instances(
         rng, count=trees_count, assets=list(assets.get("trees", [])),
         clearance_m=diff_cfg["tree_clearance_m"], difficulty_id=difficulty_id,
+        safe_zone_circles=safe_zone_circles,
+        safe_zone_rects=safe_zone_rects,
     )
 
     log_tree_occ = _scaled_occupied_instances(
@@ -389,6 +395,8 @@ def _spawn_forest_assets(
         occupied_instances=log_instances,
         tree_occupancy_scale=bush_occ_scale,
         tree_occupancy_cap_m=bush_occ_cap,
+        safe_zone_circles=safe_zone_circles,
+        safe_zone_rects=safe_zone_rects,
     )
     rock_tree_occ = _scaled_occupied_instances(
         tree_instances,
@@ -402,6 +410,8 @@ def _spawn_forest_assets(
         occupied_instances=rock_tree_occ + bush_instances + log_instances,
         tree_base_rects=tree_base_rects,
         protected_tree_span_rects=prot_span_rects,
+        safe_zone_circles=safe_zone_circles,
+        safe_zone_rects=safe_zone_rects,
     )
     stump_tree_occ = _scaled_occupied_instances(
         tree_instances,
@@ -418,6 +428,8 @@ def _spawn_forest_assets(
         ),
         tree_base_rects=tree_base_rects,
         protected_tree_span_rects=prot_span_rects,
+        safe_zone_circles=safe_zone_circles,
+        safe_zone_rects=safe_zone_rects,
     )
     plant_tree_occ = _scaled_occupied_instances(
         tree_instances,
@@ -435,6 +447,8 @@ def _spawn_forest_assets(
         tree_base_rects=tree_base_rects,
         tree_span_rects=tree_span_rects,
         protected_tree_span_rects=prot_span_rects,
+        safe_zone_circles=safe_zone_circles,
+        safe_zone_rects=safe_zone_rects,
     )
     cactus_tree_occ = _scaled_occupied_instances(
         tree_instances,
@@ -452,6 +466,8 @@ def _spawn_forest_assets(
         tree_base_rects=tree_base_rects,
         tree_span_rects=tree_span_rects,
         protected_tree_span_rects=prot_span_rects,
+        safe_zone_circles=safe_zone_circles,
+        safe_zone_rects=safe_zone_rects,
     )
 
     tree_yaw = 0.0

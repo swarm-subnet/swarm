@@ -65,7 +65,16 @@ def _build_static_world(
     elif challenge_type == 5:
         shared.build_warehouse_map(seed=seed, cli=cli, start=start, goal=goal)
     elif challenge_type == 6:
-        shared.build_forest_map(cli, seed, [], 0.0)
+        safe_zones = []
+        if start is not None:
+            safe_zones.append(start)
+        if goal is not None:
+            safe_zones.append(goal)
+        forest_safe_zone_radius = shared.SAFE_ZONE_RADIUS + max(
+            shared.START_PLATFORM_RADIUS,
+            shared.LANDING_PLATFORM_RADIUS,
+        )
+        shared.build_forest_map(cli, seed, safe_zones, forest_safe_zone_radius)
 
 
 def _find_clear_platform_position(

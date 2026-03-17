@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from . import _shared as shared
 
+STATIC_WORLD_CACHE_VERSION = 2
+
 
 def set_map_cache_epoch(epoch: int) -> None:
     shared.current_epoch_number = epoch
@@ -36,6 +38,7 @@ def _static_world_cache_file(
     goal: shared.Optional[shared.Tuple[float, float, float]],
 ) -> shared.Path:
     payload = {
+        "static_world_cache_version": STATIC_WORLD_CACHE_VERSION,
         "benchmark_version": shared.BENCHMARK_VERSION,
         "seed": int(seed),
         "challenge_type": int(challenge_type),
