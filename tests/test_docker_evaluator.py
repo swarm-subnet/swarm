@@ -377,8 +377,9 @@ def test_calibrate_rpc_overhead_success(monkeypatch):
             _Agent(), object(), {"state": np.zeros(2)}, uid=6
         )
     )
-    assert overhead == pytest.approx(0.065, abs=1e-9)
-    assert cpu_factor == pytest.approx(2.0, abs=1e-9)
+    expected_overheads = [0.038, 0.048, 0.058, 0.068]
+    assert overhead == pytest.approx(np.median(expected_overheads), abs=1e-9)
+    assert cpu_factor == pytest.approx(1.0, abs=1e-9)
 
 
 def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):

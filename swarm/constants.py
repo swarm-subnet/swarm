@@ -81,17 +81,17 @@ DOCKER_PIP_WHITELIST = {
 }
 
 # Per-step RPC timing (miner inference fairness)
-RPC_STEP_TIMEOUT_SEC = 0.220            # Per agent.act() call fallback (seconds)
+RPC_STEP_TIMEOUT_SEC = 0.500            # Per agent.act() call fallback (seconds)
 RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for model warmup/JIT (seconds)
 RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() between seeds (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
-RPC_MAX_STRIKES_PER_SEED = 5            # Timeouts before failing a seed
+RPC_MAX_STRIKES_PER_SEED = 15           # Timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 30.0             # Base overhead for global worker timeout (seconds)
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
 GLOBAL_EVAL_CAP_SEC = 590.0             # Hard upper bound for global worker timeout (seconds)
 
 # Hardware-fair calibrated timing
-MINER_COMPUTE_BUDGET_SEC = 0.350        # Guaranteed pure-compute budget per step (seconds)
+MINER_COMPUTE_BUDGET_SEC = 0.500        # Guaranteed pure-compute budget per step (seconds)
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
