@@ -728,8 +728,7 @@ class MovingDroneAviary(BaseRLAviary):
         seed = kwargs.get('seed', None)
         if seed is None:
             seed = getattr(self.task, 'map_seed', None)
-        self._search_area_center = self._generate_search_area_center(seed=seed)
-        
+
         obs, info = super().reset(**kwargs)
 
         self._time_alive = 0.0
@@ -753,6 +752,7 @@ class MovingDroneAviary(BaseRLAviary):
         )
 
         self._spawn_task_world()
+        self._search_area_center = self._generate_search_area_center(seed=seed)
         
         obs_after = self._computeObs()
         if obs_after is not None and "state" in obs_after:
