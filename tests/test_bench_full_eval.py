@@ -118,6 +118,34 @@ def test_select_next_batch_index_falls_back_to_heavy_when_only_heavy_remain():
     assert selected == 1
 
 
+def test_select_next_batch_index_treats_forest_as_heavy_when_cap_is_full():
+    batch_plan = [[0], [1], [2], [3], [4]]
+    task_meta = [
+        {"group": "type6_forest"},
+        {"group": "type6_forest"},
+        {"group": "type6_forest"},
+        {"group": "type6_forest"},
+        {"group": "type1_city"},
+    ]
+
+    selected = bench_full_eval._select_next_batch_index(
+        pending_batch_ids=[4],
+        batch_plan=batch_plan,
+        task_meta=task_meta,
+        active_batch_ids=[0, 1, 2, 3],
+        active_worker_cap=8,
+    )
+
+    assert selected == 4
+
+
+def test_max_heavy_active_allows_up_to_four_heavy_workers():
+    assert bench_full_eval._max_heavy_active(2) == 1
+    assert bench_full_eval._max_heavy_active(3) == 3
+    assert bench_full_eval._max_heavy_active(4) == 4
+    assert bench_full_eval._max_heavy_active(8) == 4
+
+
 def test_adaptive_backoff_triggers_on_calibration_spike_and_recovers():
     controller = bench_full_eval._AdaptiveBackoffController(requested_workers=3)
 

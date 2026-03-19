@@ -33,6 +33,7 @@ from .engine_parts.dispatch import (
     _PARENT_WORKER_STALL_TIMEOUT_SEC,
     _build_worker_stall_seed_meta,
     _is_clean_execution_status,
+    _max_heavy_active,
     _select_next_batch_index,
 )
 from .engine_parts.entry import main
@@ -81,6 +82,7 @@ __all__ = [
     "_infer_uid_from_model_path",
     "_is_clean_execution_status",
     "_load_type_seeds",
+    "_max_heavy_active",
     "_normalize_type_seeds",
     "_parse_args",
     "_print_results",

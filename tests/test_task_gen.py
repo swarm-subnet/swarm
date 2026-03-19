@@ -5,7 +5,7 @@ import random
 
 import pytest
 
-from swarm.constants import START_PLATFORM_TAKEOFF_BUFFER
+from swarm.constants import CHALLENGE_TYPE_DISTRIBUTION, START_PLATFORM_TAKEOFF_BUFFER
 from swarm.validator import task_gen
 
 
@@ -84,6 +84,13 @@ def test_task_for_seed_and_type_respects_moving_platform_override():
 
     assert task.challenge_type == 5
     assert task.moving_platform is True
+
+
+def test_challenge_type_distribution_is_uniform():
+    values = list(CHALLENGE_TYPE_DISTRIBUTION.values())
+    assert len(values) == 6
+    assert all(math.isclose(value, 1 / 6, rel_tol=1e-12, abs_tol=1e-12) for value in values)
+    assert math.isclose(sum(values), 1.0, rel_tol=1e-12, abs_tol=1e-12)
 
 
 def test_random_task_can_be_forced_to_warehouse(monkeypatch):

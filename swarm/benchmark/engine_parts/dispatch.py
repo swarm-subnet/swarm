@@ -14,7 +14,7 @@ _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 1,
     "type5_warehouse": 1,
 }
-_HEAVY_GROUPS = frozenset({"type3_mountain", "type5_warehouse"})
+_HEAVY_GROUPS = frozenset({"type3_mountain", "type5_warehouse", "type6_forest"})
 _BACKOFF_ACTIVE_WORKERS = 2
 _BACKOFF_RECENT_WINDOW = 6
 _BACKOFF_MIN_SAMPLES = 4
@@ -52,7 +52,7 @@ def _group_dispatch_weight(group_name: str) -> int:
 def _max_heavy_active(active_worker_cap: int) -> int:
     if active_worker_cap <= 2:
         return 1
-    return 2
+    return min(int(active_worker_cap), 4)
 
 
 def _seed_has_calibration_spike(seed_meta: Optional[Dict[str, Any]]) -> bool:

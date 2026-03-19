@@ -208,12 +208,12 @@ SCREENING_EARLY_PASS_FACTORS = {50: 1.30, 100: 1.15}
 # =============================================================================
 
 CHALLENGE_TYPE_DISTRIBUTION = {
-    1: 0.35,   # City navigation (procedural roads)
-    2: 0.12,   # Open flight (no obstacles)
-    3: 0.16,   # Mountain navigation
-    4: 0.05,   # Village navigation
-    5: 0.17,   # Warehouse navigation
-    6: 0.15,   # Forest navigation
+    1: 1 / 6,  # City navigation (procedural roads)
+    2: 1 / 6,  # Open flight (no obstacles)
+    3: 1 / 6,  # Mountain navigation
+    4: 1 / 6,  # Village navigation
+    5: 1 / 6,  # Warehouse navigation
+    6: 1 / 6,  # Forest navigation
 }
 
 assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge probabilities must sum to 1.0"

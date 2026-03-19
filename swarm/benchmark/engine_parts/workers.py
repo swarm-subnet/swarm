@@ -215,7 +215,8 @@ async def _run_benchmark_process_mode(
 
     print(
         f"[{_ts()}] Dispatch policy: heavy-aware scheduling enabled "
-        f"(mountain<=1, warehouse<=1, max_heavy={_max_heavy_active(scheduler.active_worker_cap)})"
+        f"(heavy_groups=mountain,warehouse,forest; "
+        f"mountain<=1, warehouse<=1, max_heavy={_max_heavy_active(scheduler.active_worker_cap)})"
     )
     if scheduler.enabled:
         from .dispatch import (
