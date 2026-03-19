@@ -6,10 +6,11 @@ import os
 import numpy as np
 import gymnasium.spaces as spaces
 import pybullet as p
+from PIL import Image
 
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import (
-    DroneModel, Physics, ActionType, ObservationType,
+    DroneModel, Physics, ActionType, ObservationType, ImageType,
 )
 
 # ── project‑level utilities ────────────────────────────────────────────────
@@ -729,7 +730,10 @@ class MovingDroneAviary(BaseRLAviary):
         if seed is None:
             seed = getattr(self.task, 'map_seed', None)
 
-        obs, info = super().reset(**kwargs)
+        p.resetSimulation(physicsClientId=self.CLIENT)
+        self._housekeeping()
+        self._updateAndStoreKinematicInformation()
+        self._startVideoRecording()
 
         self._time_alive = 0.0
         self._success = False
@@ -741,6 +745,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._prev_platform_pos = None
         self._platform_velocity = np.zeros(3, dtype=np.float32)
         self._platform_offsets = []
+        self._reset_action_buffer()
 
         self._prev_score = flight_reward(
             success=False,
@@ -753,7 +758,15 @@ class MovingDroneAviary(BaseRLAviary):
 
         self._spawn_task_world()
         self._search_area_center = self._generate_search_area_center(seed=seed)
-        
+        self._updateAndStoreKinematicInformation()
+
+        cli = getattr(self, "CLIENT", 0)
+        p.setPhysicsEngineParameter(
+            numSolverIterations=SOLVER_ITERATIONS,
+            minimumSolverIslandSize=SOLVER_MIN_ISLAND_SIZE,
+            physicsClientId=cli,
+        )
+
         obs_after = self._computeObs()
         if obs_after is not None and "state" in obs_after:
             actual_state_dim = obs_after["state"].shape[0]
@@ -768,35 +781,134 @@ class MovingDroneAviary(BaseRLAviary):
                         dtype=np.float32
                     ),
                 })
-        else:
-            obs_after = obs
-
-        cli = getattr(self, "CLIENT", 0)
-        p.setPhysicsEngineParameter(
-            numSolverIterations=SOLVER_ITERATIONS,
-            minimumSolverIslandSize=SOLVER_MIN_ISLAND_SIZE,
-            physicsClientId=cli,
-        )
-
-        return obs_after, info
+        info_after = self._computeInfo()
+        return obs_after, info_after
 
     def step(self, action):
-        """Execute one step. Per-step updates run exactly once here."""
+        """Execute one control step with post-physics bookkeeping."""
         self._step_processed = False
+        if self.RECORD and not self.GUI and self.step_counter % self.CAPTURE_FREQ == 0:
+            [w, h, rgb, dep, seg] = p.getCameraImage(
+                width=self.VID_WIDTH,
+                height=self.VID_HEIGHT,
+                shadow=1,
+                viewMatrix=self.CAM_VIEW,
+                projectionMatrix=self.CAM_PRO,
+                renderer=p.ER_TINY_RENDERER,
+                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+                physicsClientId=self.CLIENT,
+            )
+            (Image.fromarray(np.reshape(rgb, (h, w, 4)), 'RGBA')).save(
+                os.path.join(self.IMG_PATH, "frame_" + str(self.FRAME_NUM) + ".png")
+            )
+            self.FRAME_NUM += 1
+            if self.VISION_ATTR:
+                for i in range(self.NUM_DRONES):
+                    self.rgb[i], self.dep[i], self.seg[i] = self._getDroneImages(i)
+                    self._exportImage(
+                        img_type=ImageType.RGB,
+                        img_input=self.rgb[i],
+                        path=self.ONBOARD_IMG_PATH + "/drone_" + str(i) + "/",
+                        frame_num=int(self.step_counter / self.IMG_CAPTURE_FREQ),
+                    )
+        if self.GUI and self.USER_DEBUG:
+            current_input_switch = p.readUserDebugParameter(
+                self.INPUT_SWITCH,
+                physicsClientId=self.CLIENT,
+            )
+            if current_input_switch > self.last_input_switch:
+                self.last_input_switch = current_input_switch
+                self.USE_GUI_RPM = not self.USE_GUI_RPM
+        if self.USE_GUI_RPM:
+            for i in range(4):
+                self.gui_input[i] = p.readUserDebugParameter(
+                    int(self.SLIDERS[i]),
+                    physicsClientId=self.CLIENT,
+                )
+            clipped_action = np.tile(self.gui_input, (self.NUM_DRONES, 1))
+            if self.step_counter % (self.PYB_FREQ / 2) == 0:
+                self.GUI_INPUT_TEXT = [
+                    p.addUserDebugText(
+                        "Using GUI RPM",
+                        textPosition=[0, 0, 0],
+                        textColorRGB=[1, 0, 0],
+                        lifeTime=1,
+                        textSize=2,
+                        parentObjectUniqueId=self.DRONE_IDS[i],
+                        parentLinkIndex=-1,
+                        replaceItemUniqueId=int(self.GUI_INPUT_TEXT[i]),
+                        physicsClientId=self.CLIENT,
+                    ) for i in range(self.NUM_DRONES)
+                ]
+        else:
+            clipped_action = np.reshape(
+                self._preprocessAction(action),
+                (self.NUM_DRONES, 4),
+            )
+        self._update_moving_platform()
+        for _ in range(self.PYB_STEPS_PER_CTRL):
+            if (
+                self.PYB_STEPS_PER_CTRL > 1
+                and self.PHYSICS in [
+                    Physics.DYN,
+                    Physics.PYB_GND,
+                    Physics.PYB_DRAG,
+                    Physics.PYB_DW,
+                    Physics.PYB_GND_DRAG_DW,
+                ]
+            ):
+                self._updateAndStoreKinematicInformation()
+            for i in range(self.NUM_DRONES):
+                if self.PHYSICS == Physics.PYB:
+                    self._physics(clipped_action[i, :], i)
+                elif self.PHYSICS == Physics.DYN:
+                    self._dynamics(clipped_action[i, :], i)
+                elif self.PHYSICS == Physics.PYB_GND:
+                    self._physics(clipped_action[i, :], i)
+                    self._groundEffect(clipped_action[i, :], i)
+                elif self.PHYSICS == Physics.PYB_DRAG:
+                    self._physics(clipped_action[i, :], i)
+                    self._drag(self.last_clipped_action[i, :], i)
+                elif self.PHYSICS == Physics.PYB_DW:
+                    self._physics(clipped_action[i, :], i)
+                    self._downwash(i)
+                elif self.PHYSICS == Physics.PYB_GND_DRAG_DW:
+                    self._physics(clipped_action[i, :], i)
+                    self._groundEffect(clipped_action[i, :], i)
+                    self._drag(self.last_clipped_action[i, :], i)
+                    self._downwash(i)
+            if self.PHYSICS != Physics.DYN:
+                p.stepSimulation(physicsClientId=self.CLIENT)
+            self.last_clipped_action = clipped_action
+        self._updateAndStoreKinematicInformation()
         self._process_step_updates()
-        return super().step(action)
+        obs = self._computeObs()
+        reward = self._computeReward()
+        terminated = self._computeTerminated()
+        truncated = self._computeTruncated()
+        info = self._computeInfo()
+        self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
+        return obs, reward, terminated, truncated, info
 
     def _process_step_updates(self):
-        """Handle platform movement, time increment, collision, landing, and clearance check."""
+        """Handle post-physics episode bookkeeping exactly once per control step."""
         if self._step_processed:
             return
         self._step_processed = True
-        self._update_moving_platform()
         self._time_alive += self._sim_dt
         platform_hit, _ = self._check_collision()
         self._update_landing_state(platform_hit)
         self._update_min_clearance()
         self._apply_distance_cull()
+
+    def _reset_action_buffer(self) -> None:
+        """Zero the action history so reset observations do not leak prior episodes."""
+        action_dim = int(self.action_space.shape[-1])
+        self.action_buffer.clear()
+        for _ in range(self.ACTION_BUFFER_SIZE):
+            self.action_buffer.append(
+                np.zeros((self.NUM_DRONES, action_dim), dtype=np.float32)
+            )
 
     def _spawn_task_world(self):
         """Rebuild the procedural world defined by self.task."""

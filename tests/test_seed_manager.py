@@ -65,11 +65,12 @@ def test_manager_generates_and_splits_seeds(seed_manager_module, monkeypatch, tm
     monkeypatch.setattr(m, "_load_or_create_origin", lambda: 100)
 
     manager = m.BenchmarkSeedManager()
-    assert manager.epoch_number == 1
+    assert manager.epoch_number == 101
     assert len(manager.get_all_seeds()) == 6
     assert len(manager.get_screening_seeds()) == 2
     assert len(manager.get_benchmark_seeds()) == 4
-    assert (seeds_dir / "epoch_1.json").exists()
+    assert (seeds_dir / "epoch_101.json").exists()
+    assert manager.current_epoch_requires_state_invalidation is True
 
 
 def test_manager_loads_seeds_from_existing_file(seed_manager_module, monkeypatch, tmp_path):
@@ -82,13 +83,14 @@ def test_manager_loads_seeds_from_existing_file(seed_manager_module, monkeypatch
 
     seeds_dir.mkdir(parents=True, exist_ok=True)
     saved_seeds = [111, 222, 333, 444]
-    (seeds_dir / "epoch_1.json").write_text(json.dumps({
-        "epoch_number": 1,
+    (seeds_dir / "epoch_51.json").write_text(json.dumps({
+        "epoch_number": 51,
         "seeds": saved_seeds,
     }))
 
     manager = m.BenchmarkSeedManager()
     assert manager.get_all_seeds() == saved_seeds
+    assert manager.current_epoch_requires_state_invalidation is False
 
 
 def test_pending_publications_and_mark_published(seed_manager_module, monkeypatch, tmp_path):
@@ -124,15 +126,15 @@ def test_check_transition_and_advance_epoch(seed_manager_module, monkeypatch, tm
     monkeypatch.setattr(m, "_load_or_create_origin", lambda: 20)
 
     manager = m.BenchmarkSeedManager()
-    assert manager.epoch_number == 1
+    assert manager.epoch_number == 21
     assert manager.check_epoch_transition() is False
 
     current_raw["value"] = 21
     assert manager.check_epoch_transition() is True
     old_epoch = manager.advance_to_new_epoch()
-    assert old_epoch == 1
-    assert manager.epoch_number == 2
-    assert any(item.get("epoch_number") == 1 for item in manager.get_pending_publications())
+    assert old_epoch == 21
+    assert manager.epoch_number == 22
+    assert any(item.get("epoch_number") == 21 for item in manager.get_pending_publications())
 
 
 def test_epoch_time_range_returns_utc_datetimes(seed_manager_module, monkeypatch, tmp_path):

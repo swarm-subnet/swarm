@@ -72,6 +72,7 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         if not hasattr(self, 'seed_manager'):
             self.seed_manager = BenchmarkSeedManager()
+            _invalidate_local_state_for_regenerated_seeds(self)
 
         if not hasattr(self, 'backend_api'):
             try:
@@ -324,3 +325,18 @@ async def forward(self) -> None:
     except Exception as e:
         bt.logging.error(f"Validator forward error: {e}")
         bt.logging.error(traceback.format_exc())
+
+
+def _invalidate_local_state_for_regenerated_seeds(self) -> None:
+    """Drop persisted local evaluation state if the current epoch seeds were rebuilt."""
+    seed_manager = getattr(self, "seed_manager", None)
+    if seed_manager is None:
+        return
+    if not getattr(seed_manager, "current_epoch_requires_state_invalidation", False):
+        return
+    clear_normal_model_queue()
+    clear_benchmark_cache()
+    seed_manager.current_epoch_requires_state_invalidation = False
+    bt.logging.warning(
+        "Current epoch seeds were regenerated locally; cleared queued progress and benchmark cache"
+    )

@@ -63,9 +63,10 @@ class BenchmarkSeedManager:
         self._origin = _load_or_create_origin()
         self.epoch_number = self._raw_to_epoch(_compute_raw_week())
         self.seeds: List[int] = []
+        self.current_epoch_requires_state_invalidation = False
 
         self._publish_unpublished_epochs()
-        self._load_or_generate_seeds()
+        self._load_or_generate_seeds(invalidate_local_state_on_regenerate=True)
 
         bt.logging.info(
             f"BenchmarkSeedManager: epoch={self.epoch_number}, "
@@ -82,7 +83,11 @@ class BenchmarkSeedManager:
     def _epoch_file(self, epoch: int) -> Path:
         return EPOCH_SEEDS_DIR / f"epoch_{epoch}.json"
 
-    def _load_or_generate_seeds(self) -> None:
+    def _load_or_generate_seeds(
+        self,
+        *,
+        invalidate_local_state_on_regenerate: bool,
+    ) -> None:
         path = self._epoch_file(self.epoch_number)
         if path.exists():
             try:
@@ -92,12 +97,16 @@ class BenchmarkSeedManager:
                     and len(data.get("seeds", [])) == BENCHMARK_TOTAL_SEED_COUNT
                 ):
                     self.seeds = data["seeds"]
+                    self.current_epoch_requires_state_invalidation = False
                     bt.logging.info(f"Loaded seeds from {path.name}")
                     return
             except (json.JSONDecodeError, KeyError):
                 bt.logging.warning(f"Corrupt epoch file {path.name}, regenerating")
 
         self.seeds = _generate_random_seeds(BENCHMARK_TOTAL_SEED_COUNT)
+        self.current_epoch_requires_state_invalidation = (
+            invalidate_local_state_on_regenerate
+        )
         self._save_epoch_file(self.epoch_number, self.seeds, published=False)
         bt.logging.info(f"Generated {len(self.seeds)} random seeds for epoch {self.epoch_number}")
 
@@ -168,7 +177,7 @@ class BenchmarkSeedManager:
             except (json.JSONDecodeError, KeyError):
                 pass
 
-        self._load_or_generate_seeds()
+        self._load_or_generate_seeds(invalidate_local_state_on_regenerate=False)
         bt.logging.info(f"Epoch transition: {old_epoch} → {self.epoch_number}")
         return old_epoch
 

@@ -234,7 +234,7 @@ def _get_processable_queue_keys(queue: dict, limit: int) -> List[str]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Benchmark score cache (by model_hash + benchmark_version)
+# Benchmark score cache (by model_hash + epoch + benchmark_version)
 # ──────────────────────────────────────────────────────────────────────────
 
 def load_benchmark_cache() -> dict:
