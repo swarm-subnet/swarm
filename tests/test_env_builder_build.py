@@ -100,7 +100,7 @@ def test_build_world_goal_relocation_uses_type_distance_bounds(monkeypatch) -> N
         return (9.0, 10.0, 0.5)
 
     monkeypatch.setattr(build_mod.shared, "p", dummy_p)
-    monkeypatch.setattr(build_mod.shared, "START_PLATFORM", False)
+    monkeypatch.setattr(build_mod.shared, "START_PLATFORM", True)
     monkeypatch.setattr(build_mod.shared, "PLATFORM", False)
     monkeypatch.setattr(build_mod, "_build_static_world", lambda *args, **kwargs: None)
     monkeypatch.setattr(build_mod, "_find_clear_platform_position", _capture_position)
@@ -147,3 +147,30 @@ def test_city_adjusted_goal_distance_stays_within_type_bounds(monkeypatch) -> No
             f"seed={seed} adjusted city distance escaped bounds: {dist_xy:.3f}m "
             f"start={start} goal={goal}"
         )
+
+
+def test_build_world_village_skips_generic_platform_relocation(monkeypatch) -> None:
+    dummy_p = _DummyPyBullet()
+
+    def _unexpected_find_clear(*args, **kwargs):
+        raise AssertionError("village should not use generic platform relocation")
+
+    monkeypatch.setattr(build_mod.shared, "p", dummy_p)
+    monkeypatch.setattr(build_mod.shared, "START_PLATFORM", True)
+    monkeypatch.setattr(build_mod.shared, "PLATFORM", False)
+    monkeypatch.setattr(build_mod, "_build_static_world", lambda *args, **kwargs: None)
+    monkeypatch.setattr(build_mod, "_find_clear_platform_position", _unexpected_find_clear)
+    monkeypatch.setattr(build_mod, "_raycast_surface_z", lambda cli, x, y: 0.25)
+
+    _, _, start_surface_z, goal_surface_z, adjusted_start, adjusted_goal = build_mod.build_world(
+        seed=123,
+        cli=99,
+        start=(1.0, 2.0, 0.121),
+        goal=(4.0, 5.0, 0.0),
+        challenge_type=4,
+    )
+
+    assert start_surface_z == 0.25
+    assert goal_surface_z == 0.25
+    assert adjusted_start is None
+    assert adjusted_goal is None

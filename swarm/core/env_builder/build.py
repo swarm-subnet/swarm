@@ -14,8 +14,6 @@ def _goal_distance_bounds(
 ) -> shared.Optional[shared.Tuple[float, float, str]]:
     if challenge_type == 1:
         return (shared.TYPE_1_R_MIN, shared.TYPE_1_R_MAX, "xy")
-    if challenge_type == 4:
-        return (shared.TYPE_3_R_MIN, shared.TYPE_3_R_MAX, "xy")
     if challenge_type == 5:
         return (shared.TYPE_4_R_MIN, shared.TYPE_4_R_MAX, "xy")
     if challenge_type == 6:
@@ -82,7 +80,6 @@ def build_world(
 
     collision_scan_types = {
         1: (shared.TYPE_1_WORLD_RANGE, shared.TYPE_1_WORLD_RANGE, shared.TYPE_1_H_MIN, shared.TYPE_1_H_MAX),
-        4: (shared.TYPE_3_VILLAGE_RANGE, shared.TYPE_3_VILLAGE_RANGE, 0.0, 0.0),
         5: (shared.TYPE_4_WORLD_RANGE_X, shared.TYPE_4_WORLD_RANGE_Y, shared.TYPE_4_H_MIN, shared.TYPE_4_H_MAX),
         6: (shared.TYPE_6_WORLD_RANGE, shared.TYPE_6_WORLD_RANGE, shared.TYPE_6_H_MIN, shared.TYPE_6_H_MAX),
     }

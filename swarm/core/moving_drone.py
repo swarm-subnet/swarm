@@ -433,7 +433,10 @@ class MovingDroneAviary(BaseRLAviary):
             physicsClientId=cli
         )
         
-        SEG_FLAG = p.ER_NO_SEGMENTATION_MASK | p.ER_DEPTH_ONLY
+        seg_flag = p.ER_NO_SEGMENTATION_MASK
+        depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
+        if depth_only_flag is not None:
+            seg_flag |= depth_only_flag
         [w, h, _rgb, dep, _seg] = p.getCameraImage(
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
@@ -442,7 +445,7 @@ class MovingDroneAviary(BaseRLAviary):
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
             lightDirection=self._light_direction,
-            flags=SEG_FLAG,
+            flags=seg_flag,
             physicsClientId=cli
         )
         
