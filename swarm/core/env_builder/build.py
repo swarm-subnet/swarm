@@ -10,6 +10,34 @@ from .generation import (
 )
 
 
+def _goal_distance_bounds(
+    challenge_type: int,
+) -> shared.Optional[shared.Tuple[float, float, str]]:
+    if challenge_type == 1:
+        return (shared.TYPE_1_R_MIN, shared.TYPE_1_R_MAX, "xy")
+    if challenge_type == 4:
+        return (shared.TYPE_3_R_MIN, shared.TYPE_3_R_MAX, "xy")
+    if challenge_type == 5:
+        return (shared.TYPE_4_R_MIN, shared.TYPE_4_R_MAX, "xy")
+    if challenge_type == 6:
+        return (shared.TYPE_6_R_MIN, shared.TYPE_6_R_MAX, "xy")
+    return None
+
+
+def _distance_between_points(
+    a: shared.Tuple[float, float, float],
+    b: shared.Tuple[float, float, float],
+    *,
+    mode: str,
+) -> float:
+    dx = float(b[0]) - float(a[0])
+    dy = float(b[1]) - float(a[1])
+    if mode == "xy":
+        return shared.math.hypot(dx, dy)
+    dz = float(b[2]) - float(a[2])
+    return shared.math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
 def build_world(
     seed: int,
     cli: int,
@@ -103,6 +131,18 @@ def build_world(
         adjusted_start = (sx, sy, sz)
 
         if gx is not None and gy is not None and gz is not None:
+            goal_bounds = _goal_distance_bounds(challenge_type)
+            required_distance_min = None
+            required_distance_max = None
+            distance_mode = "xyz"
+            if goal_bounds is not None:
+                required_distance_min, required_distance_max, distance_mode = goal_bounds
+            preferred_distance = _distance_between_points(
+                (float(start[0]), float(start[1]), float(start[2])),
+                (float(goal[0]), float(goal[1]), float(goal[2])),
+                mode=distance_mode,
+            )
+
             new_gx, new_gy, new_gz = _find_clear_platform_position(
                 cli,
                 gx,
@@ -114,8 +154,13 @@ def build_world(
                 world_range_y=_wy,
                 h_min=_hmin,
                 h_max=_hmax,
-                avoid_pos=(sx, sy, start_platform_surface_z),
-                min_distance=shared.TYPE_4_MIN_PLATFORM_DISTANCE,
+                avoid_pos=(sx, sy, sz),
+                min_distance=required_distance_min or 0.0,
+                required_distance_min=required_distance_min,
+                required_distance_max=required_distance_max,
+                preferred_distance=preferred_distance,
+                distance_mode=distance_mode,
+                allow_candidate_fallback=False,
             )
             gx, gy, gz = new_gx, new_gy, new_gz
             adjusted_goal = (gx, gy, gz)
