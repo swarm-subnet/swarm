@@ -35,6 +35,7 @@ from .constants import (
     WORKER_MODEL_CANDIDATES,
 )
 from .factory import build_embedded_factory
+from .helpers_parts.geometry import clear_build_caches
 from .layout import build_area_layout_markers
 from .loading import build_loading_staging, build_loading_trucks, build_overhead_cranes
 from .office import build_embedded_office
@@ -329,6 +330,7 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     dict
         Consolidated build info (wall geometry, area layout, asset counts, timing, etc.).
     """
+    clear_build_caches()
     ctx = _create_runtime_context(cli=cli)
     _reset_runtime_context(ctx)
 

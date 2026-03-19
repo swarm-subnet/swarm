@@ -16,9 +16,6 @@ from swarm.constants import (
     BURN_EMISSIONS,
     BURN_FRACTION,
     KEEP_FRACTION,
-    MAP_CACHE_ENABLED,
-    MAP_CACHE_WARMUP_BATCH_SIZE,
-    MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES,
     MAX_MODEL_BYTES,
     MODEL_DIR,
     SCREENING_BOOTSTRAP_THRESHOLD,
@@ -26,7 +23,6 @@ from swarm.constants import (
     SIM_DT,
     UID_ZERO,
 )
-from swarm.core.env_builder import prebuild_static_world_cache
 from swarm.core.model_verify import (
     load_blacklist,
     verify_new_model_with_docker,
@@ -46,7 +42,6 @@ from swarm.validator.task_gen import random_task
 STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"
 NORMAL_MODEL_QUEUE_FILE = STATE_DIR / "normal_model_queue.json"
 NORMAL_MODEL_QUEUE_PROCESS_LIMIT = 1
-MAP_CACHE_WARMUP_STATE_FILE = STATE_DIR / "map_cache_warmup_state.json"
 CACHE_FILE = STATE_DIR / "benchmark_cache.json"
 CLAIMED_REPOS_FILE = STATE_DIR / "claimed_repos.json"
 

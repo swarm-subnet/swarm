@@ -11,7 +11,6 @@ from swarm.constants import (
 )
 from swarm.constants import START_PLATFORM_TAKEOFF_BUFFER
 from swarm.core.env_builder import build as build_mod
-from swarm.core.env_builder import cache as cache_mod
 from swarm.validator.task_gen import task_for_seed_and_type
 
 
@@ -61,9 +60,7 @@ def test_build_world_reuses_cleared_forest_start_surface(monkeypatch) -> None:
     cleared_surface_z = 12.5
 
     monkeypatch.setattr(build_mod.shared, "p", dummy_p)
-    monkeypatch.setattr(build_mod, "_try_load_static_world_cache", lambda *args, **kwargs: False)
     monkeypatch.setattr(build_mod, "_build_static_world", lambda *args, **kwargs: None)
-    monkeypatch.setattr(build_mod, "_save_static_world_cache_from_client", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         build_mod,
         "_find_clear_platform_position",
@@ -92,35 +89,6 @@ def test_build_world_reuses_cleared_forest_start_surface(monkeypatch) -> None:
     assert adjusted_start == (7.0, 8.0, cleared_surface_z + START_PLATFORM_TAKEOFF_BUFFER)
 
 
-def test_save_static_world_cache_from_client_uses_clean_prebuild(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def _capture_prebuild(seed, challenge_type, *, start, goal):
-        captured["seed"] = seed
-        captured["challenge_type"] = challenge_type
-        captured["start"] = start
-        captured["goal"] = goal
-        return "ignored"
-
-    monkeypatch.setattr(cache_mod, "prebuild_static_world_cache", _capture_prebuild)
-
-    cache_mod._save_static_world_cache_from_client(
-        seed=123,
-        cli=7,
-        start=(1.0, 2.0, 3.0),
-        goal=(4.0, 5.0, 6.0),
-        challenge_type=6,
-        base_body_count=2,
-    )
-
-    assert captured == {
-        "seed": 123,
-        "challenge_type": 6,
-        "start": (1.0, 2.0, 3.0),
-        "goal": (4.0, 5.0, 6.0),
-    }
-
-
 def test_build_world_goal_relocation_uses_type_distance_bounds(monkeypatch) -> None:
     dummy_p = _DummyPyBullet()
     calls: list[dict[str, object]] = []
@@ -134,9 +102,7 @@ def test_build_world_goal_relocation_uses_type_distance_bounds(monkeypatch) -> N
     monkeypatch.setattr(build_mod.shared, "p", dummy_p)
     monkeypatch.setattr(build_mod.shared, "START_PLATFORM", False)
     monkeypatch.setattr(build_mod.shared, "PLATFORM", False)
-    monkeypatch.setattr(build_mod, "_try_load_static_world_cache", lambda *args, **kwargs: False)
     monkeypatch.setattr(build_mod, "_build_static_world", lambda *args, **kwargs: None)
-    monkeypatch.setattr(build_mod, "_save_static_world_cache_from_client", lambda *args, **kwargs: None)
     monkeypatch.setattr(build_mod, "_find_clear_platform_position", _capture_position)
 
     build_mod.build_world(
@@ -159,8 +125,6 @@ def test_build_world_goal_relocation_uses_type_distance_bounds(monkeypatch) -> N
 
 
 def test_city_adjusted_goal_distance_stays_within_type_bounds(monkeypatch) -> None:
-    monkeypatch.setattr(build_mod.shared, "MAP_CACHE_ENABLED", False)
-
     problematic_seeds = [2, 31, 57, 74, 85, 98, 113]
     for seed in problematic_seeds:
         task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=1)

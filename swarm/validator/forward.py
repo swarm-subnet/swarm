@@ -14,10 +14,8 @@ from typing import Dict, List
 from swarm.constants import (
     EPOCH_FREEZE_SECONDS,
     FORWARD_SLEEP_SEC,
-    MAP_CACHE_PREBUILD_ALL_AT_START,
     MODEL_DIR,
 )
-from swarm.core.env_builder import cleanup_old_epoch_cache, set_map_cache_epoch
 from swarm.utils.hash import sha256sum
 
 
@@ -44,8 +42,6 @@ from .utils import (
     _process_normal_queue_item,
     _refresh_normal_model_queue,
     _run_full_benchmark,
-    _run_map_cache_prebuild_all_once,
-    _run_map_cache_warmup_step,
     _run_screening,
     _submit_score_with_ack,
     clear_benchmark_cache,
@@ -76,7 +72,6 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         if not hasattr(self, 'seed_manager'):
             self.seed_manager = BenchmarkSeedManager()
-            set_map_cache_epoch(self.seed_manager.epoch_number)
 
         if not hasattr(self, 'backend_api'):
             try:
@@ -114,11 +109,10 @@ async def forward(self) -> None:
                 bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
 
         # ──────────────────────────────────────────────────────────────
-        # STEP 0.5: Epoch transition detection + map-cache warmup
+        # STEP 0.5: Epoch transition detection
         # ──────────────────────────────────────────────────────────────
         if self.seed_manager.check_epoch_transition():
             old_epoch = self.seed_manager.advance_to_new_epoch()
-            set_map_cache_epoch(self.seed_manager.epoch_number)
             bt.logging.info(
                 f"Epoch transition: {old_epoch} -> {self.seed_manager.epoch_number}"
             )
@@ -137,19 +131,11 @@ async def forward(self) -> None:
                     bt.logging.info(f"Published epoch {ep} seeds to backend")
                 except Exception as e:
                     bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
-
-            cleanup_old_epoch_cache(keep_epoch=self.seed_manager.epoch_number)
-
             self.docker_evaluator.cleanup()
             clear_normal_model_queue()
             clear_benchmark_cache()
             self._epoch_just_transitioned = True
             bt.logging.info("Epoch transition: killed Docker, cleared queue and cache")
-
-        if MAP_CACHE_PREBUILD_ALL_AT_START:
-            await _run_map_cache_prebuild_all_once(self)
-        else:
-            await _run_map_cache_warmup_step(self)
 
         # ──────────────────────────────────────────────────────────────
         # STEP 1: Sync with backend

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from . import _shared as shared
-from .cache import _save_static_world_cache_from_client, _try_load_static_world_cache
 from .generation import (
     _build_static_world,
     _find_clear_platform_position,
@@ -65,34 +64,14 @@ def build_world(
     else:
         gx = gy = gz = None
 
-    cache_loaded = False
     static_world_body_base = shared.p.getNumBodies(physicsClientId=cli)
-    if shared.MAP_CACHE_ENABLED:
-        cache_loaded = _try_load_static_world_cache(
-            seed=seed,
-            cli=cli,
-            start=start,
-            goal=goal,
-            challenge_type=challenge_type,
-        )
-
-    if not cache_loaded:
-        _build_static_world(
-            seed=seed,
-            cli=cli,
-            start=start,
-            goal=goal,
-            challenge_type=challenge_type,
-        )
-        if shared.MAP_CACHE_ENABLED and shared.MAP_CACHE_SAVE_ON_BUILD:
-            _save_static_world_cache_from_client(
-                seed=seed,
-                cli=cli,
-                start=start,
-                goal=goal,
-                challenge_type=challenge_type,
-                base_body_count=static_world_body_base,
-            )
+    _build_static_world(
+        seed=seed,
+        cli=cli,
+        start=start,
+        goal=goal,
+        challenge_type=challenge_type,
+    )
 
     start_platform_surface_z = None
     goal_platform_surface_z = None

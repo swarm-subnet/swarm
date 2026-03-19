@@ -439,20 +439,16 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     )
 
     queue_file = tmp_path / "normal_model_queue.json"
-    warmup_file = tmp_path / "map_cache_warmup_state.json"
     cache_file = tmp_path / "benchmark_cache.json"
 
     monkeypatch.setattr(forward_mod, "MODEL_DIR", model_dir)
     monkeypatch.setattr(validator_utils, "MODEL_DIR", model_dir)
     monkeypatch.setattr(validator_utils, "STATE_DIR", tmp_path)
     monkeypatch.setattr(validator_utils, "NORMAL_MODEL_QUEUE_FILE", queue_file)
-    monkeypatch.setattr(validator_utils, "MAP_CACHE_WARMUP_STATE_FILE", warmup_file)
     monkeypatch.setattr(validator_utils, "CACHE_FILE", cache_file)
     monkeypatch.setattr(forward_mod, "FORWARD_SLEEP_SEC", 0.0)
     monkeypatch.setattr(forward_mod, "SAMPLE_K", 1)
     monkeypatch.setattr(forward_mod, "NORMAL_MODEL_QUEUE_PROCESS_LIMIT", 1)
-    monkeypatch.setattr(forward_mod, "MAP_CACHE_PREBUILD_ALL_AT_START", False)
-    monkeypatch.setattr(validator_utils, "MAP_CACHE_ENABLED", False)
 
     monkeypatch.setattr(
         forward_mod,
@@ -467,11 +463,6 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
         ),
     )
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fake_evaluate_seeds)
-    monkeypatch.setattr(forward_mod, "set_map_cache_epoch", lambda epoch: None)
-    monkeypatch.setattr(forward_mod, "cleanup_old_epoch_cache", lambda keep_epoch: None)
-    monkeypatch.setattr(
-        forward_mod, "_run_map_cache_warmup_step", lambda self_obj: asyncio.sleep(0)
-    )
     monkeypatch.setattr(DockerSecureEvaluator, "_base_ready", True)
 
     async def _run_forward_once():

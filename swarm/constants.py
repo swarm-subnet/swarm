@@ -203,12 +203,6 @@ SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated pe
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.60, 100: 0.80, 150: 0.90}
 SCREENING_EARLY_PASS_FACTORS = {50: 1.30, 100: 1.15}
 
-MAP_CACHE_ENABLED = True                # Enable/disable static world map caching
-MAP_CACHE_SAVE_ON_BUILD = True          # Save static world cache when built during scoring
-MAP_CACHE_PREBUILD_ALL_AT_START = False # True: prebuild all benchmark seeds before scoring
-MAP_CACHE_WARMUP_BATCH_SIZE = 6         # Seeds to prebuild per forward cycle in incremental mode
-MAP_CACHE_WARMUP_MAX_LOGGED_FAILURES = 2 # Maximum warmup seed failures logged per cycle
-
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
 # =============================================================================

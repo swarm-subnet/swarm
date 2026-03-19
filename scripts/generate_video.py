@@ -48,10 +48,6 @@ _REPO_ROOT = _SCRIPT_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from swarm.core.env_builder import _shared as _eb_shared
-_eb_shared.MAP_CACHE_ENABLED = False
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Constants
 # ═══════════════════════════════════════════════════════════════════════════════

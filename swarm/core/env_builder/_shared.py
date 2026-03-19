@@ -14,8 +14,6 @@ from swarm.constants import (
     BENCHMARK_VERSION,
     GOAL_COLOR_PALETTE,
     LANDING_PLATFORM_RADIUS,
-    MAP_CACHE_ENABLED,
-    MAP_CACHE_SAVE_ON_BUILD,
     MAX_ATTEMPTS_PER_OBS,
     PLATFORM,
     SAFE_ZONE_RADIUS,
@@ -61,9 +59,6 @@ from swarm.core.maps.warehouse import build_warehouse_map
 from swarm.validator.task_gen import get_platform_height_for_seed
 
 STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"
-MAP_CACHE_DIR = STATE_DIR / "map_cache"
-
-current_epoch_number: int | None = None
 _tao_tex_id: dict[int, int] = {}
 
 __all__ = [name for name in globals() if not name.startswith("__")]
