@@ -84,6 +84,7 @@ def _run_multi_seed_rpc_sync_isolated_payload(
         None,
         None,
         None,
+        None,
         0,
         None,
     )

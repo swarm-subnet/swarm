@@ -233,6 +233,14 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
     argv.extend(["--workers", str(args.workers)])
     if args.log_out is not None:
         argv.extend(["--log-out", str(args.log_out)])
+    if args.seed_file is not None:
+        argv.extend(["--seed-file", str(args.seed_file)])
+    if args.save_seed_file is not None:
+        argv.extend(["--save-seed-file", str(args.save_seed_file)])
+    if args.seed_search_rng is not None:
+        argv.extend(["--seed-search-rng", str(args.seed_search_rng)])
+    if args.summary_json_out is not None:
+        argv.extend(["--summary-json-out", str(args.summary_json_out)])
     if args.relax_timeouts:
         argv.append("--relax-timeouts")
     argv.extend(["--rpc-verbosity", str(args.rpc_verbosity)])
@@ -290,6 +298,54 @@ def _cmd_visualize(args: argparse.Namespace) -> int:
         return 1
     except Exception as exc:
         print(f"Visualizer failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def _build_video_argv(args: argparse.Namespace) -> list[str]:
+    argv = ["--model", str(args.model)]
+    if args.seed_file is not None:
+        argv.extend(["--seed-file", str(args.seed_file)])
+    else:
+        argv.extend(["--seed", str(args.seed)])
+        argv.extend(["--type", str(args.type)])
+    argv.extend(["--mode", str(args.mode)])
+    argv.extend(["--backend", str(args.backend)])
+    argv.extend(["--width", str(args.width)])
+    argv.extend(["--height", str(args.height)])
+    argv.extend(["--fps", str(args.fps)])
+    if args.out is not None:
+        argv.extend(["--out", str(args.out)])
+    if args.summary_json is not None:
+        argv.extend(["--summary-json", str(args.summary_json)])
+    if args.skip_existing:
+        argv.append("--skip-existing")
+    if args.progress_file is not None:
+        argv.extend(["--progress-file", str(args.progress_file)])
+    argv.extend(["--chase-back", str(args.chase_back)])
+    argv.extend(["--chase-up", str(args.chase_up)])
+    argv.extend(["--chase-fov", str(args.chase_fov)])
+    argv.extend(["--fpv-fov", str(args.fpv_fov)])
+    argv.extend(["--overview-fov", str(args.overview_fov)])
+    return argv
+
+
+def _cmd_video(args: argparse.Namespace) -> int:
+    model_path = Path(args.model)
+    if not model_path.exists():
+        print(f"Model not found: {model_path}", file=sys.stderr)
+        return 1
+    if args.seed_file is None and (args.seed is None or args.type is None):
+        print("Provide either --seed-file, or both --seed and --type.", file=sys.stderr)
+        return 1
+    try:
+        from scripts.generate_video import main as video_main
+
+        video_main(_build_video_argv(args))
+        return 0
+    except (SystemExit, KeyboardInterrupt) as exc:
+        return int(exc.code) if isinstance(exc, SystemExit) and isinstance(exc.code, int) else 1
+    except Exception as exc:
+        print(f"Video generation failed: {exc}", file=sys.stderr)
         return 1
 
 
@@ -680,6 +736,30 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Output benchmark log path (default in script: {DEFAULT_BENCH_LOG}).",
     )
     benchmark_parser.add_argument(
+        "--seed-file",
+        type=Path,
+        default=None,
+        help="Reuse an exact benchmark seed JSON instead of discovering seeds.",
+    )
+    benchmark_parser.add_argument(
+        "--save-seed-file",
+        type=Path,
+        default=None,
+        help="Write the resolved benchmark seeds to JSON for later replay.",
+    )
+    benchmark_parser.add_argument(
+        "--seed-search-rng",
+        type=int,
+        default=None,
+        help="Random seed used for reproducible benchmark seed discovery.",
+    )
+    benchmark_parser.add_argument(
+        "--summary-json-out",
+        type=Path,
+        default=None,
+        help="Write benchmark summary JSON to this path.",
+    )
+    benchmark_parser.add_argument(
         "--relax-timeouts",
         action="store_true",
         help="Enable slow-machine timeout overrides.",
@@ -769,6 +849,120 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable Bullet EGL hardware rendering for the visualizer if available.",
     )
     visualize_parser.set_defaults(func=_cmd_visualize)
+
+    video_parser = subparsers.add_parser(
+        "video",
+        help="Render mp4 flight videos for one seed or a saved benchmark seed file.",
+    )
+    video_parser.add_argument(
+        "--model",
+        type=Path,
+        required=True,
+        help="Path to submission zip (e.g., model/UID_178.zip).",
+    )
+    video_parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Single seed to replay.",
+    )
+    video_parser.add_argument(
+        "--type",
+        type=int,
+        default=None,
+        choices=[1, 2, 3, 4, 5, 6],
+        help="Challenge type for single-seed replay.",
+    )
+    video_parser.add_argument(
+        "--seed-file",
+        type=Path,
+        default=None,
+        help="Benchmark seed JSON generated by swarm benchmark --save-seed-file.",
+    )
+    video_parser.add_argument(
+        "--mode",
+        type=str,
+        default="chase",
+        help="Camera mode(s): depth, fpv, chase, overview, or all.",
+    )
+    video_parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Directory where mp4 files will be written.",
+    )
+    video_parser.add_argument(
+        "--width",
+        type=int,
+        default=1280,
+        help="Frame width.",
+    )
+    video_parser.add_argument(
+        "--height",
+        type=int,
+        default=720,
+        help="Frame height.",
+    )
+    video_parser.add_argument(
+        "--fps",
+        type=int,
+        default=25,
+        help="Video frames per second.",
+    )
+    video_parser.add_argument(
+        "--backend",
+        choices=["local", "benchmark"],
+        default="benchmark",
+        help="Replay backend: local fast replay, or exact benchmark Docker/RPC replay.",
+    )
+    video_parser.add_argument(
+        "--summary-json",
+        type=Path,
+        default=None,
+        help="Benchmark summary JSON from swarm benchmark --summary-json-out; replay must match when provided.",
+    )
+    video_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip a seed if all requested mp4 outputs already exist.",
+    )
+    video_parser.add_argument(
+        "--progress-file",
+        type=Path,
+        default=None,
+        help="Optional JSON progress path for single-seed video generation.",
+    )
+    video_parser.add_argument(
+        "--chase-back",
+        type=float,
+        default=2.5,
+        help="Chase camera distance behind the drone in metres.",
+    )
+    video_parser.add_argument(
+        "--chase-up",
+        type=float,
+        default=1.0,
+        help="Chase camera height above the drone in metres.",
+    )
+    video_parser.add_argument(
+        "--chase-fov",
+        type=float,
+        default=65.0,
+        help="Chase camera field of view in degrees.",
+    )
+    video_parser.add_argument(
+        "--fpv-fov",
+        type=float,
+        default=90.0,
+        help="FPV camera field of view in degrees.",
+    )
+    video_parser.add_argument(
+        "--overview-fov",
+        type=float,
+        default=60.0,
+        help="Overview camera field of view in degrees.",
+    )
+    video_parser.set_defaults(func=_cmd_video)
 
     model_parser = subparsers.add_parser("model", help="Model packaging and validation.")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)

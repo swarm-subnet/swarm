@@ -84,6 +84,10 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
             str(model_path),
             "--workers",
             "3",
+            "--save-seed-file",
+            str(tmp_path / "seeds.json"),
+            "--summary-json-out",
+            str(tmp_path / "summary.json"),
             "--rpc-verbosity",
             "low",
         ]
@@ -94,6 +98,8 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
     assert "3" in captured["argv"]
     assert "--rpc-verbosity" in captured["argv"]
     assert "low" in captured["argv"]
+    assert "--save-seed-file" in captured["argv"]
+    assert "--summary-json-out" in captured["argv"]
 
 
 def test_benchmark_fails_if_model_missing(capsys, tmp_path):
@@ -145,6 +151,53 @@ def test_visualize_reports_failure(monkeypatch, capsys):
 
     assert rc == 1
     assert "Visualizer failed: boom" in capsys.readouterr().err
+
+
+def test_video_invokes_generator_main_for_seed_file(monkeypatch, tmp_path):
+    model_path = tmp_path / "UID_178.zip"
+    model_path.write_bytes(b"zip")
+    seed_file = tmp_path / "seeds.json"
+    seed_file.write_text("{}")
+    captured: dict[str, list[str]] = {}
+
+    def _fake_video_main(argv):
+        captured["argv"] = list(argv)
+
+    monkeypatch.setattr("scripts.generate_video.main", _fake_video_main)
+
+    rc = cli.main(
+        [
+            "video",
+            "--model",
+            str(model_path),
+            "--seed-file",
+            str(seed_file),
+            "--mode",
+            "all",
+            "--out",
+            str(tmp_path / "videos"),
+            "--skip-existing",
+        ]
+    )
+
+    assert rc == 0
+    assert captured["argv"][:2] == ["--model", str(model_path)]
+    assert "--seed-file" in captured["argv"]
+    assert "--mode" in captured["argv"]
+    assert "all" in captured["argv"]
+    assert "--backend" in captured["argv"]
+    assert "benchmark" in captured["argv"]
+    assert "--skip-existing" in captured["argv"]
+
+
+def test_video_requires_seed_or_seed_file(tmp_path, capsys):
+    model_path = tmp_path / "UID_178.zip"
+    model_path.write_bytes(b"zip")
+
+    rc = cli.main(["video", "--model", str(model_path)])
+
+    assert rc == 1
+    assert "Provide either --seed-file, or both --seed and --type." in capsys.readouterr().err
 
 
 def test_model_verify_passes_for_valid_rpc_submission(tmp_path, capsys):

@@ -26,16 +26,20 @@ Examples
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
+import json
 import math
 import os
+import re
 import shutil
 import sys
 import time
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -61,6 +65,22 @@ TYPE_LABELS: Dict[int, str] = {
     4: "village",
     5: "warehouse",
     6: "forest",
+}
+BENCH_GROUP_ORDER: List[str] = [
+    "type1_city",
+    "type2_open",
+    "type3_mountain",
+    "type4_village",
+    "type5_warehouse",
+    "type6_forest",
+]
+BENCH_GROUP_TO_TYPE: Dict[str, int] = {
+    "type1_city": 1,
+    "type2_open": 2,
+    "type3_mountain": 3,
+    "type4_village": 4,
+    "type5_warehouse": 5,
+    "type6_forest": 6,
 }
 
 # --- output defaults ---
@@ -119,6 +139,8 @@ class FlightTask:
 class VideoResult:
     """Metadata returned for every successfully written video file."""
 
+    seed: int
+    challenge_type: int
     mode: str
     path: str
     frames: int
@@ -126,6 +148,47 @@ class VideoResult:
     success: bool
     sim_time_sec: float
     wall_time_sec: float
+
+
+@dataclass(frozen=True, slots=True)
+class VideoJob:
+    seed: int
+    challenge_type: int
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkExpectation:
+    success: bool
+    score: float
+    sim_time_sec: float
+
+
+def _outcome_label(success: bool) -> str:
+    return "SUCCESS" if bool(success) else "FAILED"
+
+
+def _summary_tag(*, success: bool, verified: bool) -> str:
+    if verified:
+        return "MATCH_OK" if bool(success) else "MATCH_FAIL"
+    return "OK" if bool(success) else "FAILED"
+
+
+@contextmanager
+def _temporary_env(overrides: Dict[str, Optional[str]]):
+    previous = {k: os.environ.get(k) for k in overrides}
+    try:
+        for key, value in overrides.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -371,6 +434,26 @@ def build_task(seed: int, challenge_type: int) -> FlightTask:
             platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
         ),
     )
+
+
+def _load_seed_jobs(seed_file: Path) -> List[VideoJob]:
+    raw = json.loads(Path(seed_file).read_text())
+    if not isinstance(raw, dict):
+        raise ValueError("Seed file must contain a JSON object mapping benchmark groups to seed lists.")
+
+    jobs: List[VideoJob] = []
+    missing = [group for group in BENCH_GROUP_ORDER if group not in raw]
+    if missing:
+        raise ValueError(f"Seed file missing groups: {', '.join(missing)}")
+
+    for group in BENCH_GROUP_ORDER:
+        seeds = raw.get(group)
+        if not isinstance(seeds, list) or not seeds:
+            raise ValueError(f"Seed group {group} must be a non-empty list.")
+        challenge_type = BENCH_GROUP_TO_TYPE[group]
+        for seed in seeds:
+            jobs.append(VideoJob(seed=int(seed), challenge_type=challenge_type))
+    return jobs
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -717,6 +800,363 @@ def _ensure_local_ansible_temp() -> None:
     os.environ["ANSIBLE_LOCAL_TEMP"] = str(ansible_tmp)
 
 
+class _FlightRecorder:
+    def __init__(
+        self,
+        *,
+        seed: int,
+        challenge_type: int,
+        modes: List[str],
+        out_dir: Path,
+        width: int,
+        height: int,
+        fps: int,
+        chase_back: float,
+        chase_up: float,
+        chase_fov: float,
+        fpv_fov: float,
+        overview_fov: float,
+        progress_file: Optional[Path],
+    ) -> None:
+        self._seed = int(seed)
+        self._challenge_type = int(challenge_type)
+        self._modes = list(modes)
+        self._out_dir = Path(out_dir)
+        self._out_dir.mkdir(parents=True, exist_ok=True)
+        self._width = int(width)
+        self._height = int(height)
+        self._fps = int(fps)
+        self._frame_dt = 1.0 / float(fps) if fps > 0 else 0.0
+        self._chase_back = float(chase_back)
+        self._chase_up = float(chase_up)
+        self._chase_fov = float(chase_fov)
+        self._fpv_fov = float(fpv_fov)
+        self._overview_fov = float(overview_fov)
+        self._progress_file = Path(progress_file) if progress_file else None
+
+        self._initialized = False
+        self._cameras: Dict[str, _CameraBase] = {}
+        self._writers: Dict[str, Any] = {}
+        self._out_paths: Dict[str, Path] = {}
+        self._tmp_paths: Dict[str, Path] = {}
+        self._frame_count = 0
+        self._next_frame_t = 0.0
+        self._t_wall_start = 0.0
+        self._last_sim_time = 0.0
+
+    @property
+    def expected_paths(self) -> List[Path]:
+        type_label = TYPE_LABELS.get(self._challenge_type, f"type{self._challenge_type}")
+        return [
+            self._out_dir / f"seed{self._seed}_{type_label}_{mode}.mp4"
+            for mode in self._modes
+        ]
+
+    def start(self, env: object, goal: Tuple[float, float, float], horizon: float) -> None:
+        if self._initialized:
+            return
+        cli = getattr(env, "CLIENT", 0)
+        self._t_wall_start = time.time()
+        self._last_sim_time = 0.0
+        self._next_frame_t = 0.0
+        self._frame_count = 0
+
+        if "depth" in self._modes:
+            self._cameras["depth"] = DepthCamera(cli, self._width, self._height)
+        if "fpv" in self._modes:
+            self._cameras["fpv"] = FPVCamera(cli, self._width, self._height, self._fpv_fov)
+        if "chase" in self._modes:
+            self._cameras["chase"] = ChaseCamera(
+                cli,
+                self._width,
+                self._height,
+                self._chase_fov,
+                self._chase_back,
+                self._chase_up,
+            )
+        if "overview" in self._modes:
+            self._cameras["overview"] = OverviewCamera(
+                cli,
+                self._width,
+                self._height,
+                goal,
+                self._overview_fov,
+            )
+
+        type_label = TYPE_LABELS.get(self._challenge_type, f"type{self._challenge_type}")
+        for mode in self._modes:
+            fname = f"seed{self._seed}_{type_label}_{mode}.mp4"
+            self._out_paths[mode] = self._out_dir / fname
+            self._tmp_paths[mode] = self._out_dir / f".tmp_{fname}"
+            self._writers[mode] = _open_video_writer(
+                self._tmp_paths[mode],
+                fps=self._fps,
+                width=self._width,
+                height=self._height,
+            )
+
+        if self._progress_file:
+            total_frames = int(float(horizon) * self._fps)
+            _write_progress(
+                self._progress_file,
+                {
+                    "status": "generating",
+                    "frames_rendered": 0,
+                    "total_frames": total_frames,
+                    "start_time": self._t_wall_start,
+                    "last_update": self._t_wall_start,
+                },
+            )
+        self._initialized = True
+
+    def capture_step(self, env: object, sim_time_sec: float) -> None:
+        if not self._initialized or self._frame_dt <= 0:
+            self._last_sim_time = float(sim_time_sec)
+            return
+        import pybullet as p
+
+        drone_pos = np.asarray(env._getDroneStateVector(0)[:3])
+        drone_quat = np.asarray(env.quat[0])
+        rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+
+        while float(sim_time_sec) >= self._next_frame_t:
+            for mode, cam in self._cameras.items():
+                frame = cam.capture(drone_pos, drone_quat, rot, self._frame_dt)
+                self._writers[mode].append_data(frame)
+            self._frame_count += 1
+            self._next_frame_t += self._frame_dt
+            if self._progress_file and self._frame_count % 20 == 0:
+                _write_progress(
+                    self._progress_file,
+                    {
+                        "status": "generating",
+                        "frames_rendered": self._frame_count,
+                        "total_frames": 0,
+                        "start_time": self._t_wall_start,
+                        "last_update": time.time(),
+                    },
+                )
+        self._last_sim_time = float(sim_time_sec)
+
+    def finish(self, success: bool, sim_time_sec: float) -> List[VideoResult]:
+        wall_sec = max(0.0, time.time() - self._t_wall_start) if self._initialized else 0.0
+        video_sec = self._frame_count / float(self._fps) if self._fps > 0 else 0.0
+
+        for writer in self._writers.values():
+            try:
+                writer.close()
+            except Exception:
+                pass
+        for mode in self._modes:
+            src = self._tmp_paths.get(mode)
+            dst = self._out_paths.get(mode)
+            if src is not None and dst is not None and src.exists():
+                try:
+                    src.replace(dst)
+                except Exception:
+                    pass
+
+        results: List[VideoResult] = []
+        for mode in self._modes:
+            out_path = self._out_paths[mode]
+            size_mb = out_path.stat().st_size / (1024 * 1024) if out_path.exists() else 0.0
+            results.append(
+                VideoResult(
+                    seed=self._seed,
+                    challenge_type=self._challenge_type,
+                    mode=mode,
+                    path=str(out_path),
+                    frames=self._frame_count,
+                    duration_sec=video_sec,
+                    success=bool(success),
+                    sim_time_sec=float(sim_time_sec),
+                    wall_time_sec=wall_sec,
+                )
+            )
+            print(f"  {mode:<10}  {out_path.name}  ({size_mb:.1f} MB)")
+        return results
+
+    def abort(self) -> None:
+        for writer in self._writers.values():
+            try:
+                writer.close()
+            except Exception:
+                pass
+        for tmp_path in self._tmp_paths.values():
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+
+
+def _infer_uid_from_model_path(model_path: Path) -> int:
+    for candidate in (Path(model_path).stem, Path(model_path).name):
+        match = re.search(r"uid[_-]?(\d+)", candidate, re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except Exception:
+                pass
+    return 0
+
+
+def _load_benchmark_expectations(summary_json: Path) -> Dict[Tuple[int, int], BenchmarkExpectation]:
+    payload = json.loads(Path(summary_json).read_text())
+    raw_groups = payload.get("group_results")
+    if not isinstance(raw_groups, dict):
+        raise ValueError("Summary JSON missing group_results.")
+
+    expectations: Dict[Tuple[int, int], BenchmarkExpectation] = {}
+    for group_name in BENCH_GROUP_ORDER:
+        rows = raw_groups.get(group_name, [])
+        if not isinstance(rows, list):
+            raise ValueError(f"Summary JSON group_results[{group_name}] must be a list.")
+        challenge_type = BENCH_GROUP_TO_TYPE[group_name]
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError(f"Summary JSON row for {group_name} is not an object.")
+            seed = int(row["seed"])
+            expectations[(seed, challenge_type)] = BenchmarkExpectation(
+                success=bool(row["success"]),
+                score=float(row["score"]),
+                sim_time_sec=float(row["sim_time"]),
+            )
+    return expectations
+
+
+def _assert_replay_matches_expected(
+    *,
+    job: VideoJob,
+    expected: BenchmarkExpectation,
+    success: bool,
+    score: float,
+    sim_time_sec: float,
+    score_tol: float = 1e-6,
+    sim_tol: float = 1e-6,
+) -> None:
+    mismatches: List[str] = []
+    if bool(success) != bool(expected.success):
+        mismatches.append(f"success expected={expected.success} actual={success}")
+    if abs(float(score) - float(expected.score)) > score_tol:
+        mismatches.append(f"score expected={expected.score:.6f} actual={score:.6f}")
+    if abs(float(sim_time_sec) - float(expected.sim_time_sec)) > sim_tol:
+        mismatches.append(
+            f"sim_time expected={expected.sim_time_sec:.6f} actual={sim_time_sec:.6f}"
+        )
+    if mismatches:
+        raise RuntimeError(
+            f"Benchmark replay mismatch for seed={job.seed} type={job.challenge_type}: "
+            + "; ".join(mismatches)
+        )
+
+
+def _video_benchmark_env_overrides() -> Dict[str, Optional[str]]:
+    # Video rendering runs inside the same Docker/RPC evaluator path as benchmark,
+    # but host-side frame capture makes each seed much slower than pure scoring.
+    # Use a generous timeout envelope while preserving the exact simulation logic.
+    return {
+        "SWARM_BATCH_TIMEOUT_MULT": "20.0",
+        "SWARM_BATCH_TIMEOUT_HARD_CAP_SEC": "7200.0",
+        "SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS": "1",
+        "SWARM_BATCH_TIMEOUT_EXTEND_SEC": "60.0",
+        "SWARM_BATCH_TIMEOUT_PROGRESS_STALE_SEC": "15.0",
+        "SWARM_BATCH_TIMEOUT_PROGRESS_MIN_SIM_ADVANCE": "0.02",
+        "SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC": "7200.0",
+    }
+
+
+def record_flight_benchmark(
+    model_path: Path,
+    seed: int,
+    challenge_type: int,
+    modes: List[str],
+    out_dir: Path,
+    *,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    fps: int = DEFAULT_FPS,
+    chase_back: float = CHASE_DISTANCE_BACK_M,
+    chase_up: float = CHASE_HEIGHT_ABOVE_M,
+    chase_fov: float = CHASE_FOV_DEG,
+    fpv_fov: float = FPV_FOV_DEG,
+    overview_fov: float = OVERVIEW_FOV_DEG,
+    progress_file: Optional[Path] = None,
+) -> Tuple[List[VideoResult], bool, float, float]:
+    from swarm.constants import SIM_DT
+    from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+    from swarm.validator.task_gen import task_for_seed_and_type
+
+    task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=challenge_type)
+    uid = _infer_uid_from_model_path(model_path)
+    recorder = _FlightRecorder(
+        seed=seed,
+        challenge_type=challenge_type,
+        modes=modes,
+        out_dir=out_dir,
+        width=width,
+        height=height,
+        fps=fps,
+        chase_back=chase_back,
+        chase_up=chase_up,
+        chase_fov=chase_fov,
+        fpv_fov=fpv_fov,
+        overview_fov=overview_fov,
+        progress_file=progress_file,
+    )
+
+    def _rollout_observer(event: Dict[str, object]) -> None:
+        event_type = str(event.get("event", ""))
+        env = event.get("env")
+        if env is None:
+            return
+        if event_type == "seed_ready":
+            goal = getattr(env, "GOAL_POS", getattr(task, "goal", (0.0, 0.0, 0.0)))
+            recorder.start(env, tuple(goal), float(getattr(task, "horizon", 0.0)))
+            return
+        if event_type == "step":
+            recorder.capture_step(env, float(event.get("sim_time_sec", 0.0)))
+
+    evaluator = DockerSecureEvaluator()
+    if not getattr(evaluator, "_base_ready", False):
+        raise RuntimeError("Docker evaluator base image is not ready.")
+
+    print(
+        f"[video] exact benchmark replay seed={seed}  type={challenge_type} "
+        f"modes={modes}"
+    )
+    try:
+        with _temporary_env(_video_benchmark_env_overrides()):
+            results = asyncio.run(
+                evaluator.evaluate_seeds_batch(
+                    tasks=[task],
+                    uid=uid,
+                    model_path=Path(model_path),
+                    worker_id=0,
+                    rollout_observer=_rollout_observer,
+                    task_offset=0,
+                    task_total=1,
+                )
+            )
+        if len(results) != 1:
+            raise RuntimeError(f"Unexpected result count from replay: {len(results)}")
+        result = results[0]
+        video_results = recorder.finish(
+            success=bool(result.success),
+            sim_time_sec=float(result.time_sec),
+        )
+        status = _outcome_label(bool(result.success))
+        print(
+            f"[video] RECORDED  outcome={status}  frames={video_results[0].frames if video_results else 0}  "
+            f"video={(video_results[0].duration_sec if video_results else 0.0):.1f}s  "
+            f"sim={float(result.time_sec):.1f}s"
+        )
+        return video_results, bool(result.success), float(result.score), float(result.time_sec)
+    except Exception:
+        recorder.abort()
+        raise
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Core recording function  (importable by validators)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -925,6 +1365,8 @@ def record_flight(
         size = fpath.stat().st_size / (1024 * 1024) if fpath.exists() else 0.0
         results.append(
             VideoResult(
+                seed=seed,
+                challenge_type=challenge_type,
                 mode=mode,
                 path=str(fpath),
                 frames=frame_count,
@@ -936,9 +1378,9 @@ def record_flight(
         )
         print(f"  {mode:<10}  {fpath.name}  ({size:.1f} MB)")
 
-    status = "SUCCESS" if success else "TIMEOUT"
+    status = _outcome_label(success)
     print(
-        f"[video] {status}  frames={frame_count}  video={video_sec:.1f}s  "
+        f"[video] RECORDED  outcome={status}  frames={frame_count}  video={video_sec:.1f}s  "
         f"sim={t_sim:.1f}s  wall={wall_sec:.1f}s"
     )
     return results
@@ -978,16 +1420,23 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument(
         "--seed",
         type=int,
-        required=True,
+        default=None,
         help="map seed for deterministic world generation",
     )
     req.add_argument(
         "--type",
         type=int,
-        required=True,
+        default=None,
         choices=[1, 2, 3, 4, 5, 6],
         metavar="TYPE",
         help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest)",
+    )
+    req.add_argument(
+        "--seed-file",
+        type=Path,
+        default=None,
+        metavar="JSON",
+        help="benchmark seed JSON generated by swarm benchmark --save-seed-file",
     )
 
     vid = ap.add_argument_group("video options")
@@ -1021,6 +1470,24 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_FPS,
         help=f"frames/sec    (default: {DEFAULT_FPS})",
+    )
+    vid.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="skip a seed if all requested output files already exist",
+    )
+    vid.add_argument(
+        "--backend",
+        choices=["local", "benchmark"],
+        default="benchmark",
+        help="Replay backend: local fast replay, or exact benchmark Docker/RPC replay.",
+    )
+    vid.add_argument(
+        "--summary-json",
+        type=Path,
+        default=None,
+        metavar="JSON",
+        help="Benchmark summary JSON from swarm benchmark --summary-json-out; replay results must match when provided.",
     )
 
     cam = ap.add_argument_group("camera tuning")
@@ -1070,15 +1537,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main() -> None:
-    args = _build_parser().parse_args()
-
-    model = args.model.resolve()
-    if not model.exists():
-        raise FileNotFoundError(f"Model not found: {model}")
-
-    # parse mode string
-    raw = args.mode.strip().lower()
+def _resolve_modes(raw_mode: str) -> List[str]:
+    raw = raw_mode.strip().lower()
     if raw == "all":
         modes = list(VALID_MODES)
     else:
@@ -1088,47 +1548,184 @@ def main() -> None:
             raise ValueError(f"Unknown mode(s): {invalid}  (valid: {VALID_MODES})")
     if not modes:
         raise ValueError(f"No modes selected. Choose from: {VALID_MODES}")
+    return modes
 
+
+def _resolve_jobs(args: argparse.Namespace) -> List[VideoJob]:
+    if args.seed_file is not None:
+        if args.seed is not None or args.type is not None:
+            raise ValueError("--seed-file cannot be combined with --seed or --type")
+        return _load_seed_jobs(args.seed_file)
+    if args.seed is None or args.type is None:
+        raise ValueError("Provide either --seed-file, or both --seed and --type")
+    return [VideoJob(seed=int(args.seed), challenge_type=int(args.type))]
+
+
+def _expected_output_paths(
+    out_dir: Path,
+    jobs: Iterable[VideoJob],
+    modes: List[str],
+) -> Dict[VideoJob, List[Path]]:
+    out_dir = Path(out_dir)
+    expected: Dict[VideoJob, List[Path]] = {}
+    for job in jobs:
+        type_label = TYPE_LABELS.get(job.challenge_type, f"type{job.challenge_type}")
+        expected[job] = [
+            out_dir / f"seed{job.seed}_{type_label}_{mode}.mp4"
+            for mode in modes
+        ]
+    return expected
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    args = _build_parser().parse_args(argv)
+
+    model = args.model.resolve()
+    if not model.exists():
+        raise FileNotFoundError(f"Model not found: {model}")
+    if args.summary_json is not None and args.backend != "benchmark":
+        raise ValueError("--summary-json requires --backend benchmark")
+
+    modes = _resolve_modes(args.mode)
+    jobs = _resolve_jobs(args)
     out_dir = args.out or (_SCRIPT_DIR / "videos")
-    tname = TYPE_LABELS.get(args.type, "?")
+    expected_paths = _expected_output_paths(out_dir, jobs, modes)
 
     print("=" * 64)
     print("  Swarm V4 Video Generator")
     print("=" * 64)
     print(f"  Model       {model}")
-    print(f"  Seed        {args.seed}")
-    print(f"  Type        {args.type} ({tname})")
+    if args.seed_file is not None:
+        print(f"  Seed file   {args.seed_file}")
+        print(f"  Jobs        {len(jobs)} seeds")
+    else:
+        tname = TYPE_LABELS.get(args.type, "?")
+        print(f"  Seed        {args.seed}")
+        print(f"  Type        {args.type} ({tname})")
     print(f"  Modes       {', '.join(modes)}")
     print(f"  Resolution  {args.width}x{args.height} @ {args.fps} fps")
+    print(f"  Backend     {args.backend}")
     print(f"  Output      {out_dir}")
+    if args.skip_existing:
+        print("  Skip exists yes")
+    if args.summary_json is not None:
+        print(f"  Summary     {args.summary_json}")
     print("=" * 64)
     print()
 
     t0 = time.time()
-    results = record_flight(
-        model_path=model,
-        seed=args.seed,
-        challenge_type=args.type,
-        modes=modes,
-        out_dir=out_dir,
-        width=args.width,
-        height=args.height,
-        fps=args.fps,
-        chase_back=args.chase_back,
-        chase_up=args.chase_up,
-        chase_fov=args.chase_fov,
-        fpv_fov=args.fpv_fov,
-        overview_fov=args.overview_fov,
-        progress_file=args.progress_file,
+    results: List[VideoResult] = []
+    failures: List[str] = []
+    generated_jobs = 0
+    skipped_jobs = 0
+    verified_jobs = 0
+    verified_job_keys: set[tuple[int, int]] = set()
+    mismatch_job_keys: set[tuple[int, int]] = set()
+    expectations = (
+        _load_benchmark_expectations(args.summary_json)
+        if args.summary_json is not None
+        else {}
     )
+    for index, job in enumerate(jobs, start=1):
+        job_paths = expected_paths[job]
+        if args.skip_existing and job_paths and all(path.exists() for path in job_paths):
+            print(
+                f"[video] skip {index}/{len(jobs)} seed={job.seed} "
+                f"type={job.challenge_type} (all outputs already exist)"
+            )
+            skipped_jobs += 1
+            continue
+        print(f"[video] job {index}/{len(jobs)}")
+        job_results: List[VideoResult] = []
+        try:
+            if args.backend == "benchmark":
+                job_results, success, score, sim_time_sec = record_flight_benchmark(
+                    model_path=model,
+                    seed=job.seed,
+                    challenge_type=job.challenge_type,
+                    modes=modes,
+                    out_dir=out_dir,
+                    width=args.width,
+                    height=args.height,
+                    fps=args.fps,
+                    chase_back=args.chase_back,
+                    chase_up=args.chase_up,
+                    chase_fov=args.chase_fov,
+                    fpv_fov=args.fpv_fov,
+                    overview_fov=args.overview_fov,
+                    progress_file=args.progress_file if len(jobs) == 1 else None,
+                )
+            else:
+                job_results = record_flight(
+                    model_path=model,
+                    seed=job.seed,
+                    challenge_type=job.challenge_type,
+                    modes=modes,
+                    out_dir=out_dir,
+                    width=args.width,
+                    height=args.height,
+                    fps=args.fps,
+                    chase_back=args.chase_back,
+                    chase_up=args.chase_up,
+                    chase_fov=args.chase_fov,
+                    fpv_fov=args.fpv_fov,
+                    overview_fov=args.overview_fov,
+                    progress_file=args.progress_file if len(jobs) == 1 else None,
+                )
+                success = bool(job_results[0].success) if job_results else False
+                sim_time_sec = float(job_results[0].sim_time_sec) if job_results else 0.0
+                score = 1.0 if success else 0.0
+
+            results.extend(job_results)
+            expected = expectations.get((job.seed, job.challenge_type))
+            if expected is not None:
+                _assert_replay_matches_expected(
+                    job=job,
+                    expected=expected,
+                    success=success,
+                    score=score,
+                    sim_time_sec=sim_time_sec,
+                )
+                verified_jobs += 1
+                verified_job_keys.add((job.seed, job.challenge_type))
+                print(
+                    f"[video] VERIFIED  seed={job.seed}  type={job.challenge_type}  "
+                    f"outcome={_outcome_label(success)}  score={score:.6f}  sim={sim_time_sec:.2f}s"
+                )
+            generated_jobs += 1
+        except Exception as exc:
+            if (job.seed, job.challenge_type) in expectations:
+                mismatch_job_keys.add((job.seed, job.challenge_type))
+            failures.append(
+                f"seed={job.seed} type={job.challenge_type}: {type(exc).__name__}: {exc}"
+            )
+            print(f"[video] FAILED  {failures[-1]}")
 
     print()
     print("=" * 64)
     print(f"  Finished in {time.time() - t0:.1f}s")
+    print(f"  Jobs done   {generated_jobs}")
+    if skipped_jobs:
+        print(f"  Jobs skipped {skipped_jobs}")
+    if verified_jobs:
+        print(f"  Jobs verified {verified_jobs}")
+    if failures:
+        print(f"  Jobs failed {len(failures)}")
     for r in results:
-        tag = "OK" if r.success else "TIMEOUT"
+        job_key = (r.seed, r.challenge_type)
+        if job_key in mismatch_job_keys:
+            tag = "MISMATCH"
+        else:
+            tag = _summary_tag(
+                success=r.success,
+                verified=job_key in verified_job_keys,
+            )
         print(f"  [{tag}]  {r.mode:<10}  {r.path}")
+    for failure in failures:
+        print(f"  [FAIL] {failure}")
     print("=" * 64)
+    if failures:
+        raise SystemExit(1)
 
 
 # ---------------------------------------------------------------------------

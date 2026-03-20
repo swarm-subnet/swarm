@@ -39,6 +39,7 @@ def _run_multi_seed_rpc_sync(
     uid: int,
     rpc_port: int,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    rollout_observer: Optional[Callable[[dict], None]] = None,
     stop_event: Optional[threading.Event] = None,
     progress_state: Optional[dict] = None,
     task_offset: int = 0,
@@ -119,6 +120,14 @@ def _run_multi_seed_rpc_sync(
             line = f"[{time.strftime('%H:%M:%S')}] [RPC TRACE][UID {uid}][port {rpc_port}] {msg}"
             print(line, flush=True)
             bt.logging.info(line)
+
+    def _emit_rollout_event(event: str, **payload: object) -> None:
+        if rollout_observer is None:
+            return
+        try:
+            rollout_observer({"event": event, **payload})
+        except Exception:
+            pass
 
     def _task_type_label(task_obj) -> str:
         raw_type = int(getattr(task_obj, "challenge_type", -1))
@@ -375,6 +384,16 @@ def _run_multi_seed_rpc_sync(
                                 f"(overhead={rpc_overhead_sec*1000:.1f}ms cpu_factor={cpu_factor:.2f}x)"
                             )
 
+                        _emit_rollout_event(
+                            "seed_ready",
+                            task=task,
+                            env=env,
+                            uid=int(uid),
+                            task_label=task_label,
+                            step_idx=0,
+                            sim_time_sec=0.0,
+                        )
+
                         t_sim = 0.0
                         success = False
                         info = {}
@@ -498,6 +517,18 @@ def _run_multi_seed_rpc_sync(
                             )
 
                             t_sim += SIM_DT
+                            _emit_rollout_event(
+                                "step",
+                                task=task,
+                                env=env,
+                                uid=int(uid),
+                                task_label=task_label,
+                                step_idx=step_idx,
+                                sim_time_sec=float(t_sim),
+                                terminated=bool(terminated),
+                                truncated=bool(truncated),
+                                info=dict(info),
+                            )
                             if terminated or truncated:
                                 success = info.get("success", False)
                                 _trace(
@@ -594,6 +625,18 @@ def _run_multi_seed_rpc_sync(
                                 task=task_label,
                                 step=step_idx,
                                 sim_t=t_sim,
+                            )
+                            _emit_rollout_event(
+                                "seed_result",
+                                task=task,
+                                env=env,
+                                uid=int(uid),
+                                task_label=task_label,
+                                step_idx=step_idx,
+                                sim_time_sec=float(t_sim),
+                                success=bool(success),
+                                score=float(score),
+                                info=dict(info),
                             )
                             results.append(
                                 ValidationResult(uid, success, t_sim, score)
@@ -751,6 +794,7 @@ async def _run_multi_seed_rpc_host(
     uid: int,
     rpc_port: int,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    rollout_observer: Optional[Callable[[dict], None]] = None,
     stop_event: Optional[threading.Event] = None,
     progress_state: Optional[dict] = None,
     task_offset: int = 0,
@@ -766,6 +810,7 @@ async def _run_multi_seed_rpc_host(
                 uid,
                 rpc_port,
                 on_seed_complete,
+                rollout_observer,
                 stop_event,
                 progress_state,
                 task_offset,

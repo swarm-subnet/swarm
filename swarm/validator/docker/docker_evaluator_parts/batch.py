@@ -27,6 +27,7 @@ async def evaluate_seeds_batch(
     model_path: Path,
     worker_id: int = 0,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    rollout_observer: Optional[Callable[[dict], None]] = None,
     task_offset: int = 0,
     task_total: Optional[int] = None,
 ) -> list:
@@ -562,6 +563,7 @@ async def evaluate_seeds_batch(
                         uid,
                         host_port,
                         _on_seed_complete_guarded,
+                        rollout_observer,
                         stop_event,
                         progress_state,
                         task_offset,
