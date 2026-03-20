@@ -103,7 +103,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._search_area_center = self.GOAL_POS.copy()
         self._search_area_center[0] += noise_xy[0]
         self._search_area_center[1] += noise_xy[1]
-        self._search_area_center[2] += noise_z
+        self._search_area_center[2] = max(0.0, self._search_area_center[2] + noise_z)
         
         fov_rng = np.random.RandomState(seed)
         fov_rng.rand()
@@ -495,7 +495,7 @@ class MovingDroneAviary(BaseRLAviary):
         center = self.GOAL_POS.copy()
         center[0] += noise_xy[0]
         center[1] += noise_xy[1]
-        center[2] += noise_z
+        center[2] = max(0.0, center[2] + noise_z)
         return center
 
     def _check_collision(self) -> tuple:
