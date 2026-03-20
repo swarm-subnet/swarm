@@ -318,6 +318,12 @@ def _spawn_instances_as_single_multibody(
 def _spawn_tree_trunk_colliders(
     cli: int, *, instances: List[Tuple[float, float, str, str, float, float]],
 ) -> int:
+    invis_vis = p.createVisualShape(
+        p.GEOM_BOX,
+        halfExtents=[0.001, 0.001, 0.001],
+        rgbaColor=[0, 0, 0, 0],
+        physicsClientId=cli,
+    )
     placed_count = 0
     for x, y, category, obj_name, scale, occupancy_radius in instances:
         obj_path = os.path.join(FOREST_ASSET_DIR, category, obj_name)
@@ -337,7 +343,7 @@ def _spawn_tree_trunk_colliders(
         p.createMultiBody(
             baseMass=0.0,
             baseCollisionShapeIndex=col_shape,
-            baseVisualShapeIndex=-1,
+            baseVisualShapeIndex=invis_vis,
             basePosition=[x, y, trunk_height * 0.5],
             baseOrientation=[0.0, 0.0, 0.0, 1.0],
             physicsClientId=cli,

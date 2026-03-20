@@ -977,7 +977,7 @@ class MovingDroneAviary(BaseRLAviary):
             physicsClientId=cli,
         )
 
-        if getattr(self.task, "challenge_type", 0) in (4, 6):
+        if getattr(self.task, "challenge_type", 0) != 2:
             plane_id = getattr(self, "PLANE_ID", None)
             if plane_id is not None:
                 p.changeVisualShape(
