@@ -17,6 +17,20 @@ def _default_run_dir() -> Path:
     return Path("bench_logs") / f"benchmark_video_{stamp}"
 
 
+def _timestamp_suffix() -> str:
+    return time.strftime("%Y%m%d_%H%M%S")
+
+
+def _resolve_run_dir(requested: Path | None) -> Path:
+    if requested is None:
+        return _default_run_dir().resolve()
+
+    resolved = Path(requested).resolve()
+    if not resolved.exists():
+        return resolved
+    return resolved.parent / f"{resolved.name}_{_timestamp_suffix()}"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="benchmark_with_videos",
@@ -220,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Model not found: {model}", file=sys.stderr)
         return 1
 
-    run_dir = (args.run_dir or _default_run_dir()).resolve()
+    run_dir = _resolve_run_dir(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     videos_dir = run_dir / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)

@@ -116,3 +116,23 @@ def test_runner_fails_fast_for_missing_model(tmp_path: Path) -> None:
     rc = runner.main(["--model", str(tmp_path / "missing.zip")])
 
     assert rc == 1
+
+
+def test_resolve_run_dir_appends_timestamp_when_directory_exists(
+    monkeypatch, tmp_path: Path
+) -> None:
+    existing = tmp_path / "uid178_bench_video_run"
+    existing.mkdir()
+    monkeypatch.setattr(runner, "_timestamp_suffix", lambda: "20260320_111111")
+
+    resolved = runner._resolve_run_dir(existing)
+
+    assert resolved == tmp_path / "uid178_bench_video_run_20260320_111111"
+
+
+def test_resolve_run_dir_preserves_new_requested_directory(tmp_path: Path) -> None:
+    requested = tmp_path / "uid178_bench_video_run"
+
+    resolved = runner._resolve_run_dir(requested)
+
+    assert resolved == requested.resolve()
