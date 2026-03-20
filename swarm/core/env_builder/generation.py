@@ -101,11 +101,20 @@ def _find_clear_platform_position(
     preferred_distance: shared.Optional[float] = None,
     distance_mode: str = "xyz",
     allow_candidate_fallback: bool = True,
+    min_obstacle_height: float = 0.0,
 ) -> shared.Tuple[float, float, float]:
     clearance = shared.TYPE_4_PLATFORM_CLEARANCE
     platform_r = shared.START_PLATFORM_RADIUS
     check_r = platform_r + clearance
     wx, wy = world_range_x, world_range_y
+
+    skip_bodies: shared.Optional[set] = None
+    if min_obstacle_height > 0:
+        skip_bodies = set()
+        for bid in range(body_count_before, shared.p.getNumBodies(physicsClientId=cli)):
+            mn, mx = shared.p.getAABB(bid, physicsClientId=cli)
+            if (mx[2] - mn[2]) <= min_obstacle_height:
+                skip_bodies.add(bid)
 
     def _distance(
         x1: float,
@@ -137,6 +146,8 @@ def _find_clear_platform_position(
         overlapping = False
         for body_id in range(body_count_before, shared.p.getNumBodies(physicsClientId=cli)):
             if body_id == probe_uid:
+                continue
+            if skip_bodies is not None and body_id in skip_bodies:
                 continue
             contacts = shared.p.getClosestPoints(
                 probe_uid,

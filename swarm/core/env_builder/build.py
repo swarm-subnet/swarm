@@ -80,14 +80,18 @@ def build_world(
 
     collision_scan_types = {
         1: (shared.TYPE_1_WORLD_RANGE, shared.TYPE_1_WORLD_RANGE, shared.TYPE_1_H_MIN, shared.TYPE_1_H_MAX),
+        4: (shared.TYPE_3_VILLAGE_RANGE, shared.TYPE_3_VILLAGE_RANGE, 0.0, 0.0),
         5: (shared.TYPE_4_WORLD_RANGE_X, shared.TYPE_4_WORLD_RANGE_Y, shared.TYPE_4_H_MIN, shared.TYPE_4_H_MAX),
         6: (shared.TYPE_6_WORLD_RANGE, shared.TYPE_6_WORLD_RANGE, shared.TYPE_6_H_MIN, shared.TYPE_6_H_MAX),
     }
+
+    _VILLAGE_MIN_OBSTACLE_HEIGHT = 1.0
 
     if challenge_type in collision_scan_types and sx is not None and sy is not None and sz is not None:
         _wx, _wy, _hmin, _hmax = collision_scan_types[challenge_type]
         placement_rng = shared.random.Random(seed + 777777)
 
+        obstacle_height_filter = _VILLAGE_MIN_OBSTACLE_HEIGHT if challenge_type == 4 else 0.0
         start_surface = sz - shared.START_PLATFORM_TAKEOFF_BUFFER
         new_sx, new_sy, new_s_surface = _find_clear_platform_position(
             cli,
@@ -100,6 +104,7 @@ def build_world(
             world_range_y=_wy,
             h_min=_hmin,
             h_max=_hmax,
+            min_obstacle_height=obstacle_height_filter,
         )
         sx, sy = new_sx, new_sy
         sz = new_s_surface + shared.START_PLATFORM_TAKEOFF_BUFFER
@@ -136,7 +141,8 @@ def build_world(
                 required_distance_max=required_distance_max,
                 preferred_distance=preferred_distance,
                 distance_mode=distance_mode,
-                allow_candidate_fallback=False,
+                allow_candidate_fallback=challenge_type == 4,
+                min_obstacle_height=obstacle_height_filter,
             )
             gx, gy, gz = new_gx, new_gy, new_gz
             adjusted_goal = (gx, gy, gz)
