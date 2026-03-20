@@ -107,6 +107,8 @@ def build_world(
             min_obstacle_height=obstacle_height_filter,
         )
         sx, sy = new_sx, new_sy
+        if challenge_type == 4:
+            new_s_surface = float(_raycast_surface_z(cli, sx, sy))
         sz = new_s_surface + shared.START_PLATFORM_TAKEOFF_BUFFER
         start_platform_surface_z = new_s_surface
         adjusted_start = (sx, sy, sz)
@@ -144,6 +146,8 @@ def build_world(
                 allow_candidate_fallback=challenge_type == 4,
                 min_obstacle_height=obstacle_height_filter,
             )
+            if challenge_type == 4:
+                new_gz = float(_raycast_surface_z(cli, new_gx, new_gy))
             gx, gy, gz = new_gx, new_gy, new_gz
             adjusted_goal = (gx, gy, gz)
 
@@ -151,9 +155,9 @@ def build_world(
         platform_radius = shared.START_PLATFORM_RADIUS
         platform_height = shared.START_PLATFORM_HEIGHT
 
-        if challenge_type in (3, 4):
+        if challenge_type == 3:
             surface_z = float(_raycast_surface_z(cli, sx, sy))
-        elif challenge_type in (1, 5, 6) and start_platform_surface_z is not None:
+        elif challenge_type in (1, 4, 5, 6) and start_platform_surface_z is not None:
             surface_z = start_platform_surface_z
         elif shared.START_PLATFORM_RANDOMIZE:
             surface_z = shared.get_platform_height_for_seed(seed, challenge_type)
@@ -161,7 +165,10 @@ def build_world(
             surface_z = shared.START_PLATFORM_SURFACE_Z
 
         start_platform_surface_z = surface_z
-        base_position = [sx, sy, surface_z - platform_height / 2 + 0.05]
+        if challenge_type == 4:
+            base_position = [sx, sy, surface_z + platform_height / 2 + 0.12]
+        else:
+            base_position = [sx, sy, surface_z - platform_height / 2 + 0.05]
 
         start_platform_collision = shared.p.createCollisionShape(
             shapeType=shared.p.GEOM_CYLINDER,
@@ -239,7 +246,7 @@ def build_world(
         if adjusted_goal is None:
             gx, gy, gz = goal
 
-        if challenge_type in (3, 4):
+        if challenge_type == 3:
             surface_z = float(_raycast_surface_z(cli, gx, gy))
         else:
             surface_z = gz
@@ -268,7 +275,10 @@ def build_world(
                 ],
                 physicsClientId=cli,
             )
-            goal_platform_z = surface_z - platform_height / 2 + 0.05
+            if challenge_type == 4:
+                goal_platform_z = surface_z + platform_height / 2 + 0.12
+            else:
+                goal_platform_z = surface_z - platform_height / 2 + 0.05
             platform_uid = shared.p.createMultiBody(
                 baseMass=0,
                 baseCollisionShapeIndex=platform_collision,
@@ -415,6 +425,23 @@ def build_world(
                 physicsClientId=cli,
             )
             end_platform_uids.append(cap_uid)
+
+    if challenge_type == 4:
+        all_plat = set(start_platform_uids) | set(end_platform_uids)
+        to_remove = set()
+        for plat_uid in list(all_plat):
+            for i in range(shared.p.getNumBodies(physicsClientId=cli)):
+                bid = shared.p.getBodyUniqueId(i, physicsClientId=cli)
+                if bid in all_plat or bid < static_world_body_base:
+                    continue
+                mn, mx = shared.p.getAABB(bid, physicsClientId=cli)
+                if (mx[2] - mn[2]) > 2.0:
+                    continue
+                contacts = shared.p.getClosestPoints(plat_uid, bid, distance=0.0, physicsClientId=cli)
+                if contacts and min(c[8] for c in contacts) < -0.03:
+                    to_remove.add(bid)
+        for bid in to_remove:
+            shared.p.removeBody(bid, physicsClientId=cli)
 
     return (
         end_platform_uids,
