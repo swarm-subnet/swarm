@@ -139,10 +139,31 @@ def test_select_next_batch_index_treats_forest_as_heavy_when_cap_is_full():
     assert selected == 4
 
 
-def test_max_heavy_active_allows_up_to_four_heavy_workers():
+def test_select_next_batch_index_avoids_second_heavy_seed_with_three_workers():
+    batch_plan = [[0], [1], [2]]
+    task_meta = [
+        {"group": "type6_forest"},
+        {"group": "type5_warehouse"},
+        {"group": "type2_open"},
+    ]
+
+    selected = bench_full_eval._select_next_batch_index(
+        pending_batch_ids=[1, 2],
+        batch_plan=batch_plan,
+        task_meta=task_meta,
+        active_batch_ids=[0],
+        active_worker_cap=3,
+    )
+
+    assert selected == 2
+
+
+def test_max_heavy_active_scales_with_worker_count():
+    assert bench_full_eval._max_heavy_active(1) == 1
     assert bench_full_eval._max_heavy_active(2) == 1
-    assert bench_full_eval._max_heavy_active(3) == 3
-    assert bench_full_eval._max_heavy_active(4) == 4
+    assert bench_full_eval._max_heavy_active(3) == 1
+    assert bench_full_eval._max_heavy_active(4) == 2
+    assert bench_full_eval._max_heavy_active(6) == 3
     assert bench_full_eval._max_heavy_active(8) == 4
 
 

@@ -50,9 +50,8 @@ def _group_dispatch_weight(group_name: str) -> int:
 
 
 def _max_heavy_active(active_worker_cap: int) -> int:
-    if active_worker_cap <= 2:
-        return 1
-    return min(int(active_worker_cap), 4)
+    worker_cap = max(1, int(active_worker_cap))
+    return max(1, min(worker_cap // 2, 4))
 
 
 def _seed_has_calibration_spike(seed_meta: Optional[Dict[str, Any]]) -> bool:
