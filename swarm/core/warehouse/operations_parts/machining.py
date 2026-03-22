@@ -156,15 +156,18 @@ def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
                 double_sided=MACHINING_VISUAL_DOUBLE_SIDED,
             )
         else:
-            _spawn_collision_only_with_anchor(
+            _spawn_mesh_with_anchor(
                 loader=industry_loader,
-                model_name=spec["model_name"],
+                model_name=spec.get("collision_path", spec["model_name"]),
                 world_anchor_xyz=(x, y, floor_top_z),
                 yaw_deg=yaw_deg,
                 mesh_scale_xyz=spec["scale_xyz"],
                 local_anchor_xyz=(spec["anchor_x"], spec["anchor_y"], spec["anchor_z"]),
                 cli=cli,
-                model_path_override=spec.get("collision_path", ""),
+                with_collision=True,
+                use_texture=False,
+                rgba=spec.get("simple_rgba", (0.62, 0.64, 0.66, 1.0)),
+                double_sided=MACHINING_VISUAL_DOUBLE_SIDED,
             )
         if (
             (not MACHINING_FORCE_SIMPLE_VISUALS)

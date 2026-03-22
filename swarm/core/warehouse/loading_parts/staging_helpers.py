@@ -107,7 +107,7 @@ def make_staging_spawn_helpers(*, loading_loader, cli, container_spec):
             return
 
         if with_collision:
-            _spawn_collision_only_with_anchor(
+            _spawn_mesh_with_anchor(
                 loader=loading_loader,
                 model_name=container_spec["model_name"],
                 world_anchor_xyz=(x, y, z_anchor),
@@ -115,6 +115,9 @@ def make_staging_spawn_helpers(*, loading_loader, cli, container_spec):
                 mesh_scale_xyz=container_spec["scale_xyz"],
                 local_anchor_xyz=container_spec["anchor_xyz"],
                 cli=cli,
+                with_collision=True,
+                use_texture=False,
+                rgba=(0.70, 0.70, 0.70, 1.0),
             )
 
         model_path = loading_loader._asset_path(container_spec["model_name"])

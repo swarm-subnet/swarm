@@ -139,22 +139,10 @@ def build_factory_barrier_ring(
     entry_side = segments[gap_idx]["side"]
     segments_to_spawn = [s for i, s in enumerate(segments) if i != gap_idx]
 
-    collision_proxy = _obj_collision_proxy_path(barrier_model_path)
     spawned = 0
     for seg in segments_to_spawn:
         world_anchor = (seg["x"], seg["y"], float(floor_top_z))
         yaw_deg = float(seg["yaw"])
-        if FACTORY_BARRIER_WITH_COLLISION:
-            _spawn_collision_only_with_anchor(
-                loader=barrier_loader,
-                model_name=model_name,
-                world_anchor_xyz=world_anchor,
-                yaw_deg=yaw_deg,
-                mesh_scale_xyz=FACTORY_BARRIER_SCALE_XYZ,
-                local_anchor_xyz=(anchor_x, anchor_y, anchor_z),
-                cli=cli,
-                model_path_override=collision_proxy,
-            )
         _spawn_mesh_with_anchor(
             loader=barrier_loader,
             model_name=model_name,
@@ -163,7 +151,7 @@ def build_factory_barrier_ring(
             mesh_scale_xyz=FACTORY_BARRIER_SCALE_XYZ,
             local_anchor_xyz=(anchor_x, anchor_y, anchor_z),
             cli=cli,
-            with_collision=False,
+            with_collision=FACTORY_BARRIER_WITH_COLLISION,
             use_texture=False,
             rgba=FACTORY_BARRIER_FLAT_RGBA,
             double_sided=FACTORY_BARRIER_DOUBLE_SIDED,
