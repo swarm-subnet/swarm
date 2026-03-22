@@ -528,6 +528,7 @@ def _run_multi_seed_rpc_sync(
                                 terminated=bool(terminated),
                                 truncated=bool(truncated),
                                 info=dict(info),
+                                action=act.tolist(),
                             )
                             if terminated or truncated:
                                 success = info.get("success", False)

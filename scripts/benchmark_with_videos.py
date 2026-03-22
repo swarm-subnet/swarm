@@ -227,6 +227,10 @@ def _build_video_argv(
     return argv
 
 
+def _build_video_argv_with_actions(base_argv: list[str], actions_dir: Path) -> list[str]:
+    return base_argv + ["--save-actions", str(actions_dir)]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     model = args.model.resolve()
@@ -238,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     videos_dir = run_dir / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
+    actions_dir = run_dir / "actions"
+    actions_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "benchmark.log"
     saved_seed_file = run_dir / "seeds.json"
     summary_json = run_dir / "summary.json"
@@ -281,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Seeds       {saved_seed_file}")
     print(f"  Summary     {summary_json}")
     print(f"  Videos      {videos_dir}")
+    print(f"  Actions     {actions_dir}")
     print(f"  Video       {args.width}x{args.height} @ {args.fps} fps  mode={args.mode}")
     print("=" * 64)
 
@@ -292,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         benchmark_main(benchmark_argv)
 
         print("[runner] video replay phase")
-        video_main(video_argv)
+        video_main(_build_video_argv_with_actions(video_argv, actions_dir))
 
         print("[runner] verification passed: benchmark and video replay matched.")
         return 0

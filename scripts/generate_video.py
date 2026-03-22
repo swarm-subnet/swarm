@@ -53,6 +53,32 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Action log I/O
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
+    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest"}.get(
+        challenge_type, f"type{challenge_type}"
+    )
+    return Path(directory) / f"seed{seed}_{label}_actions.json"
+
+
+def _save_action_log(
+    path: Path, seed: int, challenge_type: int, actions: List[List[float]],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"seed": seed, "challenge_type": challenge_type, "actions": actions}, f)
+
+
+def _load_action_log(path: Path) -> List[np.ndarray]:
+    with open(path, "r") as f:
+        data = json.load(f)
+    return [np.asarray(a, dtype=np.float32) for a in data["actions"]]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1081,6 +1107,7 @@ def record_flight_benchmark(
     chase_fov: float = CHASE_FOV_DEG,
     fpv_fov: float = FPV_FOV_DEG,
     overview_fov: float = OVERVIEW_FOV_DEG,
+    save_actions_dir: Optional[Path] = None,
     progress_file: Optional[Path] = None,
 ) -> Tuple[List[VideoResult], bool, float, float]:
     from swarm.constants import SIM_DT
@@ -1105,6 +1132,8 @@ def record_flight_benchmark(
         progress_file=progress_file,
     )
 
+    recorded_actions: List[List[float]] = []
+
     def _rollout_observer(event: Dict[str, object]) -> None:
         event_type = str(event.get("event", ""))
         env = event.get("env")
@@ -1116,6 +1145,9 @@ def record_flight_benchmark(
             return
         if event_type == "step":
             recorder.capture_step(env, float(event.get("sim_time_sec", 0.0)))
+            action = event.get("action")
+            if action is not None:
+                recorded_actions.append(list(action) if not isinstance(action, list) else action)
 
     evaluator = DockerSecureEvaluator()
     if not getattr(evaluator, "_base_ready", False):
@@ -1145,6 +1177,11 @@ def record_flight_benchmark(
             success=bool(result.success),
             sim_time_sec=float(result.time_sec),
         )
+        if save_actions_dir is not None and recorded_actions:
+            ap = _action_log_path(save_actions_dir, seed, challenge_type)
+            _save_action_log(ap, seed, challenge_type, recorded_actions)
+            print(f"  actions    {ap.name}  ({len(recorded_actions)} steps)")
+
         status = _outcome_label(bool(result.success))
         print(
             f"[video] RECORDED  outcome={status}  frames={video_results[0].frames if video_results else 0}  "
@@ -1191,6 +1228,8 @@ def record_flight(
     fpv_fov: float = FPV_FOV_DEG,
     overview_fov: float = OVERVIEW_FOV_DEG,
     progress_file: Optional[Path] = None,
+    save_actions_dir: Optional[Path] = None,
+    replay_actions_dir: Optional[Path] = None,
 ) -> List[VideoResult]:
     """Record one flight and return metadata for each requested camera mode.
 
@@ -1231,6 +1270,14 @@ def record_flight(
     cli = getattr(env, "CLIENT", 0)
     act_lo = env.action_space.low.flatten()
     act_hi = env.action_space.high.flatten()
+
+    replay_actions: Optional[List[np.ndarray]] = None
+    if replay_actions_dir is not None:
+        replay_path = _action_log_path(replay_actions_dir, seed, challenge_type)
+        replay_actions = _load_action_log(replay_path)
+        print(f"[video] replaying {len(replay_actions)} recorded actions")
+    recorded_actions: List[List[float]] = []
+    replay_idx = 0
 
     # --- cameras --------------------------------------------------------
     cameras: Dict[str, _CameraBase] = {}
@@ -1285,18 +1332,24 @@ def record_flight(
     try:
         while t_sim < task.horizon:
             # --- agent step ---
-            try:
-                raw = agent.act(obs)
-                if raw is None:
+            if replay_actions is not None and replay_idx < len(replay_actions):
+                act = np.clip(replay_actions[replay_idx], act_lo, act_hi)
+                replay_idx += 1
+            else:
+                try:
+                    raw = agent.act(obs)
+                    if raw is None:
+                        raw = np.zeros(5, dtype=np.float32)
+                except Exception:
                     raw = np.zeros(5, dtype=np.float32)
-            except Exception:
-                raw = np.zeros(5, dtype=np.float32)
 
-            act = np.clip(np.asarray(raw, dtype=np.float32).flatten(), act_lo, act_hi)
-            if getattr(env, "ACT_TYPE", None) == ActionType.VEL:
-                norm = max(float(np.linalg.norm(act[:3])), 1e-6)
-                act[:3] *= min(1.0, float(SPEED_LIMIT) / norm)
-                act = np.clip(act, act_lo, act_hi)
+                act = np.clip(np.asarray(raw, dtype=np.float32).flatten(), act_lo, act_hi)
+                if getattr(env, "ACT_TYPE", None) == ActionType.VEL:
+                    norm = max(float(np.linalg.norm(act[:3])), 1e-6)
+                    act[:3] *= min(1.0, float(SPEED_LIMIT) / norm)
+                    act = np.clip(act, act_lo, act_hi)
+
+            recorded_actions.append(act.tolist())
 
             obs, _, terminated, truncated, info = env.step(act[None, :])
             t_sim += float(SIM_DT)
@@ -1347,6 +1400,11 @@ def record_flight(
                     src.replace(out_paths[mode])
                 except Exception:
                     pass
+
+        if save_actions_dir is not None and recorded_actions:
+            ap = _action_log_path(save_actions_dir, seed, challenge_type)
+            _save_action_log(ap, seed, challenge_type, recorded_actions)
+            print(f"  actions    {ap.name}  ({len(recorded_actions)} steps)")
 
         # cleanup extraction directory
         try:
@@ -1534,6 +1592,22 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="write JSON progress to this file (for API integration)",
     )
+
+    replay = ap.add_argument_group("action replay")
+    replay.add_argument(
+        "--save-actions",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="save recorded actions per seed for deterministic replay",
+    )
+    replay.add_argument(
+        "--replay-actions",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="replay pre-recorded actions instead of running the policy",
+    )
     return ap
 
 
@@ -1654,6 +1728,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     fpv_fov=args.fpv_fov,
                     overview_fov=args.overview_fov,
                     progress_file=args.progress_file if len(jobs) == 1 else None,
+                    save_actions_dir=args.save_actions,
                 )
             else:
                 job_results = record_flight(
@@ -1671,6 +1746,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                     fpv_fov=args.fpv_fov,
                     overview_fov=args.overview_fov,
                     progress_file=args.progress_file if len(jobs) == 1 else None,
+                    save_actions_dir=args.save_actions,
+                    replay_actions_dir=args.replay_actions,
                 )
                 success = bool(job_results[0].success) if job_results else False
                 sim_time_sec = float(job_results[0].sim_time_sec) if job_results else 0.0
