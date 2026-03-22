@@ -90,7 +90,9 @@ class _ShapeCache:
             kw["specularColor"] = [0, 0, 0]
         vis = p.createVisualShape(p.GEOM_MESH, physicsClientId=cli, **kw)
         col = p.createCollisionShape(
-            p.GEOM_MESH, fileName=path, meshScale=scale_vec, physicsClientId=cli
+            p.GEOM_MESH, fileName=path, meshScale=scale_vec,
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH,
+            physicsClientId=cli,
         )
         self._cache[key] = (vis, col)
         return vis, col
