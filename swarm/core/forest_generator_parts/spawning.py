@@ -558,10 +558,12 @@ def _spawn_forest_assets(
     )
 
     tree_yaw = 0.0
-    _spawn_tree_visuals_individually(
-        cli, instances=tree_instances, yaw_deg=tree_yaw, flags=flags,
-    )
-    _spawn_tree_trunk_colliders(cli, instances=tree_instances)
+    for x, y, category, obj_name, scale, _ in tree_instances:
+        _spawn_asset_instance(
+            cli, category=category, obj_name=obj_name,
+            x=x, y=y, yaw_deg=tree_yaw, scale=scale,
+            flags=flags, enable_collision=True,
+        )
     for cls, inst_list in [
         ("bushes", bush_instances),
         ("rocks", rock_instances),
