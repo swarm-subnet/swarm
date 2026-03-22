@@ -109,7 +109,14 @@ def build_world(
         sx, sy = new_sx, new_sy
         if challenge_type == 4:
             new_s_surface = float(_raycast_surface_z(cli, sx, sy))
-        sz = new_s_surface + shared.START_PLATFORM_TAKEOFF_BUFFER
+            for bid in range(static_world_body_base, shared.p.getNumBodies(physicsClientId=cli)):
+                mn, mx = shared.p.getAABB(bid, physicsClientId=cli)
+                if mn[0] <= sx <= mx[0] and mn[1] <= sy <= mx[1] and mx[2] > new_s_surface:
+                    new_s_surface = mx[2]
+        if challenge_type == 4:
+            sz = new_s_surface + shared.START_PLATFORM_HEIGHT + 0.15
+        else:
+            sz = new_s_surface + shared.START_PLATFORM_TAKEOFF_BUFFER
         start_platform_surface_z = new_s_surface
         adjusted_start = (sx, sy, sz)
 
@@ -148,6 +155,10 @@ def build_world(
             )
             if challenge_type == 4:
                 new_gz = float(_raycast_surface_z(cli, new_gx, new_gy))
+                for bid in range(static_world_body_base, shared.p.getNumBodies(physicsClientId=cli)):
+                    mn, mx = shared.p.getAABB(bid, physicsClientId=cli)
+                    if mn[0] <= new_gx <= mx[0] and mn[1] <= new_gy <= mx[1] and mx[2] > new_gz:
+                        new_gz = mx[2]
             gx, gy, gz = new_gx, new_gy, new_gz
             adjusted_goal = (gx, gy, gz)
 
@@ -166,7 +177,8 @@ def build_world(
 
         start_platform_surface_z = surface_z
         if challenge_type == 4:
-            base_position = [sx, sy, surface_z + platform_height / 2 + 0.12]
+            base_position = [sx, sy, surface_z + platform_height / 2 + 0.03]
+            start_platform_surface_z = base_position[2] + platform_height / 2
         else:
             base_position = [sx, sy, surface_z - platform_height / 2 + 0.05]
 
@@ -202,6 +214,7 @@ def build_world(
             physicsClientId=cli,
         )
 
+        start_plat_top_z = base_position[2] + platform_height / 2
         flat_surface_collision = shared.p.createCollisionShape(
             shapeType=shared.p.GEOM_CYLINDER,
             radius=platform_radius * 0.9,
@@ -212,7 +225,7 @@ def build_world(
             baseMass=0,
             baseCollisionShapeIndex=flat_surface_collision,
             baseVisualShapeIndex=-1,
-            basePosition=[sx, sy, surface_z],
+            basePosition=[sx, sy, start_plat_top_z],
             physicsClientId=cli,
         )
         start_platform_uids.append(flat_surface_uid)
@@ -237,7 +250,7 @@ def build_world(
             baseMass=0,
             baseCollisionShapeIndex=-1,
             baseVisualShapeIndex=start_surface_visual,
-            basePosition=[sx, sy, surface_z + 0.001],
+            basePosition=[sx, sy, start_plat_top_z + 0.001],
             physicsClientId=cli,
         )
         start_platform_uids.append(start_visual_uid)
@@ -276,7 +289,7 @@ def build_world(
                 physicsClientId=cli,
             )
             if challenge_type == 4:
-                goal_platform_z = surface_z + platform_height / 2 + 0.12
+                goal_platform_z = surface_z + platform_height / 2 + 0.03
             else:
                 goal_platform_z = surface_z - platform_height / 2 + 0.05
             platform_uid = shared.p.createMultiBody(
@@ -297,6 +310,7 @@ def build_world(
                 physicsClientId=cli,
             )
 
+            goal_plat_top_z = goal_platform_z + platform_height / 2
             surface_radius = platform_radius * 0.8
             surface_height = 0.008
             bright_goal_color = [
@@ -321,7 +335,7 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=surface_visual,
-                basePosition=[gx, gy, surface_z + surface_height / 2 + 0.001],
+                basePosition=[gx, gy, goal_plat_top_z + surface_height / 2 + 0.001],
                 physicsClientId=cli,
             )
             end_platform_uids.append(surface_uid)
@@ -336,7 +350,7 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=flat_landing_collision,
                 baseVisualShapeIndex=-1,
-                basePosition=[gx, gy, surface_z + surface_height + 0.002],
+                basePosition=[gx, gy, goal_plat_top_z + surface_height + 0.002],
                 physicsClientId=cli,
             )
             end_platform_uids.append(flat_landing_uid)
@@ -363,7 +377,7 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_background_visual,
-                basePosition=[gx, gy, surface_z + surface_height + badge_height + 0.008],
+                basePosition=[gx, gy, goal_plat_top_z + surface_height + badge_height + 0.008],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
@@ -379,7 +393,7 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=tao_logo_visual,
-                basePosition=[gx, gy, surface_z + surface_height + badge_height + 0.011],
+                basePosition=[gx, gy, goal_plat_top_z + surface_height + badge_height + 0.011],
                 baseOrientation=[0, 0, 0, 1],
                 physicsClientId=cli,
             )
@@ -413,7 +427,7 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=pole_visual,
-                basePosition=[gx, gy, surface_z + pole_h / 2 + 0.008],
+                basePosition=[gx, gy, goal_plat_top_z + pole_h / 2 + 0.008],
                 physicsClientId=cli,
             )
             end_platform_uids.append(pole_uid)
@@ -421,7 +435,7 @@ def build_world(
                 baseMass=0,
                 baseCollisionShapeIndex=-1,
                 baseVisualShapeIndex=cap_visual,
-                basePosition=[gx, gy, surface_z + pole_h + 0.015],
+                basePosition=[gx, gy, goal_plat_top_z + pole_h + 0.015],
                 physicsClientId=cli,
             )
             end_platform_uids.append(cap_uid)
