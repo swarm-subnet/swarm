@@ -4,6 +4,7 @@ from . import _shared as shared
 from .generation import (
     _build_static_world,
     _find_clear_platform_position,
+    _find_flat_platform_spot,
     _get_tao_tex,
     _raycast_surface_z,
 )
@@ -167,7 +168,9 @@ def build_world(
         platform_height = shared.START_PLATFORM_HEIGHT
 
         if challenge_type == 3:
-            surface_z = float(_raycast_surface_z(cli, sx, sy))
+            sx, sy, surface_z = _find_flat_platform_spot(
+                cli, sx, sy, platform_radius,
+            )
         elif challenge_type in (1, 4, 5, 6) and start_platform_surface_z is not None:
             surface_z = start_platform_surface_z
         elif shared.START_PLATFORM_RANDOMIZE:
@@ -260,7 +263,9 @@ def build_world(
             gx, gy, gz = goal
 
         if challenge_type == 3:
-            surface_z = float(_raycast_surface_z(cli, gx, gy))
+            gx, gy, surface_z = _find_flat_platform_spot(
+                cli, gx, gy, shared.START_PLATFORM_RADIUS,
+            )
         else:
             surface_z = gz
 

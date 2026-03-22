@@ -3,6 +3,74 @@ from __future__ import annotations
 from . import _shared as shared
 
 
+import math as _math
+
+
+def _find_flat_platform_spot(
+    cli: int,
+    x: float,
+    y: float,
+    radius: float,
+    *,
+    nudge_distance: float = 2.0,
+    nudge_attempts: int = 8,
+    clearance: float = 0.15,
+) -> tuple:
+    """Find the best (x, y, surface_z) for a platform on mountain terrain.
+
+    Samples terrain height at platform edges. If the terrain slopes into the
+    platform, tries nudging in the direction away from the highest edge.
+    Returns (best_x, best_y, safe_surface_z) where safe_surface_z is the max
+    terrain height around the platform plus clearance.
+    """
+
+    def _sample(cx, cy):
+        center_z = _raycast_surface_z(cli, cx, cy)
+        edge_zs = [center_z]
+        for angle_deg in range(0, 360, 45):
+            rad = _math.radians(angle_deg)
+            ex = cx + radius * _math.cos(rad)
+            ey = cy + radius * _math.sin(rad)
+            ez = _raycast_surface_z(cli, ex, ey)
+            edge_zs.append(ez)
+        max_z = max(edge_zs)
+        slope = max_z - center_z
+        return center_z, max_z, slope, edge_zs
+
+    best_x, best_y = x, y
+    center_z, max_z, slope, edge_zs = _sample(x, y)
+    best_slope = slope
+    best_max_z = max_z
+
+    if slope > 0.3:
+        for attempt in range(nudge_attempts):
+            angle = attempt * (360.0 / nudge_attempts)
+            rad = _math.radians(angle)
+            nx = x + nudge_distance * _math.cos(rad)
+            ny = y + nudge_distance * _math.sin(rad)
+            nc_z, nm_z, ns, _ = _sample(nx, ny)
+            if ns < best_slope:
+                best_slope = ns
+                best_x, best_y = nx, ny
+                best_max_z = nm_z
+
+        if best_slope > 0.3 and nudge_distance < 4.0:
+            for attempt in range(nudge_attempts):
+                angle = attempt * (360.0 / nudge_attempts)
+                rad = _math.radians(angle)
+                nx = x + nudge_distance * 2.0 * _math.cos(rad)
+                ny = y + nudge_distance * 2.0 * _math.sin(rad)
+                nc_z, nm_z, ns, _ = _sample(nx, ny)
+                if ns < best_slope:
+                    best_slope = ns
+                    best_x, best_y = nx, ny
+                    best_max_z = nm_z
+
+    _, final_max_z, _, _ = _sample(best_x, best_y)
+    safe_z = final_max_z + clearance
+    return best_x, best_y, safe_z
+
+
 def _raycast_surface_z(cli: int, x: float, y: float) -> float:
     result = shared.p.rayTest(
         rayFromPosition=[x, y, 500.0],
