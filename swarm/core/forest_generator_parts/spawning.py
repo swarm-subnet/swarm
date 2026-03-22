@@ -340,11 +340,16 @@ def _spawn_tree_trunk_colliders(
             scale=effective_scale,
             occupancy_radius=occupancy_radius,
         )
+        min_x, min_y, min_z, max_x, _, max_z = _obj_bounds_cached(obj_path)
+        cx = (min_x + max_x) * 0.5
+        cz = (min_z + max_z) * 0.5
+        spawn_x = x - cx * effective_scale
+        spawn_y = y + cz * effective_scale
         p.createMultiBody(
             baseMass=0.0,
             baseCollisionShapeIndex=col_shape,
             baseVisualShapeIndex=invis_vis,
-            basePosition=[x, y, trunk_height * 0.5],
+            basePosition=[spawn_x, spawn_y, trunk_height * 0.5],
             baseOrientation=[0.0, 0.0, 0.0, 1.0],
             physicsClientId=cli,
         )
