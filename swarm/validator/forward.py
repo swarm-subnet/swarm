@@ -178,6 +178,7 @@ async def forward(self) -> None:
             else:
                 self._epoch_just_transitioned = False
         else:
+            epoch_reeval_succeeded = not epoch_just_transitioned
             for reeval_item in reeval_queue:
                 uid = reeval_item.get("uid")
                 reason = reeval_item.get("reason", "unknown")
@@ -240,6 +241,9 @@ async def forward(self) -> None:
                         )
                     continue
 
+                if reason == "epoch_transition":
+                    epoch_reeval_succeeded = True
+
                 set_cached_score(model_hash, self.seed_manager.epoch_number, {
                     "uid": uid,
                     "total_score": total_score,
@@ -252,7 +256,10 @@ async def forward(self) -> None:
                 bt.logging.info(
                     f"Re-eval complete for UID {uid}: score={total_score:.4f}"
                 )
-            self._epoch_just_transitioned = False
+            if epoch_reeval_succeeded:
+                self._epoch_just_transitioned = False
+            elif epoch_just_transitioned:
+                bt.logging.warning("Champion epoch re-eval not submitted, will retry next cycle")
 
         # ──────────────────────────────────────────────────────────────
         # STEP 4: Discovery from backend (no axon polling)
