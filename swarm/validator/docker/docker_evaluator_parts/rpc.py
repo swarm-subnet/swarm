@@ -471,8 +471,10 @@ def _run_multi_seed_rpc_sync(
                             except Exception as e:
                                 action = np.zeros(5, dtype=np.float32)
                                 err_txt = f"{type(e).__name__}: {e}"
+                                strikes += 1
                                 _trace(
-                                    f"{task_label} step={step_idx} act error: {err_txt}"
+                                    f"{task_label} step={step_idx} act error: {err_txt} "
+                                    f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                 )
                                 lowered = err_txt.lower()
                                 if (
@@ -483,6 +485,11 @@ def _run_multi_seed_rpc_sync(
                                     rpc_disconnected = True
                                     _trace(
                                         f"{task_label} rpc disconnected; aborting seed"
+                                    )
+                                    break
+                                if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                    bt.logging.warning(
+                                        f"UID {uid} seed {task_idx}: {strikes} RPC errors, failing seed"
                                     )
                                     break
 
