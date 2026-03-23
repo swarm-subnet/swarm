@@ -18,7 +18,6 @@ from swarm.constants import (
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
-EPOCH_ORIGIN_FILE = EPOCH_SEEDS_DIR / "epoch_origin.json"
 
 _MAX_SEED = 2**32 - 1
 
@@ -30,27 +29,6 @@ def _compute_raw_week(ts: Optional[float] = None) -> int:
     return int((ts - anchor_ts) // EPOCH_DURATION_SECONDS)
 
 
-def _load_or_create_origin() -> int:
-    EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
-    if EPOCH_ORIGIN_FILE.exists():
-        try:
-            data = json.loads(EPOCH_ORIGIN_FILE.read_text())
-            return data["origin_raw_week"]
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    raw = _compute_raw_week()
-    data = {
-        "origin_raw_week": raw,
-        "set_at": datetime.now(timezone.utc).isoformat(),
-    }
-    tmp = EPOCH_ORIGIN_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, separators=(",", ":")))
-    tmp.replace(EPOCH_ORIGIN_FILE)
-    bt.logging.info(f"Epoch origin set: raw_week={raw} (epoch 1 starts now)")
-    return raw
-
-
 def _generate_random_seeds(count: int) -> List[int]:
     rng = random.SystemRandom()
     return [rng.randint(0, _MAX_SEED) for _ in range(count)]
@@ -60,7 +38,6 @@ class BenchmarkSeedManager:
 
     def __init__(self) -> None:
         EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
-        self._origin = _load_or_create_origin()
         self.epoch_number = self._raw_to_epoch(_compute_raw_week())
         self.seeds: List[int] = []
         self.current_epoch_requires_state_invalidation = False
@@ -130,8 +107,6 @@ class BenchmarkSeedManager:
     def _publish_unpublished_epochs(self) -> None:
         self._pending_publications: List[dict] = []
         for f in sorted(EPOCH_SEEDS_DIR.glob("epoch_*.json")):
-            if f.name == "epoch_origin.json":
-                continue
             try:
                 data = json.loads(f.read_text())
                 ep = data.get("epoch_number")
