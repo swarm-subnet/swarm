@@ -489,7 +489,10 @@ def _run_multi_seed_rpc_sync(
                             is_first_step = False
 
                             act = np.clip(
-                                np.asarray(action, dtype=np.float32).reshape(-1),
+                                np.nan_to_num(
+                                    np.asarray(action, dtype=np.float32).reshape(-1),
+                                    nan=0.0, posinf=0.0, neginf=0.0,
+                                ),
                                 lo,
                                 hi,
                             )
