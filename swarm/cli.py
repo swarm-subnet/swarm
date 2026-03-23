@@ -326,6 +326,10 @@ def _build_video_argv(args: argparse.Namespace) -> list[str]:
     argv.extend(["--chase-fov", str(args.chase_fov)])
     argv.extend(["--fpv-fov", str(args.fpv_fov)])
     argv.extend(["--overview-fov", str(args.overview_fov)])
+    if getattr(args, "save_actions", None) is not None:
+        argv.extend(["--save-actions", str(args.save_actions)])
+    if getattr(args, "replay_actions", None) is not None:
+        argv.extend(["--replay-actions", str(args.replay_actions)])
     return argv
 
 
@@ -961,6 +965,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=60.0,
         help="Overview camera field of view in degrees.",
+    )
+    video_parser.add_argument(
+        "--save-actions",
+        type=Path,
+        default=None,
+        help="Save recorded actions per seed for deterministic replay.",
+    )
+    video_parser.add_argument(
+        "--replay-actions",
+        type=Path,
+        default=None,
+        help="Replay pre-recorded actions instead of running the policy.",
     )
     video_parser.set_defaults(func=_cmd_video)
 
