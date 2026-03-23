@@ -167,7 +167,7 @@ def build_world(
         platform_radius = shared.START_PLATFORM_RADIUS
         platform_height = shared.START_PLATFORM_HEIGHT
 
-        if challenge_type == 3:
+        if challenge_type in (2, 3):
             sx, sy, surface_z = _find_flat_platform_spot(
                 cli, sx, sy, platform_radius,
             )
@@ -262,7 +262,7 @@ def build_world(
         if adjusted_goal is None:
             gx, gy, gz = goal
 
-        if challenge_type == 3:
+        if challenge_type in (2, 3):
             gx, gy, surface_z = _find_flat_platform_spot(
                 cli, gx, gy, shared.START_PLATFORM_RADIUS,
             )
