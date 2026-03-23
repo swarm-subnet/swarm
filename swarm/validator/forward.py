@@ -151,7 +151,6 @@ async def forward(self) -> None:
         reeval_queue = sync_data.get("reeval_queue", [])
 
         epoch_just_transitioned = getattr(self, '_epoch_just_transitioned', False)
-        self._epoch_just_transitioned = False
         if epoch_just_transitioned and self._current_top.get("uid") is not None:
             champion_uid = self._current_top["uid"]
             reeval_queue.insert(0, {"uid": champion_uid, "reason": "epoch_transition"})
@@ -174,6 +173,10 @@ async def forward(self) -> None:
             bt.logging.warning(
                 f"Backend unavailable: skipping {len(reeval_queue)} cached re-eval item(s)"
             )
+            if epoch_just_transitioned:
+                bt.logging.info("Keeping epoch transition flag — will retry champion re-eval next cycle")
+            else:
+                self._epoch_just_transitioned = False
         else:
             for reeval_item in reeval_queue:
                 uid = reeval_item.get("uid")
@@ -249,6 +252,7 @@ async def forward(self) -> None:
                 bt.logging.info(
                     f"Re-eval complete for UID {uid}: score={total_score:.4f}"
                 )
+            self._epoch_just_transitioned = False
 
         # ──────────────────────────────────────────────────────────────
         # STEP 4: Discovery from backend (no axon polling)
