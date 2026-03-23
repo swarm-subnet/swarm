@@ -269,7 +269,7 @@ def spawn_asset_with_random_color(cli, path, x, y, z, rotation_deg, scale_vec, r
 
         modified_content = re.sub(r"mtllib\s+(\S+\.mtl)", replace_mtl, obj_content)
         temp_dir = os.path.dirname(path)
-        temp_path = os.path.join(temp_dir, f"_temp_colored{mtl_suffix}.obj")
+        temp_path = os.path.join(temp_dir, f"_temp_colored{mtl_suffix}_{os.getpid()}.obj")
         with open(temp_path, "w") as f:
             f.write(modified_content)
         result = spawn_asset_exact(cli, temp_path, x, y, z, rotation_deg, scale_vec)
