@@ -149,6 +149,120 @@ pm2 restart swarm_validator
 pm2 stop    swarm_validator
 ```
 
+## 📡 Telemetry and Monitor
+
+The validator now writes a local runtime snapshot and an append-only event stream while it runs.
+
+### Files
+
+By default, telemetry is written here:
+
+```bash
+swarm/state/validator_runtime.json
+swarm/state/validator_events.jsonl
+```
+
+- `validator_runtime.json`
+  - Current point-in-time health snapshot.
+  - Best source for dashboards and alert state.
+- `validator_events.jsonl`
+  - Structured event log.
+  - Useful for reconstructing stage transitions and debugging stalls.
+
+### Monitor Command
+
+Run the live terminal monitor:
+
+```bash
+source validator_env/bin/activate
+swarm monitor
+```
+
+Useful variants:
+
+```bash
+swarm monitor --once --no-clear
+swarm monitor --refresh-sec 2.0
+swarm monitor --max-events 20
+```
+
+### What the Monitor Shows
+
+- **Forward**
+  - Last forward start/completion, duration, and whether a cycle is still running.
+- **Backend**
+  - Sync state, fallback mode, pending model count, re-eval queue size, leaderboard version.
+- **Epoch**
+  - Current epoch, seconds until epoch end, and whether freeze mode is active.
+- **Queue**
+  - Local queue counts by status, oldest item age, retry pressure, and the active queue items.
+- **Evaluation**
+  - Current screening and benchmark progress.
+- **Docker**
+  - Requested/effective workers, adaptive backoff, worker failures/restarts, cleanup timing.
+- **Chain / Weights**
+  - Post-forward chain sync state and the latest weight-set attempt/result.
+- **Alerts**
+  - Automatic warning/critical classification for common stalls and dead zones.
+
+### What to Expect in Healthy Operation
+
+- `pending_models_count` rises and falls, but does not grow forever.
+- Queue items move through:
+  - `processing`
+  - `registered`
+  - `screening`
+  - `screening_submit`
+  - `benchmark`
+  - `score_submit`
+  - `completed`
+- `last_completed_forward_count` keeps increasing.
+- `backend.fallback` stays `false` most of the time.
+- Docker `active_worker_cap` usually matches the requested worker count.
+- `oldest_age_sec` stays bounded instead of drifting upward for hours.
+
+### Common Warning Signs
+
+- **Backend fallback stays active**
+  - New `pending_models` discovery is effectively stalled.
+- **Queue oldest age keeps increasing**
+  - Work is arriving faster than it is draining, or a stage is stuck.
+- **Retries dominate the queue**
+  - Backend submission failures or internal exceptions are recycling items.
+- **Freeze active with processable queue items**
+  - The validator is intentionally pausing queue work near epoch end.
+- **Docker backoff active for long periods**
+  - The host is overloaded or worker execution is unhealthy.
+- **Repeated re-eval warnings**
+  - Champion or queued re-evals are being recomputed repeatedly instead of finishing cleanly.
+- **No forward completion**
+  - The validator thread, backend sync, Docker cleanup, or post-forward chain sync may be stalled.
+
+### Recommended First Checks
+
+If the monitor looks unhealthy:
+
+1. Confirm Docker is healthy:
+   ```bash
+   docker ps
+   docker stats --no-stream
+   ```
+2. Check whether backend sync is falling back:
+   - look for `backend.fallback=true`
+   - look at `last_sync_success_at`
+3. Check whether queue items are stuck in one stage:
+   - especially `screening`, `benchmark`, or `score_submit`
+4. Check whether adaptive backoff reduced worker capacity:
+   - compare `requested_workers` vs `active_worker_cap`
+5. Check whether epoch freeze is active:
+   - the queue may be waiting by design near epoch rollover
+
+### Notes
+
+- The monitor is local-only and reads the validator's own telemetry files.
+- If the validator is not running yet, the telemetry files may not exist.
+- The event log is append-only; if it grows too much, rotate or truncate it during maintenance windows.
+
 ## 🔄 Auto-Update
 
 **`scripts/validator/update/auto_update_deploy.sh`** checks `origin/main` for version bumps every *n* minutes. When a new version is found, it pulls, resets, and restarts the PM2 process.

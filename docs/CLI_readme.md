@@ -114,6 +114,38 @@ swarm report
 swarm report --input /path/to/log
 ```
 
+### `swarm monitor`
+
+Reads the validator runtime snapshot/events files and renders a local terminal dashboard.
+
+```bash
+swarm monitor
+
+# One-shot snapshot without screen clearing
+swarm monitor --once --no-clear
+
+# Override file paths
+swarm monitor --snapshot swarm/state/validator_runtime.json --events swarm/state/validator_events.jsonl
+```
+
+Useful options:
+
+- `--refresh-sec <seconds>`
+  - Refresh interval for live mode.
+- `--max-events <n>`
+  - Number of recent events to render.
+- `--once`
+  - Print one frame and exit.
+- `--no-clear`
+  - Keep previous terminal content.
+
+Expected data files:
+
+- `swarm/state/validator_runtime.json`
+- `swarm/state/validator_events.jsonl`
+
+If those files do not exist yet, start the validator first so telemetry can be written.
+
 ---
 
 `doctor`, `model verify`, `model test`, and `report` support `--json` for machine-readable output.

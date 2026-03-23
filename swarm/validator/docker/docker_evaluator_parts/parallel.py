@@ -22,6 +22,7 @@ import bittensor as bt
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.protocol import ValidationResult
+from swarm.validator.runtime_telemetry import tracker_call
 
 from ._shared import _docker_evaluator_facade
 
@@ -111,6 +112,7 @@ async def _run_process_parallel(
     uid: int,
     model_path: Path,
     effective_workers: int,
+    runtime_tracker: Any = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
     heartbeat_sec: float = 30.0,
 ) -> list:
@@ -182,6 +184,7 @@ async def _run_process_parallel(
         worker_started_at.pop(worker_slot, None)
         worker_active_requests.pop(worker_slot, None)
         _spawn_worker(worker_slot)
+        tracker_call(runtime_tracker, "mark_docker_worker_restart", worker_slot=int(worker_slot))
 
     def _dispatch_available_batches() -> None:
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
@@ -229,12 +232,27 @@ async def _run_process_parallel(
                 f"to worker {worker_slot} | group={group_name} | "
                 f"seed={seed_list[0]} | active_limit={scheduler.active_worker_cap}"
             )
+            tracker_call(
+                runtime_tracker,
+                "mark_docker_dispatch",
+                worker_slot=int(worker_slot),
+                batch_index=int(batch_index),
+                group=str(group_name),
+                seed=int(seed_list[0]),
+                active_worker_cap=int(scheduler.active_worker_cap),
+            )
 
     def _observe_seed(seed_meta: Optional[Dict[str, Any]]) -> None:
         _emit_seed_complete(on_seed_complete, seed_meta)
         note = scheduler.observe_seed(seed_meta)
         if note:
             _log_scheduler_note(note)
+            tracker_call(
+                runtime_tracker,
+                "mark_docker_backoff",
+                active_worker_cap=int(scheduler.active_worker_cap),
+                note=str(note),
+            )
 
     def _drain_progress_events() -> None:
         while True:
@@ -261,6 +279,13 @@ async def _run_process_parallel(
         bt.logging.warning(
             f"[Validator eval] worker {worker_slot} failed batch {request.batch_index + 1}/{len(batch_plan)} "
             f"with status={status}: {error}"
+        )
+        tracker_call(
+            runtime_tracker,
+            "mark_docker_worker_failure",
+            status=str(status),
+            worker_slot=int(worker_slot),
+            error=str(error),
         )
         for task in request.tasks:
             if status == "worker_stall_timeout":
@@ -440,6 +465,14 @@ async def evaluate_seeds_parallel(
     if num_workers is None:
         num_workers = N_DOCKER_WORKERS
     effective_workers = max(1, min(int(num_workers), len(tasks)))
+    runtime_tracker = getattr(self, "runtime_tracker", None)
+    tracker_call(
+        runtime_tracker,
+        "mark_docker_run_started",
+        requested_workers=int(num_workers),
+        effective_workers=int(effective_workers),
+        total_tasks=int(len(tasks)),
+    )
 
     if not _docker_evaluator_facade().DockerSecureEvaluator._base_ready:
         return await self.evaluate_seeds_batch(
@@ -471,6 +504,7 @@ async def evaluate_seeds_parallel(
         uid=uid,
         model_path=model_path,
         effective_workers=effective_workers,
+        runtime_tracker=runtime_tracker,
         on_seed_complete=on_seed_complete,
         heartbeat_sec=30.0,
     )

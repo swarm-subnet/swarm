@@ -31,6 +31,7 @@ def _merge_per_type_medians(
 
 from .backend_api import BackendApiClient
 from .docker.docker_evaluator import DockerSecureEvaluator
+from .runtime_telemetry import tracker_call
 from .seed_manager import BenchmarkSeedManager
 from .utils import (
     NORMAL_MODEL_QUEUE_PROCESS_LIMIT,
@@ -65,6 +66,7 @@ async def forward(self) -> None:
     """
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
+        tracker_call(self, "mark_forward_started", forward_count=self.forward_count)
         bt.logging.info(f"[Forward #{self.forward_count}] start")
 
         # ──────────────────────────────────────────────────────────────
@@ -78,15 +80,19 @@ async def forward(self) -> None:
             try:
                 self.backend_api = BackendApiClient(wallet=self.wallet)
             except ValueError as e:
+                tracker_call(self, "mark_forward_failed", error=str(e))
                 bt.logging.error(f"Backend API initialization failed: {e}")
                 bt.logging.error("Set SWARM_BACKEND_API_URL environment variable")
                 await asyncio.sleep(FORWARD_SLEEP_SEC)
                 return
 
         if not hasattr(self, 'docker_evaluator') or not DockerSecureEvaluator._base_ready:
+            tracker_call(self, "mark_forward_failed", error="Docker evaluator not ready")
             bt.logging.error("Docker evaluator not ready")
             await asyncio.sleep(FORWARD_SLEEP_SEC)
             return
+        if hasattr(self, "docker_evaluator"):
+            setattr(self.docker_evaluator, "runtime_tracker", getattr(self, "runtime_tracker", None))
 
         validator_hotkey = self.wallet.hotkey.ss58_address
         validator_stake = _get_validator_stake(self)
@@ -114,6 +120,12 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         if self.seed_manager.check_epoch_transition():
             old_epoch = self.seed_manager.advance_to_new_epoch()
+            tracker_call(
+                self,
+                "mark_epoch_transition",
+                old_epoch=old_epoch,
+                new_epoch=self.seed_manager.epoch_number,
+            )
             bt.logging.info(
                 f"Epoch transition: {old_epoch} -> {self.seed_manager.epoch_number}"
             )
@@ -132,7 +144,14 @@ async def forward(self) -> None:
                     bt.logging.info(f"Published epoch {ep} seeds to backend")
                 except Exception as e:
                     bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+            cleanup_started = asyncio.get_running_loop().time()
             self.docker_evaluator.cleanup()
+            tracker_call(
+                self,
+                "mark_docker_cleanup",
+                duration_sec=asyncio.get_running_loop().time() - cleanup_started,
+                reason="epoch_transition",
+            )
             clear_normal_model_queue()
             clear_benchmark_cache()
             self._epoch_just_transitioned = True
@@ -142,6 +161,7 @@ async def forward(self) -> None:
         # STEP 1: Sync with backend
         # ──────────────────────────────────────────────────────────────
         bt.logging.info("📡 Syncing with backend...")
+        tracker_call(self, "mark_backend_sync_started")
         sync_data = await self.backend_api.sync()
 
         if sync_data.get("fallback"):
@@ -149,6 +169,15 @@ async def forward(self) -> None:
 
         self._current_top = sync_data.get("current_top", {})
         reeval_queue = sync_data.get("reeval_queue", [])
+        tracker_call(
+            self,
+            "mark_backend_sync_completed",
+            fallback=bool(sync_data.get("fallback", False)),
+            pending_models_count=len(sync_data.get("pending_models", [])),
+            reeval_queue_count=len(reeval_queue),
+            leaderboard_version=sync_data.get("leaderboard_version"),
+            error=str(sync_data.get("error", "")),
+        )
 
         epoch_just_transitioned = getattr(self, '_epoch_just_transitioned', False)
         if epoch_just_transitioned and self._current_top.get("uid") is not None:
@@ -182,10 +211,12 @@ async def forward(self) -> None:
             for reeval_item in reeval_queue:
                 uid = reeval_item.get("uid")
                 reason = reeval_item.get("reason", "unknown")
+                tracker_call(self, "mark_reeval_started", uid=int(uid), reason=str(reason))
                 bt.logging.info(f"🔄 Re-evaluation requested for UID {uid}: {reason}")
 
                 model_path = MODEL_DIR / f"UID_{uid}.zip"
                 if not model_path.exists():
+                    tracker_call(self, "mark_reeval_missing_model", uid=int(uid), reason=str(reason))
                     bt.logging.warning(f"Model not found for re-eval UID {uid}")
                     continue
 
@@ -229,6 +260,15 @@ async def forward(self) -> None:
                 )
 
                 if not recorded:
+                    tracker_call(
+                        self,
+                        "mark_reeval_completed",
+                        uid=int(uid),
+                        reason=str(reason),
+                        success=False,
+                        total_score=total_score,
+                        error=str(ack_reason),
+                    )
                     if terminal:
                         bt.logging.error(
                             f"Re-eval score rejected permanently for UID {uid}: "
@@ -244,6 +284,14 @@ async def forward(self) -> None:
                 if reason == "epoch_transition":
                     epoch_reeval_succeeded = True
 
+                tracker_call(
+                    self,
+                    "mark_reeval_completed",
+                    uid=int(uid),
+                    reason=str(reason),
+                    success=True,
+                    total_score=total_score,
+                )
                 set_cached_score(model_hash, self.seed_manager.epoch_number, {
                     "uid": uid,
                     "total_score": total_score,
@@ -266,6 +314,13 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         remaining = self.seed_manager.seconds_until_epoch_end()
         in_freeze = remaining < EPOCH_FREEZE_SECONDS
+        tracker_call(
+            self,
+            "mark_epoch_state",
+            epoch_number=self.seed_manager.epoch_number,
+            seconds_until_end=remaining,
+            freeze_active=in_freeze,
+        )
 
         if in_freeze:
             bt.logging.info(
@@ -296,6 +351,7 @@ async def forward(self) -> None:
             if new_models
             else load_normal_model_queue()
         )
+        tracker_call(self, "update_queue_state", queue)
 
         # ──────────────────────────────────────────────────────────────
         # STEP 5: Queue worker (normal-model pipeline consumer)
@@ -329,11 +385,22 @@ async def forward(self) -> None:
 
         queue["items"] = items
         save_normal_model_queue(queue)
+        tracker_call(self, "update_queue_state", queue)
 
+        cleanup_started = asyncio.get_running_loop().time()
         self.docker_evaluator.cleanup()
+        tracker_call(
+            self,
+            "mark_docker_cleanup",
+            duration_sec=asyncio.get_running_loop().time() - cleanup_started,
+            reason="forward_end",
+        )
         bt.logging.info(f"[Forward #{self.forward_count}] complete")
+        tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
+        tracker_call(self, "flush")
 
     except Exception as e:
+        tracker_call(self, "mark_forward_failed", error=str(e))
         bt.logging.error(f"Validator forward error: {e}")
         bt.logging.error(traceback.format_exc())
 

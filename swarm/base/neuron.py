@@ -28,6 +28,7 @@ import requests
 import re
 from swarm import version_url
 from swarm import __version__, __spec_version__
+from swarm.validator.runtime_telemetry import tracker_call
 
 
 class BaseNeuron(ABC):
@@ -140,6 +141,7 @@ class BaseNeuron(ABC):
         """
         Wrapper for synchronizing the state of the network for the given miner or validator.
         """
+        tracker_call(self, "mark_chain_sync_started", context="validator_sync")
         # Ensure miner or validator hotkey is still registered on the network.
         self.check_registered()
 
@@ -153,7 +155,15 @@ class BaseNeuron(ABC):
 
             # Always save state.
             self.save_state()
+            tracker_call(self, "mark_chain_sync_completed", context="validator_sync", success=True)
         except Exception:
+            tracker_call(
+                self,
+                "mark_chain_sync_completed",
+                context="validator_sync",
+                success=False,
+                error=traceback.format_exc(),
+            )
             bt.logging.error(
                 "Coundn't sync metagraph or set weights: {}".format(
                     traceback.format_exc()

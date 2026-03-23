@@ -614,6 +614,25 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_monitor(args: argparse.Namespace) -> int:
+    try:
+        from swarm.validator.runtime_dashboard import run_runtime_dashboard
+
+        return run_runtime_dashboard(
+            snapshot_path=args.snapshot,
+            events_path=args.events,
+            refresh_sec=args.refresh_sec,
+            once=args.once,
+            no_clear=args.no_clear,
+            max_events=args.max_events,
+        )
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:
+        print(f"Monitor failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def _cmd_champion(args: argparse.Namespace) -> int:
     import httpx
 
@@ -699,6 +718,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=_cmd_doctor)
+
+    monitor_parser = subparsers.add_parser(
+        "monitor",
+        help="Live validator runtime dashboard.",
+    )
+    monitor_parser.add_argument(
+        "--snapshot",
+        type=Path,
+        default=None,
+        help="Path to validator_runtime.json snapshot file.",
+    )
+    monitor_parser.add_argument(
+        "--events",
+        type=Path,
+        default=None,
+        help="Path to validator_events.jsonl events file.",
+    )
+    monitor_parser.add_argument(
+        "--refresh-sec",
+        type=float,
+        default=1.0,
+        help="Refresh interval for the live dashboard.",
+    )
+    monitor_parser.add_argument(
+        "--max-events",
+        type=int,
+        default=8,
+        help="How many recent events to display.",
+    )
+    monitor_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Render one frame and exit.",
+    )
+    monitor_parser.add_argument(
+        "--no-clear",
+        action="store_true",
+        help="Do not clear the terminal between frames.",
+    )
+    monitor_parser.set_defaults(func=_cmd_monitor)
 
     benchmark_parser = subparsers.add_parser(
         "benchmark",

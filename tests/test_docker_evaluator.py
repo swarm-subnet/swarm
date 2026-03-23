@@ -10,6 +10,7 @@ import pytest
 
 from swarm.protocol import ValidationResult
 from swarm.validator.docker import docker_evaluator as de
+from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
 
 
 class _ProcResult:
@@ -459,6 +460,33 @@ def test_evaluate_seeds_parallel_uses_default_worker_count_of_three(monkeypatch,
 
     assert len(results) == 5
     assert captured["effective_workers"] == min(len(tasks), de.parallel.N_DOCKER_WORKERS)
+
+
+def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    ev.runtime_tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [
+        SimpleNamespace(challenge_type=2, map_seed=2101),
+        SimpleNamespace(challenge_type=3, map_seed=2102),
+    ]
+    captured = {}
+
+    async def _fake_run_process_parallel(**kwargs):
+        captured["runtime_tracker"] = kwargs["runtime_tracker"]
+        return [ValidationResult(kwargs["uid"], True, 1.0, 0.5) for _ in kwargs["all_tasks"]]
+
+    monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
+    results = asyncio.run(
+        ev.evaluate_seeds_parallel(tasks, uid=19, model_path=model_path, num_workers=4)
+    )
+
+    snapshot = ev.runtime_tracker.snapshot_copy()
+    assert len(results) == 2
+    assert captured["runtime_tracker"] is ev.runtime_tracker
+    assert snapshot["docker"]["requested_workers"] == 4
+    assert snapshot["docker"]["effective_workers"] == 2
 
 
 def test_heavy_aware_chunk_distributes_heavy_maps_evenly():

@@ -1,6 +1,7 @@
 import math
 
 from ._shared import *
+from swarm.validator.runtime_telemetry import tracker_call
 
 from swarm.constants import N_DOCKER_WORKERS
 
@@ -37,9 +38,20 @@ async def _process_normal_queue_item(
 
         item["status"] = "processing"
         item["updated_at"] = time.time()
+        tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="processing")
 
         if not model_path.exists():
             _utils_facade()._schedule_queue_retry(item, "model file missing")
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="retry",
+                severity="warning",
+                note="model file missing",
+            )
             return
 
         current_hash = _utils_facade().sha256sum(model_path)
@@ -47,6 +59,16 @@ async def _process_normal_queue_item(
             item["status"] = "terminal_rejected"
             item["last_error"] = "model hash changed before processing"
             item["updated_at"] = time.time()
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="terminal_rejected",
+                severity="warning",
+                note="model hash changed before processing",
+            )
             return
 
         miner_hotkey = ""
@@ -60,6 +82,14 @@ async def _process_normal_queue_item(
                 item["registered"] = True
                 item["status"] = "registered"
                 item["updated_at"] = time.time()
+                tracker_call(
+                    self,
+                    "mark_queue_item_stage",
+                    queue=queue,
+                    key=key,
+                    item=item,
+                    stage="registered",
+                )
             else:
                 accepted, terminal, reason = await _utils_facade()._register_new_model_with_ack(
                     self,
@@ -75,8 +105,28 @@ async def _process_normal_queue_item(
                         item["last_error"] = reason
                         item["updated_at"] = time.time()
                         _utils_facade().mark_model_hash_processed(uid, model_hash)
+                        tracker_call(
+                            self,
+                            "mark_queue_item_stage",
+                            queue=queue,
+                            key=key,
+                            item=item,
+                            stage="terminal_rejected",
+                            severity="warning",
+                            note=str(reason),
+                        )
                     else:
                         _utils_facade()._schedule_queue_retry(item, f"register failed: {reason}")
+                        tracker_call(
+                            self,
+                            "mark_queue_item_stage",
+                            queue=queue,
+                            key=key,
+                            item=item,
+                            stage="retry",
+                            severity="warning",
+                            note=f"register failed: {reason}",
+                        )
                     return
 
                 item["registered"] = True
@@ -85,6 +135,14 @@ async def _process_normal_queue_item(
                 item["next_retry_at"] = 0
                 item["last_error"] = ""
                 item["updated_at"] = time.time()
+                tracker_call(
+                    self,
+                    "mark_queue_item_stage",
+                    queue=queue,
+                    key=key,
+                    item=item,
+                    stage="registered",
+                )
 
         epoch = self.seed_manager.epoch_number
         cached = (
@@ -97,6 +155,7 @@ async def _process_normal_queue_item(
             if cached:
                 item["screening_score"] = float(cached.get("screening_score", 0.0))
             else:
+                tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
                 screening_score, screening_scores, screening_per_type = (
                     await _utils_facade()._run_screening(self, uid, model_path)
                 )
@@ -115,6 +174,15 @@ async def _process_normal_queue_item(
         screening_passed = bool(item.get("screening_passed", False))
 
         if not item.get("screening_recorded", False):
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="screening_submit",
+            )
+            tracker_call(self, "mark_submission_started", stage="screening", uid=uid, model_hash=model_hash)
             recorded, terminal, reason = await _utils_facade()._submit_screening_with_ack(
                 self,
                 uid=uid,
@@ -124,27 +192,82 @@ async def _process_normal_queue_item(
                 passed=screening_passed,
             )
             if not recorded:
+                tracker_call(
+                    self,
+                    "mark_submission_result",
+                    stage="screening",
+                    uid=uid,
+                    success=False,
+                    terminal=terminal,
+                    reason=str(reason),
+                    model_hash=model_hash,
+                )
                 if terminal:
                     item["status"] = "terminal_rejected"
                     item["last_error"] = reason
                     item["updated_at"] = time.time()
                     _utils_facade().mark_model_hash_processed(uid, model_hash)
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="terminal_rejected",
+                        severity="warning",
+                        note=str(reason),
+                    )
                 else:
                     _utils_facade()._schedule_queue_retry(item, f"screening submit failed: {reason}")
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="retry",
+                        severity="warning",
+                        note=f"screening submit failed: {reason}",
+                    )
                 return
 
+            tracker_call(
+                self,
+                "mark_submission_result",
+                stage="screening",
+                uid=uid,
+                success=True,
+                terminal=False,
+                model_hash=model_hash,
+            )
             item["screening_recorded"] = True
             item["status"] = "screening_recorded"
             item["retry_attempts"] = 0
             item["next_retry_at"] = 0
             item["last_error"] = ""
             item["updated_at"] = time.time()
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="screening_recorded",
+            )
 
         if not screening_passed:
             item["status"] = "completed"
             item["updated_at"] = time.time()
             item.pop("screening_scores", None)
             _utils_facade().mark_model_hash_processed(uid, model_hash)
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="completed",
+            )
             return
 
         missing_score_payload = (
@@ -172,6 +295,16 @@ async def _process_normal_queue_item(
                 remaining_seeds = all_benchmark_seeds[done:]
 
                 if remaining_seeds:
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="benchmark",
+                        progress_done=done,
+                        progress_total=len(all_benchmark_seeds),
+                    )
                     round_size = max(1, math.ceil(len(all_benchmark_seeds) / N_DOCKER_WORKERS))
                     for i in range(0, len(remaining_seeds), round_size):
                         chunk = remaining_seeds[i:i + round_size]
@@ -186,6 +319,17 @@ async def _process_normal_queue_item(
                         item["benchmark_partial_scores"] = partial_scores
                         item["benchmark_partial_per_type"] = partial_per_type
                         item["updated_at"] = time.time()
+                        tracker_call(
+                            self,
+                            "mark_queue_item_stage",
+                            queue=queue,
+                            key=key,
+                            item=item,
+                            stage="benchmark",
+                            progress_done=done,
+                            progress_total=len(all_benchmark_seeds),
+                            note=f"chunk {done}/{len(all_benchmark_seeds)}",
+                        )
                         _utils_facade().save_normal_model_queue(queue)
 
                 screening_scores = item.get("screening_scores", [])
@@ -212,6 +356,15 @@ async def _process_normal_queue_item(
             item["updated_at"] = time.time()
 
         if not item.get("score_recorded", False):
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="score_submit",
+            )
+            tracker_call(self, "mark_submission_started", stage="score", uid=uid, model_hash=model_hash)
             recorded, terminal, reason = await _utils_facade()._submit_score_with_ack(
                 self,
                 uid=uid,
@@ -224,21 +377,68 @@ async def _process_normal_queue_item(
                 epoch_number=self.seed_manager.epoch_number,
             )
             if not recorded:
+                tracker_call(
+                    self,
+                    "mark_submission_result",
+                    stage="score",
+                    uid=uid,
+                    success=False,
+                    terminal=terminal,
+                    reason=str(reason),
+                    model_hash=model_hash,
+                )
                 if terminal:
                     item["status"] = "terminal_rejected"
                     item["last_error"] = reason
                     item["updated_at"] = time.time()
                     _utils_facade().mark_model_hash_processed(uid, model_hash)
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="terminal_rejected",
+                        severity="warning",
+                        note=str(reason),
+                    )
                 else:
                     _utils_facade()._schedule_queue_retry(item, f"score submit failed: {reason}")
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="retry",
+                        severity="warning",
+                        note=f"score submit failed: {reason}",
+                    )
                 return
 
+            tracker_call(
+                self,
+                "mark_submission_result",
+                stage="score",
+                uid=uid,
+                success=True,
+                terminal=False,
+                model_hash=model_hash,
+            )
             item["score_recorded"] = True
             item["status"] = "completed"
             item["retry_attempts"] = 0
             item["next_retry_at"] = 0
             item["last_error"] = ""
             item["updated_at"] = time.time()
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="completed",
+            )
 
         _utils_facade().set_cached_score(model_hash, epoch, {
             "uid": uid,
@@ -252,9 +452,21 @@ async def _process_normal_queue_item(
         item.pop("screening_scores", None)
         item.pop("screening_per_type", None)
         _utils_facade().mark_model_hash_processed(uid, model_hash)
+        tracker_call(self, "update_queue_state", queue)
+        tracker_call(self, "increment_counter", "models_processed_total")
 
     except Exception as e:
         _utils_facade()._schedule_queue_retry(item, f"queue worker exception: {e}")
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="retry",
+            severity="error",
+            note=f"queue worker exception: {e}",
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────

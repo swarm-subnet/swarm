@@ -27,6 +27,7 @@ import bittensor as bt
 from typing import List, Union
 from traceback import print_exception
 from swarm.base.neuron import BaseNeuron
+from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker, tracker_call
 from swarm.base.utils.weight_utils import (
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
@@ -59,6 +60,8 @@ class BaseValidatorNeuron(BaseNeuron):
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
         self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
+
+        self.runtime_tracker = ValidatorRuntimeTracker(process_label="validator")
 
         # Init sync with the network. Updates the metagraph.
         self.sync()
@@ -127,6 +130,8 @@ class BaseValidatorNeuron(BaseNeuron):
             Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
         """
 
+        tracker_call(self, "mark_worker_thread_alive", True)
+
         # Check that validator is registered on the network.
         self.sync()
 
@@ -155,14 +160,18 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
+            tracker_call(self, "mark_worker_thread_alive", False)
             self.axon.stop()
             bt.logging.success("Validator killed by keyboard interrupt.")
             exit()
 
         # In case of unforeseen errors, the validator will log the error and continue operations.
         except Exception as err:
+            tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.error(f"Error during validation: {str(err)}")
             bt.logging.debug(str(print_exception(type(err), err, err.__traceback__)))
+        finally:
+            tracker_call(self, "mark_worker_thread_alive", False)
 
     def run_in_background_thread(self):
         """
@@ -175,6 +184,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
             self.is_running = True
+            tracker_call(self, "mark_worker_thread_alive", self.thread.is_alive())
             bt.logging.debug("Started")
 
     def stop_run_thread(self):
@@ -186,6 +196,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+            tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.debug("Stopped")
 
     def __enter__(self):
@@ -210,6 +221,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+            tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.debug("Stopped")
 
     def set_weights(self):
@@ -217,64 +229,83 @@ class BaseValidatorNeuron(BaseNeuron):
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
 
-        # Check if self.scores contains any NaN values and log a warning if it does.
-        if np.isnan(self.scores).any():
-            bt.logging.warning(
-                "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+        tracker_call(self, "mark_weights_attempt")
+        try:
+            # Check if self.scores contains any NaN values and log a warning if it does.
+            if np.isnan(self.scores).any():
+                bt.logging.warning(
+                    "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                )
+
+            # Calculate the average reward for each uid across non-zero values.
+            # Replace any NaN values with 0.
+            # Compute the norm of the scores
+            norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
+
+            # Check if the norm is zero or contains NaN values
+            if np.any(norm == 0) or np.isnan(norm).any():
+                norm = np.ones_like(norm)  # Avoid division by zero or NaN
+
+            # Compute raw_weights safely
+            raw_weights = self.scores / norm
+
+            bt.logging.debug("raw_weights", raw_weights)
+            bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
+            # Process the raw weights to final_weights via subtensor limitations.
+            (
+                processed_weight_uids,
+                processed_weights,
+            ) = process_weights_for_netuid(
+                uids=self.metagraph.uids,
+                weights=raw_weights,
+                netuid=self.config.netuid,
+                subtensor=self.subtensor,
+                metagraph=self.metagraph,
             )
+            bt.logging.debug("processed_weights", processed_weights)
+            bt.logging.debug("processed_weight_uids", processed_weight_uids)
 
-        # Calculate the average reward for each uid across non-zero values.
-        # Replace any NaN values with 0.
-        # Compute the norm of the scores
-        norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
+            # Convert to uint16 weights and uids.
+            (
+                uint_uids,
+                uint_weights,
+            ) = convert_weights_and_uids_for_emit(
+                uids=processed_weight_uids, weights=processed_weights
+            )
+            bt.logging.debug("uint_weights", uint_weights)
+            bt.logging.debug("uint_uids", uint_uids)
 
-        # Check if the norm is zero or contains NaN values
-        if np.any(norm == 0) or np.isnan(norm).any():
-            norm = np.ones_like(norm)  # Avoid division by zero or NaN
-
-        # Compute raw_weights safely
-        raw_weights = self.scores / norm
-
-        bt.logging.debug("raw_weights", raw_weights)
-        bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
-        # Process the raw weights to final_weights via subtensor limitations.
-        (
-            processed_weight_uids,
-            processed_weights,
-        ) = process_weights_for_netuid(
-            uids=self.metagraph.uids,
-            weights=raw_weights,
-            netuid=self.config.netuid,
-            subtensor=self.subtensor,
-            metagraph=self.metagraph,
-        )
-        bt.logging.debug("processed_weights", processed_weights)
-        bt.logging.debug("processed_weight_uids", processed_weight_uids)
-
-        # Convert to uint16 weights and uids.
-        (
-            uint_uids,
-            uint_weights,
-        ) = convert_weights_and_uids_for_emit(
-            uids=processed_weight_uids, weights=processed_weights
-        )
-        bt.logging.debug("uint_weights", uint_weights)
-        bt.logging.debug("uint_uids", uint_uids)
-
-        # Set the weights on chain via our subtensor connection.
-        result, msg = self.subtensor.set_weights(
-            wallet=self.wallet,
-            netuid=self.config.netuid,
-            uids=uint_uids,
-            weights=uint_weights,
-            wait_for_finalization=False,
-            wait_for_inclusion=False,
-            version_key=self.spec_version,
-        )
-        if result is True:
-            bt.logging.info("set_weights on chain successfully!")
-        else:
-            bt.logging.error("set_weights failed", msg)
+            # Set the weights on chain via our subtensor connection.
+            result, msg = self.subtensor.set_weights(
+                wallet=self.wallet,
+                netuid=self.config.netuid,
+                uids=uint_uids,
+                weights=uint_weights,
+                wait_for_finalization=False,
+                wait_for_inclusion=False,
+                version_key=self.spec_version,
+            )
+            nonzero_uids = int(np.count_nonzero(self.scores))
+            if result is True:
+                tracker_call(
+                    self,
+                    "mark_weights_result",
+                    success=True,
+                    nonzero_uids=nonzero_uids,
+                )
+                bt.logging.info("set_weights on chain successfully!")
+            else:
+                tracker_call(
+                    self,
+                    "mark_weights_result",
+                    success=False,
+                    error=str(msg),
+                    nonzero_uids=nonzero_uids,
+                )
+                bt.logging.error("set_weights failed", msg)
+        except Exception as exc:
+            tracker_call(self, "mark_weights_result", success=False, error=str(exc))
+            raise
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""

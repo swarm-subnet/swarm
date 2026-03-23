@@ -14,6 +14,7 @@ from swarm.constants import (
     SIM_DT,
 )
 from swarm.validator.task_gen import random_task
+from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
 
@@ -114,6 +115,13 @@ async def _run_screening(
     screening_seeds = self.seed_manager.get_screening_seeds()
     threshold = _get_screening_threshold(self)
     total_seeds = len(screening_seeds)
+    tracker_call(
+        self,
+        "mark_screening_started",
+        uid=int(uid),
+        total_seeds=int(total_seeds),
+        threshold=float(threshold),
+    )
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb.start("evaluating_screening", uid, total_seeds)
@@ -130,6 +138,7 @@ async def _run_screening(
         ))
         if not checkpoints or checkpoints[-1] < total_seeds:
             checkpoints.append(total_seeds)
+        completion_note = ""
         for checkpoint in checkpoints:
             batch_seeds = screening_seeds[len(all_scores):checkpoint]
             if not batch_seeds:
@@ -150,9 +159,21 @@ async def _run_screening(
                 continue
 
             running_median = float(np.median(all_scores))
+            tracker_call(
+                self,
+                "mark_screening_progress",
+                uid=int(uid),
+                progress=int(evaluated),
+                total_seeds=int(total_seeds),
+                running_median=float(running_median),
+                note=f"checkpoint {evaluated}/{total_seeds}",
+            )
 
             fail_factor = SCREENING_EARLY_FAIL_FACTORS.get(evaluated)
             if fail_factor is not None and running_median < threshold * fail_factor:
+                completion_note = (
+                    f"early_fail {evaluated}/{total_seeds} median={running_median:.4f}"
+                )
                 bt.logging.info(
                     f"⏩ Screening early fail for UID {uid}: "
                     f"median={running_median:.4f} < {threshold * fail_factor:.4f} "
@@ -162,6 +183,9 @@ async def _run_screening(
 
             pass_factor = SCREENING_EARLY_PASS_FACTORS.get(evaluated)
             if pass_factor is not None and running_median > threshold * pass_factor:
+                completion_note = (
+                    f"early_pass {evaluated}/{total_seeds} median={running_median:.4f}"
+                )
                 bt.logging.info(
                     f"⏩ Screening early pass for UID {uid}: "
                     f"median={running_median:.4f} > {threshold * pass_factor:.4f} "
@@ -172,6 +196,15 @@ async def _run_screening(
         hb.finish()
 
     median_score = float(np.median(all_scores)) if all_scores else 0.0
+    tracker_call(
+        self,
+        "mark_screening_completed",
+        uid=int(uid),
+        evaluated=len(all_scores),
+        total_seeds=int(total_seeds),
+        median_score=float(median_score),
+        note=completion_note,
+    )
     bt.logging.info(
         f"📊 Screening result for UID {uid}: "
         f"median={median_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
@@ -187,6 +220,13 @@ async def _run_full_benchmark(
     Returns (median_score, per_type_medians, all_scores, per_type_raw).
     """
     benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
+    tracker_call(
+        self,
+        "mark_benchmark_started",
+        uid=int(uid),
+        total_seeds=len(benchmark_seeds),
+        note="full benchmark" if seeds is None else "custom seeds",
+    )
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
@@ -211,6 +251,15 @@ async def _run_full_benchmark(
         else:
             per_type_medians[type_name] = 0.0
 
+    tracker_call(
+        self,
+        "mark_benchmark_completed",
+        uid=int(uid),
+        evaluated=len(all_scores),
+        total_seeds=len(benchmark_seeds),
+        median_score=float(median_score),
+        note="full benchmark" if seeds is None else "custom seeds",
+    )
     bt.logging.info(f"📊 Full benchmark result for UID {uid}: median={median_score:.4f}")
     return median_score, per_type_medians, all_scores, per_type_raw
 

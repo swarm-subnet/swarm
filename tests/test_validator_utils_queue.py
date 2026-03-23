@@ -8,6 +8,10 @@ import pytest
 
 from swarm.protocol import ValidationResult
 from swarm.validator import utils as validator_utils
+from swarm.validator.runtime_telemetry import (
+    ValidatorRuntimeTracker,
+    load_recent_events,
+)
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 
 
@@ -111,6 +115,73 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
     assert len(cache_calls) == 1
     assert cache_calls[0][0] == "hash1"
     assert cache_calls[0][1] == 11
+
+
+def test_process_normal_queue_item_updates_runtime_tracker(monkeypatch, tmp_path: Path):
+    model_path = tmp_path / "UID_1.zip"
+    model_path.write_bytes(b"zip-bytes")
+
+    key = "1:hash1"
+    queue = {"items": {key: _queue_item(model_path)}}
+    tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
+    validator = _validator(epoch=13)
+    validator.runtime_tracker = tracker
+
+    monkeypatch.setattr(validator_utils, "sha256sum", lambda path: "hash1")
+    monkeypatch.setattr(validator_utils, "has_cached_score", lambda *_: False)
+
+    async def _register(*args, **kwargs):
+        _ = args, kwargs
+        return True, False, ""
+
+    async def _run_screening(*args, **kwargs):
+        _ = args, kwargs
+        return 0.8, [0.8], {"open": [0.8]}
+
+    async def _submit_screening(*args, **kwargs):
+        _ = args, kwargs
+        return True, False, ""
+
+    async def _evaluate(*args, **kwargs):
+        _ = args, kwargs
+        return [0.9], {"open": [0.9]}
+
+    async def _submit_score(*args, **kwargs):
+        _ = args, kwargs
+        return True, False, ""
+
+    monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
+    monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
+    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
+    monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
+    monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
+    monkeypatch.setattr(validator_utils, "set_cached_score", lambda *args, **kwargs: None)
+    monkeypatch.setattr(validator_utils, "mark_model_hash_processed", lambda *args, **kwargs: None)
+
+    asyncio.run(
+        validator_utils._process_normal_queue_item(
+            validator,
+            queue=queue,
+            key=key,
+            validator_hotkey="validator_hotkey",
+            validator_stake=123.0,
+        )
+    )
+
+    snapshot = tracker.snapshot_copy()
+    events = load_recent_events(tmp_path / "validator_events.jsonl", limit=32)
+    assert snapshot["queue"]["counts"]["completed"] == 1
+    assert snapshot["queue"]["active_items"][0]["progress_done"] == 1
+    assert snapshot["queue"]["active_items"][0]["progress_total"] == 1
+    assert snapshot["counters"]["models_processed_total"] == 1
+    assert snapshot["counters"]["screening_submit_success_total"] == 1
+    assert snapshot["counters"]["score_submit_success_total"] == 1
+    assert any(
+        event["event"] == "queue_item_stage"
+        and event["fields"].get("stage") == "completed"
+        for event in events
+    )
 
 
 def test_process_normal_queue_item_register_retry(monkeypatch, tmp_path: Path):
