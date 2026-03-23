@@ -458,7 +458,7 @@ def test_evaluate_seeds_parallel_uses_default_worker_count_of_three(monkeypatch,
     results = asyncio.run(ev.evaluate_seeds_parallel(tasks, uid=17, model_path=model_path))
 
     assert len(results) == 5
-    assert captured["effective_workers"] == 3
+    assert captured["effective_workers"] == min(len(tasks), de.parallel.N_DOCKER_WORKERS)
 
 
 def test_heavy_aware_chunk_distributes_heavy_maps_evenly():

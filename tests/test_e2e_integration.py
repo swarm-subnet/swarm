@@ -323,6 +323,9 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
         def get_all_seeds(self):
             return self.get_screening_seeds() + self.get_benchmark_seeds()
 
+        def seconds_until_epoch_end(self):
+            return 21600.0
+
     class _DockerEval:
         _base_ready = True
 
@@ -358,6 +361,13 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
                         },
                         "weights": {"0": 1.0},
                         "reeval_queue": [],
+                        "pending_models": [
+                            {
+                                "uid": 1,
+                                "model_hash": validator_utils.sha256sum(model_path),
+                                "github_url": "https://github.com/owner/repo",
+                            }
+                        ],
                         "leaderboard_version": 1,
                     }
                 )
@@ -447,20 +457,21 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(validator_utils, "NORMAL_MODEL_QUEUE_FILE", queue_file)
     monkeypatch.setattr(validator_utils, "CACHE_FILE", cache_file)
     monkeypatch.setattr(forward_mod, "FORWARD_SLEEP_SEC", 0.0)
-    monkeypatch.setattr(forward_mod, "SAMPLE_K", 1)
     monkeypatch.setattr(forward_mod, "NORMAL_MODEL_QUEUE_PROCESS_LIMIT", 1)
 
+    model_hash = validator_utils.sha256sum(model_path)
+    github_url = "https://github.com/owner/repo"
     monkeypatch.setattr(
         forward_mod,
-        "get_random_uids",
-        lambda self_obj, k: np.array([1], dtype=np.int64),
+        "_ensure_models_from_backend",
+        lambda self_obj, pending: asyncio.sleep(
+            0, result={1: (model_path, github_url)}
+        ),
     )
     monkeypatch.setattr(
         forward_mod,
-        "_ensure_models",
-        lambda self_obj, uids: asyncio.sleep(
-            0, result={1: (model_path, "https://github.com/owner/repo")}
-        ),
+        "_detect_new_models",
+        lambda self_obj, model_paths: {1: (model_path, model_hash, github_url)},
     )
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fake_evaluate_seeds)
     monkeypatch.setattr(DockerSecureEvaluator, "_base_ready", True)
@@ -485,7 +496,6 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
     # Check that forward flow performed real HTTP interactions against local backend.
     called_paths = [c[1] for c in server_state["calls"] if c[0] in ("GET", "POST")]
     assert "/validators/sync" in called_paths
-    assert "/validators/models/new" in called_paths
     assert any(p.endswith("/screening") for p in called_paths)
     assert any(p.endswith("/score") for p in called_paths)
     assert np.count_nonzero(validator.scores) >= 1

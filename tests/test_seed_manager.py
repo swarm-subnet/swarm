@@ -14,11 +14,9 @@ def seed_manager_module(reload_module):
 def _patch_paths(monkeypatch, module, tmp_path):
     state_dir = tmp_path / "state"
     seeds_dir = state_dir / "epoch_seeds"
-    origin_file = seeds_dir / "epoch_origin.json"
     monkeypatch.setattr(module, "STATE_DIR", state_dir)
     monkeypatch.setattr(module, "EPOCH_SEEDS_DIR", seeds_dir)
-    monkeypatch.setattr(module, "EPOCH_ORIGIN_FILE", origin_file)
-    return seeds_dir, origin_file
+    return seeds_dir
 
 
 def test_compute_raw_week_uses_epoch_anchor(seed_manager_module):
@@ -28,18 +26,15 @@ def test_compute_raw_week_uses_epoch_anchor(seed_manager_module):
     assert m._compute_raw_week(ts) == 2
 
 
-def test_load_or_create_origin_creates_then_reuses_file(seed_manager_module, monkeypatch, tmp_path):
+def test_manager_uses_raw_week_plus_one_for_epoch_number(seed_manager_module, monkeypatch, tmp_path):
     m = seed_manager_module
-    _, origin_file = _patch_paths(monkeypatch, m, tmp_path)
+    _patch_paths(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 2)
+    monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 11)
 
-    first = m._load_or_create_origin()
-    assert first == 11
-    assert origin_file.exists()
-
-    origin_file.write_text(json.dumps({"origin_raw_week": 7}))
-    second = m._load_or_create_origin()
-    assert second == 7
+    manager = m.BenchmarkSeedManager()
+    assert manager.epoch_number == 12
 
 
 def test_generate_random_seeds_returns_correct_count(seed_manager_module):
@@ -58,11 +53,10 @@ def test_generate_random_seeds_are_not_identical_across_calls(seed_manager_modul
 
 def test_manager_generates_and_splits_seeds(seed_manager_module, monkeypatch, tmp_path):
     m = seed_manager_module
-    seeds_dir, _ = _patch_paths(monkeypatch, m, tmp_path)
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 6)
     monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 2)
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 100)
-    monkeypatch.setattr(m, "_load_or_create_origin", lambda: 100)
 
     manager = m.BenchmarkSeedManager()
     assert manager.epoch_number == 101
@@ -75,11 +69,10 @@ def test_manager_generates_and_splits_seeds(seed_manager_module, monkeypatch, tm
 
 def test_manager_loads_seeds_from_existing_file(seed_manager_module, monkeypatch, tmp_path):
     m = seed_manager_module
-    seeds_dir, _ = _patch_paths(monkeypatch, m, tmp_path)
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
     monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 50)
-    monkeypatch.setattr(m, "_load_or_create_origin", lambda: 50)
 
     seeds_dir.mkdir(parents=True, exist_ok=True)
     saved_seeds = [111, 222, 333, 444]
@@ -95,11 +88,10 @@ def test_manager_loads_seeds_from_existing_file(seed_manager_module, monkeypatch
 
 def test_pending_publications_and_mark_published(seed_manager_module, monkeypatch, tmp_path):
     m = seed_manager_module
-    seeds_dir, _ = _patch_paths(monkeypatch, m, tmp_path)
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
     monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 12)
-    monkeypatch.setattr(m, "_load_or_create_origin", lambda: 10)
 
     seeds_dir.mkdir(parents=True, exist_ok=True)
     old_epoch = seeds_dir / "epoch_1.json"
@@ -123,7 +115,6 @@ def test_check_transition_and_advance_epoch(seed_manager_module, monkeypatch, tm
 
     current_raw = {"value": 20}
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: current_raw["value"])
-    monkeypatch.setattr(m, "_load_or_create_origin", lambda: 20)
 
     manager = m.BenchmarkSeedManager()
     assert manager.epoch_number == 21
@@ -141,7 +132,6 @@ def test_epoch_time_range_returns_utc_datetimes(seed_manager_module, monkeypatch
     m = seed_manager_module
     _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 50)
-    monkeypatch.setattr(m, "_load_or_create_origin", lambda: 50)
 
     manager = m.BenchmarkSeedManager()
     start, end = manager.epoch_time_range(manager.epoch_number)

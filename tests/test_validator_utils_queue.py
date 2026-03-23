@@ -30,7 +30,12 @@ def _queue_item(model_path: Path, model_hash: str = "hash1", uid: int = 1) -> di
 
 
 def _validator(epoch: int = 7) -> SimpleNamespace:
-    return SimpleNamespace(seed_manager=SimpleNamespace(epoch_number=epoch))
+    return SimpleNamespace(
+        seed_manager=SimpleNamespace(
+            epoch_number=epoch,
+            get_benchmark_seeds=lambda: [700001],
+        )
+    )
 
 
 def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
@@ -53,15 +58,15 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.8, [0.8]
+        return 0.8, [0.8], {"city": [], "open": [0.8]}
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs
         return True, False, ""
 
-    async def _run_full(*args, **kwargs):
+    async def _evaluate(*args, **kwargs):
         _ = args, kwargs
-        return 0.9, {"open": 0.9}, [0.9]
+        return [0.9], {"open": [0.9]}
 
     async def _submit_score(*args, **kwargs):
         _ = args, kwargs
@@ -71,7 +76,7 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
     monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
-    monkeypatch.setattr(validator_utils, "_run_full_benchmark", _run_full)
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
     monkeypatch.setattr(
         validator_utils,
@@ -167,22 +172,22 @@ def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatc
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.1, [0.1]
+        return 0.1, [0.1], {"city": [0.1]}
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs
         return True, False, ""
 
-    async def _run_full(*args, **kwargs):
+    async def _unexpected_evaluate(*args, **kwargs):
         _ = args, kwargs
         full_called["value"] = True
-        return 0.0, {}, []
+        return [], {}
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
     monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: False)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
-    monkeypatch.setattr(validator_utils, "_run_full_benchmark", _run_full)
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _unexpected_evaluate)
     monkeypatch.setattr(
         validator_utils,
         "set_cached_score",
@@ -231,15 +236,15 @@ def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_pat
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.8, [0.8]
+        return 0.8, [0.8], {"city": [], "open": [0.8]}
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs
         return True, False, ""
 
-    async def _run_full(*args, **kwargs):
+    async def _evaluate(*args, **kwargs):
         _ = args, kwargs
-        return 0.9, {"open": 0.9}, [0.9]
+        return [0.9], {"open": [0.9]}
 
     async def _submit_score(*args, **kwargs):
         _ = args, kwargs
@@ -249,7 +254,7 @@ def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_pat
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
     monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
-    monkeypatch.setattr(validator_utils, "_run_full_benchmark", _run_full)
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
     monkeypatch.setattr(
         validator_utils,
@@ -320,7 +325,7 @@ def test_process_normal_queue_item_uses_cached_scores(monkeypatch, tmp_path: Pat
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _fail_if_called)
-    monkeypatch.setattr(validator_utils, "_run_full_benchmark", _fail_if_called)
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fail_if_called)
     monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)

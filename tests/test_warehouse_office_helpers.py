@@ -31,7 +31,7 @@ def test_desk_lr_along_offsets_depend_on_slot():
 
 
 def test_slot_xy_places_points_on_expected_edges():
-    edge = office.FLOOR_SIZE / 2.0
+    edge = office.FLOOR_SIZE[0] / 2.0
     x_n, y_n = office.slot_xy("north", along=0.0, inward=0.0)
     x_s, y_s = office.slot_xy("south", along=0.0, inward=0.0)
     x_e, y_e = office.slot_xy("east", along=0.0, inward=0.0)

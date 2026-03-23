@@ -75,6 +75,8 @@ def test_runner_invokes_benchmark_then_video(monkeypatch, tmp_path: Path) -> Non
         "90.0",
         "--overview-fov",
         "55.0",
+        "--save-actions",
+        str((run_dir / "actions").resolve()),
     ]
 
 
