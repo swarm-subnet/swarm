@@ -495,14 +495,13 @@ def _run_multi_seed_rpc_sync(
 
                             is_first_step = False
 
-                            act = np.clip(
-                                np.nan_to_num(
-                                    np.asarray(action, dtype=np.float32).reshape(-1),
-                                    nan=0.0, posinf=0.0, neginf=0.0,
-                                ),
-                                lo,
-                                hi,
+                            raw_act = np.nan_to_num(
+                                np.asarray(action, dtype=np.float32).reshape(-1),
+                                nan=0.0, posinf=0.0, neginf=0.0,
                             )
+                            if raw_act.size != 5:
+                                raw_act = np.zeros(5, dtype=np.float32)
+                            act = np.clip(raw_act, lo, hi)
 
                             if hasattr(env, "ACT_TYPE") and hasattr(
                                 env, "SPEED_LIMIT"
