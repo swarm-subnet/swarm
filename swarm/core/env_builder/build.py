@@ -316,6 +316,7 @@ def build_world(
             )
 
             goal_plat_top_z = goal_platform_z + platform_height / 2
+            goal_platform_surface_z = goal_plat_top_z
             surface_radius = platform_radius * 0.8
             surface_height = 0.008
             bright_goal_color = [
