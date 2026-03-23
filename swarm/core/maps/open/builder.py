@@ -27,7 +27,7 @@ _TERRAIN_AMPLITUDE = 1.5
 _TERRAIN_FREQUENCY = 0.05
 _TERRAIN_OCTAVES = 6
 _TERRAIN_FLAT_CENTER = 10.0
-_TERRAIN_MESH_VERSION = 1
+_TERRAIN_MESH_VERSION = 2
 
 _CLI_TEX_CACHE: dict = {}
 
@@ -60,10 +60,13 @@ def _fbm(x: float, y: float, seed: int, octaves: int = 5, gain: float = 0.5) -> 
     return value
 
 
+_FBM_MAX = sum(0.5 ** i for i in range(_TERRAIN_OCTAVES))
+
+
 def _terrain_z(x: float, y: float, seed: int) -> float:
     h = _fbm(x * _TERRAIN_FREQUENCY, y * _TERRAIN_FREQUENCY, seed,
              octaves=_TERRAIN_OCTAVES, gain=0.5)
-    h = (h - 0.5) * 2.0 * _TERRAIN_AMPLITUDE
+    h = (h / _FBM_MAX - 0.5) * 2.0 * _TERRAIN_AMPLITUDE
     dist = math.sqrt(x * x + y * y)
     if dist < _TERRAIN_FLAT_CENTER:
         h *= (dist / _TERRAIN_FLAT_CENTER) ** 2
