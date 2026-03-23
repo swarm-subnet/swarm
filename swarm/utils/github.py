@@ -152,12 +152,10 @@ async def check_readme_matches(
                 digest = hashlib.sha256(resp.content).hexdigest()
                 if digest == REQUIRED_README_HASH:
                     return True
-                bt.logging.warning(
-                    f"README.md hash mismatch{tag}: "
-                    f"expected {REQUIRED_README_HASH[:16]}..., "
-                    f"got {digest[:16]}..."
+                bt.logging.info(
+                    f"README.md hash mismatch on {url.split('/raw/')[1].split('/')[0]}{tag}, "
+                    f"trying next branch"
                 )
-                return False
     except Exception as e:
         bt.logging.warning(f"README.md check failed{tag}: {e}")
         return False
