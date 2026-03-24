@@ -289,7 +289,7 @@ async def evaluate_seeds_batch(
                 "--network",
                 "bridge",
                 "-p",
-                f"{host_port}:8000",
+                f"127.0.0.1:{host_port}:8000",
                 "-v",
                 f"{submission_dir}:/workspace/submission:rw",
             ]
@@ -328,7 +328,7 @@ async def evaluate_seeds_batch(
                 "--network",
                 "bridge",
                 "-p",
-                f"{host_port}:8000",
+                f"127.0.0.1:{host_port}:8000",
                 "-v",
                 f"{submission_dir}:/workspace/submission:ro",
             ]
