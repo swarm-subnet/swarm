@@ -992,7 +992,7 @@ class MovingDroneAviary(BaseRLAviary):
             success=self._success,
             t=(self._t_to_goal if self._success else self._time_alive),
             horizon=self.EP_LEN_SEC,
-            task=None,
+            task=self.task,
             min_clearance=self._min_clearance_episode,
             collision=self._collision,
         )
