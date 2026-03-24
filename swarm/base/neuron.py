@@ -224,7 +224,7 @@ class BaseNeuron(ABC):
         self.version = __version__
 
         bt.logging.info("Parsing versions...")
-        response = requests.get(version_url)
+        response = requests.get(version_url, timeout=10)
         bt.logging.info(f"Response: {response.status_code}")
         if response.status_code == 200:
             content = response.text
