@@ -29,7 +29,7 @@ Train an autonomous drone pilot, benchmark it against 1,000 procedurally generat
 
 ## System Requirements
 
-Mining is extremely lightweight — your miner only serves a GitHub URL pointing to your model, so any machine with **Python 3.10+** and a network connection will do. Training hardware depends entirely on your approach (SB3, PyTorch, custom RL — your choice).
+Mining is extremely lightweight — your miner submits a GitHub URL to the backend and goes offline. Any machine with **Python 3.10+** and a network connection will do. Training hardware depends entirely on your approach (SB3, PyTorch, custom RL — your choice).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -67,7 +67,7 @@ The full miner workflow — from first install to competing on the leaderboard:
 5. swarm model verify         ← Verify compliance (size, structure)
 6. swarm benchmark            ← Run local benchmark
 7. Push to GitHub             ← Public repo with submission.zip + README
-8. Start miner                ← Serve your model to validators
+8. Submit model               ← One-shot submit, then go offline
 ```
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -238,15 +238,9 @@ git commit -m "Add submission"
 git push
 ```
 
-### 4. Set the Environment Variable
+### 4. Submit
 
-Before starting your miner, export your repo URL:
-
-```bash
-export GITHUB_URL="https://github.com/YOUR_USER/YOUR_REPO"
-```
-
-Validators will use this URL to download your `submission.zip` and verify your `README.md`.
+The backend will download your `submission.zip` and verify your `README.md` automatically.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -258,11 +252,11 @@ Validators will use this URL to download your `submission.zip` and verify your `
 
 | Flag | Description | Example |
 |------|-------------|---------|
+| `--github_url` | **Required.** Public GitHub repo URL | `--github_url https://github.com/user/repo` |
 | `--netuid` | Subnet netuid | `--netuid 124` |
 | `--wallet.name` | Your coldkey name | `--wallet.name my_cold` |
 | `--wallet.hotkey` | Hotkey used for mining | `--wallet.hotkey my_hot` |
 | `--subtensor.network` | Network (finney, test) | `--subtensor.network finney` |
-| `--axon.port` | TCP port your miner listens on | `--axon.port 8091` |
 
 ### Create Keys
 
@@ -271,28 +265,20 @@ btcli wallet new_coldkey --wallet.name my_cold
 btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
-### PM2 Launch
+### Submit Your Model
 
 ```bash
 source miner_env/bin/activate
 
-export GITHUB_URL="https://github.com/YOUR_USER/YOUR_REPO"
-
-pm2 start neurons/miner.py --name swarm_miner -- \
+python neurons/miner.py \
      --netuid 124 \
      --subtensor.network finney \
      --wallet.name my_cold \
      --wallet.hotkey my_hot \
-     --axon.port 8091
+     --github_url "https://github.com/YOUR_USER/YOUR_REPO"
 ```
 
-### Logs / Stop / Restart
-
-```bash
-pm2 logs swarm_miner
-pm2 restart swarm_miner
-pm2 stop swarm_miner
-```
+The miner submits your model and exits. You do **not** need to stay online — validators discover your model automatically.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -332,11 +318,11 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 
 ### How Your Model Is Evaluated
 
-1. **Validator** queries your miner for a `PolicyRef` (model hash + metadata)
-2. **Validator** downloads your `submission.zip` from your GitHub repo
-3. **Validator** verifies your README hash (SHA-256 must match template exactly)
+1. **Miner** submits GitHub URL to backend (one-shot, goes offline)
+2. **Backend** downloads `submission.zip`, computes SHA-256, verifies README hash
+3. **Validator** syncs with backend, downloads your model from GitHub, verifies hash
 4. **Validator** runs your agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — quick filter, must score > **101%** of the current champion
+   - **Screening** (200 seeds) — quick filter, must score >= **101%** of the current champion (or >= 0.1 if no champion)
    - **Full benchmark** (800 seeds) — complete evaluation across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
 5. **Final score** = median of all 1,000 seed results
 6. **Winner-take-all** — #1 scorer receives emissions
@@ -354,7 +340,7 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 | Total seeds per epoch | 1,000 |
 | Screening seeds | 200 |
 | Full benchmark seeds | 800 |
-| Screening threshold | > 101% of champion score |
+| Screening threshold | >= 101% of champion score (or >= 0.1 bootstrap) |
 | Max submission size | 50 MiB (compressed) |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>

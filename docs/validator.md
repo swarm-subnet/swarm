@@ -282,14 +282,14 @@ pm2 start --name auto_update_validator \
 
 ## 🧩 What the Validator Does
 
-1. **Detect new models**
-   For each miner UID, compare SHA-256 hash to cache. If hash differs, download the new model.
+1. **Sync with backend**
+   Fetch pending models list via backend API (`GET /validators/sync`). Discover new models submitted by miners.
 
 2. **Download from GitHub**
-   Validators download models from miners' public GitHub repositories. The miner's `README.md` hash is verified (SHA-256) before downloading — it must match the official template exactly.
+   Download `submission.zip` from the miner's public GitHub repository. Verify SHA-256 hash matches the backend's stored hash. README.md hash is verified by the backend during submission.
 
 3. **Screening (200 seeds)**
-   New models are first evaluated on 200 seeds. Must score > **101%** of the current champion to proceed (`SCREENING_TOP_MODEL_FACTOR = 1.01`).
+   New models are first evaluated on 200 seeds. Must score >= **101%** of the current champion to proceed (`SCREENING_TOP_MODEL_FACTOR = 1.01`), or >= 0.1 if no champion exists.
 
 4. **Full benchmark (800 seeds)**
    Models that pass screening are evaluated on the remaining 800 benchmark seeds across all environment types. Evaluation runs in parallel Docker containers.
