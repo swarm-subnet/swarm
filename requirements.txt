@@ -7,7 +7,7 @@ numpy>=1.24,<2.0
 loguru
 xmldiff
 filelock
-swarm-pybullet>=3.2.7,<4.0.0
+swarm-pybullet>=3.2.7.0,<4.0.0
 bittensor
 msgpack
 importlib-metadata
@@ -22,4 +22,4 @@ gymnasium
 requests
 httpx
 pycapnp
-swarm-gym-pybullet-drones>=2.0.0,<3.0.0
+swarm-gym-pybullet-drones>=2.0.0.0,<3.0.0

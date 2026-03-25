@@ -18,10 +18,11 @@
 import sys
 from pathlib import Path
 
-__version__ = "4.0.0"
+__version__ = "4.0.0.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
 
+# Keep protocol compatibility keyed to the first three version components.
 __spec_version__ = (
     (1000 * int(version_split[0]))
     + (10 * int(version_split[1]))
