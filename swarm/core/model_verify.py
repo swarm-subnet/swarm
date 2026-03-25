@@ -88,7 +88,7 @@ def inspect_model_structure(zip_path: Path) -> Dict:
             dangerous_files = [
                 f
                 for f in file_list
-                if f.endswith((".exe", ".so", ".dll", ".sh", ".bat"))
+                if f.endswith((".exe", ".so", ".dll", ".sh", ".bat", ".pyc"))
             ]
             if dangerous_files:
                 return {
