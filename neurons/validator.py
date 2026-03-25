@@ -380,5 +380,7 @@ if __name__ == "__main__":
 
     with Validator() as validator:
         while True:
-            bt.logging.info(f"Validator running... {time.time()}")
+            if hasattr(validator, 'thread') and not validator.thread.is_alive():
+                bt.logging.error("Validator worker thread died! Exiting.")
+                break
             time.sleep(5)
