@@ -98,15 +98,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._platform_offsets = []
 
         self._init_platform_randomization(seed)
-        search_radius = getattr(task, 'search_radius', 10.0)
-        rng = np.random.RandomState(seed)
-        noise_xy = rng.uniform(-search_radius, search_radius, size=2)
-        noise_z = rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
         self._search_area_center = self.GOAL_POS.copy()
-        self._search_area_center[0] += noise_xy[0]
-        self._search_area_center[1] += noise_xy[1]
-        self._search_area_center[2] = max(0.0, self._search_area_center[2] + noise_z)
-        
+
         fov_rng = np.random.RandomState(seed)
         fov_rng.rand()
         self._fov = CAMERA_FOV_BASE + fov_rng.uniform(-CAMERA_FOV_VARIANCE, CAMERA_FOV_VARIANCE)
