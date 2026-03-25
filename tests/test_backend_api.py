@@ -167,6 +167,31 @@ def test_post_new_model_maps_backend_response(monkeypatch, tmp_path):
         _run(client.close())
 
 
+def test_post_new_model_forwards_github_url(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+        monkeypatch.setattr(client, "_get_miner_hotkey", lambda uid: "miner_hotkey")
+
+        async def _fake_post(endpoint, data):
+            assert endpoint == "/validators/models/new"
+            assert data["github_url"] == "https://github.com/example/model"
+            return {"model_id": 56}
+
+        monkeypatch.setattr(client, "_post_signed", _fake_post)
+        result = _run(
+            client.post_new_model(
+                1,
+                "hash",
+                "coldkey",
+                "validator",
+                github_url="https://github.com/example/model",
+            )
+        )
+        assert result == {"accepted": True, "model_id": 56}
+    finally:
+        _run(client.close())
+
+
 def test_post_new_model_handles_missing_hotkey(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
@@ -192,6 +217,13 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
                 "weights": {"2": 1.0},
                 "reeval_queue": [{"uid": 2, "reason": "reeval"}],
                 "leaderboard_version": 9,
+                "pending_models": [
+                    {
+                        "uid": 3,
+                        "model_hash": "pending-hash",
+                        "github_url": "https://github.com/example/pending-model",
+                    }
+                ],
             }
 
         monkeypatch.setattr(client, "_get_signed", _fake_get)
@@ -199,6 +231,13 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
         assert result["current_top"]["uid"] == 2
         assert result["weights"] == {"2": 1.0}
         assert result["leaderboard_version"] == 9
+        assert result["pending_models"] == [
+            {
+                "uid": 3,
+                "model_hash": "pending-hash",
+                "github_url": "https://github.com/example/pending-model",
+            }
+        ]
     finally:
         _run(client.close())
 
@@ -253,5 +292,35 @@ def test_upload_model_file_posts_signed_request(monkeypatch, tmp_path):
         _, kwargs = fake_http.last_post
         assert kwargs["headers"]["X-Model-Hash"] == expected_hash
         assert kwargs["files"]["file"][0] == "model.zip"
+    finally:
+        _run(client.close())
+
+
+def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+
+        async def _fake_post(endpoint, data):
+            assert endpoint == "/validators/epoch/publish"
+            assert data == {
+                "epoch_number": 7,
+                "seeds": [11, 12, 13],
+                "started_at": "2026-03-25T10:00:00Z",
+                "ended_at": "2026-03-25T10:10:00Z",
+                "benchmark_version": "v4.0.0",
+            }
+            return {"accepted": True}
+
+        monkeypatch.setattr(client, "_post_signed", _fake_post)
+        result = _run(
+            client.publish_epoch_seeds(
+                epoch_number=7,
+                seeds=[11, 12, 13],
+                started_at="2026-03-25T10:00:00Z",
+                ended_at="2026-03-25T10:10:00Z",
+                benchmark_version="v4.0.0",
+            )
+        )
+        assert result == {"accepted": True}
     finally:
         _run(client.close())
