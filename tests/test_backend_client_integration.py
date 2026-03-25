@@ -195,7 +195,7 @@ def test_backend_api_client_can_walk_live_backend_contract(monkeypatch, tmp_path
                 status="evaluating_benchmark",
                 current_uid=42,
                 progress=600,
-                total_seeds=1200,
+                total_seeds=1000,
             )
             assert heartbeat["recorded"] is True
 
