@@ -413,6 +413,11 @@ async def evaluate_seeds_batch(
             pip_done = True
             _phase("no pip install required")
 
+        if has_requirements:
+            shutil.copy(template_dir / "agent.capnp", submission_dir)
+            shutil.copy(template_dir / "agent_server.py", submission_dir)
+            shutil.copy(template_dir / "main.py", submission_dir)
+
         container_pid = self._get_container_pid(container_name)
         if not container_pid:
             bt.logging.warning(f"[Worker {worker_id}] Failed to get container PID")
