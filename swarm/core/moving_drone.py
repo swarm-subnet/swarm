@@ -73,6 +73,8 @@ class MovingDroneAviary(BaseRLAviary):
         Remaining arguments are forwarded to ``BaseRLAviary`` unchanged.
         """
         self.task       = task
+        self._original_start = tuple(task.start)
+        self._original_goal = tuple(task.goal)
         self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
         self._moving    = getattr(task, 'moving_platform', False)
@@ -915,6 +917,8 @@ class MovingDroneAviary(BaseRLAviary):
 
     def _spawn_task_world(self):
         """Rebuild the procedural world defined by self.task."""
+        self.task.start = self._original_start
+        self.task.goal = self._original_goal
 
         cli = getattr(self, "CLIENT", 0)
         result = build_world(
