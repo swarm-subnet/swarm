@@ -8,16 +8,17 @@ This creates HTTP client to talk to backend.
 Endpoints (all under /validators prefix):
 - POST /validators/models/new           - Tell backend "I found a new model"
 - POST /validators/models/{uid}/screening - Submit screening result (200 private seeds)
-- POST /validators/models/{uid}/score   - Submit full benchmark score (1000 seeds)
-- GET  /validators/sync                 - Get current weights + re-eval queue
+- POST /validators/models/{uid}/score   - Submit full benchmark score (1200 seeds)
+- GET  /validators/sync                 - Get current weights + re-eval queue + authoritative benchmark epoch
 
 Freeze-last behavior:
 - If backend is down → use last known weights (saved locally)
 - Validator doesn't crash, keeps running with old weights
 
-Rate Limiting:
-- Each miner hotkey can only submit ONE model ever (lifetime limit)
-- Backend tracks this and rejects duplicate submissions
+Submission Rules:
+- Each miner hotkey can only submit ONE active model at a time
+- `EPOCH_EXPIRED` submissions free the hotkey for resubmission
+- `github_url` is required so pending models propagate across validators
 
 Scoring Thresholds (calculated by backend):
 - Screening pass: score >= 0.1 OR score >= 101% of current top model
@@ -74,6 +75,9 @@ def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool
             "409",
             "429",
             "conflict",
+            "github_url is required",
+            "invalid github url",
+            "hotkey already submitted an active model",
         )
         if any(pattern in text for pattern in terminal_patterns):
             return True, reason
@@ -85,6 +89,9 @@ def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool
             "pending benchmark",
             "not found",
             "404",
+            "benchmark epoch mismatch",
+            "not eligible for benchmark scoring",
+            "422",
         )
         if any(pattern in text for pattern in terminal_patterns):
             return True, reason
@@ -114,7 +121,7 @@ def _load_runtime_state() -> dict:
                 return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         bt.logging.warning(f"Runtime state load failed: {e}")
-    return {"last_weights": {}, "reeval_queue": [], "last_sync": 0}
+    return {"last_weights": {}, "reeval_queue": [], "last_sync": 0, "benchmark_epoch": 0}
 
 
 def _save_runtime_state(state: dict) -> None:
@@ -247,8 +254,7 @@ class BackendApiClient:
             "coldkey": coldkey,
             "hotkey": miner_hotkey,
         }
-        if github_url:
-            payload["github_url"] = github_url
+        payload["github_url"] = github_url
 
         result = await self._post_signed("/validators/models/new", payload)
 
@@ -367,6 +373,9 @@ class BackendApiClient:
                 self._runtime_state["reeval_queue"] = reeval_queue
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
+                self._runtime_state["benchmark_epoch"] = data.get(
+                    "benchmark_epoch", data.get("current_epoch", 0)
+                )
                 _save_runtime_state(self._runtime_state)
 
                 pending_models = data.get("pending_models", [])
@@ -375,12 +384,16 @@ class BackendApiClient:
                     f"Backend sync successful: leaderboard v{data.get('leaderboard_version', '?')}, "
                     f"{len(pending_models)} pending model(s)"
                 )
+                benchmark_epoch = data.get("benchmark_epoch", data.get("current_epoch", 0))
                 return {
                     "current_top": current_top,
                     "weights": data.get("weights", {}),
                     "reeval_queue": reeval_queue,
                     "leaderboard_version": data.get("leaderboard_version", 0),
                     "pending_models": pending_models,
+                    "benchmark_epoch": benchmark_epoch,
+                    "current_epoch": benchmark_epoch,
+                    "latest_reported_epoch": data.get("latest_reported_epoch"),
                 }
 
             raise Exception(data.get("error", "Unknown error"))
@@ -396,6 +409,8 @@ class BackendApiClient:
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
                 "pending_models": [],
+                "benchmark_epoch": self._runtime_state.get("benchmark_epoch", 0),
+                "current_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "fallback": True,
                 "error": str(e),
             }
@@ -476,7 +491,7 @@ class BackendApiClient:
             status: "idle", "evaluating_screening", or "evaluating_benchmark"
             current_uid: UID being evaluated (required when evaluating)
             progress: Seeds completed so far
-            total_seeds: Total seeds to evaluate (200 or 1000)
+            total_seeds: Total seeds to evaluate (200 or 1200)
 
         Returns:
             {"recorded": True, "message": "..."} or error dict

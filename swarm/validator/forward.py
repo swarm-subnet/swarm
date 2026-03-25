@@ -169,6 +169,11 @@ async def forward(self) -> None:
 
         self._current_top = sync_data.get("current_top", {})
         reeval_queue = sync_data.get("reeval_queue", [])
+        backend_epoch = int(
+            sync_data.get("benchmark_epoch")
+            or sync_data.get("current_epoch")
+            or 0
+        )
         tracker_call(
             self,
             "mark_backend_sync_completed",
@@ -178,6 +183,16 @@ async def forward(self) -> None:
             leaderboard_version=sync_data.get("leaderboard_version"),
             error=str(sync_data.get("error", "")),
         )
+
+        if backend_epoch > 0 and backend_epoch != self.seed_manager.epoch_number:
+            old_epoch = self.seed_manager.align_to_epoch(backend_epoch)
+            if old_epoch is not None:
+                _invalidate_local_state_for_regenerated_seeds(self)
+                self._epoch_just_transitioned = True
+                bt.logging.info(
+                    f"Aligned validator seed epoch to backend benchmark epoch: "
+                    f"{old_epoch} -> {self.seed_manager.epoch_number}"
+                )
 
         epoch_just_transitioned = getattr(self, '_epoch_just_transitioned', False)
         if epoch_just_transitioned and self._current_top.get("uid") is not None:

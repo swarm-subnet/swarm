@@ -156,6 +156,29 @@ class BenchmarkSeedManager:
         bt.logging.info(f"Epoch transition: {old_epoch} → {self.epoch_number}")
         return old_epoch
 
+    def align_to_epoch(self, epoch: int) -> int | None:
+        """Align local seed state to the authoritative backend benchmark epoch."""
+        if epoch <= 0 or epoch == self.epoch_number:
+            return None
+
+        old_epoch = self.epoch_number
+        old_file = self._epoch_file(old_epoch)
+        if old_file.exists():
+            try:
+                data = json.loads(old_file.read_text())
+                if not data.get("published", False):
+                    self._pending_publications.append(data)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        self.epoch_number = epoch
+        self._publish_unpublished_epochs()
+        self._load_or_generate_seeds(invalidate_local_state_on_regenerate=False)
+        bt.logging.info(
+            f"BenchmarkSeedManager aligned to backend epoch: {old_epoch} -> {self.epoch_number}"
+        )
+        return old_epoch
+
     def epoch_time_range(self, epoch: int) -> tuple[datetime, datetime]:
         raw = self._epoch_to_raw(epoch)
         anchor_ts = EPOCH_ANCHOR_UTC.timestamp()
