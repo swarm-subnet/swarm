@@ -83,7 +83,7 @@ def _build_client(monkeypatch, tmp_path, wallet=None):
 def test_load_runtime_state_missing_file_returns_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr(backend_api, "RUNTIME_STATE_FILE", tmp_path / "missing.json")
     state = backend_api._load_runtime_state()
-    assert state == {"last_weights": {}, "reeval_queue": [], "last_sync": 0}
+    assert state == {"last_weights": {}, "reeval_queue": [], "last_sync": 0, "benchmark_epoch": 0}
 
 
 def test_save_runtime_state_writes_file(monkeypatch, tmp_path):
@@ -91,7 +91,7 @@ def test_save_runtime_state_writes_file(monkeypatch, tmp_path):
     runtime_file = tmp_path / "runtime_state.json"
     monkeypatch.setattr(backend_api, "RUNTIME_STATE_FILE", runtime_file)
 
-    backend_api._save_runtime_state({"last_weights": {"1": 1.0}})
+    backend_api._save_runtime_state({"last_weights": {"1": 1.0}, "benchmark_epoch": 7})
     assert runtime_file.exists()
     assert json.loads(runtime_file.read_text())["last_weights"] == {"1": 1.0}
 
@@ -217,6 +217,7 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
                 "weights": {"2": 1.0},
                 "reeval_queue": [{"uid": 2, "reason": "reeval"}],
                 "leaderboard_version": 9,
+                "benchmark_epoch": 7,
                 "pending_models": [
                     {
                         "uid": 3,
@@ -231,6 +232,7 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
         assert result["current_top"]["uid"] == 2
         assert result["weights"] == {"2": 1.0}
         assert result["leaderboard_version"] == 9
+        assert result["benchmark_epoch"] == 7
         assert result["pending_models"] == [
             {
                 "uid": 3,
@@ -249,6 +251,7 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         "last_weights": {"7": 1.0},
         "reeval_queue": [{"uid": 7, "reason": "cached"}],
         "last_sync": 1,
+        "benchmark_epoch": 8,
     }
     try:
 
@@ -261,6 +264,7 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         assert result["fallback"] is True
         assert result["weights"] == {"7": 1.0}
         assert result["current_top"] == {"uid": 7}
+        assert result["benchmark_epoch"] == 8
     finally:
         _run(client.close())
 
@@ -324,3 +328,19 @@ def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
         assert result == {"accepted": True}
     finally:
         _run(client.close())
+
+
+def test_classify_backend_failure_marks_epoch_mismatch_and_missing_github_as_terminal():
+    is_terminal, reason = backend_api.classify_backend_failure(
+        {"detail": "Benchmark epoch mismatch. Current benchmark epoch is 7, got 6."},
+        "score",
+    )
+    assert is_terminal is True
+    assert "epoch mismatch" in reason.lower()
+
+    is_terminal, reason = backend_api.classify_backend_failure(
+        {"detail": "github_url is required and must be https://github.com/{owner}/{repo}"},
+        "new_model",
+    )
+    assert is_terminal is True
+    assert "github_url" in reason

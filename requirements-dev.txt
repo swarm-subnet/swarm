@@ -2,3 +2,10 @@
 pytest
 build
 twine
+# Backend contract tests import the validator API app to exercise real HTTP flows.
+fastapi
+uvicorn
+sqlmodel
+sqlalchemy
+python-multipart
+apscheduler

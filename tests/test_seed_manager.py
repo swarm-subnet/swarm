@@ -138,3 +138,23 @@ def test_epoch_time_range_returns_utc_datetimes(seed_manager_module, monkeypatch
     assert start.tzinfo == timezone.utc
     assert end.tzinfo == timezone.utc
     assert (end - start).total_seconds() == m.EPOCH_DURATION_SECONDS
+
+
+def test_align_to_epoch_switches_local_epoch_and_preserves_pending_publications(
+    seed_manager_module,
+    monkeypatch,
+    tmp_path,
+):
+    m = seed_manager_module
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
+    monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
+    monkeypatch.setattr(m, "_compute_raw_week", lambda ts=None: 10)
+
+    manager = m.BenchmarkSeedManager()
+    old_epoch = manager.epoch_number
+    aligned_from = manager.align_to_epoch(15)
+
+    assert aligned_from == old_epoch
+    assert manager.epoch_number == 15
+    assert (seeds_dir / "epoch_15.json").exists()
