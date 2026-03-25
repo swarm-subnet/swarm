@@ -124,4 +124,5 @@ def make_env(
         physicsClientId=cli,
     )
 
+    env._initial_obs = obs
     return env
