@@ -712,6 +712,14 @@ async def evaluate_seeds_batch(
                 except Exception as e:
                     _phase(f"container logs tail failed: {type(e).__name__}: {e}")
 
+                partial_results = rpc_payload.get("results")
+                if isinstance(partial_results, list) and len(partial_results) == len(tasks):
+                    completed = sum(1 for r in partial_results if r.score > 0.0)
+                    bt.logging.warning(
+                        f"[Worker {worker_id}] Using partial results: {completed}/{len(tasks)} seeds completed before timeout"
+                    )
+                    _notify_all_failed(status="batch_timeout_partial")
+                    return partial_results
                 _notify_all_failed(status="batch_timeout")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
