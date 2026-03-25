@@ -91,7 +91,6 @@ def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool
             "404",
             "benchmark epoch mismatch",
             "not eligible for benchmark scoring",
-            "422",
         )
         if any(pattern in text for pattern in terminal_patterns):
             return True, reason

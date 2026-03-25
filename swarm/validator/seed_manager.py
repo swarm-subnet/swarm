@@ -158,7 +158,7 @@ class BenchmarkSeedManager:
 
     def align_to_epoch(self, epoch: int) -> int | None:
         """Align local seed state to the authoritative backend benchmark epoch."""
-        if epoch <= 0 or epoch == self.epoch_number:
+        if epoch <= 0 or epoch <= self.epoch_number:
             return None
 
         old_epoch = self.epoch_number

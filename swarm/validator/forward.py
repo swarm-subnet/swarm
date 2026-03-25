@@ -187,7 +187,9 @@ async def forward(self) -> None:
         if backend_epoch > 0 and backend_epoch != self.seed_manager.epoch_number:
             old_epoch = self.seed_manager.align_to_epoch(backend_epoch)
             if old_epoch is not None:
-                _invalidate_local_state_for_regenerated_seeds(self)
+                self.docker_evaluator.cleanup()
+                clear_normal_model_queue()
+                clear_benchmark_cache()
                 self._epoch_just_transitioned = True
                 bt.logging.info(
                     f"Aligned validator seed epoch to backend benchmark epoch: "
