@@ -95,7 +95,7 @@ def test_backend_api_client_can_walk_live_backend_contract(monkeypatch, tmp_path
     monkeypatch.setattr(backend_api_validators, "get_weights", lambda _session: {41: 1.0})
     monkeypatch.setattr(backend_api_validators, "get_reeval_queue", lambda _session: [])
     monkeypatch.setattr(backend_api_validators, "get_leaderboard_version", lambda _session: 12)
-    monkeypatch.setattr(backend_api_validators, "get_trusted_epoch", lambda _session: 7)
+    monkeypatch.setattr(backend_api_validators, "get_benchmark_epoch", lambda: 7)
     monkeypatch.setattr(
         backend_api_validators,
         "get_current_champion",
