@@ -54,7 +54,11 @@ def submit_model(wallet, github_url: str, backend_url: str) -> dict:
 
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
         resp = client.post(url, content=payload, headers=headers)
-        data = resp.json()
+
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            return {"_error": f"HTTP {resp.status_code} (non-JSON response)", "_status_code": resp.status_code}
 
         if resp.is_success and data.get("accepted"):
             return data
