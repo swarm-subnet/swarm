@@ -3,7 +3,7 @@ import math
 from ._shared import *
 from swarm.validator.runtime_telemetry import tracker_call
 
-from swarm.constants import N_DOCKER_WORKERS
+from swarm.constants import N_DOCKER_WORKERS, BENCHMARK_TOTAL_SEED_COUNT
 
 
 def _utils_facade():
@@ -286,7 +286,7 @@ async def _process_normal_queue_item(
                 )
                 item["total_score"] = float(cached.get("total_score", 0.0))
                 item["per_type_scores"] = per_type_scores
-                item["seeds_evaluated"] = int(cached.get("seeds_evaluated", 1200))
+                item["seeds_evaluated"] = int(cached.get("seeds_evaluated", BENCHMARK_TOTAL_SEED_COUNT))
             else:
                 all_benchmark_seeds = self.seed_manager.get_benchmark_seeds()
                 partial_scores = item.get("benchmark_partial_scores", [])

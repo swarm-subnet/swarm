@@ -8,7 +8,7 @@ This creates HTTP client to talk to backend.
 Endpoints (all under /validators prefix):
 - POST /validators/models/new           - Tell backend "I found a new model"
 - POST /validators/models/{uid}/screening - Submit screening result (200 private seeds)
-- POST /validators/models/{uid}/score   - Submit full benchmark score (1200 seeds)
+- POST /validators/models/{uid}/score   - Submit full benchmark score (1000 seeds)
 - GET  /validators/sync                 - Get current weights + re-eval queue
 
 Freeze-last behavior:
@@ -476,7 +476,7 @@ class BackendApiClient:
             status: "idle", "evaluating_screening", or "evaluating_benchmark"
             current_uid: UID being evaluated (required when evaluating)
             progress: Seeds completed so far
-            total_seeds: Total seeds to evaluate (200 or 1200)
+            total_seeds: Total seeds to evaluate (200 or 1000)
 
         Returns:
             {"recorded": True, "message": "..."} or error dict
