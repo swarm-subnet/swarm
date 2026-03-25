@@ -321,9 +321,13 @@ def _run_multi_seed_rpc_sync(
                     )
 
                     try:
-                        obs = getattr(env, '_initial_obs', None)
-                        if obs is None:
-                            obs, _ = env.reset()
+                        t_reset_env_start = time.time()
+                        _set_phase("env_reset", task=task_label, step=0, sim_t=0.0)
+                        _trace(f"{task_label} env.reset() start")
+                        obs, _ = env.reset()
+                        _trace(
+                            f"{task_label} env.reset() done in {(time.time() - t_reset_env_start):.2f}s"
+                        )
                         t_reset_start = time.time()
                         try:
                             _set_phase(
