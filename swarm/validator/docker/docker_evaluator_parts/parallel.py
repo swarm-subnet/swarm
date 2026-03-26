@@ -470,7 +470,7 @@ async def _run_process_parallel(
                 vr = ValidationResult(*packed)
                 results[idx] = vr
                 meta = task_meta[idx] if idx < len(task_meta) else None
-                _record_seed_result(vr, meta)
+                _record_seed_result(vr, meta, is_infra_failure=(vr.score == 0.0))
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
