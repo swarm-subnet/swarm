@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import queue as queue_mod
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -299,9 +300,7 @@ async def _run_process_parallel(
             vr = ValidationResult(int(uid), False, 0.0, 0.0)
             results[idx] = vr
             meta = task_meta[idx] if idx < len(task_meta) else None
-            if meta:
-                meta = dict(meta, status=status)
-            _record_seed_result(vr, meta)
+            _record_seed_result(vr, meta, is_infra_failure=True)
 
         worker_active_requests.pop(worker_slot, None)
         worker_last_heartbeat.pop(worker_slot, None)
@@ -327,39 +326,35 @@ async def _run_process_parallel(
             _dispatch_available_batches()
         return completed_now
 
+    _TYPE_PREFIX = re.compile(r"^type\d+_")
     seed_stats: dict[str, Any] = {
-        "ok": 0, "timeout": 0, "error": 0,
+        "ok": 0, "failed": 0, "timeout": 0,
         "scores": [],
         "per_type": {},
-        "started_at": time.time(),
-        "window_events": [],
+        "timeout_types": {},
     }
 
-    def _record_seed_result(result_obj: Any, meta: Optional[dict]) -> None:
+    def _type_name(meta: Optional[dict]) -> str:
+        raw = meta.get("group", "unknown") if meta else "unknown"
+        return _TYPE_PREFIX.sub("", raw)
+
+    def _record_seed_result(result_obj: Any, meta: Optional[dict], is_infra_failure: bool = False) -> None:
         if result_obj is None:
-            seed_stats["error"] += 1
+            seed_stats["timeout"] += 1
             return
         score = float(result_obj.score) if result_obj else 0.0
-        success = bool(result_obj.success) if result_obj else False
         seed_stats["scores"].append(score)
-        tname = meta.get("group", "unknown").replace("type1_", "").replace("type2_", "").replace("type3_", "").replace("type4_", "").replace("type5_", "").replace("type6_", "") if meta else "unknown"
+        tname = _type_name(meta)
         if tname not in seed_stats["per_type"]:
             seed_stats["per_type"][tname] = []
         seed_stats["per_type"][tname].append(score)
-        now = time.time()
-        seed_stats["window_events"].append({"t": now, "score": score})
-        is_failure = (
-            not success
-            or (meta and meta.get("status") in (
-                "seed_cancelled", "seed_timeout", "batch_exception",
-                "worker_stall_timeout", "model_path_missing", "docker_not_ready",
-                "submission_missing_drone_agent", "submission_validation_failed",
-                "submission_start_failed", "network_lockdown_failed",
-                "container_pid_missing",
-            ))
-        )
-        if is_failure:
+        if is_infra_failure:
             seed_stats["timeout"] += 1
+            seed_stats["timeout_types"][tname] = seed_stats["timeout_types"].get(tname, 0) + 1
+            seed_id = meta.get("seed", "?") if meta else "?"
+            seed_stats.setdefault("timeout_seeds", []).append(f"{tname}:{seed_id}")
+        elif score == 0.0:
+            seed_stats["failed"] += 1
         else:
             seed_stats["ok"] += 1
 
@@ -377,11 +372,18 @@ async def _run_process_parallel(
             for t, s in sorted(seed_stats["per_type"].items()) if s
         )
         active = len(worker_active_requests)
-        bt.logging.info(
+        counts = f"{seed_stats['ok']} ok"
+        if seed_stats["failed"]:
+            counts += f", {seed_stats['failed']} failed"
+        if seed_stats["timeout"]:
+            counts += f", {seed_stats['timeout']} timeout"
+        line = (
             f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
-            f"{seed_stats['ok']} ok, {seed_stats['timeout']} timeout | "
-            f"{type_parts} | {active}/{effective_workers} workers"
+            f"{counts} | {type_parts} | {active}/{effective_workers} workers"
         )
+        bt.logging.info(line)
+        if seed_stats.get("timeout_seeds"):
+            bt.logging.info(f"  timeouts: {', '.join(seed_stats['timeout_seeds'])}")
 
     last_summary_time = time.time()
 
