@@ -305,12 +305,17 @@ async def _process_normal_queue_item(
                         progress_done=done,
                         progress_total=len(all_benchmark_seeds),
                     )
-                    round_size = max(1, math.ceil(len(all_benchmark_seeds) / N_DOCKER_WORKERS))
+                    total_benchmark_seeds = len(all_benchmark_seeds)
+                    round_size = max(1, math.ceil(total_benchmark_seeds / N_DOCKER_WORKERS))
                     for i in range(0, len(remaining_seeds), round_size):
                         chunk = remaining_seeds[i:i + round_size]
+                        prior_avg = float(np.mean(partial_scores)) if partial_scores else 0.0
                         chunk_scores, chunk_per_type = await _utils_facade()._evaluate_seeds(
                             self, uid, model_path, chunk,
                             f"benchmark [{done + 1}..{done + len(chunk)}]",
+                            prior_seeds_done=done,
+                            prior_total_seeds=total_benchmark_seeds,
+                            prior_avg=prior_avg,
                         )
                         partial_scores.extend(chunk_scores)
                         for tname, tscores in chunk_per_type.items():

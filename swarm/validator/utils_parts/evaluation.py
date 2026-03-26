@@ -32,6 +32,9 @@ async def _evaluate_seeds(
     seeds: List[int],
     description: str = "benchmark",
     on_seed_complete: Optional[Callable[[], None]] = None,
+    prior_seeds_done: int = 0,
+    prior_total_seeds: int = 0,
+    prior_avg: float = 0.0,
 ) -> Tuple[List[float], Dict[str, List[float]]]:
     """Evaluate a model on multiple seeds using parallel Docker containers."""
     all_scores = []
@@ -78,6 +81,9 @@ async def _evaluate_seeds(
         model_path=model_path,
         on_seed_complete=on_seed_complete,
         phase_label=phase,
+        prior_seeds_done=prior_seeds_done,
+        prior_total_seeds=prior_total_seeds,
+        prior_avg=prior_avg,
     )
 
     task_idx = 0

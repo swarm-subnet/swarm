@@ -115,6 +115,9 @@ async def _run_process_parallel(
     runtime_tracker: Any = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
     phase_label: str = "eval",
+    prior_seeds_done: int = 0,
+    prior_total_seeds: int = 0,
+    prior_avg: float = 0.0,
     heartbeat_sec: float = 30.0,
 ) -> list:
     bench_engine = _benchmark_engine()
@@ -346,18 +349,21 @@ async def _run_process_parallel(
             seed_stats["ok"] += 1
 
     def _log_summary() -> None:
-        total_done = len(seed_stats["scores"])
-        total_seeds = len(all_tasks)
-        if total_done == 0:
+        chunk_done = len(seed_stats["scores"])
+        if chunk_done == 0:
             return
-        avg = sum(seed_stats["scores"]) / len(seed_stats["scores"])
+        overall_done = prior_seeds_done + chunk_done
+        overall_total = prior_total_seeds if prior_total_seeds > 0 else len(all_tasks)
+        chunk_sum = sum(seed_stats["scores"])
+        prior_sum = prior_avg * prior_seeds_done if prior_seeds_done > 0 else 0.0
+        overall_avg = (prior_sum + chunk_sum) / overall_done if overall_done > 0 else 0.0
         type_parts = " ".join(
             f"{t}={sum(s)/len(s):.2f}"
             for t, s in sorted(seed_stats["per_type"].items()) if s
         )
         active = len(worker_active_requests)
         bt.logging.info(
-            f"[{phase_label} {total_done}/{total_seeds}] avg={avg:.4f} | "
+            f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
             f"{seed_stats['ok']} ok, {seed_stats['timeout']} timeout | "
             f"{type_parts} | {active}/{effective_workers} workers"
         )
@@ -498,6 +504,9 @@ async def evaluate_seeds_parallel(
     num_workers: int = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
     phase_label: str = "eval",
+    prior_seeds_done: int = 0,
+    prior_total_seeds: int = 0,
+    prior_avg: float = 0.0,
 ) -> list:
     """Evaluate validator seeds using the benchmark-grade process scheduler."""
     if not tasks:
@@ -549,6 +558,9 @@ async def evaluate_seeds_parallel(
         on_seed_complete=on_seed_complete,
         heartbeat_sec=30.0,
         phase_label=phase_label,
+        prior_seeds_done=prior_seeds_done,
+        prior_total_seeds=prior_total_seeds,
+        prior_avg=prior_avg,
     )
 
 
