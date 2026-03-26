@@ -331,7 +331,6 @@ async def _run_process_parallel(
         "ok": 0, "failed": 0, "timeout": 0,
         "scores": [],
         "per_type": {},
-        "timeout_types": {},
     }
 
     def _type_name(meta: Optional[dict]) -> str:
@@ -343,6 +342,7 @@ async def _run_process_parallel(
             seed_stats["timeout"] += 1
             return
         score = float(result_obj.score) if result_obj else 0.0
+        success = bool(result_obj.success) if result_obj else False
         seed_stats["scores"].append(score)
         tname = _type_name(meta)
         if tname not in seed_stats["per_type"]:
@@ -350,13 +350,12 @@ async def _run_process_parallel(
         seed_stats["per_type"][tname].append(score)
         if is_infra_failure:
             seed_stats["timeout"] += 1
-            seed_stats["timeout_types"][tname] = seed_stats["timeout_types"].get(tname, 0) + 1
             seed_id = meta.get("seed", "?") if meta else "?"
             seed_stats.setdefault("timeout_seeds", []).append(f"{tname}:{seed_id}")
-        elif score == 0.0:
-            seed_stats["failed"] += 1
-        else:
+        elif success:
             seed_stats["ok"] += 1
+        else:
+            seed_stats["failed"] += 1
 
     def _log_summary() -> None:
         chunk_done = len(seed_stats["scores"])
