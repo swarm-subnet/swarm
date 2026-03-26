@@ -2,6 +2,7 @@
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
     OPENBLAS_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     NUMEXPR_NUM_THREADS=1 \
@@ -26,6 +27,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade "numpy>=2.0.0"
+
+COPY swarm /app/swarm
 
 USER evaluator
 

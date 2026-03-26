@@ -87,7 +87,7 @@ RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for model warmup/JIT 
 RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() between seeds (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
 RPC_MAX_STRIKES_PER_SEED = 15           # Timeouts before failing a seed
-GLOBAL_EVAL_BASE_SEC = 30.0             # Base overhead for global worker timeout (seconds)
+GLOBAL_EVAL_BASE_SEC = 105.0            # Base overhead for global worker timeout (seconds); with one-seed validator batches and 15s/seed this yields a 120s wall-clock cap
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
 GLOBAL_EVAL_CAP_SEC = 590.0             # Hard upper bound for global worker timeout (seconds)
 
