@@ -142,12 +142,17 @@ class BaseValidatorNeuron(BaseNeuron):
             while True:
                 bt.logging.info(f"step({self.step}) block({self.block})")
 
-                # Restart wandb before each forward cycle for fresh run
-                if hasattr(self, "wandb_helper") and self.wandb_helper:
-                    self.wandb_helper.restart()
-
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
+
+                # Restart wandb only after an actual evaluation cycle
+                if (
+                    getattr(self, "_completed_evaluation", False)
+                    and hasattr(self, "wandb_helper")
+                    and self.wandb_helper
+                ):
+                    self.wandb_helper.restart()
+                    self._completed_evaluation = False
 
                 # Check if we should exit.
                 if self.should_exit:

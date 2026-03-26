@@ -13,6 +13,7 @@ from typing import Dict, List
 
 from swarm.constants import (
     EPOCH_FREEZE_SECONDS,
+    FORWARD_IDLE_SEC,
     FORWARD_SLEEP_SEC,
     MODEL_DIR,
 )
@@ -412,9 +413,22 @@ async def forward(self) -> None:
             duration_sec=asyncio.get_running_loop().time() - cleanup_started,
             reason="forward_end",
         )
-        bt.logging.info(f"[Forward #{self.forward_count}] complete")
+        did_work = bool(processable_keys) or (
+            reeval_queue and not sync_data.get("fallback")
+        )
+        self._completed_evaluation = did_work
+
+        if did_work:
+            bt.logging.info(f"[Forward #{self.forward_count}] complete")
+        else:
+            bt.logging.info(
+                f"[Forward #{self.forward_count}] idle — next poll in {FORWARD_IDLE_SEC}s"
+            )
+
         tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
         tracker_call(self, "flush")
+
+        await asyncio.sleep(FORWARD_SLEEP_SEC if did_work else FORWARD_IDLE_SEC)
 
     except Exception as e:
         tracker_call(self, "mark_forward_failed", error=str(e))
