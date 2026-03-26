@@ -110,7 +110,7 @@ async def _run_screening(
 ) -> Tuple[float, List[float], Dict[str, List[float]]]:
     """Run screening benchmark with early termination on clearly failing/passing models.
 
-    Returns (median_score, all_scores, per_type_scores).
+    Returns (avg_score, all_scores, per_type_scores).
     """
     screening_seeds = self.seed_manager.get_screening_seeds()
     threshold = _get_screening_threshold(self)
@@ -158,58 +158,58 @@ async def _run_screening(
             if evaluated < SCREENING_CHECKPOINT_SIZE:
                 continue
 
-            running_median = float(np.median(all_scores))
+            running_avg = float(np.mean(all_scores))
             tracker_call(
                 self,
                 "mark_screening_progress",
                 uid=int(uid),
                 progress=int(evaluated),
                 total_seeds=int(total_seeds),
-                running_median=float(running_median),
+                running_median=float(running_avg),
                 note=f"checkpoint {evaluated}/{total_seeds}",
             )
 
             fail_factor = SCREENING_EARLY_FAIL_FACTORS.get(evaluated)
-            if fail_factor is not None and running_median < threshold * fail_factor:
+            if fail_factor is not None and running_avg < threshold * fail_factor:
                 completion_note = (
-                    f"early_fail {evaluated}/{total_seeds} median={running_median:.4f}"
+                    f"early_fail {evaluated}/{total_seeds} avg={running_avg:.4f}"
                 )
                 bt.logging.info(
                     f"⏩ Screening early fail for UID {uid}: "
-                    f"median={running_median:.4f} < {threshold * fail_factor:.4f} "
+                    f"avg={running_avg:.4f} < {threshold * fail_factor:.4f} "
                     f"after {evaluated}/{total_seeds} seeds"
                 )
                 break
 
             pass_factor = SCREENING_EARLY_PASS_FACTORS.get(evaluated)
-            if pass_factor is not None and running_median > threshold * pass_factor:
+            if pass_factor is not None and running_avg > threshold * pass_factor:
                 completion_note = (
-                    f"early_pass {evaluated}/{total_seeds} median={running_median:.4f}"
+                    f"early_pass {evaluated}/{total_seeds} avg={running_avg:.4f}"
                 )
                 bt.logging.info(
                     f"⏩ Screening early pass for UID {uid}: "
-                    f"median={running_median:.4f} > {threshold * pass_factor:.4f} "
+                    f"avg={running_avg:.4f} > {threshold * pass_factor:.4f} "
                     f"after {evaluated}/{total_seeds} seeds"
                 )
                 break
     finally:
         hb.finish()
 
-    median_score = float(np.median(all_scores)) if all_scores else 0.0
+    avg_score = float(np.mean(all_scores)) if all_scores else 0.0
     tracker_call(
         self,
         "mark_screening_completed",
         uid=int(uid),
         evaluated=len(all_scores),
         total_seeds=int(total_seeds),
-        median_score=float(median_score),
+        median_score=float(avg_score),
         note=completion_note,
     )
     bt.logging.info(
         f"📊 Screening result for UID {uid}: "
-        f"median={median_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
+        f"avg={avg_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
     )
-    return median_score, all_scores, all_per_type
+    return avg_score, all_scores, all_per_type
 
 
 async def _run_full_benchmark(
@@ -217,7 +217,7 @@ async def _run_full_benchmark(
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
-    Returns (median_score, per_type_medians, all_scores, per_type_raw).
+    Returns (avg_score, per_type_avgs, all_scores, per_type_raw).
     """
     benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
     tracker_call(
@@ -239,17 +239,11 @@ async def _run_full_benchmark(
     finally:
         hb.finish()
 
-    if all_scores:
-        median_score = float(np.median(all_scores))
-    else:
-        median_score = 0.0
+    avg_score = float(np.mean(all_scores)) if all_scores else 0.0
 
-    per_type_medians = {}
+    per_type_avgs = {}
     for type_name, scores in per_type_raw.items():
-        if scores:
-            per_type_medians[type_name] = float(np.median(scores))
-        else:
-            per_type_medians[type_name] = 0.0
+        per_type_avgs[type_name] = float(np.mean(scores)) if scores else 0.0
 
     tracker_call(
         self,
@@ -257,11 +251,11 @@ async def _run_full_benchmark(
         uid=int(uid),
         evaluated=len(all_scores),
         total_seeds=len(benchmark_seeds),
-        median_score=float(median_score),
+        median_score=float(avg_score),
         note="full benchmark" if seeds is None else "custom seeds",
     )
-    bt.logging.info(f"📊 Full benchmark result for UID {uid}: median={median_score:.4f}")
-    return median_score, per_type_medians, all_scores, per_type_raw
+    bt.logging.info(f"📊 Full benchmark result for UID {uid}: avg={avg_score:.4f}")
+    return avg_score, per_type_avgs, all_scores, per_type_raw
 
 
 # ──────────────────────────────────────────────────────────────────────────

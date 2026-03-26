@@ -324,7 +324,7 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 4. **Validator** runs your agent in a sandboxed Docker container:
    - **Screening** (200 seeds) — quick filter, must score >= **101%** of the current champion (or >= 0.1 if no champion)
    - **Full benchmark** (800 seeds) — complete evaluation across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
-5. **Final score** = median of all 1,000 seed results
+5. **Final score** = average of all 1,000 seed results
 6. **Winner-take-all** — #1 scorer receives emissions
 
 ### Epoch Rotation

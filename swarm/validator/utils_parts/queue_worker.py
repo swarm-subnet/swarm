@@ -338,14 +338,14 @@ async def _process_normal_queue_item(
                 scr_per_type = item.get("screening_per_type", {})
 
                 combined_scores = screening_scores + partial_scores
-                total_score = float(np.median(combined_scores)) if combined_scores else 0.0
-                full_score = float(np.median(partial_scores)) if partial_scores else 0.0
+                total_score = float(np.mean(combined_scores)) if combined_scores else 0.0
+                full_score = float(np.mean(partial_scores)) if partial_scores else 0.0
 
                 merged_per_type = {}
                 all_type_keys = set(scr_per_type) | set(partial_per_type)
                 for type_key in all_type_keys:
                     combined = scr_per_type.get(type_key, []) + partial_per_type.get(type_key, [])
-                    merged_per_type[type_key] = float(np.median(combined)) if combined else 0.0
+                    merged_per_type[type_key] = float(np.mean(combined)) if combined else 0.0
 
                 item["full_score"] = full_score
                 item["total_score"] = total_score

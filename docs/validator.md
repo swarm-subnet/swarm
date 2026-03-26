@@ -295,7 +295,7 @@ pm2 start --name auto_update_validator \
    Models that pass screening are evaluated on the remaining 800 benchmark seeds across all environment types. Evaluation runs in parallel Docker containers.
 
 5. **Submit scores to backend**
-   Final score (median of all 1,000 seeds) is submitted to the backend.
+   Final score (average of all 1,000 seeds) is submitted to the backend.
 
 6. **Backend aggregation**
    Backend aggregates scores from all validators (51% stake consensus).

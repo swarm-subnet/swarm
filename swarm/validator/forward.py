@@ -20,14 +20,14 @@ from swarm.constants import (
 from swarm.utils.hash import sha256sum
 
 
-def _merge_per_type_medians(
+def _merge_per_type_averages(
     a: Dict[str, List[float]], b: Dict[str, List[float]]
 ) -> Dict[str, float]:
     merged: Dict[str, float] = {}
     all_keys = set(a) | set(b)
     for key in all_keys:
         combined = a.get(key, []) + b.get(key, [])
-        merged[key] = float(np.median(combined)) if combined else 0.0
+        merged[key] = float(np.mean(combined)) if combined else 0.0
     return merged
 
 from .backend_api import BackendApiClient
@@ -259,10 +259,10 @@ async def forward(self) -> None:
                         self, uid, model_path
                     )
                     combined_scores = screening_scores + full_scores
-                    per_type_scores = _merge_per_type_medians(scr_per_type, bench_per_type)
+                    per_type_scores = _merge_per_type_averages(scr_per_type, bench_per_type)
                 all_seeds_count = len(combined_scores)
                 total_score = (
-                    float(np.median(combined_scores)) if combined_scores else 0.0
+                    float(np.mean(combined_scores)) if combined_scores else 0.0
                 )
 
                 recorded, terminal, ack_reason = await _submit_score_with_ack(

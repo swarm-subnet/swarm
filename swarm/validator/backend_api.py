@@ -2,7 +2,7 @@
 Backend API Client for Swarm v4 Benchmark System.
 
 Validators need to report scores to backend. Backend aggregates
-scores from all validators (51% stake, median) and calculates final weights.
+scores from all validators (51% stake, average) and calculates final weights.
 This creates HTTP client to talk to backend.
 
 Endpoints (all under /validators prefix):
