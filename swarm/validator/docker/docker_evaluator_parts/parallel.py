@@ -296,7 +296,12 @@ async def _run_process_parallel(
             _observe_seed(seed_meta)
 
         for idx in request.batch_indices:
-            results[idx] = ValidationResult(int(uid), False, 0.0, 0.0)
+            vr = ValidationResult(int(uid), False, 0.0, 0.0)
+            results[idx] = vr
+            meta = task_meta[idx] if idx < len(task_meta) else None
+            if meta:
+                meta = dict(meta, status=status)
+            _record_seed_result(vr, meta)
 
         worker_active_requests.pop(worker_slot, None)
         worker_last_heartbeat.pop(worker_slot, None)
@@ -343,7 +348,17 @@ async def _run_process_parallel(
         seed_stats["per_type"][tname].append(score)
         now = time.time()
         seed_stats["window_events"].append({"t": now, "score": score})
-        if meta and meta.get("status") in ("seed_cancelled", "seed_timeout"):
+        is_failure = (
+            not success
+            or (meta and meta.get("status") in (
+                "seed_cancelled", "seed_timeout", "batch_exception",
+                "worker_stall_timeout", "model_path_missing", "docker_not_ready",
+                "submission_missing_drone_agent", "submission_validation_failed",
+                "submission_start_failed", "network_lockdown_failed",
+                "container_pid_missing",
+            ))
+        )
+        if is_failure:
             seed_stats["timeout"] += 1
         else:
             seed_stats["ok"] += 1
