@@ -371,11 +371,7 @@ async def _run_process_parallel(
             for t, s in sorted(seed_stats["per_type"].items()) if s
         )
         active = len(worker_active_requests)
-        counts = f"{seed_stats['ok']} ok"
-        if seed_stats["failed"]:
-            counts += f", {seed_stats['failed']} failed"
-        if seed_stats["timeout"]:
-            counts += f", {seed_stats['timeout']} timeout"
+        counts = f"{seed_stats['ok']} ok, {seed_stats['failed']} failed, {seed_stats['timeout']} timeout"
         line = (
             f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
             f"{counts} | {type_parts} | {active}/{effective_workers} workers"
