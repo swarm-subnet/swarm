@@ -49,7 +49,13 @@ async def _evaluate_seeds(
         6: "forest",
     }
 
-    bt.logging.info(f"🔬 Starting {description} for UID {uid}: {len(seeds)} seeds (parallel)")
+    model_hash_short = ""
+    try:
+        from swarm.utils.hash import sha256sum as _sha
+        model_hash_short = _sha(model_path)[:12]
+    except Exception:
+        pass
+    bt.logging.info(f"━━━ {description.upper()} UID {uid} | {model_hash_short} ━━━")
 
     tasks = []
     for seed in seeds:

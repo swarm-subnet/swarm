@@ -133,20 +133,11 @@ async def _run_process_parallel(
         max(0.0, float(heartbeat_sec)) * 2.0,
     )
 
+    from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_PER_SEED_SEC, EVAL_SUMMARY_INTERVAL_SEC
+    wall_timeout = GLOBAL_EVAL_BASE_SEC + GLOBAL_EVAL_PER_SEED_SEC
     bt.logging.info(
-        f"Evaluating {len(all_tasks)} seeds with {effective_workers} "
-        f"process worker(s) using dynamic weighted scheduling"
-    )
-    if scheduler.enabled:
-        bt.logging.info(
-            "Adaptive backoff enabled for validator evaluation "
-            f"(fallback cap=2/{effective_workers} workers)"
-        )
-    else:
-        bt.logging.info("Adaptive backoff disabled (requested workers <= 2)")
-    bt.logging.info(
-        "Parent worker stall watchdog enabled: "
-        f"{stall_timeout_sec:.1f}s without heartbeat"
+        f"    {len(all_tasks)} seeds | {effective_workers} workers | "
+        f"timeout={wall_timeout:.0f}s | backoff={'on' if scheduler.enabled else 'off'}"
     )
 
     def _spawn_worker(worker_slot: int) -> None:
@@ -227,11 +218,6 @@ async def _run_process_parallel(
             worker_queues[worker_slot].put(request)
             group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
             seed_list = [int(meta["seed"]) for meta in batch_meta]
-            bt.logging.info(
-                f"[Validator eval] dispatch batch {batch_index + 1}/{len(batch_plan)} "
-                f"to worker {worker_slot} | group={group_name} | "
-                f"seed={seed_list[0]} | active_limit={scheduler.active_worker_cap}"
-            )
             tracker_call(
                 runtime_tracker,
                 "mark_docker_dispatch",
@@ -332,6 +318,59 @@ async def _run_process_parallel(
             _dispatch_available_batches()
         return completed_now
 
+    seed_stats: dict[str, Any] = {
+        "ok": 0, "timeout": 0, "error": 0,
+        "scores": [],
+        "per_type": {},
+        "started_at": time.time(),
+        "window_events": [],
+    }
+
+    def _record_seed_result(result_obj: Any, meta: Optional[dict]) -> None:
+        if result_obj is None:
+            seed_stats["error"] += 1
+            return
+        score = float(result_obj.score) if result_obj else 0.0
+        success = bool(result_obj.success) if result_obj else False
+        seed_stats["scores"].append(score)
+        tname = meta.get("group", "unknown").replace("type1_", "").replace("type2_", "").replace("type3_", "").replace("type4_", "").replace("type5_", "").replace("type6_", "") if meta else "unknown"
+        if tname not in seed_stats["per_type"]:
+            seed_stats["per_type"][tname] = []
+        seed_stats["per_type"][tname].append(score)
+        now = time.time()
+        seed_stats["window_events"].append({"t": now, "score": score})
+        if meta and meta.get("status") in ("seed_cancelled", "seed_timeout"):
+            seed_stats["timeout"] += 1
+        else:
+            seed_stats["ok"] += 1
+
+    def _log_summary(phase_label: str) -> None:
+        total_done = len(seed_stats["scores"])
+        total_seeds = len(all_tasks)
+        if total_done == 0:
+            return
+        avg = sum(seed_stats["scores"]) / len(seed_stats["scores"])
+        now = time.time()
+        events_1m = [e for e in seed_stats["window_events"] if now - e["t"] < 60]
+        events_10m = [e for e in seed_stats["window_events"] if now - e["t"] < 600]
+        parts = [f"── eval UID {uid} | {phase_label} {total_done}/{total_seeds} ──"]
+        if events_1m:
+            avg_1m = sum(e["score"] for e in events_1m) / len(events_1m)
+            parts.append(f"   1m: {len(events_1m)} seeds ({seed_stats['ok']} ok, {seed_stats['timeout']} timeout) | avg={avg:.4f}")
+        if len(events_10m) > len(events_1m):
+            avg_10m = sum(e["score"] for e in events_10m) / len(events_10m)
+            parts.append(f"   10m: {len(events_10m)} seeds | avg={avg_10m:.4f}")
+        type_parts = []
+        for tname, scores in sorted(seed_stats["per_type"].items()):
+            if scores:
+                type_parts.append(f"{tname}={sum(scores)/len(scores):.2f}")
+        if type_parts:
+            parts.append(f"   per-type: {' '.join(type_parts)}")
+        parts.append(f"   workers: {len(worker_active_requests)}/{effective_workers} active")
+        bt.logging.info("\n".join(parts))
+
+    last_summary_time = time.time()
+
     try:
         for worker_slot in range(effective_workers):
             _spawn_worker(worker_slot)
@@ -417,13 +456,21 @@ async def _run_process_parallel(
                 continue
 
             for idx, packed in zip(request.batch_indices, payload.results):
-                results[idx] = ValidationResult(*packed)
+                vr = ValidationResult(*packed)
+                results[idx] = vr
+                meta = task_meta[idx] if idx < len(task_meta) else None
+                _record_seed_result(vr, meta)
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
             worker_started_at.pop(worker_slot, None)
             completed_batches += 1
             _dispatch_available_batches()
+
+            now_ts = time.time()
+            if now_ts - last_summary_time >= EVAL_SUMMARY_INTERVAL_SEC:
+                _log_summary("eval")
+                last_summary_time = now_ts
 
         _drain_progress_events()
         return [

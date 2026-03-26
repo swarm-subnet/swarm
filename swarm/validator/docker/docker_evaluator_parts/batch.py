@@ -187,9 +187,6 @@ async def evaluate_seeds_batch(
     container_name = f"swarm_eval_{uid}_w{worker_id}_{int(time.time() * 1000)}"
     host_port = self._find_free_port()
 
-    bt.logging.info(
-        f"[Worker {worker_id}] Starting container for UID {uid} ({len(tasks)} seeds)..."
-    )
     _phase(
         f"prepare container={container_name} host_port={host_port} seeds={len(tasks)}"
     )
@@ -427,7 +424,6 @@ async def evaluate_seeds_batch(
             _notify_all_failed(status="container_pid_missing")
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
-        bt.logging.debug(f"[Worker {worker_id}] Applying network lockdown...")
         _phase(
             f"applying network lockdown pid={container_pid} validator_ip={validator_ip}"
         )
@@ -467,9 +463,6 @@ async def evaluate_seeds_batch(
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
         _phase("submission main.py launched")
 
-        bt.logging.debug(
-            f"[Worker {worker_id}] Waiting for RPC server for UID {uid} (max {rpc_timeout}s)..."
-        )
         rpc_start = time.time()
         max_rpc_wait = 30
         rpc_check_interval = 2
@@ -485,9 +478,6 @@ async def evaluate_seeds_batch(
                 if self._check_rpc_ready(container_name, timeout=5.0):
                     connected = True
                     elapsed = time.time() - rpc_start
-                    bt.logging.debug(
-                        f"[Worker {worker_id}] RPC ready for UID {uid} after {elapsed:.1f}s"
-                    )
                     _phase(f"rpc ready after {elapsed:.1f}s")
                     break
             except Exception:
@@ -749,9 +739,6 @@ async def evaluate_seeds_batch(
                     add_to_blacklist(model_hash)
                     valid_results.append(ValidationResult(uid, False, 0.0, 0.0))
 
-            bt.logging.info(
-                f"[Worker {worker_id}] Completed {len(tasks)} seeds for UID {uid}"
-            )
             _phase(f"batch complete ({len(valid_results)} result(s))")
             return valid_results
         finally:

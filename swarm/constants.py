@@ -87,7 +87,7 @@ RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for model warmup/JIT 
 RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() between seeds (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
 RPC_MAX_STRIKES_PER_SEED = 15           # Timeouts before failing a seed
-GLOBAL_EVAL_BASE_SEC = 105.0            # Base overhead for global worker timeout (seconds); with one-seed validator batches and 15s/seed this yields a 120s wall-clock cap
+GLOBAL_EVAL_BASE_SEC = 225.0            # Base overhead for global worker timeout (seconds); with one-seed validator batches and 15s/seed this yields a 240s wall-clock cap
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
 GLOBAL_EVAL_CAP_SEC = 590.0             # Hard upper bound for global worker timeout (seconds)
 
@@ -100,6 +100,9 @@ CALIBRATION_BENCHMARK_REF_NS = 15_000_000 # Reference CPU benchmark time (ns) â€
 CALIBRATION_CPU_FACTOR_CAP = 2.0        # Max CPU scaling factor (prevents abuse on very slow HW)
 CALIBRATION_MARGIN_SEC = 0.015          # Safety margin for response deserialization jitter (seconds)
 CALIBRATION_RECAL_INTERVAL = 100        # Re-calibrate every N seeds to catch thermal throttling
+CALIBRATION_WARN_OVERHEAD_MS = 30.0     # Log warning when calibrated overhead exceeds this (ms)
+CALIBRATION_WARN_CPU_FACTOR = 1.5       # Log warning when CPU factor exceeds this
+EVAL_SUMMARY_INTERVAL_SEC = 60          # Periodic evaluation progress summary interval (seconds)
 
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files

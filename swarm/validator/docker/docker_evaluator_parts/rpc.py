@@ -368,16 +368,6 @@ def _run_multi_seed_rpc_sync(
                                 + rpc_overhead_sec
                                 + CALIBRATION_MARGIN_SEC
                             )
-                            if not calibrated:
-                                bt.logging.info(
-                                    f"UID {uid}: calibrated timeout = {calibrated_timeout*1000:.1f}ms "
-                                    f"(budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms x {cpu_factor:.2f} + overhead={rpc_overhead_sec*1000:.1f}ms + margin={CALIBRATION_MARGIN_SEC*1000:.0f}ms)"
-                                )
-                            else:
-                                bt.logging.info(
-                                    f"UID {uid}: recalibrated at seed {task_idx} — timeout = {calibrated_timeout*1000:.1f}ms "
-                                    f"(cpu_factor={cpu_factor:.2f}x, overhead={rpc_overhead_sec*1000:.1f}ms)"
-                                )
                             calibrated = True
                             _trace(
                                 f"{phase_label} step timeout={calibrated_timeout*1000:.1f}ms "
@@ -788,12 +778,12 @@ async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int)
     bench_median_ms = (
         statistics.median(benchmark_times_ns) / 1e6 if benchmark_times_ns else 0.0
     )
-    bt.logging.info(
-        f"UID {uid}: calibration results — "
-        f"overhead={median_overhead*1000:.1f}ms (pure network), "
-        f"cpu_factor={cpu_factor:.2f}x, "
-        f"benchmark_median={bench_median_ms:.1f}ms, "
-        f"rtt=[{', '.join(f'{t*1000:.1f}' for t in pure_overheads)}]ms"
-    )
+    overhead_ms = median_overhead * 1000
+    if overhead_ms > docker_evaluator_mod.CALIBRATION_WARN_OVERHEAD_MS or cpu_factor > docker_evaluator_mod.CALIBRATION_WARN_CPU_FACTOR:
+        bt.logging.warning(
+            f"UID {uid}: abnormal calibration — "
+            f"overhead={overhead_ms:.1f}ms, cpu_factor={cpu_factor:.2f}x, "
+            f"benchmark={bench_median_ms:.1f}ms"
+        )
 
     return median_overhead, cpu_factor

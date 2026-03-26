@@ -89,29 +89,37 @@ def _print_rejection_hint(error: str) -> None:
 
 
 def main(argv=None):
-    parser = bt.config.parser()
+    import argparse
+    parser = argparse.ArgumentParser(description="Swarm Miner — submit model to backend")
     parser.add_argument("--github_url", type=str, required=True,
                         help="Public GitHub repo URL (https://github.com/owner/repo)")
     parser.add_argument("--backend_url", type=str, default=DEFAULT_BACKEND_URL,
                         help="Backend API URL (or set SWARM_BACKEND_API_URL env var)")
     parser.add_argument("--netuid", type=int, default=124)
-    config = bt.config(parser, args=argv)
+    parser.add_argument("--wallet.name", type=str, default="default", dest="wallet_name")
+    parser.add_argument("--wallet.hotkey", type=str, default="default", dest="wallet_hotkey")
+    parser.add_argument("--subtensor.network", type=str, default="finney", dest="network")
+    parser.add_argument("--logging.debug", action="store_true", dest="debug")
+    args = parser.parse_args(argv)
 
-    backend_url = config.backend_url or DEFAULT_BACKEND_URL
+    if args.debug:
+        bt.logging.set_debug(True)
+
+    backend_url = args.backend_url or DEFAULT_BACKEND_URL
     if not backend_url:
         bt.logging.error("Backend URL required. Set --backend_url or SWARM_BACKEND_API_URL env var.")
         return 1
 
-    wallet = bt.wallet(config=config)
+    wallet = bt.wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     hotkey = wallet.hotkey.ss58_address
 
     bt.logging.info(f"Hotkey:      {hotkey}")
-    bt.logging.info(f"GitHub URL:  {config.github_url}")
+    bt.logging.info(f"GitHub URL:  {args.github_url}")
     bt.logging.info(f"Backend:     {backend_url}")
     bt.logging.info("Submitting model...")
 
     try:
-        result = submit_model(wallet, config.github_url, backend_url)
+        result = submit_model(wallet, args.github_url, backend_url)
     except httpx.ConnectError:
         bt.logging.error(f"Cannot connect to backend at {backend_url}")
         return 1
