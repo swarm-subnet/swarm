@@ -17,7 +17,10 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional, Tuple
 
 import msgpack
-import bittensor as bt
+try:
+    import bittensor as bt
+except ImportError:
+    bt = None
 
 
 # --------------------------------------------------------------------------- #
@@ -70,7 +73,7 @@ class PolicyRef:
 # --------------------------------------------------------------------------- #
 # 3.  Bidirectional Synapse                                                   #
 # --------------------------------------------------------------------------- #
-Synapse = bt.Synapse  # alias
+Synapse = bt.Synapse if bt is not None else None  # alias
 
 
 class PolicySynapse(Synapse):
