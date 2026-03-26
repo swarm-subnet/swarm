@@ -114,6 +114,7 @@ async def _run_process_parallel(
     effective_workers: int,
     runtime_tracker: Any = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    phase_label: str = "eval",
     heartbeat_sec: float = 30.0,
 ) -> list:
     bench_engine = _benchmark_engine()
@@ -344,30 +345,22 @@ async def _run_process_parallel(
         else:
             seed_stats["ok"] += 1
 
-    def _log_summary(phase_label: str) -> None:
+    def _log_summary() -> None:
         total_done = len(seed_stats["scores"])
         total_seeds = len(all_tasks)
         if total_done == 0:
             return
         avg = sum(seed_stats["scores"]) / len(seed_stats["scores"])
-        now = time.time()
-        events_1m = [e for e in seed_stats["window_events"] if now - e["t"] < 60]
-        events_10m = [e for e in seed_stats["window_events"] if now - e["t"] < 600]
-        parts = [f"── eval UID {uid} | {phase_label} {total_done}/{total_seeds} ──"]
-        if events_1m:
-            avg_1m = sum(e["score"] for e in events_1m) / len(events_1m)
-            parts.append(f"   1m: {len(events_1m)} seeds ({seed_stats['ok']} ok, {seed_stats['timeout']} timeout) | avg={avg:.4f}")
-        if len(events_10m) > len(events_1m):
-            avg_10m = sum(e["score"] for e in events_10m) / len(events_10m)
-            parts.append(f"   10m: {len(events_10m)} seeds | avg={avg_10m:.4f}")
-        type_parts = []
-        for tname, scores in sorted(seed_stats["per_type"].items()):
-            if scores:
-                type_parts.append(f"{tname}={sum(scores)/len(scores):.2f}")
-        if type_parts:
-            parts.append(f"   per-type: {' '.join(type_parts)}")
-        parts.append(f"   workers: {len(worker_active_requests)}/{effective_workers} active")
-        bt.logging.info("\n".join(parts))
+        type_parts = " ".join(
+            f"{t}={sum(s)/len(s):.2f}"
+            for t, s in sorted(seed_stats["per_type"].items()) if s
+        )
+        active = len(worker_active_requests)
+        bt.logging.info(
+            f"[{phase_label} {total_done}/{total_seeds}] avg={avg:.4f} | "
+            f"{seed_stats['ok']} ok, {seed_stats['timeout']} timeout | "
+            f"{type_parts} | {active}/{effective_workers} workers"
+        )
 
     last_summary_time = time.time()
 
@@ -469,7 +462,7 @@ async def _run_process_parallel(
 
             now_ts = time.time()
             if now_ts - last_summary_time >= EVAL_SUMMARY_INTERVAL_SEC:
-                _log_summary("eval")
+                _log_summary()
                 last_summary_time = now_ts
 
         _drain_progress_events()
@@ -504,6 +497,7 @@ async def evaluate_seeds_parallel(
     model_path: Path,
     num_workers: int = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    phase_label: str = "eval",
 ) -> list:
     """Evaluate validator seeds using the benchmark-grade process scheduler."""
     if not tasks:
@@ -554,6 +548,7 @@ async def evaluate_seeds_parallel(
         runtime_tracker=runtime_tracker,
         on_seed_complete=on_seed_complete,
         heartbeat_sec=30.0,
+        phase_label=phase_label,
     )
 
 

@@ -71,11 +71,13 @@ async def _evaluate_seeds(
         bt.logging.warning(f"No valid tasks created for UID {uid}")
         return [], per_type_scores
 
+    phase = "screening" if "screening" in description.lower() else "benchmark"
     results = await self.docker_evaluator.evaluate_seeds_parallel(
         tasks=valid_tasks,
         uid=uid,
         model_path=model_path,
         on_seed_complete=on_seed_complete,
+        phase_label=phase,
     )
 
     task_idx = 0
