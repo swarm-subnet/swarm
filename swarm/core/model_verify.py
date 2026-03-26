@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Dict, Tuple, Set
 from zipfile import ZipFile, BadZipFile
 
-import bittensor as bt
+import logging
+
+try:
+    import bittensor as bt
+    _log = bt.logging
+except ImportError:
+    _log = logging.getLogger("swarm.model_verify")
 
 from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
 
@@ -36,7 +42,7 @@ def load_blacklist(file_path: Path = None) -> Set[str]:
                 return {line.strip() for line in f if line.strip()}
         return set()
     except Exception as e:
-        bt.logging.warning(f"Error loading blacklist: {e}")
+        _log.warning(f"Error loading blacklist: {e}")
         return set()
 
 
@@ -50,7 +56,7 @@ def save_blacklist(blacklist: Set[str], file_path: Path = None) -> None:
             for hash_val in sorted(blacklist):
                 f.write(f"{hash_val}\n")
     except Exception as e:
-        bt.logging.error(f"Error saving blacklist: {e}")
+        _log.error(f"Error saving blacklist: {e}")
 
 
 def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
@@ -59,9 +65,9 @@ def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
         blacklist = load_blacklist(file_path)
         blacklist.add(model_hash)
         save_blacklist(blacklist, file_path)
-        bt.logging.info(f"🚫 Added {model_hash[:16]}... to blacklist")
+        _log.info(f"🚫 Added {model_hash[:16]}... to blacklist")
     except Exception as e:
-        bt.logging.error(f"Error adding to blacklist: {e}")
+        _log.error(f"Error adding to blacklist: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -199,14 +205,14 @@ def save_fake_model_for_analysis(
         with open(report_file, "w") as f:
             json.dump(report_data, f, indent=2, default=str)
 
-        bt.logging.info(
+        _log.info(
             f"📁 Saved fake model UID_{uid}_fake/{next_fake_num}/ for analysis"
         )
-        bt.logging.info(f"   Size: {model_path.stat().st_size} bytes")
-        bt.logging.info(f"   Hash: {model_hash[:16]}...")
+        _log.info(f"   Size: {model_path.stat().st_size} bytes")
+        _log.info(f"   Hash: {model_hash[:16]}...")
 
     except Exception as e:
-        bt.logging.error(f"Failed to save fake model for analysis: {e}")
+        _log.error(f"Failed to save fake model for analysis: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -225,22 +231,22 @@ def zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
             for info in zf.infolist():
                 name = info.filename
                 if name.startswith(("/", "\\")) or ".." in Path(name).parts:
-                    bt.logging.error(f"ZIP path traversal attempt: {name}")
+                    _log.error(f"ZIP path traversal attempt: {name}")
                     return False
 
                 total_uncompressed += info.file_size
                 if total_uncompressed > max_uncompressed:
-                    bt.logging.error(
+                    _log.error(
                         f"ZIP too large when decompressed "
                         f"({total_uncompressed/1e6:.1f} MB > {max_uncompressed/1e6:.1f} MB)"
                     )
                     return False
             return True
     except BadZipFile:
-        bt.logging.error("Corrupted ZIP archive.")
+        _log.error("Corrupted ZIP archive.")
         return False
     except Exception as e:
-        bt.logging.error(f"ZIP inspection error: {e}")
+        _log.error(f"ZIP inspection error: {e}")
         return False
 
 
@@ -256,17 +262,17 @@ async def verify_new_model_with_docker(
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 
     if not model_path.is_file():
-        bt.logging.warning(f"Verification skipped; model file missing: {model_path}")
+        _log.warning(f"Verification skipped; model file missing: {model_path}")
         return
 
-    bt.logging.info(
+    _log.info(
         f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}"
     )
 
     docker_evaluator = DockerSecureEvaluator()
 
     if not docker_evaluator._base_ready:
-        bt.logging.warning(f"Docker not ready for verification of {model_hash[:16]}...")
+        _log.warning(f"Docker not ready for verification of {model_hash[:16]}...")
         return
 
     container_name = f"swarm_verify_{model_hash[:8]}_{int(time.time() * 1000)}"
@@ -292,7 +298,7 @@ async def verify_new_model_with_docker(
             with open(task_file, "w") as f:
                 json.dump(dummy_task, f)
 
-            bt.logging.info(
+            _log.info(
                 f"🐳 Starting Docker container for verification of UID model {model_hash[:16]}..."
             )
 
@@ -339,26 +345,26 @@ async def verify_new_model_with_docker(
                 stdout_str = stdout.decode() if stdout else ""
                 stderr_str = stderr.decode() if stderr else ""
 
-                bt.logging.debug(f"Verification container for {model_hash[:16]}:")
-                bt.logging.debug(f"  Return code: {proc.returncode}")
-                bt.logging.debug(f"  STDOUT: {stdout_str}")
-                bt.logging.debug(f"  STDERR: {stderr_str}")
+                _log.debug(f"Verification container for {model_hash[:16]}:")
+                _log.debug(f"  Return code: {proc.returncode}")
+                _log.debug(f"  STDOUT: {stdout_str}")
+                _log.debug(f"  STDERR: {stderr_str}")
 
                 if proc.returncode != 0:
-                    bt.logging.warning(
+                    _log.warning(
                         f"Verification container failed for {model_hash[:16]} "
                         f"with return code {proc.returncode}"
                     )
-                    bt.logging.warning(f"Error output: {stderr_str}")
+                    _log.warning(f"Error output: {stderr_str}")
 
             except asyncio.TimeoutError:
                 subprocess.run(["docker", "kill", container_name], capture_output=True)
-                bt.logging.warning(
+                _log.warning(
                     f"⏰ Verification timeout for model {model_hash[:16]}..."
                 )
                 return
 
-            bt.logging.info(
+            _log.info(
                 f"🔚 Ending Docker container for verification of model {model_hash[:16]}..."
             )
 
@@ -373,18 +379,18 @@ async def verify_new_model_with_docker(
                             "inspection_results", {}
                         )
 
-                        bt.logging.warning(
+                        _log.warning(
                             f"🚫 FAKE MODEL DETECTED during verification: {fake_reason}"
                         )
-                        bt.logging.info(f"Model hash: {model_hash}")
-                        bt.logging.debug(f"Inspection details: {inspection_results}")
+                        _log.info(f"Model hash: {model_hash}")
+                        _log.debug(f"Inspection details: {inspection_results}")
 
                         save_fake_model_for_analysis(
                             model_path, uid, model_hash, fake_reason, inspection_results
                         )
                         add_to_blacklist(model_hash)
                         model_path.unlink(missing_ok=True)
-                        bt.logging.info(
+                        _log.info(
                             f"🗑️ Removed fake model {model_hash[:16]}... from cache and blacklisted"
                         )
 
@@ -392,42 +398,42 @@ async def verify_new_model_with_docker(
                         rejection_reason = verification_data.get(
                             "rejection_reason", "Missing drone_agent.py"
                         )
-                        bt.logging.warning(
+                        _log.warning(
                             f"⚠️ MISSING drone_agent.py during verification: {rejection_reason}"
                         )
-                        bt.logging.info(f"Model hash: {model_hash}")
+                        _log.info(f"Model hash: {model_hash}")
                         model_path.unlink(missing_ok=True)
-                        bt.logging.info(
+                        _log.info(
                             f"🗑️ Removed model {model_hash[:16]}... from cache "
                             f"(missing drone_agent.py - can resubmit)"
                         )
 
                     else:
-                        bt.logging.info(
+                        _log.info(
                             f"✅ Model {model_hash[:16]}... passed verification - legitimate model"
                         )
 
                 except Exception as e:
-                    bt.logging.warning(
+                    _log.warning(
                         f"Failed to parse verification results for {model_hash[:16]}: {e}"
                     )
             else:
-                bt.logging.warning(
+                _log.warning(
                     f"No verification results found for model {model_hash[:16]}..."
                 )
                 try:
                     temp_files = list(Path(tmpdir).glob("*"))
-                    bt.logging.debug(
+                    _log.debug(
                         f"Files in temp directory: {[f.name for f in temp_files]}"
                     )
                     expected_file = Path(tmpdir) / "verification_result.json"
-                    bt.logging.debug(f"Expected result file: {expected_file}")
-                    bt.logging.debug(f"Expected file exists: {expected_file.exists()}")
+                    _log.debug(f"Expected result file: {expected_file}")
+                    _log.debug(f"Expected file exists: {expected_file.exists()}")
                 except Exception as e:
-                    bt.logging.debug(f"Error checking temp directory: {e}")
+                    _log.debug(f"Error checking temp directory: {e}")
 
     except Exception as e:
-        bt.logging.warning(
+        _log.warning(
             f"Docker verification failed for model {model_hash[:16]}: {e}"
         )
         subprocess.run(["docker", "kill", container_name], capture_output=True)
