@@ -73,7 +73,7 @@ class PolicyRef:
 # --------------------------------------------------------------------------- #
 # 3.  Bidirectional Synapse                                                   #
 # --------------------------------------------------------------------------- #
-Synapse = bt.Synapse if bt is not None else None  # alias
+Synapse = bt.Synapse if bt is not None else type("Synapse", (), {})  # alias
 
 
 class PolicySynapse(Synapse):
