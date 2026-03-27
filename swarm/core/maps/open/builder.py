@@ -208,6 +208,8 @@ def _load_texture(cli: int) -> Optional[int]:
     tex_path = _generate_grass_texture()
     try:
         tex_id = p.loadTexture(tex_path, physicsClientId=cli)
+        if isinstance(tex_id, int) and tex_id < 0:
+            tex_id = None
     except Exception:
         tex_id = None
     _CLI_TEX_CACHE[cli] = tex_id
@@ -228,7 +230,7 @@ def _spawn_terrain(cli: int, seed: int) -> None:
     )
     vis = p.createVisualShape(
         p.GEOM_MESH, fileName=obj_path, meshScale=[1, 1, 1],
-        rgbaColor=[1.0, 1.0, 1.0, 1.0], specularColor=[0.02, 0.02, 0.02],
+        rgbaColor=[0.35, 0.52, 0.25, 1.0], specularColor=[0.02, 0.02, 0.02],
         physicsClientId=cli,
     )
     body = p.createMultiBody(
