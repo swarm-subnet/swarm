@@ -3,16 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import socket
 import sys
-import threading
-import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-import uvicorn
 from fastapi import FastAPI
 from sqlmodel import SQLModel, Session, create_engine, select
 
@@ -44,23 +40,6 @@ class _DummyHotkey:
 
 class _DummyWallet:
     hotkey = _DummyHotkey()
-
-
-def _pick_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def _wait_for_server(port: int, timeout_seconds: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError(f"Timed out waiting for backend test server on port {port}")
 
 
 def test_backend_api_client_can_walk_live_backend_contract(monkeypatch, tmp_path):
@@ -139,24 +118,17 @@ def test_backend_api_client_can_walk_live_backend_contract(monkeypatch, tmp_path
         "RUNTIME_STATE_FILE",
         tmp_path / "state" / "runtime_state.json",
     )
-    port = _pick_free_port()
-    config = uvicorn.Config(
-        http_app,
-        host="127.0.0.1",
-        port=port,
-        log_level="warning",
-        lifespan="off",
-    )
-    server = uvicorn.Server(config)
-    server.install_signal_handlers = lambda: None
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    _wait_for_server(port)
 
     async def _run_flow():
         client = subnet_backend_api.BackendApiClient(
             wallet=_DummyWallet(),
-            base_url=f"http://127.0.0.1:{port}",
+            base_url="http://testserver",
+        )
+        await client.client.aclose()
+        client.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=http_app),
+            base_url=client.base_url,
+            timeout=client.timeout,
         )
 
         model_payload = b"zip-artifact-from-subnet"
@@ -213,7 +185,5 @@ def test_backend_api_client_can_walk_live_backend_contract(monkeypatch, tmp_path
     try:
         asyncio.run(_run_flow())
     finally:
-        server.should_exit = True
-        thread.join(timeout=5)
         http_app.dependency_overrides = {}
         SQLModel.metadata.drop_all(engine)

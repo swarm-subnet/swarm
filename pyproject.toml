@@ -40,13 +40,6 @@ Issues = "https://github.com/swarm-subnet/swarm/issues"
 [project.scripts]
 swarm = "swarm.cli:main"
 
-[project.optional-dependencies]
-dev = [
-  "build",
-  "pytest",
-  "twine",
-]
-
 [tool.setuptools]
 include-package-data = true
 license-files = ["LICENSE"]

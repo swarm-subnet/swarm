@@ -1,25 +1,36 @@
-# Runtime dependencies for the published package.
+# Definitive host dependency set for runtime, development, and tests.
 # Docker itself must still be installed separately on validator/benchmark hosts.
 
-pydantic
-rich
+pydantic==2.12.5
+rich==14.3.3
 numpy>=1.24,<2.0
-loguru
-xmldiff
-filelock
-swarm-pybullet>=3.2.7.0,<4.0.0
-bittensor
-msgpack
-importlib-metadata
-onnxruntime
-stable-baselines3[extra]
-wandb
-python-dotenv
-typing-extensions
-tqdm
-torch
-gymnasium
-requests
-httpx
-pycapnp
-swarm-gym-pybullet-drones>=2.0.0.0,<3.0.0
+loguru==0.7.3
+xmldiff==2.7.0
+filelock==3.25.2
+swarm-pybullet @ git+https://github.com/swarm-subnet/bullet3-swarmfork.git@a639608
+bittensor==7.4.0
+msgpack==1.1.2
+importlib-metadata==9.0.0
+onnxruntime==1.23.2
+stable-baselines3[extra]==2.7.1
+wandb==0.25.1
+python-dotenv==1.2.2
+typing-extensions==4.15.0
+tqdm==4.67.3
+torch==2.10.0
+gymnasium==0.29.1
+requests==2.32.5
+httpx==0.28.1
+pycapnp==2.2.2
+swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git@35a16199fd983e44de9d90530ede875e4d7383f6
+pytest==8.4.2
+build==1.4.2
+twine==6.2.0
+# Backend contract tests import the validator API app to exercise real HTTP flows.
+fastapi==0.110.3
+uvicorn==0.42.0
+sqlmodel==0.0.37
+sqlalchemy==2.0.48
+python-multipart==0.0.22
+apscheduler==3.11.2
+psycopg2-binary==2.9.11
