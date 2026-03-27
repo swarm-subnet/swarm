@@ -101,7 +101,7 @@ def _check_module_available(module_name: str) -> DoctorCheck:
 
 
 def _check_python_version() -> DoctorCheck:
-    ok = sys.version_info >= (3, 10)
+    ok = sys.version_info >= (3, 11)
     return DoctorCheck(
         name="python",
         ok=ok,

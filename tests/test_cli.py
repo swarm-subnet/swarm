@@ -14,7 +14,7 @@ def test_doctor_json_output_with_mocked_checks(monkeypatch, capsys):
         cli,
         "_run_doctor_checks",
         lambda: [
-            cli.DoctorCheck("python", True, "3.10.12", True),
+            cli.DoctorCheck("python", True, "3.11.14", True),
             cli.DoctorCheck("docker_binary", True, "Docker version 26", True),
         ],
     )
@@ -52,7 +52,7 @@ def test_doctor_checks_runtime_state_dir(monkeypatch):
         captured.append((path, name))
         return cli.DoctorCheck(name, True, str(path), True)
 
-    monkeypatch.setattr(cli, "_check_python_version", lambda: cli.DoctorCheck("python", True, "3.10.12", True))
+    monkeypatch.setattr(cli, "_check_python_version", lambda: cli.DoctorCheck("python", True, "3.11.14", True))
     monkeypatch.setattr(cli, "_check_docker_binary", lambda: cli.DoctorCheck("docker_binary", True, "ok", True))
     monkeypatch.setattr(cli, "_check_docker_daemon", lambda: cli.DoctorCheck("docker_daemon", True, "ok", True))
     monkeypatch.setattr(cli, "_check_module_available", lambda module: cli.DoctorCheck(f"module:{module}", True, "ok", True))

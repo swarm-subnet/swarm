@@ -29,7 +29,7 @@ Train an autonomous drone pilot, benchmark it against 1,000 procedurally generat
 
 ## System Requirements
 
-Mining is extremely lightweight — your miner submits a GitHub URL to the backend and goes offline. Any machine with **Python 3.10+** and a network connection will do. Training hardware depends entirely on your approach (SB3, PyTorch, custom RL — your choice).
+Mining is extremely lightweight — your miner submits a GitHub URL to the backend and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (SB3, PyTorch, custom RL — your choice).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
