@@ -101,3 +101,57 @@ def test_reset_clears_action_history(monkeypatch) -> None:
 
     assert np.array_equal(obs["state"], np.zeros((4,), dtype=np.float32))
     assert all(np.count_nonzero(buf) == 0 for buf in env.action_buffer)
+
+
+def test_spawn_task_world_sinks_default_plane_for_open_maps(monkeypatch) -> None:
+    env = moving_drone_mod.MovingDroneAviary.__new__(moving_drone_mod.MovingDroneAviary)
+    env.task = SimpleNamespace(
+        map_seed=123,
+        challenge_type=2,
+        start=(1.0, 2.0, 3.0),
+        goal=(4.0, 5.0, 6.0),
+    )
+    env._original_start = env.task.start
+    env._original_goal = env.task.goal
+    env.GOAL_POS = np.array(env.task.goal, dtype=float)
+    env.CLIENT = 7
+    env.DRONE_IDS = np.array([99], dtype=np.int64)
+    env.PLANE_ID = 1234
+    env._build_cull_targets = lambda: None
+
+    monkeypatch.setattr(
+        moving_drone_mod,
+        "build_world",
+        lambda **kwargs: ([], [], None, None, None, None),
+    )
+    monkeypatch.setattr(
+        moving_drone_mod.p,
+        "getQuaternionFromEuler",
+        lambda euler: (0.0, 0.0, 0.0, 1.0),
+    )
+
+    reset_calls: list[tuple[int, tuple[float, float, float]]] = []
+
+    def _reset_base_position_and_orientation(
+        body_id,
+        position,
+        orientation,
+        physicsClientId=None,
+    ) -> None:
+        reset_calls.append((int(body_id), tuple(float(v) for v in position)))
+
+    monkeypatch.setattr(
+        moving_drone_mod.p,
+        "resetBasePositionAndOrientation",
+        _reset_base_position_and_orientation,
+    )
+    monkeypatch.setattr(
+        moving_drone_mod.p,
+        "changeVisualShape",
+        lambda *args, **kwargs: None,
+    )
+
+    moving_drone_mod.MovingDroneAviary._spawn_task_world(env)
+
+    assert (99, (1.0, 2.0, 3.0)) in reset_calls
+    assert (1234, (0.0, 0.0, -1000.0)) in reset_calls

@@ -28,6 +28,8 @@ _TERRAIN_FREQUENCY = 0.05
 _TERRAIN_OCTAVES = 6
 _TERRAIN_FLAT_CENTER = 10.0
 _TERRAIN_MESH_VERSION = 2
+_TERRAIN_BASE_RGBA = [0.72, 0.90, 0.62, 1.0]
+_TERRAIN_SPECULAR = [0.0, 0.0, 0.0]
 
 _CLI_TEX_CACHE: dict = {}
 
@@ -230,7 +232,8 @@ def _spawn_terrain(cli: int, seed: int) -> None:
     )
     vis = p.createVisualShape(
         p.GEOM_MESH, fileName=obj_path, meshScale=[1, 1, 1],
-        rgbaColor=[0.35, 0.52, 0.25, 1.0], specularColor=[0.02, 0.02, 0.02],
+        rgbaColor=_TERRAIN_BASE_RGBA,
+        specularColor=_TERRAIN_SPECULAR,
         physicsClientId=cli,
     )
     body = p.createMultiBody(
@@ -241,7 +244,8 @@ def _spawn_terrain(cli: int, seed: int) -> None:
     if tex_id is not None:
         p.changeVisualShape(
             body, -1, textureUniqueId=tex_id,
-            rgbaColor=[1, 1, 1, 1], specularColor=[0.02, 0.02, 0.02],
+            rgbaColor=_TERRAIN_BASE_RGBA,
+            specularColor=_TERRAIN_SPECULAR,
             physicsClientId=cli,
         )
 

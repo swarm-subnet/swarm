@@ -976,6 +976,15 @@ class MovingDroneAviary(BaseRLAviary):
 
         plane_id = getattr(self, "PLANE_ID", None)
         if plane_id is not None:
+            if int(getattr(self.task, "challenge_type", 0)) == 2:
+                # TinyRenderer does not reliably hide the default plane via alpha,
+                # so move it far below the custom open-terrain mesh instead.
+                p.resetBasePositionAndOrientation(
+                    plane_id,
+                    [0.0, 0.0, -1000.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                    physicsClientId=cli,
+                )
             p.changeVisualShape(
                 plane_id, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli,
             )
