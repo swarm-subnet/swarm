@@ -8,6 +8,12 @@ This directory contains repository-level executable utilities.
   - Full benchmark entrypoint used by the CLI and manual benchmark runs.
 - `benchmark_with_videos.py`
   - One-shot runner that executes benchmark, saves seeds + summary, renders exact benchmark replay videos, and fails if replayed results differ.
+- `stress_benchmark_compare.py`
+  - Repeats validator-style benchmark samples for one model, saves per-run artifacts, and emits a comparison report with average-score variance across runs.
+  - Example smoke test:
+    - `python3 scripts/stress_benchmark_compare.py --model model/UID_178.zip --seed-count 100 --repetitions 5 --workers 6 --relax-timeouts --rpc-verbosity low`
+  - Example full run:
+    - `python3 scripts/stress_benchmark_compare.py --model model/UID_178.zip --seed-count 1000 --repetitions 5 --workers 6 --relax-timeouts --rpc-verbosity low`
 - `debug_idempotency_report.py`
   - Debug-only repeated-seed runner that replays one exact seed per map type multiple times and prints a grouped idempotency report.
 - `generate_video.py`
