@@ -55,6 +55,12 @@ def test_doctor_checks_runtime_state_dir(monkeypatch):
     monkeypatch.setattr(cli, "_check_python_version", lambda: cli.DoctorCheck("python", True, "3.11.14", True))
     monkeypatch.setattr(cli, "_check_docker_binary", lambda: cli.DoctorCheck("docker_binary", True, "ok", True))
     monkeypatch.setattr(cli, "_check_docker_daemon", lambda: cli.DoctorCheck("docker_daemon", True, "ok", True))
+    monkeypatch.setattr(cli, "_check_binary_available", lambda binary: cli.DoctorCheck(f"binary:{binary}", True, "ok", True))
+    monkeypatch.setattr(
+        cli,
+        "_check_sandbox_lockdown_permissions",
+        lambda: cli.DoctorCheck("sandbox_lockdown_permissions", True, "ok", False),
+    )
     monkeypatch.setattr(cli, "_check_module_available", lambda module: cli.DoctorCheck(f"module:{module}", True, "ok", True))
     monkeypatch.setattr(cli, "_check_writable_dir", _fake_check_writable_dir)
     monkeypatch.setattr(cli, "_check_submission_template", lambda: cli.DoctorCheck("submission_template", True, "ok", True))
@@ -65,6 +71,41 @@ def test_doctor_checks_runtime_state_dir(monkeypatch):
     assert captured[0] == (cli.REPO_ROOT / "swarm" / "state", "state_dir")
     assert captured[1][1] == "model_dir"
     assert cli._runtime_state_dir() == cli.REPO_ROOT / "swarm" / "state"
+
+
+def test_sandbox_lockdown_permissions_ok_for_root(monkeypatch):
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+
+    check = cli._check_sandbox_lockdown_permissions()
+
+    assert check.ok is True
+    assert check.required is False
+    assert "running as root" in check.detail
+
+
+def test_sandbox_lockdown_permissions_warns_for_non_root_without_caps(monkeypatch):
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: {
+            "nsenter": "/usr/bin/nsenter",
+            "iptables": "/usr/sbin/iptables",
+            "getcap": "/usr/sbin/getcap",
+        }.get(name),
+    )
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(cli.os.path, "realpath", lambda path: "/usr/sbin/xtables-nft-multi")
+    monkeypatch.setattr(cli, "_binary_capabilities", lambda path: set())
+
+    check = cli._check_sandbox_lockdown_permissions()
+
+    assert check.ok is False
+    assert check.required is False
+    assert "current user is not root" in check.detail
+    assert "sudo -E" in check.detail
+    assert "cap_sys_admin" in check.detail
+    assert "cap_net_admin" in check.detail
 
 
 def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
