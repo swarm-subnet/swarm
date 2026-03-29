@@ -9,7 +9,6 @@ from swarm.constants import (
     SCREENING_BOOTSTRAP_THRESHOLD,
     SCREENING_CHECKPOINT_SIZE,
     SCREENING_EARLY_FAIL_FACTORS,
-    SCREENING_EARLY_PASS_FACTORS,
     SCREENING_TOP_MODEL_FACTOR,
     SIM_DT,
 )
@@ -191,18 +190,6 @@ async def _run_screening(
                 bt.logging.info(
                     f"⏩ Screening early fail for UID {uid}: "
                     f"avg={running_avg:.4f} < {threshold * fail_factor:.4f} "
-                    f"after {evaluated}/{total_seeds} seeds"
-                )
-                break
-
-            pass_factor = SCREENING_EARLY_PASS_FACTORS.get(evaluated)
-            if pass_factor is not None and running_avg > threshold * pass_factor:
-                completion_note = (
-                    f"early_pass {evaluated}/{total_seeds} avg={running_avg:.4f}"
-                )
-                bt.logging.info(
-                    f"⏩ Screening early pass for UID {uid}: "
-                    f"avg={running_avg:.4f} > {threshold * pass_factor:.4f} "
                     f"after {evaluated}/{total_seeds} seeds"
                 )
                 break

@@ -205,7 +205,6 @@ SCREENING_TOP_MODEL_FACTOR = 1.01       # Must score above 101% of top model to 
 # Early screening termination — abort screening when outcome is statistically certain
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.60, 100: 0.80, 150: 0.90}
-SCREENING_EARLY_PASS_FACTORS = {50: 1.30, 100: 1.15}
 
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
