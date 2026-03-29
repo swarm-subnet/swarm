@@ -173,6 +173,7 @@ def build_world(
             sx, sy, surface_z = _find_flat_platform_spot(
                 cli, sx, sy, platform_radius,
             )
+            adjusted_start = (sx, sy, surface_z + shared.START_PLATFORM_TAKEOFF_BUFFER)
         elif challenge_type in (1, 4, 5, 6) and start_platform_surface_z is not None:
             surface_z = start_platform_surface_z
         elif shared.START_PLATFORM_RANDOMIZE:
@@ -268,6 +269,7 @@ def build_world(
             gx, gy, surface_z = _find_flat_platform_spot(
                 cli, gx, gy, shared.START_PLATFORM_RADIUS,
             )
+            adjusted_goal = (gx, gy, surface_z)
         else:
             surface_z = gz
 
