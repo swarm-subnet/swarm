@@ -172,6 +172,10 @@ async def _process_normal_queue_item(
             )
 
         screening_passed = bool(item.get("screening_passed", False))
+        bt.logging.info(
+            f"{'PASSED' if screening_passed else 'FAILED'} Screening UID {uid} | "
+            f"score={item.get('screening_score', 0):.4f}"
+        )
 
         if not item.get("screening_recorded", False):
             tracker_call(
@@ -192,6 +196,10 @@ async def _process_normal_queue_item(
                 passed=screening_passed,
             )
             if not recorded:
+                bt.logging.warning(
+                    f"Screening submit failed for UID {uid} | "
+                    f"terminal={terminal} | {reason}"
+                )
                 tracker_call(
                     self,
                     "mark_submission_result",
@@ -246,6 +254,7 @@ async def _process_normal_queue_item(
             item["next_retry_at"] = 0
             item["last_error"] = ""
             item["updated_at"] = time.time()
+            bt.logging.info(f"Screening score submitted to backend for UID {uid}")
             tracker_call(
                 self,
                 "mark_queue_item_stage",
@@ -256,6 +265,9 @@ async def _process_normal_queue_item(
             )
 
         if not screening_passed:
+            bt.logging.info(
+                f"UID {uid} screening failed — skipping benchmark"
+            )
             item["status"] = "completed"
             item["updated_at"] = time.time()
             item.pop("screening_scores", None)
@@ -360,6 +372,15 @@ async def _process_normal_queue_item(
                 item.pop("benchmark_partial_per_type", None)
             item["updated_at"] = time.time()
 
+        per_type_str = " | ".join(
+            f"{k}={v:.2f}" for k, v in sorted(item.get("per_type_scores", {}).items())
+        )
+        bt.logging.info(
+            f"Benchmark UID {uid} | "
+            f"total={item.get('total_score', 0):.4f} | "
+            f"{item.get('seeds_evaluated', 0)} seeds | {per_type_str}"
+        )
+
         if not item.get("score_recorded", False):
             tracker_call(
                 self,
@@ -382,6 +403,10 @@ async def _process_normal_queue_item(
                 epoch_number=self.seed_manager.epoch_number,
             )
             if not recorded:
+                bt.logging.warning(
+                    f"Score submit failed for UID {uid} | "
+                    f"terminal={terminal} | {reason}"
+                )
                 tracker_call(
                     self,
                     "mark_submission_result",
@@ -436,6 +461,7 @@ async def _process_normal_queue_item(
             item["next_retry_at"] = 0
             item["last_error"] = ""
             item["updated_at"] = time.time()
+            bt.logging.info(f"Score submitted to backend for UID {uid}")
             tracker_call(
                 self,
                 "mark_queue_item_stage",
@@ -444,6 +470,13 @@ async def _process_normal_queue_item(
                 item=item,
                 stage="completed",
             )
+
+        bt.logging.info(
+            f"UID {uid} evaluation complete | "
+            f"screening={item.get('screening_score', 0):.4f} "
+            f"total={item.get('total_score', 0):.4f} | "
+            f"{item.get('seeds_evaluated', 0)} seeds"
+        )
 
         _utils_facade().set_cached_score(model_hash, epoch, {
             "uid": uid,
