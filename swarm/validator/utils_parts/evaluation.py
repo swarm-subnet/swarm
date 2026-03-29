@@ -9,7 +9,7 @@ from swarm.constants import (
     SCREENING_BOOTSTRAP_THRESHOLD,
     SCREENING_CHECKPOINT_SIZE,
     SCREENING_EARLY_FAIL_FACTORS,
-    SCREENING_TOP_MODEL_FACTOR,
+    SCREENING_MIN_IMPROVEMENT,
     SIM_DT,
 )
 from swarm.validator.task_gen import random_task
@@ -115,7 +115,7 @@ def _get_screening_threshold(self) -> float:
     current_top = getattr(self, '_current_top', None)
     if not current_top or not current_top.get('score'):
         return float(SCREENING_BOOTSTRAP_THRESHOLD)
-    return float(current_top.get('score', 0.0)) * SCREENING_TOP_MODEL_FACTOR
+    return float(current_top.get('score', 0.0)) + SCREENING_MIN_IMPROVEMENT
 
 
 async def _run_screening(
@@ -276,10 +276,10 @@ def _passes_screening(self, screening_score: float) -> bool:
         return passed
 
     top_score = current_top.get('score', 0.0)
-    threshold = top_score * SCREENING_TOP_MODEL_FACTOR
+    threshold = top_score + SCREENING_MIN_IMPROVEMENT
     passed = screening_score >= threshold
     bt.logging.info(
         f"Screening: {screening_score:.4f} >= {threshold:.4f} "
-        f"({SCREENING_TOP_MODEL_FACTOR:.0%} of top {top_score:.4f}) = {passed}"
+        f"(top {top_score:.4f} + {SCREENING_MIN_IMPROVEMENT}) = {passed}"
     )
     return passed

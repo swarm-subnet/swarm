@@ -200,7 +200,7 @@ SCREENING_BOOTSTRAP_THRESHOLD = 0.1     # Minimum score threshold during bootstr
 # Epoch system — seeds rotate every 7 days (Monday 16:00 UTC)
 EPOCH_DURATION_SECONDS = 7 * 86400
 EPOCH_ANCHOR_UTC = datetime(2026, 3, 23, 16, 0, 0, tzinfo=timezone.utc)
-SCREENING_TOP_MODEL_FACTOR = 1.01       # Must score above 101% of top model to pass
+SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this margin to pass
 
 # Early screening termination — abort screening when outcome is statistically certain
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint

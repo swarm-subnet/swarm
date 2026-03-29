@@ -289,7 +289,7 @@ pm2 start --name auto_update_validator \
    Download `submission.zip` from the miner's public GitHub repository. Verify SHA-256 hash matches the backend's stored hash. README.md hash is verified by the backend during submission.
 
 3. **Screening (200 seeds)**
-   New models are first evaluated on 200 seeds. Must score >= **101%** of the current champion to proceed (`SCREENING_TOP_MODEL_FACTOR = 1.01`), or >= 0.1 if no champion exists.
+   New models are first evaluated on 200 seeds. Must score >= current champion + **0.015** to proceed (`SCREENING_MIN_IMPROVEMENT = 0.015`), or >= 0.1 if no champion exists.
 
 4. **Full benchmark (800 seeds)**
    Models that pass screening are evaluated on the remaining 800 benchmark seeds across all environment types. Evaluation runs in parallel Docker containers.
