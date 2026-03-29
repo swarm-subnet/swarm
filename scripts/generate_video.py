@@ -468,17 +468,17 @@ def _load_seed_jobs(seed_file: Path) -> List[VideoJob]:
         raise ValueError("Seed file must contain a JSON object mapping benchmark groups to seed lists.")
 
     jobs: List[VideoJob] = []
-    missing = [group for group in BENCH_GROUP_ORDER if group not in raw]
-    if missing:
-        raise ValueError(f"Seed file missing groups: {', '.join(missing)}")
-
     for group in BENCH_GROUP_ORDER:
-        seeds = raw.get(group)
-        if not isinstance(seeds, list) or not seeds:
-            raise ValueError(f"Seed group {group} must be a non-empty list.")
+        seeds = raw.get(group, [])
+        if seeds in (None, []):
+            continue
+        if not isinstance(seeds, list):
+            raise ValueError(f"Seed group {group} must be a list when present.")
         challenge_type = BENCH_GROUP_TO_TYPE[group]
         for seed in seeds:
             jobs.append(VideoJob(seed=int(seed), challenge_type=challenge_type))
+    if not jobs:
+        raise ValueError("Seed file does not contain any jobs.")
     return jobs
 
 
