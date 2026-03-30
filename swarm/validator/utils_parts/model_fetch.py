@@ -7,7 +7,7 @@ async def _download_model_from_github(
     """Download model ZIP from GitHub and verify its hash."""
     validated = validate_github_url(github_url, uid=uid)
     if not validated:
-        bt.logging.warning(f"UID {uid}: invalid github_url: {github_url}")
+        bt.logging.warning(f"UID {uid}: invalid github_url")
         return False
 
     candidate_urls = build_raw_urls(validated)
@@ -18,7 +18,7 @@ async def _download_model_from_github(
             break
 
     if not downloaded:
-        bt.logging.warning(f"UID {uid}: GitHub download failed from {validated}")
+        bt.logging.warning(f"UID {uid}: GitHub download failed")
         dest.unlink(missing_ok=True)
         return False
 

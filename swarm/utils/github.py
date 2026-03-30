@@ -32,17 +32,17 @@ def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[
     parsed = urlparse(url)
 
     if parsed.scheme != "https":
-        bt.logging.warning(f"Rejecting github_url: non-HTTPS scheme{tag}: {url}")
+        bt.logging.warning(f"Rejecting github_url: non-HTTPS scheme{tag}")
         return None
 
     host = (parsed.netloc or "").lower()
     if host != "github.com":
-        bt.logging.warning(f"Rejecting github_url: unsupported host{tag}: {url}")
+        bt.logging.warning(f"Rejecting github_url: unsupported host{tag}")
         return None
 
     segments = [s for s in (parsed.path or "").split("/") if s]
     if len(segments) != 2:
-        bt.logging.warning(f"Rejecting github_url: expected owner/repo{tag}: {url}")
+        bt.logging.warning(f"Rejecting github_url: expected owner/repo{tag}")
         return None
 
     return f"https://github.com/{segments[0]}/{segments[1]}"
@@ -82,7 +82,7 @@ async def download_from_github(
             async with client.stream("GET", url) as response:
                 if response.status_code != 200:
                     bt.logging.warning(
-                        f"GitHub download failed: HTTP {response.status_code} for {url}"
+                        f"GitHub download failed: HTTP {response.status_code}"
                     )
                     return False
 
@@ -105,7 +105,7 @@ async def download_from_github(
                             return False
                         fh.write(chunk)
 
-        bt.logging.info(f"Downloaded {total_bytes} bytes from GitHub: {url}")
+        bt.logging.info(f"Downloaded {total_bytes} bytes from GitHub")
 
         if dest.exists() and dest.is_dir():
             shutil.rmtree(dest)
@@ -113,7 +113,7 @@ async def download_from_github(
         return True
 
     except httpx.TimeoutException:
-        bt.logging.error(f"GitHub download timed out ({timeout_sec}s): {url}")
+        bt.logging.error(f"GitHub download timed out ({timeout_sec}s)")
         tmp.unlink(missing_ok=True)
         return False
     except Exception as e:
@@ -152,13 +152,13 @@ async def check_readme_matches(
                 digest = hashlib.sha256(resp.content).hexdigest()
                 if digest == REQUIRED_README_HASH:
                     return True
+                branch = url.rsplit("/raw/", 1)[-1].split("/", 1)[0]
                 bt.logging.info(
-                    f"README.md hash mismatch on {url.split('/raw/')[1].split('/')[0]}{tag}, "
-                    f"trying next branch"
+                    f"README.md hash mismatch on branch {branch}{tag}, trying next"
                 )
     except Exception as e:
         bt.logging.warning(f"README.md check failed{tag}: {e}")
         return False
 
-    bt.logging.warning(f"README.md not found in repo{tag}: {repo_url}")
+    bt.logging.warning(f"README.md not found in repo{tag}")
     return False
