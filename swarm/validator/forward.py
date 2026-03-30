@@ -384,6 +384,20 @@ async def forward(self) -> None:
             bt.logging.info("No normal-model queue items ready this cycle")
         else:
             bt.logging.info(f"📦 Processing {len(processable_keys)} queued model(s)")
+            try:
+                queue_items = queue.get("items", {})
+                queue_list = []
+                for qk in processable_keys:
+                    qi = queue_items.get(qk, {})
+                    q_uid = int(qi.get("uid", -1))
+                    if q_uid >= 0:
+                        phase = "benchmark" if qi.get("screening_passed") else "screening"
+                        queue_list.append({"uid": q_uid, "phase": phase})
+                await self.backend_api.post_heartbeat(
+                    status="idle", queue=queue_list,
+                )
+            except Exception:
+                pass
             for queue_key in processable_keys:
                 await _process_normal_queue_item(
                     self,

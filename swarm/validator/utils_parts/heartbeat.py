@@ -26,7 +26,7 @@ class HeartbeatManager:
         with self._lock:
             self._queue = queue
 
-    def start(self, status: str, uid: int, total: int) -> None:
+    def start(self, status: str, uid: int, total: int, queue: Optional[list] = None) -> None:
         with self._lock:
             self._session_id += 1
             self._status = status
@@ -35,6 +35,8 @@ class HeartbeatManager:
             self._progress = 0
             self._last_sent = 0
             self._active = True
+            if queue is not None:
+                self._queue = queue
 
         asyncio.run_coroutine_threadsafe(
             self._safe_heartbeat(0, self._session_id),
