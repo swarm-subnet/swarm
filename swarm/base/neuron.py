@@ -85,11 +85,13 @@ class BaseNeuron(ABC):
 
         # The wallet holds the cryptographic key pairs for the miner.
 
-        self.wallet = bt.Wallet(config=self.config)
+        _wallet_cls = getattr(bt, "Wallet", None) or getattr(bt, "wallet")
+        self.wallet = _wallet_cls(config=self.config)
         while True:
             try:
                 bt.logging.info("Initializing subtensor and metagraph")
-                self.subtensor = bt.Subtensor(config=self.config)
+                _subtensor_cls = getattr(bt, "Subtensor", None) or getattr(bt, "subtensor")
+                self.subtensor = _subtensor_cls(config=self.config)
                 self.metagraph = self.subtensor.metagraph(self.config.netuid)
                 break
             except Exception as e:
