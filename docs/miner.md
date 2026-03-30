@@ -97,7 +97,7 @@ class DroneFlightController:
 
     def act(self, observation):
         # observation: dict with "depth" (128,128,1) and "state" (N,)
-        # Return action array [vx, vy, vz, speed, yaw]
+        # Return action array [dir_x, dir_y, dir_z, speed, yaw]
         action, _ = self.model.predict(observation, deterministic=True)
         return action
 

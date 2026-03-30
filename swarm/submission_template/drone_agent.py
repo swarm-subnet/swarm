@@ -15,15 +15,15 @@ class DroneFlightController:
         - "state": numpy array (N,) - flight state vector containing:
             * Position (x, y, z) in meters
             * Orientation (roll, pitch, yaw)
-            * Linear velocities (vx, vy, vz) in m/s
+            * Linear velocities (vel_x, vel_y, vel_z) in m/s
             * Angular velocities (roll_rate, pitch_rate, yaw_rate) in rad/s
             * Action history (previous actions)
             * Altitude (normalized)
             * Search area vector (relative x, y, z) - ±10m accuracy in X/Y
     
     Action Space:
-        numpy array (5,) containing [vx, vy, vz, speed, yaw]
-        - vx, vy, vz: velocity direction components, range [-1, 1]
+        numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
+        - dir_x, dir_y, dir_z: direction components, range [-1, 1]
         - speed: thrust multiplier, range [0, 1]
         - yaw: target yaw angle normalized, range [-1, 1] maps to [-π, π]
     
@@ -63,7 +63,7 @@ class DroneFlightController:
             observation: dict with "depth" (128,128,1) and "state" (N,) arrays
         
         Returns:
-            numpy array (5,) containing [vx, vy, vz, speed, yaw]
+            numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
         """
         action = np.random.uniform(-1, 1, size=5)
         action[3] = np.clip(action[3], 0, 1)

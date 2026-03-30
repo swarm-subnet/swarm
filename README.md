@@ -236,7 +236,7 @@ swarm report                                          # View results
 <tr>
 <td align="center"><b>Depth Camera</b><br><sub>128×128 image</sub></td>
 <td align="center" rowspan="2"><b>&nbsp;→&nbsp; Your Model &nbsp;→&nbsp;</b></td>
-<td align="center" rowspan="2"><b>Velocity Commands</b><br><sub>[vx, vy, vz, speed, yaw]</sub></td>
+<td align="center" rowspan="2"><b>Flight Commands</b><br><sub>[dir_x, dir_y, dir_z, speed, yaw]</sub></td>
 <td align="center" rowspan="2"><b>&nbsp;→&nbsp; Drone</b></td>
 </tr>
 <tr>
