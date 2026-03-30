@@ -11,7 +11,6 @@ from typing import List, Optional, Tuple
 import pybullet as p
 
 from swarm.constants import (
-    BENCHMARK_VERSION,
     GOAL_COLOR_PALETTE,
     LANDING_PLATFORM_RADIUS,
     MAX_ATTEMPTS_PER_OBS,

@@ -191,7 +191,8 @@ SAFETY_DISTANCE_DANGER = 0.2            # Zero safety score at this clearance (m
 # BENCHMARK SYSTEM
 # =============================================================================
 
-BENCHMARK_VERSION = "SB1.1"             # Current benchmark version identifier
+from swarm import version_split as _vs
+BENCHMARK_VERSION = ".".join(_vs[:3])
 BENCHMARK_TOTAL_SEED_COUNT = 1000       # Total seeds per epoch
 BENCHMARK_SCREENING_SEED_COUNT = 200    # Seeds used for screening phase
 BENCHMARK_FULL_SEED_COUNT = 800         # Seeds used for full benchmark phase

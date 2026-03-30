@@ -303,7 +303,7 @@ class BackendApiClient:
         """
         return await self._post_signed(
             f"/validators/models/{uid}/screening",
-            {"score": screening_score, "passed": passed},
+            {"score": screening_score, "passed": passed, "benchmark_version": BENCHMARK_VERSION},
         )
 
     # ──────────────────────────────────────────────────────────────────────
