@@ -238,7 +238,7 @@ The `.zip` contains the agent's `DroneFlightController` class and trained weight
 Final score = 0.45 × success + 0.45 × time_bonus + 0.10 × safety_bonus
 ```
 
-Models are ranked by **median score across 1,000 seeds** — consistency matters more than lucky runs. To claim the top spot, a new model must beat the current leader by at least **1%**.
+Models are ranked by **average score across 1,000 seeds** — consistency matters more than lucky runs. To claim the top spot, a new model must beat the current champion by at least **+0.015**.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

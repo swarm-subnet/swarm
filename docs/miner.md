@@ -135,9 +135,9 @@ The search area provides a direction toward the goal with up to ±10m noise. The
 
 | Index | Name | Range | Description |
 |-------|------|-------|-------------|
-| 0 | vx | [-1, 1] | Velocity X direction |
-| 1 | vy | [-1, 1] | Velocity Y direction |
-| 2 | vz | [-1, 1] | Velocity Z direction |
+| 0 | dir_x | [-1, 1] | Direction X component |
+| 1 | dir_y | [-1, 1] | Direction Y component |
+| 2 | dir_z | [-1, 1] | Direction Z component |
 | 3 | speed | [0, 1] | Thrust multiplier |
 | 4 | yaw | [-1, 1] | Target yaw angle (maps to [-π, π]) |
 
@@ -322,7 +322,7 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 2. **Backend** downloads `submission.zip`, computes SHA-256, verifies README hash
 3. **Validator** syncs with backend, downloads your model from GitHub, verifies hash
 4. **Validator** runs your agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — quick filter, must score >= **101%** of the current champion (or >= 0.1 if no champion)
+   - **Screening** (200 seeds) — quick filter, must score >= **champion + 0.015** (or >= 0.01 if no champion)
    - **Full benchmark** (800 seeds) — complete evaluation across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
 5. **Final score** = average of all 1,000 seed results
 6. **Winner-take-all** — #1 scorer receives emissions
@@ -340,7 +340,7 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 | Total seeds per epoch | 1,000 |
 | Screening seeds | 200 |
 | Full benchmark seeds | 800 |
-| Screening threshold | >= 101% of champion score (or >= 0.1 bootstrap) |
+| Screening threshold | >= champion score + 0.015 (or >= 0.01 bootstrap) |
 | Max submission size | 50 MiB (compressed) |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
