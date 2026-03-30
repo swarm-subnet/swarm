@@ -353,6 +353,14 @@ class MovingDroneAviary(BaseRLAviary):
                     new_pos = candidate
                     break
 
+        max_step_dist = self._platform_speed * self._sim_dt * 1.5
+        disp = new_pos - current
+        disp_dist = np.linalg.norm(disp[:2])
+        if disp_dist > max_step_dist > 0:
+            scale = max_step_dist / disp_dist
+            new_pos[0] = current[0] + disp[0] * scale
+            new_pos[1] = current[1] + disp[1] * scale
+
         center = self._platform_orbit_center
         rel = new_pos[:2] - center[:2]
         r = np.linalg.norm(rel)
