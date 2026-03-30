@@ -70,7 +70,7 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
 
     async def _evaluate(*args, **kwargs):
         _ = args, kwargs
-        return [0.9], {"open": [0.9]}
+        return [0.9], {"open": [0.9]}, [{"score": 0.9, "map_type": "open"}]
 
     async def _submit_score(*args, **kwargs):
         _ = args, kwargs
@@ -144,7 +144,7 @@ def test_process_normal_queue_item_updates_runtime_tracker(monkeypatch, tmp_path
 
     async def _evaluate(*args, **kwargs):
         _ = args, kwargs
-        return [0.9], {"open": [0.9]}
+        return [0.9], {"open": [0.9]}, [{"score": 0.9, "map_type": "open"}]
 
     async def _submit_score(*args, **kwargs):
         _ = args, kwargs
@@ -252,7 +252,7 @@ def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatc
     async def _unexpected_evaluate(*args, **kwargs):
         _ = args, kwargs
         full_called["value"] = True
-        return [], {}
+        return [], {}, []
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
@@ -315,7 +315,7 @@ def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_pat
 
     async def _evaluate(*args, **kwargs):
         _ = args, kwargs
-        return [0.9], {"open": [0.9]}
+        return [0.9], {"open": [0.9]}, [{"score": 0.9, "map_type": "open"}]
 
     async def _submit_score(*args, **kwargs):
         _ = args, kwargs
@@ -450,7 +450,7 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(validator_evaluation, "random_task", _fake_random_task)
 
-    all_scores, per_type_scores = asyncio.run(
+    all_scores, per_type_scores, _details = asyncio.run(
         validator_utils._evaluate_seeds(
             validator,
             uid=9,

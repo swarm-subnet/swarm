@@ -322,13 +322,24 @@ async def _process_normal_queue_item(
                     for i in range(0, len(remaining_seeds), round_size):
                         chunk = remaining_seeds[i:i + round_size]
                         prior_avg = float(np.mean(partial_scores)) if partial_scores else 0.0
-                        chunk_scores, chunk_per_type = await _utils_facade()._evaluate_seeds(
+                        chunk_scores, chunk_per_type, chunk_details = await _utils_facade()._evaluate_seeds(
                             self, uid, model_path, chunk,
                             f"benchmark [{done + 1}..{done + len(chunk)}]",
                             prior_seeds_done=done,
                             prior_total_seeds=total_benchmark_seeds,
                             prior_avg=prior_avg,
                         )
+                        try:
+                            seed_batch = [
+                                {"seed_index": done + j, "score": d["score"], "map_type": d["map_type"]}
+                                for j, d in enumerate(chunk_details) if d.get("map_type") != "unknown"
+                            ]
+                            if seed_batch:
+                                await self.backend_api.post_seed_scores_batch(
+                                    model_uid=uid, epoch_number=epoch, scores=seed_batch,
+                                )
+                        except Exception as seed_err:
+                            bt.logging.debug(f"Seed score upload failed for UID {uid}: {seed_err}")
                         partial_scores.extend(chunk_scores)
                         for tname, tscores in chunk_per_type.items():
                             partial_per_type.setdefault(tname, []).extend(tscores)

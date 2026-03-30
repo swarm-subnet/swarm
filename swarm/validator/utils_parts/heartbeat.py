@@ -20,6 +20,11 @@ class HeartbeatManager:
         self._uid: Optional[int] = None
         self._session_id = 0
         self._active = False
+        self._queue: list = []
+
+    def set_queue(self, queue: list) -> None:
+        with self._lock:
+            self._queue = queue
 
     def start(self, status: str, uid: int, total: int) -> None:
         with self._lock:
@@ -86,7 +91,8 @@ class HeartbeatManager:
                     status=status,
                     current_uid=uid,
                     progress=progress,
-                    total_seeds=total
+                    total_seeds=total,
+                    queue=self._queue,
                 ),
                 timeout=2.0
             )

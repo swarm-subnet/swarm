@@ -483,27 +483,30 @@ class BackendApiClient:
         current_uid: Optional[int] = None,
         progress: Optional[int] = None,
         total_seeds: Optional[int] = None,
+        queue: Optional[list] = None,
     ) -> Dict[str, Any]:
-        """Post validator heartbeat for liveness tracking.
-
-        Args:
-            status: "idle", "evaluating_screening", or "evaluating_benchmark"
-            current_uid: UID being evaluated (required when evaluating)
-            progress: Seeds completed so far
-            total_seeds: Total seeds to evaluate (200 or 1000)
-
-        Returns:
-            {"recorded": True, "message": "..."} or error dict
-        """
-        data = {"status": status}
+        data: Dict[str, Any] = {"status": status}
         if current_uid is not None:
             data["current_uid"] = current_uid
         if progress is not None:
             data["progress"] = progress
         if total_seeds is not None:
             data["total_seeds"] = total_seeds
-
+        if queue is not None:
+            data["queue"] = queue
         return await self._post_signed("/validators/heartbeat", data)
+
+    async def post_seed_scores_batch(
+        self,
+        model_uid: int,
+        epoch_number: int,
+        scores: list,
+    ) -> Dict[str, Any]:
+        return await self._post_signed("/validators/seed-scores", {
+            "model_uid": model_uid,
+            "epoch_number": epoch_number,
+            "scores": scores,
+        })
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/epoch/publish

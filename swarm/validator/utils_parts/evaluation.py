@@ -85,10 +85,12 @@ async def _evaluate_seeds(
         prior_avg=prior_avg,
     )
 
+    seed_details = []
     task_idx = 0
     for i, task in enumerate(tasks):
         if task is None:
             all_scores.append(0.0)
+            seed_details.append({"score": 0.0, "map_type": "unknown"})
             continue
 
         if task_idx < len(results):
@@ -102,12 +104,14 @@ async def _evaluate_seeds(
             elif type_name in per_type_scores:
                 per_type_scores[type_name].append(score)
 
+            seed_details.append({"score": score, "map_type": type_name})
             task_idx += 1
         else:
             all_scores.append(0.0)
+            seed_details.append({"score": 0.0, "map_type": "unknown"})
 
     bt.logging.info(f"✅ {description} complete for UID {uid}: {len(all_scores)} seeds evaluated")
-    return all_scores, per_type_scores
+    return all_scores, per_type_scores, seed_details
 
 
 def _get_screening_threshold(self) -> float:
@@ -157,7 +161,7 @@ async def _run_screening(
             if not batch_seeds:
                 break
 
-            batch_scores, batch_per_type = await _utils_facade()._evaluate_seeds(
+            batch_scores, batch_per_type, _batch_details = await _utils_facade()._evaluate_seeds(
                 self, uid, model_path, batch_seeds,
                 f"screening [{len(all_scores) + 1}..{checkpoint}]",
                 on_seed_complete=hb.on_seed_complete,
@@ -233,7 +237,7 @@ async def _run_full_benchmark(
     hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
 
     try:
-        all_scores, per_type_raw = await _utils_facade()._evaluate_seeds(
+        all_scores, per_type_raw, _details = await _utils_facade()._evaluate_seeds(
             self, uid, model_path, benchmark_seeds, "full benchmark",
             on_seed_complete=hb.on_seed_complete
         )
