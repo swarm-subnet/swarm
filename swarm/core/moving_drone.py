@@ -17,6 +17,7 @@ from gym_pybullet_drones.utils.enums import (
 from swarm.core.env_builder import build_world
 from swarm.validator.reward import flight_reward
 from swarm.constants import (
+    SIM_DT as VALIDATOR_SIM_DT,
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
     SEARCH_AREA_NOISE_Z,
@@ -49,6 +50,10 @@ class MovingDroneAviary(BaseRLAviary):
     """
     MAX_TILT_RAD: float = 1.047         # safety cut‑off for roll / pitch (rad)
     _fov: float = 90.0
+    FIXED_KINEMATIC_STATE_DIM: int = 12
+    FIXED_ALTITUDE_STATE_DIM: int = 1
+    FIXED_SEARCH_VECTOR_DIM: int = 3
+    FIXED_ACTION_HISTORY_SLOTS: int = int(round(1.0 / VALIDATOR_SIM_DT)) // 2
 
     # --------------------------------------------------------------------- #
     # 1. constructor
@@ -141,7 +146,13 @@ class MovingDroneAviary(BaseRLAviary):
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
 
         action_dim = self.action_space.shape[-1]
-        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + 3
+        self._action_dim = int(action_dim)
+        state_dim = (
+            self.FIXED_KINEMATIC_STATE_DIM
+            + self.FIXED_ACTION_HISTORY_SLOTS * self._action_dim
+            + self.FIXED_ALTITUDE_STATE_DIM
+            + self.FIXED_SEARCH_VECTOR_DIM
+        )
         self._state_dim = state_dim
 
         depth_shape = (enhanced_height, enhanced_width, 1)
@@ -173,6 +184,41 @@ class MovingDroneAviary(BaseRLAviary):
     def _sim_dt(self) -> float:
         """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
+
+    def _get_fixed_action_history(self) -> np.ndarray:
+        """Project the last 0.5s of actions into the fixed deploy-time shape."""
+
+        if not self.action_buffer:
+            return np.zeros(
+                (self.FIXED_ACTION_HISTORY_SLOTS, self._action_dim),
+                dtype=np.float32,
+            )
+
+        history = np.stack(
+            [np.asarray(entry[0, :], dtype=np.float32) for entry in self.action_buffer],
+            axis=0,
+        )
+        source_len = int(history.shape[0])
+        if source_len == self.FIXED_ACTION_HISTORY_SLOTS:
+            return history
+        if source_len == 1:
+            return np.repeat(history, self.FIXED_ACTION_HISTORY_SLOTS, axis=0)
+
+        source_positions = np.linspace(0.0, 1.0, source_len, dtype=np.float32)
+        target_positions = np.linspace(
+            0.0,
+            1.0,
+            self.FIXED_ACTION_HISTORY_SLOTS,
+            dtype=np.float32,
+        )
+        resampled = np.stack(
+            [
+                np.interp(target_positions, source_positions, history[:, col])
+                for col in range(history.shape[1])
+            ],
+            axis=1,
+        )
+        return resampled.astype(np.float32)
     
     def _get_movement_pattern_from_seed(self, seed: int) -> str:
         """Deterministically select movement pattern based on seed."""
@@ -774,19 +820,6 @@ class MovingDroneAviary(BaseRLAviary):
         )
 
         obs_after = self._computeObs()
-        if obs_after is not None and "state" in obs_after:
-            actual_state_dim = obs_after["state"].shape[0]
-            if actual_state_dim != self._state_dim:
-                self._state_dim = actual_state_dim
-                self.observation_space = spaces.Dict({
-                    "depth": self.observation_space["depth"],
-                    "state": spaces.Box(
-                        low=-np.inf,
-                        high=np.inf,
-                        shape=(actual_state_dim,),
-                        dtype=np.float32
-                    ),
-                })
         info_after = self._computeInfo()
         return obs_after, info_after
 
@@ -1054,33 +1087,31 @@ class MovingDroneAviary(BaseRLAviary):
         Build depth + state observation for the single-drone task.
         Optimized: calls _getDroneImages directly, skips parent class overhead.
         """
+        h, w = (self.IMG_RES[1], self.IMG_RES[0]) if self.IMG_RES is not None else (128, 128)
+        state_dim = getattr(
+            self,
+            "_state_dim",
+            self.FIXED_KINEMATIC_STATE_DIM
+            + self.FIXED_ACTION_HISTORY_SLOTS * self._action_dim
+            + self.FIXED_ALTITUDE_STATE_DIM
+            + self.FIXED_SEARCH_VECTOR_DIM,
+        )
+
         # Get depth directly (skip parent class which would also store rgb/seg)
         _, depth_raw, _ = self._getDroneImages(0)
-
         if depth_raw is None:
-            h, w = (self.IMG_RES[1], self.IMG_RES[0]) if self.IMG_RES is not None else (128, 128)
-            state_dim = getattr(self, "_state_dim", 115)
             return {
                 "depth": np.zeros((h, w, 1), dtype=np.float32),
                 "state": np.zeros((state_dim,), dtype=np.float32),
             }
-
         # Store in self.dep for compatibility
         self.dep[0] = depth_raw
         depth = self._process_depth(depth_raw)
 
         state_vec = self._getDroneStateVector(0)
-        obs_12 = np.hstack([
-            state_vec[0:3],
-            state_vec[7:10],
-            state_vec[10:13],
-            state_vec[13:16]
-        ]).astype(np.float32)
-
-        state_full = np.array([obs_12], dtype=np.float32)
-        for i in range(self.ACTION_BUFFER_SIZE):
-            state_full = np.hstack([state_full, np.array([self.action_buffer[i][0, :]])])
-        state_full = state_full.flatten().astype(np.float32)
+        obs_12 = np.hstack([state_vec[0:3], state_vec[7:10], state_vec[10:13], state_vec[13:16]]).astype(np.float32)
+        action_history = self._get_fixed_action_history().reshape(-1)
+        state_full = np.concatenate([obs_12, action_history]).astype(np.float32)
 
         altitude = self._get_altitude_distance() / MAX_RAY_DISTANCE
         state_full = np.append(state_full, altitude).astype(np.float32)
@@ -1089,18 +1120,11 @@ class MovingDroneAviary(BaseRLAviary):
         search_area_vector = (self._search_area_center - drone_pos).astype(np.float32)
         state_full = np.append(state_full, search_area_vector).astype(np.float32)
 
-        actual_state_dim = state_full.shape[0]
-        if actual_state_dim != self._state_dim:
-            self._state_dim = actual_state_dim
-            self.observation_space = spaces.Dict({
-                "depth": self.observation_space["depth"],
-                "state": spaces.Box(
-                    low=-np.inf,
-                    high=np.inf,
-                    shape=(actual_state_dim,),
-                    dtype=np.float32
-                ),
-            })
+        if state_full.shape[0] != self._state_dim:
+            raise RuntimeError(
+                f"State vector size drifted from fixed contract: "
+                f"expected {self._state_dim}, got {state_full.shape[0]}"
+            )
 
         return {
             "depth": depth,
