@@ -18,26 +18,21 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-import json
 import copy
 import numpy as np
 import asyncio
 import argparse
 import threading
 import bittensor as bt
-from pathlib import Path
-from typing import List, Union, Optional
+from typing import List, Union
 from traceback import print_exception
 from swarm.base.neuron import BaseNeuron
+from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker, tracker_call
 from swarm.base.utils.weight_utils import (
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
 )
 from swarm.utils.config import add_validator_args
-from swarm.constants import AVGS_DIR, MODEL_DIR
-
-VICTORY_HISTORY_FILE = Path("/tmp/victory_history.json")
-MODEL_HASH_TRACKER_FILE = Path("/tmp/uid_model_hashes.json")
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -58,9 +53,6 @@ class BaseValidatorNeuron(BaseNeuron):
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
-        # Capture previous state before sync() overwrites state.npz.
-        self._startup_hotkeys_snapshot = self._load_hotkeys_from_saved_state()
-
         self.dendrite = bt.Dendrite(wallet=self.wallet)
 
         bt.logging.info(f"Dendrite: {self.dendrite}")
@@ -69,13 +61,10 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Building validation weights.")
         self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
+        self.runtime_tracker = ValidatorRuntimeTracker(process_label="validator")
+
         # Init sync with the network. Updates the metagraph.
         self.sync()
-        self._reconcile_hotkeys(
-            self._startup_hotkeys_snapshot,
-            self.metagraph.hotkeys,
-            reason="startup snapshot",
-        )
 
         # Serve axon to enable external connections.
         if not self.config.neuron.axon_off:
@@ -112,16 +101,12 @@ class BaseValidatorNeuron(BaseNeuron):
                 pass
 
         except Exception as e:
-            bt.logging.error(
-                f"Failed to create Axon initialize with exception: {e}"
-            )
+            bt.logging.error(f"Failed to create Axon initialize with exception: {e}")
             pass
 
     async def concurrent_forward(self):
-        from swarm.base.burn_validator import Validator as BurnValidator
         coroutines = [
-            BurnValidator.forward(self)
-            for _ in range(self.config.neuron.num_concurrent_forwards)
+            self.forward() for _ in range(self.config.neuron.num_concurrent_forwards)
         ]
         await asyncio.gather(*coroutines)
 
@@ -145,6 +130,8 @@ class BaseValidatorNeuron(BaseNeuron):
             Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
         """
 
+        tracker_call(self, "mark_worker_thread_alive", True)
+
         # Check that validator is registered on the network.
         self.sync()
 
@@ -155,38 +142,41 @@ class BaseValidatorNeuron(BaseNeuron):
             while True:
                 bt.logging.info(f"step({self.step}) block({self.block})")
 
-                # Restart wandb before each forward cycle for fresh run
-                if hasattr(self, 'wandb_helper') and self.wandb_helper:
-                    self.wandb_helper.restart()
-
-                # Always refresh the metagraph before scoring to prevent stale
-                # UID ownership from leaking into history updates.
-                self.resync_metagraph(force=True)
-
-                # Sync lifecycle state before forward processing.
-                self.sync()
-
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
+
+                # Restart wandb only after an actual evaluation cycle
+                if (
+                    getattr(self, "_completed_evaluation", False)
+                    and hasattr(self, "wandb_helper")
+                    and self.wandb_helper
+                ):
+                    self.wandb_helper.restart()
+                    self._completed_evaluation = False
 
                 # Check if we should exit.
                 if self.should_exit:
                     break
 
+                # Sync metagraph and potentially set weights.
+                self.sync()
+
                 self.step += 1
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
+            tracker_call(self, "mark_worker_thread_alive", False)
             self.axon.stop()
             bt.logging.success("Validator killed by keyboard interrupt.")
             exit()
 
         # In case of unforeseen errors, the validator will log the error and continue operations.
         except Exception as err:
+            tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.error(f"Error during validation: {str(err)}")
-            bt.logging.debug(
-                str(print_exception(type(err), err, err.__traceback__))
-            )
+            bt.logging.debug(str(print_exception(type(err), err, err.__traceback__)))
+        finally:
+            tracker_call(self, "mark_worker_thread_alive", False)
 
     def run_in_background_thread(self):
         """
@@ -199,6 +189,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
             self.is_running = True
+            tracker_call(self, "mark_worker_thread_alive", self.thread.is_alive())
             bt.logging.debug("Started")
 
     def stop_run_thread(self):
@@ -210,13 +201,14 @@ class BaseValidatorNeuron(BaseNeuron):
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+            tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.debug("Stopped")
 
     def __enter__(self):
         self.run_in_background_thread()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, _exc_type, _exc_value, _traceback):
         """
         Stops the validator's background operations upon exiting the context.
         This method facilitates the use of the validator in a 'with' statement.
@@ -234,6 +226,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+            tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.debug("Stopped")
 
     def set_weights(self):
@@ -241,192 +234,117 @@ class BaseValidatorNeuron(BaseNeuron):
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
 
-        # Check if self.scores contains any NaN values and log a warning if it does.
-        if np.isnan(self.scores).any():
-            bt.logging.warning(
-                f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
-            )
-
-        # Calculate the average reward for each uid across non-zero values.
-        # Replace any NaN values with 0.
-        # Compute the norm of the scores
-        norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
-
-        # Check if the norm is zero or contains NaN values
-        if np.any(norm == 0) or np.isnan(norm).any():
-            norm = np.ones_like(norm)  # Avoid division by zero or NaN
-
-        # Compute raw_weights safely
-        raw_weights = self.scores / norm
-
-        bt.logging.debug("raw_weights", raw_weights)
-        bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
-        # Process the raw weights to final_weights via subtensor limitations.
-        (
-            processed_weight_uids,
-            processed_weights,
-        ) = process_weights_for_netuid(
-            uids=self.metagraph.uids,
-            weights=raw_weights,
-            netuid=self.config.netuid,
-            subtensor=self.subtensor,
-            metagraph=self.metagraph,
-        )
-        bt.logging.debug("processed_weights", processed_weights)
-        bt.logging.debug("processed_weight_uids", processed_weight_uids)
-
-        # Convert to uint16 weights and uids.
-        (
-            uint_uids,
-            uint_weights,
-        ) = convert_weights_and_uids_for_emit(
-            uids=processed_weight_uids, weights=processed_weights
-        )
-        bt.logging.debug("uint_weights", uint_weights)
-        bt.logging.debug("uint_uids", uint_uids)
-
-        # Set the weights on chain via our subtensor connection.
-        result, msg = self.subtensor.set_weights(
-            wallet=self.wallet,
-            netuid=self.config.netuid,
-            uids=uint_uids,
-            weights=uint_weights,
-            wait_for_finalization=False,
-            wait_for_inclusion=False,
-            version_key=self.spec_version,
-        )
-        if result is True:
-            bt.logging.info("set_weights on chain successfully!")
-        else:
-            bt.logging.error("set_weights failed", msg)
-
-    @staticmethod
-    def _normalize_hotkeys(hotkeys) -> List[str]:
-        if hotkeys is None:
-            return []
-        if isinstance(hotkeys, np.ndarray):
-            return [str(h) for h in hotkeys.tolist()]
-        return [str(h) for h in list(hotkeys)]
-
-    def _state_file_path(self) -> Path:
-        return Path(self.config.neuron.full_path) / "state.npz"
-
-    def _load_hotkeys_from_saved_state(self) -> Optional[List[str]]:
-        state_file = self._state_file_path()
-        if not state_file.exists():
-            return None
-
+        tracker_call(self, "mark_weights_attempt")
         try:
-            with np.load(state_file, allow_pickle=True) as state:
-                if "hotkeys" not in state:
-                    return None
-                return self._normalize_hotkeys(state["hotkeys"])
-        except Exception as e:
-            bt.logging.warning(f"Failed to load startup hotkeys snapshot: {e}")
-            return None
+            # Check if self.scores contains any NaN values and log a warning if it does.
+            if np.isnan(self.scores).any():
+                bt.logging.warning(
+                    "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                )
 
-    def _remove_uid_from_json_index(self, file_path: Path, uid: int):
-        if not file_path.exists():
-            return
+            # Calculate the average reward for each uid across non-zero values.
+            # Replace any NaN values with 0.
+            # Compute the norm of the scores
+            norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
 
-        uid_str = str(uid)
-        try:
-            with open(file_path, "r") as f:
-                data = json.load(f)
-            if not isinstance(data, dict) or uid_str not in data:
-                return
+            # Check if the norm is zero or contains NaN values
+            if np.any(norm == 0) or np.isnan(norm).any():
+                norm = np.ones_like(norm)  # Avoid division by zero or NaN
 
-            del data[uid_str]
-            tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
-            with open(tmp_path, "w") as f:
-                json.dump(data, f)
-            tmp_path.replace(file_path)
-            bt.logging.info(f"Cleared UID {uid} from {file_path}")
-        except Exception as e:
-            bt.logging.warning(f"Failed to clear UID {uid} from {file_path}: {e}")
+            # Compute raw_weights safely
+            raw_weights = self.scores / norm
 
-    def _clear_uid_persistent_state(self, uid: int, reason: str):
-        history_file = AVGS_DIR / f"uid_{uid}.json"
-        if history_file.exists():
-            try:
-                history_file.unlink()
-                bt.logging.info(f"Cleared avgs history for UID {uid} ({reason})")
-            except Exception as e:
-                bt.logging.warning(f"Failed to clear avgs history for UID {uid}: {e}")
-
-        model_cache_file = MODEL_DIR / f"UID_{uid}.zip"
-        if model_cache_file.exists():
-            try:
-                if model_cache_file.is_dir():
-                    import shutil
-                    shutil.rmtree(model_cache_file)
-                else:
-                    model_cache_file.unlink()
-                bt.logging.info(f"Cleared model cache for UID {uid} ({reason})")
-            except Exception as e:
-                bt.logging.warning(f"Failed to clear model cache for UID {uid}: {e}")
-
-        self._remove_uid_from_json_index(VICTORY_HISTORY_FILE, uid)
-        self._remove_uid_from_json_index(MODEL_HASH_TRACKER_FILE, uid)
-
-    def _reconcile_hotkeys(self, old_hotkeys, new_hotkeys, *, reason: str) -> List[int]:
-        previous = self._normalize_hotkeys(old_hotkeys)
-        current = self._normalize_hotkeys(new_hotkeys)
-
-        compare_len = min(len(previous), len(current))
-        changed_uids = [
-            uid for uid in range(compare_len) if previous[uid] != current[uid]
-        ]
-        removed_uids = list(range(len(current), len(previous)))
-        if removed_uids:
-            changed_uids.extend(removed_uids)
-
-        if changed_uids:
-            preview = changed_uids[:10]
-            suffix = "..." if len(changed_uids) > 10 else ""
-            bt.logging.info(
-                f"Detected {len(changed_uids)} hotkey change(s) ({reason}): {preview}{suffix}"
+            bt.logging.debug("raw_weights", raw_weights)
+            bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
+            # Process the raw weights to final_weights via subtensor limitations.
+            (
+                processed_weight_uids,
+                processed_weights,
+            ) = process_weights_for_netuid(
+                uids=self.metagraph.uids,
+                weights=raw_weights,
+                netuid=self.config.netuid,
+                subtensor=self.subtensor,
+                metagraph=self.metagraph,
             )
+            bt.logging.debug("processed_weights", processed_weights)
+            bt.logging.debug("processed_weight_uids", processed_weight_uids)
 
-        for uid in changed_uids:
-            if uid < len(self.scores):
-                self.scores[uid] = 0.0
-            self._clear_uid_persistent_state(uid, reason)
+            # Convert to uint16 weights and uids.
+            (
+                uint_uids,
+                uint_weights,
+            ) = convert_weights_and_uids_for_emit(
+                uids=processed_weight_uids, weights=processed_weights
+            )
+            bt.logging.debug("uint_weights", uint_weights)
+            bt.logging.debug("uint_uids", uint_uids)
 
-        if len(self.scores) != len(current):
-            resized = np.zeros(len(current), dtype=np.float32)
-            min_len = min(len(self.scores), len(resized))
-            resized[:min_len] = self.scores[:min_len]
-            self.scores = resized
+            # Set the weights on chain via our subtensor connection.
+            result, msg = self.subtensor.set_weights(
+                wallet=self.wallet,
+                netuid=self.config.netuid,
+                uids=uint_uids,
+                weights=uint_weights,
+                wait_for_finalization=False,
+                wait_for_inclusion=False,
+                version_key=self.spec_version,
+            )
+            nonzero_uids = int(np.count_nonzero(self.scores))
+            if result is True:
+                tracker_call(
+                    self,
+                    "mark_weights_result",
+                    success=True,
+                    nonzero_uids=nonzero_uids,
+                )
+                bt.logging.info("set_weights on chain successfully!")
+            else:
+                tracker_call(
+                    self,
+                    "mark_weights_result",
+                    success=False,
+                    error=str(msg),
+                    nonzero_uids=nonzero_uids,
+                )
+                bt.logging.error("set_weights failed", msg)
+        except Exception as exc:
+            tracker_call(self, "mark_weights_result", success=False, error=str(exc))
+            raise
 
-        self.hotkeys = copy.deepcopy(current)
-        return changed_uids
-
-    def reconcile_hotkeys_with_metagraph(self, *, reason: str = "manual") -> List[int]:
-        return self._reconcile_hotkeys(self.hotkeys, self.metagraph.hotkeys, reason=reason)
-
-    def resync_metagraph(self, force: bool = False):
+    def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
         bt.logging.info("resync_metagraph()")
 
         # Copies state of metagraph before syncing.
         previous_metagraph = copy.deepcopy(self.metagraph)
-        previous_hotkeys = copy.deepcopy(self.hotkeys)
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
 
-        no_chain_change = previous_metagraph.axons == self.metagraph.axons
-        no_hotkey_change = self._normalize_hotkeys(previous_hotkeys) == self._normalize_hotkeys(self.metagraph.hotkeys)
-        no_size_change = len(self.scores) == len(self.metagraph.hotkeys)
-
-        if not force and no_chain_change and no_hotkey_change and no_size_change:
+        # Check if the metagraph axon info has changed.
+        if previous_metagraph.axons == self.metagraph.axons:
             return
 
         bt.logging.info(
             "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
         )
-        self._reconcile_hotkeys(previous_hotkeys, self.metagraph.hotkeys, reason="metagraph sync")
+        # Zero out all hotkeys that have been replaced.
+        for uid, hotkey in enumerate(self.hotkeys):
+            if hotkey != self.metagraph.hotkeys[uid]:
+                self.scores[uid] = 0  # hotkey has been replaced
+
+        # Check to see if the metagraph has changed size.
+        # If so, we need to add new hotkeys and moving averages.
+        if len(self.hotkeys) < len(self.metagraph.hotkeys):
+            # Update the size of the moving average scores.
+            new_moving_average = np.zeros((self.metagraph.n))
+            min_len = min(len(self.hotkeys), len(self.scores))
+            new_moving_average[:min_len] = self.scores[:min_len]
+            self.scores = new_moving_average
+
+        # Update the hotkeys.
+        self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
     def update_scores(self, rewards: np.ndarray, uids: List[int]):
         """Performs exponential moving average on the scores based on the rewards received from the miners."""
@@ -470,9 +388,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
         alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: np.ndarray = (
-            alpha * scattered_rewards + (1 - alpha) * self.scores
-        )
+        self.scores: np.ndarray = alpha * scattered_rewards + (1 - alpha) * self.scores
         bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
@@ -480,9 +396,8 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Saving validator state.")
 
         # Save the state of the validator to file.
-        state_file = self._state_file_path()
         np.savez(
-            state_file,
+            self.config.neuron.full_path + "/state.npz",
             step=self.step,
             scores=self.scores,
             hotkeys=self.hotkeys,
@@ -492,20 +407,13 @@ class BaseValidatorNeuron(BaseNeuron):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        state_file = self._state_file_path()
-        if not state_file.exists():
-            bt.logging.warning(f"No state file found at {state_file}, starting fresh.")
-            return
-
         # Load the state of the validator from file.
-        with np.load(state_file, allow_pickle=True) as state:
-            self.step = int(state["step"]) if "step" in state else 0
-            if "scores" in state:
-                self.scores = np.asarray(state["scores"], dtype=np.float32)
-            loaded_hotkeys = state["hotkeys"] if "hotkeys" in state else self.hotkeys
-
-        self._reconcile_hotkeys(
-            loaded_hotkeys,
-            self.metagraph.hotkeys,
-            reason="state reload",
-        )
+        state_path = self.config.neuron.full_path + "/state.npz"
+        try:
+            state = np.load(state_path)
+        except FileNotFoundError:
+            bt.logging.warning(f"No state file found at {state_path}, starting fresh.")
+            return
+        self.step = state["step"]
+        self.scores = state["scores"]
+        self.hotkeys = state["hotkeys"]

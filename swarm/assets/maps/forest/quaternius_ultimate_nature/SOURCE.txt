@@ -1,0 +1,6 @@
+Source: Quaternius - Ultimate Nature Pack
+URL: https://quaternius.com/packs/ultimatenature.html
+License: CC0
+
+This folder contains the shared third-party nature asset pack used by the Forest map.
+The assets in this folder are not custom assets created by Abdulla Alnasser.

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarm-benchmark"
+dynamic = ["version", "dependencies"]
+description = "Open autonomous drone navigation benchmark and CLI"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Swarm" }
+]
+keywords = [
+  "autonomous-drones",
+  "benchmark",
+  "bittensor",
+  "navigation",
+  "robotics",
+  "swarm",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/swarm-subnet/swarm"
+Repository = "https://github.com/swarm-subnet/swarm"
+Issues = "https://github.com/swarm-subnet/swarm/issues"
+
+[project.scripts]
+swarm = "swarm.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["LICENSE"]
+
+[tool.setuptools.packages.find]
+include = ["swarm*", "neurons*", "scripts*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "*.py[cod]"]
+
+[tool.setuptools.dynamic]
+version = { attr = "swarm.__version__" }
+dependencies = { file = ["requirements.txt"] }

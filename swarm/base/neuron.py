@@ -28,6 +28,7 @@ import requests
 import re
 from swarm import version_url
 from swarm import __version__, __spec_version__
+from swarm.validator.runtime_telemetry import tracker_call
 
 
 class BaseNeuron(ABC):
@@ -64,7 +65,7 @@ class BaseNeuron(ABC):
         base_config = copy.deepcopy(config or BaseNeuron.config())
         self.config = self.config()
         self.config.merge(base_config)
-        self.check_config(self.config) 
+        self.check_config(self.config)
 
         # Version check
         self.parse_versions()
@@ -84,11 +85,13 @@ class BaseNeuron(ABC):
 
         # The wallet holds the cryptographic key pairs for the miner.
 
-        self.wallet = bt.Wallet(config=self.config)
+        _wallet_cls = getattr(bt, "Wallet", None) or getattr(bt, "wallet")
+        self.wallet = _wallet_cls(config=self.config)
         while True:
             try:
                 bt.logging.info("Initializing subtensor and metagraph")
-                self.subtensor = bt.Subtensor(config=self.config)
+                _subtensor_cls = getattr(bt, "Subtensor", None) or getattr(bt, "subtensor")
+                self.subtensor = _subtensor_cls(config=self.config)
                 self.metagraph = self.subtensor.metagraph(self.config.netuid)
                 break
             except Exception as e:
@@ -116,10 +119,12 @@ class BaseNeuron(ABC):
         self.last_update = 0
 
     @abstractmethod
-    async def forward(self, synapse: bt.Synapse) -> bt.Synapse: ...
+    async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
+        ...
 
     @abstractmethod
-    def run(self): ...
+    def run(self):
+        ...
 
     @abstractmethod
     def resync_metagraph(self):
@@ -132,13 +137,13 @@ class BaseNeuron(ABC):
 
     @abstractmethod
     def set_weights(self):
-
         pass
 
     def sync(self):
         """
         Wrapper for synchronizing the state of the network for the given miner or validator.
         """
+        tracker_call(self, "mark_chain_sync_started", context="validator_sync")
         # Ensure miner or validator hotkey is still registered on the network.
         self.check_registered()
 
@@ -152,7 +157,15 @@ class BaseNeuron(ABC):
 
             # Always save state.
             self.save_state()
-        except Exception as e:
+            tracker_call(self, "mark_chain_sync_completed", context="validator_sync", success=True)
+        except Exception:
+            tracker_call(
+                self,
+                "mark_chain_sync_completed",
+                context="validator_sync",
+                success=False,
+                error=traceback.format_exc(),
+            )
             bt.logging.error(
                 "Coundn't sync metagraph or set weights: {}".format(
                     traceback.format_exc()
@@ -213,7 +226,7 @@ class BaseNeuron(ABC):
         self.version = __version__
 
         bt.logging.info("Parsing versions...")
-        response = requests.get(version_url)
+        response = requests.get(version_url, timeout=10)
         bt.logging.info(f"Response: {response.status_code}")
         if response.status_code == 200:
             content = response.text

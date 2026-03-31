@@ -1,226 +1,129 @@
-# neurons/miner.py
-# -------------------------------------------------------------------------
-#  Swarm Miner (SDK v2.0.0 – Policy API)
-# -------------------------------------------------------------------------
-#  Implements the handshake described in Phase 2:
-#
-#  1) Every inbound request → send a PolicyRef (points at our model).
-#  2) If the validator replies with `need_blob=True` → stream the model
-#     back in fixed‑size chunks (PolicyChunk messages).
-# -------------------------------------------------------------------------
+#!/usr/bin/env python3
+"""
+Swarm Miner — commit model GitHub URL to Bittensor chain.
 
-import time
-from pathlib import Path
-from typing import Tuple
-import base64
+Usage:
+    python neurons/miner.py \
+        --netuid 124 \
+        --subtensor.network finney \
+        --wallet.name miner \
+        --wallet.hotkey default \
+        --github_url https://github.com/yourname/your-model
+
+The GitHub URL is committed on-chain. The backend reads the chain
+periodically, downloads submission.zip from your repository, verifies
+it, and queues it for evaluation. You do NOT need to stay online.
+"""
+
+import argparse
+import sys
+from urllib.parse import urlparse
+
 import bittensor as bt
 
-# ── Swarm core ────────────────────────────────────────────────────────────
-from swarm.base.miner import BaseMinerNeuron
-from swarm.protocol import PolicySynapse, PolicyRef, PolicyChunk
-from swarm.utils.hash import sha256sum
 
-from bittensor_wallet import Keypair                        
-from bittensor.core.errors import NotVerifiedException      
-
-# Optional coloured logging – fall back gracefully if unavailable
-try:
-    from swarm.utils.logging import ColoredLogger
-except Exception:  # pragma: no cover – colour module optional
-
-    class _Stub:  # noqa: D401 – simple stub
-        RED = GREEN = YELLOW = BLUE = GRAY = ""
-
-        @staticmethod
-        def info(msg, *a, **kw):
-            bt.logging.info(msg)
-
-        @staticmethod
-        def success(msg, *a, **kw):
-            bt.logging.info(msg)
-
-        @staticmethod
-        def warning(msg, *a, **kw):
-            bt.logging.warning(msg)
-
-        @staticmethod
-        def error(msg, *a, **kw):
-            bt.logging.error(msg)
-
-    ColoredLogger = _Stub()  # type: ignore[misc]
+def _validate_github_url(raw: str) -> str | None:
+    """Return normalized https://github.com/{owner}/{repo} or None."""
+    url = (raw or "").strip().rstrip("/")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or (parsed.netloc or "").lower() != "github.com":
+        return None
+    parts = [s for s in (parsed.path or "").split("/") if s]
+    if len(parts) != 2:
+        return None
+    return f"https://github.com/{parts[0]}/{parts[1]}"
 
 
-# =========================================================================
-#  Miner implementation
-# =========================================================================
-class Miner(BaseMinerNeuron):
-    # ------------------------------------------------------------------
-    #  **Adjust these constants for your own model**
-    # ------------------------------------------------------------------
-    POLICY_PATH = Path(__file__).parent.parent / "Submission" / "submission.zip"
-    ENTRYPOINT  = ""
-    FRAMEWORK   = "sb3-ppo"
-    
-    # ------------------------------------------------------------------
-    #  Whitelisted validators - only these can access the miner
-    # ------------------------------------------------------------------
-    WHITELISTED_VALIDATORS = {
-        "5FTr8ZAQCGieBGdqXvGxHcAuzcEscEyvUQmnRZ8PJnEsn124": "RoundTable21",
-        "5FKk6ucEKuKzLspVYSv9fVHonumxMJ33MdHqbVjZi2NUs124": "Rizzo", 
-        "5FF6pxRem43f7wCisfXevqYVURZtxxnC4kYTx4dnNAWqi9vg": "Owner",
-        "5CsvRJXuR955WojnGMdok1hbhffZyB4N5ocrv82f3p5A2zVp": "tao5",
-        "5CUwbDbxCm3A4uk3rC69gQuphyG1CZaWBZRjFQTnvvMMPGun": "Yuma",
-        "5EhiBKjj56jE1a6rLPP14TtrzxiwgfG8qk7nuZprkbYKH87C": "OTF",
-        "5FCvTkZK44fcs1iHsyUce8ZgJQD8351QJiVA8YvvuA6YcP2v": "New vali",
-        "5FBqnTwnCq6yeVeXTnVGHbiRR6zh6ZGbKVRBusu4zSCu4WUw": "New vali2",
-        "5EbgPJdzg1daqm9DcXJ98hGUQUKU84uffumUJzEt6Cva835H": "TestValidator"  # Keep existing test validator
-    }
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Swarm Miner — commit model to Bittensor chain"
+    )
+    parser.add_argument(
+        "--github_url", type=str, required=True,
+        help="Public GitHub repo URL (https://github.com/owner/repo)",
+    )
+    parser.add_argument("--netuid", type=int, default=124)
+    parser.add_argument("--wallet.name", type=str, default="default", dest="wallet_name")
+    parser.add_argument("--wallet.hotkey", type=str, default="default", dest="wallet_hotkey")
+    parser.add_argument("--subtensor.network", type=str, default="finney", dest="network")
+    parser.add_argument("--logging.debug", action="store_true", dest="debug")
+    args = parser.parse_args(argv)
 
-    # ------------------------------------------------------------------
-    #  Life cycle
-    # ------------------------------------------------------------------
-    def __init__(self, config=None):
-        super().__init__(config=config)
-        self.load_state()
+    if args.debug:
+        bt.logging.set_debug(True)
 
-        if not self.POLICY_PATH.exists():
-            raise FileNotFoundError(f"Model not found: {self.POLICY_PATH}")
-
-        self._sha256 = sha256sum(self.POLICY_PATH)
-        self._size   = self.POLICY_PATH.stat().st_size
-        self.axon.verify_fns[PolicySynapse.__name__] = self._verify_validator_request
-        ColoredLogger.success("Swarm Miner initialised.", ColoredLogger.GREEN)
-
-
-    async def _verify_validator_request(self, synapse: PolicySynapse) -> None:
-        """
-        Rejects any RPC that is not cryptographically proven to come from
-        one of the whitelisted validator hotkeys.
-
-        Signature *must* be present and valid.  If anything is missing or
-        incorrect we raise `NotVerifiedException`, which the Axon middleware
-        converts into a 401 reply.
-        """
-        # ----------  basic sanity checks  ----------
-        if synapse.dendrite is None:
-            raise NotVerifiedException("Missing dendrite terminal in request")
-
-        hotkey    = synapse.dendrite.hotkey
-        signature = synapse.dendrite.signature
-        nonce     = synapse.dendrite.nonce
-        uuid      = synapse.dendrite.uuid
-        body_hash = synapse.computed_body_hash
-
-        # 1 — is the sender even on our allow‑list?
-        if hotkey not in self.WHITELISTED_VALIDATORS:
-            raise NotVerifiedException(f"{hotkey} is not a whitelisted validator")
-
-        # 2 — signature header is mandatory
-        if not signature:
-            raise NotVerifiedException("Request carries no signature header")
-
-        # 3 — run all the standard Bittensor checks (nonce window, replay,
-        #     timeout, signature, …).  This *does not* insist on a signature,
-        #     so we still do step 4 afterwards.
-        message = (
-            f"nonce: {nonce}. "
-            f"hotkey {hotkey}. "
-            f"self hotkey {self.wallet.hotkey.ss58_address}. "
-            f"uuid {uuid}. "
-            f"body hash {body_hash} "
+    github_url = _validate_github_url(args.github_url)
+    if not github_url:
+        bt.logging.error(
+            "Invalid GitHub URL. Must be https://github.com/{owner}/{repo}"
         )
-        ColoredLogger.info(
-            f"Verifying message: {message}",
-            ColoredLogger.YELLOW,
+        return 1
+
+    try:
+        wallet = bt.wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
+        hotkey = wallet.hotkey.ss58_address
+    except Exception as e:
+        bt.logging.error(f"Wallet error: {e}")
+        return 1
+
+    bt.logging.info(f"Hotkey:      {hotkey}")
+    bt.logging.info(f"GitHub URL:  {github_url}")
+    bt.logging.info(f"Network:     {args.network} (netuid {args.netuid})")
+
+    try:
+        subtensor = bt.subtensor(network=args.network)
+    except Exception as e:
+        bt.logging.error(f"Failed to connect to {args.network}: {e}")
+        return 1
+
+    metagraph = subtensor.metagraph(netuid=args.netuid)
+    if hotkey not in metagraph.hotkeys:
+        bt.logging.error(
+            f"Hotkey {hotkey[:16]}... is not registered on subnet {args.netuid}."
         )
+        return 1
 
-        await self.axon.default_verify(synapse)
+    bt.logging.info("Committing GitHub URL to chain...")
 
-        # 5 — all good ➜ let the middleware continue
-        ColoredLogger.success(
-            f"Verified call from {self.WHITELISTED_VALIDATORS[hotkey]} ({hotkey})",
-            ColoredLogger.GREEN,
+    try:
+        success = subtensor.commit(
+            wallet=wallet, netuid=args.netuid, data=github_url,
         )
+    except Exception as e:
+        bt.logging.error(f"Chain commit failed: {e}")
+        return 1
 
-    # ------------------------------------------------------------------
-    #  Main RPC endpoint
-    # ------------------------------------------------------------------
-    async def forward(self, synapse: PolicySynapse) -> PolicySynapse:
-        """
-        • need_blob absent / False → return PolicyRef  
-        • need_blob True          → return a single base‑64 chunk
-        """
-        try:
-            vk = getattr(synapse.dendrite, "hotkey", "<??>")
-            ColoredLogger.info(f"[forward] from {vk}", ColoredLogger.YELLOW)
-
-            # ── validator wants the model binary ──────────────────────
-            if synapse.need_blob:
-                ColoredLogger.info("Sending full model blob …", ColoredLogger.BLUE)
-
-                raw_bytes = self.POLICY_PATH.read_bytes()
-                b64_str   = base64.b64encode(raw_bytes).decode("ascii")
-
-                return PolicySynapse.from_chunk(
-                    PolicyChunk(sha256=self._sha256, data=b64_str)
-                )
-
-            # ── first handshake: send manifest ────────────────────────
-            ref = PolicyRef(
-                sha256     = self._sha256,
-                entrypoint = self.ENTRYPOINT,
-                framework  = self.FRAMEWORK,
-                size_bytes = self._size,
-            )
-            ColoredLogger.success("Sent PolicyRef.", ColoredLogger.GREEN)
-            return PolicySynapse.from_ref(ref)
-
-        except Exception as e:
-            bt.logging.error(f"Miner forward error: {e}")
-            return PolicySynapse()          # fail‑safe empty reply
-
-        
-    # ------------------------------------------------------------------
-    #  Black‑list logic (unchanged except for type names)
-    # ------------------------------------------------------------------
-    async def blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
-        return await self._common_blacklist(synapse)
-
-    async def _common_blacklist(self, synapse: PolicySynapse) -> Tuple[bool, str]:
-    
-        # 1 — now we can safely trust synapse.dendrite.hotkey
-        hotkey = synapse.dendrite.hotkey
-
-        if hotkey in self.WHITELISTED_VALIDATORS:
-            name = self.WHITELISTED_VALIDATORS[hotkey]
-            ColoredLogger.success(f"Synapse from {name} with ({hotkey} arrived, starting verification.")
-            return False, f"whitelisted: {name}"
-
-        ColoredLogger.warning(f"Denying non‑whitelisted validator {hotkey}")
-        return True, f"{hotkey} not in whitelist"
-
-    # ------------------------------------------------------------------
-    #  Priority logic
-    # ------------------------------------------------------------------
-    async def priority(self, synapse: PolicySynapse) -> float:
-        return await self._common_priority(synapse)
-
-    async def _common_priority(self, synapse: PolicySynapse) -> float:
-        if synapse.dendrite is None or synapse.dendrite.hotkey is None:
-            return 0.0
-
-        hotkey = synapse.dendrite.hotkey
-        if hotkey not in self.metagraph.hotkeys:
-            return 0.0
-
-        uid = self.metagraph.hotkeys.index(hotkey)
-        return float(self.metagraph.S[uid])
+    if success:
+        bt.logging.info("")
+        bt.logging.info("=" * 60)
+        bt.logging.info("  MODEL COMMITTED SUCCESSFULLY")
+        bt.logging.info("=" * 60)
+        bt.logging.info(f"  GitHub URL:  {github_url}")
+        bt.logging.info(f"  Hotkey:      {hotkey}")
+        bt.logging.info("=" * 60)
+        bt.logging.info("")
+        bt.logging.info(
+            "Validators will discover your model from the chain automatically."
+        )
+        bt.logging.info("You can now go offline.")
+        return 0
+    else:
+        bt.logging.error("")
+        bt.logging.error("=" * 60)
+        bt.logging.error("  COMMITMENT FAILED")
+        bt.logging.error("=" * 60)
+        bt.logging.error(
+            "  Chain commit returned False. Possible causes:"
+        )
+        bt.logging.error(
+            "  - Rate limited (wait ~20 minutes between commits)"
+        )
+        bt.logging.error(
+            "  - Insufficient balance for transaction fee"
+        )
+        bt.logging.error("=" * 60)
+        return 1
 
 
-# -------------------------------------------------------------------------
-#  Stand‑alone entry‑point
-# -------------------------------------------------------------------------
 if __name__ == "__main__":
-    with Miner() as miner:
-        while True:
-            time.sleep(5)
+    sys.exit(main() or 0)

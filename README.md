@@ -1,106 +1,334 @@
-<div align="center">
-  <h1>🐝 <strong>Swarm</strong> – Bittensor Drone autopilot Subnet 🐝</h1>
-  <img src="swarm/assets/Swarm_2.png" alt="Swarm"  width="500">
-  <p>
-    <a href="docs/miner.md">🚀 Miner guide</a> &bull;
-    <a href="docs/validator.md">🔐 Validator guide</a> &bull;
-    <a href="docs/roadmap.md">🗺️ Roadmap</a> &bull;
-    <a href="https://x.com/SwarmSubnet">🐦 Follow us on X</a> &bull;
-    <a href="https://swarm124.com/">🌐 Web & Leaderboard </a>
-    <br>
-    <a href="https://discord.com/channels/799672011265015819/1385341501130801172">💬 Join us on Discord</a>
-  </p>
-</div>
+<a id="readme-top"></a>
 
-## 🔍 Overview
-Swarm is a **Bittensor subnet engineered to enable decentralized autonomous drone flight**.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm" width="60%" />
+</p>
 
-Validators create synthetic map tasks and evaluate miner-supplied **pre-trained RL policies** inside secure Docker containers using PyBullet physics simulation.
+<h1 align="center">Swarm — Autonomous Drone Navigation</h1>
 
-Miners that produce fast and *successful* policies earn the highest rewards
+<p align="center">
+  <b>The open benchmark where AI learns to fly.</b><br/>
+  <i>Train a neural network to navigate drones through 3D worlds it has never seen —<br/>
+  using nothing but a depth camera and raw flight state. No maps. No rules. No shortcuts.</i>
+</p>
 
-**Why OS drone flying?**
+<p align="center">
+  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v4.0.0-green?style=flat-square" /></a>
+  <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
+  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white" /></a>
+  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=flat-square&logo=googlechrome&logoColor=white" /></a>
+</p>
 
-- Open-sourcing flight algorithms isn't just idealism – it is a practical route to safer, cheaper and more accountable drones, and it prevents the future of aerial autonomy from being locked behind half a dozen NDAs
-
-- Our ambition is to establish Swarm miners as the **go‑to control intelligence for micro‑drone navigation** in research and industry.
-
----
-## ⚙️ Subnet Mechanics
-
-### 🧑‍🏫 Validator
-
-- Generates unique MapTasks  
-- Evaluates policies head‑less and validates them
-- Assigns weights proportional to the final reward score
-
-### ⛏️ Miner
-
-- Provides RPC agents that are evaluated on secret tasks
-- Any framework is allowed – Stable Baselines 3, PyTorch, JAX, or custom implementations
-- Must submit RPC agent with main.py entry point
+<p align="center">
+  <a href="docs/miner.md">
+    <img alt="Start Training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-111111?style=for-the-badge" />
+  </a>
+  &nbsp;
+  <a href="#cli">
+    <img alt="Run Benchmark" src="https://img.shields.io/badge/Run%20Benchmark-CLI-111111?style=for-the-badge" />
+  </a>
+  &nbsp;
+  <a href="docs/validator.md">
+    <img alt="Run Validator" src="https://img.shields.io/badge/Run%20Validator-Guide-111111?style=for-the-badge" />
+  </a>
+</p>
 
 ---
 
-## Swarm Core components
+<details>
+  <summary><b>Table of Contents</b></summary>
+  <ol>
+    <li><a href="#about-swarm">About Swarm</a></li>
+    <li><a href="#see-it-fly">See It Fly</a></li>
+    <li><a href="#environments">Environments</a></li>
+    <li><a href="#from-simulation-to-reality">From Simulation to Reality</a></li>
+    <li><a href="#cli">CLI</a></li>
+    <li><a href="#how-it-works">How It Works</a></li>
+    <li><a href="#scoring">Scoring</a></li>
+    <li><a href="#getting-started">Getting Started</a></li>
+    <li><a href="#community">Community</a></li>
+    <li><a href="#license">License</a></li>
+  </ol>
+</details>
 
-| Component             | Purpose                           | Key points (code refs)                                                      |
-|-----------------------|-----------------------------------|------------------------------------------------------------------------------|
-| **MapTask**           | Internal validator task         | Random start→goal pair, simulation time‑step `sim_dt`, hard time limit `horizon` (`swarm.protocol.MapTask`) |
-| **PolicyRef**         | Model metadata                    | SHA256, framework, size (`swarm.protocol.PolicyRef`) |
-| **Policy Evaluation** | RL model testing                 | Evaluates RPC agents on secret tasks in Docker (`swarm.core.evaluator`) |
-| **Reward**            | Maps outcome → [0,1] score        | 0.50 × success + 0.50 × time (`swarm.validator.reward.flight_reward`) |
+---
 
-### Task generation
+<!-- ABOUT SWARM -->
+## About Swarm
 
-Tasks are generated with synchronized seeds across all validators using 10-minute time windows. Goals are placed 5-15 meters away at random altitude with procedural obstacles based on challenge types (1-4).
+Delivery, inspection, search and rescue — autonomous drones are being deployed everywhere, but the AI behind them is still developed behind closed doors. There's no standard way to measure if one flight policy is better than another.
 
-```python
-# swarm/validator/task_gen.py
-distance = rng.uniform(5.0, 15.0)   # meters
-challenge_type = rng.choice([1, 2, 3, 4])
+**Swarm changes that.** It's an open benchmark that puts every model on equal footing: 1,000 procedurally generated worlds, containerized evaluation, and a public [leaderboard](https://swarm124.com/benchmark). No data leaks, no memorization — just raw skill.
+
+The rules are simple:
+- Your model gets a **128×128 depth image** and a **state vector**
+- It outputs **velocity commands** to fly the drone
+- It has **60 seconds** to navigate to a landing platform
+- It must do this across **cities, mountains, warehouses, forests, open terrain, and more** — environments it has never seen before
+
+The best model wins. That's it. Powered by the [Bittensor](https://bittensor.com) network (Subnet 124).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- SEE IT FLY -->
+## See It Fly
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying.gif" alt="Drone navigating a procedural city" width="100%">
+<br><sub>Third-person view</sub>
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying_FPV.gif" alt="Drone FPV view" width="100%">
+<br><sub>FPV — what the drone sees</sub>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <sub>No GPS. No pre-built map. Just a depth camera and learned instincts.</sub>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- ENVIRONMENTS -->
+## Environments
+
+Every benchmark run generates unique worlds. Six environment types test completely different navigation skills — tight urban corridors, open-air precision, mountain terrain, village streets, indoor obstacle courses, and dense forests.
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type1_sub2.png" alt="City" width="100%">
+<br><b>City</b> — dense streets, buildings, intersections
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3_sub2.png" alt="Ski Village" width="100%">
+<br><b>Ski Village</b> — snow-roofed buildings, mountain backdrop
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3.png" alt="Mountains" width="100%">
+<br><b>Mountains</b> — procedural terrain, peaks and valleys
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type4_2.png" alt="Warehouse" width="100%">
+<br><b>Warehouse</b> — indoor, racks, cranes, 12m ceiling
+</td>
+</tr>
+</table>
+
+<br>
+
+<h3 align="center">Forest — 4 Seasonal Modes</h3>
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub1.png" alt="Forest Normal" width="100%">
+<br><b>Normal</b> — green canopy, full foliage
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub2.png" alt="Forest Autumn" width="100%">
+<br><b>Autumn</b> — orange and brown tones
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub3.png" alt="Forest Snow" width="100%">
+<br><b>Snow</b> — white terrain, bare branches
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub4.png" alt="Forest Dead" width="100%">
+<br><b>Dead</b> — no leaves, dark ground
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <sub>1,000 unique seeds per epoch — 6 environment types, each procedurally generated with unique layouts every run.</sub>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- FROM SIMULATION TO REALITY -->
+## From Simulation to Reality
+
+The models trained here don't stay in simulation.
+
+<p align="center">
+  <a href="https://github.com/swarm-subnet/Langostino">
+    <img src="https://raw.githubusercontent.com/swarm-subnet/Langostino/main/assets/banner_section_1.png" alt="Langostino — The Swarm Drone" width="80%" />
+  </a>
+</p>
+
+**[Langostino](https://github.com/swarm-subnet/Langostino)** is the open-source drone we built to prove it — ROS2, Raspberry Pi, INAV, 3D-printed parts. Full assembly guide and bill of materials included. Anyone can build one.
+
+<p align="center">
+  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.youtube.com/vi/gf9mxroeurU/maxresdefault.jpg" alt="Langostino autonomous flight" width="80%" loading="lazy" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Watch-Autonomous%20Flight-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch on YouTube" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/swarm-subnet/Langostino">
+    <img src="https://img.shields.io/badge/Build%20Your%20Own-Langostino-111111?style=for-the-badge&logo=github" alt="Build your own" />
+  </a>
+</p>
+
+<p align="center">
+  <b>Train in Simulation</b> &nbsp;→&nbsp; <b>Compete on the Leaderboard</b> &nbsp;→&nbsp; <b>Deploy on Real Hardware</b>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- CLI -->
+## CLI
+
+Develop, test, and benchmark your model without ever leaving the terminal.
+
+```bash
+pip install -e .
 ```
 
-### Validation loop  
-The validator:
+Once published on PyPI:
 
-1. Generates synchronized seed based on time window
-2. Samples miners and requests their models
-3. Downloads new models and performs multi-layer fake detection
-4. Evaluates each policy in isolated Docker container
-5. Computes normalized scores across challenge types
-6. Applies winner-take-all rewards and writes weights to chain
+```bash
+pip install swarm-benchmark
+```
 
-Here is an example image of our GUI!
+```bash
+swarm doctor                                          # Check environment readiness
+swarm model test --source my_agent/                   # Validate source folder
+swarm model package --source my_agent/                # Bundle into Submission/submission.zip
+swarm model verify --model Submission/submission.zip  # Verify structure and compliance
+swarm benchmark --model Submission/submission.zip --workers 4  # Run benchmark
+swarm benchmark --model Submission/submission.zip --seeds-per-group 1  # Quick test
+swarm report                                          # View results
+```
 
-<div align="center">
-<img src="swarm/assets/drone_image.png" alt="Drone"  width="300">
-</div>
+<p align="center">
+  <sub>Most commands support <code>--json</code> for CI/CD pipelines. Full docs: <a href="docs/CLI_readme.md">CLI reference</a>.</sub>
+</p>
 
----
-
-## 🎯 Reward Mechanism
-
-### Performance Scoring
-| Term        | Weight | Rationale                               |
-|-------------|--------|-----------------------------------------|
-| Success     | 0.50   | Goal reached                            |
-| Time        | 0.50   | Speed optimization with target time     |
-
-### Reward Distribution
-
-**Winner-Take-All**: Top performer gets 25% of the emissions, all others get 0%.
-
-Miners must complete minimum 25 runs before eligibility. Scores are normalized across all challenge types for fair comparison.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-## 🤝 Contributing
-PRs, issues and benchmark ideas are welcome!  
+<!-- HOW IT WORKS -->
+## How It Works
+
+<table align="center">
+<tr>
+<td align="center"><b>Depth Camera</b><br><sub>128×128 image</sub></td>
+<td align="center" rowspan="2"><b>&nbsp;→&nbsp; Your Model &nbsp;→&nbsp;</b></td>
+<td align="center" rowspan="2"><b>Flight Commands</b><br><sub>[dir_x, dir_y, dir_z, speed, yaw]</sub></td>
+<td align="center" rowspan="2"><b>&nbsp;→&nbsp; Drone</b></td>
+</tr>
+<tr>
+<td align="center"><b>State Vector</b><br><sub>position · velocity · orientation</sub></td>
+</tr>
+</table>
+
+<br/>
+
+Your model receives a depth image and flight state at 50 Hz. It outputs 5D velocity commands. The drone has 60 seconds to navigate to a landing platform and touch down safely.
+
+There are no waypoints, no GPS, no obstacle coordinates. The model must learn to read the depth image and react — just like a real pilot would.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-## 📜 License
-Licensed under the MIT License – see LICENSE.
+<!-- SCORING -->
+## Scoring
 
-Built with ❤️ by the Swarm team.
+| Component | Weight | What It Measures |
+|-----------|--------|-----------------|
+| **Success** | 45% | Did the drone land on the platform? |
+| **Speed** | 45% | How fast, relative to the time limit? |
+| **Safety** | 10% | Minimum clearance from obstacles during flight |
+
+```
+score = 0.45 × success + 0.45 × time + 0.10 × safety
+```
+
+Ranking is by **average score across 1,000 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + 0.015) before running the full benchmark.
+
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its own 1,000 seeds per epoch. All seeds are published on [swarm124.com](https://swarm124.com) for transparency.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- GETTING STARTED -->
+## Getting Started
+
+<table>
+<tr>
+<td align="center" width="50%">
+<h3>Train a Model</h3>
+<p>Build a drone pilot from zero. The <a href="docs/miner.md">Miner Guide</a> covers the agent interface, CLI workflow, submission format, and how to push to the leaderboard.</p>
+<a href="docs/miner.md">
+  <img alt="Miner Guide" src="https://img.shields.io/badge/Miner%20Guide-Start%20Training-111111?style=for-the-badge" />
+</a>
+</td>
+<td align="center" width="50%">
+<h3>Run a Validator</h3>
+<p>Evaluate models on your hardware. The <a href="docs/validator.md">Validator Guide</a> covers Docker setup, PM2 launch, and auto-updates.</p>
+<a href="docs/validator.md">
+  <img alt="Validator Guide" src="https://img.shields.io/badge/Validator%20Guide-Get%20Started-111111?style=for-the-badge" />
+</a>
+</td>
+</tr>
+</table>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- COMMUNITY -->
+## Community
+
+<p align="center">
+  <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
+  &nbsp;
+  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/Follow-000000?style=for-the-badge&logo=x&logoColor=white" /></a>
+  &nbsp;
+  <a href="https://github.com/swarm-subnet"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white" /></a>
+  &nbsp;
+  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=for-the-badge&logo=googlechrome&logoColor=white" /></a>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## License
+
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm.png" alt="Swarm" width="60">
+</p>
+
+<p align="center">
+  <b><a href="https://swarm124.com">Swarm</a> — where AI learns to fly.</b><br/>
+  <sub>Subnet 124 on <a href="https://bittensor.com">Bittensor</a></sub>
+</p>

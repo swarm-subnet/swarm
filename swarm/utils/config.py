@@ -45,14 +45,13 @@ def check_config(cls, config: "bt.Config"):
 
     full_path = os.path.expanduser(
         "{}/{}/{}/netuid{}/{}".format(
-            config.logging.logging_dir,  # TODO: change from ~/.bittensor/miners to ~/.bittensor/neurons
+            config.logging.logging_dir,
             config.wallet.name,
             config.wallet.hotkey,
             config.netuid,
             config.neuron.name,
         )
     )
-    print("full path:", full_path)
     config.neuron.full_path = os.path.expanduser(full_path)
     if not os.path.exists(config.neuron.full_path):
         os.makedirs(config.neuron.full_path, exist_ok=True)
@@ -264,9 +263,14 @@ def config(cls):
     Returns the configuration object specific to this miner or validator after adding relevant arguments.
     """
     parser = argparse.ArgumentParser()
-    bt.Wallet.add_args(parser)
-    bt.Subtensor.add_args(parser)
+    wallet_cls = getattr(bt, "Wallet", None) or getattr(bt, "wallet", None)
+    subtensor_cls = getattr(bt, "Subtensor", None) or getattr(bt, "subtensor", None)
+    axon_cls = getattr(bt, "Axon", None) or getattr(bt, "axon", None)
+    config_ctor = getattr(bt, "Config", None) or getattr(bt, "config", None)
+
+    wallet_cls.add_args(parser)
+    subtensor_cls.add_args(parser)
     bt.logging.add_args(parser)
-    bt.Axon.add_args(parser)
+    axon_cls.add_args(parser)
     cls.add_args(parser)
-    return bt.Config(parser)
+    return config_ctor(parser)

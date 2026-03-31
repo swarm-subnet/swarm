@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
     OPENBLAS_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     NUMEXPR_NUM_THREADS=1 \
@@ -25,12 +26,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/docker-requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git && \
     pip install --upgrade "numpy>=2.0.0"
 
-WORKDIR /app
-
-COPY --chown=evaluator:evaluator swarm/ /app/swarm/
+COPY swarm /app/swarm
 
 USER evaluator
 

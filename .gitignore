@@ -2,7 +2,7 @@
 .env
 .envDev
 .envProd
-
+bench_logs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -52,6 +52,12 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pip-wheel-metadata/
+
+# Package publishing
+.pypirc
+.pypirc.*
+.twine/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -189,3 +195,11 @@ cython_debug/
 testing/
 data/mongodb_data/
 swarm_venv/
+
+# Runtime state (auto-created by validator)
+/state/
+/swarm/state/
+/stats/
+
+# Accidental shell artifacts from malformed multiline CLI commands (repo root).
+/--*

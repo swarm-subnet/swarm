@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class DroneFlightController:
     """
     Swarm Subnet 124 - Autonomous Drone Flight Controller
@@ -7,37 +10,35 @@ class DroneFlightController:
     navigate from start to goal while avoiding obstacles.
     
     Observation Space:
-        Dictionary with three keys:
-        - "rgb": numpy array (96, 96, 4) - RGBA camera feed
-        - "depth": numpy array (96, 96, 1) - Normalized depth map [0,1] for 0.5-20m range
+        Dictionary with two keys:
+        - "depth": numpy array (128, 128, 1) - Normalized depth map [0,1] for 0.5-20m range
         - "state": numpy array (N,) - flight state vector containing:
             * Position (x, y, z) in meters
             * Orientation (roll, pitch, yaw)
-            * Linear velocities (vx, vy, vz) in m/s
+            * Linear velocities (vel_x, vel_y, vel_z) in m/s
             * Angular velocities (roll_rate, pitch_rate, yaw_rate) in rad/s
             * Action history (previous actions)
             * Altitude (normalized)
             * Search area vector (relative x, y, z) - ±10m accuracy in X/Y
     
     Action Space:
-        numpy array (5,) containing [vx, vy, vz, speed, yaw]
-        - vx, vy, vz: velocity direction components, range [-1, 1]
+        numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
+        - dir_x, dir_y, dir_z: direction components, range [-1, 1]
         - speed: thrust multiplier, range [0, 1]
         - yaw: target yaw angle normalized, range [-1, 1] maps to [-π, π]
     
     Mission Objectives:
-        - Navigate to goal landing platform within time limit (30s)
+        - Navigate to goal landing platform within time limit
         - Avoid all obstacles (collision = mission failure)
-        - Land precisely within platform radius (0.5088m)
+        - Land precisely within platform radius
         - Maximize speed while maintaining safety
-    
+
     Scoring:
-        score = 0.5 × success + 0.5 × (1 - time/horizon)
-        
+        score = 0.45 × success + 0.45 × time + 0.10 × safety
+
     Constraints:
         - Max velocity: 3.0 m/s (enforced by validator)
-        - Max yaw rate: 1.57 rad/s
-        - World altitude limit: 11m
+        - Max yaw rate: 3.141 rad/s (180°/s)
         - Simulation rate: 50 Hz
     """
     
@@ -59,12 +60,11 @@ class DroneFlightController:
         Compute flight action for current observation.
         
         Args:
-            observation: dict with "rgb" (96,96,4), "depth" (96,96,1), and "state" (N,) arrays
+            observation: dict with "depth" (128,128,1) and "state" (N,) arrays
         
         Returns:
-            numpy array (5,) containing [vx, vy, vz, speed, yaw]
+            numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
         """
-        import numpy as np
         action = np.random.uniform(-1, 1, size=5)
         action[3] = np.clip(action[3], 0, 1)
         return action
@@ -77,4 +77,3 @@ class DroneFlightController:
         state like hidden states, observation buffers, or counters.
         """
         pass
-
