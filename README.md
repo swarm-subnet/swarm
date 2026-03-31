@@ -41,12 +41,12 @@
     <li><a href="#about-swarm">About Swarm</a></li>
     <li><a href="#see-it-fly">See It Fly</a></li>
     <li><a href="#environments">Environments</a></li>
-    <li><a href="#from-simulation-to-reality">From Simulation to Reality</a></li>
     <li><a href="#cli">CLI</a></li>
     <li><a href="#how-it-works">How It Works</a></li>
     <li><a href="#scoring">Scoring</a></li>
     <li><a href="#getting-started">Getting Started</a></li>
     <li><a href="#community">Community</a></li>
+    <li><a href="#from-simulation-to-reality">From Simulation to Reality</a></li>
     <li><a href="#license">License</a></li>
   </ol>
 </details>
@@ -153,43 +153,6 @@ Every benchmark run generates unique worlds. Six environment types test complete
 
 <p align="center">
   <sub>1,000 unique seeds per epoch — 6 environment types, each procedurally generated with unique layouts every run.</sub>
-</p>
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-<!-- FROM SIMULATION TO REALITY -->
-## From Simulation to Reality
-
-The models trained here don't stay in simulation.
-
-<p align="center">
-  <a href="https://github.com/swarm-subnet/Langostino">
-    <img src="https://raw.githubusercontent.com/swarm-subnet/Langostino/main/assets/banner_section_1.png" alt="Langostino — The Swarm Drone" width="80%" />
-  </a>
-</p>
-
-**[Langostino](https://github.com/swarm-subnet/Langostino)** is the open-source drone we built to prove it — ROS2, Raspberry Pi, INAV, 3D-printed parts. Full assembly guide and bill of materials included. Anyone can build one.
-
-<p align="center">
-  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.youtube.com/vi/gf9mxroeurU/maxresdefault.jpg" alt="Langostino autonomous flight" width="80%" loading="lazy" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.shields.io/badge/Watch-Autonomous%20Flight-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch on YouTube" />
-  </a>
-  &nbsp;
-  <a href="https://github.com/swarm-subnet/Langostino">
-    <img src="https://img.shields.io/badge/Build%20Your%20Own-Langostino-111111?style=for-the-badge&logo=github" alt="Build your own" />
-  </a>
-</p>
-
-<p align="center">
-  <b>Train in Simulation</b> &nbsp;→&nbsp; <b>Compete on the Leaderboard</b> &nbsp;→&nbsp; <b>Deploy on Real Hardware</b>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -312,6 +275,43 @@ Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its o
   <a href="https://github.com/swarm-subnet"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white" /></a>
   &nbsp;
   <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=for-the-badge&logo=googlechrome&logoColor=white" /></a>
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<!-- FROM SIMULATION TO REALITY -->
+## From Simulation to Reality
+
+The models trained here don't stay in simulation.
+
+<p align="center">
+  <a href="https://github.com/swarm-subnet/Langostino">
+    <img src="https://raw.githubusercontent.com/swarm-subnet/Langostino/main/assets/banner_section_1.png" alt="Langostino — The Swarm Drone" width="80%" />
+  </a>
+</p>
+
+**[Langostino](https://github.com/swarm-subnet/Langostino)** is the open-source drone we built to prove it — ROS2, Raspberry Pi, INAV, 3D-printed parts. Full assembly guide and bill of materials included. Anyone can build one.
+
+<p align="center">
+  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.youtube.com/vi/gf9mxroeurU/maxresdefault.jpg" alt="Langostino autonomous flight" width="80%" loading="lazy" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Watch-Autonomous%20Flight-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch on YouTube" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/swarm-subnet/Langostino">
+    <img src="https://img.shields.io/badge/Build%20Your%20Own-Langostino-111111?style=for-the-badge&logo=github" alt="Build your own" />
+  </a>
+</p>
+
+<p align="center">
+  <b>Train in Simulation</b> &nbsp;→&nbsp; <b>Compete on the Leaderboard</b> &nbsp;→&nbsp; <b>Deploy on Real Hardware</b>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
