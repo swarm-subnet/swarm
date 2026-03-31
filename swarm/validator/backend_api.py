@@ -137,23 +137,18 @@ def _save_runtime_state(state: dict) -> None:
         temp_file.unlink(missing_ok=True)
 
 
+def _scrub_url(text: str) -> str:
+    """Strip backend URLs from log messages to prevent leaking via wandb."""
+    import re
+    return re.sub(r"https?://[^\s'\"]+", "<backend>", str(text))
+
+
 class BackendApiClient:
     """HTTP client for backend API communication with signature authentication."""
 
     def __init__(
         self, wallet: "bt.wallet" = None, base_url: str = None, timeout: float = 30.0
     ):
-        """Initialize backend API client.
-
-        Args:
-            wallet: Bittensor wallet for signing requests. If None, will try to sign
-                    but requests may fail auth on backend.
-            base_url: Backend URL. If None, reads from SWARM_BACKEND_API_URL env var.
-            timeout: Request timeout in seconds.
-
-        Raises:
-            ValueError: If SWARM_BACKEND_API_URL is not set.
-        """
         self.base_url = base_url or BackendApiSettings.from_env().base_url
         if not self.base_url:
             raise ValueError(
@@ -167,7 +162,7 @@ class BackendApiClient:
         self.client = httpx.AsyncClient(timeout=timeout)
 
         self._runtime_state = _load_runtime_state()
-        bt.logging.info(f"BackendApiClient initialized: {self.base_url}")
+        bt.logging.info("BackendApiClient initialized")
 
     async def close(self) -> None:
         """Close HTTP client."""
@@ -211,10 +206,10 @@ class BackendApiClient:
             try:
                 return e.response.json()
             except Exception:
-                return {"error": str(e), "status_code": e.response.status_code}
+                return {"error": _scrub_url(str(e)), "status_code": e.response.status_code}
         except Exception as e:
-            bt.logging.warning(f"Backend API error ({endpoint}): {e}")
-            return {"error": str(e)}
+            bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
+            return {"error": _scrub_url(str(e))}
 
     async def _get_signed(self, endpoint: str) -> Dict[str, Any]:
         """Make a signed GET request to the backend."""
@@ -226,8 +221,8 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            bt.logging.warning(f"Backend API error ({endpoint}): {e}")
-            return {"error": str(e)}
+            bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
+            return {"error": _scrub_url(str(e))}
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/models/new
@@ -400,7 +395,7 @@ class BackendApiClient:
 
         except Exception as e:
             bt.logging.warning(
-                f"Backend API error (sync): {e} — fallback active, emissions will burn"
+                f"Backend API error (sync): {_scrub_url(e)} — fallback active, emissions will burn"
             )
 
             return {
@@ -412,7 +407,7 @@ class BackendApiClient:
                 "benchmark_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "current_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "fallback": True,
-                "error": str(e),
+                "error": _scrub_url(str(e)),
             }
 
     # ──────────────────────────────────────────────────────────────────────
@@ -470,10 +465,10 @@ class BackendApiClient:
             try:
                 return e.response.json()
             except (ValueError, RuntimeError):
-                return {"error": str(e), "status_code": e.response.status_code}
+                return {"error": _scrub_url(str(e)), "status_code": e.response.status_code}
         except Exception as e:
-            bt.logging.warning(f"Model upload failed for UID {uid}: {e}")
-            return {"error": str(e)}
+            bt.logging.warning(f"Model upload failed for UID {uid}: {_scrub_url(e)}")
+            return {"error": _scrub_url(str(e))}
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/heartbeat
