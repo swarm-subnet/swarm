@@ -147,7 +147,7 @@ class BackendApiClient:
     """HTTP client for backend API communication with signature authentication."""
 
     def __init__(
-        self, wallet: "bt.wallet" = None, base_url: str = None, timeout: float = 30.0
+        self, wallet: "bt.wallet" = None, base_url: str = None, timeout: float = 60.0
     ):
         self.base_url = base_url or BackendApiSettings.from_env().base_url
         if not self.base_url:
