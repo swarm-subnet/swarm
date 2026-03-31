@@ -19,7 +19,7 @@ EPOCH_FREEZE_SECONDS = 5400                # 1.5 hours before epoch end — no n
 # =============================================================================
 
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
-FORWARD_IDLE_SEC = 30                   # Pause when no models to evaluate (seconds)
+FORWARD_IDLE_SEC = 300                  # Pause when no models to evaluate (seconds)
 
 # =============================================================================
 # SIMULATION & PHYSICS
