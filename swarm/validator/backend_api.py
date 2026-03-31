@@ -28,6 +28,7 @@ Scoring Thresholds (calculated by backend):
 
 import hashlib
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -494,6 +495,9 @@ class BackendApiClient:
             data["total_seeds"] = total_seeds
         if queue is not None:
             data["queue"] = queue
+        name = os.environ.get("VALIDATOR_NAME")
+        if name:
+            data["name"] = name[:32]
         return await self._post_signed("/validators/heartbeat", data)
 
     async def post_seed_scores_batch(
