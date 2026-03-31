@@ -237,10 +237,23 @@ async def _run_full_benchmark(
     hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
 
     try:
-        all_scores, per_type_raw, _details = await _utils_facade()._evaluate_seeds(
+        all_scores, per_type_raw, details = await _utils_facade()._evaluate_seeds(
             self, uid, model_path, benchmark_seeds, "full benchmark",
             on_seed_complete=hb.on_seed_complete
         )
+        try:
+            seed_batch = [
+                {"seed_index": i, "score": d["score"], "map_type": d["map_type"]}
+                for i, d in enumerate(details) if d.get("map_type") != "unknown"
+            ]
+            if seed_batch:
+                await self.backend_api.post_seed_scores_batch(
+                    model_uid=uid,
+                    epoch_number=self.seed_manager.epoch_number,
+                    scores=seed_batch,
+                )
+        except Exception:
+            bt.logging.debug(f"Seed score upload failed for UID {uid}")
     finally:
         hb.finish()
 

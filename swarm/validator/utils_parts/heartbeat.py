@@ -20,7 +20,7 @@ class HeartbeatManager:
         self._uid: Optional[int] = None
         self._session_id = 0
         self._active = False
-        self._queue: list = []
+        self._queue: Optional[list] = None
 
     def set_queue(self, queue: list) -> None:
         with self._lock:
