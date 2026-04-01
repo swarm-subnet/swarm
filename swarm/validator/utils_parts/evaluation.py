@@ -161,11 +161,25 @@ async def _run_screening(
             if not batch_seeds:
                 break
 
-            batch_scores, batch_per_type, _batch_details = await _utils_facade()._evaluate_seeds(
+            batch_start = len(all_scores)
+            batch_scores, batch_per_type, batch_details = await _utils_facade()._evaluate_seeds(
                 self, uid, model_path, batch_seeds,
-                f"screening [{len(all_scores) + 1}..{checkpoint}]",
+                f"screening [{batch_start + 1}..{checkpoint}]",
                 on_seed_complete=hb.on_seed_complete,
             )
+            try:
+                seed_batch = [
+                    {"seed_index": batch_start + j, "score": d["score"], "map_type": d["map_type"]}
+                    for j, d in enumerate(batch_details) if d.get("map_type") != "unknown"
+                ]
+                if seed_batch:
+                    await self.backend_api.post_seed_scores_batch(
+                        model_uid=uid,
+                        epoch_number=self.seed_manager.epoch_number,
+                        scores=seed_batch,
+                    )
+            except Exception:
+                bt.logging.debug(f"Screening seed score upload failed for UID {uid}")
             all_scores.extend(batch_scores)
             for type_name, scores in batch_per_type.items():
                 if type_name in all_per_type:
@@ -246,12 +260,14 @@ async def _run_full_benchmark(
                 {"seed_index": i, "score": d["score"], "map_type": d["map_type"]}
                 for i, d in enumerate(details) if d.get("map_type") != "unknown"
             ]
-            if seed_batch:
-                await self.backend_api.post_seed_scores_batch(
-                    model_uid=uid,
-                    epoch_number=self.seed_manager.epoch_number,
-                    scores=seed_batch,
-                )
+            for chunk_start in range(0, len(seed_batch), 300):
+                chunk = seed_batch[chunk_start:chunk_start + 300]
+                if chunk:
+                    await self.backend_api.post_seed_scores_batch(
+                        model_uid=uid,
+                        epoch_number=self.seed_manager.epoch_number,
+                        scores=chunk,
+                    )
         except Exception:
             bt.logging.debug(f"Seed score upload failed for UID {uid}")
     finally:
