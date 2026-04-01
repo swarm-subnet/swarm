@@ -197,6 +197,7 @@ BENCHMARK_TOTAL_SEED_COUNT = 1000       # Total seeds per epoch
 BENCHMARK_SCREENING_SEED_COUNT = 200    # Seeds used for screening phase
 BENCHMARK_FULL_SEED_COUNT = 800         # Seeds used for full benchmark phase
 SCREENING_BOOTSTRAP_THRESHOLD = 0.01    # Minimum score threshold during bootstrap
+SEED_SCORE_BATCH_MAX = 300              # Backend max per POST /validators/seed-scores
 
 # Epoch system — seeds rotate every 7 days (Monday 16:00 UTC)
 EPOCH_DURATION_SECONDS = 7 * 86400

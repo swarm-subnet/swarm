@@ -10,6 +10,7 @@ from swarm.constants import (
     SCREENING_CHECKPOINT_SIZE,
     SCREENING_EARLY_FAIL_FACTORS,
     SCREENING_MIN_IMPROVEMENT,
+    SEED_SCORE_BATCH_MAX,
     SIM_DT,
 )
 from swarm.validator.task_gen import random_task
@@ -260,8 +261,8 @@ async def _run_full_benchmark(
                 {"seed_index": i, "score": d["score"], "map_type": d["map_type"]}
                 for i, d in enumerate(details) if d.get("map_type") != "unknown"
             ]
-            for chunk_start in range(0, len(seed_batch), 300):
-                chunk = seed_batch[chunk_start:chunk_start + 300]
+            for chunk_start in range(0, len(seed_batch), SEED_SCORE_BATCH_MAX):
+                chunk = seed_batch[chunk_start:chunk_start + SEED_SCORE_BATCH_MAX]
                 if chunk:
                     await self.backend_api.post_seed_scores_batch(
                         model_uid=uid,

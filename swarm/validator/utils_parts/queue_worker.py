@@ -321,6 +321,10 @@ async def _process_normal_queue_item(
                     total_benchmark_seeds = len(all_benchmark_seeds)
                     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
                     hb.start("evaluating_benchmark", uid, total_benchmark_seeds)
+                    if done > 0:
+                        with hb._lock:
+                            hb._progress = done
+                            hb._last_sent = done
                     round_size = max(1, math.ceil(total_benchmark_seeds / N_DOCKER_WORKERS))
                     try:
                         for i in range(0, len(remaining_seeds), round_size):
