@@ -4,7 +4,7 @@ from ._shared import *
 from .heartbeat import HeartbeatManager
 from swarm.validator.runtime_telemetry import tracker_call
 
-from swarm.constants import N_DOCKER_WORKERS, BENCHMARK_TOTAL_SEED_COUNT
+from swarm.constants import N_DOCKER_WORKERS, BENCHMARK_TOTAL_SEED_COUNT, BENCHMARK_SCREENING_SEED_COUNT
 
 
 def _utils_facade():
@@ -340,7 +340,7 @@ async def _process_normal_queue_item(
                             )
                             try:
                                 seed_batch = [
-                                    {"seed_index": done + j, "score": d["score"], "map_type": d["map_type"]}
+                                    {"seed_index": BENCHMARK_SCREENING_SEED_COUNT + done + j, "score": d["score"], "map_type": d["map_type"]}
                                     for j, d in enumerate(chunk_details) if d.get("map_type") != "unknown"
                                 ]
                                 if seed_batch:
