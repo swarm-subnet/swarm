@@ -178,8 +178,8 @@ async def _run_screening(
                         epoch_number=self.seed_manager.epoch_number,
                         scores=seed_batch,
                     )
-            except Exception:
-                bt.logging.debug(f"Screening seed score upload failed for UID {uid}")
+            except Exception as e:
+                bt.logging.debug(f"Screening seed score upload failed for UID {uid}: {e}")
             all_scores.extend(batch_scores)
             for type_name, scores in batch_per_type.items():
                 if type_name in all_per_type:
