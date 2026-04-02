@@ -60,7 +60,8 @@ def main(argv=None):
         return 1
 
     try:
-        wallet = bt.wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
+        _WalletCls = bt.Wallet if hasattr(bt, "Wallet") else bt.wallet
+        wallet = _WalletCls(name=args.wallet_name, hotkey=args.wallet_hotkey)
         hotkey = wallet.hotkey.ss58_address
     except Exception as e:
         bt.logging.error(f"Wallet error: {e}")
@@ -71,7 +72,8 @@ def main(argv=None):
     bt.logging.info(f"Network:     {args.network} (netuid {args.netuid})")
 
     try:
-        subtensor = bt.subtensor(network=args.network)
+        _SubtensorCls = bt.Subtensor if hasattr(bt, "Subtensor") else bt.subtensor
+        subtensor = _SubtensorCls(network=args.network)
     except Exception as e:
         bt.logging.error(f"Failed to connect to {args.network}: {e}")
         return 1
