@@ -8,7 +8,7 @@ loguru==0.7.3
 xmldiff==2.7.0
 filelock==3.25.2
 swarm-pybullet @ git+https://github.com/swarm-subnet/bullet3-swarmfork.git@a639608
-bittensor==7.4.0
+bittensor>=7.4.0
 msgpack==1.1.2
 importlib-metadata==9.0.0
 onnxruntime==1.23.2
