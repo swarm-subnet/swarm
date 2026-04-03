@@ -11,7 +11,7 @@ import numpy as np
 
 from typing import Dict, List
 
-import time as _time
+import time
 
 from swarm.constants import (
     BACKEND_GRACE_PERIOD_SEC,
@@ -210,7 +210,7 @@ async def forward(self) -> None:
         # STEP 2: Apply weights from backend
         # ──────────────────────────────────────────────────────────────
         if sync_data.get("fallback"):
-            seconds_since = _time.time() - self.backend_api.last_sync_ts
+            seconds_since = time.time() - self.backend_api.last_sync_ts
             if seconds_since < BACKEND_GRACE_PERIOD_SEC:
                 backend_weights = self.backend_api.get_cached_weights()
                 bt.logging.info(

@@ -152,14 +152,10 @@ class BaseValidatorNeuron(BaseNeuron):
                         self.wandb_helper.restart()
                         self._completed_evaluation = False
                         self._last_wandb_restart = time.time()
-                    else:
-                        last_restart = getattr(self, "_last_wandb_restart", 0)
-                        if last_restart == 0:
-                            self._last_wandb_restart = time.time()
-                        elif (time.time() - last_restart) >= WANDB_IDLE_RESTART_SEC:
-                            self.wandb_helper.restart()
-                            self._last_wandb_restart = time.time()
-                            bt.logging.info("W&B idle restart (5h cycle)")
+                    elif (time.time() - getattr(self, "_last_wandb_restart", time.time())) >= WANDB_IDLE_RESTART_SEC:
+                        self.wandb_helper.restart()
+                        self._last_wandb_restart = time.time()
+                        bt.logging.info("W&B idle restart (5h cycle)")
 
                 # Check if we should exit.
                 if self.should_exit:

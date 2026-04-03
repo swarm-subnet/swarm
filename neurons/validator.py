@@ -296,11 +296,12 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info(f"🚀 Swarm Validator v{swarm.__version__} started")
 
         self.forward_count = 0
+        self._heartbeat_queue: Optional[list] = None
+        self._last_wandb_restart = time.time()
 
         bt.logging.info("load_state()")
         self.load_state()
 
-        # Initialize wandb logging
         self.wandb_helper: Optional[WandbHelper] = None
         try:
             bt.logging.debug("Initializing Wandb helper")
