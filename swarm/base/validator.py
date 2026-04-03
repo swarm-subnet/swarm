@@ -19,6 +19,7 @@
 
 
 import copy
+import time
 import numpy as np
 import asyncio
 import argparse
@@ -27,6 +28,7 @@ import bittensor as bt
 from typing import List, Union
 from traceback import print_exception
 from swarm.base.neuron import BaseNeuron
+from swarm.constants import WANDB_IDLE_RESTART_SEC
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker, tracker_call
 from swarm.base.utils.weight_utils import (
     process_weights_for_netuid,
@@ -145,14 +147,15 @@ class BaseValidatorNeuron(BaseNeuron):
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
 
-                # Restart wandb only after an actual evaluation cycle
-                if (
-                    getattr(self, "_completed_evaluation", False)
-                    and hasattr(self, "wandb_helper")
-                    and self.wandb_helper
-                ):
-                    self.wandb_helper.restart()
-                    self._completed_evaluation = False
+                if hasattr(self, "wandb_helper") and self.wandb_helper:
+                    if getattr(self, "_completed_evaluation", False):
+                        self.wandb_helper.restart()
+                        self._completed_evaluation = False
+                        self._last_wandb_restart = time.time()
+                    elif (time.time() - getattr(self, "_last_wandb_restart", time.time())) >= WANDB_IDLE_RESTART_SEC:
+                        self.wandb_helper.restart()
+                        self._last_wandb_restart = time.time()
+                        bt.logging.info("W&B idle restart (5h cycle)")
 
                 # Check if we should exit.
                 if self.should_exit:

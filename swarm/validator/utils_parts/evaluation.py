@@ -142,7 +142,8 @@ async def _run_screening(
     )
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
-    hb.start("evaluating_screening", uid, total_seeds)
+    hb_queue = getattr(self, '_heartbeat_queue', None)
+    hb.start("evaluating_screening", uid, total_seeds, queue=hb_queue)
 
     all_per_type: Dict[str, List[float]] = {
         "city": [], "open": [], "mountain": [],
@@ -249,7 +250,8 @@ async def _run_full_benchmark(
     )
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
-    hb.start("evaluating_benchmark", uid, len(benchmark_seeds))
+    hb_queue = getattr(self, '_heartbeat_queue', None)
+    hb.start("evaluating_benchmark", uid, len(benchmark_seeds), queue=hb_queue)
 
     try:
         all_scores, per_type_raw, details = await _utils_facade()._evaluate_seeds(
