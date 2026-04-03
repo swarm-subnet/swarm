@@ -11,7 +11,10 @@ import numpy as np
 
 from typing import Dict, List
 
+import time as _time
+
 from swarm.constants import (
+    BACKEND_GRACE_PERIOD_SEC,
     EPOCH_FREEZE_SECONDS,
     FORWARD_IDLE_SEC,
     FORWARD_SLEEP_SEC,
@@ -206,7 +209,22 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         # STEP 2: Apply weights from backend
         # ──────────────────────────────────────────────────────────────
-        backend_weights = {} if sync_data.get("fallback") else sync_data.get("weights", {})
+        if sync_data.get("fallback"):
+            seconds_since = _time.time() - self.backend_api.last_sync_ts
+            if seconds_since < BACKEND_GRACE_PERIOD_SEC:
+                backend_weights = self.backend_api.get_cached_weights()
+                bt.logging.info(
+                    f"⚖️ Backend unreachable — using cached weights "
+                    f"({int(seconds_since)}s since last sync, grace: {BACKEND_GRACE_PERIOD_SEC}s)"
+                )
+            else:
+                backend_weights = {}
+                bt.logging.warning(
+                    f"⚖️ Backend unreachable for {int(seconds_since)}s "
+                    f"(>{BACKEND_GRACE_PERIOD_SEC}s) — burning 100%"
+                )
+        else:
+            backend_weights = sync_data.get("weights", {})
         _apply_backend_weights_to_scores(self, backend_weights)
         nonzero_uids = int(np.count_nonzero(self.scores))
         bt.logging.info(
@@ -386,15 +404,16 @@ async def forward(self) -> None:
             bt.logging.info(f"📦 Processing {len(processable_keys)} queued model(s)")
             try:
                 queue_items = queue.get("items", {})
-                queue_list = []
+                heartbeat_queue = []
                 for qk in processable_keys:
                     qi = queue_items.get(qk, {})
                     q_uid = int(qi.get("uid", -1))
                     if q_uid >= 0:
                         phase = "benchmark" if qi.get("screening_passed") else "screening"
-                        queue_list.append({"uid": q_uid, "phase": phase})
+                        heartbeat_queue.append({"uid": q_uid, "phase": phase})
+                self._heartbeat_queue = heartbeat_queue
                 await self.backend_api.post_heartbeat(
-                    status="idle", queue=queue_list,
+                    status="idle", queue=heartbeat_queue,
                 )
             except Exception:
                 pass
@@ -418,6 +437,7 @@ async def forward(self) -> None:
         queue["items"] = items
         save_normal_model_queue(queue)
         tracker_call(self, "update_queue_state", queue)
+        self._heartbeat_queue = None
 
         cleanup_started = asyncio.get_running_loop().time()
         self.docker_evaluator.cleanup()

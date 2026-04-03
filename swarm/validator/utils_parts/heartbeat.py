@@ -59,20 +59,29 @@ class HeartbeatManager:
             lambda p=progress, s=session_id: asyncio.create_task(self._safe_heartbeat(p, s))
         )
 
+    def remove_uid_from_queue(self, uid: int) -> None:
+        """Remove a UID from the queue after it finishes a phase."""
+        with self._lock:
+            if self._queue is not None:
+                self._queue[:] = [q for q in self._queue if q.get("uid") != uid]
+
     def finish(self) -> None:
         with self._lock:
             final_progress = self._progress
             session_id = self._session_id
+            uid = self._uid
             self._active = False
 
         asyncio.run_coroutine_threadsafe(
-            self._finish_async(final_progress, session_id),
+            self._finish_async(final_progress, session_id, uid),
             self.main_loop
         )
 
-    async def _finish_async(self, final_progress: int, session_id: int) -> None:
+    async def _finish_async(self, final_progress: int, session_id: int, uid: Optional[int]) -> None:
         if final_progress > 0:
             await self._safe_heartbeat(final_progress, session_id, allow_inactive=True)
+        if uid is not None:
+            self.remove_uid_from_queue(uid)
         await self._send_idle()
 
     async def _safe_heartbeat(
@@ -86,6 +95,7 @@ class HeartbeatManager:
             status = self._status
             uid = self._uid
             total = self._total
+            queue = list(self._queue) if self._queue is not None else None
 
         try:
             await asyncio.wait_for(
@@ -94,7 +104,7 @@ class HeartbeatManager:
                     current_uid=uid,
                     progress=progress,
                     total_seeds=total,
-                    queue=self._queue,
+                    queue=queue,
                 ),
                 timeout=2.0
             )
@@ -102,9 +112,11 @@ class HeartbeatManager:
             pass
 
     async def _send_idle(self) -> None:
+        with self._lock:
+            queue = list(self._queue) if self._queue is not None else []
         try:
             await asyncio.wait_for(
-                self.backend_api.post_heartbeat(status="idle"),
+                self.backend_api.post_heartbeat(status="idle", queue=queue),
                 timeout=2.0
             )
         except Exception:

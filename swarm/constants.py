@@ -20,6 +20,8 @@ EPOCH_FREEZE_SECONDS = 5400                # 1.5 hours before epoch end — no n
 
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
 FORWARD_IDLE_SEC = 300                  # Pause when no models to evaluate (seconds)
+BACKEND_GRACE_PERIOD_SEC = 3600         # Use cached weights for 1h after last successful sync
+WANDB_IDLE_RESTART_SEC = 5 * 3600      # Restart W&B run every 5h when idle
 
 # =============================================================================
 # SIMULATION & PHYSICS
