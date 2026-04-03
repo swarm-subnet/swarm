@@ -164,6 +164,13 @@ class BackendApiClient:
         self._runtime_state = _load_runtime_state()
         bt.logging.info("BackendApiClient initialized")
 
+    @property
+    def last_sync_ts(self) -> float:
+        return self._runtime_state.get("last_sync", 0)
+
+    def get_cached_weights(self) -> dict:
+        return self._runtime_state.get("last_weights", {})
+
     async def close(self) -> None:
         """Close HTTP client."""
         await self.client.aclose()
