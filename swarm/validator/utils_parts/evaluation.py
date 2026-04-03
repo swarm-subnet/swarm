@@ -6,6 +6,7 @@ import bittensor as bt
 import numpy as np
 
 from swarm.constants import (
+    BENCHMARK_SCREENING_SEED_COUNT,
     SCREENING_BOOTSTRAP_THRESHOLD,
     SCREENING_CHECKPOINT_SIZE,
     SCREENING_EARLY_FAIL_FACTORS,
@@ -258,7 +259,7 @@ async def _run_full_benchmark(
         )
         try:
             seed_batch = [
-                {"seed_index": i, "score": d["score"], "map_type": d["map_type"]}
+                {"seed_index": BENCHMARK_SCREENING_SEED_COUNT + i, "score": d["score"], "map_type": d["map_type"]}
                 for i, d in enumerate(details) if d.get("map_type") != "unknown"
             ]
             for chunk_start in range(0, len(seed_batch), SEED_SCORE_BATCH_MAX):
