@@ -613,8 +613,9 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
             on_seed_complete=None,
             task_offset=0,
             task_total=None,
+            model_image=None,
         ):
-            _ = uid, model_path, worker_id, task_offset, task_total
+            _ = uid, model_path, worker_id, task_offset, task_total, model_image
             for task in tasks:
                 if on_seed_complete is not None:
                     on_seed_complete(

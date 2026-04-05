@@ -75,6 +75,7 @@ DockerSecureEvaluator._serialize_observation = staticmethod(
 
 DockerSecureEvaluator._run_multi_seed_rpc_sync = rpc._run_multi_seed_rpc_sync
 DockerSecureEvaluator._calibrate_rpc_overhead_async = rpc._calibrate_rpc_overhead_async
+DockerSecureEvaluator.prepare_model_image = batch.prepare_model_image
 DockerSecureEvaluator.evaluate_seeds_batch = batch.evaluate_seeds_batch
 DockerSecureEvaluator.evaluate_seeds_parallel = parallel.evaluate_seeds_parallel
 DockerSecureEvaluator.cleanup = batch.cleanup

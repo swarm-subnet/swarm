@@ -20,6 +20,151 @@ from swarm.utils.hash import sha256sum
 from ._shared import _docker_evaluator_facade, _submission_template_dir
 
 
+def prepare_model_image(
+    self,
+    uid: int,
+    model_path: Path,
+) -> Optional[str]:
+    """Build a per-model Docker image with pip dependencies pre-installed.
+
+    Returns the image tag if requirements.txt exists and pip succeeds, None otherwise.
+    The caller must call remove_model_image() when done.
+    """
+    if not model_path.is_file():
+        return None
+
+    tmpdir = None
+    container_name = f"swarm_pip_{uid}_{int(time.time() * 1000)}"
+    try:
+        current_uid = os.getuid()
+        current_gid = os.getgid()
+        worker_limits = self._resolve_worker_limits(0)
+
+        tmpdir = tempfile.mkdtemp()
+        os.chmod(tmpdir, 0o755)
+        submission_dir = Path(tmpdir) / "submission"
+        submission_dir.mkdir()
+        os.chmod(submission_dir, 0o755)
+
+        with zipfile.ZipFile(model_path, "r") as zf:
+            zf.extractall(submission_dir)
+
+        contents = list(submission_dir.iterdir())
+        if len(contents) == 1 and contents[0].is_dir():
+            nested_dir = contents[0]
+            for item in nested_dir.iterdir():
+                target = submission_dir / item.name
+                if target.exists():
+                    if target.is_dir():
+                        shutil.rmtree(target)
+                    else:
+                        target.unlink()
+                shutil.move(str(item), str(target))
+            nested_dir.rmdir()
+
+        template_dir = _submission_template_dir()
+        shutil.copy(template_dir / "agent.capnp", submission_dir)
+        shutil.copy(template_dir / "agent_server.py", submission_dir)
+        shutil.copy(template_dir / "main.py", submission_dir)
+
+        for f in submission_dir.iterdir():
+            os.chown(f, current_uid, current_gid)
+            os.chmod(f, 0o644)
+
+        miner_requirements = submission_dir / "requirements.txt"
+        if not miner_requirements.exists():
+            return None
+
+        if not self._validate_requirements(miner_requirements, uid):
+            bt.logging.warning(f"UID {uid}: requirements.txt rejected during image build")
+            return None
+
+        startup_script = submission_dir / "startup.sh"
+        with open(startup_script, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write("pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n")
+            f.write("if [ $? -ne 0 ]; then exit 1; fi\n")
+            f.write("touch /workspace/submission/.pip_done\n")
+            f.write("sleep infinity\n")
+        os.chmod(startup_script, 0o755)
+        os.chown(startup_script, current_uid, current_gid)
+
+        cmd = [
+            "docker", "run", "--rm", "-d",
+            "--name", container_name,
+            "--user", f"{current_uid}:{current_gid}",
+            f"--memory={worker_limits['memory']}",
+            f"--cpus={worker_limits['cpus']}",
+            "--network", "bridge",
+            "-v", f"{submission_dir}:/workspace/submission:rw",
+            self.base_image,
+            "bash", "/workspace/submission/startup.sh",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            bt.logging.warning(f"UID {uid}: pip container start failed: {result.stderr[:200]}")
+            return None
+
+        pip_done_flag = submission_dir / ".pip_done"
+        pip_start = time.time()
+        pip_timeout = 120
+        pip_done = False
+
+        bt.logging.info(f"UID {uid}: installing pip dependencies...")
+        while time.time() - pip_start < pip_timeout:
+            if pip_done_flag.exists():
+                pip_done = True
+                break
+            check = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                capture_output=True, text=True,
+            )
+            if check.returncode != 0 or check.stdout.strip() != "true":
+                break
+            time.sleep(2)
+
+        if not pip_done:
+            bt.logging.warning(f"UID {uid}: pip install failed during image build")
+            subprocess.run(["docker", "kill", container_name], capture_output=True)
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+            return None
+
+        elapsed = time.time() - pip_start
+        model_hash = sha256sum(model_path)[:12]
+        image_tag = f"swarm_eval_model_{model_hash}:latest"
+
+        commit_result = subprocess.run(
+            ["docker", "commit", container_name, image_tag],
+            capture_output=True, text=True, timeout=30,
+        )
+        subprocess.run(["docker", "kill", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+        if commit_result.returncode != 0:
+            bt.logging.warning(f"UID {uid}: docker commit failed: {commit_result.stderr[:200]}")
+            return None
+
+        bt.logging.info(f"UID {uid}: model image ready ({image_tag}, pip took {elapsed:.1f}s)")
+        return image_tag
+
+    except Exception as e:
+        bt.logging.warning(f"UID {uid}: prepare_model_image failed: {e}")
+        subprocess.run(["docker", "kill", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        return None
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def remove_model_image(image_tag: str) -> None:
+    """Remove a per-model Docker image after evaluation completes."""
+    try:
+        subprocess.run(["docker", "rmi", image_tag], capture_output=True, timeout=15)
+    except Exception:
+        pass
+
+
 async def evaluate_seeds_batch(
     self,
     tasks: list,
@@ -30,21 +175,16 @@ async def evaluate_seeds_batch(
     rollout_observer: Optional[Callable[[dict], None]] = None,
     task_offset: int = 0,
     task_total: Optional[int] = None,
+    model_image: Optional[str] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
-
-    This is the parallel-friendly method for V4 benchmark.
-    Instead of creating a new container per seed, this method:
-    1. Starts ONE container
-    2. Runs all seeds through the same RPC connection
-    3. Calls agent.reset() between seeds
-    4. Kills container when done
 
     Args:
         tasks: List of MapTask objects (one per seed)
         uid: Miner UID
         model_path: Path to model zip file
         worker_id: Worker ID for logging (0 to N_DOCKER_WORKERS-1)
+        model_image: Pre-built image with pip deps (skips pip install when set)
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -234,7 +374,7 @@ async def evaluate_seeds_batch(
             os.chmod(f, 0o644)
 
         miner_requirements = submission_dir / "requirements.txt"
-        has_requirements = miner_requirements.exists()
+        has_requirements = miner_requirements.exists() and model_image is None
 
         if has_requirements and not self._validate_requirements(
             miner_requirements, uid
@@ -246,6 +386,7 @@ async def evaluate_seeds_batch(
             return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
         validator_ip = self._get_docker_host_ip()
+        run_image = model_image or self.base_image
 
         if has_requirements:
             bt.logging.info(
@@ -296,7 +437,7 @@ async def evaluate_seeds_batch(
                 cmd.extend(["-e", f"{key}={value}"])
             cmd.extend(
                 [
-                    self.base_image,
+                    run_image,
                     "bash",
                     "/workspace/submission/startup.sh",
                 ]
@@ -335,7 +476,7 @@ async def evaluate_seeds_batch(
                 cmd.extend(["-e", f"{key}={value}"])
             cmd.extend(
                 [
-                    self.base_image,
+                    run_image,
                     "bash",
                     "-c",
                     "sleep infinity",
@@ -819,6 +960,28 @@ def cleanup(self):
                     bt.logging.debug(
                         f"Cleaned up orphaned verify container: {container}"
                     )
+
+        result_pip = subprocess.run(
+            [
+                "docker", "ps", "-a",
+                "--filter", "name=swarm_pip_",
+                "--format", "{{.Names}}",
+            ],
+            capture_output=True, text=True,
+        )
+        if result_pip.returncode == 0 and result_pip.stdout:
+            for c in result_pip.stdout.strip().split("\n"):
+                if c:
+                    subprocess.run(["docker", "rm", "-f", c], capture_output=True, timeout=30)
+
+        result_images = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=swarm_eval_model_*"],
+            capture_output=True, text=True,
+        )
+        if result_images.returncode == 0 and result_images.stdout:
+            for img in result_images.stdout.strip().split("\n"):
+                if img:
+                    subprocess.run(["docker", "rmi", img], capture_output=True, timeout=15)
 
         subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
         subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
