@@ -20,6 +20,13 @@ from swarm.utils.hash import sha256sum
 from ._shared import _docker_evaluator_facade, _submission_template_dir
 
 
+def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=timeout_sec)
+    except Exception:
+        pass
+
+
 def prepare_model_image(
     self,
     uid: int,
@@ -95,6 +102,11 @@ def prepare_model_image(
             "--user", f"{current_uid}:{current_gid}",
             f"--memory={worker_limits['memory']}",
             f"--cpus={worker_limits['cpus']}",
+            "--pids-limit=50",
+            "--ulimit", "nofile=256:256",
+            "--ulimit", "fsize=524288000:524288000",
+            "--security-opt", "no-new-privileges",
+            "--cap-drop", "ALL",
             "--network", "bridge",
             "-v", f"{submission_dir}:/workspace/submission:rw",
             self.base_image,
@@ -117,7 +129,7 @@ def prepare_model_image(
                 break
             check = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=10,
             )
             if check.returncode != 0 or check.stdout.strip() != "true":
                 break
@@ -125,8 +137,8 @@ def prepare_model_image(
 
         if not pip_done:
             bt.logging.warning(f"UID {uid}: pip install failed during image build")
-            subprocess.run(["docker", "kill", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+            _docker_cmd_quiet(["docker", "kill", container_name])
+            _docker_cmd_quiet(["docker", "rm", "-f", container_name])
             return None
 
         elapsed = time.time() - pip_start
@@ -137,8 +149,8 @@ def prepare_model_image(
             ["docker", "commit", container_name, image_tag],
             capture_output=True, text=True, timeout=30,
         )
-        subprocess.run(["docker", "kill", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        _docker_cmd_quiet(["docker", "kill", container_name])
+        _docker_cmd_quiet(["docker", "rm", "-f", container_name])
 
         if commit_result.returncode != 0:
             bt.logging.warning(f"UID {uid}: docker commit failed: {commit_result.stderr[:200]}")
@@ -149,8 +161,11 @@ def prepare_model_image(
 
     except Exception as e:
         bt.logging.warning(f"UID {uid}: prepare_model_image failed: {e}")
-        subprocess.run(["docker", "kill", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        try:
+            _docker_cmd_quiet(["docker", "kill", container_name])
+            _docker_cmd_quiet(["docker", "rm", "-f", container_name])
+        except Exception:
+            pass
         return None
     finally:
         if tmpdir:
