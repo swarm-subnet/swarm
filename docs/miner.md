@@ -240,7 +240,14 @@ git push
 
 ### 4. Submit
 
-The backend will download your `submission.zip` and verify your `README.md` automatically.
+To protect your model from front-running (someone copying your submission before you commit), follow this order:
+
+1. Keep your GitHub repo **private**
+2. Run the miner command below to commit the URL to chain
+3. Wait for the commit to finalize (~30 seconds)
+4. Make the repo **public**
+
+The system processes commitments in block order — the earliest committer always wins, and duplicate model hashes are automatically rejected. Newer versions of the Bittensor SDK also encrypt your URL on-chain until the reveal round, adding another layer of protection.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
