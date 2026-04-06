@@ -86,6 +86,7 @@ class _ProcessBatchRequest:
     uid: int
     model_path: str
     task_total: int
+    model_image: Optional[str] = None
 
 
 @dataclass

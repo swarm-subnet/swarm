@@ -120,6 +120,7 @@ async def _run_process_parallel(
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
     heartbeat_sec: float = 30.0,
+    model_image: Optional[str] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -215,6 +216,7 @@ async def _run_process_parallel(
                 uid=uid,
                 model_path=str(model_path),
                 task_total=len(all_tasks),
+                model_image=model_image,
             )
             worker_active_requests[worker_slot] = request
             now = time.time()
@@ -547,6 +549,10 @@ async def evaluate_seeds_parallel(
             task_total=len(tasks),
         )
 
+    from .batch import prepare_model_image, remove_model_image
+
+    model_image = prepare_model_image(self, uid, model_path)
+
     task_meta = [
         {
             "group": _task_group_name(task, index),
@@ -559,21 +565,26 @@ async def evaluate_seeds_parallel(
     ]
     batch_plan = _benchmark_engine()._batch_indices(len(tasks))
 
-    return await _run_process_parallel(
-        all_tasks=list(tasks),
-        task_meta=task_meta,
-        batch_plan=batch_plan,
-        uid=uid,
-        model_path=model_path,
-        effective_workers=effective_workers,
-        runtime_tracker=runtime_tracker,
-        on_seed_complete=on_seed_complete,
-        heartbeat_sec=30.0,
-        phase_label=phase_label,
-        prior_seeds_done=prior_seeds_done,
-        prior_total_seeds=prior_total_seeds,
-        prior_avg=prior_avg,
-    )
+    try:
+        return await _run_process_parallel(
+            all_tasks=list(tasks),
+            task_meta=task_meta,
+            batch_plan=batch_plan,
+            uid=uid,
+            model_path=model_path,
+            effective_workers=effective_workers,
+            runtime_tracker=runtime_tracker,
+            on_seed_complete=on_seed_complete,
+            heartbeat_sec=30.0,
+            phase_label=phase_label,
+            prior_seeds_done=prior_seeds_done,
+            prior_total_seeds=prior_total_seeds,
+            prior_avg=prior_avg,
+            model_image=model_image,
+        )
+    finally:
+        if model_image:
+            remove_model_image(model_image)
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -140,6 +140,7 @@ def _benchmark_worker_main(
                         on_seed_complete=_on_seed_complete,
                         task_offset=request.batch_indices[0] if request.batch_indices else 0,
                         task_total=request.task_total,
+                        model_image=getattr(request, "model_image", None),
                     )
                 )
                 result_queue.put(
