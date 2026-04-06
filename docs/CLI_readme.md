@@ -146,9 +146,67 @@ Expected data files:
 
 If those files do not exist yet, start the validator first so telemetry can be written.
 
+### `swarm video`
+
+Renders mp4 flight videos of a model navigating through a map. Supports single seeds or batch replay from a benchmark seed file.
+
+```bash
+# Record a chase-cam video of seed 42 on a city map
+swarm video --model submission.zip --seed 42 --type 1
+
+# Record all camera angles
+swarm video --model submission.zip --seed 42 --type 3 --mode all
+
+# Batch replay from a benchmark seed file
+swarm video --model submission.zip --seed-file benchmark_seeds.json
+
+# Higher quality output
+swarm video --model submission.zip --seed 42 --type 1 --width 1920 --height 1080 --fps 30
+```
+
+Requires either `--seed-file`, or both `--seed` and `--type`.
+
+Camera modes: `chase` (default), `fpv`, `depth`, `overview`, `all`.
+
+Replay backends: `local` (fast in-process replay) or `benchmark` (default, exact Docker/RPC replay matching validator scoring).
+
+Additional options:
+
+- `--out <dir>` — output directory for mp4 files.
+- `--chase-back <m>`, `--chase-up <m>`, `--chase-fov <deg>` — chase camera positioning.
+- `--fpv-fov <deg>`, `--overview-fov <deg>` — field of view for other modes.
+- `--skip-existing` — skip seeds whose mp4 outputs already exist.
+- `--save-actions <path>` — save recorded actions for deterministic replay.
+- `--replay-actions <path>` — replay pre-recorded actions instead of running the policy.
+- `--summary-json <path>` — benchmark summary JSON for replay verification.
+- `--progress-file <path>` — JSON progress path for monitoring generation status.
+
+### `swarm champion`
+
+Downloads the current champion model.
+
+```bash
+# Download the champion
+swarm champion
+
+# View champion info as JSON without downloading
+swarm champion --json
+
+# Save to a specific path
+swarm champion --output my_champion.zip
+```
+
+Options:
+
+- `--output <path>` — output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
+- `--backend-url <url>` — override the backend API URL (defaults to the public API).
+- `--json` — print champion info as JSON. If the model is not released, prints info and exits.
+
+The download includes SHA-256 integrity verification against the hash reported by the backend.
+
 ---
 
-`doctor`, `model verify`, `model test`, and `report` support `--json` for machine-readable output.
+`doctor`, `model verify`, `model test`, `report`, and `champion` support `--json` for machine-readable output.
 
 ## Tests
 

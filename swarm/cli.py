@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -13,7 +14,7 @@ import tempfile
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -334,7 +335,59 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
     return argv
 
 
+def _download_champion_model() -> Optional[Path]:
+    import httpx
+
+    base_url = os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com").rstrip("/")
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(f"{base_url}/champion")
+            if resp.status_code != 200:
+                print("No champion model available to download.", file=sys.stderr)
+                return None
+            champ = resp.json()
+            if not champ.get("is_released"):
+                print(f"Champion UID {champ['uid']} is not released for download yet.", file=sys.stderr)
+                return None
+
+            uid = champ["uid"]
+            expected_hash = champ.get("model_hash")
+            output = Path(f"champion_UID_{uid}.zip")
+
+            if output.exists() and expected_hash:
+                existing_hash = hashlib.sha256(output.read_bytes()).hexdigest()
+                if existing_hash == expected_hash:
+                    print(f"Using cached champion: {output}")
+                    return output
+
+            print(f"Downloading champion UID {uid} (score: {champ.get('benchmark_score', 0):.4f})...")
+            dl = client.get(f"{base_url}/models/{uid}/download")
+            if dl.status_code != 200:
+                print(f"Download failed: HTTP {dl.status_code}", file=sys.stderr)
+                return None
+
+            if expected_hash:
+                dl_hash = hashlib.sha256(dl.content).hexdigest()
+                if dl_hash != expected_hash:
+                    print("Download integrity check failed.", file=sys.stderr)
+                    return None
+
+            output.write_bytes(dl.content)
+            print(f"Saved: {output} ({len(dl.content) / (1024*1024):.1f} MB)")
+            return output
+    except Exception as exc:
+        print(f"Failed to download champion: {exc}", file=sys.stderr)
+        return None
+
+
 def _cmd_benchmark(args: argparse.Namespace) -> int:
+    if args.model is None:
+        downloaded = _download_champion_model()
+        if downloaded is None:
+            print("No --model specified and champion download failed.", file=sys.stderr)
+            return 1
+        args.model = downloaded
+
     model_path = Path(args.model)
     if not model_path.exists():
         print(f"Model not found: {model_path}", file=sys.stderr)
@@ -731,29 +784,20 @@ def _cmd_champion(args: argparse.Namespace) -> int:
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.get(f"{base_url}/leaderboard?page_size=1")
+            resp = client.get(f"{base_url}/champion")
+            if resp.status_code == 404:
+                print("No champion model yet.", file=sys.stderr)
+                return 1
             if resp.status_code != 200:
-                print(f"Failed to fetch leaderboard: HTTP {resp.status_code}", file=sys.stderr)
+                print(f"Failed to fetch champion: HTTP {resp.status_code}", file=sys.stderr)
                 return 1
 
-            data = resp.json()
-            entries = data.get("entries", [])
-            if not entries:
-                print("No evaluated models on the leaderboard yet.", file=sys.stderr)
-                return 1
-
-            champ = None
-            for entry in entries:
-                if entry.get("is_champion"):
-                    champ = entry
-                    break
-            if champ is None:
-                champ = entries[0]
-
+            champ = resp.json()
             uid = champ["uid"]
             score = champ.get("benchmark_score", 0)
             released = champ.get("is_released", False)
             per_type = champ.get("per_type_scores") or {}
+            expected_hash = champ.get("model_hash")
 
             if args.json:
                 print(json.dumps(champ, indent=2))
@@ -780,6 +824,12 @@ def _cmd_champion(args: argparse.Namespace) -> int:
             if dl.status_code != 200:
                 print(f"Download failed: HTTP {dl.status_code}", file=sys.stderr)
                 return 1
+
+            if expected_hash:
+                dl_hash = hashlib.sha256(dl.content).hexdigest()
+                if dl_hash != expected_hash:
+                    print(f"Download integrity check failed (expected {expected_hash[:16]}...)", file=sys.stderr)
+                    return 1
 
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(dl.content)
@@ -858,8 +908,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--model",
         type=Path,
-        required=True,
-        help="Path to submission zip (e.g., model/UID_178.zip).",
+        default=None,
+        help="Path to submission zip. If omitted, auto-downloads the current champion.",
     )
     benchmark_parser.add_argument(
         "--uid",
@@ -1210,8 +1260,8 @@ def build_parser() -> argparse.ArgumentParser:
     champion_parser.add_argument(
         "--backend-url",
         type=str,
-        default=os.environ.get("SWARM_BACKEND_API_URL", ""),
-        help="Backend API URL (or set SWARM_BACKEND_API_URL env var).",
+        default=os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com"),
+        help="Backend API URL (default: https://api.swarm124.com).",
     )
     champion_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     champion_parser.set_defaults(func=_cmd_champion)
