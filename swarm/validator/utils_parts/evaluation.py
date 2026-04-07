@@ -261,8 +261,9 @@ async def _run_full_benchmark(
             on_seed_complete=hb.on_seed_complete
         )
         try:
+            seed_offset = 0 if seeds is not None else BENCHMARK_SCREENING_SEED_COUNT
             seed_batch = [
-                {"seed_index": BENCHMARK_SCREENING_SEED_COUNT + i, "score": d["score"], "map_type": d["map_type"]}
+                {"seed_index": seed_offset + i, "score": d["score"], "map_type": d["map_type"]}
                 for i, d in enumerate(details) if d.get("map_type") != "unknown"
             ]
             for chunk_start in range(0, len(seed_batch), SEED_SCORE_BATCH_MAX):

@@ -510,6 +510,8 @@ class BackendApiClient:
         scores: list,
         retries: int = 3,
     ) -> Dict[str, Any]:
+        retries = max(retries, 1)
+        last_reason = ""
         result: Dict[str, Any] = {}
         for attempt in range(retries):
             result = await self._post_signed("/validators/seed-scores", {
@@ -517,12 +519,16 @@ class BackendApiClient:
                 "epoch_number": epoch_number,
                 "scores": scores,
             })
-            if "error" not in result:
+            if result.get("recorded"):
                 return result
+            last_reason = str(
+                result.get("error") or result.get("detail") or "not recorded"
+            )
             if attempt < retries - 1:
                 await asyncio.sleep(1)
         bt.logging.warning(
-            f"Seed score upload failed for UID {model_uid} after {retries} attempts"
+            f"Seed score upload failed for UID {model_uid} "
+            f"after {retries} attempts: {last_reason}"
         )
         return result
 
