@@ -26,6 +26,7 @@ Scoring Thresholds (calculated by backend):
 - Champion: highest benchmark score after 51% threshold met
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -507,12 +508,29 @@ class BackendApiClient:
         model_uid: int,
         epoch_number: int,
         scores: list,
+        retries: int = 3,
     ) -> Dict[str, Any]:
-        return await self._post_signed("/validators/seed-scores", {
-            "model_uid": model_uid,
-            "epoch_number": epoch_number,
-            "scores": scores,
-        })
+        retries = max(retries, 1)
+        last_reason = ""
+        result: Dict[str, Any] = {}
+        for attempt in range(retries):
+            result = await self._post_signed("/validators/seed-scores", {
+                "model_uid": model_uid,
+                "epoch_number": epoch_number,
+                "scores": scores,
+            })
+            if result.get("recorded"):
+                return result
+            last_reason = str(
+                result.get("error") or result.get("detail") or "not recorded"
+            )
+            if attempt < retries - 1:
+                await asyncio.sleep(1)
+        bt.logging.warning(
+            f"Seed score upload failed for UID {model_uid} "
+            f"after {retries} attempts: {last_reason}"
+        )
+        return result
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/epoch/publish

@@ -348,7 +348,7 @@ async def _process_normal_queue_item(
                                         model_uid=uid, epoch_number=epoch, scores=seed_batch,
                                     )
                             except Exception as seed_err:
-                                bt.logging.debug(f"Seed score upload failed for UID {uid}: {seed_err}")
+                                bt.logging.warning(f"Seed score upload failed for UID {uid}: {seed_err}")
                             partial_scores.extend(chunk_scores)
                             for tname, tscores in chunk_per_type.items():
                                 partial_per_type.setdefault(tname, []).extend(tscores)

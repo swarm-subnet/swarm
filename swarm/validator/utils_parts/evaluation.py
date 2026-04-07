@@ -109,8 +109,9 @@ async def _evaluate_seeds(
             seed_details.append({"score": score, "map_type": type_name})
             task_idx += 1
         else:
+            type_name = challenge_type_to_name.get(task.challenge_type, "unknown")
             all_scores.append(0.0)
-            seed_details.append({"score": 0.0, "map_type": "unknown"})
+            seed_details.append({"score": 0.0, "map_type": type_name})
 
     bt.logging.info(f"✅ {description} complete for UID {uid}: {len(all_scores)} seeds evaluated")
     return all_scores, per_type_scores, seed_details
@@ -182,7 +183,7 @@ async def _run_screening(
                         scores=seed_batch,
                     )
             except Exception as e:
-                bt.logging.debug(f"Screening seed score upload failed for UID {uid}: {e}")
+                bt.logging.warning(f"Screening seed score upload failed for UID {uid}: {e}")
             all_scores.extend(batch_scores)
             for type_name, scores in batch_per_type.items():
                 if type_name in all_per_type:
@@ -260,8 +261,9 @@ async def _run_full_benchmark(
             on_seed_complete=hb.on_seed_complete
         )
         try:
+            seed_offset = 0 if seeds is not None else BENCHMARK_SCREENING_SEED_COUNT
             seed_batch = [
-                {"seed_index": BENCHMARK_SCREENING_SEED_COUNT + i, "score": d["score"], "map_type": d["map_type"]}
+                {"seed_index": seed_offset + i, "score": d["score"], "map_type": d["map_type"]}
                 for i, d in enumerate(details) if d.get("map_type") != "unknown"
             ]
             for chunk_start in range(0, len(seed_batch), SEED_SCORE_BATCH_MAX):
@@ -272,8 +274,8 @@ async def _run_full_benchmark(
                         epoch_number=self.seed_manager.epoch_number,
                         scores=chunk,
                     )
-        except Exception:
-            bt.logging.debug(f"Seed score upload failed for UID {uid}")
+        except Exception as e:
+            bt.logging.warning(f"Seed score upload failed for UID {uid}: {e}")
     finally:
         hb.finish()
 
