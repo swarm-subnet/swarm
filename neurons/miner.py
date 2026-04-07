@@ -31,7 +31,10 @@ def _validate_github_url(raw: str) -> str | None:
     parts = [s for s in (parsed.path or "").split("/") if s]
     if len(parts) != 2:
         return None
-    return f"https://github.com/{parts[0]}/{parts[1]}"
+    repo = parts[1].removesuffix(".git")
+    if not repo:
+        return None
+    return f"https://github.com/{parts[0]}/{repo}"
 
 
 def main(argv=None):
@@ -88,14 +91,9 @@ def main(argv=None):
     bt.logging.info("Committing GitHub URL to chain...")
 
     try:
-        if hasattr(subtensor, "set_reveal_commitment"):
-            success, reveal_round = subtensor.set_reveal_commitment(
-                wallet=wallet, netuid=args.netuid, data=github_url,
-            )
-        else:
-            success = subtensor.commit(
-                wallet=wallet, netuid=args.netuid, data=github_url,
-            )
+        success = subtensor.commit(
+            wallet=wallet, netuid=args.netuid, data=github_url,
+        )
     except Exception as e:
         bt.logging.error(f"Chain commit failed: {e}")
         return 1

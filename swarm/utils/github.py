@@ -45,7 +45,12 @@ def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[
         bt.logging.warning(f"Rejecting github_url: expected owner/repo{tag}")
         return None
 
-    return f"https://github.com/{segments[0]}/{segments[1]}"
+    repo = segments[1].removesuffix(".git")
+    if not repo:
+        bt.logging.warning(f"Rejecting github_url: empty repo name{tag}")
+        return None
+
+    return f"https://github.com/{segments[0]}/{repo}"
 
 
 def build_raw_urls(repo_url: str) -> list[str]:
