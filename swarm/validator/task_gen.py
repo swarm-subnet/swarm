@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+from importlib import import_module
 from typing import Optional, Tuple
 
 from swarm.constants import (
@@ -61,6 +62,16 @@ from swarm.constants import (
     resolve_moving_platform,
 )
 from swarm.protocol import MapTask
+
+_MOUNTAIN_FUNCS: tuple | None = None
+
+
+def _mountain_funcs() -> tuple:
+    global _MOUNTAIN_FUNCS
+    if _MOUNTAIN_FUNCS is None:
+        mod = import_module("swarm.core.mountain_generator")
+        _MOUNTAIN_FUNCS = (mod.get_global_scale, mod.get_terrain_z)
+    return _MOUNTAIN_FUNCS
 
 TYPE_PARAMS = {
     1: {
@@ -185,16 +196,14 @@ def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
 
 
 def _get_type3_world_range(seed: int) -> float:
-    from swarm.core.mountain_generator import get_global_scale
-
+    get_global_scale, _ = _mountain_funcs()
     gs = get_global_scale(seed)
     half = 250.0 * gs
     return half * TYPE_3_WORLD_RANGE_RATIO
 
 
 def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
-    from swarm.core.mountain_generator import get_global_scale, get_terrain_z
-
+    get_global_scale, get_terrain_z = _mountain_funcs()
     gs = get_global_scale(seed)
     return get_terrain_z(x, y, seed, gs)
 

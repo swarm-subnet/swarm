@@ -32,16 +32,28 @@ import json
 import math
 import os
 import re
+import random
 import shutil
 import sys
 import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
+from swarm.constants import (
+    DEPTH_FAR,
+    DEPTH_MAX_M,
+    DEPTH_MIN_M,
+    SEARCH_RADIUS_MAX,
+    SEARCH_RADIUS_MIN,
+    SIM_DT,
+    SPEED_LIMIT,
+    resolve_moving_platform,
+)
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — allow importing the V4 swarm package from the sibling repo
@@ -135,6 +147,16 @@ OVERVIEW_ORBIT_DEG_SEC = 5.0  # slow rotation around the scene
 DEPTH_SENSOR_RES = 128  # native sensor resolution (square)
 DEPTH_COLORMAP_NAME = "inferno"
 
+_MOUNTAIN_FUNCS: tuple | None = None
+
+
+def _mountain_funcs() -> tuple:
+    global _MOUNTAIN_FUNCS
+    if _MOUNTAIN_FUNCS is None:
+        mod = import_module("swarm.core.mountain_generator")
+        _MOUNTAIN_FUNCS = (mod.get_global_scale, mod.get_terrain_z)
+    return _MOUNTAIN_FUNCS
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Data classes
@@ -224,15 +246,14 @@ def _temporary_env(overrides: Dict[str, Optional[str]]):
 
 def _get_type3_world_range(seed: int) -> float:
     from swarm.constants import TYPE_3_WORLD_RANGE_RATIO
-    from swarm.core.mountain_generator import get_global_scale
 
+    get_global_scale, _ = _mountain_funcs()
     gs = get_global_scale(seed)
     return (250.0 * gs) * TYPE_3_WORLD_RANGE_RATIO
 
 
 def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
-    from swarm.core.mountain_generator import get_global_scale, get_terrain_z
-
+    get_global_scale, get_terrain_z = _mountain_funcs()
     gs = get_global_scale(seed)
     return get_terrain_z(x, y, seed, gs)
 
@@ -446,17 +467,9 @@ def _sample_goal(
 
 def build_task(seed: int, challenge_type: int) -> FlightTask:
     """Deterministically build a :class:`FlightTask` for *seed* / *challenge_type*."""
-    import random as _random
-    from swarm.constants import (
-        SEARCH_RADIUS_MAX,
-        SEARCH_RADIUS_MIN,
-        SIM_DT,
-        resolve_moving_platform,
-    )
-
     params = _load_type_params(challenge_type, seed)
-    rng = _random.Random(seed)
-    search_rng = _random.Random(seed + 888888)
+    rng = random.Random(seed)
+    search_rng = random.Random(seed + 888888)
 
     start = _sample_start(rng, params, challenge_type, seed)
     goal = _sample_goal(rng, start, params, challenge_type, seed)
@@ -657,8 +670,6 @@ class DepthCamera(_CameraBase):
 
     def __init__(self, cli: int, width: int, height: int):
         super().__init__(cli, DEPTH_SENSOR_RES, DEPTH_SENSOR_RES, fov=90.0)
-        from swarm.constants import DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M
-
         self._near = 0.05
         self._far = float(DEPTH_FAR)
         self._clip_min = float(DEPTH_MIN_M)
@@ -1128,7 +1139,6 @@ def record_flight_benchmark(
     save_actions_dir: Optional[Path] = None,
     progress_file: Optional[Path] = None,
 ) -> Tuple[List[VideoResult], bool, float, float]:
-    from swarm.constants import SIM_DT
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
     from swarm.validator.task_gen import task_for_seed_and_type
 
@@ -1266,8 +1276,6 @@ def record_flight(
     """
     import pybullet as p
     from gym_pybullet_drones.utils.enums import ActionType
-    from swarm.constants import SIM_DT, SPEED_LIMIT
-
     model_path = Path(model_path).resolve()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

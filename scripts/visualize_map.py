@@ -34,6 +34,7 @@ from typing import Iterable, Tuple
 
 import numpy as np
 import gymnasium.spaces as spaces
+from swarm.constants import MAX_YAW_RATE, SPEED_LIMIT
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
@@ -722,8 +723,6 @@ def _build_visualizer_env(task, prefer_gpu: bool):
     import pybullet as p
     import pybullet_data
     from gym_pybullet_drones.utils.enums import ActionType, ObservationType
-
-    from swarm.constants import MAX_YAW_RATE, SPEED_LIMIT
     from swarm.core.moving_drone import MovingDroneAviary
 
     ctrl_freq = int(round(1.0 / task.sim_dt))
