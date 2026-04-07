@@ -11,6 +11,13 @@ Build here:
 - dataset merge policy
 - retraining schedule
 
+Current expectation:
+
+- merge newly labeled student rollouts with the base dataset through weighted
+  manifests, not raw concatenation
+- preserve `teacher_id`, `teacher_version`, and `map_category` provenance so
+  later regressions can be traced back to the source data
+
 Done when:
 
 - the student recovers from its own drift better than plain behavior cloning

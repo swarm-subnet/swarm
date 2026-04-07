@@ -68,16 +68,16 @@ Filesystem guide:
 
 Build a "godmode" expert that can see privileged information.
 
-This expert should be modular:
+The current design is:
 
-- go to search center
-- avoid obstacles
-- intercept platform
-- land
+- one shared expert implementation
+- one shared mode vocabulary
+- one registry that assigns `map_category -> teacher_id`
+- per-category config overrides and quality gates
+- per-category reporting, because expert quality is uneven by map category
 
-Do not use the current hardcoded baseline as the final teacher.
-It is acceptable as a reference, but it is not strong enough to anchor the full
-pipeline.
+This keeps the action contract shared while allowing categories such as
+`open_dynamic` or `mountain_static` to evolve independently.
 
 Filesystem guide:
 
@@ -95,12 +95,21 @@ Every rollout should be able to produce:
 
 Record at least:
 
-- observation
+- deployable observation
 - action
 - reward
-- done
-- privileged info
+- termination flags
+- privileged teacher state
 - recurrent sequence boundaries
+
+Current dataset policy:
+
+- save one `.npz` per episode
+- record `teacher_id`, `teacher_version`, and `map_category`
+- export one shared `mode_vocabulary.json`
+- build weighted sampling manifests for later BC and DAgger stages
+- prefer success-only datasets for imitation training, with failures kept
+  separately for debugging if needed
 
 Filesystem guide:
 
@@ -119,6 +128,8 @@ Recommended first version:
 - auxiliary perception heads
 
 The student must remain deployable on the real observation contract.
+This stage creates the model config, validates the contract, saves an initial
+checkpoint, and exports a runtime preview.
 
 Filesystem guide:
 
@@ -136,6 +147,14 @@ Losses:
 This stage should already produce a student that can solve easy maps and expose
 where pure imitation breaks.
 
+Current implementation notes:
+
+- recurrent sequence batching over Phase-3 episode files
+- optional weighted dataset manifests from Phase 3
+- live progress logging during training
+- early stopping based on validation total loss
+- train and validation both log total loss and action-only loss
+
 Filesystem guide:
 
 - [`05_behavior_cloning`](./stages/05_behavior_cloning/README.md)
@@ -147,6 +166,9 @@ those student-visited states, merge the new labels into the dataset, retrain,
 and repeat.
 
 This is the first major robustness stage.
+
+The merge policy should stay weighted by dataset/category policy rather than
+blind concatenation.
 
 Filesystem guide:
 
@@ -267,18 +289,18 @@ final learned export should be either:
 
 ## 6. Current Status
 
-Already present:
+Implemented:
 
 - [`training_env.py`](./training_env.py)
 - cleaned hardcoded baseline in [`final_agents/drone_agent.py`](./final_agents/drone_agent.py)
 - ordered build tree in [`stages`](./stages/README.md)
+- specialist expert registry and per-category overrides
+- Phase-3 dataset builder with weighted manifests and teacher provenance
+- Phase-4 student model builder and runtime preview export
+- Phase-5 behavior cloning with progress logs and early stopping
 
-Not implemented yet:
+Partially implemented / still iterative:
 
-- privileged expert
-- dataset builder
-- student model
-- behavior cloning loop
 - DAgger loop
 - PPO fine-tuning
 - residual landing refinement

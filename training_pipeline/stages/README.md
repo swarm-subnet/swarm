@@ -20,3 +20,5 @@ The rule is simple:
 - Nothing in `final_agents` should depend on privileged labels.
 - Promotion goes from training artifacts to deployable agent, never the other
   way around.
+- Phases 1-3 define data, Phases 4-7 define learning, and Phases 8-9 package
+  the final controller.
