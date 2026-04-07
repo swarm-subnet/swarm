@@ -211,6 +211,39 @@ def test_should_step_world_respects_capped_rate() -> None:
     assert not vis_mod._should_step_world(1.5, None, 0.0)
 
 
+def test_advance_world_prefers_env_advance_simulation(monkeypatch) -> None:
+    calls: list[object] = []
+
+    class _DummyBullet:
+        def stepSimulation(self, physicsClientId=None):
+            _ = physicsClientId
+            calls.append("step")
+
+    env = type(
+        "DummyEnv",
+        (),
+        {
+            "advance_simulation": lambda self: calls.append("advance"),
+            "getPyBulletClient": lambda self: 99,
+        },
+    )()
+
+    monkeypatch.setattr(
+        vis_mod,
+        "_set_drone_pose",
+        lambda _env, _bullet, position, yaw: calls.append(("pose", tuple(position.tolist()), yaw)),
+    )
+
+    vis_mod._advance_world(
+        env,
+        _DummyBullet(),
+        np.array([1.0, 2.0, 3.0], dtype=np.float32),
+        yaw=0.25,
+    )
+
+    assert calls == ["advance", ("pose", (1.0, 2.0, 3.0), 0.25)]
+
+
 def test_sync_observation_space_updates_dimension() -> None:
     depth_space = spaces.Box(low=0.0, high=1.0, shape=(4, 4), dtype=np.float32)
     env = type(

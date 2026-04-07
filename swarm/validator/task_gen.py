@@ -7,8 +7,6 @@ from typing import Optional, Tuple
 
 from swarm.constants import (
     CHALLENGE_TYPE_DISTRIBUTION,
-    MOVING_PLATFORM_PROB,
-    MOVING_PLATFORM_SEED_OFFSET,
     RANDOM_START,
     SEARCH_RADIUS_MAX,
     SEARCH_RADIUS_MIN,
@@ -60,8 +58,8 @@ from swarm.constants import (
     TYPE_6_START_H_MAX,
     TYPE_6_START_H_MIN,
     TYPE_6_WORLD_RANGE,
+    resolve_moving_platform,
 )
-from swarm.core.mountain_generator import get_global_scale, get_terrain_z
 from swarm.protocol import MapTask
 
 TYPE_PARAMS = {
@@ -132,10 +130,7 @@ def _build_task_for_type(
     search_radius = search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
 
     if moving_platform is None:
-        platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
-        resolved_moving_platform = (
-            platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
-        )
+        resolved_moving_platform = resolve_moving_platform(seed, challenge_type)
     else:
         resolved_moving_platform = bool(moving_platform)
 
@@ -190,12 +185,16 @@ def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
 
 
 def _get_type3_world_range(seed: int) -> float:
+    from swarm.core.mountain_generator import get_global_scale
+
     gs = get_global_scale(seed)
     half = 250.0 * gs
     return half * TYPE_3_WORLD_RANGE_RATIO
 
 
 def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
+    from swarm.core.mountain_generator import get_global_scale, get_terrain_z
+
     gs = get_global_scale(seed)
     return get_terrain_z(x, y, seed, gs)
 

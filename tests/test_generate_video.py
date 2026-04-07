@@ -127,6 +127,14 @@ def test_build_task_supports_all_map_types(challenge_type: int) -> None:
     assert isinstance(task.moving_platform, bool)
 
 
+def test_build_task_uses_shared_moving_platform_resolver(monkeypatch) -> None:
+    monkeypatch.setattr(C, "resolve_moving_platform", lambda seed, challenge_type: seed == 404 and challenge_type == 2)
+
+    task = video_mod.build_task(seed=404, challenge_type=2)
+
+    assert task.moving_platform is True
+
+
 def test_build_task_warehouse_uses_current_world_ranges() -> None:
     task = video_mod.build_task(seed=323518, challenge_type=5)
 

@@ -241,8 +241,8 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
     """Return current map-generation parameters for *challenge_type*."""
     from swarm import constants as C
 
-    _MAP = {
-        1: dict(
+    if challenge_type == 1:
+        raw = dict(
             world_range=C.TYPE_1_WORLD_RANGE,
             r_min=C.TYPE_1_R_MIN,
             r_max=C.TYPE_1_R_MAX,
@@ -251,8 +251,9 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
             start_h_min=C.TYPE_1_START_H_MIN,
             start_h_max=C.TYPE_1_START_H_MAX,
             horizon=C.TYPE_1_HORIZON,
-        ),
-        2: dict(
+        )
+    elif challenge_type == 2:
+        raw = dict(
             world_range=C.TYPE_2_WORLD_RANGE,
             r_min=C.TYPE_2_R_MIN,
             r_max=C.TYPE_2_R_MAX,
@@ -261,8 +262,9 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
             start_h_min=C.TYPE_2_START_H_MIN,
             start_h_max=C.TYPE_2_START_H_MAX,
             horizon=C.TYPE_2_HORIZON,
-        ),
-        3: dict(
+        )
+    elif challenge_type == 3:
+        raw = dict(
             world_range=_get_type3_world_range(seed),
             r_min=C.TYPE_3_R_MIN,
             r_max=C.TYPE_3_R_MAX,
@@ -271,8 +273,9 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
             start_h_min=C.TYPE_3_START_H_MIN,
             start_h_max=C.TYPE_3_START_H_MAX,
             horizon=C.TYPE_3_HORIZON,
-        ),
-        4: dict(
+        )
+    elif challenge_type == 4:
+        raw = dict(
             world_range=C.TYPE_3_VILLAGE_RANGE,
             r_min=C.TYPE_3_R_MIN,
             r_max=C.TYPE_3_R_MAX,
@@ -281,8 +284,9 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
             start_h_min=C.TYPE_3_START_H_MIN,
             start_h_max=C.TYPE_3_START_H_MAX,
             horizon=C.TYPE_3_HORIZON,
-        ),
-        5: dict(
+        )
+    elif challenge_type == 5:
+        raw = dict(
             world_range_x=C.TYPE_4_WORLD_RANGE_X,
             world_range_y=C.TYPE_4_WORLD_RANGE_Y,
             r_min=C.TYPE_4_R_MIN,
@@ -292,8 +296,9 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
             start_h_min=C.TYPE_4_START_H_MIN,
             start_h_max=C.TYPE_4_START_H_MAX,
             horizon=C.TYPE_4_HORIZON,
-        ),
-        6: dict(
+        )
+    elif challenge_type == 6:
+        raw = dict(
             world_range=C.TYPE_6_WORLD_RANGE,
             r_min=C.TYPE_6_R_MIN,
             r_max=C.TYPE_6_R_MAX,
@@ -302,9 +307,18 @@ def _load_type_params(challenge_type: int, seed: int) -> Dict[str, float]:
             start_h_min=C.TYPE_6_START_H_MIN,
             start_h_max=C.TYPE_6_START_H_MAX,
             horizon=C.TYPE_6_HORIZON,
-        ),
-    }
-    raw = _MAP.get(challenge_type, _MAP[1])
+        )
+    else:
+        raw = dict(
+            world_range=C.TYPE_1_WORLD_RANGE,
+            r_min=C.TYPE_1_R_MIN,
+            r_max=C.TYPE_1_R_MAX,
+            h_min=C.TYPE_1_H_MIN,
+            h_max=C.TYPE_1_H_MAX,
+            start_h_min=C.TYPE_1_START_H_MIN,
+            start_h_max=C.TYPE_1_START_H_MAX,
+            horizon=C.TYPE_1_HORIZON,
+        )
     return {k: float(v) for k, v in raw.items()}
 
 
@@ -434,17 +448,15 @@ def build_task(seed: int, challenge_type: int) -> FlightTask:
     """Deterministically build a :class:`FlightTask` for *seed* / *challenge_type*."""
     import random as _random
     from swarm.constants import (
-        MOVING_PLATFORM_PROB,
-        MOVING_PLATFORM_SEED_OFFSET,
         SEARCH_RADIUS_MAX,
         SEARCH_RADIUS_MIN,
         SIM_DT,
+        resolve_moving_platform,
     )
 
     params = _load_type_params(challenge_type, seed)
     rng = _random.Random(seed)
     search_rng = _random.Random(seed + 888888)
-    platform_rng = _random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
 
     start = _sample_start(rng, params, challenge_type, seed)
     goal = _sample_goal(rng, start, params, challenge_type, seed)
@@ -456,9 +468,7 @@ def build_task(seed: int, challenge_type: int) -> FlightTask:
         horizon=float(params["horizon"]),
         challenge_type=int(challenge_type),
         search_radius=float(search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)),
-        moving_platform=bool(
-            platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
-        ),
+        moving_platform=resolve_moving_platform(seed, challenge_type),
     )
 
 
@@ -767,6 +777,9 @@ class OverviewCamera(_CameraBase):
         self._goal = np.asarray(goal)
         self._yaw = 0.0
 
+    def set_goal(self, goal: Tuple[float, float, float] | np.ndarray) -> None:
+        self._goal = np.asarray(goal, dtype=np.float32)
+
     def capture(self, drone_pos, drone_quat, rot, dt):
         mid = (drone_pos + self._goal) * 0.5
         span = float(np.linalg.norm(drone_pos - self._goal))
@@ -944,6 +957,11 @@ class _FlightRecorder:
         drone_pos = np.asarray(env._getDroneStateVector(0)[:3])
         drone_quat = np.asarray(env.quat[0])
         rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+        overview_camera = self._cameras.get("overview")
+        if isinstance(overview_camera, OverviewCamera):
+            overview_camera.set_goal(
+                getattr(env, "_current_platform_pos", getattr(env, "GOAL_POS", overview_camera._goal))
+            )
 
         while float(sim_time_sec) >= self._next_frame_t:
             for mode, cam in self._cameras.items():
@@ -1154,8 +1172,8 @@ def record_flight_benchmark(
         raise RuntimeError("Docker evaluator base image is not ready.")
 
     print(
-        f"[video] exact benchmark replay seed={seed}  type={challenge_type} "
-        f"modes={modes}"
+        f"[video] exact benchmark replay seed={seed}  type={challenge_type}  "
+        f"platform={'moving' if task.moving_platform else 'static'}  modes={modes}"
     )
     try:
         with _temporary_env(_video_benchmark_env_overrides()):
@@ -1326,6 +1344,7 @@ def record_flight(
     dist_m = math.dist(task.start, task.goal)
     print(
         f"[video] seed={seed}  type={challenge_type} ({type_label})  "
+        f"platform={'moving' if task.moving_platform else 'static'}  "
         f"dist={dist_m:.1f}m  modes={modes}"
     )
 
@@ -1359,6 +1378,11 @@ def record_flight(
                 drone_pos = np.asarray(env._getDroneStateVector(0)[:3])
                 drone_quat = np.asarray(env.quat[0])
                 rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+                overview_camera = cameras.get("overview")
+                if isinstance(overview_camera, OverviewCamera):
+                    overview_camera.set_goal(
+                        getattr(env, "_current_platform_pos", getattr(env, "GOAL_POS", task.goal))
+                    )
 
                 for mode, cam in cameras.items():
                     frame = cam.capture(drone_pos, drone_quat, rot, frame_dt)

@@ -790,6 +790,27 @@ class MovingDroneAviary(BaseRLAviary):
         info_after = self._computeInfo()
         return obs_after, info_after
 
+    def advance_simulation(self) -> None:
+        self._step_processed = False
+        self._update_moving_platform()
+        for _ in range(self.PYB_STEPS_PER_CTRL):
+            if (
+                self.PYB_STEPS_PER_CTRL > 1
+                and self.PHYSICS in [
+                    Physics.DYN,
+                    Physics.PYB_GND,
+                    Physics.PYB_DRAG,
+                    Physics.PYB_DW,
+                    Physics.PYB_GND_DRAG_DW,
+                ]
+            ):
+                self._updateAndStoreKinematicInformation()
+            if self.PHYSICS != Physics.DYN:
+                p.stepSimulation(physicsClientId=self.CLIENT)
+        self._updateAndStoreKinematicInformation()
+        self._process_step_updates()
+        self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
+
     def step(self, action):
         """Execute one control step with post-physics bookkeeping."""
         self._step_processed = False

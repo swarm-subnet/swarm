@@ -7,6 +7,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+import random
 
 # =============================================================================
 # EPOCH
@@ -313,6 +314,11 @@ MOVING_PLATFORM_PROB = {
     6: 0.00,
 }
 MOVING_PLATFORM_SEED_OFFSET = 555555
+
+
+def resolve_moving_platform(seed: int, challenge_type: int) -> bool:
+    platform_rng = random.Random((int(seed) + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
+    return platform_rng.random() < MOVING_PLATFORM_PROB.get(int(challenge_type), 0.0)
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

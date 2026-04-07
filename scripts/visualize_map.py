@@ -550,6 +550,15 @@ def _should_step_world(
     return (now - last_step_at) >= (1.0 / max(sim_fps, 0.1))
 
 
+def _advance_world(env, pybullet_module, position: np.ndarray, yaw: float) -> None:
+    advance_simulation = getattr(env, "advance_simulation", None)
+    if callable(advance_simulation):
+        advance_simulation()
+    else:
+        pybullet_module.stepSimulation(physicsClientId=env.getPyBulletClient())
+    _set_drone_pose(env, pybullet_module, position, yaw)
+
+
 def _print_controls(type_label: str, seed: int) -> None:
     print("=" * 72)
     print(" Swarm Map Visualizer")
@@ -854,8 +863,7 @@ def main(argv: Iterable[str] | None = None) -> None:
             _set_drone_pose(env, p, visualizer_position, visualizer_yaw)
 
             if _should_step_world(loop_now, last_step_at, sim_fps):
-                p.stepSimulation(physicsClientId=env.getPyBulletClient())
-                _set_drone_pose(env, p, visualizer_position, visualizer_yaw)
+                _advance_world(env, p, visualizer_position, visualizer_yaw)
                 last_step_at = loop_now
 
             current_pose = _capture_pose_snapshot(env, p)

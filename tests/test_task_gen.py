@@ -86,6 +86,18 @@ def test_task_for_seed_and_type_respects_moving_platform_override():
     assert task.moving_platform is True
 
 
+def test_task_for_seed_and_type_uses_shared_moving_platform_resolver(monkeypatch):
+    monkeypatch.setattr(
+        task_gen,
+        "resolve_moving_platform",
+        lambda seed, challenge_type: seed == 777 and challenge_type == 2,
+    )
+
+    task = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=777, challenge_type=2)
+
+    assert task.moving_platform is True
+
+
 def test_challenge_type_distribution_is_uniform():
     values = list(CHALLENGE_TYPE_DISTRIBUTION.values())
     assert len(values) == 6
@@ -95,7 +107,7 @@ def test_challenge_type_distribution_is_uniform():
 
 def test_random_task_can_be_forced_to_warehouse(monkeypatch):
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {5: 1.0})
-    monkeypatch.setattr(task_gen, "MOVING_PLATFORM_PROB", {5: 0.0})
+    monkeypatch.setattr(task_gen, "resolve_moving_platform", lambda *_args, **_kwargs: False)
     task = task_gen.random_task(sim_dt=0.02, seed=111)
 
     params = task_gen.get_type_params(5)
@@ -112,7 +124,7 @@ def test_random_task_can_be_forced_to_warehouse(monkeypatch):
 
 def test_random_task_type3_uses_terrain_surface(monkeypatch):
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {3: 1.0})
-    monkeypatch.setattr(task_gen, "MOVING_PLATFORM_PROB", {3: 0.0})
+    monkeypatch.setattr(task_gen, "resolve_moving_platform", lambda *_args, **_kwargs: False)
     task = task_gen.random_task(sim_dt=0.02, seed=321)
 
     sx, sy, sz = task.start
