@@ -1,0 +1,23 @@
+{
+  "cruise_speed_m_s": 2.4,
+  "climb_speed_m_s": 1.2,
+  "align_speed_m_s": 0.9,
+  "high_altitude_transit_speed_m_s": 1.4,
+  "transit_hover_clearance_m": 0.55,
+  "obstacle_distance_m": 3.8,
+  "recovery_speed_m_s": 0.95,
+  "recovery_hold_sec": 1.1,
+  "recovery_lateral_m": 2.6,
+  "recovery_forward_m": 3.6,
+  "recovery_climb_extra_m": 1.6,
+  "speed_limit_m_s": 3.6,
+  "max_speed_delta_norm_per_step": 0.05,
+  "max_vertical_speed_m_s": 0.9,
+  "max_aggressive_lateral_speed_m_s": 1.0,
+  "descend_speed_m_s": 0.38,
+  "sink_speed_m_s": 0.72,
+  "touchdown_speed_m_s": 0.22,
+  "static_settle_speed_m_s": 0.26,
+  "near_target_speed_floor_m_s": 0.42,
+  "near_target_speed_gain_m_s_per_m": 0.3
+}

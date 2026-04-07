@@ -36,18 +36,45 @@ def front_depth_m(depth: np.ndarray, patch_radius_px: int = 4) -> float:
     return float(np.min(depth_to_meters(depth[row : row + 1, c0:c1])))
 
 
-def choose_lateral_detour(depth: np.ndarray, hold_altitude: bool = True) -> np.ndarray:
+def choose_lateral_detour(
+    depth: np.ndarray,
+    *,
+    target_pixel_col: int | None = None,
+    blocked_distance_m: float = 1.8,
+    hold_altitude: bool = True,
+    num_sectors: int = 5,
+) -> np.ndarray:
     depth = np.squeeze(np.asarray(depth, dtype=np.float32))
     if depth.ndim != 2:
-        return np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
     depth_m = depth_to_meters(depth)
     _, width = depth_m.shape
-    third = max(1, width // 3)
-    left_clearance = float(np.mean(depth_m[:, :third]))
-    right_clearance = float(np.mean(depth_m[:, -third:]))
-    if right_clearance >= left_clearance:
-        return np.array([0.0, 1.0, 0.0 if hold_altitude else 0.05], dtype=np.float32)
-    return np.array([0.0, -1.0, 0.0 if hold_altitude else 0.05], dtype=np.float32)
+    target_pixel_col = int(np.clip(width // 2 if target_pixel_col is None else target_pixel_col, 0, width - 1))
+    sector_edges = np.linspace(0, width, max(2, num_sectors) + 1, dtype=int)
+    best_score = -float("inf")
+    best_theta = 0.0
+
+    for idx in range(len(sector_edges) - 1):
+        c0 = int(sector_edges[idx])
+        c1 = int(max(c0 + 1, sector_edges[idx + 1]))
+        sector = depth_m[:, c0:c1]
+        if sector.size == 0:
+            continue
+        mean_clearance = float(np.mean(sector))
+        p20_clearance = float(np.percentile(sector, 20.0))
+        center_col = 0.5 * (c0 + c1 - 1)
+        target_penalty = abs(center_col - target_pixel_col) / max(width * 0.5, 1.0)
+        blocked_penalty = max(0.0, blocked_distance_m - p20_clearance)
+        score = mean_clearance - 0.65 * target_penalty - 0.75 * blocked_penalty
+        if score > best_score:
+            best_score = score
+            col_norm = (center_col - (width - 1) * 0.5) / max((width - 1) * 0.5, 1.0)
+            best_theta = float(np.clip(col_norm, -1.0, 1.0)) * (DEFAULT_CAMERA_FOV_RAD * 0.42)
+
+    body_forward = max(0.45, math.cos(best_theta))
+    body_left = -math.sin(best_theta)
+    body_up = 0.0 if hold_altitude else 0.05
+    return normalize(np.array([body_forward, body_left, body_up], dtype=np.float32))
 
 
 def yaw_from_direction(direction: np.ndarray) -> float:

@@ -16,8 +16,8 @@ for root in (DEFAULT_MODEL_ROOT, REPO_ROOT):
 from training_env import make_training_env, task_from_payload
 from training_lib.bc import BehaviorCloningConfig, run_behavior_cloning
 from training_lib.common import ensure_dir, load_json, rollout_episode, save_json, seed_everything, summary_as_dict
-from training_lib.dataset import save_episode_dataset, validate_episode_dataset
-from training_lib.experts import PrivilegedExpertPolicy, load_expert_config
+from training_lib.dataset import DATASET_WEIGHTING_POLICIES, build_weighted_dataset_manifest, save_episode_dataset, validate_episode_dataset
+from training_lib.experts import ExpertIdentity, load_expert_config, make_expert_policy, map_category_label
 from training_lib.models import StudentInferencePolicy, load_checkpoint
 
 
@@ -39,6 +39,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bc-batch-size", type=int, default=16, help="Batch size for BC retraining.")
     parser.add_argument("--bc-learning-rate", type=float, default=3e-4, help="Learning rate for BC retraining.")
     parser.add_argument("--bc-max-episodes", type=int, default=None, help="Optional cap on episodes used during BC retraining.")
+    parser.add_argument(
+        "--dataset-weighting-policy",
+        choices=DATASET_WEIGHTING_POLICIES,
+        default="balanced_by_map_category",
+        help="How merged datasets are reweighted for BC retraining.",
+    )
+    parser.add_argument("--teacher-id", type=str, default="expert_shared")
+    parser.add_argument("--teacher-version", type=str, default="v0")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--random-seed", type=int, default=17)
     return parser.parse_args()
@@ -61,10 +69,17 @@ def main() -> None:
     ensure_dir(args.output_dir)
 
     manifest = load_json(args.curriculum_manifest)
-    expert = PrivilegedExpertPolicy(load_expert_config(args.expert_config))
+    expert_config = load_expert_config(args.expert_config)
+    expert_cache = {}
     current_checkpoint = Path(args.student_checkpoint)
     merged_dataset_root = ensure_dir(args.output_dir / "merged_dataset")
     copy_dataset_tree(args.base_dataset_root, merged_dataset_root)
+    merged_dataset_manifest_path = args.output_dir / "merged_dataset_sampling_manifest.json"
+    build_weighted_dataset_manifest(
+        merged_dataset_root,
+        weighting_policy=str(args.dataset_weighting_policy),
+        output_path=merged_dataset_manifest_path,
+    )
     source_episode_count = len(list(merged_dataset_root.rglob("*.npz")))
     stage_filter = set(args.stage_name) if args.stage_name else None
 
@@ -80,6 +95,17 @@ def main() -> None:
                 continue
             for payload in stage["splits"]["train"][: args.episodes_per_stage]:
                 task = task_from_payload(payload)
+                map_category = map_category_label(task.challenge_type, task.moving_platform)
+                if map_category not in expert_cache:
+                    expert_cache[map_category] = make_expert_policy(
+                        expert_config,
+                        identity=ExpertIdentity(
+                            teacher_id=str(args.teacher_id),
+                            teacher_version=str(args.teacher_version),
+                            map_category=map_category,
+                        ),
+                    )
+                expert = expert_cache[map_category]
                 env = make_training_env(task, gui=False, privileged=True)
                 try:
                     step_records, summary = rollout_episode(
@@ -109,18 +135,33 @@ def main() -> None:
                             }
                         )
 
-                    episode_name = f"{stage['stage_name']}_iter_{iteration:03d}_seed_{task.map_seed}"
-                    saved_path = save_episode_dataset(iteration_dataset_root, episode_name, relabeled_records, summary)
+                    episode_name = f"{map_category}_{args.teacher_id}_iter_{iteration:03d}_seed_{task.map_seed}"
+                    rollout_dir = ensure_dir(iteration_dataset_root / map_category / str(args.teacher_id))
+                    saved_path = save_episode_dataset(
+                        rollout_dir,
+                        episode_name,
+                        relabeled_records,
+                        summary,
+                        extra_metadata={
+                            "dataset_weight": 1.0,
+                            "teacher_id": str(args.teacher_id),
+                            "teacher_version": str(args.teacher_version),
+                            "map_category": map_category,
+                        },
+                    )
                     dataset_shapes = validate_episode_dataset(saved_path)
 
-                    merge_target = merged_dataset_root / stage["stage_name"] / saved_path.name
+                    merge_target = merged_dataset_root / saved_path.relative_to(iteration_dataset_root)
                     merge_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(saved_path, merge_target)
                     shutil.copy2(saved_path.with_suffix(".json"), merge_target.with_suffix(".json"))
 
                     row = summary_as_dict(summary)
                     row["stage_name"] = stage["stage_name"]
+                    row["map_category"] = map_category
                     row["iteration"] = iteration
+                    row["teacher_id"] = str(args.teacher_id)
+                    row["teacher_version"] = str(args.teacher_version)
                     row["merged_dataset_path"] = str(merge_target)
                     row["dataset_shapes"] = {key: list(shape) for key, shape in dataset_shapes.items()}
                     iteration_rows.append(row)
@@ -129,9 +170,15 @@ def main() -> None:
                 episode_index += 1
 
         bc_output_dir = ensure_dir(args.output_dir / f"iteration_{iteration:03d}" / "bc_retrain")
+        build_weighted_dataset_manifest(
+            merged_dataset_root,
+            weighting_policy=str(args.dataset_weighting_policy),
+            output_path=merged_dataset_manifest_path,
+        )
         bc_result = run_behavior_cloning(
             BehaviorCloningConfig(
                 dataset_root=str(merged_dataset_root),
+                dataset_manifest=str(merged_dataset_manifest_path),
                 output_dir=str(bc_output_dir),
                 model_config_path=str(args.model_config_path),
                 init_checkpoint=str(current_checkpoint),

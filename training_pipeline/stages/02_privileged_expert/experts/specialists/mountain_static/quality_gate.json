@@ -1,0 +1,5 @@
+{
+  "min_mean_score": 0.25,
+  "min_num_episodes": 10,
+  "min_success_rate": 0.5
+}

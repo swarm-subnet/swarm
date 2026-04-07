@@ -14,13 +14,14 @@ for root in (DEFAULT_MODEL_ROOT, REPO_ROOT):
         sys.path.insert(0, str(root))
 
 from training_lib.bc import BehaviorCloningConfig, run_behavior_cloning
-from training_lib.common import ensure_dir
+from training_lib.common import ensure_dir, load_json
 from training_lib.dataset import list_episode_files, validate_episode_dataset
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "03_dataset_and_labels" / "train")
+    parser.add_argument("--dataset-manifest", type=Path, default=None, help="Optional weighted dataset manifest built from phase 3.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "05_behavior_cloning")
     parser.add_argument("--model-config-path", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "04_student_model" / "student_model_config.json")
     parser.add_argument("--init-checkpoint", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "04_student_model" / "student_init.pt")
@@ -31,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--max-episodes", type=int, default=None)
+    parser.add_argument("--early-stopping-patience", type=int, default=5)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=3)
+    parser.add_argument("--log-every-batches", type=int, default=0)
     return parser.parse_args()
 
 
@@ -38,13 +43,18 @@ def main() -> None:
     args = parse_args()
     ensure_dir(args.output_dir)
     dataset_root = Path(args.dataset_root)
-    episode_files = list_episode_files(dataset_root)
+    if args.dataset_manifest is not None:
+        manifest_payload = load_json(args.dataset_manifest)
+        episode_files = [Path(row["episode_path"]) for row in manifest_payload.get("episodes", [])]
+    else:
+        episode_files = list_episode_files(dataset_root)
     if not episode_files:
         raise FileNotFoundError(f"No episode files found under {dataset_root}")
 
     sample_shapes = validate_episode_dataset(episode_files[0])
     smoke_manifest = {
         "dataset_root": str(dataset_root),
+        "dataset_manifest": str(args.dataset_manifest) if args.dataset_manifest else None,
         "episode_count": len(episode_files),
         "sample_episode": str(episode_files[0]),
         "sample_shapes": {key: list(shape) for key, shape in sample_shapes.items()},
@@ -53,6 +63,7 @@ def main() -> None:
 
     config = BehaviorCloningConfig(
         dataset_root=str(args.dataset_root),
+        dataset_manifest=str(args.dataset_manifest) if args.dataset_manifest else None,
         output_dir=str(args.output_dir),
         model_config_path=str(args.model_config_path),
         init_checkpoint=str(args.init_checkpoint) if args.init_checkpoint else None,
@@ -63,6 +74,10 @@ def main() -> None:
         learning_rate=args.learning_rate,
         device=args.device,
         max_episodes=args.max_episodes,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_min_delta=args.early_stopping_min_delta,
+        early_stopping_min_epochs=args.early_stopping_min_epochs,
+        log_every_batches=args.log_every_batches,
     )
     result = run_behavior_cloning(config)
     with (args.output_dir / "bc_result.json").open("w", encoding="utf-8") as handle:

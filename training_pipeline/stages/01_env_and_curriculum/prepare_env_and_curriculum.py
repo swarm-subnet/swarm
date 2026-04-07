@@ -41,16 +41,20 @@ from training_env import (
     task_from_payload,
 )
 from training_lib.common import ensure_dir, load_json, save_json, seed_everything
+from swarm.constants import CHALLENGE_TYPE_DISTRIBUTION, MOVING_PLATFORM_PROB
 
 SPLIT_ORDER = ("train", "val", "test")
 STAGE_DESCRIPTIONS = {
-    "open_static": "Single-type warm-up on the open terrain map with a fixed landing objective.",
-    "city_forest_static": "Static-goal obstacle curriculum over dense outdoor maps.",
-    "mountain_village_static": "Static-goal terrain curriculum over elevation-heavy outdoor maps.",
-    "warehouse_static": "Indoor static-goal curriculum for tight obstacle structure and height changes.",
-    "mixed_static": "Type-balanced static-goal curriculum across all six map families.",
-    "mixed_dynamic": "Type-balanced moving-platform curriculum across the map families that support moving goals.",
-    "benchmark_like": "Type-balanced curriculum that keeps exact map-type control while delegating moving/static resolution to the repo generator.",
+    "city_static": "Type-1 city tasks with a fixed landing objective.",
+    "city_dynamic": "Type-1 city tasks with moving-platform contact objectives.",
+    "open_static": "Type-2 open-terrain tasks with a fixed landing objective.",
+    "open_dynamic": "Type-2 open-terrain tasks with moving-platform contact objectives.",
+    "mountain_static": "Type-3 mountain tasks with a fixed landing objective.",
+    "mountain_dynamic": "Type-3 mountain tasks with moving-platform contact objectives.",
+    "village_static": "Type-4 village tasks with a fixed landing objective.",
+    "village_dynamic": "Type-4 village tasks with moving-platform contact objectives.",
+    "warehouse_static": "Type-5 warehouse tasks with a fixed landing objective.",
+    "forest_static": "Type-6 forest tasks with a fixed landing objective.",
 }
 PRIVILEGED_KEYS = {
     "adjusted_goal",
@@ -81,6 +85,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-per-stage", type=int, default=32)
     parser.add_argument("--val-per-stage", type=int, default=8)
     parser.add_argument("--test-per-stage", type=int, default=8)
+    parser.add_argument("--train-total", type=int, default=None)
+    parser.add_argument("--val-total", type=int, default=None)
+    parser.add_argument("--test-total", type=int, default=None)
+    parser.add_argument(
+        "--count-mode",
+        choices=("uniform", "validator_weighted"),
+        default="validator_weighted",
+        help=(
+            "uniform uses the same per-stage count for every category; "
+            "validator_weighted allocates split totals by challenge-type "
+            "distribution and MOVING_PLATFORM_PROB."
+        ),
+    )
     parser.add_argument("--seed-start", type=int, default=1000)
     parser.add_argument("--seed-stride", type=int, default=10000)
     parser.add_argument("--sim-dt", type=float, default=DEFAULT_SIM_DT)
@@ -137,6 +154,89 @@ def split_counts_from_args(args: argparse.Namespace) -> dict[str, int]:
         "train": int(args.train_per_stage),
         "val": int(args.val_per_stage),
         "test": int(args.test_per_stage),
+    }
+
+
+def split_totals_from_args(args: argparse.Namespace) -> dict[str, int]:
+    uniform_counts = split_counts_from_args(args)
+    totals: dict[str, int] = {}
+    for split_name in SPLIT_ORDER:
+        explicit_total = getattr(args, f"{split_name}_total")
+        if explicit_total is not None:
+            totals[split_name] = int(explicit_total)
+        else:
+            totals[split_name] = int(uniform_counts[split_name]) * len(CURRICULUM_STAGES)
+    return totals
+
+
+def stage_sampling_weight(stage) -> float:
+    weight = 0.0
+    for challenge_type in stage.challenge_types:
+        p_type = float(CHALLENGE_TYPE_DISTRIBUTION[int(challenge_type)])
+        p_move = float(MOVING_PLATFORM_PROB.get(int(challenge_type), 0.0))
+        if stage.moving_platform is True:
+            weight += p_type * p_move
+        elif stage.moving_platform is False:
+            weight += p_type * (1.0 - p_move)
+        else:
+            weight += p_type
+    return float(weight)
+
+
+def allocate_weighted_counts(total: int, *, stages: tuple) -> dict[str, int]:
+    if total <= 0:
+        return {stage.name: 0 for stage in stages}
+
+    raw_weights = {stage.name: stage_sampling_weight(stage) for stage in stages}
+    weight_sum = float(sum(raw_weights.values()))
+    if weight_sum <= 0.0:
+        raise ValueError("Weighted count allocation requires a positive total stage weight.")
+
+    expected = {
+        stage.name: float(total) * raw_weights[stage.name] / weight_sum
+        for stage in stages
+    }
+    counts = {name: int(np.floor(value)) for name, value in expected.items()}
+    remaining = int(total - sum(counts.values()))
+    order = sorted(
+        expected,
+        key=lambda name: (
+            -(expected[name] - counts[name]),
+            -raw_weights[name],
+            name,
+        ),
+    )
+    for name in order[:remaining]:
+        counts[name] += 1
+    return counts
+
+
+def stage_split_counts_from_args(args: argparse.Namespace) -> dict[str, dict[str, int]]:
+    if args.count_mode == "uniform":
+        uniform_counts = split_counts_from_args(args)
+        return {
+            stage.name: {split_name: int(uniform_counts[split_name]) for split_name in SPLIT_ORDER}
+            for stage in CURRICULUM_STAGES
+        }
+
+    split_totals = split_totals_from_args(args)
+    split_allocations = {
+        split_name: allocate_weighted_counts(int(split_totals[split_name]), stages=CURRICULUM_STAGES)
+        for split_name in SPLIT_ORDER
+    }
+    return {
+        stage.name: {
+            split_name: int(split_allocations[split_name][stage.name])
+            for split_name in SPLIT_ORDER
+        }
+        for stage in CURRICULUM_STAGES
+    }
+
+
+def aggregate_split_totals(stage_split_counts: dict[str, dict[str, int]]) -> dict[str, int]:
+    return {
+        split_name: int(sum(stage_split_counts[stage.name][split_name] for stage in CURRICULUM_STAGES))
+        for split_name in SPLIT_ORDER
     }
 
 
@@ -263,7 +363,10 @@ def build_stage_manifest(
     }
 
 
-def aggregate_manifest_summary(stages: list[dict[str, Any]], split_counts: dict[str, int]) -> dict[str, Any]:
+def aggregate_manifest_summary(
+    stages: list[dict[str, Any]],
+    stage_split_counts: dict[str, dict[str, int]],
+) -> dict[str, Any]:
     type_histogram = empty_type_histogram(CHALLENGE_TYPES)
     moving_histogram = empty_moving_histogram()
     total_tasks = 0
@@ -291,17 +394,22 @@ def aggregate_manifest_summary(stages: list[dict[str, Any]], split_counts: dict[
         "total_by_stage": total_by_stage,
         "challenge_type_histogram": type_histogram,
         "moving_platform_histogram": moving_histogram,
-        "per_stage_split_counts": dict(split_counts),
+        "split_totals": aggregate_split_totals(stage_split_counts),
+        "per_stage_split_counts": {
+            stage.name: dict(stage_split_counts[stage.name])
+            for stage in CURRICULUM_STAGES
+        },
     }
 
 
 def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
-    split_counts = split_counts_from_args(args)
+    stage_split_counts = stage_split_counts_from_args(args)
+    split_totals = aggregate_split_totals(stage_split_counts)
     stages = [
         build_stage_manifest(
             stage_index=stage_index,
             stage=stage,
-            split_counts=split_counts,
+            split_counts=stage_split_counts[stage.name],
             seed_start=args.seed_start,
             seed_stride=args.seed_stride,
             sim_dt=args.sim_dt,
@@ -318,10 +426,15 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "seed_start": args.seed_start,
             "seed_stride": args.seed_stride,
             "random_seed": args.random_seed,
-            "split_counts": split_counts,
+            "count_mode": args.count_mode,
+            "split_totals": split_totals,
+            "stage_split_counts": {
+                stage.name: dict(stage_split_counts[stage.name])
+                for stage in CURRICULUM_STAGES
+            },
             "smoke_test_per_split": args.smoke_test_per_split,
         },
-        "summary": aggregate_manifest_summary(stages, split_counts),
+        "summary": aggregate_manifest_summary(stages, stage_split_counts),
         "stage_count": len(stages),
         "stages": stages,
     }
@@ -483,13 +596,24 @@ def validate_stage_manifest(
 
 
 def validate_manifest(manifest: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    split_counts = split_counts_from_args(args)
-    require(args.seed_stride >= sum(split_counts.values()), "--seed-stride is too small for the split sizes.")
+    stage_split_counts = stage_split_counts_from_args(args)
+    split_totals = aggregate_split_totals(stage_split_counts)
+    max_stage_total = max(sum(stage_split_counts[stage.name].values()) for stage in CURRICULUM_STAGES)
+    require(args.seed_stride >= max_stage_total, "--seed-stride is too small for the split sizes.")
     require(manifest["stage_count"] == len(CURRICULUM_STAGES), "Stage count mismatch.")
     require(len(manifest["stages"]) == len(CURRICULUM_STAGES), "Stage list length mismatch.")
     require(
-        manifest["generator"]["split_counts"] == split_counts,
-        "Manifest split counts do not match CLI arguments.",
+        manifest["generator"]["count_mode"] == args.count_mode,
+        "Manifest count mode does not match CLI arguments.",
+    )
+    require(
+        manifest["generator"]["split_totals"] == split_totals,
+        "Manifest split totals do not match CLI arguments.",
+    )
+    require(
+        manifest["generator"]["stage_split_counts"]
+        == {stage.name: dict(stage_split_counts[stage.name]) for stage in CURRICULUM_STAGES},
+        "Manifest stage split counts do not match CLI arguments.",
     )
     require(float(manifest["generator"]["sim_dt"]) == float(args.sim_dt), "sim_dt mismatch.")
     require(
@@ -505,7 +629,7 @@ def validate_manifest(manifest: dict[str, Any], args: argparse.Namespace) -> dic
         validate_stage_manifest(
             stage_manifest,
             stage=stage,
-            split_counts=split_counts,
+            split_counts=stage_split_counts[stage.name],
             seed_start=args.seed_start,
             seed_stride=args.seed_stride,
             sim_dt=args.sim_dt,
@@ -516,7 +640,7 @@ def validate_manifest(manifest: dict[str, Any], args: argparse.Namespace) -> dic
                 require(seed not in all_seen_seeds, f"Seed {seed} is reused across stages.")
                 all_seen_seeds.add(seed)
 
-    expected_summary = aggregate_manifest_summary(manifest["stages"], split_counts)
+    expected_summary = aggregate_manifest_summary(manifest["stages"], stage_split_counts)
     require(manifest["summary"] == expected_summary, "Manifest summary does not match the task contents.")
     require(
         manifest["summary"]["total_tasks"] == len(all_seen_seeds),
@@ -659,10 +783,18 @@ def main() -> None:
     args = parse_args()
     seed_everything(args.random_seed)
 
-    split_counts = split_counts_from_args(args)
-    for split_name, count in split_counts.items():
-        require(count >= 0, f"{split_name} split size must be non-negative.")
-    require(sum(split_counts.values()) > 0, "At least one task per stage is required.")
+    uniform_counts = split_counts_from_args(args)
+    split_totals = split_totals_from_args(args)
+    stage_split_counts = stage_split_counts_from_args(args)
+    for split_name, count in uniform_counts.items():
+        require(count >= 0, f"{split_name} per-stage count must be non-negative.")
+    for split_name, total in split_totals.items():
+        require(total >= 0, f"{split_name} split total must be non-negative.")
+    require(sum(split_totals.values()) > 0, "At least one task is required across all splits.")
+    require(
+        args.seed_stride >= max(sum(stage_split_counts[stage.name].values()) for stage in CURRICULUM_STAGES),
+        "--seed-stride is too small for the per-stage split totals.",
+    )
     require(args.seed_start >= 0, "--seed-start must be non-negative.")
     require(args.seed_stride > 0, "--seed-stride must be positive.")
     require(args.sim_dt > 0.0, "--sim-dt must be positive.")

@@ -1,12 +1,12 @@
 """Shared training utilities for the Swarm training pipeline."""
 
 from .common import EpisodeSummary, ensure_dir, load_json, rollout_episode, save_json, seed_everything
-from .dataset import MODE_TO_ID, list_episode_files, make_perception_labels, save_episode_dataset
-from .experts import PrivilegedExpertConfig, PrivilegedExpertPolicy, load_expert_config, save_expert_config
+from .dataset import list_episode_files, make_perception_labels, save_episode_dataset
+from .experts import EXPERT_MODE_TO_ID, PrivilegedExpertConfig, PrivilegedExpertPolicy, load_expert_config, save_expert_config
 
 __all__ = [
     "EpisodeSummary",
-    "MODE_TO_ID",
+    "EXPERT_MODE_TO_ID",
     "PrivilegedExpertConfig",
     "PrivilegedExpertPolicy",
     "ensure_dir",

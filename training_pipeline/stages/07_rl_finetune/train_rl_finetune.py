@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--curriculum-manifest", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "01_env_and_curriculum" / "curriculum_manifest.json")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "07_rl_finetune")
     parser.add_argument("--split", choices=["train", "val"], default="train")
-    parser.add_argument("--stage-name", type=str, default="benchmark_like")
+    parser.add_argument("--stage-name", type=str, default="open_static")
     parser.add_argument("--total-timesteps", type=int, default=100_000)
     parser.add_argument(
         "--trainer",

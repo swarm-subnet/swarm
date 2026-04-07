@@ -1,0 +1,74 @@
+{
+  "action_dim": 5,
+  "modes": [
+    {
+      "id": 0,
+      "name": "idle"
+    },
+    {
+      "id": 1,
+      "name": "climb_to_cruise"
+    },
+    {
+      "id": 2,
+      "name": "transit_to_hover"
+    },
+    {
+      "id": 3,
+      "name": "direct_hover"
+    },
+    {
+      "id": 4,
+      "name": "hover_align"
+    },
+    {
+      "id": 5,
+      "name": "avoid_obstacle"
+    },
+    {
+      "id": 6,
+      "name": "recover_stall"
+    },
+    {
+      "id": 7,
+      "name": "recover_tilt"
+    },
+    {
+      "id": 8,
+      "name": "descend_static"
+    },
+    {
+      "id": 9,
+      "name": "sink_static"
+    },
+    {
+      "id": 10,
+      "name": "landing_commit_static"
+    },
+    {
+      "id": 11,
+      "name": "touchdown_static"
+    },
+    {
+      "id": 12,
+      "name": "hold_contact_static"
+    },
+    {
+      "id": 13,
+      "name": "settle_static"
+    },
+    {
+      "id": 14,
+      "name": "match_velocity_moving"
+    },
+    {
+      "id": 15,
+      "name": "descend_moving"
+    },
+    {
+      "id": 16,
+      "name": "commit_contact_moving"
+    }
+  ],
+  "version": "1"
+}

@@ -123,7 +123,6 @@ def main() -> None:
         "num_workers": int(args.num_workers),
         "gui": bool(args.gui),
         "fast_privileged": bool(args.fast_privileged),
-        "skip_depth_render": bool(args.skip_depth_render) or bool(args.fast_privileged),
         "disable_depth_obstacle_checks": bool(args.disable_depth_obstacle_checks) or bool(args.fast_privileged),
         "privileged_raycast_stride": max(int(args.privileged_raycast_stride), 10) if args.fast_privileged else int(args.privileged_raycast_stride),
         "eval_command": command,

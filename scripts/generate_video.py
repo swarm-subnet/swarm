@@ -64,18 +64,56 @@ def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
     return Path(directory) / f"seed{seed}_{label}_actions.json"
 
 
+def _task_payload(task: Any) -> Dict[str, Any]:
+    return {
+        "map_seed": int(task.map_seed),
+        "start": [float(v) for v in task.start],
+        "goal": [float(v) for v in task.goal],
+        "sim_dt": float(task.sim_dt),
+        "horizon": float(task.horizon),
+        "challenge_type": int(task.challenge_type),
+        "search_radius": float(getattr(task, "search_radius", 10.0)),
+        "moving_platform": bool(getattr(task, "moving_platform", False)),
+        "version": str(getattr(task, "version", "1")),
+    }
+
+
+def _task_from_payload(payload: Dict[str, Any]) -> FlightTask:
+    return FlightTask(
+        map_seed=int(payload["map_seed"]),
+        start=tuple(float(v) for v in payload["start"]),
+        goal=tuple(float(v) for v in payload["goal"]),
+        sim_dt=float(payload["sim_dt"]),
+        horizon=float(payload["horizon"]),
+        challenge_type=int(payload["challenge_type"]),
+        search_radius=float(payload.get("search_radius", 10.0)),
+        moving_platform=bool(payload.get("moving_platform", False)),
+        version=str(payload.get("version", "1")),
+    )
+
+
 def _save_action_log(
-    path: Path, seed: int, challenge_type: int, actions: List[List[float]],
+    path: Path,
+    seed: int,
+    challenge_type: int,
+    actions: List[List[float]],
+    *,
+    task: Optional[Any] = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        json.dump({"seed": seed, "challenge_type": challenge_type, "actions": actions}, f)
+        payload = {"seed": seed, "challenge_type": challenge_type, "actions": actions}
+        if task is not None:
+            payload["task"] = _task_payload(task)
+        json.dump(payload, f)
 
 
-def _load_action_log(path: Path) -> List[np.ndarray]:
+def _load_action_log(path: Path) -> Tuple[List[np.ndarray], Optional[FlightTask]]:
     with open(path, "r") as f:
         data = json.load(f)
-    return [np.asarray(a, dtype=np.float32) for a in data["actions"]]
+    task_payload = data.get("task")
+    task = _task_from_payload(task_payload) if isinstance(task_payload, dict) else None
+    return [np.asarray(a, dtype=np.float32) for a in data["actions"]], task
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1179,7 +1217,7 @@ def record_flight_benchmark(
         )
         if save_actions_dir is not None and recorded_actions:
             ap = _action_log_path(save_actions_dir, seed, challenge_type)
-            _save_action_log(ap, seed, challenge_type, recorded_actions)
+            _save_action_log(ap, seed, challenge_type, recorded_actions, task=task)
             print(f"  actions    {ap.name}  ({len(recorded_actions)} steps)")
 
         status = _outcome_label(bool(result.success))
@@ -1262,6 +1300,16 @@ def record_flight(
 
     # --- environment ----------------------------------------------------
     task = build_task(seed, challenge_type)
+    replay_actions: Optional[List[np.ndarray]] = None
+    if replay_actions_dir is not None:
+        replay_path = _action_log_path(replay_actions_dir, seed, challenge_type)
+        replay_actions, replay_task = _load_action_log(replay_path)
+        if replay_task is not None:
+            task = replay_task
+        print(
+            f"[video] replaying {len(replay_actions)} recorded actions"
+            + (" using embedded task metadata" if replay_task is not None else "")
+        )
     _ensure_local_ansible_temp()
     from swarm.utils.env_factory import make_env
 
@@ -1271,11 +1319,6 @@ def record_flight(
     act_lo = env.action_space.low.flatten()
     act_hi = env.action_space.high.flatten()
 
-    replay_actions: Optional[List[np.ndarray]] = None
-    if replay_actions_dir is not None:
-        replay_path = _action_log_path(replay_actions_dir, seed, challenge_type)
-        replay_actions = _load_action_log(replay_path)
-        print(f"[video] replaying {len(replay_actions)} recorded actions")
     recorded_actions: List[List[float]] = []
     replay_idx = 0
 
@@ -1403,7 +1446,7 @@ def record_flight(
 
         if save_actions_dir is not None and recorded_actions:
             ap = _action_log_path(save_actions_dir, seed, challenge_type)
-            _save_action_log(ap, seed, challenge_type, recorded_actions)
+            _save_action_log(ap, seed, challenge_type, recorded_actions, task=task)
             print(f"  actions    {ap.name}  ({len(recorded_actions)} steps)")
 
         # cleanup extraction directory

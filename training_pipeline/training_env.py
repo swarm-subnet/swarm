@@ -60,13 +60,16 @@ class CurriculumStage:
 
 
 CURRICULUM_STAGES: tuple[CurriculumStage, ...] = (
+    CurriculumStage("city_static", (1,), moving_platform=False),
+    CurriculumStage("city_dynamic", (1,), moving_platform=True),
     CurriculumStage("open_static", (2,), moving_platform=False),
-    CurriculumStage("city_forest_static", (1, 6), moving_platform=False),
-    CurriculumStage("mountain_village_static", (3, 4), moving_platform=False),
+    CurriculumStage("open_dynamic", (2,), moving_platform=True),
+    CurriculumStage("mountain_static", (3,), moving_platform=False),
+    CurriculumStage("mountain_dynamic", (3,), moving_platform=True),
+    CurriculumStage("village_static", (4,), moving_platform=False),
+    CurriculumStage("village_dynamic", (4,), moving_platform=True),
     CurriculumStage("warehouse_static", (5,), moving_platform=False),
-    CurriculumStage("mixed_static", CHALLENGE_TYPES, moving_platform=False),
-    CurriculumStage("mixed_dynamic", (1, 2, 3, 4), moving_platform=True),
-    CurriculumStage("benchmark_like", CHALLENGE_TYPES, moving_platform=None),
+    CurriculumStage("forest_static", (6,), moving_platform=False),
 )
 
 
@@ -339,6 +342,9 @@ class PrivilegedTrainingWrapper(gym.Wrapper):
             "planner": heavy.get("planner", {}),
             "time_alive": float(getattr(self.env, "_time_alive", 0.0)),
             "landing_stable_time": float(getattr(self.env, "_landing_stable_time", 0.0)),
+            "platform_contact": bool(getattr(self.env, "_platform_contact", False)),
+            "ever_platform_contact": bool(getattr(self.env, "_ever_platform_contact", False)),
+            "platform_contact_steps": int(getattr(self.env, "_platform_contact_steps", 0)),
             "success": bool(getattr(self.env, "_success", False)),
             "collision": bool(getattr(self.env, "_collision", False)),
         }

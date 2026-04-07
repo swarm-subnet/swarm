@@ -10,6 +10,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 import multiprocessing as mp
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 import statistics
 import sys
 import threading
+import time
 import traceback
 from typing import Any, Iterable
 
@@ -32,7 +34,16 @@ for root in (DEFAULT_MODEL_ROOT, REPO_ROOT):
 from training_env import make_training_env
 from training_env import task_from_payload
 from training_lib.common import ensure_dir, load_json, save_json, seed_everything
-from training_lib.experts import PrivilegedExpertConfig, make_expert_policy, save_expert_config
+from training_lib.experts import (
+    PrivilegedExpertConfig,
+    ExpertIdentity,
+    build_specialist_policy,
+    evaluate_quality_gate,
+    load_quality_gate,
+    make_expert_policy,
+    map_category_label,
+    save_expert_config,
+)
 from progressive_curriculum import (
     PROGRESSIVE_STATIC_STAGES,
     ExpertCurriculumStage,
@@ -64,6 +75,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--curriculum-manifest", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "01_env_and_curriculum" / "curriculum_manifest.json")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_MODEL_ROOT / "artifacts" / "02_privileged_expert")
+    parser.add_argument("--expert-registry", type=Path, default=None, help="Optional specialist registry for category-specific expert config selection.")
+    parser.add_argument("--map-category", type=str, default=None, help="Required with --expert-registry.")
     parser.add_argument("--profile", type=str, choices=tuple(PROFILE_DEFAULTS.keys()), default="debug")
     parser.add_argument("--task-source", type=str, choices=("manifest", "custom_radius", "task_list"), default="manifest")
     parser.add_argument("--task-list-path", type=Path, default=None, help="JSON file with explicit task rows discovered for stage-02 curricula.")
@@ -110,6 +123,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--radius-min-m", type=float, default=None)
     parser.add_argument("--radius-max-m", type=float, default=None)
     parser.add_argument("--curriculum-moving-platform", action="store_true")
+    parser.add_argument("--teacher-id", type=str, default="expert_shared")
+    parser.add_argument("--teacher-version", type=str, default="v0")
     return parser.parse_args()
 
 
@@ -264,14 +279,31 @@ def challenge_type_label(challenge_type: int) -> str:
     return CHALLENGE_TYPE_LABELS.get(int(challenge_type), f"type_{challenge_type}")
 
 
+def map_category_label(challenge_type: int, moving_platform: bool) -> str:
+    motion = "dynamic" if bool(moving_platform) else "static"
+    return f"{challenge_type_label(int(challenge_type))}_{motion}"
+
+
 def infer_failure_bucket(row: dict[str, Any]) -> str:
     if row["success"]:
         return "success"
     if row["collision"]:
+        if row["moving_platform"] and row.get("ever_platform_contact", False):
+            return "contact_collision"
         return "collision"
     if row["termination_reason"] == "tilt_limit":
         return "tilt_limit"
     if row["termination_reason"] in {"timeout", "max_steps"}:
+        if row["moving_platform"]:
+            if row.get("ever_platform_contact", False):
+                return "contact_timeout"
+            if row["min_xy_distance_to_platform_m"] <= 0.30:
+                return "missed_contact_timeout"
+            if row["min_distance_to_platform_m"] <= 2.0:
+                return "near_goal_timeout"
+            if row["progress_ratio"] < 0.25:
+                return "low_progress_timeout"
+            return "far_timeout"
         if row["min_distance_to_platform_m"] <= 1.0 and row["max_landing_stable_time_sec"] > 0.0:
             return "unstable_touchdown"
         if row["min_distance_to_platform_m"] <= 2.0:
@@ -298,6 +330,7 @@ def format_episode_summary(row: dict[str, Any], *, episode_number: int, total_ep
         f"steps={row['steps']} "
         f"score={row['score']:.3f} "
         f"final_dist={row['final_distance_to_platform_m']:.2f}m "
+        f"min_xy={row['min_xy_distance_to_platform_m']:.2f}m "
         f"min_dist={row['min_distance_to_platform_m']:.2f}m "
         f"progress={row['progress_toward_platform_m']:.2f}m "
         f"stable={row['max_landing_stable_time_sec']:.2f}s"
@@ -338,6 +371,8 @@ def run_episode(
     action_jerk_max = 0.0
     line_of_sight_steps = 0
     max_landing_stable = float(info.get("landing_stable_time", 0.0))
+    ever_platform_contact = bool(info.get("platform_contact", False) or info.get("ever_platform_contact", False))
+    max_platform_contact_steps = int(info.get("platform_contact_steps", 0))
     steps = 0
     terminated = False
     truncated = False
@@ -390,6 +425,10 @@ def run_episode(
         min_xy_distance = min(min_xy_distance, float(privileged["xy_distance_to_platform"]))
         line_of_sight_steps += int(bool(privileged["line_of_sight_to_platform"]))
         max_landing_stable = max(max_landing_stable, float(next_info.get("landing_stable_time", 0.0)))
+        ever_platform_contact = ever_platform_contact or bool(
+            next_info.get("platform_contact", False) or next_info.get("ever_platform_contact", False)
+        )
+        max_platform_contact_steps = max(max_platform_contact_steps, int(next_info.get("platform_contact_steps", 0)))
 
         observation = next_observation
         info = next_info
@@ -408,6 +447,7 @@ def run_episode(
         step_bar.close()
 
     final_privileged = dict(info["privileged"])
+    final_metadata = dict(policy.get_last_metadata())
     final_state = np.asarray(observation["state"], dtype=np.float32).reshape(-1)
     final_pos = final_state[0:3]
     final_rpy = final_state[3:6]
@@ -443,8 +483,15 @@ def run_episode(
         "seed": int(seed),
         "challenge_type": int(final_privileged["challenge_type"]),
         "moving_platform": bool(final_privileged["moving_platform"]),
+        "map_category": map_category_label(
+            challenge_type=int(final_privileged["challenge_type"]),
+            moving_platform=bool(final_privileged["moving_platform"]),
+        ),
+        "teacher_id": str(final_metadata.get("teacher_id", "expert_shared")),
+        "teacher_version": str(final_metadata.get("teacher_version", "v0")),
         "success": bool(info.get("success", False)),
         "collision": bool(info.get("collision", False)),
+        "ever_platform_contact": bool(ever_platform_contact),
         "termination_reason": termination_reason,
         "steps": int(steps),
         "total_reward": float(total_reward),
@@ -465,6 +512,7 @@ def run_episode(
         "path_efficiency": float(path_efficiency),
         "line_of_sight_fraction": float(line_of_sight_steps / max(steps, 1)),
         "max_landing_stable_time_sec": float(max_landing_stable),
+        "max_platform_contact_time_sec": float(max_platform_contact_steps) * float(task.sim_dt),
         "final_relative_xy_speed_m_s": float(rel_vxy),
         "final_vertical_speed_m_s": float(abs(final_vel[2])),
         "mean_action_jerk": float(action_jerk_sum / max(steps - 1, 1)),
@@ -581,6 +629,37 @@ def maybe_save_comparison(
     save_json(output_dir / "expert_eval_comparison.json", comparison)
 
 
+def build_map_category_report(by_map_category: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    report_rows: list[dict[str, Any]] = []
+    for map_category, metrics in sorted(by_map_category.items()):
+        report_rows.append(
+            {
+                "map_category": map_category,
+                "num_episodes": int(metrics["num_episodes"]),
+                "success_rate": float(metrics["success_rate"]),
+                "mean_score": float(metrics["mean_score"]),
+                "mean_final_distance_to_platform_m": float(metrics["mean_final_distance_to_platform_m"]),
+                "mean_steps": float(metrics["mean_steps"]),
+            }
+        )
+    return report_rows
+
+
+def print_map_category_report(report_rows: list[dict[str, Any]]) -> None:
+    if not report_rows:
+        return
+    print("Per-map-category report:")
+    for row in report_rows:
+        print(
+            f"  {row['map_category']}: "
+            f"episodes={row['num_episodes']} "
+            f"success_rate={row['success_rate']:.3f} "
+            f"mean_score={row['mean_score']:.3f} "
+            f"mean_final_dist={row['mean_final_distance_to_platform_m']:.2f}m "
+            f"mean_steps={row['mean_steps']:.1f}"
+        )
+
+
 def main() -> None:
     install_monitor_eof_suppression()
     args = parse_args()
@@ -592,12 +671,33 @@ def main() -> None:
     if args.num_workers > 1 and args.gui:
         raise ValueError("--num-workers > 1 is not compatible with --gui")
 
-    config = build_config(args)
+    specialist_spec = None
+    if args.expert_registry is not None:
+        if not args.map_category:
+            raise ValueError("--expert-registry requires --map-category")
+        policy, specialist_spec = build_specialist_policy(
+            registry_path=args.expert_registry,
+            map_category=args.map_category,
+        )
+        config = policy.config
+        expert_identity = asdict(policy.identity)
+    else:
+        config = build_config(args)
+        policy = make_expert_policy(
+            config,
+            identity=ExpertIdentity(
+                teacher_id=str(args.teacher_id),
+                teacher_version=str(args.teacher_version),
+                map_category=str(args.map_category or "global"),
+            ),
+        )
+        expert_identity = asdict(policy.identity)
     save_expert_config(args.output_dir / "expert_config.json", config)
     save_json(args.output_dir / "expert_config_used.json", asdict(config))
     save_json(args.output_dir / "expert_config_expanded.json", asdict(config))
-
-    policy = make_expert_policy(config)
+    save_json(args.output_dir / "expert_identity.json", expert_identity)
+    wall_start = time.perf_counter()
+    started_at_utc = datetime.now(timezone.utc).isoformat()
     stage_filter = set(args.stage_name) if args.stage_name else None
     challenge_filter = set(args.challenge_type) if args.challenge_type else None
     map_seed_filter = set(args.map_seed) if args.map_seed else None
@@ -784,9 +884,24 @@ def main() -> None:
         "static": summarize_group([row for row in per_episode_rows if not row["moving_platform"]]),
         "moving": summarize_group([row for row in per_episode_rows if row["moving_platform"]]),
     }
+    by_map_category = {
+        map_category: summarize_group([row for row in per_episode_rows if row["map_category"] == map_category])
+        for map_category in sorted({row["map_category"] for row in per_episode_rows})
+    }
+    wall_time_sec = float(time.perf_counter() - wall_start)
+    completed_at_utc = datetime.now(timezone.utc).isoformat()
+    runtime = {
+        "started_at_utc": started_at_utc,
+        "completed_at_utc": completed_at_utc,
+        "wall_time_sec": wall_time_sec,
+        "mean_wall_time_per_episode_sec": wall_time_sec / max(1, len(per_episode_rows)),
+        "episodes_per_hour": len(per_episode_rows) * 3600.0 / max(wall_time_sec, 1e-6),
+    }
+    map_category_report = build_map_category_report(by_map_category)
 
     summary = {
         "expert": "strong",
+        "teacher": expert_identity,
         "profile": eval_settings["profile"],
         "task_source": source_payload,
         "filters": {
@@ -804,6 +919,8 @@ def main() -> None:
         "by_stage": by_stage,
         "by_challenge_type": by_challenge_type,
         "by_motion": by_motion,
+        "by_map_category": by_map_category,
+        "runtime": runtime,
     }
 
     failure_buckets = build_failure_buckets(per_episode_rows)
@@ -811,9 +928,24 @@ def main() -> None:
     save_json(args.output_dir / "expert_eval_summary.json", summary)
     save_json(args.output_dir / "expert_eval_per_episode.json", per_episode_rows)
     save_json(args.output_dir / "expert_failure_buckets.json", failure_buckets)
+    save_json(args.output_dir / "expert_eval_by_map_category.json", map_category_report)
+    if specialist_spec is not None and specialist_spec.quality_gate_path is not None:
+        registry_root = args.expert_registry.resolve().parent
+        gate_path = (registry_root / specialist_spec.quality_gate_path).resolve()
+        quality_gate = load_quality_gate(gate_path)
+        gate_report = evaluate_quality_gate(
+            summary=summary,
+            map_category=specialist_spec.map_category,
+            quality_gate=quality_gate,
+            teacher_id=specialist_spec.teacher_id,
+            teacher_version=specialist_spec.teacher_version,
+        )
+        save_json(args.output_dir / "expert_quality_gate_report.json", gate_report)
 
     print(f"Evaluated {len(per_episode_rows)} episodes using the strong privileged expert")
     print(f"Summary saved to {args.output_dir / 'expert_eval_summary.json'}")
+    print(f"Per-map-category report saved to {args.output_dir / 'expert_eval_by_map_category.json'}")
+    print_map_category_report(map_category_report)
 
 
 if __name__ == "__main__":

@@ -92,6 +92,9 @@ class MovingDroneAviary(BaseRLAviary):
         self._step_processed = False
         self._min_clearance_episode = SAFETY_DISTANCE_SAFE
         self._landing_stable_time = 0.0
+        self._platform_contact = False
+        self._ever_platform_contact = False
+        self._platform_contact_steps = 0
         self._prev_platform_pos = None
         self._platform_velocity = np.zeros(3, dtype=np.float32)
         
@@ -794,6 +797,9 @@ class MovingDroneAviary(BaseRLAviary):
         self._step_processed = False
         self._min_clearance_episode = SAFETY_DISTANCE_SAFE
         self._landing_stable_time = 0.0
+        self._platform_contact = False
+        self._ever_platform_contact = False
+        self._platform_contact_steps = 0
         self._prev_platform_pos = None
         self._platform_velocity = np.zeros(3, dtype=np.float32)
         self._platform_offsets = []
@@ -936,6 +942,10 @@ class MovingDroneAviary(BaseRLAviary):
         self._step_processed = True
         self._time_alive += self._sim_dt
         platform_hit, _ = self._check_collision()
+        self._platform_contact = bool(platform_hit)
+        if platform_hit:
+            self._ever_platform_contact = True
+            self._platform_contact_steps += 1
         self._update_landing_state(platform_hit)
         self._update_min_clearance()
         self._apply_distance_cull()
@@ -1079,6 +1089,9 @@ class MovingDroneAviary(BaseRLAviary):
             "t_to_goal"           : self._t_to_goal,
             "min_clearance"       : self._min_clearance_episode,
             "landing_stable_time" : self._landing_stable_time,
+            "platform_contact"    : self._platform_contact,
+            "ever_platform_contact": self._ever_platform_contact,
+            "platform_contact_steps": self._platform_contact_steps,
         }
 
     # -------- observation extension -------------------------------------- #

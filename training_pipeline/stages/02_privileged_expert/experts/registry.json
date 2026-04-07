@@ -1,0 +1,129 @@
+{
+  "experts": [
+    {
+      "config_override_path": "specialists/city_static/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "city_static",
+      "notes": "Shared-base specialist slot for city static maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/city_static/quality_gate.json",
+      "teacher_id": "expert_city_static",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/city_dynamic/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "city_dynamic",
+      "notes": "Shared-base specialist slot for city dynamic maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/city_dynamic/quality_gate.json",
+      "teacher_id": "expert_city_dynamic",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/open_static/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "open_static",
+      "notes": "Shared-base specialist slot for open static maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/open_static/quality_gate.json",
+      "teacher_id": "expert_open_static",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/open_dynamic/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "open_dynamic",
+      "notes": "Shared-base specialist slot for open dynamic maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/open_dynamic/quality_gate.json",
+      "teacher_id": "expert_open_dynamic",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/mountain_static/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "mountain_static",
+      "notes": "Shared-base specialist slot for mountain static maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/mountain_static/quality_gate.json",
+      "teacher_id": "expert_mountain_static",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/mountain_dynamic/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "mountain_dynamic",
+      "notes": "Shared-base specialist slot for mountain dynamic maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/mountain_dynamic/quality_gate.json",
+      "teacher_id": "expert_mountain_dynamic",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/village_static/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "village_static",
+      "notes": "Shared-base specialist slot for village static maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/village_static/quality_gate.json",
+      "teacher_id": "expert_village_static",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/village_dynamic/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "village_dynamic",
+      "notes": "Shared-base specialist slot for village dynamic maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/village_dynamic/quality_gate.json",
+      "teacher_id": "expert_village_dynamic",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/warehouse_static/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "warehouse_static",
+      "notes": "Shared-base specialist slot for warehouse static maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/warehouse_static/quality_gate.json",
+      "teacher_id": "expert_warehouse_static",
+      "teacher_version": "v0"
+    },
+    {
+      "config_override_path": "specialists/forest_static/config_override.json",
+      "dataset_weight": 1.0,
+      "enabled": true,
+      "eval_summary_path": null,
+      "map_category": "forest_static",
+      "notes": "Shared-base specialist slot for forest static maps.",
+      "parent_teacher_id": "expert_shared",
+      "quality_gate_path": "specialists/forest_static/quality_gate.json",
+      "teacher_id": "expert_forest_static",
+      "teacher_version": "v0"
+    }
+  ],
+  "registry_version": 1,
+  "shared": {
+    "base_config_path": "shared/base_config.json",
+    "mode_vocabulary_path": "shared/mode_vocabulary.json"
+  }
+}

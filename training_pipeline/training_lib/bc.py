@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
 
 try:
     import torch
-    from torch.utils.data import DataLoader, Dataset
+    from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 except ImportError as exc:  # pragma: no cover - optional during non-training usage
     raise ImportError(
         "training_lib.bc requires PyTorch to train the student policy."
@@ -26,6 +27,7 @@ class BehaviorCloningConfig:
     dataset_root: str
     output_dir: str
     model_config_path: str
+    dataset_manifest: str | None = None
     init_checkpoint: str | None = None
     seq_len: int = 16
     stride: int = 8
@@ -40,25 +42,40 @@ class BehaviorCloningConfig:
     device: str = "cpu"
     num_workers: int = 0
     max_episodes: int | None = None
+    early_stopping_patience: int | None = 5
+    early_stopping_min_delta: float = 1e-4
+    early_stopping_min_epochs: int = 3
+    log_every_batches: int = 0
 
 
 class EpisodeSequenceDataset(Dataset):
     """Windowed recurrent dataset over `.npz` episode files."""
 
-    def __init__(self, episode_files: list[Path], *, seq_len: int, stride: int):
-        self.episode_files = list(episode_files)
+    def __init__(self, episode_entries: list[dict[str, Any]], *, seq_len: int, stride: int):
+        self.episode_entries = [
+            {
+                "episode_path": Path(entry["episode_path"]),
+                "sample_weight": float(entry.get("sample_weight", 1.0)),
+            }
+            for entry in episode_entries
+        ]
         self.seq_len = int(seq_len)
         self.stride = int(stride)
         self.index: list[tuple[Path, int, int]] = []
-        for file_path in self.episode_files:
+        self.sample_weights: list[float] = []
+        for entry in self.episode_entries:
+            file_path = Path(entry["episode_path"])
+            sample_weight = float(entry["sample_weight"])
             with np.load(file_path) as episode:
                 length = int(episode["action"].shape[0])
             if length < seq_len:
                 self.index.append((file_path, 0, length))
+                self.sample_weights.append(sample_weight)
                 continue
             for start in range(0, max(1, length - seq_len + 1), stride):
                 stop = min(length, start + seq_len)
                 self.index.append((file_path, start, stop))
+                self.sample_weights.append(sample_weight)
 
     def __len__(self) -> int:
         return len(self.index)
@@ -106,12 +123,22 @@ def _collate_sequences(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.
     return output
 
 
-def build_dataloader(config: BehaviorCloningConfig, *, episode_files: list[Path], shuffle: bool) -> DataLoader:
-    dataset = EpisodeSequenceDataset(episode_files, seq_len=config.seq_len, stride=config.stride)
+def build_dataloader(
+    config: BehaviorCloningConfig,
+    *,
+    episode_entries: list[dict[str, Any]],
+    shuffle: bool,
+) -> DataLoader:
+    dataset = EpisodeSequenceDataset(episode_entries, seq_len=config.seq_len, stride=config.stride)
+    sampler = None
+    if shuffle:
+        weights = torch.as_tensor(dataset.sample_weights, dtype=torch.double)
+        sampler = WeightedRandomSampler(weights=weights, num_samples=len(dataset), replacement=True)
     return DataLoader(
         dataset,
         batch_size=config.batch_size,
-        shuffle=shuffle,
+        shuffle=False if sampler is not None else shuffle,
+        sampler=sampler,
         num_workers=config.num_workers,
         collate_fn=_collate_sequences,
     )
@@ -125,6 +152,50 @@ def _masked_mean(loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     masked = loss * expanded_mask
     denom = torch.clamp(expanded_mask.sum(), min=1.0)
     return masked.sum() / denom
+
+
+def _compute_loss_terms(
+    *,
+    outputs: dict[str, torch.Tensor | None],
+    batch: dict[str, torch.Tensor],
+    mask: torch.Tensor,
+    model_config: StudentModelConfig,
+    bce,
+    ce,
+) -> dict[str, torch.Tensor]:
+    target_action = batch["action"]
+    action_loss = _masked_mean((outputs["action"] - target_action) ** 2, mask)
+    zero = action_loss.new_zeros(())
+    visibility_loss = zero
+    pixel_loss = zero
+    bucket_loss = zero
+
+    if outputs["visibility_logit"] is not None:
+        target_visible = batch["visible"].unsqueeze(-1)
+        target_pixel = batch["pixel_norm"]
+        target_bucket = batch["distance_bucket"]
+        visibility_loss = _masked_mean(
+            bce(outputs["visibility_logit"], target_visible),
+            mask,
+        )
+        pixel_loss = _masked_mean(
+            (outputs["pixel_norm"] - target_pixel) ** 2,
+            mask,
+        )
+        bucket_loss = _masked_mean(
+            ce(
+                outputs["distance_bucket_logits"].reshape(-1, model_config.perception_num_buckets),
+                target_bucket.reshape(-1),
+            ).reshape(mask.shape),
+            mask,
+        )
+
+    return {
+        "action_loss": action_loss,
+        "visibility_loss": visibility_loss,
+        "pixel_loss": pixel_loss,
+        "bucket_loss": bucket_loss,
+    }
 
 
 def run_behavior_cloning(config: BehaviorCloningConfig) -> dict[str, Any]:
@@ -144,58 +215,78 @@ def run_behavior_cloning(config: BehaviorCloningConfig) -> dict[str, Any]:
     bce = torch.nn.BCEWithLogitsLoss(reduction="none")
     ce = torch.nn.CrossEntropyLoss(reduction="none")
 
-    episode_files = list_episode_files(config.dataset_root)
-    if config.max_episodes is not None:
-        episode_files = episode_files[: config.max_episodes]
-    if not episode_files:
-        raise FileNotFoundError(f"No .npz episodes found in {config.dataset_root}")
+    if config.dataset_manifest:
+        manifest_payload = load_json(config.dataset_manifest)
+        episode_entries = list(manifest_payload.get("episodes", []))
+        if not episode_entries:
+            raise FileNotFoundError(f"No weighted dataset entries found in {config.dataset_manifest}")
+    else:
+        episode_files = list_episode_files(config.dataset_root)
+        episode_entries = [{"episode_path": str(path), "sample_weight": 1.0} for path in episode_files]
 
-    split_idx = max(1, int(0.8 * len(episode_files)))
-    train_files = episode_files[:split_idx]
-    val_files = episode_files[split_idx:] or episode_files[:1]
-    train_loader = build_dataloader(config, episode_files=train_files, shuffle=True)
-    val_loader = build_dataloader(config, episode_files=val_files, shuffle=False)
+    if config.max_episodes is not None:
+        episode_entries = episode_entries[: config.max_episodes]
+    if not episode_entries:
+        raise FileNotFoundError(
+            f"No dataset episodes found for root={config.dataset_root} manifest={config.dataset_manifest}"
+        )
+
+    split_idx = max(1, int(0.8 * len(episode_entries)))
+    train_entries = episode_entries[:split_idx]
+    val_entries = episode_entries[split_idx:] or episode_entries[:1]
+    train_loader = build_dataloader(config, episode_entries=train_entries, shuffle=True)
+    val_loader = build_dataloader(config, episode_entries=val_entries, shuffle=False)
 
     best_val = float("inf")
+    best_val_action = float("inf")
+    best_epoch = -1
+    epochs_without_improvement = 0
+    stopped_early = False
     history: list[dict[str, float]] = []
+    print(
+        "[BC] starting "
+        f"episodes={len(episode_entries)} train_episodes={len(train_entries)} val_episodes={len(val_entries)} "
+        f"train_windows={len(train_loader.dataset)} val_windows={len(val_loader.dataset)} "
+        f"epochs={config.epochs} batch_size={config.batch_size} seq_len={config.seq_len} stride={config.stride} "
+        f"lr={config.learning_rate} device={config.device}",
+        flush=True,
+    )
     for epoch in range(config.epochs):
+        epoch_start = time.perf_counter()
         model.train()
         train_loss_total = 0.0
+        train_action_loss_total = 0.0
         train_batches = 0
-        for batch in train_loader:
+        for batch_idx, batch in enumerate(train_loader, start=1):
             depth = batch["depth"].to(config.device)
             state = batch["state"].to(config.device)
             target_action = batch["action"].to(config.device)
             mask = batch["mask"].to(config.device)
+            visible = batch["visible"].to(config.device)
+            pixel_norm = batch["pixel_norm"].to(config.device)
+            distance_bucket = batch["distance_bucket"].to(config.device)
             outputs = model(depth, state)
 
-            action_loss = _masked_mean((outputs["action"] - target_action) ** 2, mask)
+            loss_terms = _compute_loss_terms(
+                outputs=outputs,
+                batch={
+                    "action": target_action,
+                    "visible": visible,
+                    "pixel_norm": pixel_norm,
+                    "distance_bucket": distance_bucket,
+                },
+                mask=mask,
+                model_config=model_config,
+                bce=bce,
+                ce=ce,
+            )
+            action_loss = loss_terms["action_loss"]
             loss = config.action_loss_weight * action_loss
-
-            if outputs["visibility_logit"] is not None:
-                target_visible = batch["visible"].to(config.device).unsqueeze(-1)
-                target_pixel = batch["pixel_norm"].to(config.device)
-                target_bucket = batch["distance_bucket"].to(config.device)
-                visible_loss = _masked_mean(
-                    bce(outputs["visibility_logit"], target_visible),
-                    mask,
-                )
-                pixel_loss = _masked_mean(
-                    (outputs["pixel_norm"] - target_pixel) ** 2,
-                    mask,
-                )
-                bucket_loss = _masked_mean(
-                    ce(
-                        outputs["distance_bucket_logits"].reshape(-1, model_config.perception_num_buckets),
-                        target_bucket.reshape(-1),
-                    ).reshape(mask.shape),
-                    mask,
-                )
-                loss = loss + (
-                    config.visibility_loss_weight * visible_loss
-                    + config.pixel_loss_weight * pixel_loss
-                    + config.distance_bucket_loss_weight * bucket_loss
-                )
+            loss = loss + (
+                config.visibility_loss_weight * loss_terms["visibility_loss"]
+                + config.pixel_loss_weight * loss_terms["pixel_loss"]
+                + config.distance_bucket_loss_weight * loss_terms["bucket_loss"]
+            )
 
             optimizer.zero_grad()
             loss.backward()
@@ -203,10 +294,25 @@ def run_behavior_cloning(config: BehaviorCloningConfig) -> dict[str, Any]:
             optimizer.step()
 
             train_loss_total += float(loss.item())
+            train_action_loss_total += float(action_loss.item())
             train_batches += 1
+            if config.log_every_batches and (
+                batch_idx == 1
+                or batch_idx % config.log_every_batches == 0
+                or batch_idx == len(train_loader)
+            ):
+                running_train_loss = train_loss_total / max(train_batches, 1)
+                running_train_action_loss = train_action_loss_total / max(train_batches, 1)
+                print(
+                    f"[BC][epoch {epoch + 1}/{config.epochs}][batch {batch_idx}/{len(train_loader)}] "
+                    f"train_total_loss={running_train_loss:.6f} "
+                    f"train_action_loss={running_train_action_loss:.6f}",
+                    flush=True,
+                )
 
         model.eval()
         val_loss_total = 0.0
+        val_action_loss_total = 0.0
         val_batches = 0
         with torch.no_grad():
             for batch in val_loader:
@@ -214,27 +320,97 @@ def run_behavior_cloning(config: BehaviorCloningConfig) -> dict[str, Any]:
                 state = batch["state"].to(config.device)
                 target_action = batch["action"].to(config.device)
                 mask = batch["mask"].to(config.device)
+                visible = batch["visible"].to(config.device)
+                pixel_norm = batch["pixel_norm"].to(config.device)
+                distance_bucket = batch["distance_bucket"].to(config.device)
                 outputs = model(depth, state)
-                loss = _masked_mean((outputs["action"] - target_action) ** 2, mask)
+                loss_terms = _compute_loss_terms(
+                    outputs=outputs,
+                    batch={
+                        "action": target_action,
+                        "visible": visible,
+                        "pixel_norm": pixel_norm,
+                        "distance_bucket": distance_bucket,
+                    },
+                    mask=mask,
+                    model_config=model_config,
+                    bce=bce,
+                    ce=ce,
+                )
+                loss = config.action_loss_weight * loss_terms["action_loss"]
+                loss = loss + (
+                    config.visibility_loss_weight * loss_terms["visibility_loss"]
+                    + config.pixel_loss_weight * loss_terms["pixel_loss"]
+                    + config.distance_bucket_loss_weight * loss_terms["bucket_loss"]
+                )
                 val_loss_total += float(loss.item())
+                val_action_loss_total += float(loss_terms["action_loss"].item())
                 val_batches += 1
 
         train_loss = train_loss_total / max(train_batches, 1)
+        train_action_loss = train_action_loss_total / max(train_batches, 1)
         val_loss = val_loss_total / max(val_batches, 1)
-        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
-        if val_loss < best_val:
+        val_action_loss = val_action_loss_total / max(val_batches, 1)
+        improved = val_loss < (best_val - float(config.early_stopping_min_delta))
+        history.append(
+            {
+                "epoch": epoch,
+                "train_total_loss": train_loss,
+                "train_action_loss": train_action_loss,
+                "val_total_loss": val_loss,
+                "val_action_loss": val_action_loss,
+                "best_val_total_loss_so_far": min(best_val, val_loss) if best_epoch >= 0 else val_loss,
+                "improved": bool(improved),
+                "epoch_wall_time_sec": time.perf_counter() - epoch_start,
+            }
+        )
+        if improved:
             best_val = val_loss
+            best_val_action = val_action_loss
+            best_epoch = epoch
+            epochs_without_improvement = 0
             save_checkpoint(
                 output_dir / "best_student.pt",
                 model,
                 optimizer=optimizer,
                 extra={"epoch": epoch, "train_history": history},
             )
+        else:
+            epochs_without_improvement += 1
+
+        print(
+            f"[BC][epoch {epoch + 1}/{config.epochs}] "
+            f"train_total_loss={train_loss:.6f} train_action_loss={train_action_loss:.6f} "
+            f"val_total_loss={val_loss:.6f} val_action_loss={val_action_loss:.6f} "
+            f"best_val_total={best_val:.6f} best_epoch={best_epoch + 1 if best_epoch >= 0 else 0} "
+            f"improved={'yes' if improved else 'no'} no_improve={epochs_without_improvement} "
+            f"epoch_sec={history[-1]['epoch_wall_time_sec']:.2f}",
+            flush=True,
+        )
+
+        if (
+            config.early_stopping_patience is not None
+            and config.early_stopping_patience >= 0
+            and (epoch + 1) >= int(config.early_stopping_min_epochs)
+            and epochs_without_improvement >= int(config.early_stopping_patience)
+        ):
+            stopped_early = True
+            print(
+                f"[BC] early stopping at epoch {epoch + 1}: "
+                f"no validation improvement for {epochs_without_improvement} epoch(s)",
+                flush=True,
+            )
+            break
 
     save_json(output_dir / "bc_config.json", asdict(config))
     save_json(output_dir / "bc_history.json", history)
     return {
-        "best_val_loss": best_val,
+        "best_val_total_loss": best_val,
+        "best_val_action_loss": best_val_action,
+        "best_epoch": (best_epoch + 1) if best_epoch >= 0 else None,
+        "best_epoch_index": best_epoch,
+        "epochs_completed": len(history),
+        "stopped_early": stopped_early,
         "history_path": str(output_dir / "bc_history.json"),
         "checkpoint_path": str(output_dir / "best_student.pt"),
     }

@@ -10,7 +10,7 @@ Goal:
 Build here:
 
 - wrappers around [`../../training_env.py`](../../training_env.py)
-- fixed stage definitions
+- fixed category/stage definitions that match the repo moving-platform policy
 - seed split logic
 - evaluation helpers for held-out seeds
 - manifest generation and validation
@@ -29,6 +29,7 @@ Done when:
 
 - you can generate deterministic tasks by type
 - you can switch between static and moving objectives
+- the manifest exposes explicit challenge categories such as `city_static` and `city_dynamic`
 - you can run held-out evaluations without touching later folders
 - the manifest is regenerated identically on repeated runs
 - every manifest task can be re-derived from the repo task generator
