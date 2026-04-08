@@ -40,8 +40,15 @@ def test_main_uses_plain_commit(monkeypatch):
         error=lambda *_args, **_kwargs: None,
     )
 
-    monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
-    monkeypatch.setattr(miner.bt, "Subtensor", FakeSubtensor)
+    if hasattr(miner.bt, "Wallet"):
+        monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
+    else:
+        monkeypatch.setattr(miner.bt, "wallet", FakeWallet)
+
+    if hasattr(miner.bt, "Subtensor"):
+        monkeypatch.setattr(miner.bt, "Subtensor", FakeSubtensor)
+    else:
+        monkeypatch.setattr(miner.bt, "subtensor", FakeSubtensor)
     monkeypatch.setattr(miner.bt, "logging", fake_logging)
 
     exit_code = miner.main(
