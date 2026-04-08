@@ -117,6 +117,7 @@ def test_default_model_fixed_seed_fixture_has_expected_shape() -> None:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.full
 def test_default_model_fixed_100_seed_benchmark_regression(tmp_path: Path) -> None:
     """
     Fixed benchmark regression for the tracked default model.

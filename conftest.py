@@ -25,18 +25,28 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run e2e/runtime tests that are skipped by default.",
     )
+    parser.addoption(
+        "--run-full",
+        action="store_true",
+        default=False,
+        help="Run full-suite heavy tests that are skipped by default.",
+    )
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     run_e2e = config.getoption("--run-e2e") or os.getenv("SWARM_RUN_E2E") == "1"
-    if run_e2e:
-        return
+    run_full = config.getoption("--run-full") or os.getenv("SWARM_RUN_FULL") == "1"
 
     skip_e2e = pytest.mark.skip(
         reason="e2e/runtime tests are opt-in; use --run-e2e or SWARM_RUN_E2E=1"
     )
+    skip_full = pytest.mark.skip(
+        reason="full-suite heavy tests are opt-in; use --run-full or SWARM_RUN_FULL=1"
+    )
     for item in items:
-        if item.get_closest_marker("e2e") is not None:
+        if not run_e2e and item.get_closest_marker("e2e") is not None:
             item.add_marker(skip_e2e)
+        if not run_full and item.get_closest_marker("full") is not None:
+            item.add_marker(skip_full)
