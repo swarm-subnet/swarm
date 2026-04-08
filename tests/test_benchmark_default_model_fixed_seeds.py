@@ -17,6 +17,7 @@ MODEL_PATH = REPO_ROOT / "tests" / "default_model" / "default_model.zip"
 FIXED_SEED_FILE = REPO_ROOT / "tests" / "fixtures" / "benchmark_default_model_fixed_100_seeds_v1.json"
 FIXED_SEED_TOTAL = 100
 BENCHMARK_WORKERS = 8
+MIN_CLEAN_EXECUTION_COUNT = 95
 EXPECTED_GROUP_COUNTS = {
     "type1_city": 17,
     "type2_open": 17,
@@ -63,6 +64,28 @@ def _success_count(summary: dict[str, object]) -> int:
     ]
     assert rows, "Benchmark summary JSON did not contain any scored rows."
     return int(sum(1 for row in rows if bool(row["success"])))
+
+
+def _clean_execution_count(summary: dict[str, object]) -> int:
+    group_results = summary.get("group_results")
+    assert isinstance(group_results, dict), "Benchmark summary JSON missing group_results."
+    rows = [
+        row
+        for group in BENCH_GROUP_ORDER
+        for row in list(group_results.get(group, []))
+    ]
+    assert rows, "Benchmark summary JSON did not contain any scored rows."
+    return int(sum(1 for row in rows if bool(row.get("execution_ok", False))))
+
+
+def _execution_failure_modes(summary: dict[str, object]) -> dict[str, int]:
+    raw = summary.get("execution_status_counts", {})
+    assert isinstance(raw, dict), "Benchmark summary JSON missing execution_status_counts."
+    return {
+        str(status): int(count)
+        for status, count in raw.items()
+        if str(status) not in {"completed", "seed_done"}
+    }
 
 
 def _require_docker() -> None:
@@ -132,6 +155,8 @@ def test_default_model_fixed_100_seed_benchmark_regression(tmp_path: Path) -> No
     summary = json.loads(summary_path.read_text())
     observed_score = _overall_avg_score(summary)
     observed_success_count = _success_count(summary)
+    observed_clean_execution_count = _clean_execution_count(summary)
+    execution_failure_modes = _execution_failure_modes(summary)
     observed_seed_total = sum(
         len(list(summary.get("group_results", {}).get(group, [])))
         for group in BENCH_GROUP_ORDER
@@ -140,6 +165,15 @@ def test_default_model_fixed_100_seed_benchmark_regression(tmp_path: Path) -> No
     min_success_count, max_success_count = EXPECTED_SUCCESS_COUNT_RANGE
 
     assert observed_seed_total == FIXED_SEED_TOTAL
+    assert observed_clean_execution_count >= MIN_CLEAN_EXECUTION_COUNT, (
+        "Default-model fixed-seed benchmark had too many non-clean executions. "
+        f"clean_execution_count={observed_clean_execution_count}/{FIXED_SEED_TOTAL}; "
+        f"failure_modes={execution_failure_modes}. "
+        "This indicates benchmark infrastructure instability (for example RPC "
+        "disconnects or container issues), so score regression should not be "
+        "interpreted as a model-only failure. "
+        f"Summary: {summary_path}  Log: {log_path}"
+    )
     assert min_success_count <= observed_success_count <= max_success_count, (
         f"Default-model fixed-seed benchmark success_count {observed_success_count} fell "
         f"outside the expected window [{min_success_count}, {max_success_count}]. "
