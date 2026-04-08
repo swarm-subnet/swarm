@@ -91,9 +91,12 @@ def main(argv=None):
     bt.logging.info("Committing GitHub URL to chain...")
 
     try:
-        success = subtensor.commit(
+        _commit_fn = getattr(subtensor, "set_commitment", None) or subtensor.commit
+        response = _commit_fn(
             wallet=wallet, netuid=args.netuid, data=github_url,
+            **({"mev_protection": False} if hasattr(subtensor, "set_commitment") else {}),
         )
+        success = response.success if hasattr(response, "success") else bool(response)
     except Exception as e:
         bt.logging.error(f"Chain commit failed: {e}")
         return 1
