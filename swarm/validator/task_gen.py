@@ -101,43 +101,37 @@ def get_type_params(challenge_type: int) -> dict:
     return TYPE_PARAMS.get(challenge_type, TYPE_PARAMS[1])
 
 
-def _build_task_for_type(
-    sim_dt: float,
-    seed: int,
-    *,
-    challenge_type: int,
-    moving_platform: Optional[bool],
-) -> MapTask:
+def _resolve_params(seed: int, challenge_type: int) -> dict:
     if challenge_type == 3:
-        params = {
+        return {
             'world_range': _get_type3_world_range(seed),
             'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
             'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
             'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
             'horizon': TYPE_3_HORIZON,
         }
-    elif challenge_type == 4:
-        params = {
+    if challenge_type == 4:
+        return {
             'world_range': TYPE_3_VILLAGE_RANGE,
             'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
             'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
             'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
             'horizon': TYPE_3_HORIZON,
         }
-    else:
-        params = get_type_params(challenge_type)
+    return dict(get_type_params(challenge_type))
 
+
+def _build_task_with_params(
+    sim_dt: float,
+    seed: int,
+    *,
+    challenge_type: int,
+    params: dict,
+    moving_platform: bool,
+) -> MapTask:
     rng = random.Random(seed)
     search_rng = random.Random(seed + 888888)
     search_radius = search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
-
-    if moving_platform is None:
-        platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
-        resolved_moving_platform = (
-            platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
-        )
-    else:
-        resolved_moving_platform = bool(moving_platform)
 
     if RANDOM_START:
         start = _random_start(rng, params, challenge_type=challenge_type, seed=seed)
@@ -164,8 +158,31 @@ def _build_task_for_type(
         horizon=params['horizon'],
         challenge_type=challenge_type,
         search_radius=search_radius,
-        moving_platform=resolved_moving_platform,
+        moving_platform=moving_platform,
         version="1",
+    )
+
+
+def _build_task_for_type(
+    sim_dt: float,
+    seed: int,
+    *,
+    challenge_type: int,
+    moving_platform: Optional[bool],
+) -> MapTask:
+    params = _resolve_params(seed, challenge_type)
+
+    if moving_platform is None:
+        platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
+        resolved = platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
+    else:
+        resolved = bool(moving_platform)
+
+    return _build_task_with_params(
+        sim_dt, seed,
+        challenge_type=challenge_type,
+        params=params,
+        moving_platform=resolved,
     )
 
 
@@ -461,11 +478,37 @@ def task_for_seed_and_type(
     challenge_type: int,
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
-    if challenge_type not in {1, 2, 3, 4, 5, 6}:
+    if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
     return _build_task_for_type(
         sim_dt=sim_dt,
         seed=seed,
         challenge_type=challenge_type,
+        moving_platform=moving_platform,
+    )
+
+
+def screening_task(
+    sim_dt: float,
+    seed: int,
+    *,
+    challenge_type: int,
+    distance_range: Tuple[float, float],
+    goal_height_range: Optional[Tuple[float, float]],
+    moving_platform: bool,
+) -> MapTask:
+    """Build a task with controlled type, distance, height, and platform flag."""
+    if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
+        raise ValueError(f"Unsupported challenge type: {challenge_type}")
+
+    params = _resolve_params(seed, challenge_type)
+    params['r_min'], params['r_max'] = distance_range
+    if goal_height_range is not None and challenge_type not in (3, 4):
+        params['h_min'], params['h_max'] = goal_height_range
+
+    return _build_task_with_params(
+        sim_dt, seed,
+        challenge_type=challenge_type,
+        params=params,
         moving_platform=moving_platform,
     )

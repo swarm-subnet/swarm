@@ -208,7 +208,42 @@ SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this marg
 
 # Early screening termination — abort screening when outcome is statistically certain
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
-SCREENING_EARLY_FAIL_FACTORS = {50: 0.60, 100: 0.80, 150: 0.90}
+SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
+
+# Screening template — 50 standardised entries, cycled 4× for 200 screening seeds
+def _build_screening_template() -> list[dict]:
+    slots: list[dict] = []
+
+    city_static      = dict(challenge_type=1, distance_range=(15, 25), goal_height_range=(0.3, 0.8), moving_platform=False)
+    city_moving      = dict(challenge_type=1, distance_range=(15, 25), goal_height_range=(0.3, 0.8), moving_platform=True)
+    open_static      = dict(challenge_type=2, distance_range=(14, 20), goal_height_range=(4.0, 7.0), moving_platform=False)
+    open_moving      = dict(challenge_type=2, distance_range=(14, 20), goal_height_range=(4.0, 7.0), moving_platform=True)
+    mountain_static  = dict(challenge_type=3, distance_range=(30, 55), goal_height_range=None, moving_platform=False)
+    mountain_moving  = dict(challenge_type=3, distance_range=(30, 55), goal_height_range=None, moving_platform=True)
+    village_static   = dict(challenge_type=4, distance_range=(25, 45), goal_height_range=None, moving_platform=False)
+    village_moving   = dict(challenge_type=4, distance_range=(25, 45), goal_height_range=None, moving_platform=True)
+    warehouse_static = dict(challenge_type=5, distance_range=(10, 22), goal_height_range=(1.0, 6.0), moving_platform=False)
+    forest_static    = dict(challenge_type=6, distance_range=(15, 28), goal_height_range=(0.5, 2.0), moving_platform=False)
+
+    pools = [
+        [city_static]*6      + [city_moving]*2,
+        [open_static]*2      + [open_moving]*6,
+        [mountain_static]*6  + [mountain_moving]*2,
+        [village_static]*7   + [village_moving]*2,
+        [warehouse_static]*9,
+        [forest_static]*8,
+    ]
+    for i in range(max(len(p) for p in pools)):
+        for pool in pools:
+            if i < len(pool):
+                slots.append(pool[i])
+
+    if len(slots) != 50:
+        raise RuntimeError(f"Screening template must have 50 entries, got {len(slots)}")
+    return slots
+
+
+SCREENING_TEMPLATE: list[dict] = _build_screening_template()
 
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
