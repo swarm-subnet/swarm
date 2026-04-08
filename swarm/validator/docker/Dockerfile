@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/docker-requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade "numpy>=2.0.0"
+    pip install --upgrade "numpy>=2.0.1,<3.0.0"
 
 COPY swarm /app/swarm
 

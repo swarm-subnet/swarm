@@ -42,7 +42,7 @@ def test_validate_requirements_accepts_whitelisted_packages(tmp_path):
         "\n".join(
             [
                 "# comment",
-                "numpy>=1.24",
+                "numpy>=2.0.1",
                 "torch==2.0.0",
             ]
         )

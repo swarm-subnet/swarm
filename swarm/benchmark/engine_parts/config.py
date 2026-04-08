@@ -123,7 +123,9 @@ def _debug_profile_options() -> _RunOptions:
         timeout_progress_stale_sec=3.0,
         timeout_progress_min_sim_advance=0.02,
         max_seed_walltime_sec=1800.0,
-        default_log_out="/tmp/bench_full_eval.log",
+        default_log_out=str(
+            Path("/tmp") / f"bench_full_eval_{os.getuid()}_{os.getpid()}.log"
+        ),
     )
 
 
@@ -167,7 +169,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-out", type=Path, default=None,
-        help="Path to write log file (default: /tmp/bench_full_eval.log).",
+        help="Path to write log file (default: a per-run /tmp/bench_full_eval_<uid>_<pid>.log file).",
     )
     parser.add_argument(
         "--relax-timeouts", action="store_true", default=False,

@@ -93,6 +93,10 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+remote_videos/
+swarm/assets/open_terrain/
+training_pipeline/
+tests/default_model/*_summary.json
 
 # Flask stuff:
 instance/

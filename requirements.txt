@@ -3,12 +3,14 @@
 
 pydantic==2.12.5
 rich==14.3.3
-numpy>=1.24,<2.0
+# Keep NumPy aligned with bittensor 10.2.0's supported range.
+numpy>=2.0.1,<3.0.0
 loguru==0.7.3
 xmldiff==2.7.0
 filelock==3.25.2
 swarm-pybullet @ git+https://github.com/swarm-subnet/bullet3-swarmfork.git@a639608
-bittensor>=7.4.0
+# Canonical SDK version for validator/miner environments.
+bittensor==10.2.0
 msgpack==1.1.2
 importlib-metadata==9.0.0
 onnxruntime==1.23.2
@@ -22,7 +24,7 @@ gymnasium==0.29.1
 requests==2.32.5
 httpx==0.28.1
 pycapnp==2.2.2
-swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git@35a16199fd983e44de9d90530ede875e4d7383f6
+swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git@05b15964dc7020a208092632bbfaa081cce3e95b
 pytest==8.4.2
 build==1.4.2
 twine==6.2.0

@@ -1,6 +1,7 @@
 """Test seed score upload fixes: map_type resolution, retry logic."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,9 +28,8 @@ def client():
     return c
 
 
-@pytest.mark.asyncio
 @patch("asyncio.sleep", return_value=None)
-async def test_retry_succeeds_on_second_attempt(mock_sleep, client):
+def test_retry_succeeds_on_second_attempt(mock_sleep, client):
     call_count = 0
 
     async def mock_post(endpoint, data):
@@ -41,31 +41,37 @@ async def test_retry_succeeds_on_second_attempt(mock_sleep, client):
 
     client._post_signed = mock_post
 
-    result = await client.post_seed_scores_batch(
-        model_uid=1, epoch_number=1, scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+    result = asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=1,
+            epoch_number=1,
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+        )
     )
     assert result.get("recorded") == 5
     assert call_count == 2
 
 
-@pytest.mark.asyncio
 @patch("asyncio.sleep", return_value=None)
-async def test_retry_exhausted_returns_error(mock_sleep, client):
+def test_retry_exhausted_returns_error(mock_sleep, client):
     async def mock_post(endpoint, data):
         return {"error": "connection refused"}
 
     client._post_signed = mock_post
 
-    result = await client.post_seed_scores_batch(
-        model_uid=1, epoch_number=1, scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
-        retries=2,
+    result = asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=1,
+            epoch_number=1,
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+            retries=2,
+        )
     )
     assert "error" in result
 
 
-@pytest.mark.asyncio
 @patch("asyncio.sleep", return_value=None)
-async def test_retry_on_detail_key(mock_sleep, client):
+def test_retry_on_detail_key(mock_sleep, client):
     call_count = 0
 
     async def mock_post(endpoint, data):
@@ -77,15 +83,18 @@ async def test_retry_on_detail_key(mock_sleep, client):
 
     client._post_signed = mock_post
 
-    result = await client.post_seed_scores_batch(
-        model_uid=1, epoch_number=1, scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+    result = asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=1,
+            epoch_number=1,
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+        )
     )
     assert result.get("recorded") == 1
     assert call_count == 2
 
 
-@pytest.mark.asyncio
-async def test_no_retry_on_success(client):
+def test_no_retry_on_success(client):
     call_count = 0
 
     async def mock_post(endpoint, data):
@@ -95,8 +104,12 @@ async def test_no_retry_on_success(client):
 
     client._post_signed = mock_post
 
-    result = await client.post_seed_scores_batch(
-        model_uid=1, epoch_number=1, scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+    result = asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=1,
+            epoch_number=1,
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+        )
     )
     assert call_count == 1
     assert result["recorded"] == 1

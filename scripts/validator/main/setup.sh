@@ -50,16 +50,9 @@ install_python_reqs() {
 
 install_modules() {
   echo -e "\e[34m[INFO]\e[0m Installing current package in editable mode..."
-  pip install -e . \
+  pip install -e . --no-deps \
     || handle_error "Failed to install current package"
   success_msg "Main package installed."
-}
-
-install_bittensor() {
-  echo -e "\e[34m[INFO]\e[0m Installing Bittensor and CLI"
-  pip install bittensor bittensor-cli \
-    || handle_error "Failed to install Bittensor"
-  success_msg "Bittensor installed."
 }
 
 main() {
@@ -68,7 +61,6 @@ main() {
   upgrade_pip
   install_python_reqs
   install_modules
-  install_bittensor
   success_msg "Setup completed successfully."
   echo -e "\e[33m[INFO]\e[0m Virtual environment: $(pwd)/validator_env"
   echo -e "\e[33m[INFO]\e[0m To activate: source validator_env/bin/activate"

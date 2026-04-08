@@ -56,17 +56,10 @@ install_python_reqs() {
 
 install_modules() {
   info_msg "Installing current package in editable mode..."
-  pip install -e . \
+  pip install -e . --no-deps \
     || handle_error "Failed to install current package"
   success_msg "Main package installed."
 
-}
-
-install_bittensor() {
-  info_msg "Installing Bittensor v9.6.0 and CLI v9.4.2..."
-  pip install bittensor==9.6.0 bittensor-cli==9.4.2 \
-    || handle_error "Failed to install Bittensor"
-  success_msg "Bittensor installed."
 }
 
 verify_installation() {
@@ -102,7 +95,6 @@ main() {
   upgrade_pip
   install_python_reqs
   install_modules
-  install_bittensor
   verify_installation
   
   show_completion_info

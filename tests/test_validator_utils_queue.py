@@ -34,11 +34,24 @@ def _queue_item(model_path: Path, model_hash: str = "hash1", uid: int = 1) -> di
 
 
 def _validator(epoch: int = 7) -> SimpleNamespace:
+    async def _post_heartbeat(**kwargs):
+        _ = kwargs
+        return {"ok": True}
+
+    async def _post_seed_scores_batch(**kwargs):
+        _ = kwargs
+        return {"recorded": True}
+
     return SimpleNamespace(
         seed_manager=SimpleNamespace(
             epoch_number=epoch,
             get_benchmark_seeds=lambda: [700001],
-        )
+        ),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_post_seed_scores_batch,
+        ),
+        metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
     )
 
 
