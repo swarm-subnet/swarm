@@ -10,8 +10,8 @@ Subtypes:
 import math
 import os
 import random
-import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pybullet as p
@@ -55,6 +55,7 @@ ROAD_COLOR = [0.35, 0.35, 0.38, 1]
 TERRAIN_RESOLUTION = 97
 TERRAIN_N_OCTAVES = 4
 TERRAIN_TILES = 4
+STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"
 
 VILLAGE_SIZE = 100.0
 ROAD_WIDTH = 6.0
@@ -105,6 +106,18 @@ HOUSE_SPECS = [
     ("building-type-t.obj", 6.60, 7.05),
     ("building-type-u.obj", 7.14, 5.44),
 ]
+
+
+def _terrain_mesh_cache_dir() -> Path:
+    override = os.getenv("SWARM_TERRAIN_CACHE_DIR")
+    if override:
+        cache_dir = Path(override).expanduser()
+    else:
+        uid_getter = getattr(os, "geteuid", None) or getattr(os, "getuid", None)
+        uid_token = str(int(uid_getter())) if uid_getter is not None else "unknown"
+        cache_dir = STATE_DIR / "terrain_meshes" / f"user_{uid_token}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 # ---------------------------------------------------------------------------

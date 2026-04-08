@@ -109,7 +109,7 @@ def _build_mountains_only(
     if os.path.exists(PEAK_TEX):
         tex_id = p.loadTexture(PEAK_TEX, physicsClientId=cli)
 
-    obj_dir = os.path.join(tempfile.gettempdir(), "swarm_terrain_meshes")
+    obj_dir = str(_terrain_mesh_cache_dir())
     get_z = _spawn_terrain(cli, seed, obj_dir, gs)
 
     total = rng.randint(70, 90)

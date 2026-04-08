@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
 import random
+from pathlib import Path
 
 from swarm.core import mountain_generator as mg
 
@@ -24,6 +26,28 @@ def test_get_terrain_z_is_deterministic():
     z1 = mg.get_terrain_z(10.0, -4.0, seed=88, gs=gs)
     z2 = mg.get_terrain_z(10.0, -4.0, seed=88, gs=gs)
     assert math.isclose(z1, z2, rel_tol=1e-12, abs_tol=1e-12)
+
+
+def test_terrain_mesh_cache_dir_defaults_under_repo_state(monkeypatch):
+    monkeypatch.delenv("SWARM_TERRAIN_CACHE_DIR", raising=False)
+
+    uid_getter = getattr(os, "geteuid", None) or getattr(os, "getuid", None)
+    uid_token = str(int(uid_getter())) if uid_getter is not None else "unknown"
+
+    cache_dir = mg._terrain_mesh_cache_dir()
+
+    assert cache_dir == Path(mg.STATE_DIR) / "terrain_meshes" / f"user_{uid_token}"
+    assert "/tmp/" not in str(cache_dir)
+
+
+def test_terrain_mesh_cache_dir_honors_env_override(monkeypatch, tmp_path):
+    override = tmp_path / "terrain-cache"
+    monkeypatch.setenv("SWARM_TERRAIN_CACHE_DIR", str(override))
+
+    cache_dir = mg._terrain_mesh_cache_dir()
+
+    assert cache_dir == override
+    assert cache_dir.is_dir()
 
 
 def test_too_close_detects_overlap_threshold():
