@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = REPO_ROOT / "tests" / "default_model" / "default_model.zip"
 FIXED_SEED_FILE = REPO_ROOT / "tests" / "fixtures" / "benchmark_default_model_fixed_100_seeds_v1.json"
 FIXED_SEED_TOTAL = 100
-BENCHMARK_WORKERS = 4
+BENCHMARK_WORKERS = 8
 MIN_CLEAN_EXECUTION_COUNT = 95
 EXPECTED_GROUP_COUNTS = {
     "type1_city": 17,
