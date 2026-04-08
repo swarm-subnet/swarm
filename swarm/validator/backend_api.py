@@ -219,10 +219,14 @@ class BackendApiClient:
             bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
             return {"error": _scrub_url(str(e))}
 
-    async def _get_signed(self, endpoint: str) -> Dict[str, Any]:
+    async def _get_signed(
+        self, endpoint: str, extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """Make a signed GET request to the backend."""
         body = b""
         headers = self._sign_request("GET", endpoint, body)
+        if extra_headers:
+            headers.update(extra_headers)
 
         try:
             resp = await self.client.get(f"{self.base_url}{endpoint}", headers=headers)
@@ -352,7 +356,10 @@ class BackendApiClient:
             The forward loop burns 100% when fallback is active.
         """
         try:
-            data = await self._get_signed("/validators/sync")
+            data = await self._get_signed(
+                "/validators/sync",
+                extra_headers={"X-Benchmark-Version": BENCHMARK_VERSION},
+            )
 
             if "error" not in data:
                 # Map backend response to expected format
