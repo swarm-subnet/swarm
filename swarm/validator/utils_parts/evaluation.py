@@ -11,10 +11,11 @@ from swarm.constants import (
     SCREENING_CHECKPOINT_SIZE,
     SCREENING_EARLY_FAIL_FACTORS,
     SCREENING_MIN_IMPROVEMENT,
+    SCREENING_TEMPLATE,
     SEED_SCORE_BATCH_MAX,
     SIM_DT,
 )
-from swarm.validator.task_gen import random_task
+from swarm.validator.task_gen import random_task, screening_task
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
@@ -36,7 +37,8 @@ async def _evaluate_seeds(
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
-) -> Tuple[List[float], Dict[str, List[float]]]:
+    pre_built_tasks: Optional[List] = None,
+) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
     """Evaluate a model on multiple seeds using parallel Docker containers."""
     all_scores = []
     per_type_scores = {
@@ -61,19 +63,22 @@ async def _evaluate_seeds(
         pass
     bt.logging.info(f"━━━ {description.upper()} UID {uid} | {model_hash_short} ━━━")
 
-    tasks = []
-    for seed in seeds:
-        try:
-            task = random_task(sim_dt=SIM_DT, seed=seed)
-            tasks.append(task)
-        except Exception as e:
-            bt.logging.warning(f"Failed to create task for seed {seed}: {e}")
-            tasks.append(None)
+    if pre_built_tasks is not None:
+        tasks = list(pre_built_tasks)
+    else:
+        tasks = []
+        for seed in seeds:
+            try:
+                task = random_task(sim_dt=SIM_DT, seed=seed)
+                tasks.append(task)
+            except Exception as e:
+                bt.logging.warning(f"Failed to create task for seed {seed}: {e}")
+                tasks.append(None)
 
     valid_tasks = [t for t in tasks if t is not None]
     if not valid_tasks:
         bt.logging.warning(f"No valid tasks created for UID {uid}")
-        return [], per_type_scores
+        return [], per_type_scores, []
 
     phase = "screening" if "screening" in description.lower() else "benchmark"
     results = await self.docker_evaluator.evaluate_seeds_parallel(
@@ -135,6 +140,22 @@ async def _run_screening(
     screening_seeds = self.seed_manager.get_screening_seeds()
     threshold = _get_screening_threshold(self)
     total_seeds = len(screening_seeds)
+
+    template_cycle = (SCREENING_TEMPLATE * ((total_seeds // len(SCREENING_TEMPLATE)) + 1))[:total_seeds]
+    screening_tasks = []
+    for seed, slot in zip(screening_seeds, template_cycle):
+        try:
+            screening_tasks.append(screening_task(
+                sim_dt=SIM_DT, seed=seed,
+                challenge_type=slot["challenge_type"],
+                distance_range=slot["distance_range"],
+                goal_height_range=slot.get("goal_height_range"),
+                moving_platform=slot["moving_platform"],
+            ))
+        except Exception as e:
+            bt.logging.warning(f"Failed to create screening task for seed {seed}: {e}")
+            screening_tasks.append(None)
+
     tracker_call(
         self,
         "mark_screening_started",
@@ -162,6 +183,7 @@ async def _run_screening(
         completion_note = ""
         for checkpoint in checkpoints:
             batch_seeds = screening_seeds[len(all_scores):checkpoint]
+            batch_tasks = screening_tasks[len(all_scores):checkpoint]
             if not batch_seeds:
                 break
 
@@ -170,6 +192,7 @@ async def _run_screening(
                 self, uid, model_path, batch_seeds,
                 f"screening [{batch_start + 1}..{checkpoint}]",
                 on_seed_complete=hb.on_seed_complete,
+                pre_built_tasks=batch_tasks,
             )
             try:
                 seed_batch = [
