@@ -258,7 +258,7 @@ async def forward(self) -> None:
 
                 model_hash = sha256sum(model_path)
 
-                if reason == "epoch_transition":
+                if reason in ("epoch_transition", "version_transition"):
                     all_seeds = self.seed_manager.get_all_seeds()
                     bt.logging.info(
                         f"👑 Champion UID {uid}: {len(all_seeds)} seeds directly (no screening)"
