@@ -24,7 +24,7 @@ gymnasium==0.29.1
 requests==2.32.5
 httpx==0.28.1
 pycapnp==2.2.2
-swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git@05b15964dc7020a208092632bbfaa081cce3e95b
+swarm-gym-pybullet-drones @ git+https://github.com/swarm-subnet/swarm-gym-pybullet-drones.git@116da2f
 pytest==8.4.2
 build==1.4.2
 twine==6.2.0
