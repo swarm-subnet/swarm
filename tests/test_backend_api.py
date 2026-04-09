@@ -206,8 +206,11 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
 
-        async def _fake_get(endpoint):
+        async def _fake_get(endpoint, **kwargs):
             assert endpoint == "/validators/sync"
+            assert kwargs["extra_headers"] == {
+                "X-Benchmark-Version": backend_api.BENCHMARK_VERSION
+            }
             return {
                 "current_champion": {
                     "uid": 2,
@@ -255,8 +258,9 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
     }
     try:
 
-        async def _fake_get(endpoint):
+        async def _fake_get(endpoint, **kwargs):
             _ = endpoint
+            _ = kwargs
             return {"error": "backend down"}
 
         monkeypatch.setattr(client, "_get_signed", _fake_get)
