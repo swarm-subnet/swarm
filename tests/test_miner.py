@@ -12,7 +12,7 @@ def test_validate_github_url_strips_git_suffix():
     )
 
 
-def test_main_uses_plain_commit(monkeypatch):
+def test_main_uses_set_commitment(monkeypatch):
     hotkey = "5ExampleHotkey"
     commit_calls = []
 
@@ -27,9 +27,9 @@ def test_main_uses_plain_commit(monkeypatch):
         def metagraph(self, netuid):
             return SimpleNamespace(hotkeys=[hotkey])
 
-        def commit(self, *, wallet, netuid, data):
-            commit_calls.append((wallet.hotkey.ss58_address, netuid, data))
-            return True
+        def set_commitment(self, wallet, netuid, data, *, mev_protection=False):
+            commit_calls.append((wallet.hotkey.ss58_address, netuid, data, mev_protection))
+            return SimpleNamespace(success=True, message="ok")
 
         def set_reveal_commitment(self, **_kwargs):
             raise AssertionError("set_reveal_commitment should not be used")
@@ -68,5 +68,5 @@ def test_main_uses_plain_commit(monkeypatch):
 
     assert exit_code == 0
     assert commit_calls == [
-        ("5ExampleHotkey", 124, "https://github.com/example/project")
+        ("5ExampleHotkey", 124, "https://github.com/example/project", False)
     ]

@@ -274,7 +274,7 @@ class BackendApiClient:
     def _get_miner_hotkey(self, uid: int) -> str:
         """Get miner hotkey from metagraph by UID."""
         try:
-            subtensor = bt.subtensor(network="finney")
+            subtensor = bt.Subtensor(network="finney")
             metagraph = subtensor.metagraph(netuid=124)
             if 0 <= uid < len(metagraph.hotkeys):
                 return metagraph.hotkeys[uid]
