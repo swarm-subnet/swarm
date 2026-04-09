@@ -8,7 +8,7 @@ numpy>=2.0.1,<3.0.0
 loguru==0.7.3
 xmldiff==2.7.0
 filelock==3.25.2
-swarm-pybullet @ git+https://github.com/swarm-subnet/bullet3-swarmfork.git@91b2cf185d65f4167a29df45a7a45b02f7eeab96
+swarm-pybullet @ git+https://github.com/swarm-subnet/bullet3-swarmfork.git@91b2cf1856f367a4b95327546c5018d000ed967a
 # Canonical SDK version for validator/miner environments.
 bittensor==10.2.0
 msgpack==1.1.2
