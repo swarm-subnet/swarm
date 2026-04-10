@@ -3,6 +3,19 @@ from ._shared import *
 
 def _apply_backend_weights_to_scores(self, backend_weights: Dict[Any, Any]) -> None:
     """Apply backend weights to validator scores with deterministic reset."""
+    scores_lock = getattr(self, "_scores_lock", None)
+    if scores_lock is not None:
+        with scores_lock:
+            _apply_backend_weights_to_scores_unlocked(self, backend_weights)
+    else:
+        _apply_backend_weights_to_scores_unlocked(self, backend_weights)
+
+    mark_ready = getattr(self, "_mark_weights_ready_for_setting", None)
+    if mark_ready is not None:
+        mark_ready()
+
+
+def _apply_backend_weights_to_scores_unlocked(self, backend_weights: Dict[Any, Any]) -> None:
     self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
     if not backend_weights:

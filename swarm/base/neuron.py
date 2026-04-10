@@ -152,7 +152,10 @@ class BaseNeuron(ABC):
                 self.last_update = self.block
                 self.resync_metagraph()
 
-            if self.should_set_weights():
+            maybe_set_weights = getattr(self, "_maybe_set_weights", None)
+            if maybe_set_weights is not None:
+                maybe_set_weights(source="sync")
+            elif self.should_set_weights():
                 self.set_weights()
 
             # Always save state.

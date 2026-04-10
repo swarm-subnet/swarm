@@ -23,6 +23,7 @@ import time
 import numpy as np
 import asyncio
 import argparse
+import os
 import threading
 import bittensor as bt
 from typing import List, Union
@@ -35,6 +36,10 @@ from swarm.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
 )
 from swarm.utils.config import add_validator_args
+
+
+WEIGHT_SETTER_POLL_SEC = float(os.getenv("SWARM_WEIGHT_SETTER_POLL_SEC", "60"))
+WEIGHT_SETTER_RETRY_SEC = float(os.getenv("SWARM_WEIGHT_SETTER_RETRY_SEC", "300"))
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -65,6 +70,18 @@ class BaseValidatorNeuron(BaseNeuron):
 
         self.runtime_tracker = ValidatorRuntimeTracker(process_label="validator")
 
+        self._scores_lock = threading.RLock()
+        self._set_weights_lock = threading.Lock()
+        self._weight_setter_wakeup = threading.Event()
+        self._weight_setter_thread: Union[threading.Thread, None] = None
+        self._weights_ready_for_setting = False
+        self._last_successful_weight_set_block: int | None = None
+        self._last_weight_set_attempt_at = 0.0
+
+        self.should_exit: bool = False
+        self.is_running: bool = False
+        self.thread: Union[threading.Thread, None] = None
+
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
@@ -78,9 +95,6 @@ class BaseValidatorNeuron(BaseNeuron):
         self.loop = asyncio.get_event_loop()
 
         # Instantiate runners
-        self.should_exit: bool = False
-        self.is_running: bool = False
-        self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
 
     def serve_axon(self):
@@ -112,6 +126,101 @@ class BaseValidatorNeuron(BaseNeuron):
         ]
         await asyncio.gather(*coroutines)
 
+    def _mark_weights_ready_for_setting(self) -> None:
+        """Allow background weight submission after backend weights are applied."""
+        self._weights_ready_for_setting = True
+        self._weight_setter_wakeup.set()
+
+    def _should_set_weights_due(self, *, allow_initial_step: bool = False) -> bool:
+        if self.neuron_type == "MinerNeuron":
+            return False
+        if self.config.neuron.disable_set_weights:
+            return False
+        if self.step == 0 and not allow_initial_step:
+            return False
+
+        current_block = int(self.block)
+        last_chain_update = int(self.metagraph.last_update[self.uid])
+        if (current_block - last_chain_update) <= self.config.neuron.epoch_length:
+            return False
+
+        last_local_set = self._last_successful_weight_set_block
+        if last_local_set is not None:
+            if (current_block - int(last_local_set)) <= self.config.neuron.epoch_length:
+                return False
+
+        return True
+
+    def should_set_weights(self) -> bool:
+        return self._should_set_weights_due(allow_initial_step=False)
+
+    def _maybe_set_weights(
+        self,
+        *,
+        source: str,
+        allow_initial_step: bool = False,
+    ) -> bool:
+        if allow_initial_step and not self._weights_ready_for_setting:
+            return False
+        if not self._should_set_weights_due(allow_initial_step=allow_initial_step):
+            return False
+
+        now = time.time()
+        if source == "background":
+            since_attempt = now - self._last_weight_set_attempt_at
+            if since_attempt < WEIGHT_SETTER_RETRY_SEC:
+                return False
+
+        if not self._set_weights_lock.acquire(blocking=False):
+            bt.logging.info(f"Skipping {source} weight set; another weight set is active")
+            return False
+
+        try:
+            if not self._should_set_weights_due(allow_initial_step=allow_initial_step):
+                return False
+            self._last_weight_set_attempt_at = time.time()
+            bt.logging.info(f"⚖️ Weight setter triggered ({source})")
+            return bool(self.set_weights())
+        finally:
+            self._set_weights_lock.release()
+
+    def _weight_setter_loop(self) -> None:
+        bt.logging.info(
+            f"⚖️ Background weight setter started "
+            f"(poll={WEIGHT_SETTER_POLL_SEC:.0f}s, retry={WEIGHT_SETTER_RETRY_SEC:.0f}s)"
+        )
+        while not self.should_exit:
+            self._weight_setter_wakeup.wait(WEIGHT_SETTER_POLL_SEC)
+            self._weight_setter_wakeup.clear()
+            if self.should_exit:
+                break
+            try:
+                self._maybe_set_weights(
+                    source="background",
+                    allow_initial_step=True,
+                )
+            except Exception as e:
+                bt.logging.error(f"Background weight setter failed: {e}")
+        bt.logging.info("⚖️ Background weight setter stopped")
+
+    def _start_weight_setter_thread(self) -> None:
+        thread = self._weight_setter_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._weight_setter_wakeup.clear()
+        self._weight_setter_thread = threading.Thread(
+            target=self._weight_setter_loop,
+            name="swarm_weight_setter",
+            daemon=True,
+        )
+        self._weight_setter_thread.start()
+
+    def _stop_weight_setter_thread(self) -> None:
+        self._weight_setter_wakeup.set()
+        thread = self._weight_setter_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5)
+
     def run(self):
         """
         Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
@@ -136,6 +245,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Check that validator is registered on the network.
         self.sync()
+        self._start_weight_setter_thread()
 
         bt.logging.info(f"Validator starting at block: {self.block}")
 
@@ -179,6 +289,7 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.error(f"Error during validation: {str(err)}")
             bt.logging.debug(str(print_exception(type(err), err, err.__traceback__)))
         finally:
+            self._stop_weight_setter_thread()
             tracker_call(self, "mark_worker_thread_alive", False)
 
     def run_in_background_thread(self):
@@ -202,7 +313,9 @@ class BaseValidatorNeuron(BaseNeuron):
         if self.is_running:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
+            self._weight_setter_wakeup.set()
             self.thread.join(5)
+            self._stop_weight_setter_thread()
             self.is_running = False
             tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.debug("Stopped")
@@ -227,7 +340,9 @@ class BaseValidatorNeuron(BaseNeuron):
         if self.is_running:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
+            self._weight_setter_wakeup.set()
             self.thread.join(5)
+            self._stop_weight_setter_thread()
             self.is_running = False
             tracker_call(self, "mark_worker_thread_alive", False)
             bt.logging.debug("Stopped")
@@ -239,8 +354,15 @@ class BaseValidatorNeuron(BaseNeuron):
 
         tracker_call(self, "mark_weights_attempt")
         try:
+            scores_lock = getattr(self, "_scores_lock", None)
+            if scores_lock is not None:
+                with scores_lock:
+                    scores_snapshot = np.array(self.scores, copy=True)
+            else:
+                scores_snapshot = np.array(self.scores, copy=True)
+
             # Check if self.scores contains any NaN values and log a warning if it does.
-            if np.isnan(self.scores).any():
+            if np.isnan(scores_snapshot).any():
                 bt.logging.warning(
                     "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
                 )
@@ -248,14 +370,14 @@ class BaseValidatorNeuron(BaseNeuron):
             # Calculate the average reward for each uid across non-zero values.
             # Replace any NaN values with 0.
             # Compute the norm of the scores
-            norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
+            norm = np.linalg.norm(scores_snapshot, ord=1, axis=0, keepdims=True)
 
             # Check if the norm is zero or contains NaN values
             if np.any(norm == 0) or np.isnan(norm).any():
                 norm = np.ones_like(norm)  # Avoid division by zero or NaN
 
             # Compute raw_weights safely
-            raw_weights = self.scores / norm
+            raw_weights = scores_snapshot / norm
 
             bt.logging.debug("raw_weights", raw_weights)
             bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
@@ -293,8 +415,12 @@ class BaseValidatorNeuron(BaseNeuron):
                 wait_for_inclusion=False,
                 version_key=self.spec_version,
             )
-            nonzero_uids = int(np.count_nonzero(self.scores))
+            nonzero_uids = int(np.count_nonzero(scores_snapshot))
             if result is True:
+                try:
+                    self._last_successful_weight_set_block = int(self.block)
+                except Exception:
+                    pass
                 tracker_call(
                     self,
                     "mark_weights_result",
@@ -302,6 +428,7 @@ class BaseValidatorNeuron(BaseNeuron):
                     nonzero_uids=nonzero_uids,
                 )
                 bt.logging.info("set_weights on chain successfully!")
+                return True
             else:
                 tracker_call(
                     self,
@@ -311,6 +438,7 @@ class BaseValidatorNeuron(BaseNeuron):
                     nonzero_uids=nonzero_uids,
                 )
                 bt.logging.error("set_weights failed", msg)
+                return False
         except Exception as exc:
             tracker_call(self, "mark_weights_result", success=False, error=str(exc))
             raise
@@ -332,19 +460,20 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info(
             "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
         )
-        # Zero out all hotkeys that have been replaced.
-        for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid]:
-                self.scores[uid] = 0  # hotkey has been replaced
+        with self._scores_lock:
+            # Zero out all hotkeys that have been replaced.
+            for uid, hotkey in enumerate(self.hotkeys):
+                if hotkey != self.metagraph.hotkeys[uid]:
+                    self.scores[uid] = 0  # hotkey has been replaced
 
-        # Check to see if the metagraph has changed size.
-        # If so, we need to add new hotkeys and moving averages.
-        if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            # Update the size of the moving average scores.
-            new_moving_average = np.zeros((self.metagraph.n))
-            min_len = min(len(self.hotkeys), len(self.scores))
-            new_moving_average[:min_len] = self.scores[:min_len]
-            self.scores = new_moving_average
+            # Check to see if the metagraph has changed size.
+            # If so, we need to add new hotkeys and moving averages.
+            if len(self.hotkeys) < len(self.metagraph.hotkeys):
+                # Update the size of the moving average scores.
+                new_moving_average = np.zeros((self.metagraph.n))
+                min_len = min(len(self.hotkeys), len(self.scores))
+                new_moving_average[:min_len] = self.scores[:min_len]
+                self.scores = new_moving_average
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
@@ -384,14 +513,12 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Compute forward pass rewards, assumes uids are mutually exclusive.
         # shape: [ metagraph.n ]
-        scattered_rewards: np.ndarray = np.zeros_like(self.scores)
-        scattered_rewards[uids_array] = rewards
+        with self._scores_lock:
+            scattered_rewards: np.ndarray = np.zeros_like(self.scores)
+            scattered_rewards[uids_array] = rewards
+            alpha: float = self.config.neuron.moving_average_alpha
+            self.scores = alpha * scattered_rewards + (1 - alpha) * self.scores
         bt.logging.debug(f"Scattered rewards: {rewards}")
-
-        # Update scores with rewards produced by this step.
-        # shape: [ metagraph.n ]
-        alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: np.ndarray = alpha * scattered_rewards + (1 - alpha) * self.scores
         bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
@@ -399,10 +526,12 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Saving validator state.")
 
         # Save the state of the validator to file.
+        with self._scores_lock:
+            scores = np.array(self.scores, copy=True)
         np.savez(
             self.config.neuron.full_path + "/state.npz",
             step=self.step,
-            scores=self.scores,
+            scores=scores,
             hotkeys=self.hotkeys,
         )
 
@@ -418,5 +547,6 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.warning(f"No state file found at {state_path}, starting fresh.")
             return
         self.step = state["step"]
-        self.scores = state["scores"]
+        with self._scores_lock:
+            self.scores = state["scores"]
         self.hotkeys = state["hotkeys"]
