@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import MethodType, SimpleNamespace
 
 import numpy as np
@@ -51,6 +52,7 @@ def test_set_weights_updates_weight_tracker(monkeypatch, tmp_path) -> None:
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     dummy = SimpleNamespace(
         runtime_tracker=tracker,
+        _subtensor_lock=threading.RLock(),
         scores=np.array([1.0, 0.0], dtype=np.float32),
         metagraph=SimpleNamespace(uids=np.array([0, 1], dtype=np.int64)),
         config=SimpleNamespace(netuid=124),
@@ -119,3 +121,74 @@ def test_background_weight_helper_waits_for_backend_weights(monkeypatch) -> None
 
     assert dummy._maybe_set_weights(source="background", allow_initial_step=True) is False
     assert calls == []
+
+
+def test_subtensor_lock_serializes_sync_and_set_weights(monkeypatch, tmp_path) -> None:
+    """set_weights from background thread blocks while sync holds _subtensor_lock."""
+    tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
+    lock = threading.RLock()
+    gate = threading.Event()
+    order: list[str] = []
+
+    def blocking_check_registered():
+        order.append("sync_enter")
+        gate.wait(timeout=3)
+        order.append("sync_exit")
+
+    sync_dummy = SimpleNamespace(
+        runtime_tracker=tracker,
+        _subtensor_lock=lock,
+        check_registered=blocking_check_registered,
+        should_sync_metagraph=lambda: False,
+        _maybe_set_weights=lambda **kw: None,
+        save_state=lambda: None,
+    )
+
+    def mock_set_weights(**kwargs):
+        order.append("weights_call")
+        return (True, "")
+
+    weights_dummy = SimpleNamespace(
+        runtime_tracker=tracker,
+        _subtensor_lock=lock,
+        _scores_lock=threading.RLock(),
+        scores=np.array([1.0, 0.0], dtype=np.float32),
+        metagraph=SimpleNamespace(uids=np.array([0, 1], dtype=np.int64)),
+        config=SimpleNamespace(netuid=124),
+        subtensor=SimpleNamespace(set_weights=mock_set_weights),
+        wallet=object(),
+        spec_version=1,
+        block=100,
+    )
+
+    monkeypatch.setattr(
+        base_validator_mod, "process_weights_for_netuid",
+        lambda **kw: (np.array([0, 1], dtype=np.int64), np.array([1.0, 0.0], dtype=np.float32)),
+    )
+    monkeypatch.setattr(
+        base_validator_mod, "convert_weights_and_uids_for_emit",
+        lambda **kw: ([0, 1], [65535, 0]),
+    )
+
+    sync_thread = threading.Thread(target=lambda: BaseNeuron.sync(sync_dummy))
+    sync_thread.start()
+    time.sleep(0.05)
+
+    weights_thread = threading.Thread(
+        target=lambda: base_validator_mod.BaseValidatorNeuron.set_weights(weights_dummy),
+    )
+    weights_thread.start()
+    time.sleep(0.05)
+
+    assert "sync_enter" in order
+    assert "weights_call" not in order, "set_weights must wait for sync to release the lock"
+
+    gate.set()
+    sync_thread.join(timeout=3)
+    weights_thread.join(timeout=3)
+
+    assert "sync_exit" in order
+    assert "weights_call" in order
+    sync_idx = order.index("sync_exit")
+    weights_idx = order.index("weights_call")
+    assert sync_idx < weights_idx, "set_weights must run after sync releases the lock"

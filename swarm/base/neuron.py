@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import contextlib
 import copy
 import bittensor as bt
 from abc import ABC, abstractmethod
@@ -144,38 +145,38 @@ class BaseNeuron(ABC):
         Wrapper for synchronizing the state of the network for the given miner or validator.
         """
         tracker_call(self, "mark_chain_sync_started", context="validator_sync")
-        # Ensure miner or validator hotkey is still registered on the network.
-        self.check_registered()
+        _stl = getattr(self, "_subtensor_lock", None)
+        with _stl if _stl is not None else contextlib.nullcontext():
+            self.check_registered()
 
-        try:
-            if self.should_sync_metagraph():
-                self.last_update = self.block
-                self.resync_metagraph()
+            try:
+                if self.should_sync_metagraph():
+                    self.last_update = self.block
+                    self.resync_metagraph()
 
-            maybe_set_weights = getattr(self, "_maybe_set_weights", None)
-            if maybe_set_weights is not None:
-                maybe_set_weights(source="sync")
-            elif self.should_set_weights():
-                self.set_weights()
+                maybe_set_weights = getattr(self, "_maybe_set_weights", None)
+                if maybe_set_weights is not None:
+                    maybe_set_weights(source="sync")
+                elif self.should_set_weights():
+                    self.set_weights()
 
-            # Always save state.
-            self.save_state()
-            tracker_call(self, "mark_chain_sync_completed", context="validator_sync", success=True)
-        except Exception:
-            tracker_call(
-                self,
-                "mark_chain_sync_completed",
-                context="validator_sync",
-                success=False,
-                error=traceback.format_exc(),
-            )
-            bt.logging.error(
-                "Coundn't sync metagraph or set weights: {}".format(
-                    traceback.format_exc()
+                self.save_state()
+                tracker_call(self, "mark_chain_sync_completed", context="validator_sync", success=True)
+            except Exception:
+                tracker_call(
+                    self,
+                    "mark_chain_sync_completed",
+                    context="validator_sync",
+                    success=False,
+                    error=traceback.format_exc(),
                 )
-            )
-            bt.logging.error("If you use public RPC endpoint try to move to local node")
-            time.sleep(5)
+                bt.logging.error(
+                    "Coundn't sync metagraph or set weights: {}".format(
+                        traceback.format_exc()
+                    )
+                )
+                bt.logging.error("If you use public RPC endpoint try to move to local node")
+                time.sleep(5)
 
     def check_registered(self):
         # --- Check for registration.

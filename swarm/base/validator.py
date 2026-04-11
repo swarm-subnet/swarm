@@ -71,6 +71,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self.runtime_tracker = ValidatorRuntimeTracker(process_label="validator")
 
         self._scores_lock = threading.RLock()
+        self._subtensor_lock = threading.RLock()
         self._set_weights_lock = threading.Lock()
         self._weight_setter_wakeup = threading.Event()
         self._weight_setter_thread: Union[threading.Thread, None] = None
@@ -353,95 +354,87 @@ class BaseValidatorNeuron(BaseNeuron):
         """
 
         tracker_call(self, "mark_weights_attempt")
-        try:
-            scores_lock = getattr(self, "_scores_lock", None)
-            if scores_lock is not None:
-                with scores_lock:
+        with self._subtensor_lock:
+            try:
+                scores_lock = getattr(self, "_scores_lock", None)
+                if scores_lock is not None:
+                    with scores_lock:
+                        scores_snapshot = np.array(self.scores, copy=True)
+                else:
                     scores_snapshot = np.array(self.scores, copy=True)
-            else:
-                scores_snapshot = np.array(self.scores, copy=True)
 
-            # Check if self.scores contains any NaN values and log a warning if it does.
-            if np.isnan(scores_snapshot).any():
-                bt.logging.warning(
-                    "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                if np.isnan(scores_snapshot).any():
+                    bt.logging.warning(
+                        "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                    )
+
+                norm = np.linalg.norm(scores_snapshot, ord=1, axis=0, keepdims=True)
+
+                if np.any(norm == 0) or np.isnan(norm).any():
+                    norm = np.ones_like(norm)
+
+                raw_weights = scores_snapshot / norm
+
+                bt.logging.debug("raw_weights", raw_weights)
+                bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
+                (
+                    processed_weight_uids,
+                    processed_weights,
+                ) = process_weights_for_netuid(
+                    uids=self.metagraph.uids,
+                    weights=raw_weights,
+                    netuid=self.config.netuid,
+                    subtensor=self.subtensor,
+                    metagraph=self.metagraph,
                 )
+                bt.logging.debug("processed_weights", processed_weights)
+                bt.logging.debug("processed_weight_uids", processed_weight_uids)
 
-            # Calculate the average reward for each uid across non-zero values.
-            # Replace any NaN values with 0.
-            # Compute the norm of the scores
-            norm = np.linalg.norm(scores_snapshot, ord=1, axis=0, keepdims=True)
-
-            # Check if the norm is zero or contains NaN values
-            if np.any(norm == 0) or np.isnan(norm).any():
-                norm = np.ones_like(norm)  # Avoid division by zero or NaN
-
-            # Compute raw_weights safely
-            raw_weights = scores_snapshot / norm
-
-            bt.logging.debug("raw_weights", raw_weights)
-            bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
-            # Process the raw weights to final_weights via subtensor limitations.
-            (
-                processed_weight_uids,
-                processed_weights,
-            ) = process_weights_for_netuid(
-                uids=self.metagraph.uids,
-                weights=raw_weights,
-                netuid=self.config.netuid,
-                subtensor=self.subtensor,
-                metagraph=self.metagraph,
-            )
-            bt.logging.debug("processed_weights", processed_weights)
-            bt.logging.debug("processed_weight_uids", processed_weight_uids)
-
-            # Convert to uint16 weights and uids.
-            (
-                uint_uids,
-                uint_weights,
-            ) = convert_weights_and_uids_for_emit(
-                uids=processed_weight_uids, weights=processed_weights
-            )
-            bt.logging.debug("uint_weights", uint_weights)
-            bt.logging.debug("uint_uids", uint_uids)
-
-            # Set the weights on chain via our subtensor connection.
-            result, msg = self.subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.config.netuid,
-                uids=uint_uids,
-                weights=uint_weights,
-                wait_for_finalization=False,
-                wait_for_inclusion=False,
-                version_key=self.spec_version,
-            )
-            nonzero_uids = int(np.count_nonzero(scores_snapshot))
-            if result is True:
-                try:
-                    self._last_successful_weight_set_block = int(self.block)
-                except Exception:
-                    pass
-                tracker_call(
-                    self,
-                    "mark_weights_result",
-                    success=True,
-                    nonzero_uids=nonzero_uids,
+                (
+                    uint_uids,
+                    uint_weights,
+                ) = convert_weights_and_uids_for_emit(
+                    uids=processed_weight_uids, weights=processed_weights
                 )
-                bt.logging.info("set_weights on chain successfully!")
-                return True
-            else:
-                tracker_call(
-                    self,
-                    "mark_weights_result",
-                    success=False,
-                    error=str(msg),
-                    nonzero_uids=nonzero_uids,
+                bt.logging.debug("uint_weights", uint_weights)
+                bt.logging.debug("uint_uids", uint_uids)
+
+                result, msg = self.subtensor.set_weights(
+                    wallet=self.wallet,
+                    netuid=self.config.netuid,
+                    uids=uint_uids,
+                    weights=uint_weights,
+                    wait_for_finalization=False,
+                    wait_for_inclusion=False,
+                    version_key=self.spec_version,
                 )
-                bt.logging.error("set_weights failed", msg)
-                return False
-        except Exception as exc:
-            tracker_call(self, "mark_weights_result", success=False, error=str(exc))
-            raise
+                nonzero_uids = int(np.count_nonzero(scores_snapshot))
+                if result is True:
+                    try:
+                        self._last_successful_weight_set_block = int(self.block)
+                    except Exception:
+                        pass
+                    tracker_call(
+                        self,
+                        "mark_weights_result",
+                        success=True,
+                        nonzero_uids=nonzero_uids,
+                    )
+                    bt.logging.info("set_weights on chain successfully!")
+                    return True
+                else:
+                    tracker_call(
+                        self,
+                        "mark_weights_result",
+                        success=False,
+                        error=str(msg),
+                        nonzero_uids=nonzero_uids,
+                    )
+                    bt.logging.error("set_weights failed", msg)
+                    return False
+            except Exception as exc:
+                tracker_call(self, "mark_weights_result", success=False, error=str(exc))
+                raise
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
