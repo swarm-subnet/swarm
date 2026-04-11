@@ -161,29 +161,30 @@ class BaseValidatorNeuron(BaseNeuron):
         source: str,
         allow_initial_step: bool = False,
     ) -> bool:
-        if allow_initial_step and not self._weights_ready_for_setting:
-            return False
-        if not self._should_set_weights_due(allow_initial_step=allow_initial_step):
-            return False
-
-        now = time.time()
-        if source == "background":
-            since_attempt = now - self._last_weight_set_attempt_at
-            if since_attempt < WEIGHT_SETTER_RETRY_SEC:
+        with self._subtensor_lock:
+            if allow_initial_step and not self._weights_ready_for_setting:
                 return False
-
-        if not self._set_weights_lock.acquire(blocking=False):
-            bt.logging.info(f"Skipping {source} weight set; another weight set is active")
-            return False
-
-        try:
             if not self._should_set_weights_due(allow_initial_step=allow_initial_step):
                 return False
-            self._last_weight_set_attempt_at = time.time()
-            bt.logging.info(f"⚖️ Weight setter triggered ({source})")
-            return bool(self.set_weights())
-        finally:
-            self._set_weights_lock.release()
+
+            now = time.time()
+            if source == "background":
+                since_attempt = now - self._last_weight_set_attempt_at
+                if since_attempt < WEIGHT_SETTER_RETRY_SEC:
+                    return False
+
+            if not self._set_weights_lock.acquire(blocking=False):
+                bt.logging.info(f"Skipping {source} weight set; another weight set is active")
+                return False
+
+            try:
+                if not self._should_set_weights_due(allow_initial_step=allow_initial_step):
+                    return False
+                self._last_weight_set_attempt_at = time.time()
+                bt.logging.info(f"⚖️ Weight setter triggered ({source})")
+                return bool(self.set_weights())
+            finally:
+                self._set_weights_lock.release()
 
     def _weight_setter_loop(self) -> None:
         bt.logging.info(
