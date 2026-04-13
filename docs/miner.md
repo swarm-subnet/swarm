@@ -364,7 +364,8 @@ Your `requirements.txt` can only include packages from the approved whitelist. A
 torch, torchvision, torchaudio, onnx, onnxruntime, onnxruntime-gpu,
 stable-baselines3, sb3-contrib, gymnasium, gym, numpy, scipy,
 scikit-learn, opencv-python, opencv-python-headless, pillow, imageio,
-matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack
+matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack,
+swarm-bullet3, swarm-drone-gym
 ```
 
 Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC).

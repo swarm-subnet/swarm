@@ -71,6 +71,7 @@ DOCKER_PIP_WHITELIST = {
     "onnx", "onnxruntime", "onnxruntime-gpu",
     "stable-baselines3", "sb3-contrib",
     "gymnasium", "gym",
+    "swarm-bullet3", "swarm-drone-gym",
     "numpy", "scipy", "scikit-learn",
     "opencv-python", "opencv-python-headless",
     "pillow", "imageio",
