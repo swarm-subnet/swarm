@@ -14,7 +14,9 @@ _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 1,
     "type5_warehouse": 1,
 }
-_HEAVY_GROUPS = frozenset({"type3_mountain", "type5_warehouse", "type6_forest"})
+_HEAVY_GROUPS = frozenset(
+    {"type3_mountain", "type4_village", "type5_warehouse", "type6_forest"}
+)
 _BACKOFF_ACTIVE_WORKERS = 2
 _BACKOFF_RECENT_WINDOW = 6
 _BACKOFF_MIN_SAMPLES = 4
@@ -24,18 +26,16 @@ _BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC = 0.25
 _BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE = 1.5
 _PARENT_WORKER_HEARTBEAT_SEC = 15.0
 _PARENT_WORKER_STALL_TIMEOUT_SEC = 90.0
-_BACKOFF_FAILURE_STATUSES = frozenset(
+_BACKOFF_TIMEOUT_STATUSES = frozenset(
     {
         "batch_timeout",
-        "batch_exception",
-        "rpc_connection_failed",
-        "rpc_ping_timeout",
-        "rpc_connect_failed",
-        "rpc_agent_unavailable",
-        "seed_timeout_strikes",
-        "seed_rpc_disconnected",
-        "seed_exception",
+        "batch_timeout_partial",
         "seed_cancelled",
+    }
+)
+_BACKOFF_INFRA_FAILURE_STATUSES = frozenset(
+    {
+        "batch_exception",
         "worker_stall_timeout",
     }
 )
@@ -52,6 +52,28 @@ def _group_dispatch_weight(group_name: str) -> int:
 def _max_heavy_active(active_worker_cap: int) -> int:
     worker_cap = max(1, int(active_worker_cap))
     return max(1, min(worker_cap // 2, 4))
+
+
+def _is_backoff_timeout_status(status: str) -> bool:
+    return status in _BACKOFF_TIMEOUT_STATUSES
+
+
+def _is_backoff_infra_status(status: str) -> bool:
+    return status in _BACKOFF_INFRA_FAILURE_STATUSES
+
+
+def _worker_cap_levels(requested_workers: int) -> Tuple[int, ...]:
+    current = max(1, int(requested_workers))
+    levels = [current]
+    while current > _BACKOFF_ACTIVE_WORKERS:
+        if current >= 6:
+            current -= 2
+        else:
+            current -= 1
+        current = max(_BACKOFF_ACTIVE_WORKERS, current)
+        if current != levels[-1]:
+            levels.append(current)
+    return tuple(levels)
 
 
 def _seed_has_calibration_spike(seed_meta: Optional[Dict[str, Any]]) -> bool:
@@ -107,34 +129,47 @@ def _build_worker_stall_seed_meta(
 class _AdaptiveBackoffController:
     requested_workers: int
     active_worker_cap: int = field(init=False)
+    worker_cap_levels: Tuple[int, ...] = field(init=False)
     cooldown_remaining: int = 0
     recent_statuses: deque[str] = field(
         default_factory=lambda: deque(maxlen=_BACKOFF_RECENT_WINDOW)
     )
-    recent_spikes: deque[bool] = field(
+    recent_issue_flags: deque[bool] = field(
         default_factory=lambda: deque(maxlen=_BACKOFF_RECENT_WINDOW)
     )
 
     def __post_init__(self) -> None:
-        self.active_worker_cap = max(1, int(self.requested_workers))
+        self.worker_cap_levels = _worker_cap_levels(self.requested_workers)
+        self.active_worker_cap = self.worker_cap_levels[0]
 
     @property
     def enabled(self) -> bool:
         return self.requested_workers > _BACKOFF_ACTIVE_WORKERS
 
     def recent_clean_rate(self) -> float:
-        if not self.recent_statuses:
+        if not self.recent_issue_flags:
             return 1.0
-        clean = sum(1 for status in self.recent_statuses if _is_clean_execution_status(status))
-        return clean / float(len(self.recent_statuses))
+        clean = sum(1 for issue in self.recent_issue_flags if not issue)
+        return clean / float(len(self.recent_issue_flags))
 
     def recent_window_is_healthy(self) -> bool:
-        if len(self.recent_statuses) < _BACKOFF_RECENT_WINDOW:
+        if len(self.recent_issue_flags) < _BACKOFF_RECENT_WINDOW:
             return False
-        return (
-            all(_is_clean_execution_status(status) for status in self.recent_statuses)
-            and not any(self.recent_spikes)
-        )
+        return not any(self.recent_issue_flags)
+
+    def _next_lower_worker_cap(self) -> int:
+        for level in self.worker_cap_levels:
+            if level < self.active_worker_cap:
+                return level
+        return self.active_worker_cap
+
+    def _next_higher_worker_cap(self) -> int:
+        previous_level = self.worker_cap_levels[0]
+        for level in self.worker_cap_levels:
+            if level == self.active_worker_cap:
+                return previous_level
+            previous_level = level
+        return self.worker_cap_levels[0]
 
     def observe_seed(self, seed_meta: Optional[Dict[str, Any]]) -> Optional[str]:
         if not self.enabled or not isinstance(seed_meta, dict):
@@ -143,10 +178,14 @@ class _AdaptiveBackoffController:
         status = str(seed_meta.get("status", "")).strip() or "unknown"
         spike = _seed_has_calibration_spike(seed_meta)
         self.recent_statuses.append(status)
-        self.recent_spikes.append(spike)
+        self.recent_issue_flags.append(
+            _is_backoff_timeout_status(status) or _is_backoff_infra_status(status) or spike
+        )
 
         trigger_reason: Optional[str] = None
-        if status in _BACKOFF_FAILURE_STATUSES:
+        if _is_backoff_timeout_status(status):
+            trigger_reason = f"status={status} {_format_seed_desc(seed_meta)}"
+        elif status in _BACKOFF_INFRA_FAILURE_STATUSES:
             trigger_reason = f"status={status} {_format_seed_desc(seed_meta)}"
         elif spike:
             try:
@@ -161,18 +200,9 @@ class _AdaptiveBackoffController:
                 f"calibration spike {_format_seed_desc(seed_meta)} "
                 f"overhead={overhead_ms:.1f}ms cpu_factor={cpu_factor:.2f}x"
             )
-        elif (
-            len(self.recent_statuses) >= _BACKOFF_MIN_SAMPLES
-            and self.recent_clean_rate() < _BACKOFF_CLEAN_RATE_THRESHOLD
-        ):
-            trigger_reason = (
-                f"recent clean execution {self.recent_clean_rate() * 100.0:.0f}% "
-                f"over last {len(self.recent_statuses)} seeds"
-            )
-
         if trigger_reason is not None:
             previous_cap = self.active_worker_cap
-            self.active_worker_cap = min(self.active_worker_cap, _BACKOFF_ACTIVE_WORKERS)
+            self.active_worker_cap = self._next_lower_worker_cap()
             self.cooldown_remaining = max(
                 self.cooldown_remaining,
                 _BACKOFF_COOLDOWN_COMPLETIONS,
@@ -192,11 +222,19 @@ class _AdaptiveBackoffController:
         if self.active_worker_cap < self.requested_workers:
             self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
             if self.cooldown_remaining == 0 and self.recent_window_is_healthy():
-                self.active_worker_cap = self.requested_workers
-                return (
-                    f"Adaptive backoff cleared: restoring dispatch to "
-                    f"{self.requested_workers} workers"
-                )
+                next_cap = self._next_higher_worker_cap()
+                if next_cap > self.active_worker_cap:
+                    self.active_worker_cap = next_cap
+                    if self.active_worker_cap >= self.requested_workers:
+                        return (
+                            f"Adaptive backoff cleared: restoring dispatch to "
+                            f"{self.requested_workers} workers"
+                        )
+                    self.cooldown_remaining = _BACKOFF_COOLDOWN_COMPLETIONS
+                    return (
+                        f"Adaptive backoff relaxed: increasing dispatch to "
+                        f"{self.active_worker_cap}/{self.requested_workers} workers"
+                    )
 
         return None
 

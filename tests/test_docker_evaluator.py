@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from swarm.benchmark import engine as bench_full_eval
 from swarm.protocol import ValidationResult
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
@@ -26,6 +27,111 @@ def _new_evaluator() -> de.DockerSecureEvaluator:
     ev.base_ready = True
     de.DockerSecureEvaluator._base_ready = True
     return ev
+
+
+class _ScriptedQueue:
+    def __init__(self):
+        self._items = []
+        self._handler = None
+
+    def set_handler(self, handler):
+        self._handler = handler
+
+    def put(self, item):
+        if self._handler is not None:
+            self._handler(item)
+            return
+        self._items.append(item)
+
+    def get(self, timeout=None):
+        _ = timeout
+        if self._items:
+            return self._items.pop(0)
+        raise de.parallel.queue_mod.Empty
+
+    def get_nowait(self):
+        return self.get(timeout=0.0)
+
+    def close(self):
+        return None
+
+
+class _ScriptedProcess:
+    def __init__(self, ctx, args):
+        self._ctx = ctx
+        self._args = args
+        self.exitcode = None
+        self._alive = False
+
+    def start(self):
+        self._alive = True
+        worker_slot, task_queue, result_queue, progress_queue = self._args
+        task_queue.set_handler(
+            lambda request: self._ctx.handle_request(
+                worker_slot,
+                request,
+                result_queue,
+                progress_queue,
+            )
+        )
+
+    def join(self, timeout=None):
+        _ = timeout
+        return None
+
+    def terminate(self):
+        self._alive = False
+        self.exitcode = -15
+
+    def is_alive(self):
+        return self._alive
+
+
+class _ScriptedContext:
+    def __init__(self, bench_engine, scripted_attempts):
+        self._bench_engine = bench_engine
+        self._scripted_attempts = scripted_attempts
+        self._attempts = {}
+        self._queues = []
+
+    def Queue(self):
+        queue_obj = _ScriptedQueue()
+        self._queues.append(queue_obj)
+        return queue_obj
+
+    def Process(self, target, args, name, daemon):
+        _ = target, name, daemon
+        return _ScriptedProcess(self, args)
+
+    def handle_request(self, worker_slot, request, result_queue, progress_queue):
+        if request is None:
+            return
+        batch_index = int(request.batch_index)
+        attempt = self._attempts.get(batch_index, 0)
+        self._attempts[batch_index] = attempt + 1
+        plan = self._scripted_attempts[batch_index][attempt]
+        for seed_meta in plan.get("seed_events", []):
+            progress_queue.put(
+                self._bench_engine._ProcessSeedEvent(
+                    worker_id=int(worker_slot),
+                    batch_index=batch_index,
+                    seed_meta=seed_meta,
+                )
+            )
+        result_queue.put(
+            self._bench_engine._ProcessBatchResult(
+                worker_id=int(worker_slot),
+                batch_index=batch_index,
+                batch_indices=list(request.batch_indices),
+                results=list(plan.get("results", [])),
+                elapsed_sec=float(plan.get("elapsed_sec", 0.1)),
+                error=plan.get("error"),
+            )
+        )
+
+    @property
+    def attempts(self):
+        return dict(self._attempts)
 
 
 def test_normalize_package_name():
@@ -489,15 +595,174 @@ def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
     assert snapshot["docker"]["effective_workers"] == 2
 
 
+def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=4,
+        map_seed=3101,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 41,
+                            "map_seed": 3101,
+                            "challenge_type": 4,
+                            "status": "seed_cancelled",
+                            "success": False,
+                            "sim_time_sec": 12.0,
+                            "seed_wall_sec": 240.1,
+                            "step_idx": 123,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(41, False, 12.0, 0.0)],
+                    "elapsed_sec": 240.1,
+                },
+                {
+                    "seed_events": [
+                        {
+                            "uid": 41,
+                            "map_seed": 3101,
+                            "challenge_type": 4,
+                            "status": "seed_done",
+                            "success": True,
+                            "sim_time_sec": 18.0,
+                            "seed_wall_sec": 300.0,
+                            "step_idx": 180,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(41, True, 18.0, 0.8)],
+                    "elapsed_sec": 18.0,
+                },
+            ]
+        },
+    )
+    callback_payloads = []
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type4_village",
+                    "seed": 3101,
+                    "challenge_type": 4,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=41,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=lambda payload=None: callback_payloads.append(payload),
+            phase_label="eval",
+        )
+    )
+
+    assert scripted_context.attempts == {0: 2}
+    assert len(results) == 1
+    assert results[0].success is True
+    assert results[0].score == pytest.approx(0.8)
+    assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
+    assert any("retrying timed-out seed village:3101" in line for line in log_lines)
+    assert any("1 retried_timeout" in line for line in log_lines)
+
+
+def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=3,
+        map_seed=3201,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 51,
+                            "map_seed": 3201,
+                            "challenge_type": 3,
+                            "status": "seed_timeout_strikes",
+                            "success": False,
+                            "sim_time_sec": 4.0,
+                            "seed_wall_sec": 30.0,
+                            "step_idx": 15,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(51, False, 4.0, 0.0)],
+                    "elapsed_sec": 30.0,
+                }
+            ]
+        },
+    )
+    callback_payloads = []
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type3_mountain",
+                    "seed": 3201,
+                    "challenge_type": 3,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=51,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=lambda payload=None: callback_payloads.append(payload),
+            phase_label="eval",
+        )
+    )
+
+    assert scripted_context.attempts == {0: 1}
+    assert len(results) == 1
+    assert results[0].success is False
+    assert results[0].score == pytest.approx(0.0)
+    assert [payload["status"] for payload in callback_payloads] == ["seed_timeout_strikes"]
+    assert not any("retrying timed-out seed mountain:3201" in line for line in log_lines)
+    assert any("1 failed, 0 timeout, 0 runtime, 0 retried_timeout" in line for line in log_lines)
+
+
 def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
     tasks = [
         SimpleNamespace(challenge_type=3),
         SimpleNamespace(challenge_type=5),
         SimpleNamespace(challenge_type=3),
-        SimpleNamespace(challenge_type=5),
         SimpleNamespace(challenge_type=1),
         SimpleNamespace(challenge_type=2),
         SimpleNamespace(challenge_type=1),
+        SimpleNamespace(challenge_type=2),
         SimpleNamespace(challenge_type=4),
     ]
 

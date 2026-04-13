@@ -118,6 +118,25 @@ def test_select_next_batch_index_falls_back_to_heavy_when_only_heavy_remain():
     assert selected == 1
 
 
+def test_select_next_batch_index_treats_village_as_heavy_when_light_available():
+    batch_plan = [[0], [1], [2]]
+    task_meta = [
+        {"group": "type4_village"},
+        {"group": "type6_forest"},
+        {"group": "type2_open"},
+    ]
+
+    selected = bench_full_eval._select_next_batch_index(
+        pending_batch_ids=[1, 2],
+        batch_plan=batch_plan,
+        task_meta=task_meta,
+        active_batch_ids=[0],
+        active_worker_cap=2,
+    )
+
+    assert selected == 2
+
+
 def test_select_next_batch_index_treats_forest_as_heavy_when_cap_is_full():
     batch_plan = [[0], [1], [2], [3], [4]]
     task_meta = [
@@ -214,6 +233,81 @@ def test_adaptive_backoff_triggers_on_clean_execution_failure():
 
     assert "Adaptive backoff active" in str(note)
     assert controller.active_worker_cap == 2
+
+
+def test_adaptive_backoff_ignores_seed_timeout_strikes():
+    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=8)
+
+    note = controller.observe_seed(
+        {
+            "status": "seed_timeout_strikes",
+            "map_seed": 410,
+            "challenge_type": 4,
+        }
+    )
+
+    assert note is None
+    assert controller.active_worker_cap == 8
+
+
+def test_adaptive_backoff_steps_down_and_recovers_gradually():
+    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=8)
+
+    note_one = controller.observe_seed(
+        {
+            "status": "batch_timeout_partial",
+            "map_seed": 510,
+            "challenge_type": 4,
+        }
+    )
+    note_two = controller.observe_seed(
+        {
+            "status": "batch_timeout",
+            "map_seed": 511,
+            "challenge_type": 3,
+        }
+    )
+
+    assert controller.worker_cap_levels == (8, 6, 4, 3, 2)
+    assert "Adaptive backoff active" in str(note_one)
+    assert "6/8 workers" in str(note_one)
+    assert "Adaptive backoff active" in str(note_two)
+    assert "4/8 workers" in str(note_two)
+    assert controller.active_worker_cap == 4
+
+    notes = []
+    for idx in range(6):
+        notes.append(
+            controller.observe_seed(
+                {
+                    "status": "seed_done",
+                    "map_seed": 600 + idx,
+                    "challenge_type": 2,
+                    "calibration_overhead_sec": 0.01,
+                    "calibration_cpu_factor": 1.0,
+                }
+            )
+        )
+
+    assert controller.active_worker_cap == 6
+    assert any(note and "Adaptive backoff relaxed" in note for note in notes)
+
+    notes = []
+    for idx in range(6):
+        notes.append(
+            controller.observe_seed(
+                {
+                    "status": "seed_done",
+                    "map_seed": 700 + idx,
+                    "challenge_type": 1,
+                    "calibration_overhead_sec": 0.01,
+                    "calibration_cpu_factor": 1.0,
+                }
+            )
+        )
+
+    assert controller.active_worker_cap == 8
+    assert any(note and "Adaptive backoff cleared" in note for note in notes)
 
 
 def test_save_and_load_type_seeds(tmp_path):
