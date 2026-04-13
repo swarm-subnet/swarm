@@ -150,6 +150,8 @@ def test_validate_requirements_accepts_whitelisted_packages(tmp_path):
                 "# comment",
                 "numpy>=2.0.1",
                 "torch==2.0.0",
+                "swarm-bullet3==2.0.0.1",
+                "swarm-drone-gym==2.0.0.1",
             ]
         )
     )
