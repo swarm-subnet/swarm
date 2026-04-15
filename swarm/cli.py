@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import json
 import os
 import py_compile
 import re
@@ -12,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -304,11 +303,7 @@ def _print_doctor_text(checks: list[DoctorCheck]) -> None:
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     checks = _run_doctor_checks()
-    if args.json:
-        payload = [asdict(c) for c in checks]
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        _print_doctor_text(checks)
+    _print_doctor_text(checks)
     failed_required = any((not c.ok) and c.required for c in checks)
     return 1 if failed_required else 0
 
@@ -589,14 +584,11 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
         "inspection": inspection,
     }
 
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        print(f"Model: {payload['model']}")
-        print(f"Compliant: {payload['compliant']}")
-        print(f"Status: {payload['status']}")
-        print(f"Reason: {payload['reason']}")
-        print(f"Size: {payload['size_bytes']} bytes (limit {payload['size_limit_bytes']})")
+    print(f"Model: {payload['model']}")
+    print(f"Compliant: {payload['compliant']}")
+    print(f"Status: {payload['status']}")
+    print(f"Reason: {payload['reason']}")
+    print(f"Size: {payload['size_bytes']} bytes (limit {payload['size_limit_bytes']})")
 
     return 0 if compliant else 1
 
@@ -659,14 +651,11 @@ def _cmd_model_test(args: argparse.Namespace) -> int:
         )
     )
 
-    if args.json:
-        print(json.dumps([asdict(c) for c in checks], indent=2, sort_keys=True))
-    else:
-        print("Model Test")
-        for check in checks:
-            status = "OK" if check.ok else "FAIL"
-            req = "required" if check.required else "optional"
-            print(f"- {status:4} [{req}] {check.name}: {check.detail}")
+    print("Model Test")
+    for check in checks:
+        status = "OK" if check.ok else "FAIL"
+        req = "required" if check.required else "optional"
+        print(f"- {status:4} [{req}] {check.name}: {check.detail}")
 
     failed_required = any((not c.ok) and c.required for c in checks)
     return 1 if failed_required else 0
@@ -728,28 +717,21 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    if args.json:
-        payload = dict(summary)
-        if results_block:
-            payload["results_block"] = results_block
-        payload["report_source"] = str(input_path)
-        print(json.dumps(payload, indent=2, sort_keys=True))
+    print(f"Report source: {input_path}")
+    if results_block:
+        print()
+        print(results_block)
     else:
-        print(f"Report source: {input_path}")
-        if results_block:
-            print()
-            print(results_block)
-        else:
-            print(f"Seeds evaluated: {summary['seeds_evaluated']}")
-            print(f"Workers used: {summary['workers_used']}")
-            print(f"Total wall-clock: {summary['total_wall_clock_sec']:.1f}s")
-            if "throughput_seeds_per_min" in summary:
-                print(f"Throughput: {summary['throughput_seeds_per_min']:.2f} seeds/min")
-            if "estimated_wall_clock_sec_1000" in summary:
-                print(
-                    "Estimated wall-clock for 1000 seeds: "
-                    f"{summary['estimated_wall_clock_sec_1000']:.1f}s"
-                )
+        print(f"Seeds evaluated: {summary['seeds_evaluated']}")
+        print(f"Workers used: {summary['workers_used']}")
+        print(f"Total wall-clock: {summary['total_wall_clock_sec']:.1f}s")
+        if "throughput_seeds_per_min" in summary:
+            print(f"Throughput: {summary['throughput_seeds_per_min']:.2f} seeds/min")
+        if "estimated_wall_clock_sec_1000" in summary:
+            print(
+                "Estimated wall-clock for 1000 seeds: "
+                f"{summary['estimated_wall_clock_sec_1000']:.1f}s"
+            )
 
     return 0
 
@@ -798,11 +780,6 @@ def _cmd_champion(args: argparse.Namespace) -> int:
             released = champ.get("is_released", False)
             per_type = champ.get("per_type_scores") or {}
             expected_hash = champ.get("model_hash")
-
-            if args.json:
-                print(json.dumps(champ, indent=2))
-                if not released:
-                    return 0
 
             if not released:
                 print(f"Champion: UID {uid}  Score: {score:.4f}")
@@ -853,7 +830,6 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser(
         "doctor", help="Check local environment readiness for Swarm benchmarking."
     )
-    doctor_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     doctor_parser.set_defaults(func=_cmd_doctor)
 
     monitor_parser = subparsers.add_parser(
@@ -899,11 +875,6 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser = subparsers.add_parser(
         "benchmark",
         help="Run benchmark workflows.",
-    )
-    benchmark_parser.add_argument(
-        "--full",
-        action="store_true",
-        help="Compatibility flag; full benchmark is the default mode.",
     )
     benchmark_parser.add_argument(
         "--model",
@@ -1195,7 +1166,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=300.0,
         help="Maximum allowed uncompressed ZIP size in MB for safety checks.",
     )
-    model_verify_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     model_verify_parser.set_defaults(func=_cmd_model_verify)
 
     model_package_parser = model_subparsers.add_parser(
@@ -1231,7 +1201,6 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Source directory containing drone_agent.py.",
     )
-    model_test_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     model_test_parser.set_defaults(func=_cmd_model_test)
 
     report_parser = subparsers.add_parser(
@@ -1244,7 +1213,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_BENCH_LOG,
         help=f"Benchmark log input path (default: {DEFAULT_BENCH_LOG}).",
     )
-    report_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     report_parser.set_defaults(func=_cmd_report)
 
     champion_parser = subparsers.add_parser(
@@ -1263,7 +1231,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com"),
         help="Backend API URL (default: https://api.swarm124.com).",
     )
-    champion_parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     champion_parser.set_defaults(func=_cmd_champion)
 
     return parser

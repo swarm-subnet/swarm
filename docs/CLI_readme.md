@@ -189,9 +189,6 @@ Downloads the current champion model.
 # Download the champion
 swarm champion
 
-# View champion info as JSON without downloading
-swarm champion --json
-
 # Save to a specific path
 swarm champion --output my_champion.zip
 ```
@@ -200,13 +197,8 @@ Options:
 
 - `--output <path>` — output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
 - `--backend-url <url>` — override the backend API URL (defaults to the public API).
-- `--json` — print champion info as JSON. If the model is not released, prints info and exits.
 
 The download includes SHA-256 integrity verification against the hash reported by the backend.
-
----
-
-`doctor`, `model verify`, `model test`, `report`, and `champion` support `--json` for machine-readable output.
 
 ## Tests
 

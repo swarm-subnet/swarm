@@ -205,8 +205,6 @@ The `--seeds-per-group` flag controls how many seeds run per environment type. V
 swarm report
 ```
 
-`doctor`, `model verify`, `model test`, and `report` support `--json` for machine-readable output.
-
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
 ---

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import zipfile
@@ -9,7 +8,7 @@ from types import SimpleNamespace
 from swarm import cli
 
 
-def test_doctor_json_output_with_mocked_checks(monkeypatch, capsys):
+def test_doctor_text_output_with_mocked_checks(monkeypatch, capsys):
     monkeypatch.setattr(
         cli,
         "_run_doctor_checks",
@@ -19,10 +18,11 @@ def test_doctor_json_output_with_mocked_checks(monkeypatch, capsys):
         ],
     )
 
-    rc = cli.main(["doctor", "--json"])
+    rc = cli.main(["doctor"])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload[0]["name"] == "python"
+    output = capsys.readouterr().out
+    assert "Swarm Doctor" in output
+    assert "python: 3.11.14" in output
 
 
 def test_doctor_fails_if_required_check_fails(monkeypatch):
@@ -120,7 +120,6 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
     rc = cli.main(
         [
             "benchmark",
-            "--full",
             "--model",
             str(model_path),
             "--workers",
@@ -246,10 +245,11 @@ def test_model_verify_passes_for_valid_rpc_submission(tmp_path, capsys):
     with zipfile.ZipFile(model_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("drone_agent.py", "class DroneFlightController:\n    pass\n")
 
-    rc = cli.main(["model", "verify", "--model", str(model_zip), "--json"])
+    rc = cli.main(["model", "verify", "--model", str(model_zip)])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["compliant"] is True
+    output = capsys.readouterr().out
+    assert "Model:" in output
+    assert "Compliant: True" in output
 
 
 def test_model_verify_fails_if_missing_drone_agent(tmp_path):
@@ -322,19 +322,19 @@ def test_model_test_fails_for_invalid_requirements(tmp_path):
     assert cli.main(["model", "test", "--source", str(src)]) == 1
 
 
-def test_model_test_json_success_for_valid_source(tmp_path, capsys):
+def test_model_test_success_for_valid_source(tmp_path, capsys):
     src = tmp_path / "agent"
     src.mkdir(parents=True, exist_ok=True)
     (src / "drone_agent.py").write_text("class DroneFlightController:\n    pass\n")
     (src / "weights.pt").write_bytes(b"weights")
 
-    rc = cli.main(["model", "test", "--source", str(src), "--json"])
+    rc = cli.main(["model", "test", "--source", str(src)])
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    checks = {item["name"]: item for item in payload}
-    assert checks["drone_agent.py"]["ok"] is True
-    assert checks["estimated_package_size"]["ok"] is True
+    output = capsys.readouterr().out
+    assert "Model Test" in output
+    assert "drone_agent.py: present" in output
+    assert "estimated_package_size:" in output
 
 
 def test_model_test_fails_for_invalid_python(tmp_path):
@@ -345,49 +345,31 @@ def test_model_test_fails_for_invalid_python(tmp_path):
     assert cli.main(["model", "test", "--source", str(src)]) == 1
 
 
-def test_report_json_parses_benchmark_log(tmp_path, capsys):
+def test_report_text_output_parses_summary_without_results_block(tmp_path, capsys):
     log_path = tmp_path / "bench.log"
     log_path.write_text(
         "\n".join(
             [
-                "[17:28:58] === RESULTS ===",
-                "",
-                "  Run summary:",
                 "    Seeds evaluated:           50",
                 "    Success rate:              40/50 (80.0%)",
                 "    Clean execution rate:      49/50 (98.0%)",
                 "    Total wall-clock:          120.0s (2.0 min)",
-                "    Avg wall / seed:           2.40s",
-                "    Median wall / seed:        2.20s",
-                "    P90 wall / seed:           3.10s",
-                "    Avg sim time / seed:       1.20s",
-                "    Total seed-worker time:    140.0s",
                 "    Throughput:                25.00 seeds/min",
-                "    Throughput per worker:     8.33 seeds/min/worker",
-                "    Effective parallelism:     2.33x (utilization 77.7% of 3 workers)",
-                "    Batches run:               50",
-                "    Avg seeds / container:     1.00",
-                "    Total startup overhead:    20.0s",
-                "    Avg startup / container:   0.40s",
-                "",
                 "    Workers used:              3",
                 "    Estimated wall-clock:      900.0s (15.0 min)",
-                "    Estimated avg wall / seed: 0.90s",
-                "    Estimated throughput:      66.67 seeds/min",
-                "",
-                "[17:28:58] === BENCHMARK COMPLETE ===",
             ]
         )
     )
 
-    rc = cli.main(["report", "--input", str(log_path), "--json"])
+    rc = cli.main(["report", "--input", str(log_path)])
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["seeds_evaluated"] == 50
-    assert payload["workers_used"] == 3
-    assert payload["clean_execution_rate_pct"] == 98.0
-    assert "=== RESULTS ===" in payload["results_block"]
-    assert payload["report_source"] == str(log_path)
+    output = capsys.readouterr().out
+    assert f"Report source: {log_path}" in output
+    assert "Seeds evaluated: 50" in output
+    assert "Workers used: 3" in output
+    assert "Total wall-clock: 120.0s" in output
+    assert "Throughput: 25.00 seeds/min" in output
+    assert "Estimated wall-clock for 1000 seeds: 900.0s" in output
 
 
 def test_report_text_output_contains_results_block(tmp_path, capsys):
@@ -469,12 +451,12 @@ def test_python_module_entrypoint_model_test_runs(tmp_path):
     (src / "drone_agent.py").write_text("class DroneFlightController:\n    pass\n")
 
     result = subprocess.run(
-        [sys.executable, "-m", "swarm", "model", "test", "--source", str(src), "--json"],
+        [sys.executable, "-m", "swarm", "model", "test", "--source", str(src)],
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert result.returncode == 0
-    payload = json.loads(result.stdout)
-    assert any(item["name"] == "drone_agent.py" and item["ok"] for item in payload)
+    assert "Model Test" in result.stdout
+    assert "drone_agent.py: present" in result.stdout

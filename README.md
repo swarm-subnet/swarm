@@ -176,6 +176,7 @@ pip install swarm-sotapilot
 
 ```bash
 swarm doctor                                          # Check environment readiness
+swarm champion                                        # Download the current champion model
 swarm model test --source my_agent/                   # Validate source folder
 swarm model package --source my_agent/                # Bundle into Submission/submission.zip
 swarm model verify --model Submission/submission.zip  # Verify structure and compliance
@@ -185,7 +186,7 @@ swarm report                                          # View results
 ```
 
 <p align="center">
-  <sub>Most commands support <code>--json</code> for CI/CD pipelines. Full docs: <a href="docs/CLI_readme.md">CLI reference</a>.</sub>
+  <sub>Full docs: <a href="docs/CLI_readme.md">CLI reference</a>.</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
