@@ -6,5 +6,11 @@ recursive-include swarm/assets *
 recursive-include swarm/submission_template *
 recursive-include swarm/templates *
 recursive-include swarm/validator/docker *
+recursive-exclude swarm/assets/open_terrain *
+recursive-exclude swarm/assets/maps/forest/terrain_cache *
+prune swarm/assets/map_images
+exclude swarm/assets/Drone_flying.gif
+exclude swarm/assets/Drone_flying_FPV.gif
+exclude swarm/assets/Drone_flying.mp4
 global-exclude __pycache__/*
 global-exclude *.py[cod]

@@ -13,7 +13,7 @@ pip install -e .
 Once published on PyPI:
 
 ```bash
-pip install swarm-benchmark
+pip install swarm-sotapilot
 ```
 
 Then use `swarm <command>` directly. Alternatively, run without installation:

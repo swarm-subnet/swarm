@@ -20,6 +20,14 @@ ASSETS_DIR = os.path.normpath(
         "maps",
     )
 )
+STATE_DIR = os.path.normpath(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        os.pardir,
+        os.pardir,
+        "state",
+    )
+)
 FOREST_ASSET_DIR = os.path.join(ASSETS_DIR, "forest", "quaternius_ultimate_nature")
 MOUNTAIN_ASSET_DIR = os.path.join(ASSETS_DIR, "custom", "mountains")
 
@@ -42,7 +50,7 @@ GROUND_TEXTURE_SEED = 13731
 GROUND_TEXTURE_DIR = os.path.join(ASSETS_DIR, "forest", "textures")
 GROUND_TEXTURE_PATH = os.path.join(GROUND_TEXTURE_DIR, "forest_ground.bmp")
 
-HILLS_MESH_CACHE_DIR = os.path.join(ASSETS_DIR, "forest", "terrain_cache")
+HILLS_MESH_CACHE_DIR = os.path.join(STATE_DIR, "forest", "terrain_cache")
 HILLS_MESH_VERSION = 12
 HILLS_WORLD_HALF_SIZE_M = 520.0
 

@@ -171,7 +171,7 @@ pip install -e .
 Once published on PyPI:
 
 ```bash
-pip install swarm-benchmark
+pip install swarm-sotapilot
 ```
 
 ```bash
