@@ -166,7 +166,18 @@ async def _run_screening(
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb_queue = getattr(self, '_heartbeat_queue', None)
-    hb.start("evaluating_screening", uid, total_seeds, queue=hb_queue)
+    decision_version = None
+    if hb_queue:
+        matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
+        if matched is not None:
+            decision_version = matched.get("backend_decision_version")
+    hb.start(
+        "evaluating_screening",
+        uid,
+        total_seeds,
+        queue=hb_queue,
+        backend_decision_version=decision_version,
+    )
 
     all_per_type: Dict[str, List[float]] = {
         "city": [], "open": [], "mountain": [],
@@ -276,7 +287,18 @@ async def _run_full_benchmark(
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb_queue = getattr(self, '_heartbeat_queue', None)
-    hb.start("evaluating_benchmark", uid, len(benchmark_seeds), queue=hb_queue)
+    decision_version = None
+    if hb_queue:
+        matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
+        if matched is not None:
+            decision_version = matched.get("backend_decision_version")
+    hb.start(
+        "evaluating_benchmark",
+        uid,
+        len(benchmark_seeds),
+        queue=hb_queue,
+        backend_decision_version=decision_version,
+    )
 
     try:
         all_scores, per_type_raw, details = await _utils_facade()._evaluate_seeds(

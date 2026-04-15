@@ -83,7 +83,14 @@ def _build_client(monkeypatch, tmp_path, wallet=None):
 def test_load_runtime_state_missing_file_returns_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr(backend_api, "RUNTIME_STATE_FILE", tmp_path / "missing.json")
     state = backend_api._load_runtime_state()
-    assert state == {"last_weights": {}, "reeval_queue": [], "last_sync": 0, "benchmark_epoch": 0}
+    assert state == {
+        "last_weights": {},
+        "reeval_queue": [],
+        "assigned_tasks": [],
+        "leaderboard_version": 0,
+        "last_sync": 0,
+        "benchmark_epoch": 0,
+    }
 
 
 def test_save_runtime_state_writes_file(monkeypatch, tmp_path):
@@ -126,6 +133,58 @@ def test_post_signed_success(monkeypatch, tmp_path):
         data = _run(client._post_signed("/validators/heartbeat", {"status": "idle"}))
         assert data == {"ok": True}
         assert fake_http.last_post[0] == "http://backend.local/validators/heartbeat"
+    finally:
+        _run(client.close())
+
+
+def test_authorize_task_posts_expected_payload(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+        captured = {}
+
+        async def _fake_post(endpoint, data):
+            captured["endpoint"] = endpoint
+            captured["data"] = data
+            return {"authorized": True, "task_id": 9}
+
+        monkeypatch.setattr(client, "_post_signed", _fake_post)
+        result = _run(client.authorize_task(114, "BENCHMARK", assignment_id=7, epoch_number=3))
+        assert result == {"authorized": True, "task_id": 9}
+        assert captured["endpoint"] == "/validators/tasks/authorize"
+        assert captured["data"]["uid"] == 114
+        assert captured["data"]["phase"] == "BENCHMARK"
+        assert captured["data"]["assignment_id"] == 7
+        assert captured["data"]["epoch_number"] == 3
+    finally:
+        _run(client.close())
+
+
+def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+        captured = {}
+
+        async def _fake_post(endpoint, data):
+            captured["endpoint"] = endpoint
+            captured["data"] = data
+            return {"recorded": True}
+
+        monkeypatch.setattr(client, "_post_signed", _fake_post)
+        result = _run(
+            client.post_heartbeat(
+                status="evaluating_benchmark",
+                current_uid=114,
+                progress=10,
+                total_seeds=800,
+                queue=[{"uid": 114, "phase": "benchmark", "status": "benchmark", "enqueue_time": "2026-04-15T17:00:00Z"}],
+                active_task={"uid": 114, "phase": "BENCHMARK", "assignment_id": 9},
+                backend_decision_version=12,
+            )
+        )
+        assert result == {"recorded": True}
+        assert captured["endpoint"] == "/validators/heartbeat"
+        assert captured["data"]["active_task"]["assignment_id"] == 9
+        assert captured["data"]["backend_decision_version"] == 12
     finally:
         _run(client.close())
 
@@ -221,6 +280,16 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
                 "reeval_queue": [{"uid": 2, "reason": "reeval"}],
                 "leaderboard_version": 9,
                 "benchmark_epoch": 7,
+                "assigned_tasks": [
+                    {
+                        "task_id": 5,
+                        "uid": 3,
+                        "phase": "SCREENING",
+                        "status": "QUEUED",
+                        "priority": 20,
+                        "assigned_at": "2026-04-15T18:00:00Z",
+                    }
+                ],
                 "pending_models": [
                     {
                         "uid": 3,
@@ -236,6 +305,7 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
         assert result["weights"] == {"2": 1.0}
         assert result["leaderboard_version"] == 9
         assert result["benchmark_epoch"] == 7
+        assert result["assigned_tasks"][0]["task_id"] == 5
         assert result["pending_models"] == [
             {
                 "uid": 3,
@@ -253,6 +323,8 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         "current_top": {"uid": 7},
         "last_weights": {"7": 1.0},
         "reeval_queue": [{"uid": 7, "reason": "cached"}],
+        "assigned_tasks": [{"task_id": 11, "uid": 7, "phase": "SCREENING", "status": "QUEUED"}],
+        "leaderboard_version": 3,
         "last_sync": 1,
         "benchmark_epoch": 8,
     }
@@ -268,6 +340,7 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         assert result["fallback"] is True
         assert result["weights"] == {"7": 1.0}
         assert result["current_top"] == {"uid": 7}
+        assert result["assigned_tasks"] == [{"task_id": 11, "uid": 7, "phase": "SCREENING", "status": "QUEUED"}]
         assert result["benchmark_epoch"] == 8
     finally:
         _run(client.close())

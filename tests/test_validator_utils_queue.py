@@ -42,6 +42,15 @@ def _validator(epoch: int = 7) -> SimpleNamespace:
         _ = kwargs
         return {"recorded": True}
 
+    async def _authorize_task(*args, **kwargs):
+        _ = args, kwargs
+        return {
+            "authorized": True,
+            "reason": "ok",
+            "task_id": 1,
+            "decision_version": 1,
+        }
+
     return SimpleNamespace(
         seed_manager=SimpleNamespace(
             epoch_number=epoch,
@@ -50,6 +59,7 @@ def _validator(epoch: int = 7) -> SimpleNamespace:
         backend_api=SimpleNamespace(
             post_heartbeat=_post_heartbeat,
             post_seed_scores_batch=_post_seed_scores_batch,
+            authorize_task=_authorize_task,
         ),
         metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
     )
@@ -476,3 +486,58 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
     assert all_scores == [0.25, 0.75]
     assert per_type_scores["forest"] == [0.25]
     assert per_type_scores["moving_platform"] == [0.75]
+
+
+def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch):
+    monkeypatch.setattr(validator_utils.time, "time", lambda: 100.0)
+
+    queue = {
+        "items": {
+            "11:hash11": {
+                "uid": 11,
+                "model_hash": "hash11",
+                "status": "pending",
+                "created_at": 10.0,
+                "updated_at": 15.0,
+                "retry_attempts": 0,
+                "next_retry_at": 0,
+                "screening_passed": None,
+                "assignment_id": 3,
+                "backend_authorized": True,
+                "backend_decision_version": 7,
+            },
+            "12:hash12": {
+                "uid": 12,
+                "model_hash": "hash12",
+                "status": "retry",
+                "created_at": 20.0,
+                "updated_at": 25.0,
+                "retry_attempts": 2,
+                "next_retry_at": 150.0,
+                "last_error": "waiting for lease",
+                "screening_passed": True,
+            },
+            "13:hash13": {
+                "uid": 13,
+                "model_hash": "hash13",
+                "status": "cancelled",
+                "created_at": 30.0,
+                "updated_at": 35.0,
+                "retry_attempts": 0,
+                "next_retry_at": 0,
+                "last_error": "backend authorization failed",
+                "screening_passed": False,
+            },
+        }
+    }
+
+    snapshot = validator_utils.build_heartbeat_queue_snapshot(queue)
+
+    assert [entry["uid"] for entry in snapshot] == [11, 12, 13]
+    assert snapshot[0]["assignment_id"] == 3
+    assert snapshot[0]["processable"] is True
+    assert snapshot[1]["phase"] == "benchmark"
+    assert snapshot[1]["processable"] is False
+    assert snapshot[1]["blocked_reason"] == "waiting for lease"
+    assert snapshot[2]["status"] == "cancelled"
+    assert snapshot[2]["blocked_reason"] == "backend authorization failed"

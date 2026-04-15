@@ -49,6 +49,7 @@ from .utils import (
     _run_full_benchmark,
     _run_screening,
     _submit_score_with_ack,
+    build_heartbeat_queue_snapshot,
     clear_benchmark_cache,
     clear_normal_model_queue,
     load_normal_model_queue,
@@ -398,25 +399,19 @@ async def forward(self) -> None:
             processable_keys = _get_processable_queue_keys(
                 queue, NORMAL_MODEL_QUEUE_PROCESS_LIMIT
             )
+        try:
+            self._heartbeat_queue = build_heartbeat_queue_snapshot(queue)
+            await self.backend_api.post_heartbeat(
+                status="idle",
+                queue=self._heartbeat_queue,
+                backend_decision_version=sync_data.get("leaderboard_version"),
+            )
+        except Exception:
+            pass
         if not processable_keys:
             bt.logging.info("No normal-model queue items ready this cycle")
         else:
             bt.logging.info(f"📦 Processing {len(processable_keys)} queued model(s)")
-            try:
-                queue_items = queue.get("items", {})
-                heartbeat_queue = []
-                for qk in processable_keys:
-                    qi = queue_items.get(qk, {})
-                    q_uid = int(qi.get("uid", -1))
-                    if q_uid >= 0:
-                        phase = "benchmark" if qi.get("screening_passed") else "screening"
-                        heartbeat_queue.append({"uid": q_uid, "phase": phase})
-                self._heartbeat_queue = heartbeat_queue
-                await self.backend_api.post_heartbeat(
-                    status="idle", queue=heartbeat_queue,
-                )
-            except Exception:
-                pass
             for queue_key in processable_keys:
                 await _process_normal_queue_item(
                     self,

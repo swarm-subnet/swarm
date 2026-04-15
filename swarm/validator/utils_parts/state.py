@@ -220,7 +220,7 @@ def _get_processable_queue_keys(queue: dict, limit: int) -> List[str]:
 
     for key, item in items.items():
         status = item.get("status", "pending")
-        if status in ("completed", "terminal_rejected"):
+        if status in ("completed", "terminal_rejected", "cancelled"):
             continue
 
         next_retry_at = float(item.get("next_retry_at", 0) or 0)
@@ -231,6 +231,62 @@ def _get_processable_queue_keys(queue: dict, limit: int) -> List[str]:
 
     ready.sort(key=lambda pair: pair[0])
     return [key for _, key in ready[:limit]]
+
+
+def _format_queue_timestamp(ts: float | int | None) -> str | None:
+    if not ts:
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(ts)))
+
+
+def _queue_phase(item: Dict[str, Any]) -> str:
+    if item.get("screening_passed") is True:
+        return "benchmark"
+    if str(item.get("status", "")).startswith("benchmark"):
+        return "benchmark"
+    return "screening"
+
+
+def build_heartbeat_queue_snapshot(queue: dict) -> List[Dict[str, Any]]:
+    now = time.time()
+    items = list(queue.get("items", {}).items())
+    items.sort(key=lambda pair: (float(pair[1].get("created_at", 0) or 0), pair[0]))
+
+    snapshot: List[Dict[str, Any]] = []
+    for position, (key, item) in enumerate(items, start=1):
+        status = str(item.get("status", "pending"))
+        if status in ("completed", "terminal_rejected"):
+            continue
+        next_retry_at = float(item.get("next_retry_at", 0) or 0)
+        processable = status not in ("retry", "cancelled") and next_retry_at <= now
+        blocked_reason = ""
+        if status == "cancelled":
+            blocked_reason = str(item.get("last_error", "cancelled by backend"))
+        elif next_retry_at > now:
+            blocked_reason = str(item.get("last_error", "waiting for retry window"))
+        elif status == "retry":
+            blocked_reason = str(item.get("last_error", "retry pending"))
+
+        snapshot.append(
+            {
+                "key": str(key),
+                "uid": int(item.get("uid", -1)),
+                "phase": _queue_phase(item),
+                "status": status,
+                "queue_position": position,
+                "enqueue_time": _format_queue_timestamp(item.get("created_at")),
+                "updated_at": _format_queue_timestamp(item.get("updated_at")),
+                "assignment_id": item.get("assignment_id"),
+                "processable": processable,
+                "blocked_reason": blocked_reason or None,
+                "retry_attempts": int(item.get("retry_attempts", 0) or 0),
+                "backend_authorized": item.get("backend_authorized"),
+                "backend_reason": item.get("backend_reason"),
+                "backend_decision_version": item.get("backend_decision_version"),
+                "model_hash": str(item.get("model_hash", ""))[:12],
+            }
+        )
+    return snapshot
 
 
 # ──────────────────────────────────────────────────────────────────────────

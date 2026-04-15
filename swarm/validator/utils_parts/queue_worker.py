@@ -31,6 +31,41 @@ async def _process_normal_queue_item(
         model_path = Path(str(item.get("model_path", "")))
         github_url = str(item.get("github_url", ""))
 
+        def _update_heartbeat_entry(**fields) -> None:
+            hb_queue = getattr(self, "_heartbeat_queue", None)
+            if not hb_queue:
+                return
+            for entry in hb_queue:
+                if int(entry.get("uid", -1)) == uid:
+                    for field_name, value in fields.items():
+                        if value is not None:
+                            entry[field_name] = value
+                    break
+
+        async def _authorize_phase(phase: str) -> dict:
+            response = await self.backend_api.authorize_task(
+                uid,
+                phase,
+                assignment_id=item.get("assignment_id"),
+                epoch_number=getattr(self.seed_manager, "epoch_number", None),
+            )
+            item["backend_authorized"] = bool(response.get("authorized", False))
+            item["backend_reason"] = response.get("reason")
+            item["backend_decision_version"] = response.get("decision_version")
+            if response.get("task_id") is not None:
+                item["assignment_id"] = response.get("task_id")
+            if response.get("authorized"):
+                item.pop("last_error", None)
+            _update_heartbeat_entry(
+                assignment_id=item.get("assignment_id"),
+                backend_authorized=item.get("backend_authorized"),
+                backend_reason=item.get("backend_reason"),
+                backend_decision_version=item.get("backend_decision_version"),
+                epoch_number=getattr(self.seed_manager, "epoch_number", None),
+                benchmark_version=BENCHMARK_VERSION,
+            )
+            return response
+
         if uid < 0 or not model_hash:
             item["status"] = "terminal_rejected"
             item["last_error"] = "invalid queue item"
@@ -156,6 +191,23 @@ async def _process_normal_queue_item(
             if cached:
                 item["screening_score"] = float(cached.get("screening_score", 0.0))
             else:
+                auth = await _authorize_phase("SCREENING")
+                if not auth.get("authorized"):
+                    item["status"] = "cancelled"
+                    item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
+                    item["updated_at"] = time.time()
+                    _utils_facade().mark_model_hash_processed(uid, model_hash)
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="cancelled",
+                        severity="warning",
+                        note=item["last_error"],
+                    )
+                    return
                 tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
                 screening_score, screening_scores, screening_per_type = (
                     await _utils_facade()._run_screening(self, uid, model_path)
@@ -308,6 +360,23 @@ async def _process_normal_queue_item(
                 remaining_seeds = all_benchmark_seeds[done:]
 
                 if remaining_seeds:
+                    auth = await _authorize_phase("BENCHMARK")
+                    if not auth.get("authorized"):
+                        item["status"] = "cancelled"
+                        item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
+                        item["updated_at"] = time.time()
+                        _utils_facade().mark_model_hash_processed(uid, model_hash)
+                        tracker_call(
+                            self,
+                            "mark_queue_item_stage",
+                            queue=queue,
+                            key=key,
+                            item=item,
+                            stage="cancelled",
+                            severity="warning",
+                            note=item["last_error"],
+                        )
+                        return
                     tracker_call(
                         self,
                         "mark_queue_item_stage",
@@ -320,7 +389,20 @@ async def _process_normal_queue_item(
                     )
                     total_benchmark_seeds = len(all_benchmark_seeds)
                     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
-                    hb.start("evaluating_benchmark", uid, total_benchmark_seeds)
+                    hb.start(
+                        "evaluating_benchmark",
+                        uid,
+                        total_benchmark_seeds,
+                        queue=getattr(self, "_heartbeat_queue", None),
+                        active_task={
+                            "uid": uid,
+                            "phase": "BENCHMARK",
+                            "assignment_id": item.get("assignment_id"),
+                            "epoch_number": epoch,
+                            "benchmark_version": BENCHMARK_VERSION,
+                        },
+                        backend_decision_version=item.get("backend_decision_version"),
+                    )
                     if done > 0:
                         with hb._lock:
                             hb._progress = done
@@ -328,6 +410,25 @@ async def _process_normal_queue_item(
                     round_size = max(1, math.ceil(total_benchmark_seeds / N_DOCKER_WORKERS))
                     try:
                         for i in range(0, len(remaining_seeds), round_size):
+                            auth = await _authorize_phase("BENCHMARK")
+                            if not auth.get("authorized"):
+                                item["status"] = "cancelled"
+                                item["last_error"] = (
+                                    f"backend authorization failed mid-benchmark: {auth.get('reason', 'unknown')}"
+                                )
+                                item["updated_at"] = time.time()
+                                _utils_facade().mark_model_hash_processed(uid, model_hash)
+                                tracker_call(
+                                    self,
+                                    "mark_queue_item_stage",
+                                    queue=queue,
+                                    key=key,
+                                    item=item,
+                                    stage="cancelled",
+                                    severity="warning",
+                                    note=item["last_error"],
+                                )
+                                return
                             chunk = remaining_seeds[i:i + round_size]
                             prior_avg = float(np.mean(partial_scores)) if partial_scores else 0.0
                             chunk_scores, chunk_per_type, chunk_details = await _utils_facade()._evaluate_seeds(

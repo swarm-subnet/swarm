@@ -122,7 +122,14 @@ def _load_runtime_state() -> dict:
                 return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         bt.logging.warning(f"Runtime state load failed: {e}")
-    return {"last_weights": {}, "reeval_queue": [], "last_sync": 0, "benchmark_epoch": 0}
+    return {
+        "last_weights": {},
+        "reeval_queue": [],
+        "assigned_tasks": [],
+        "leaderboard_version": 0,
+        "last_sync": 0,
+        "benchmark_epoch": 0,
+    }
 
 
 def _save_runtime_state(state: dict) -> None:
@@ -383,6 +390,8 @@ class BackendApiClient:
                 self._runtime_state["reeval_queue"] = reeval_queue
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
+                self._runtime_state["assigned_tasks"] = data.get("assigned_tasks", [])
+                self._runtime_state["leaderboard_version"] = data.get("leaderboard_version", 0)
                 self._runtime_state["benchmark_epoch"] = data.get(
                     "benchmark_epoch", data.get("current_epoch", 0)
                 )
@@ -401,6 +410,7 @@ class BackendApiClient:
                     "reeval_queue": reeval_queue,
                     "leaderboard_version": data.get("leaderboard_version", 0),
                     "pending_models": pending_models,
+                    "assigned_tasks": data.get("assigned_tasks", []),
                     "benchmark_epoch": benchmark_epoch,
                     "current_epoch": benchmark_epoch,
                     "latest_reported_epoch": data.get("latest_reported_epoch"),
@@ -419,11 +429,31 @@ class BackendApiClient:
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
                 "pending_models": [],
+                "assigned_tasks": self._runtime_state.get("assigned_tasks", []),
                 "benchmark_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "current_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "fallback": True,
                 "error": _scrub_url(str(e)),
             }
+
+    async def authorize_task(
+        self,
+        uid: int,
+        phase: str,
+        *,
+        assignment_id: Optional[int] = None,
+        epoch_number: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "uid": uid,
+            "phase": phase,
+            "benchmark_version": BENCHMARK_VERSION,
+        }
+        if assignment_id is not None:
+            data["assignment_id"] = assignment_id
+        if epoch_number is not None:
+            data["epoch_number"] = epoch_number
+        return await self._post_signed("/validators/tasks/authorize", data)
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/models/{uid}/upload
@@ -495,6 +525,9 @@ class BackendApiClient:
         progress: Optional[int] = None,
         total_seeds: Optional[int] = None,
         queue: Optional[list] = None,
+        blocked_queue: Optional[list] = None,
+        active_task: Optional[dict] = None,
+        backend_decision_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         data: Dict[str, Any] = {"status": status}
         if current_uid is not None:
@@ -505,6 +538,12 @@ class BackendApiClient:
             data["total_seeds"] = total_seeds
         if queue is not None:
             data["queue"] = queue
+        if blocked_queue is not None:
+            data["blocked_queue"] = blocked_queue
+        if active_task is not None:
+            data["active_task"] = active_task
+        if backend_decision_version is not None:
+            data["backend_decision_version"] = backend_decision_version
         name = os.environ.get("VALIDATOR_NAME")
         if name:
             data["name"] = name[:32]
