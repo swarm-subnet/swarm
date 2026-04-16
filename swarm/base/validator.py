@@ -40,6 +40,7 @@ from swarm.utils.config import add_validator_args
 
 WEIGHT_SETTER_POLL_SEC = float(os.getenv("SWARM_WEIGHT_SETTER_POLL_SEC", "60"))
 WEIGHT_SETTER_RETRY_SEC = float(os.getenv("SWARM_WEIGHT_SETTER_RETRY_SEC", "300"))
+WEIGHT_REFRESH_SEC = float(os.getenv("SWARM_WEIGHT_REFRESH_SEC", "300"))
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -122,10 +123,41 @@ class BaseValidatorNeuron(BaseNeuron):
             pass
 
     async def concurrent_forward(self):
+        refresh_task = asyncio.create_task(self._periodic_weight_refresh())
         coroutines = [
             self.forward() for _ in range(self.config.neuron.num_concurrent_forwards)
         ]
-        await asyncio.gather(*coroutines)
+        try:
+            await asyncio.gather(*coroutines)
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _periodic_weight_refresh(self) -> None:
+        """Refresh backend weights while forward loop is running.
+
+        Forward loop can block for up to ~1h during benchmark evaluation,
+        leaving self.scores stale. The background weight setter then submits
+        outdated champion weights. This task keeps self.scores fresh while
+        forwards are in progress.
+        """
+        from swarm.validator.utils import _apply_backend_weights_to_scores
+        while True:
+            try:
+                await asyncio.sleep(WEIGHT_REFRESH_SEC)
+                if not hasattr(self, "backend_api"):
+                    continue
+                data = await self.backend_api.sync()
+                if data.get("fallback"):
+                    continue
+                _apply_backend_weights_to_scores(self, data.get("weights", {}))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                bt.logging.debug(f"Periodic weight refresh skipped: {e}")
 
     def _mark_weights_ready_for_setting(self) -> None:
         """Allow background weight submission after backend weights are applied."""
