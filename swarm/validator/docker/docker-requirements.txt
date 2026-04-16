@@ -4,8 +4,6 @@ torch
 onnxruntime
 stable-baselines3
 gymnasium
-swarm-bullet3
-swarm-drone-gym
 scipy
 scikit-learn
 opencv-python-headless
