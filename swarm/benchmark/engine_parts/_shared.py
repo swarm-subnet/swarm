@@ -76,7 +76,6 @@ class _BatchStat:
     seed_processing_sec: float
     startup_overhead_sec: float
     seeds: List[int]
-    timing_breakdown: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -97,7 +96,6 @@ class _ProcessBatchResult:
     batch_indices: List[int]
     results: List[Tuple[int, bool, float, float]]
     elapsed_sec: float
-    batch_meta: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     traceback_text: Optional[str] = None
 

@@ -129,8 +129,6 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
             str(tmp_path / "seeds.json"),
             "--summary-json-out",
             str(tmp_path / "summary.json"),
-            "--timing-json-out",
-            str(tmp_path / "timing.json"),
             "--rpc-verbosity",
             "low",
         ]
@@ -143,7 +141,6 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
     assert "low" in captured["argv"]
     assert "--save-seed-file" in captured["argv"]
     assert "--summary-json-out" in captured["argv"]
-    assert "--timing-json-out" in captured["argv"]
 
 
 def test_benchmark_fails_if_model_missing(capsys, tmp_path):

@@ -69,10 +69,6 @@ def _run_multi_seed_rpc_sync(
         calibration_overhead_sec: Optional[float] = None,
         calibration_cpu_factor: Optional[float] = None,
         calibrated_timeout_sec: Optional[float] = None,
-        timing_breakdown: Optional[dict] = None,
-        rollout_breakdown: Optional[dict] = None,
-        latency_stats: Optional[dict] = None,
-        step_metrics: Optional[dict] = None,
     ) -> None:
         if on_seed_complete is None:
             return
@@ -108,18 +104,6 @@ def _run_multi_seed_rpc_sync(
                     if calibrated_timeout_sec is None
                     else float(calibrated_timeout_sec)
                 ),
-                "timing_breakdown": (
-                    dict(timing_breakdown) if isinstance(timing_breakdown, dict) else {}
-                ),
-                "rollout_breakdown": (
-                    dict(rollout_breakdown) if isinstance(rollout_breakdown, dict) else {}
-                ),
-                "latency_stats": (
-                    dict(latency_stats) if isinstance(latency_stats, dict) else {}
-                ),
-                "step_metrics": (
-                    dict(step_metrics) if isinstance(step_metrics, dict) else {}
-                ),
             }
         try:
             on_seed_complete(payload)
@@ -144,33 +128,6 @@ def _run_multi_seed_rpc_sync(
             rollout_observer({"event": event, **payload})
         except Exception:
             pass
-
-    def _percentile_ms(samples_sec: list[float], q: float) -> float:
-        if not samples_sec:
-            return 0.0
-        values = sorted(float(v) for v in samples_sec)
-        if len(values) == 1:
-            return values[0] * 1000.0
-        q_clamped = min(1.0, max(0.0, float(q)))
-        pos = q_clamped * (len(values) - 1)
-        lower = int(pos)
-        upper = min(lower + 1, len(values) - 1)
-        frac = pos - lower
-        sec = values[lower] + ((values[upper] - values[lower]) * frac)
-        return sec * 1000.0
-
-    def _latency_stats(samples_sec: list[float]) -> dict:
-        total_sec = float(sum(samples_sec))
-        count = int(len(samples_sec))
-        avg_ms = (total_sec / count * 1000.0) if count > 0 else 0.0
-        return {
-            "count": count,
-            "total_sec": total_sec,
-            "avg_ms": avg_ms,
-            "p50_ms": _percentile_ms(samples_sec, 0.50),
-            "p95_ms": _percentile_ms(samples_sec, 0.95),
-            "max_ms": (max(samples_sec) * 1000.0) if samples_sec else 0.0,
-        }
 
     def _task_type_label(task_obj) -> str:
         raw_type = int(getattr(task_obj, "challenge_type", -1))
@@ -204,20 +161,6 @@ def _run_multi_seed_rpc_sync(
             progress_state["step_idx"] = int(step)
             progress_state["sim_t"] = float(sim_t)
             progress_state["ts"] = time.time()
-
-    def _set_active_seed(task_obj=None) -> None:
-        if progress_state is None:
-            return
-        if task_obj is None:
-            progress_state["map_seed"] = -1
-            progress_state["challenge_type"] = -1
-            progress_state["seed_active"] = False
-            progress_state["ts"] = time.time()
-            return
-        progress_state["map_seed"] = int(getattr(task_obj, "map_seed", -1))
-        progress_state["challenge_type"] = int(getattr(task_obj, "challenge_type", -1))
-        progress_state["seed_active"] = True
-        progress_state["ts"] = time.time()
 
     def _watchdog_loop() -> None:
         if not trace_rpc or trace_heartbeat_sec <= 0:
@@ -363,131 +306,29 @@ def _run_multi_seed_rpc_sync(
                     f"map_seed={getattr(task, 'map_seed', 'n/a')} "
                     f"type={_task_type_label(task)}"
                 )
-                seed_wall_start = time.perf_counter()
-                env = None
-                t_sim = 0.0
-                success = False
-                info = {}
-                strikes = 0
-                is_first_step = True
-                step_idx = 0
-                rpc_disconnected = False
-                seed_phase_sec = {
-                    "env_build_sec": 0.0,
-                    "env_reset_sec": 0.0,
-                    "agent_reset_sec": 0.0,
-                    "calibration_sec": 0.0,
-                    "rollout_total_sec": 0.0,
-                    "env_cleanup_sec": 0.0,
-                }
-                rollout_phase_sec = {
-                    "observation_serialize_sec": 0.0,
-                    "agent_act_sec": 0.0,
-                    "action_decode_sec": 0.0,
-                    "action_postprocess_sec": 0.0,
-                    "env_step_sec": 0.0,
-                }
-                act_latencies_sec: list[float] = []
-                env_step_latencies_sec: list[float] = []
-                step_total_latencies_sec: list[float] = []
-                act_timeout_count = 0
-                act_error_count = 0
-                act_budget_overrun_count = 0
-                calibration_count = 0
-                first_act_ms: Optional[float] = None
-                last_act_ms = 0.0
-
-                def _build_seed_report() -> tuple[float, dict, dict, dict, dict]:
-                    seed_total_sec = max(0.0, time.perf_counter() - seed_wall_start)
-                    rollout_total_sec = max(
-                        0.0, float(seed_phase_sec.get("rollout_total_sec", 0.0))
-                    )
-                    rollout_known_sec = (
-                        float(rollout_phase_sec.get("observation_serialize_sec", 0.0))
-                        + float(rollout_phase_sec.get("agent_act_sec", 0.0))
-                        + float(rollout_phase_sec.get("action_decode_sec", 0.0))
-                        + float(rollout_phase_sec.get("action_postprocess_sec", 0.0))
-                        + float(rollout_phase_sec.get("env_step_sec", 0.0))
-                    )
-                    rollout_breakdown_payload = {
-                        "rollout_total_sec": rollout_total_sec,
-                        **{
-                            key: float(value)
-                            for key, value in rollout_phase_sec.items()
-                        },
-                        "rollout_other_sec": max(
-                            0.0, rollout_total_sec - rollout_known_sec
-                        ),
-                    }
-                    known_seed_sec = (
-                        float(seed_phase_sec.get("env_build_sec", 0.0))
-                        + float(seed_phase_sec.get("env_reset_sec", 0.0))
-                        + float(seed_phase_sec.get("agent_reset_sec", 0.0))
-                        + float(seed_phase_sec.get("calibration_sec", 0.0))
-                        + rollout_total_sec
-                        + float(seed_phase_sec.get("env_cleanup_sec", 0.0))
-                    )
-                    timing_breakdown = {
-                        "seed_total_sec": seed_total_sec,
-                        **{key: float(value) for key, value in seed_phase_sec.items()},
-                        "seed_unaccounted_sec": max(
-                            0.0, seed_total_sec - known_seed_sec
-                        ),
-                    }
-                    latency_payload = {
-                        "act": _latency_stats(act_latencies_sec),
-                        "env_step": _latency_stats(env_step_latencies_sec),
-                        "step_total": _latency_stats(step_total_latencies_sec),
-                    }
-                    step_metrics = {
-                        "step_count": int(step_idx),
-                        "act_timeout_count": int(act_timeout_count),
-                        "act_error_count": int(act_error_count),
-                        "act_budget_overrun_count": int(act_budget_overrun_count),
-                        "calibration_count": int(calibration_count),
-                        "first_act_ms": (
-                            None if first_act_ms is None else float(first_act_ms)
-                        ),
-                        "last_act_ms": float(last_act_ms),
-                        "rpc_disconnected": bool(rpc_disconnected),
-                    }
-                    return (
-                        seed_total_sec,
-                        timing_breakdown,
-                        rollout_breakdown_payload,
-                        latency_payload,
-                        step_metrics,
-                    )
-
+                seed_wall_start = time.time()
                 try:
-                    _set_active_seed(task)
                     _set_phase("seed_start", task=task_label, step=0, sim_t=0.0)
                     _trace(
                         f"{task_label} start horizon={getattr(task, 'horizon', 0.0):.1f}s"
                     )
-                    t_env_start = time.perf_counter()
+                    t_env_start = time.time()
                     _set_phase("env_build", task=task_label, step=0, sim_t=0.0)
                     _trace(f"{task_label} building env")
                     env = make_env(task, gui=False)
-                    seed_phase_sec["env_build_sec"] = max(
-                        0.0, time.perf_counter() - t_env_start
-                    )
                     _trace(
-                        f"{task_label} env built in {seed_phase_sec['env_build_sec']:.2f}s"
+                        f"{task_label} env built in {(time.time() - t_env_start):.2f}s"
                     )
 
                     try:
-                        t_reset_env_start = time.perf_counter()
+                        t_reset_env_start = time.time()
                         _set_phase("env_reset", task=task_label, step=0, sim_t=0.0)
                         _trace(f"{task_label} env.reset() start")
                         obs, _ = env.reset()
-                        seed_phase_sec["env_reset_sec"] = max(
-                            0.0, time.perf_counter() - t_reset_env_start
-                        )
                         _trace(
-                            f"{task_label} env.reset() done in {seed_phase_sec['env_reset_sec']:.2f}s"
+                            f"{task_label} env.reset() done in {(time.time() - t_reset_env_start):.2f}s"
                         )
-                        t_reset_start = time.perf_counter()
+                        t_reset_start = time.time()
                         try:
                             _set_phase(
                                 "agent_reset", task=task_label, step=0, sim_t=0.0
@@ -500,10 +341,7 @@ def _run_multi_seed_rpc_sync(
                                 f"{task_label} reset failed: {type(e).__name__}: {e}"
                             )
                             raise
-                        seed_phase_sec["agent_reset_sec"] = max(
-                            0.0, time.perf_counter() - t_reset_start
-                        )
-                        reset_ms = seed_phase_sec["agent_reset_sec"] * 1000.0
+                        reset_ms = (time.time() - t_reset_start) * 1000.0
                         _trace(f"{task_label} reset ok in {reset_ms:.1f}ms")
 
                         should_calibrate = not calibrated or (
@@ -519,17 +357,12 @@ def _run_multi_seed_rpc_sync(
                                 step=0,
                                 sim_t=0.0,
                             )
-                            calibration_start = time.perf_counter()
                             (
                                 rpc_overhead_sec,
                                 cpu_factor,
                             ) = await self._calibrate_rpc_overhead_async(
                                 agent, agent_capnp, obs, uid
                             )
-                            seed_phase_sec["calibration_sec"] += max(
-                                0.0, time.perf_counter() - calibration_start
-                            )
-                            calibration_count += 1
                             calibrated_timeout = (
                                 (MINER_COMPUTE_BUDGET_SEC * cpu_factor)
                                 + rpc_overhead_sec
@@ -551,205 +384,158 @@ def _run_multi_seed_rpc_sync(
                             sim_time_sec=0.0,
                         )
 
+                        t_sim = 0.0
+                        success = False
+                        info = {}
+                        strikes = 0
+                        is_first_step = True
+                        step_idx = 0
+                        rpc_disconnected = False
+
                         lo, hi = (
                             env.action_space.low.flatten(),
                             env.action_space.high.flatten(),
                         )
 
-                        rollout_start = time.perf_counter()
-                        emit_status = "seed_exception"
-                        emit_success = False
-                        emit_error = ""
-                        emit_score = 0.0
-                        try:
-                            while t_sim < task.horizon and not (
-                                stop_event is not None and stop_event.is_set()
-                            ):
-                                step_idx += 1
-                                step_timeout = (
-                                    RPC_FIRST_STEP_TIMEOUT_SEC
-                                    if is_first_step
-                                    else calibrated_timeout
-                                )
-                                step_wall_start = time.perf_counter()
-
-                                serialize_start = time.perf_counter()
-                                observation = self._serialize_observation(
-                                    agent_capnp, obs
-                                )
-                                rollout_phase_sec["observation_serialize_sec"] += max(
-                                    0.0, time.perf_counter() - serialize_start
-                                )
-                                _set_phase(
-                                    "rpc_act",
-                                    task=task_label,
-                                    step=step_idx,
-                                    sim_t=t_sim,
-                                )
-
-                                decode_sec = 0.0
-                                act_start = time.perf_counter()
-                                try:
-                                    action_response = await asyncio.wait_for(
-                                        agent.act(observation), timeout=step_timeout
-                                    )
-                                    act_sec = max(
-                                        0.0, time.perf_counter() - act_start
-                                    )
-                                    decode_start = time.perf_counter()
-                                    action = np.frombuffer(
-                                        action_response.action.data,
-                                        dtype=np.dtype(action_response.action.dtype),
-                                    ).reshape(tuple(action_response.action.shape))
-                                    decode_sec = max(
-                                        0.0, time.perf_counter() - decode_start
-                                    )
-                                    if trace_rpc and (
-                                        step_idx == 1 or step_idx % trace_every == 0
-                                    ):
-                                        _trace(
-                                            f"{task_label} step={step_idx} t_sim={t_sim:.2f}s "
-                                            f"act_ok={act_sec*1000.0:.1f}ms timeout={step_timeout*1000:.0f}ms"
-                                        )
-                                except asyncio.TimeoutError:
-                                    act_sec = max(
-                                        0.0, time.perf_counter() - act_start
-                                    )
-                                    act_timeout_count += 1
-                                    strikes += 1
-                                    action = np.zeros(5, dtype=np.float32)
-                                    _trace(
-                                        f"{task_label} step={step_idx} act timeout {act_sec*1000.0:.1f}ms "
-                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                    )
-                                    if is_first_step:
-                                        bt.logging.warning(
-                                            f"UID {uid}: first-step act() timeout ({act_sec*1000.0:.0f}ms > {step_timeout*1000:.0f}ms), "
-                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                        )
-                                    else:
-                                        bt.logging.warning(
-                                            f"UID {uid}: act() timeout ({act_sec*1000.0:.0f}ms > {step_timeout*1000:.0f}ms "
-                                            f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
-                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                        )
-                                    if strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                        bt.logging.warning(
-                                            f"UID {uid} seed {task_idx}: {strikes} RPC timeouts, failing seed"
-                                        )
-                                except Exception as e:
-                                    act_sec = max(
-                                        0.0, time.perf_counter() - act_start
-                                    )
-                                    act_error_count += 1
-                                    action = np.zeros(5, dtype=np.float32)
-                                    err_txt = f"{type(e).__name__}: {e}"
-                                    strikes += 1
-                                    _trace(
-                                        f"{task_label} step={step_idx} act error: {err_txt} "
-                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                    )
-                                    lowered = err_txt.lower()
-                                    if (
-                                        "broken pipe" in lowered
-                                        or "disconnected" in lowered
-                                        or "connection reset" in lowered
-                                    ):
-                                        rpc_disconnected = True
-                                        _trace(
-                                            f"{task_label} rpc disconnected; aborting seed"
-                                        )
-                                    elif strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                        bt.logging.warning(
-                                            f"UID {uid} seed {task_idx}: {strikes} RPC errors, failing seed"
-                                        )
-
-                                rollout_phase_sec["agent_act_sec"] += act_sec
-                                rollout_phase_sec["action_decode_sec"] += decode_sec
-                                act_latencies_sec.append(act_sec)
-                                if act_sec > MINER_COMPUTE_BUDGET_SEC:
-                                    act_budget_overrun_count += 1
-                                if first_act_ms is None:
-                                    first_act_ms = act_sec * 1000.0
-                                last_act_ms = act_sec * 1000.0
-                                is_first_step = False
-
-                                if rpc_disconnected or strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                    step_total_latencies_sec.append(
-                                        max(0.0, time.perf_counter() - step_wall_start)
-                                    )
-                                    break
-
-                                postprocess_start = time.perf_counter()
-                                raw_act = np.nan_to_num(
-                                    np.asarray(action, dtype=np.float32).reshape(-1),
-                                    nan=0.0,
-                                    posinf=0.0,
-                                    neginf=0.0,
-                                )
-                                if raw_act.size != 5:
-                                    raw_act = np.zeros(5, dtype=np.float32)
-                                act = np.clip(raw_act, lo, hi)
-
-                                if hasattr(env, "ACT_TYPE") and hasattr(
-                                    env, "SPEED_LIMIT"
-                                ):
-                                    if (
-                                        env.ACT_TYPE == ActionType.VEL
-                                        and env.SPEED_LIMIT
-                                    ):
-                                        n = max(np.linalg.norm(act[:3]), 1e-6)
-                                        scale = min(1.0, SPEED_LIMIT / n)
-                                        act[:3] *= scale
-                                        act = np.clip(act, lo, hi)
-                                rollout_phase_sec["action_postprocess_sec"] += max(
-                                    0.0, time.perf_counter() - postprocess_start
-                                )
-
-                                _set_phase(
-                                    "env_step",
-                                    task=task_label,
-                                    step=step_idx,
-                                    sim_t=t_sim,
-                                )
-                                env_step_start = time.perf_counter()
-                                obs, _r, terminated, truncated, info = env.step(
-                                    act[None, :]
-                                )
-                                env_step_sec = max(
-                                    0.0, time.perf_counter() - env_step_start
-                                )
-                                rollout_phase_sec["env_step_sec"] += env_step_sec
-                                env_step_latencies_sec.append(env_step_sec)
-                                step_total_latencies_sec.append(
-                                    max(0.0, time.perf_counter() - step_wall_start)
-                                )
-
-                                t_sim += SIM_DT
-                                _emit_rollout_event(
-                                    "step",
-                                    task=task,
-                                    env=env,
-                                    uid=int(uid),
-                                    task_label=task_label,
-                                    step_idx=step_idx,
-                                    sim_time_sec=float(t_sim),
-                                    terminated=bool(terminated),
-                                    truncated=bool(truncated),
-                                    info=dict(info),
-                                    action=act.tolist(),
-                                )
-                                if terminated or truncated:
-                                    success = info.get("success", False)
-                                    _trace(
-                                        f"{task_label} terminated={terminated} truncated={truncated} "
-                                        f"success={success} t_sim={t_sim:.2f}s strikes={strikes}"
-                                    )
-                                    break
-                        finally:
-                            seed_phase_sec["rollout_total_sec"] += max(
-                                0.0, time.perf_counter() - rollout_start
+                        while t_sim < task.horizon and not (
+                            stop_event is not None and stop_event.is_set()
+                        ):
+                            step_idx += 1
+                            step_timeout = (
+                                RPC_FIRST_STEP_TIMEOUT_SEC
+                                if is_first_step
+                                else calibrated_timeout
                             )
+
+                            observation = self._serialize_observation(
+                                agent_capnp, obs
+                            )
+                            _set_phase(
+                                "rpc_act",
+                                task=task_label,
+                                step=step_idx,
+                                sim_t=t_sim,
+                            )
+
+                            try:
+                                t_act_start = time.time()
+                                action_response = await asyncio.wait_for(
+                                    agent.act(observation), timeout=step_timeout
+                                )
+                                act_ms = (time.time() - t_act_start) * 1000.0
+                                action = np.frombuffer(
+                                    action_response.action.data,
+                                    dtype=np.dtype(action_response.action.dtype),
+                                ).reshape(tuple(action_response.action.shape))
+                                if trace_rpc and (
+                                    step_idx == 1 or step_idx % trace_every == 0
+                                ):
+                                    _trace(
+                                        f"{task_label} step={step_idx} t_sim={t_sim:.2f}s "
+                                        f"act_ok={act_ms:.1f}ms timeout={step_timeout*1000:.0f}ms"
+                                    )
+                            except asyncio.TimeoutError:
+                                act_ms = (time.time() - t_act_start) * 1000
+                                strikes += 1
+                                action = np.zeros(5, dtype=np.float32)
+                                _trace(
+                                    f"{task_label} step={step_idx} act timeout {act_ms:.1f}ms "
+                                    f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                )
+                                if is_first_step:
+                                    bt.logging.warning(
+                                        f"UID {uid}: first-step act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
+                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                    )
+                                else:
+                                    bt.logging.warning(
+                                        f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
+                                        f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
+                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                    )
+                                if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                    bt.logging.warning(
+                                        f"UID {uid} seed {task_idx}: {strikes} RPC timeouts, failing seed"
+                                    )
+                                    break
+                            except Exception as e:
+                                action = np.zeros(5, dtype=np.float32)
+                                err_txt = f"{type(e).__name__}: {e}"
+                                strikes += 1
+                                _trace(
+                                    f"{task_label} step={step_idx} act error: {err_txt} "
+                                    f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                )
+                                lowered = err_txt.lower()
+                                if (
+                                    "broken pipe" in lowered
+                                    or "disconnected" in lowered
+                                    or "connection reset" in lowered
+                                ):
+                                    rpc_disconnected = True
+                                    _trace(
+                                        f"{task_label} rpc disconnected; aborting seed"
+                                    )
+                                    break
+                                if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                    bt.logging.warning(
+                                        f"UID {uid} seed {task_idx}: {strikes} RPC errors, failing seed"
+                                    )
+                                    break
+
+                            is_first_step = False
+
+                            raw_act = np.nan_to_num(
+                                np.asarray(action, dtype=np.float32).reshape(-1),
+                                nan=0.0, posinf=0.0, neginf=0.0,
+                            )
+                            if raw_act.size != 5:
+                                raw_act = np.zeros(5, dtype=np.float32)
+                            act = np.clip(raw_act, lo, hi)
+
+                            if hasattr(env, "ACT_TYPE") and hasattr(
+                                env, "SPEED_LIMIT"
+                            ):
+                                if (
+                                    env.ACT_TYPE == ActionType.VEL
+                                    and env.SPEED_LIMIT
+                                ):
+                                    n = max(np.linalg.norm(act[:3]), 1e-6)
+                                    scale = min(1.0, SPEED_LIMIT / n)
+                                    act[:3] *= scale
+                                    act = np.clip(act, lo, hi)
+
+                            _set_phase(
+                                "env_step",
+                                task=task_label,
+                                step=step_idx,
+                                sim_t=t_sim,
+                            )
+                            obs, _r, terminated, truncated, info = env.step(
+                                act[None, :]
+                            )
+
+                            t_sim += SIM_DT
+                            _emit_rollout_event(
+                                "step",
+                                task=task,
+                                env=env,
+                                uid=int(uid),
+                                task_label=task_label,
+                                step_idx=step_idx,
+                                sim_time_sec=float(t_sim),
+                                terminated=bool(terminated),
+                                truncated=bool(truncated),
+                                info=dict(info),
+                                action=act.tolist(),
+                            )
+                            if terminated or truncated:
+                                success = info.get("success", False)
+                                _trace(
+                                    f"{task_label} terminated={terminated} truncated={truncated} "
+                                    f"success={success} t_sim={t_sim:.2f}s strikes={strikes}"
+                                )
+                                break
 
                         seed_cancelled = (
                             stop_event is not None and stop_event.is_set()
@@ -765,7 +551,17 @@ def _run_multi_seed_rpc_sync(
                                 f"{task_label} cancelled due to stop request at t_sim={t_sim:.2f}s"
                             )
                             results.append(ValidationResult(uid, False, t_sim, 0.0))
-                            emit_status = "seed_cancelled"
+                            _emit_seed_complete(
+                                task,
+                                status="seed_cancelled",
+                                success=False,
+                                sim_t=t_sim,
+                                seed_wall_sec=time.time() - seed_wall_start,
+                                step_idx=step_idx,
+                                calibration_overhead_sec=rpc_overhead_sec,
+                                calibration_cpu_factor=cpu_factor,
+                                calibrated_timeout_sec=calibrated_timeout,
+                            )
                         elif rpc_disconnected:
                             _set_phase(
                                 "seed_failed_rpc_disconnect",
@@ -775,7 +571,17 @@ def _run_multi_seed_rpc_sync(
                             )
                             _trace(f"{task_label} failed due to rpc disconnect")
                             results.append(ValidationResult(uid, False, t_sim, 0.0))
-                            emit_status = "seed_rpc_disconnected"
+                            _emit_seed_complete(
+                                task,
+                                status="seed_rpc_disconnected",
+                                success=False,
+                                sim_t=t_sim,
+                                seed_wall_sec=time.time() - seed_wall_start,
+                                step_idx=step_idx,
+                                calibration_overhead_sec=rpc_overhead_sec,
+                                calibration_cpu_factor=cpu_factor,
+                                calibrated_timeout_sec=calibrated_timeout,
+                            )
                         elif strikes >= RPC_MAX_STRIKES_PER_SEED:
                             _set_phase(
                                 "seed_failed_timeout_strikes",
@@ -787,11 +593,21 @@ def _run_multi_seed_rpc_sync(
                                 f"{task_label} failed due to strike limit; returning zero result"
                             )
                             results.append(ValidationResult(uid, False, t_sim, 0.0))
-                            emit_status = "seed_timeout_strikes"
+                            _emit_seed_complete(
+                                task,
+                                status="seed_timeout_strikes",
+                                success=False,
+                                sim_t=t_sim,
+                                seed_wall_sec=time.time() - seed_wall_start,
+                                step_idx=step_idx,
+                                calibration_overhead_sec=rpc_overhead_sec,
+                                calibration_cpu_factor=cpu_factor,
+                                calibrated_timeout_sec=calibrated_timeout,
+                            )
                         else:
                             min_clearance = info.get("min_clearance", None)
                             collision = info.get("collision", False)
-                            emit_score = flight_reward(
+                            score = flight_reward(
                                 success=success,
                                 t=t_sim,
                                 horizon=task.horizon,
@@ -802,7 +618,7 @@ def _run_multi_seed_rpc_sync(
                             )
                             _trace(
                                 f"{task_label} result success={success} "
-                                f"score={emit_score:.4f} t_sim={t_sim:.2f}s"
+                                f"score={score:.4f} t_sim={t_sim:.2f}s"
                             )
                             _set_phase(
                                 "seed_done",
@@ -819,49 +635,32 @@ def _run_multi_seed_rpc_sync(
                                 step_idx=step_idx,
                                 sim_time_sec=float(t_sim),
                                 success=bool(success),
-                                score=float(emit_score),
+                                score=float(score),
                                 info=dict(info),
                             )
                             results.append(
-                                ValidationResult(uid, success, t_sim, emit_score)
+                                ValidationResult(uid, success, t_sim, score)
                             )
-                            emit_status = "seed_done"
-                            emit_success = bool(success)
+                            _emit_seed_complete(
+                                task,
+                                status="seed_done",
+                                success=success,
+                                sim_t=t_sim,
+                                seed_wall_sec=time.time() - seed_wall_start,
+                                step_idx=step_idx,
+                                calibration_overhead_sec=rpc_overhead_sec,
+                                calibration_cpu_factor=cpu_factor,
+                                calibrated_timeout_sec=calibrated_timeout,
+                            )
 
                     finally:
-                        cleanup_start = time.perf_counter()
                         _cleanup_env_quietly(env)
-                        seed_phase_sec["env_cleanup_sec"] += max(
-                            0.0, time.perf_counter() - cleanup_start
-                        )
-
-                    (
-                        seed_total_sec,
-                        timing_breakdown,
-                        rollout_breakdown_payload,
-                        latency_payload,
-                        step_metrics,
-                    ) = _build_seed_report()
-                    _emit_seed_complete(
-                        task,
-                        status=emit_status,
-                        success=emit_success,
-                        sim_t=t_sim,
-                        seed_wall_sec=seed_total_sec,
-                        step_idx=step_idx,
-                        error=emit_error,
-                        calibration_overhead_sec=rpc_overhead_sec,
-                        calibration_cpu_factor=cpu_factor,
-                        calibrated_timeout_sec=calibrated_timeout,
-                        timing_breakdown=timing_breakdown,
-                        rollout_breakdown=rollout_breakdown_payload,
-                        latency_stats=latency_payload,
-                        step_metrics=step_metrics,
-                    )
-                    _set_active_seed(None)
 
                 except Exception as e:
-                    exc_t_sim = t_sim
+                    try:
+                        exc_t_sim = t_sim
+                    except NameError:
+                        exc_t_sim = 0.0
                     bt.logging.warning(
                         f"UID {uid} {task_label} failed: {type(e).__name__}: {e}"
                     )
@@ -872,30 +671,18 @@ def _run_multi_seed_rpc_sync(
                         f"{task_label} failed with exception: {type(e).__name__}: {e}"
                     )
                     results.append(ValidationResult(uid, False, exc_t_sim, 0.0))
-                    (
-                        seed_total_sec,
-                        timing_breakdown,
-                        rollout_breakdown_payload,
-                        latency_payload,
-                        step_metrics,
-                    ) = _build_seed_report()
                     _emit_seed_complete(
                         task,
                         status="seed_exception",
                         success=False,
                         sim_t=exc_t_sim,
-                        seed_wall_sec=seed_total_sec,
-                        step_idx=step_idx,
+                        seed_wall_sec=time.time() - seed_wall_start,
+                        step_idx=0,
                         error=f"{type(e).__name__}: {e}",
                         calibration_overhead_sec=locals().get("rpc_overhead_sec"),
                         calibration_cpu_factor=locals().get("cpu_factor"),
                         calibrated_timeout_sec=locals().get("calibrated_timeout"),
-                        timing_breakdown=timing_breakdown,
-                        rollout_breakdown=rollout_breakdown_payload,
-                        latency_stats=latency_payload,
-                        step_metrics=step_metrics,
                     )
-                    _set_active_seed(None)
 
         return results
 

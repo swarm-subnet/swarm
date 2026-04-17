@@ -1,29 +1,90 @@
 from __future__ import annotations
 
+import os
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency in tests.
+    psutil = None
+
+from swarm.constants import available_vcpu_count
+
 from ._shared import Any, Counter, Dict, List, Optional, Tuple, dataclass, deque, field
 
+
+@dataclass(frozen=True)
+class _SeedResourceCost:
+    resource_class: str
+    cpu_units: float
+    ram_mb: float
+    heavy_tokens: int
+
+
+@dataclass(frozen=True)
+class _ResourceSnapshot:
+    cpu_percent: float
+    load_ratio: float
+    mem_available_mb: float
+    mem_total_mb: float
+    ts: float
+
+
+_GROUP_RESOURCE_CLASS = {
+    "type1_city": "light",
+    "type2_open": "light",
+    "type5_warehouse": "medium",
+    "type6_forest": "medium",
+    "type4_village": "heavy",
+    "type3_mountain": "heavy",
+}
+_RESOURCE_COSTS = {
+    "light": _SeedResourceCost(
+        resource_class="light",
+        cpu_units=0.90,
+        ram_mb=2300.0,
+        heavy_tokens=0,
+    ),
+    "medium": _SeedResourceCost(
+        resource_class="medium",
+        cpu_units=1.15,
+        ram_mb=3000.0,
+        heavy_tokens=1,
+    ),
+    "heavy": _SeedResourceCost(
+        resource_class="heavy",
+        cpu_units=1.40,
+        ram_mb=3800.0,
+        heavy_tokens=2,
+    ),
+}
+_RESOURCE_CLASS_GROUPS = {
+    "light": ("type1_city", "type2_open"),
+    "medium": ("type5_warehouse", "type6_forest"),
+    "heavy": ("type4_village", "type3_mountain"),
+}
 _GROUP_DISPATCH_WEIGHTS = {
     "type1_city": 1,
     "type2_open": 1,
-    "type3_mountain": 4,
-    "type4_village": 2,
-    "type5_warehouse": 3,
+    "type5_warehouse": 2,
     "type6_forest": 2,
+    "type4_village": 3,
+    "type3_mountain": 3,
 }
 _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 1,
-    "type5_warehouse": 1,
 }
-_HEAVY_GROUPS = frozenset(
-    {"type3_mountain", "type4_village", "type5_warehouse", "type6_forest"}
-)
+_HEAVY_GROUPS = frozenset(_RESOURCE_CLASS_GROUPS["heavy"])
 _BACKOFF_ACTIVE_WORKERS = 2
-_BACKOFF_RECENT_WINDOW = 6
-_BACKOFF_MIN_SAMPLES = 4
-_BACKOFF_COOLDOWN_COMPLETIONS = 6
-_BACKOFF_CLEAN_RATE_THRESHOLD = 0.85
-_BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC = 0.25
-_BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE = 1.5
+_BACKOFF_COOLDOWN_COMPLETIONS = 4
+_PRESSURE_HIGH_CPU_PERCENT = 88.0
+_PRESSURE_CRITICAL_CPU_PERCENT = 94.0
+_PRESSURE_HEALTHY_CPU_PERCENT = 72.0
+_PRESSURE_HIGH_LOAD_RATIO = 0.95
+_PRESSURE_CRITICAL_LOAD_RATIO = 1.10
+_PRESSURE_HEALTHY_LOAD_RATIO = 0.75
+_RESOURCE_WINDOW = 6
+_PRESSURE_HIGH_STREAK = 3
+_PRESSURE_CRITICAL_STREAK = 2
 _PARENT_WORKER_HEARTBEAT_SEC = 15.0
 _PARENT_WORKER_STALL_TIMEOUT_SEC = 90.0
 _BACKOFF_TIMEOUT_STATUSES = frozenset(
@@ -39,6 +100,125 @@ _BACKOFF_INFRA_FAILURE_STATUSES = frozenset(
         "worker_stall_timeout",
     }
 )
+_RESOURCE_SOFT_SIGNAL_STATUSES = frozenset(
+    {
+        "seed_timeout_strikes",
+        "seed_rpc_disconnected",
+        "seed_exception",
+    }
+)
+_NON_RESOURCE_FAILURE_STATUSES = frozenset(
+    {
+        "container_start_failed",
+        "pip_install_failed",
+        "network_lockdown_failed",
+        "submission_start_failed",
+        "rpc_connection_failed",
+    }
+)
+
+
+def _detect_total_ram_mb() -> float:
+    try:
+        if psutil is not None:
+            return float(psutil.virtual_memory().total) / (1024.0 * 1024.0)
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return float(parts[1]) / 1024.0
+    except Exception:
+        pass
+    return 8192.0
+
+
+def _read_mem_available_mb() -> float:
+    try:
+        if psutil is not None:
+            return float(psutil.virtual_memory().available) / (1024.0 * 1024.0)
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return float(parts[1]) / 1024.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _read_cpu_percent() -> float:
+    try:
+        if psutil is not None:
+            return float(psutil.cpu_percent(interval=None))
+    except Exception:
+        pass
+    return 0.0
+
+
+def _read_load_ratio(machine_vcpus: int) -> float:
+    try:
+        if hasattr(os, "getloadavg"):
+            load1 = float(os.getloadavg()[0])
+            return load1 / float(max(1, machine_vcpus))
+    except Exception:
+        pass
+    return 0.0
+
+
+def _sample_resource_snapshot(machine_vcpus: int) -> _ResourceSnapshot:
+    return _ResourceSnapshot(
+        cpu_percent=_read_cpu_percent(),
+        load_ratio=_read_load_ratio(machine_vcpus),
+        mem_available_mb=_read_mem_available_mb(),
+        mem_total_mb=_detect_total_ram_mb(),
+        ts=float(os.times().elapsed),
+    )
+
+
+def _default_ram_reserve_mb(total_ram_mb: float) -> float:
+    return max(2048.0, min(6144.0, float(total_ram_mb) * 0.12))
+
+
+def _resource_class_for_group(group_name: str) -> str:
+    return str(_GROUP_RESOURCE_CLASS.get(str(group_name), "medium"))
+
+
+def _resource_cost_for_group(group_name: str) -> _SeedResourceCost:
+    return _RESOURCE_COSTS[_resource_class_for_group(group_name)]
+
+
+def _resource_cost_dict_for_group(group_name: str) -> Dict[str, Any]:
+    cost = _resource_cost_for_group(group_name)
+    return {
+        "resource_class": cost.resource_class,
+        "cpu_units": float(cost.cpu_units),
+        "ram_mb": float(cost.ram_mb),
+        "heavy_tokens": int(cost.heavy_tokens),
+    }
+
+
+def _resource_model_rows() -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for resource_class in ("light", "medium", "heavy"):
+        cost = _RESOURCE_COSTS[resource_class]
+        rows.append(
+            {
+                "resource_class": cost.resource_class,
+                "groups": list(_RESOURCE_CLASS_GROUPS[resource_class]),
+                "cpu_units": float(cost.cpu_units),
+                "ram_mb": float(cost.ram_mb),
+                "heavy_tokens": int(cost.heavy_tokens),
+            }
+        )
+    return rows
 
 
 def _is_clean_execution_status(status: str) -> bool:
@@ -51,7 +231,7 @@ def _group_dispatch_weight(group_name: str) -> int:
 
 def _max_heavy_active(active_worker_cap: int) -> int:
     worker_cap = max(1, int(active_worker_cap))
-    return max(1, min(worker_cap // 2, 4))
+    return max(1, min(4, (worker_cap + 1) // 3))
 
 
 def _is_backoff_timeout_status(status: str) -> bool:
@@ -63,14 +243,15 @@ def _is_backoff_infra_status(status: str) -> bool:
 
 
 def _worker_cap_levels(requested_workers: int) -> Tuple[int, ...]:
+    floor = 1 if int(requested_workers) <= 1 else _BACKOFF_ACTIVE_WORKERS
     current = max(1, int(requested_workers))
     levels = [current]
-    while current > _BACKOFF_ACTIVE_WORKERS:
-        if current >= 6:
+    while current > floor:
+        if current >= 8:
             current -= 2
         else:
             current -= 1
-        current = max(_BACKOFF_ACTIVE_WORKERS, current)
+        current = max(floor, current)
         if current != levels[-1]:
             levels.append(current)
     return tuple(levels)
@@ -86,10 +267,7 @@ def _seed_has_calibration_spike(seed_meta: Optional[Dict[str, Any]]) -> bool:
         cpu_factor_val = float(cpu_factor) if cpu_factor is not None else 1.0
     except Exception:
         return False
-    return (
-        overhead_val >= _BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC
-        or cpu_factor_val >= _BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE
-    )
+    return overhead_val >= 0.25 or cpu_factor_val >= 1.5
 
 
 def _format_seed_desc(seed_meta: Optional[Dict[str, Any]]) -> str:
@@ -128,66 +306,411 @@ def _build_worker_stall_seed_meta(
 @dataclass
 class _AdaptiveBackoffController:
     requested_workers: int
+    machine_vcpus: Optional[int] = None
+    machine_total_ram_mb: Optional[float] = None
+    resource_provider: Optional[Any] = None
     active_worker_cap: int = field(init=False)
+    active_heavy_cap: int = field(init=False)
     worker_cap_levels: Tuple[int, ...] = field(init=False)
+    max_worker_cap: int = field(init=False)
+    max_heavy_cap: int = field(init=False)
+    ram_reserve_mb: float = field(init=False)
+    healthy_completion_streak: int = 0
     cooldown_remaining: int = 0
-    recent_statuses: deque[str] = field(
-        default_factory=lambda: deque(maxlen=_BACKOFF_RECENT_WINDOW)
+    pressure_high_streak: int = 0
+    pressure_critical_streak: int = 0
+    recent_outcome_signals: deque[str] = field(
+        default_factory=lambda: deque(maxlen=12)
     )
-    recent_issue_flags: deque[bool] = field(
-        default_factory=lambda: deque(maxlen=_BACKOFF_RECENT_WINDOW)
+    recent_snapshots: deque[_ResourceSnapshot] = field(
+        default_factory=lambda: deque(maxlen=_RESOURCE_WINDOW)
     )
+    latest_pressure: str = "unknown"
+    latest_snapshot: Optional[_ResourceSnapshot] = None
 
     def __post_init__(self) -> None:
-        self.worker_cap_levels = _worker_cap_levels(self.requested_workers)
+        if self.machine_vcpus is None:
+            self.machine_vcpus = available_vcpu_count()
+        self.machine_vcpus = max(1, int(self.machine_vcpus))
+        if self.machine_total_ram_mb is None:
+            self.machine_total_ram_mb = _detect_total_ram_mb()
+        self.machine_total_ram_mb = max(2048.0, float(self.machine_total_ram_mb))
+        self.ram_reserve_mb = _default_ram_reserve_mb(self.machine_total_ram_mb)
+        if psutil is not None:
+            try:
+                psutil.cpu_percent(interval=None)
+            except Exception:
+                pass
+        ram_limited_workers = max(
+            1,
+            int((self.machine_total_ram_mb - self.ram_reserve_mb) // _RESOURCE_COSTS["light"].ram_mb),
+        )
+        self.max_worker_cap = max(
+            1,
+            min(
+                int(self.requested_workers),
+                int(self.machine_vcpus),
+                int(ram_limited_workers),
+            ),
+        )
+        self.worker_cap_levels = _worker_cap_levels(self.max_worker_cap)
         self.active_worker_cap = self.worker_cap_levels[0]
+        self.max_heavy_cap = _max_heavy_active(self.max_worker_cap)
+        self.active_heavy_cap = self.max_heavy_cap
 
     @property
     def enabled(self) -> bool:
-        return self.requested_workers > _BACKOFF_ACTIVE_WORKERS
+        return self.max_worker_cap > _BACKOFF_ACTIVE_WORKERS
 
-    def recent_clean_rate(self) -> float:
-        if not self.recent_issue_flags:
-            return 1.0
-        clean = sum(1 for issue in self.recent_issue_flags if not issue)
-        return clean / float(len(self.recent_issue_flags))
+    def machine_summary(self) -> Dict[str, Any]:
+        return {
+            "requested_workers": int(self.requested_workers),
+            "machine_vcpus": int(self.machine_vcpus),
+            "machine_total_ram_mb": float(self.machine_total_ram_mb),
+            "ram_reserve_mb": float(self.ram_reserve_mb),
+            "max_worker_cap": int(self.max_worker_cap),
+            "max_heavy_cap": int(self.max_heavy_cap),
+        }
 
-    def recent_window_is_healthy(self) -> bool:
-        if len(self.recent_issue_flags) < _BACKOFF_RECENT_WINDOW:
+    def cost_model(self) -> List[Dict[str, Any]]:
+        return _resource_model_rows()
+
+    def status_dict(self) -> Dict[str, Any]:
+        snapshot = self.latest_snapshot
+        return {
+            "active_worker_cap": int(self.active_worker_cap),
+            "active_heavy_cap": int(self.active_heavy_cap),
+            "max_worker_cap": int(self.max_worker_cap),
+            "max_heavy_cap": int(self.max_heavy_cap),
+            "pressure": str(self.latest_pressure),
+            "cpu_percent": (
+                float(snapshot.cpu_percent)
+                if snapshot is not None
+                else 0.0
+            ),
+            "load_ratio": (
+                float(snapshot.load_ratio)
+                if snapshot is not None
+                else 0.0
+            ),
+            "mem_available_mb": (
+                float(snapshot.mem_available_mb)
+                if snapshot is not None
+                else 0.0
+            ),
+        }
+
+    def format_status_line(self) -> str:
+        state = self.status_dict()
+        return (
+            f"cap={state['active_worker_cap']}/{state['max_worker_cap']} "
+            f"heavy={state['active_heavy_cap']}/{state['max_heavy_cap']} "
+            f"pressure={state['pressure']} "
+            f"cpu={state['cpu_percent']:.1f}% "
+            f"load={state['load_ratio']:.2f} "
+            f"mem_avail={state['mem_available_mb']:.0f}MiB"
+        )
+
+    def describe_configuration_lines(self) -> List[str]:
+        lines = [
+            (
+                "Scheduler machine: "
+                f"vcpus={self.machine_vcpus} total_ram={self.machine_total_ram_mb / 1024.0:.1f}GiB "
+                f"reserve_ram={self.ram_reserve_mb / 1024.0:.1f}GiB "
+                f"max_workers={self.max_worker_cap} max_heavy={self.max_heavy_cap}"
+            )
+        ]
+        for row in self.cost_model():
+            lines.append(
+                "Scheduler cost model: "
+                f"{row['resource_class']} groups={','.join(row['groups'])} "
+                f"cpu={row['cpu_units']:.2f} ram={row['ram_mb']:.0f}MiB "
+                f"heavy_tokens={row['heavy_tokens']}"
+            )
+        return lines
+
+    def _sample_resources(self) -> _ResourceSnapshot:
+        if callable(self.resource_provider):
+            raw = self.resource_provider()
+            if isinstance(raw, _ResourceSnapshot):
+                snapshot = raw
+            else:
+                raw_dict = raw if isinstance(raw, dict) else {}
+                snapshot = _ResourceSnapshot(
+                    cpu_percent=float(
+                        getattr(raw, "cpu_percent", raw_dict.get("cpu_percent", 0.0))
+                    ),
+                    load_ratio=float(
+                        getattr(raw, "load_ratio", raw_dict.get("load_ratio", 0.0))
+                    ),
+                    mem_available_mb=float(
+                        getattr(
+                            raw,
+                            "mem_available_mb",
+                            raw_dict.get("mem_available_mb", 0.0),
+                        )
+                    ),
+                    mem_total_mb=float(
+                        getattr(
+                            raw,
+                            "mem_total_mb",
+                            raw_dict.get("mem_total_mb", self.machine_total_ram_mb),
+                        )
+                    ),
+                    ts=float(getattr(raw, "ts", raw_dict.get("ts", 0.0))),
+                )
+        else:
+            snapshot = _sample_resource_snapshot(self.machine_vcpus)
+        self.latest_snapshot = snapshot
+        self.recent_snapshots.append(snapshot)
+        return snapshot
+
+    def _pressure_state(self) -> str:
+        if not self.recent_snapshots:
+            return "unknown"
+        samples = list(self.recent_snapshots)[-3:]
+        cpu_values = [float(sample.cpu_percent) for sample in samples if sample.cpu_percent > 0.0]
+        avg_cpu = sum(cpu_values) / len(cpu_values) if cpu_values else 0.0
+        load_values = [float(sample.load_ratio) for sample in samples if sample.load_ratio > 0.0]
+        avg_load = sum(load_values) / len(load_values) if load_values else 0.0
+        min_mem_available = min(float(sample.mem_available_mb) for sample in samples)
+        if (
+            avg_cpu >= _PRESSURE_CRITICAL_CPU_PERCENT
+            or avg_load >= _PRESSURE_CRITICAL_LOAD_RATIO
+            or min_mem_available <= (self.ram_reserve_mb + _RESOURCE_COSTS["heavy"].ram_mb)
+        ):
+            return "critical"
+        if (
+            avg_cpu >= _PRESSURE_HIGH_CPU_PERCENT
+            or avg_load >= _PRESSURE_HIGH_LOAD_RATIO
+            or min_mem_available <= (self.ram_reserve_mb + (_RESOURCE_COSTS["medium"].ram_mb * 1.25))
+        ):
+            return "high"
+        if (
+            (avg_cpu == 0.0 or avg_cpu <= _PRESSURE_HEALTHY_CPU_PERCENT)
+            and (avg_load == 0.0 or avg_load <= _PRESSURE_HEALTHY_LOAD_RATIO)
+            and min_mem_available >= (self.ram_reserve_mb + (_RESOURCE_COSTS["medium"].ram_mb * 2.0))
+        ):
+            return "healthy"
+        return "neutral"
+
+    def _cpu_budget_units(self) -> float:
+        return max(
+            float(_RESOURCE_COSTS["heavy"].cpu_units),
+            min(
+                float(self.machine_vcpus) * 1.20,
+                float(max(1, self.active_worker_cap)) * 1.25,
+            ),
+        )
+
+    def _ram_budget_mb(self) -> float:
+        return max(0.0, float(self.machine_total_ram_mb) - float(self.ram_reserve_mb))
+
+    def _heavy_token_budget(self) -> int:
+        return max(2, int(self.active_worker_cap))
+
+    def _active_group_costs(self, active_groups: List[str]) -> Dict[str, float]:
+        cpu_units = 0.0
+        ram_mb = 0.0
+        heavy_tokens = 0
+        heavy_count = 0
+        for group_name in active_groups:
+            cost = _resource_cost_for_group(group_name)
+            cpu_units += float(cost.cpu_units)
+            ram_mb += float(cost.ram_mb)
+            heavy_tokens += int(cost.heavy_tokens)
+            if cost.resource_class == "heavy":
+                heavy_count += 1
+        return {
+            "cpu_units": cpu_units,
+            "ram_mb": ram_mb,
+            "heavy_tokens": float(heavy_tokens),
+            "heavy_count": float(heavy_count),
+        }
+
+    def _recent_signal_count(self, signal: str) -> int:
+        return sum(1 for item in self.recent_outcome_signals if item == signal)
+
+    def _default_heavy_cap_for_current_workers(self, worker_cap: int) -> int:
+        return _max_heavy_active(worker_cap)
+
+    def _reduce_caps(self, *, reason: str, severity: str) -> Optional[str]:
+        previous_worker_cap = int(self.active_worker_cap)
+        previous_heavy_cap = int(self.active_heavy_cap)
+        if severity == "critical":
+            next_worker_cap = max(
+                2 if self.max_worker_cap > 1 else 1,
+                min(self.active_worker_cap - 2, int(self.active_worker_cap * 0.7)),
+            )
+            next_heavy_cap = max(1, min(self.active_heavy_cap - 1, next_worker_cap))
+            self.cooldown_remaining = max(self.cooldown_remaining, _BACKOFF_COOLDOWN_COMPLETIONS + 2)
+        else:
+            next_worker_cap = max(
+                2 if self.max_worker_cap > 1 else 1,
+                self.active_worker_cap - 1,
+            )
+            next_heavy_cap = max(1, min(self.active_heavy_cap, self._default_heavy_cap_for_current_workers(next_worker_cap)))
+            if next_heavy_cap == previous_heavy_cap and next_heavy_cap > 1:
+                next_heavy_cap -= 1
+            self.cooldown_remaining = max(self.cooldown_remaining, _BACKOFF_COOLDOWN_COMPLETIONS)
+
+        self.active_worker_cap = max(1, min(next_worker_cap, self.max_worker_cap))
+        self.active_heavy_cap = max(1, min(next_heavy_cap, self._default_heavy_cap_for_current_workers(self.active_worker_cap)))
+        self.healthy_completion_streak = 0
+        if self.active_worker_cap < previous_worker_cap or self.active_heavy_cap < previous_heavy_cap:
+            return (
+                f"Scheduler pressure backoff: workers {previous_worker_cap}->{self.active_worker_cap}, "
+                f"heavy {previous_heavy_cap}->{self.active_heavy_cap} ({reason})"
+            )
+        return (
+            f"Scheduler pressure hold: workers {self.active_worker_cap}/{self.max_worker_cap}, "
+            f"heavy {self.active_heavy_cap}/{self.max_heavy_cap} ({reason})"
+        )
+
+    def _maybe_relax_caps(self) -> Optional[str]:
+        if self.cooldown_remaining > 0 or self.latest_pressure != "healthy":
+            return None
+        if self.healthy_completion_streak < 3:
+            return None
+        previous_worker_cap = int(self.active_worker_cap)
+        previous_heavy_cap = int(self.active_heavy_cap)
+        if self.active_worker_cap < self.max_worker_cap:
+            self.active_worker_cap += 1
+        target_heavy_cap = self._default_heavy_cap_for_current_workers(self.active_worker_cap)
+        if self.active_heavy_cap < target_heavy_cap and self.healthy_completion_streak >= 4:
+            self.active_heavy_cap += 1
+        self.active_heavy_cap = min(self.active_heavy_cap, target_heavy_cap)
+        if (
+            self.active_worker_cap == previous_worker_cap
+            and self.active_heavy_cap == previous_heavy_cap
+        ):
+            return None
+        self.healthy_completion_streak = 0
+        self.cooldown_remaining = 2 if self.active_worker_cap < self.max_worker_cap else 0
+        if self.active_worker_cap >= self.max_worker_cap and self.active_heavy_cap >= self.max_heavy_cap:
+            return (
+                f"Scheduler relaxed: restored full dispatch "
+                f"{self.active_worker_cap}/{self.max_worker_cap} workers "
+                f"and {self.active_heavy_cap}/{self.max_heavy_cap} heavy"
+            )
+        return (
+            f"Scheduler relaxed: workers {previous_worker_cap}->{self.active_worker_cap}, "
+            f"heavy {previous_heavy_cap}->{self.active_heavy_cap}"
+        )
+
+    def observe_resources(self, active_groups: List[str]) -> Optional[str]:
+        self._sample_resources()
+        self.latest_pressure = self._pressure_state()
+        if self.latest_pressure == "critical":
+            self.pressure_critical_streak += 1
+            self.pressure_high_streak += 1
+        elif self.latest_pressure == "high":
+            self.pressure_high_streak += 1
+            self.pressure_critical_streak = 0
+        else:
+            self.pressure_high_streak = 0
+            self.pressure_critical_streak = 0
+
+        if not self.enabled:
+            return None
+
+        snapshot = self.latest_snapshot
+        if snapshot is None:
+            return None
+
+        if self.pressure_critical_streak >= _PRESSURE_CRITICAL_STREAK:
+            self.pressure_critical_streak = 0
+            self.pressure_high_streak = 0
+            return self._reduce_caps(
+                reason=(
+                    f"host pressure cpu={snapshot.cpu_percent:.1f}% "
+                    f"load={snapshot.load_ratio:.2f} "
+                    f"mem_avail={snapshot.mem_available_mb:.0f}MiB"
+                ),
+                severity="critical",
+            )
+
+        if self.pressure_high_streak >= _PRESSURE_HIGH_STREAK:
+            self.pressure_high_streak = 0
+            return self._reduce_caps(
+                reason=(
+                    f"host pressure cpu={snapshot.cpu_percent:.1f}% "
+                    f"load={snapshot.load_ratio:.2f} "
+                    f"mem_avail={snapshot.mem_available_mb:.0f}MiB"
+                ),
+                severity="moderate",
+            )
+        return None
+
+    def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
+        if len(active_groups) >= self.active_worker_cap:
             return False
-        return not any(self.recent_issue_flags)
+        cost = _resource_cost_for_group(group_name)
+        class_name = cost.resource_class
+        active_costs = self._active_group_costs(active_groups)
+        group_limit = int(_GROUP_CONCURRENCY_LIMITS.get(group_name, self.active_worker_cap))
+        if sum(1 for group in active_groups if group == group_name) >= group_limit:
+            return False
+        if (
+            class_name == "heavy"
+            and int(active_costs["heavy_count"]) >= int(self.active_heavy_cap)
+        ):
+            return False
+        if (active_costs["cpu_units"] + float(cost.cpu_units)) > self._cpu_budget_units():
+            return False
+        if (active_costs["ram_mb"] + float(cost.ram_mb)) > self._ram_budget_mb():
+            return False
+        if (active_costs["heavy_tokens"] + float(cost.heavy_tokens)) > float(self._heavy_token_budget()):
+            return False
+        snapshot = self.latest_snapshot
+        if (
+            snapshot is not None
+            and snapshot.mem_available_mb > 0.0
+            and (snapshot.mem_available_mb - self.ram_reserve_mb) < float(cost.ram_mb)
+        ):
+            return False
+        if self.latest_pressure == "critical" and class_name != "light":
+            return False
+        return True
 
-    def _next_lower_worker_cap(self) -> int:
-        for level in self.worker_cap_levels:
-            if level < self.active_worker_cap:
-                return level
-        return self.active_worker_cap
-
-    def _next_higher_worker_cap(self) -> int:
-        previous_level = self.worker_cap_levels[0]
-        for level in self.worker_cap_levels:
-            if level == self.active_worker_cap:
-                return previous_level
-            previous_level = level
-        return self.worker_cap_levels[0]
-
-    def observe_seed(self, seed_meta: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not self.enabled or not isinstance(seed_meta, dict):
+    def observe_seed(
+        self,
+        seed_meta: Optional[Dict[str, Any]],
+        *,
+        group_name: Optional[str] = None,
+    ) -> Optional[str]:
+        if not isinstance(seed_meta, dict):
             return None
 
         status = str(seed_meta.get("status", "")).strip() or "unknown"
-        spike = _seed_has_calibration_spike(seed_meta)
-        self.recent_statuses.append(status)
-        self.recent_issue_flags.append(
-            _is_backoff_timeout_status(status) or _is_backoff_infra_status(status) or spike
-        )
+        if status in _NON_RESOURCE_FAILURE_STATUSES:
+            self.healthy_completion_streak = 0
+            return None
 
-        trigger_reason: Optional[str] = None
-        if _is_backoff_timeout_status(status):
-            trigger_reason = f"status={status} {_format_seed_desc(seed_meta)}"
-        elif status in _BACKOFF_INFRA_FAILURE_STATUSES:
-            trigger_reason = f"status={status} {_format_seed_desc(seed_meta)}"
-        elif spike:
+        hard_issue = _is_backoff_infra_status(status)
+        timeout_issue = _is_backoff_timeout_status(status)
+        soft_signal = status in _RESOURCE_SOFT_SIGNAL_STATUSES
+        calibration_spike = _seed_has_calibration_spike(seed_meta)
+
+        signal = "clean"
+        if hard_issue:
+            signal = "hard"
+        elif timeout_issue or soft_signal or calibration_spike:
+            signal = "soft"
+        self.recent_outcome_signals.append(signal)
+
+        reason: Optional[str] = None
+        severity = "moderate"
+        if hard_issue:
+            reason = f"final outcome {status} {_format_seed_desc(seed_meta)}"
+            severity = "critical" if self.latest_pressure == "critical" else "moderate"
+        elif timeout_issue and self.latest_pressure in {"high", "critical"}:
+            reason = f"timeout under {self.latest_pressure} pressure ({status} {_format_seed_desc(seed_meta)})"
+        elif timeout_issue and self._recent_signal_count("soft") >= 3:
+            reason = f"repeated timeout-like outcomes ({status} {_format_seed_desc(seed_meta)})"
+        elif soft_signal and self.latest_pressure == "critical":
+            reason = f"resource-sensitive failure under critical pressure ({status} {_format_seed_desc(seed_meta)})"
+        elif calibration_spike and self.latest_pressure in {"high", "critical"}:
             try:
                 overhead_ms = float(seed_meta.get("calibration_overhead_sec") or 0.0) * 1000.0
             except Exception:
@@ -196,46 +719,24 @@ class _AdaptiveBackoffController:
                 cpu_factor = float(seed_meta.get("calibration_cpu_factor") or 1.0)
             except Exception:
                 cpu_factor = 1.0
-            trigger_reason = (
+            reason = (
                 f"calibration spike {_format_seed_desc(seed_meta)} "
                 f"overhead={overhead_ms:.1f}ms cpu_factor={cpu_factor:.2f}x"
             )
-        if trigger_reason is not None:
-            previous_cap = self.active_worker_cap
-            self.active_worker_cap = self._next_lower_worker_cap()
-            self.cooldown_remaining = max(
-                self.cooldown_remaining,
-                _BACKOFF_COOLDOWN_COMPLETIONS,
-            )
-            if previous_cap > self.active_worker_cap:
-                return (
-                    f"Adaptive backoff active: limiting dispatch to "
-                    f"{self.active_worker_cap}/{self.requested_workers} workers "
-                    f"({trigger_reason})"
-                )
-            return (
-                f"Adaptive backoff extended: keeping dispatch at "
-                f"{self.active_worker_cap}/{self.requested_workers} workers "
-                f"({trigger_reason})"
-            )
 
-        if self.active_worker_cap < self.requested_workers:
-            self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
-            if self.cooldown_remaining == 0 and self.recent_window_is_healthy():
-                next_cap = self._next_higher_worker_cap()
-                if next_cap > self.active_worker_cap:
-                    self.active_worker_cap = next_cap
-                    if self.active_worker_cap >= self.requested_workers:
-                        return (
-                            f"Adaptive backoff cleared: restoring dispatch to "
-                            f"{self.requested_workers} workers"
-                        )
-                    self.cooldown_remaining = _BACKOFF_COOLDOWN_COMPLETIONS
-                    return (
-                        f"Adaptive backoff relaxed: increasing dispatch to "
-                        f"{self.active_worker_cap}/{self.requested_workers} workers"
-                    )
+        if reason is not None and self.enabled:
+            return self._reduce_caps(reason=reason, severity=severity)
 
+        if status == "seed_done" and not calibration_spike:
+            if self.latest_pressure in {"healthy", "neutral", "unknown"}:
+                self.healthy_completion_streak += 1
+                if self.cooldown_remaining > 0:
+                    self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
+                return self._maybe_relax_caps()
+        else:
+            self.healthy_completion_streak = 0
+            if self.cooldown_remaining > 0:
+                self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
         return None
 
 
@@ -246,34 +747,35 @@ def _select_next_batch_index(
     task_meta: List[Dict[str, Any]],
     active_batch_ids: List[int],
     active_worker_cap: int,
+    scheduler: Optional[_AdaptiveBackoffController] = None,
 ) -> Optional[int]:
     if not pending_batch_ids:
         return None
 
-    active_groups = Counter(
+    active_groups = [
         str(task_meta[batch_plan[batch_id][0]]["group"])
         for batch_id in active_batch_ids
         if batch_plan[batch_id]
-    )
-    active_heavy = sum(
-        1
-        for batch_id in active_batch_ids
-        if batch_plan[batch_id]
-        and str(task_meta[batch_plan[batch_id][0]]["group"]) in _HEAVY_GROUPS
-    )
+    ]
+    active_group_counts = Counter(active_groups)
+    active_heavy = sum(1 for group_name in active_groups if group_name in _HEAVY_GROUPS)
 
     def _is_preferred(batch_id: int) -> bool:
         if not batch_plan[batch_id]:
             return False
         group_name = str(task_meta[batch_plan[batch_id][0]]["group"])
+        if scheduler is not None:
+            return scheduler.can_admit_group(group_name, active_groups)
         group_limit = int(_GROUP_CONCURRENCY_LIMITS.get(group_name, active_worker_cap))
-        if active_groups[group_name] >= group_limit:
+        if active_group_counts[group_name] >= group_limit:
             return False
         if group_name in _HEAVY_GROUPS and active_heavy >= _max_heavy_active(active_worker_cap):
             return False
         return True
 
     preferred = [batch_id for batch_id in pending_batch_ids if _is_preferred(batch_id)]
+    if scheduler is not None and not preferred:
+        return None
     candidate_pool = preferred if preferred else pending_batch_ids
 
     def _sort_key(batch_id: int) -> Tuple[int, int]:

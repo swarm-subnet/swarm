@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from swarm.constants import N_DOCKER_WORKERS
+
 from ._shared import (
     Any,
     Dict,
@@ -164,8 +166,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Number of seeds per benchmark map group (default: 3).",
     )
     parser.add_argument(
-        "--workers", type=int, default=2,
-        help="Number of parallel Docker workers (default: 2).",
+        "--workers", type=int, default=N_DOCKER_WORKERS,
+        help="Number of parallel Docker workers (default: available vCPUs, capped at 12).",
     )
     parser.add_argument(
         "--log-out", type=Path, default=None,
@@ -204,12 +206,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Write benchmark summary JSON to this path.",
-    )
-    parser.add_argument(
-        "--timing-json-out",
-        type=Path,
-        default=None,
-        help="Write detailed timing analysis JSON to this path.",
     )
     return parser.parse_args(argv)
 

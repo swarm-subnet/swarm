@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from swarm.constants import N_DOCKER_WORKERS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
@@ -360,8 +361,6 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
         argv.extend(["--seed-search-rng", str(args.seed_search_rng)])
     if args.summary_json_out is not None:
         argv.extend(["--summary-json-out", str(args.summary_json_out)])
-    if getattr(args, "timing_json_out", None) is not None:
-        argv.extend(["--timing-json-out", str(args.timing_json_out)])
     if args.relax_timeouts:
         argv.append("--relax-timeouts")
     argv.extend(["--rpc-verbosity", str(args.rpc_verbosity)])
@@ -1169,8 +1168,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--workers",
         type=int,
-        default=2,
-        help="Parallel workers for benchmark.",
+        default=N_DOCKER_WORKERS,
+        help="Parallel workers for benchmark (default: available vCPUs, capped at 12).",
     )
     benchmark_parser.add_argument(
         "--log-out",
@@ -1201,12 +1200,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Write benchmark summary JSON to this path.",
-    )
-    benchmark_parser.add_argument(
-        "--timing-json-out",
-        type=Path,
-        default=None,
-        help="Write detailed timing analysis JSON to this path.",
     )
     benchmark_parser.add_argument(
         "--relax-timeouts",

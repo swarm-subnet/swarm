@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.constants import N_DOCKER_WORKERS
 
 
 def _argv_for_model(model_path, *extra: str) -> list[str]:
@@ -58,6 +59,15 @@ def test_batch_indices_creates_one_seed_per_batch():
     ]
 
 
+def test_parse_args_defaults_workers_to_dynamic_count(tmp_path):
+    model_path = tmp_path / "submission.zip"
+    model_path.write_bytes(b"x")
+
+    args = bench_full_eval._parse_args(["--model", str(model_path)])
+
+    assert args.workers == N_DOCKER_WORKERS
+
+
 def test_build_worker_stall_seed_meta_marks_failure():
     task = SimpleNamespace(
         map_seed=123,
@@ -81,13 +91,27 @@ def test_build_worker_stall_seed_meta_marks_failure():
     assert meta["seed_wall_sec"] == pytest.approx(91.5)
 
 
-def test_select_next_batch_index_avoids_second_heavy_seed_when_light_available():
+def test_resource_class_assignments_match_expected_groups():
+    assert bench_full_eval._resource_class_for_group("type1_city") == "light"
+    assert bench_full_eval._resource_class_for_group("type2_open") == "light"
+    assert bench_full_eval._resource_class_for_group("type5_warehouse") == "medium"
+    assert bench_full_eval._resource_class_for_group("type6_forest") == "medium"
+    assert bench_full_eval._resource_class_for_group("type4_village") == "heavy"
+    assert bench_full_eval._resource_class_for_group("type3_mountain") == "heavy"
+
+
+def test_select_next_batch_index_prefers_light_when_heavy_is_already_active():
     batch_plan = [[0], [1], [2]]
     task_meta = [
         {"group": "type3_mountain"},
         {"group": "type5_warehouse"},
         {"group": "type1_city"},
     ]
+    scheduler = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=2,
+        machine_vcpus=2,
+        machine_total_ram_mb=8192,
+    )
 
     selected = bench_full_eval._select_next_batch_index(
         pending_batch_ids=[1, 2],
@@ -95,219 +119,141 @@ def test_select_next_batch_index_avoids_second_heavy_seed_when_light_available()
         task_meta=task_meta,
         active_batch_ids=[0],
         active_worker_cap=2,
+        scheduler=scheduler,
     )
 
     assert selected == 2
 
 
-def test_select_next_batch_index_falls_back_to_heavy_when_only_heavy_remain():
+def test_select_next_batch_index_waits_when_only_extra_heavy_seed_is_pending():
     batch_plan = [[0], [1]]
     task_meta = [
+        {"group": "type4_village"},
         {"group": "type3_mountain"},
-        {"group": "type5_warehouse"},
     ]
+    scheduler = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=3,
+        machine_vcpus=3,
+        machine_total_ram_mb=16384,
+    )
 
     selected = bench_full_eval._select_next_batch_index(
         pending_batch_ids=[1],
         batch_plan=batch_plan,
         task_meta=task_meta,
         active_batch_ids=[0],
-        active_worker_cap=2,
+        active_worker_cap=3,
+        scheduler=scheduler,
     )
 
-    assert selected == 1
+    assert selected is None
 
 
-def test_select_next_batch_index_treats_village_as_heavy_when_light_available():
-    batch_plan = [[0], [1], [2]]
+def test_select_next_batch_index_allows_heavy_seed_when_capacity_is_available():
+    batch_plan = [[0], [1]]
     task_meta = [
-        {"group": "type4_village"},
-        {"group": "type6_forest"},
-        {"group": "type2_open"},
-    ]
-
-    selected = bench_full_eval._select_next_batch_index(
-        pending_batch_ids=[1, 2],
-        batch_plan=batch_plan,
-        task_meta=task_meta,
-        active_batch_ids=[0],
-        active_worker_cap=2,
-    )
-
-    assert selected == 2
-
-
-def test_select_next_batch_index_treats_forest_as_heavy_when_cap_is_full():
-    batch_plan = [[0], [1], [2], [3], [4]]
-    task_meta = [
-        {"group": "type6_forest"},
-        {"group": "type6_forest"},
-        {"group": "type6_forest"},
-        {"group": "type6_forest"},
         {"group": "type1_city"},
+        {"group": "type4_village"},
     ]
-
-    selected = bench_full_eval._select_next_batch_index(
-        pending_batch_ids=[4],
-        batch_plan=batch_plan,
-        task_meta=task_meta,
-        active_batch_ids=[0, 1, 2, 3],
-        active_worker_cap=8,
+    scheduler = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=3,
+        machine_vcpus=3,
+        machine_total_ram_mb=16384,
     )
 
-    assert selected == 4
-
-
-def test_select_next_batch_index_avoids_second_heavy_seed_with_three_workers():
-    batch_plan = [[0], [1], [2]]
-    task_meta = [
-        {"group": "type6_forest"},
-        {"group": "type5_warehouse"},
-        {"group": "type2_open"},
-    ]
-
     selected = bench_full_eval._select_next_batch_index(
-        pending_batch_ids=[1, 2],
+        pending_batch_ids=[1],
         batch_plan=batch_plan,
         task_meta=task_meta,
         active_batch_ids=[0],
         active_worker_cap=3,
+        scheduler=scheduler,
     )
 
-    assert selected == 2
+    assert selected == 1
 
 
 def test_max_heavy_active_scales_with_worker_count():
     assert bench_full_eval._max_heavy_active(1) == 1
     assert bench_full_eval._max_heavy_active(2) == 1
     assert bench_full_eval._max_heavy_active(3) == 1
-    assert bench_full_eval._max_heavy_active(4) == 2
-    assert bench_full_eval._max_heavy_active(6) == 3
-    assert bench_full_eval._max_heavy_active(8) == 4
+    assert bench_full_eval._max_heavy_active(4) == 1
+    assert bench_full_eval._max_heavy_active(6) == 2
+    assert bench_full_eval._max_heavy_active(8) == 3
+    assert bench_full_eval._max_heavy_active(12) == 4
 
 
-def test_adaptive_backoff_triggers_on_calibration_spike_and_recovers():
-    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=3)
-
-    note = controller.observe_seed(
-        {
-            "status": "seed_done",
-            "map_seed": 123,
-            "challenge_type": 3,
-            "calibration_overhead_sec": 0.6,
-            "calibration_cpu_factor": 2.0,
-        }
+def test_scheduler_ignores_non_resource_failure_statuses():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=8,
+        machine_vcpus=8,
+        machine_total_ram_mb=65536,
     )
 
-    assert "Adaptive backoff active" in str(note)
-    assert controller.active_worker_cap == 2
+    for status in (
+        "container_start_failed",
+        "pip_install_failed",
+        "network_lockdown_failed",
+        "submission_start_failed",
+        "rpc_connection_failed",
+    ):
+        note = controller.observe_seed({"status": status, "map_seed": 10, "challenge_type": 2})
+        assert note is None
 
-    notes = []
-    for idx in range(6):
-        notes.append(
-            controller.observe_seed(
-                {
-                    "status": "seed_done",
-                    "map_seed": 200 + idx,
-                    "challenge_type": 2,
-                    "calibration_overhead_sec": 0.01,
-                    "calibration_cpu_factor": 1.0,
-                }
-            )
-        )
-
-    assert controller.active_worker_cap == 3
-    assert any(note and "Adaptive backoff cleared" in note for note in notes)
+    assert controller.active_worker_cap == controller.max_worker_cap == 8
 
 
-def test_adaptive_backoff_triggers_on_clean_execution_failure():
-    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=3)
-
-    note = controller.observe_seed(
-        {
-            "status": "batch_timeout",
-            "map_seed": 456,
-            "challenge_type": 5,
-        }
+def test_scheduler_reduces_cap_on_critical_pressure_and_relaxes_after_recovery():
+    snapshots = deque(
+        [
+            {"cpu_percent": 95.0, "load_ratio": 1.20, "mem_available_mb": 24000.0, "mem_total_mb": 65536.0, "ts": 1.0},
+            {"cpu_percent": 96.0, "load_ratio": 1.18, "mem_available_mb": 23500.0, "mem_total_mb": 65536.0, "ts": 2.0},
+            {"cpu_percent": 40.0, "load_ratio": 0.40, "mem_available_mb": 36000.0, "mem_total_mb": 65536.0, "ts": 3.0},
+        ]
     )
 
-    assert "Adaptive backoff active" in str(note)
-    assert controller.active_worker_cap == 2
-
-
-def test_adaptive_backoff_ignores_seed_timeout_strikes():
-    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=8)
-
-    note = controller.observe_seed(
-        {
-            "status": "seed_timeout_strikes",
-            "map_seed": 410,
-            "challenge_type": 4,
+    def _provider():
+        if snapshots:
+            return snapshots.popleft()
+        return {
+            "cpu_percent": 38.0,
+            "load_ratio": 0.35,
+            "mem_available_mb": 36500.0,
+            "mem_total_mb": 65536.0,
+            "ts": time.time(),
         }
+
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=8,
+        machine_vcpus=8,
+        machine_total_ram_mb=65536,
+        resource_provider=_provider,
     )
 
-    assert note is None
-    assert controller.active_worker_cap == 8
+    note_one = controller.observe_resources([])
+    note_two = controller.observe_resources([])
 
+    assert note_one is None
+    assert "Scheduler pressure backoff" in str(note_two)
+    assert controller.worker_cap_levels == (8, 6, 5, 4, 3, 2)
+    assert controller.active_worker_cap == 5
+    assert controller.active_heavy_cap == 2
 
-def test_adaptive_backoff_steps_down_and_recovers_gradually():
-    controller = bench_full_eval._AdaptiveBackoffController(requested_workers=8)
-
-    note_one = controller.observe_seed(
-        {
-            "status": "batch_timeout_partial",
-            "map_seed": 510,
-            "challenge_type": 4,
-        }
-    )
-    note_two = controller.observe_seed(
-        {
-            "status": "batch_timeout",
-            "map_seed": 511,
-            "challenge_type": 3,
-        }
-    )
-
-    assert controller.worker_cap_levels == (8, 6, 4, 3, 2)
-    assert "Adaptive backoff active" in str(note_one)
-    assert "6/8 workers" in str(note_one)
-    assert "Adaptive backoff active" in str(note_two)
-    assert "4/8 workers" in str(note_two)
-    assert controller.active_worker_cap == 4
-
-    notes = []
-    for idx in range(6):
-        notes.append(
+    relax_notes = []
+    for idx in range(8):
+        controller.observe_resources([])
+        relax_notes.append(
             controller.observe_seed(
                 {
                     "status": "seed_done",
                     "map_seed": 600 + idx,
                     "challenge_type": 2,
-                    "calibration_overhead_sec": 0.01,
-                    "calibration_cpu_factor": 1.0,
                 }
             )
         )
 
-    assert controller.active_worker_cap == 6
-    assert any(note and "Adaptive backoff relaxed" in note for note in notes)
-
-    notes = []
-    for idx in range(6):
-        notes.append(
-            controller.observe_seed(
-                {
-                    "status": "seed_done",
-                    "map_seed": 700 + idx,
-                    "challenge_type": 1,
-                    "calibration_overhead_sec": 0.01,
-                    "calibration_cpu_factor": 1.0,
-                }
-            )
-        )
-
-    assert controller.active_worker_cap == 8
-    assert any(note and "Adaptive backoff cleared" in note for note in notes)
+    assert controller.active_worker_cap > 5
+    assert any(note and "Scheduler relaxed" in note for note in relax_notes)
 
 
 def test_save_and_load_type_seeds(tmp_path):
@@ -325,7 +271,7 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, {}, {}, {}, [], 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -347,7 +293,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, {}, {}, {}, [], 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -387,7 +333,6 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
             [1060.0],
             {(seed, 5): deque([60.0])},
             {(seed, 5): deque(["seed_done"])},
-            {(seed, 5): deque([{"batch_index": 0, "timing_breakdown": {"seed_total_sec": 60.0}}])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -410,85 +355,8 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
 
     assert "=== RESULTS ===" in combined
     assert "Run summary:" in combined
-    assert "Memory breakdown (avg per seed):" in combined
     assert "Clean execution rate:      1/1 (100.0%)" in combined
     assert "=== BENCHMARK COMPLETE ===" in combined
-
-
-def test_print_results_includes_memory_overview_in_summary():
-    seed = 200662
-    task_meta = [{
-        "group": "type5_warehouse",
-        "bench_type": 5,
-        "seed": seed,
-        "challenge_type": 5,
-        "horizon": 60.0,
-        "moving_platform": False,
-    }]
-    fake_result = SimpleNamespace(success=True, score=0.95, time_sec=12.0)
-
-    summary = bench_full_eval._print_results(
-        task_meta=task_meta,
-        results=[fake_result],
-        seed_times=[1012.0],
-        seed_wall_by_key={(seed, 5): deque([12.0])},
-        seed_status_by_key={(seed, 5): deque(["seed_done"])},
-        seed_detail_by_key={
-            (seed, 5): deque(
-                [
-                    {
-                        "batch_index": 0,
-                        "timing_breakdown": {"seed_total_sec": 12.0},
-                        "memory_breakdown": {
-                            "system_total_bytes": 8 * 1024 * 1024 * 1024,
-                            "docker_container_memory_limit_bytes": 1024 * 1024 * 1024,
-                            "validator_process_rss": {
-                                "avg_bytes": 256 * 1024 * 1024,
-                                "peak_bytes": 300 * 1024 * 1024,
-                                "peak_delta_from_first_bytes": 32 * 1024 * 1024,
-                            },
-                            "validator_process_vms": {
-                                "avg_bytes": 2048 * 1024 * 1024,
-                                "peak_bytes": 3072 * 1024 * 1024,
-                                "peak_delta_from_first_bytes": 512 * 1024 * 1024,
-                            },
-                            "docker_container_memory": {
-                                "avg_bytes": 128 * 1024 * 1024,
-                                "peak_bytes": 160 * 1024 * 1024,
-                                "peak_delta_from_first_bytes": 24 * 1024 * 1024,
-                            },
-                            "system_available_memory": {
-                                "avg_bytes": 6144 * 1024 * 1024,
-                                "min_bytes": 5632 * 1024 * 1024,
-                                "min_delta_from_first_bytes": 768 * 1024 * 1024,
-                            },
-                            "system_used_memory": {
-                                "avg_bytes": 2048 * 1024 * 1024,
-                                "peak_bytes": 2560 * 1024 * 1024,
-                            },
-                        },
-                    }
-                ]
-            )
-        },
-        full_wall_by_key={(seed, 5): 13.0},
-        batch_stats=[bench_full_eval._BatchStat(0, 0, 1, 13.0, 12.0, 1.0, [seed])],
-        elapsed=13.0,
-        eval_start=1000.0,
-        num_workers=1,
-    )
-
-    memory_overview = summary["timing_analysis"]["memory_overview_mib"]
-    assert memory_overview["validator_avg_rss_mib"] == pytest.approx(256.0)
-    assert memory_overview["validator_peak_rss_mib"] == pytest.approx(300.0)
-    assert memory_overview["validator_avg_vms_mib"] == pytest.approx(2048.0)
-    assert memory_overview["validator_peak_vms_mib"] == pytest.approx(3072.0)
-    assert memory_overview["container_avg_mem_mib"] == pytest.approx(128.0)
-    assert memory_overview["container_peak_mem_mib"] == pytest.approx(160.0)
-    assert memory_overview["container_limit_mib"] == pytest.approx(1024.0)
-    assert memory_overview["host_total_ram_mib"] == pytest.approx(8192.0)
-    assert memory_overview["host_available_ram_min_mib"] == pytest.approx(5632.0)
-    assert memory_overview["host_available_ram_drop_mib"] == pytest.approx(768.0)
 
 
 def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
@@ -518,7 +386,6 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
             [1060.0],
             {(seed, 5): deque([60.0])},
             {(seed, 5): deque(["seed_done"])},
-            {(seed, 5): deque([{"batch_index": 0, "timing_breakdown": {"seed_total_sec": 60.0}}])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -599,7 +466,6 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
             [1060.0],
             {(seed, 5): deque([60.0])},
             {(seed, 5): deque(["seed_done"])},
-            {(seed, 5): deque([{"batch_index": 0, "timing_breakdown": {"seed_total_sec": 60.0}}])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -767,8 +633,7 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
     assert out[-1] == 2
     assert out[1][0].score == 0.5
     assert out[4][(123456, 5)][0] == "seed_done"
-    assert out[5][(123456, 5)][0]["status"] == "seed_done"
-    assert out[6][(123456, 5)] == 0.5
+    assert out[5][(123456, 5)] == 0.5
 
 
 def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path):
@@ -786,12 +651,11 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
             model_path,
             worker_id=0,
             on_seed_complete=None,
-            on_batch_complete=None,
             task_offset=0,
             task_total=None,
             model_image=None,
         ):
-            _ = uid, model_path, worker_id, on_batch_complete, task_offset, task_total, model_image
+            _ = uid, model_path, worker_id, task_offset, task_total, model_image
             for task in tasks:
                 if on_seed_complete is not None:
                     on_seed_complete(
