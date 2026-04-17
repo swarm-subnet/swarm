@@ -282,33 +282,33 @@ pm2 start --name auto_update_validator \
 
 ## 🧩 What the Validator Does
 
-1. **Sync with backend**
-   Fetch pending models list via backend API (`GET /validators/sync`). Discover new models submitted by miners.
+1. **Sync with the backend**
+   `GET /validators/sync` returns the current epoch, the pending model queue, the re-eval queue, and the latest weight map. Runs once per forward cycle.
 
 2. **Download from GitHub**
-   Download `submission.zip` from the miner's public GitHub repository. Verify SHA-256 hash matches the backend's stored hash. README.md hash is verified by the backend during submission.
+   Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
 
 3. **Screening (200 seeds)**
-   New models are first evaluated on 200 seeds. Must score >= current champion + **0.015** to proceed (`SCREENING_MIN_IMPROVEMENT = 0.015`), or >= 0.1 if no champion exists.
+   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears **champion + 0.015** (or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
 
 4. **Full benchmark (800 seeds)**
-   Models that pass screening are evaluated on the remaining 800 benchmark seeds across all environment types. Evaluation runs in parallel Docker containers.
+   Models that advance are evaluated on the remaining 800 seeds across all six environment types, in parallel Docker containers.
 
-5. **Submit scores to backend**
-   Final score (average of all 1,000 seeds) is submitted to the backend.
+5. **Report scores**
+   Per-seed and aggregate scores are submitted to the backend as they are computed.
 
-6. **Backend aggregation**
-   Backend aggregates scores from all validators (51% stake consensus).
+6. **Consensus**
+   Reports from all active validators are combined by stake (>= 51%) to determine the network's per-model result.
 
 7. **Apply weights**
-   Validators fetch final weights from the backend and apply them on-chain.
+   Validators pull the resulting weight map and set it on-chain each forward cycle.
 
 8. **Caching**
-   Results are cached by model hash + benchmark version + epoch. Same model is never re-evaluated within the same epoch.
+   Results are cached by model hash + benchmark version + epoch. The same model is never re-evaluated within the same epoch.
 
 ### Per-Validator Seeds
 
-Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. With 1,000 seeds, the statistical variance across validators is negligible.
+Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. With 1,000 seeds per validator and stake-weighted consensus, statistical variance across validators is negligible.
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 

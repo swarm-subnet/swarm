@@ -18,8 +18,6 @@ from swarm.constants import (
     KEEP_FRACTION,
     MAX_MODEL_BYTES,
     MODEL_DIR,
-    SCREENING_BOOTSTRAP_THRESHOLD,
-    SCREENING_MIN_IMPROVEMENT,
     SIM_DT,
     UID_ZERO,
 )

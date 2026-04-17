@@ -308,12 +308,6 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
             _ = epoch
             return None
 
-        def check_epoch_transition(self):
-            return False
-
-        def advance_to_new_epoch(self):
-            return 1
-
         def get_screening_seeds(self):
             return [_seed_from_bench("type2_open")]
 
@@ -524,12 +518,6 @@ def test_e2e_forward_single_cycle_local_backend_no_mocks():
         def mark_epoch_published(self, epoch):
             _ = epoch
             return None
-
-        def check_epoch_transition(self):
-            return False
-
-        def advance_to_new_epoch(self):
-            return 1
 
         def get_all_seeds(self):
             return []

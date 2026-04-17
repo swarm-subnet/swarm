@@ -121,48 +121,6 @@ async def forward(self) -> None:
                 bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
 
         # ──────────────────────────────────────────────────────────────
-        # STEP 0.5: Epoch transition detection
-        # ──────────────────────────────────────────────────────────────
-        if self.seed_manager.check_epoch_transition():
-            old_epoch = self.seed_manager.advance_to_new_epoch()
-            tracker_call(
-                self,
-                "mark_epoch_transition",
-                old_epoch=old_epoch,
-                new_epoch=self.seed_manager.epoch_number,
-            )
-            bt.logging.info(
-                f"Epoch transition: {old_epoch} -> {self.seed_manager.epoch_number}"
-            )
-
-            for pub in self.seed_manager.get_pending_publications():
-                ep = pub.get("epoch_number")
-                try:
-                    await self.backend_api.publish_epoch_seeds(
-                        epoch_number=ep,
-                        seeds=pub.get("seeds", []),
-                        started_at=pub.get("started_at", ""),
-                        ended_at=pub.get("ended_at", ""),
-                        benchmark_version=pub.get("benchmark_version"),
-                    )
-                    self.seed_manager.mark_epoch_published(ep)
-                    bt.logging.info(f"Published epoch {ep} seeds to backend")
-                except Exception as e:
-                    bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
-            cleanup_started = asyncio.get_running_loop().time()
-            self.docker_evaluator.cleanup()
-            tracker_call(
-                self,
-                "mark_docker_cleanup",
-                duration_sec=asyncio.get_running_loop().time() - cleanup_started,
-                reason="epoch_transition",
-            )
-            clear_normal_model_queue()
-            clear_benchmark_cache()
-            self._epoch_just_transitioned = True
-            bt.logging.info("Epoch transition: killed Docker, cleared queue and cache")
-
-        # ──────────────────────────────────────────────────────────────
         # STEP 1: Sync with backend
         # ──────────────────────────────────────────────────────────────
         bt.logging.info("📡 Syncing with backend...")
@@ -172,7 +130,6 @@ async def forward(self) -> None:
         if sync_data.get("fallback"):
             bt.logging.warning("Backend unavailable — burning 100% emissions")
 
-        self._current_top = sync_data.get("current_top", {})
         reeval_queue = sync_data.get("reeval_queue", [])
         backend_epoch = int(
             sync_data.get("benchmark_epoch")
@@ -202,10 +159,6 @@ async def forward(self) -> None:
                 )
 
         epoch_just_transitioned = getattr(self, '_epoch_just_transitioned', False)
-        if epoch_just_transitioned and self._current_top.get("uid") is not None:
-            champion_uid = self._current_top["uid"]
-            reeval_queue.insert(0, {"uid": champion_uid, "reason": "epoch_transition"})
-            bt.logging.info(f"👑 Champion UID {champion_uid} queued for epoch re-evaluation")
 
         # ──────────────────────────────────────────────────────────────
         # STEP 2: Apply weights from backend
@@ -240,7 +193,7 @@ async def forward(self) -> None:
                 f"Backend unavailable: skipping {len(reeval_queue)} cached re-eval item(s)"
             )
             if epoch_just_transitioned:
-                bt.logging.info("Keeping epoch transition flag — will retry champion re-eval next cycle")
+                bt.logging.info("Backend unavailable after epoch transition — will retry re-eval queue next cycle")
             else:
                 self._epoch_just_transitioned = False
         else:

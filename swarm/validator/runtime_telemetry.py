@@ -512,7 +512,6 @@ class ValidatorRuntimeTracker:
         *,
         uid: int,
         total_seeds: int,
-        threshold: float,
     ) -> None:
         now = time.time()
         with self._lock:
@@ -522,13 +521,12 @@ class ValidatorRuntimeTracker:
             screening["started_at"] = now
             screening["progress"] = 0
             screening["total"] = int(total_seeds)
-            screening["last_note"] = f"threshold={float(threshold):.4f}"
+            screening["last_note"] = ""
             self._record_counter("screening_started_total")
             self._record_event_locked(
                 "screening_started",
                 uid=int(uid),
                 total_seeds=int(total_seeds),
-                threshold=float(threshold),
             )
 
     def mark_screening_progress(

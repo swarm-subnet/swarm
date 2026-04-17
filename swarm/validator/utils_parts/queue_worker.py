@@ -219,15 +219,8 @@ async def _process_normal_queue_item(
                 }
             item["updated_at"] = time.time()
 
-        if item.get("screening_passed") is None:
-            item["screening_passed"] = _utils_facade()._passes_screening(
-                self, float(item.get("screening_score", 0.0))
-            )
-
-        screening_passed = bool(item.get("screening_passed", False))
         bt.logging.info(
-            f"{'PASSED' if screening_passed else 'FAILED'} Screening UID {uid} | "
-            f"score={item.get('screening_score', 0):.4f}"
+            f"Screening UID {uid} | score={item.get('screening_score', 0):.4f}"
         )
 
         if not item.get("screening_recorded", False):
@@ -246,7 +239,6 @@ async def _process_normal_queue_item(
                 validator_hotkey=validator_hotkey,
                 validator_stake=validator_stake,
                 screening_score=float(item.get("screening_score", 0.0)),
-                passed=screening_passed,
             )
             if not recorded:
                 bt.logging.warning(
@@ -316,24 +308,6 @@ async def _process_normal_queue_item(
                 item=item,
                 stage="screening_recorded",
             )
-
-        if not screening_passed:
-            bt.logging.info(
-                f"UID {uid} screening failed — skipping benchmark"
-            )
-            item["status"] = "completed"
-            item["updated_at"] = time.time()
-            item.pop("screening_scores", None)
-            _utils_facade().mark_model_hash_processed(uid, model_hash)
-            tracker_call(
-                self,
-                "mark_queue_item_stage",
-                queue=queue,
-                key=key,
-                item=item,
-                stage="completed",
-            )
-            return
 
         missing_score_payload = (
             item.get("total_score") is None
