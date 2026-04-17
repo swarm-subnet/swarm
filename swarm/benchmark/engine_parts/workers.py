@@ -18,6 +18,7 @@ from ._shared import (
     deque,
     gc,
     mp,
+    os,
     queue_mod,
     sys,
     threading,
@@ -35,6 +36,7 @@ from .dispatch import (
     _max_heavy_active,
     _select_next_batch_index,
 )
+from swarm.config import HostWorkerRuntimeSettings
 
 
 def _engine_facade():
@@ -72,12 +74,51 @@ def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float]:
     )
 
 
+def _apply_host_worker_limits(process_slot: int) -> None:
+    settings = HostWorkerRuntimeSettings.from_env()
+    limits = settings.resolve_worker_limits(process_slot)
+
+    cpuset = limits.cpuset_cpus
+    if cpuset:
+        try:
+            allowed = settings.parse_cpuset_spec(cpuset)
+            if allowed and hasattr(os, "sched_setaffinity"):
+                os.sched_setaffinity(0, allowed)
+        except Exception:
+            pass
+
+    memory_mb = limits.memory_mb
+    if memory_mb is None or memory_mb <= 0:
+        return
+    try:
+        import resource
+    except Exception:
+        return
+    limit_bytes = int(memory_mb) * 1024 * 1024
+    for resource_name in ("RLIMIT_AS", "RLIMIT_DATA"):
+        try:
+            resource_id = getattr(resource, resource_name, None)
+            if resource_id is None:
+                continue
+            soft, hard = resource.getrlimit(resource_id)
+            new_soft = limit_bytes
+            new_hard = limit_bytes
+            if hard not in (resource.RLIM_INFINITY, -1):
+                new_hard = min(int(hard), limit_bytes)
+            if soft not in (resource.RLIM_INFINITY, -1):
+                new_soft = min(int(soft), limit_bytes)
+            resource.setrlimit(resource_id, (new_soft, new_hard))
+        except Exception:
+            pass
+
+
 def _benchmark_worker_main(
     process_slot: int,
     task_queue: Any,
     result_queue: Any,
     progress_queue: Any,
 ) -> None:
+    _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -90,6 +131,7 @@ def _benchmark_worker_main(
 
             batch_start = time.time()
             heartbeat_stop = threading.Event()
+            batch_meta_holder: Dict[str, Dict[str, Any]] = {}
 
             def _on_seed_complete(seed_meta: Optional[Dict[str, Any]] = None) -> None:
                 try:
@@ -102,6 +144,14 @@ def _benchmark_worker_main(
                     )
                 except Exception:
                     pass
+
+            def _on_batch_complete(batch_meta: Optional[Dict[str, Any]] = None) -> None:
+                if batch_meta is None:
+                    return
+                try:
+                    batch_meta_holder["value"] = dict(batch_meta)
+                except Exception:
+                    batch_meta_holder["value"] = {"status": "batch_meta_invalid"}
 
             def _emit_worker_heartbeat(event_type: str) -> None:
                 try:
@@ -138,6 +188,7 @@ def _benchmark_worker_main(
                         model_path=Path(request.model_path),
                         worker_id=process_slot,
                         on_seed_complete=_on_seed_complete,
+                        on_batch_complete=_on_batch_complete,
                         task_offset=request.batch_indices[0] if request.batch_indices else 0,
                         task_total=request.task_total,
                         model_image=getattr(request, "model_image", None),
@@ -150,6 +201,7 @@ def _benchmark_worker_main(
                         batch_indices=list(request.batch_indices),
                         results=[_pack_validation_result(result) for result in seed_results],
                         elapsed_sec=time.time() - batch_start,
+                        batch_meta=batch_meta_holder.get("value"),
                     )
                 )
             except Exception as exc:
@@ -253,6 +305,10 @@ async def _run_benchmark_process_mode(
                     worker_started_at[int(event.worker_id)] = float(event.ts)
                 continue
             seed_meta = getattr(event, "seed_meta", None)
+            if isinstance(seed_meta, dict):
+                seed_meta = dict(seed_meta)
+                seed_meta.setdefault("batch_index", int(event.batch_index))
+                seed_meta.setdefault("worker_id", int(event.worker_id))
             on_seed_done(seed_meta)
             note = scheduler.observe_seed(seed_meta)
             if note:
@@ -415,6 +471,7 @@ async def _run_benchmark_process_mode(
                 list(payload.batch_indices),
                 [ValidationResult(*packed) for packed in payload.results],
                 float(payload.elapsed_sec),
+                payload.batch_meta,
             )
             completed_batches += 1
             _dispatch_available_batches()
@@ -472,6 +529,7 @@ async def _run_benchmark(
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
     seed_status_by_key: Dict[Tuple[int, int], deque[str]] = {}
+    seed_detail_by_key: Dict[Tuple[int, int], deque[Dict[str, Any]]] = {}
     full_wall_by_key: Dict[Tuple[int, int], float] = {}
     batch_stats: List[_BatchStat] = []
     total_seeds = len(all_tasks)
@@ -506,6 +564,7 @@ async def _run_benchmark(
                     seed_status = str(seed_meta.get("status", "")).strip()
                     if seed_status:
                         seed_status_by_key.setdefault(seed_key, deque()).append(seed_status)
+                    seed_detail_by_key.setdefault(seed_key, deque()).append(dict(seed_meta))
                 except Exception:
                     pass
             done_count += 1
@@ -624,6 +683,7 @@ async def _run_benchmark(
                 batch_indices: List[int],
                 seed_results: List[Any],
                 batch_elapsed: float,
+                batch_meta: Optional[Dict[str, Any]] = None,
             ) -> None:
                 if len(seed_results) != len(batch_indices):
                     raise RuntimeError(
@@ -631,8 +691,18 @@ async def _run_benchmark(
                         f"for batch of {len(batch_indices)} seeds."
                     )
 
-                batch_meta = [task_meta[idx] for idx in batch_indices]
-                seed_list = [meta["seed"] for meta in batch_meta]
+                batch_seed_meta = [task_meta[idx] for idx in batch_indices]
+                seed_list = [meta["seed"] for meta in batch_seed_meta]
+                batch_meta_payload = dict(batch_meta) if isinstance(batch_meta, dict) else {}
+                timing_breakdown = dict(batch_meta_payload.get("timing_breakdown", {}))
+                batch_total_sec = float(timing_breakdown.get("batch_total_sec", batch_elapsed))
+                timing_breakdown.setdefault("batch_total_sec", batch_total_sec)
+                if abs(float(batch_elapsed) - batch_total_sec) > 0.001:
+                    timing_breakdown["outer_worker_elapsed_sec"] = float(batch_elapsed)
+                    timing_breakdown["outer_worker_overhead_sec"] = max(
+                        0.0,
+                        float(batch_elapsed) - batch_total_sec,
+                    )
                 batch_processing_sec = 0.0
                 for idx, result in zip(batch_indices, seed_results):
                     results[idx] = result
@@ -642,7 +712,7 @@ async def _run_benchmark(
                     seed_processing = float(seed_values[0]) if seed_values else 0.0
                     batch_processing_sec += seed_processing
 
-                startup_overhead_sec = max(0.0, batch_elapsed - batch_processing_sec)
+                startup_overhead_sec = max(0.0, batch_total_sec - batch_processing_sec)
                 startup_share = startup_overhead_sec / len(batch_indices) if batch_indices else 0.0
                 for idx in batch_indices:
                     meta = task_meta[idx]
@@ -656,15 +726,16 @@ async def _run_benchmark(
                         worker_id=worker_slot,
                         batch_index=batch_index,
                         seed_count=len(batch_indices),
-                        elapsed_sec=batch_elapsed,
+                        elapsed_sec=batch_total_sec,
                         seed_processing_sec=batch_processing_sec,
                         startup_overhead_sec=startup_overhead_sec,
                         seeds=seed_list,
+                        timing_breakdown=timing_breakdown,
                     )
                 )
                 print(
                     f"[{_ts()}] Worker {worker_slot} complete | batch {batch_index + 1} "
-                    f"| seeds={len(batch_indices)} | elapsed={batch_elapsed:.1f}s "
+                    f"| seeds={len(batch_indices)} | elapsed={batch_total_sec:.1f}s "
                     f"| startup={startup_overhead_sec:.1f}s",
                     flush=True,
                 )
@@ -695,6 +766,7 @@ async def _run_benchmark(
         seed_times,
         seed_wall_by_key,
         seed_status_by_key,
+        seed_detail_by_key,
         full_wall_by_key,
         batch_stats,
         elapsed,

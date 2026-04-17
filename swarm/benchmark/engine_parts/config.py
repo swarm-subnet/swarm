@@ -205,6 +205,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Write benchmark summary JSON to this path.",
     )
+    parser.add_argument(
+        "--timing-json-out",
+        type=Path,
+        default=None,
+        help="Write detailed timing analysis JSON to this path.",
+    )
     return parser.parse_args(argv)
 
 
@@ -258,6 +264,8 @@ def _active_runtime_overrides() -> Dict[str, str]:
         "SWARM_DOCKER_WORKER_CPUS_OVERRIDE",
         "SWARM_DOCKER_WORKER_MEMORY_OVERRIDE",
         "SWARM_DOCKER_WORKER_CPUSETS",
+        "SWARM_HOST_WORKER_MEMORY_MB",
+        "SWARM_HOST_WORKER_CPUSETS",
     ]
     active: Dict[str, str] = {}
     for key in keys:
@@ -266,5 +274,7 @@ def _active_runtime_overrides() -> Dict[str, str]:
             active[key] = value
     for key, value in os.environ.items():
         if key.startswith("SWARM_DOCKER_WORKER_CPUSET_CPUS_") and value not in ("",):
+            active[key] = value
+        if key.startswith("SWARM_HOST_WORKER_CPUSET_CPUS_") and value not in ("",):
             active[key] = value
     return active

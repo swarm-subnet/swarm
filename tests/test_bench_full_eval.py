@@ -325,7 +325,7 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -347,7 +347,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
-        return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
+        return ([], [], [], {}, {}, {}, {}, [], 0.0, 0.0, 1)
 
     monkeypatch.setattr(
         bench_full_eval,
@@ -387,6 +387,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
             [1060.0],
             {(seed, 5): deque([60.0])},
             {(seed, 5): deque(["seed_done"])},
+            {(seed, 5): deque([{"batch_index": 0, "timing_breakdown": {"seed_total_sec": 60.0}}])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -409,8 +410,85 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
 
     assert "=== RESULTS ===" in combined
     assert "Run summary:" in combined
+    assert "Memory breakdown (avg per seed):" in combined
     assert "Clean execution rate:      1/1 (100.0%)" in combined
     assert "=== BENCHMARK COMPLETE ===" in combined
+
+
+def test_print_results_includes_memory_overview_in_summary():
+    seed = 200662
+    task_meta = [{
+        "group": "type5_warehouse",
+        "bench_type": 5,
+        "seed": seed,
+        "challenge_type": 5,
+        "horizon": 60.0,
+        "moving_platform": False,
+    }]
+    fake_result = SimpleNamespace(success=True, score=0.95, time_sec=12.0)
+
+    summary = bench_full_eval._print_results(
+        task_meta=task_meta,
+        results=[fake_result],
+        seed_times=[1012.0],
+        seed_wall_by_key={(seed, 5): deque([12.0])},
+        seed_status_by_key={(seed, 5): deque(["seed_done"])},
+        seed_detail_by_key={
+            (seed, 5): deque(
+                [
+                    {
+                        "batch_index": 0,
+                        "timing_breakdown": {"seed_total_sec": 12.0},
+                        "memory_breakdown": {
+                            "system_total_bytes": 8 * 1024 * 1024 * 1024,
+                            "docker_container_memory_limit_bytes": 1024 * 1024 * 1024,
+                            "validator_process_rss": {
+                                "avg_bytes": 256 * 1024 * 1024,
+                                "peak_bytes": 300 * 1024 * 1024,
+                                "peak_delta_from_first_bytes": 32 * 1024 * 1024,
+                            },
+                            "validator_process_vms": {
+                                "avg_bytes": 2048 * 1024 * 1024,
+                                "peak_bytes": 3072 * 1024 * 1024,
+                                "peak_delta_from_first_bytes": 512 * 1024 * 1024,
+                            },
+                            "docker_container_memory": {
+                                "avg_bytes": 128 * 1024 * 1024,
+                                "peak_bytes": 160 * 1024 * 1024,
+                                "peak_delta_from_first_bytes": 24 * 1024 * 1024,
+                            },
+                            "system_available_memory": {
+                                "avg_bytes": 6144 * 1024 * 1024,
+                                "min_bytes": 5632 * 1024 * 1024,
+                                "min_delta_from_first_bytes": 768 * 1024 * 1024,
+                            },
+                            "system_used_memory": {
+                                "avg_bytes": 2048 * 1024 * 1024,
+                                "peak_bytes": 2560 * 1024 * 1024,
+                            },
+                        },
+                    }
+                ]
+            )
+        },
+        full_wall_by_key={(seed, 5): 13.0},
+        batch_stats=[bench_full_eval._BatchStat(0, 0, 1, 13.0, 12.0, 1.0, [seed])],
+        elapsed=13.0,
+        eval_start=1000.0,
+        num_workers=1,
+    )
+
+    memory_overview = summary["timing_analysis"]["memory_overview_mib"]
+    assert memory_overview["validator_avg_rss_mib"] == pytest.approx(256.0)
+    assert memory_overview["validator_peak_rss_mib"] == pytest.approx(300.0)
+    assert memory_overview["validator_avg_vms_mib"] == pytest.approx(2048.0)
+    assert memory_overview["validator_peak_vms_mib"] == pytest.approx(3072.0)
+    assert memory_overview["container_avg_mem_mib"] == pytest.approx(128.0)
+    assert memory_overview["container_peak_mem_mib"] == pytest.approx(160.0)
+    assert memory_overview["container_limit_mib"] == pytest.approx(1024.0)
+    assert memory_overview["host_total_ram_mib"] == pytest.approx(8192.0)
+    assert memory_overview["host_available_ram_min_mib"] == pytest.approx(5632.0)
+    assert memory_overview["host_available_ram_drop_mib"] == pytest.approx(768.0)
 
 
 def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
@@ -440,6 +518,7 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
             [1060.0],
             {(seed, 5): deque([60.0])},
             {(seed, 5): deque(["seed_done"])},
+            {(seed, 5): deque([{"batch_index": 0, "timing_breakdown": {"seed_total_sec": 60.0}}])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -520,6 +599,7 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
             [1060.0],
             {(seed, 5): deque([60.0])},
             {(seed, 5): deque(["seed_done"])},
+            {(seed, 5): deque([{"batch_index": 0, "timing_breakdown": {"seed_total_sec": 60.0}}])},
             {(seed, 5): 61.0},
             [bench_full_eval._BatchStat(0, 0, 1, 61.0, 60.0, 1.0, [seed])],
             61.0,
@@ -687,7 +767,8 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
     assert out[-1] == 2
     assert out[1][0].score == 0.5
     assert out[4][(123456, 5)][0] == "seed_done"
-    assert out[5][(123456, 5)] == 0.5
+    assert out[5][(123456, 5)][0]["status"] == "seed_done"
+    assert out[6][(123456, 5)] == 0.5
 
 
 def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path):
@@ -705,11 +786,12 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
             model_path,
             worker_id=0,
             on_seed_complete=None,
+            on_batch_complete=None,
             task_offset=0,
             task_total=None,
             model_image=None,
         ):
-            _ = uid, model_path, worker_id, task_offset, task_total, model_image
+            _ = uid, model_path, worker_id, on_batch_complete, task_offset, task_total, model_image
             for task in tasks:
                 if on_seed_complete is not None:
                     on_seed_complete(

@@ -435,6 +435,23 @@ def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
     assert limits["cpuset_cpus"] == "2-3"
 
 
+def test_host_worker_runtime_settings_use_env_overrides(monkeypatch):
+    from swarm.config import HostWorkerRuntimeSettings
+
+    monkeypatch.setenv("SWARM_HOST_WORKER_MEMORY_MB", "2048")
+    monkeypatch.setenv("SWARM_HOST_WORKER_CPUSETS", "0;1;2-3")
+    limits = HostWorkerRuntimeSettings.from_env().resolve_worker_limits(worker_id=2)
+    assert limits.memory_mb == 2048
+    assert limits.cpuset_cpus == "2-3"
+
+
+def test_host_worker_runtime_parse_cpuset_spec():
+    from swarm.config import HostWorkerRuntimeSettings
+
+    parsed = HostWorkerRuntimeSettings.parse_cpuset_spec("0,2-4,7")
+    assert parsed == {0, 2, 3, 4, 7}
+
+
 def test_calibrate_rpc_overhead_fallback_on_failures(monkeypatch):
     ev = _new_evaluator()
     monkeypatch.setattr(ev, "_serialize_observation", lambda *a, **k: object())

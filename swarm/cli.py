@@ -360,6 +360,8 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
         argv.extend(["--seed-search-rng", str(args.seed_search_rng)])
     if args.summary_json_out is not None:
         argv.extend(["--summary-json-out", str(args.summary_json_out)])
+    if getattr(args, "timing_json_out", None) is not None:
+        argv.extend(["--timing-json-out", str(args.timing_json_out)])
     if args.relax_timeouts:
         argv.append("--relax-timeouts")
     argv.extend(["--rpc-verbosity", str(args.rpc_verbosity)])
@@ -1199,6 +1201,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Write benchmark summary JSON to this path.",
+    )
+    benchmark_parser.add_argument(
+        "--timing-json-out",
+        type=Path,
+        default=None,
+        help="Write detailed timing analysis JSON to this path.",
     )
     benchmark_parser.add_argument(
         "--relax-timeouts",

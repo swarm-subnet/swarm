@@ -61,6 +61,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     results: list = []
     seed_times: List[float] = []
     seed_wall_by_key: Dict[Tuple[int, int], deque[float]] = {}
+    seed_detail_by_key: Dict[Tuple[int, int], deque[Dict[str, object]]] = {}
     full_wall_by_key: Dict[Tuple[int, int], float] = {}
     seed_status_by_key: Dict[Tuple[int, int], deque[str]] = {}
     batch_stats: List[_BatchStat] = []
@@ -129,6 +130,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             seed_times,
             seed_wall_by_key,
             seed_status_by_key,
+            seed_detail_by_key,
             full_wall_by_key,
             batch_stats,
             elapsed,
@@ -176,6 +178,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     seed_times,
                     seed_wall_by_key,
                     seed_status_by_key,
+                    seed_detail_by_key,
                     full_wall_by_key,
                     batch_stats,
                     elapsed,
@@ -221,6 +224,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.summary_json_out is not None and summary is not None:
         args.summary_json_out.parent.mkdir(parents=True, exist_ok=True)
         args.summary_json_out.write_text(json.dumps(summary, indent=2, sort_keys=True))
+    if args.timing_json_out is not None and summary is not None:
+        args.timing_json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.timing_json_out.write_text(
+            json.dumps(summary.get("timing_analysis", {}), indent=2, sort_keys=True)
+        )
 
     if run_error is not None:
         raise run_error
