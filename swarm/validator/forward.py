@@ -33,6 +33,42 @@ def _merge_per_type_averages(
         merged[key] = float(np.mean(combined)) if combined else 0.0
     return merged
 
+
+def _partition_assigned_tasks(sync_data: dict) -> tuple[List[dict], List[dict]]:
+    """Split assigned_tasks into reeval items and pending-model entries.
+
+    The rest of the forward loop consumes two legacy shapes:
+    ``{"uid", "reason", "model_hash", "github_url"}`` for re-eval work
+    and ``{"uid", "model_hash", "github_url"}`` for new screening or
+    benchmark work. Multiple assigned_tasks for the same pending uid
+    collapse into one entry so the model is downloaded only once.
+    """
+    reeval: List[dict] = []
+    pending: List[dict] = []
+    seen_pending: set = set()
+    for task in sync_data.get("assigned_tasks", []) or []:
+        uid = task.get("uid")
+        model_hash = task.get("model_hash") or ""
+        github_url = task.get("github_url") or ""
+        if uid is None or not model_hash or not github_url:
+            continue
+        phase = task.get("phase")
+        if phase == "REEVAL":
+            reeval.append({
+                "uid": uid,
+                "reason": task.get("reeval_reason") or "version_transition",
+                "model_hash": model_hash,
+                "github_url": github_url,
+            })
+        elif phase in ("SCREENING", "BENCHMARK") and uid not in seen_pending:
+            seen_pending.add(uid)
+            pending.append({
+                "uid": uid,
+                "model_hash": model_hash,
+                "github_url": github_url,
+            })
+    return reeval, pending
+
 from .backend_api import BackendApiClient
 from .docker.docker_evaluator import DockerSecureEvaluator
 from .runtime_telemetry import tracker_call
@@ -130,7 +166,7 @@ async def forward(self) -> None:
         if sync_data.get("fallback"):
             bt.logging.warning("Backend unavailable — burning 100% emissions")
 
-        reeval_queue = sync_data.get("reeval_queue", [])
+        reeval_queue, pending_models = _partition_assigned_tasks(sync_data)
         backend_epoch = int(
             sync_data.get("benchmark_epoch")
             or sync_data.get("current_epoch")
@@ -140,7 +176,7 @@ async def forward(self) -> None:
             self,
             "mark_backend_sync_completed",
             fallback=bool(sync_data.get("fallback", False)),
-            pending_models_count=len(sync_data.get("pending_models", [])),
+            pending_models_count=len(pending_models),
             reeval_queue_count=len(reeval_queue),
             leaderboard_version=sync_data.get("leaderboard_version"),
             error=str(sync_data.get("error", "")),
@@ -197,6 +233,8 @@ async def forward(self) -> None:
             else:
                 self._epoch_just_transitioned = False
         else:
+            if reeval_queue:
+                await _ensure_models_from_backend(self, reeval_queue)
             epoch_reeval_succeeded = not epoch_just_transitioned
             for reeval_item in reeval_queue:
                 uid = reeval_item.get("uid")
@@ -319,7 +357,7 @@ async def forward(self) -> None:
             )
             pending = []
         else:
-            pending = sync_data.get("pending_models", [])
+            pending = pending_models
             if pending:
                 bt.logging.info(f"Backend reports {len(pending)} pending model(s)")
 
