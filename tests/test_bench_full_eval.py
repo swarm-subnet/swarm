@@ -365,6 +365,175 @@ def test_scheduler_relaxes_faster_and_raises_heavy_cap_earlier():
     assert controller.active_heavy_cap == 2
 
 
+def test_scheduler_neutral_relax_only_allows_early_step():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+    controller.latest_pressure = "neutral"
+
+    note = None
+    for idx in range(2):
+        note = controller.observe_seed(
+            {
+                "status": "seed_done",
+                "map_seed": 4000 + idx,
+                "challenge_type": 1,
+                "sim_time_sec": 12.0,
+                "seed_wall_sec": 48.0,
+                "horizon_sec": 60.0,
+            },
+            group_name="type1_city",
+        )
+
+    assert note is not None and "Scheduler relaxed" in note
+    assert controller.active_worker_cap == 5
+    assert controller.active_heavy_cap == 2
+
+    note = None
+    for idx in range(2):
+        note = controller.observe_seed(
+            {
+                "status": "seed_done",
+                "map_seed": 4100 + idx,
+                "challenge_type": 1,
+                "sim_time_sec": 12.0,
+                "seed_wall_sec": 48.0,
+                "horizon_sec": 60.0,
+            },
+            group_name="type1_city",
+        )
+
+    assert note is None
+    assert controller.active_worker_cap == 5
+    assert controller.active_heavy_cap == 2
+
+
+def test_scheduler_requires_healthy_for_7_to_9_relaxation():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+    controller.active_worker_cap = 7
+    controller.active_heavy_cap = 2
+    controller.latest_pressure = "neutral"
+
+    for idx in range(2):
+        note = controller.observe_seed(
+            {
+                "status": "seed_done",
+                "map_seed": 4200 + idx,
+                "challenge_type": 1,
+                "sim_time_sec": 12.0,
+                "seed_wall_sec": 48.0,
+                "horizon_sec": 60.0,
+            },
+            group_name="type1_city",
+        )
+        assert note is None
+
+    assert controller.active_worker_cap == 7
+    assert controller.active_heavy_cap == 2
+
+    controller.latest_pressure = "healthy"
+    notes = []
+    for idx in range(2):
+        notes.append(
+            controller.observe_seed(
+                {
+                    "status": "seed_done",
+                    "map_seed": 4300 + idx,
+                    "challenge_type": 1,
+                    "sim_time_sec": 12.0,
+                "seed_wall_sec": 48.0,
+                    "horizon_sec": 60.0,
+                },
+                group_name="type1_city",
+            )
+        )
+
+    assert any(note and "Scheduler relaxed" in note for note in notes)
+    assert controller.active_worker_cap == 9
+    assert controller.active_heavy_cap == 3
+
+
+def test_scheduler_waits_between_pressure_backoffs_and_hold_does_not_refresh_cooldown():
+    snapshots = deque(
+        [
+            {"cpu_percent": 95.0, "load_ratio": 1.20, "mem_available_mb": 24000.0, "mem_total_mb": 65536.0, "ts": 1.0},
+            {"cpu_percent": 96.0, "load_ratio": 1.18, "mem_available_mb": 23500.0, "mem_total_mb": 65536.0, "ts": 2.0},
+            {"cpu_percent": 98.0, "load_ratio": 1.16, "mem_available_mb": 23600.0, "mem_total_mb": 65536.0, "ts": 5.0},
+            {"cpu_percent": 99.0, "load_ratio": 1.15, "mem_available_mb": 23600.0, "mem_total_mb": 65536.0, "ts": 6.0},
+            {"cpu_percent": 99.0, "load_ratio": 1.14, "mem_available_mb": 23800.0, "mem_total_mb": 65536.0, "ts": 18.0},
+        ]
+    )
+
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+        resource_provider=lambda: snapshots.popleft(),
+    )
+    controller.active_worker_cap = 9
+    controller.active_heavy_cap = 3
+
+    assert controller.observe_resources([]) is None
+    note = controller.observe_resources([])
+    assert note is not None and "Scheduler pressure backoff" in note
+    assert controller.active_worker_cap == 6
+    assert controller.active_heavy_cap == 2
+    cooldown_after_backoff = controller.cooldown_remaining
+
+    controller.observe_resources([])
+    hold_note = controller.observe_resources([])
+    assert hold_note is not None and "Scheduler pressure hold" in hold_note
+    assert controller.active_worker_cap == 6
+    assert controller.active_heavy_cap == 2
+    assert controller.cooldown_remaining == cooldown_after_backoff
+
+    note = controller.observe_resources([])
+    assert note is not None and "Scheduler pressure backoff" in note
+    assert controller.active_worker_cap == 4
+    assert controller.active_heavy_cap == 1
+
+
+def test_scheduler_poll_driven_recovery_reopens_capacity_after_healthy_window():
+    snapshots = deque(
+        [
+            {"cpu_percent": 32.0, "load_ratio": 0.42, "mem_available_mb": 38000.0, "mem_total_mb": 65536.0, "ts": 1.0},
+            {"cpu_percent": 31.0, "load_ratio": 0.40, "mem_available_mb": 38100.0, "mem_total_mb": 65536.0, "ts": 7.0},
+            {"cpu_percent": 29.0, "load_ratio": 0.38, "mem_available_mb": 38200.0, "mem_total_mb": 65536.0, "ts": 13.0},
+            {"cpu_percent": 28.0, "load_ratio": 0.36, "mem_available_mb": 38300.0, "mem_total_mb": 65536.0, "ts": 19.0},
+            {"cpu_percent": 27.0, "load_ratio": 0.34, "mem_available_mb": 38400.0, "mem_total_mb": 65536.0, "ts": 25.0},
+        ]
+    )
+
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+        resource_provider=lambda: snapshots.popleft(),
+    )
+    controller.active_worker_cap = 3
+    controller.active_heavy_cap = 1
+    controller.cooldown_remaining = 99
+
+    assert controller.observe_resources([]) is None
+    assert controller.observe_resources([]) is None
+    note = controller.observe_resources([])
+    assert note is not None and "Scheduler relaxed" in note
+    assert controller.active_worker_cap == 5
+    assert controller.active_heavy_cap == 2
+
+    assert controller.observe_resources([]) is None
+    note = controller.observe_resources([])
+    assert note is not None and "Scheduler relaxed" in note
+    assert controller.active_worker_cap == 7
+    assert controller.active_heavy_cap == 2
+
+
 def test_scheduler_promotes_light_group_when_observed_runtime_is_expensive():
     controller = bench_full_eval._AdaptiveBackoffController(
         requested_workers=12,

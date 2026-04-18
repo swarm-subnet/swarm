@@ -446,6 +446,7 @@ async def _run_benchmark_process_mode(
         while completed_batches < len(batch_plan):
             _drain_progress_events()
             _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -453,6 +454,7 @@ async def _run_benchmark_process_mode(
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
                 _maybe_poll_scheduler()
+                _dispatch_available_batches()
                 if any(
                     (not worker.is_alive()) and worker.exitcode not in (0, None)
                     for worker in workers.values()
@@ -471,6 +473,7 @@ async def _run_benchmark_process_mode(
 
             _drain_progress_events()
             _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break

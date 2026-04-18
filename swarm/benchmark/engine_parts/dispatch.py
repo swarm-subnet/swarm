@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 try:
     import psutil
@@ -96,6 +97,7 @@ _GROUP_FROM_CHALLENGE_TYPE = {
 }
 _BACKOFF_ACTIVE_WORKERS = 2
 _BACKOFF_COOLDOWN_COMPLETIONS = 4
+_BACKOFF_DWELL_SEC = 10.0
 _COLD_START_WORKERS = 3
 _PRESSURE_HIGH_CPU_PERCENT = 88.0
 _PRESSURE_CRITICAL_CPU_PERCENT = 94.0
@@ -104,6 +106,7 @@ _PRESSURE_HIGH_LOAD_RATIO = 0.95
 _PRESSURE_CRITICAL_LOAD_RATIO = 1.10
 _PRESSURE_HEALTHY_LOAD_RATIO = 0.75
 _PRESSURE_POLL_INTERVAL_SEC = 2.0
+_POLL_RELAX_HEALTHY_SEC = 12.0
 _RESOURCE_WINDOW = 6
 _PRESSURE_HIGH_STREAK = 3
 _PRESSURE_CRITICAL_STREAK = 2
@@ -440,6 +443,8 @@ class _AdaptiveBackoffController:
     cooldown_remaining: int = 0
     pressure_high_streak: int = 0
     pressure_critical_streak: int = 0
+    healthy_since_ts: Optional[float] = None
+    last_backoff_ts: float = field(default_factory=lambda: float("-inf"))
     recent_outcome_signals: deque[str] = field(
         default_factory=lambda: deque(maxlen=12)
     )
@@ -789,7 +794,59 @@ class _AdaptiveBackoffController:
     def _default_heavy_cap_for_current_workers(self, worker_cap: int) -> int:
         return _max_heavy_active(worker_cap)
 
-    def _reduce_caps(self, *, reason: str, severity: str) -> Optional[str]:
+    def _now_ts(self, snapshot: Optional[_ResourceSnapshot] = None) -> float:
+        if snapshot is not None:
+            try:
+                candidate = float(snapshot.ts)
+                if candidate > 0.0:
+                    return candidate
+            except Exception:
+                pass
+        return time.monotonic()
+
+    def _hold_caps(self, *, reason: str) -> str:
+        self.healthy_completion_streak = 0
+        return (
+            f"Scheduler pressure hold: workers {self.active_worker_cap}/{self.max_worker_cap}, "
+            f"heavy {self.active_heavy_cap}/{self.max_heavy_cap} ({reason})"
+        )
+
+    def _can_backoff(self, *, now_ts: float, severity: str) -> bool:
+        if (float(now_ts) - float(self.last_backoff_ts)) < _BACKOFF_DWELL_SEC:
+            return False
+        if self.active_worker_cap < self.max_worker_cap and severity != "critical":
+            return False
+        return True
+
+    def _next_relax_worker_cap(self) -> int:
+        current = int(self.active_worker_cap)
+        if current >= self.max_worker_cap:
+            return current
+
+        early_cap = min(self.max_worker_cap, 5)
+        if current < early_cap:
+            return early_cap
+
+        if self.latest_pressure != "healthy":
+            return current
+
+        mid_cap = min(self.max_worker_cap, 7)
+        if current < mid_cap:
+            return mid_cap
+
+        high_cap = min(self.max_worker_cap, 9)
+        if current < high_cap:
+            return high_cap
+
+        return min(self.max_worker_cap, current + 1)
+
+    def _reduce_caps(
+        self,
+        *,
+        reason: str,
+        severity: str,
+        now_ts: Optional[float] = None,
+    ) -> Optional[str]:
         previous_worker_cap = int(self.active_worker_cap)
         previous_heavy_cap = int(self.active_heavy_cap)
         if severity == "critical":
@@ -798,7 +855,6 @@ class _AdaptiveBackoffController:
                 min(self.active_worker_cap - 2, int(self.active_worker_cap * 0.7)),
             )
             next_heavy_cap = max(1, min(self.active_heavy_cap - 1, next_worker_cap))
-            self.cooldown_remaining = max(self.cooldown_remaining, _BACKOFF_COOLDOWN_COMPLETIONS + 2)
         else:
             next_worker_cap = max(
                 self.start_worker_cap if self.max_worker_cap > 1 else 1,
@@ -807,50 +863,97 @@ class _AdaptiveBackoffController:
             next_heavy_cap = max(1, min(self.active_heavy_cap, self._default_heavy_cap_for_current_workers(next_worker_cap)))
             if next_heavy_cap == previous_heavy_cap and next_heavy_cap > 1:
                 next_heavy_cap -= 1
-            self.cooldown_remaining = max(self.cooldown_remaining, _BACKOFF_COOLDOWN_COMPLETIONS)
+            next_worker_cap = max(1, min(next_worker_cap, self.max_worker_cap))
+            next_heavy_cap = max(
+                1,
+                min(
+                    next_heavy_cap,
+                    self._default_heavy_cap_for_current_workers(next_worker_cap),
+                ),
+            )
 
-        self.active_worker_cap = max(1, min(next_worker_cap, self.max_worker_cap))
-        self.active_heavy_cap = max(1, min(next_heavy_cap, self._default_heavy_cap_for_current_workers(self.active_worker_cap)))
+        next_worker_cap = max(1, min(next_worker_cap, self.max_worker_cap))
+        next_heavy_cap = max(
+            1,
+            min(
+                next_heavy_cap,
+                self._default_heavy_cap_for_current_workers(next_worker_cap),
+            ),
+        )
         self.healthy_completion_streak = 0
-        if self.active_worker_cap < previous_worker_cap or self.active_heavy_cap < previous_heavy_cap:
+        if next_worker_cap < previous_worker_cap or next_heavy_cap < previous_heavy_cap:
+            self.active_worker_cap = next_worker_cap
+            self.active_heavy_cap = next_heavy_cap
+            self.last_backoff_ts = float(now_ts) if now_ts is not None else time.monotonic()
+            self.healthy_since_ts = None
+            if severity == "critical":
+                self.cooldown_remaining = max(
+                    self.cooldown_remaining,
+                    _BACKOFF_COOLDOWN_COMPLETIONS + 2,
+                )
+            else:
+                self.cooldown_remaining = max(
+                    self.cooldown_remaining,
+                    _BACKOFF_COOLDOWN_COMPLETIONS,
+                )
             return (
                 f"Scheduler pressure backoff: workers {previous_worker_cap}->{self.active_worker_cap}, "
                 f"heavy {previous_heavy_cap}->{self.active_heavy_cap} ({reason})"
             )
-        return (
-            f"Scheduler pressure hold: workers {self.active_worker_cap}/{self.max_worker_cap}, "
-            f"heavy {self.active_heavy_cap}/{self.max_heavy_cap} ({reason})"
-        )
+        return self._hold_caps(reason=reason)
 
-    def _maybe_relax_caps(self) -> Optional[str]:
-        if self.cooldown_remaining > 0 or self.latest_pressure not in {"healthy", "neutral"}:
-            return None
-        min_streak = (
-            _RELAX_FAST_STREAK
-            if self.active_worker_cap < min(self.max_worker_cap, _RAMP_FAST_UNTIL_WORKERS)
-            else _RELAX_NORMAL_STREAK
-        )
-        if self.healthy_completion_streak < min_streak:
-            return None
+    def _maybe_relax_caps(
+        self,
+        *,
+        trigger: str,
+        now_ts: Optional[float] = None,
+    ) -> Optional[str]:
+        current_ts = float(now_ts) if now_ts is not None else time.monotonic()
+        min_streak = 0
+        if trigger == "poll":
+            if self.latest_pressure != "healthy":
+                return None
+            if self.healthy_since_ts is None:
+                return None
+            if (current_ts - float(self.healthy_since_ts)) < _POLL_RELAX_HEALTHY_SEC:
+                return None
+        else:
+            if self.cooldown_remaining > 0 or self.latest_pressure not in {"healthy", "neutral"}:
+                return None
+            min_streak = (
+                _RELAX_FAST_STREAK
+                if self.active_worker_cap < min(self.max_worker_cap, _RAMP_FAST_UNTIL_WORKERS)
+                else _RELAX_NORMAL_STREAK
+            )
+            if self.healthy_completion_streak < min_streak:
+                return None
         previous_worker_cap = int(self.active_worker_cap)
         previous_heavy_cap = int(self.active_heavy_cap)
-        if self.active_worker_cap < self.max_worker_cap:
-            worker_step = 2 if self.active_worker_cap < min(self.max_worker_cap, _RAMP_FAST_UNTIL_WORKERS) else 1
-            self.active_worker_cap = min(self.max_worker_cap, self.active_worker_cap + worker_step)
-        target_heavy_cap = self._default_heavy_cap_for_current_workers(self.active_worker_cap)
-        if self.active_heavy_cap < target_heavy_cap:
-            if self.active_worker_cap >= 5:
-                self.active_heavy_cap = min(target_heavy_cap, max(self.active_heavy_cap + 1, 2))
-            elif self.healthy_completion_streak >= max(min_streak + 1, 3) and self.active_worker_cap >= 4:
-                self.active_heavy_cap += 1
-        self.active_heavy_cap = min(self.active_heavy_cap, target_heavy_cap)
+        next_worker_cap = self._next_relax_worker_cap()
+        target_heavy_cap = self._default_heavy_cap_for_current_workers(next_worker_cap)
+        next_heavy_cap = int(self.active_heavy_cap)
+        if next_heavy_cap < target_heavy_cap:
+            if next_worker_cap > previous_worker_cap and next_worker_cap >= 5:
+                next_heavy_cap = min(target_heavy_cap, max(next_heavy_cap + 1, 2))
+            elif self.latest_pressure == "healthy" and next_worker_cap >= 5:
+                next_heavy_cap = min(target_heavy_cap, max(next_heavy_cap + 1, 2))
+            elif (
+                trigger == "seed"
+                and self.healthy_completion_streak >= max(min_streak + 1, 3)
+                and next_worker_cap >= 4
+            ):
+                next_heavy_cap = min(target_heavy_cap, next_heavy_cap + 1)
         if (
-            self.active_worker_cap == previous_worker_cap
-            and self.active_heavy_cap == previous_heavy_cap
+            next_worker_cap == previous_worker_cap
+            and next_heavy_cap == previous_heavy_cap
         ):
             return None
+        self.active_worker_cap = next_worker_cap
+        self.active_heavy_cap = next_heavy_cap
         self.healthy_completion_streak = 0
-        self.cooldown_remaining = 1 if self.active_worker_cap < self.max_worker_cap else 0
+        self.healthy_since_ts = current_ts
+        if trigger == "seed":
+            self.cooldown_remaining = 1 if self.active_worker_cap < self.max_worker_cap else 0
         if self.active_worker_cap >= self.max_worker_cap and self.active_heavy_cap >= self.max_heavy_cap:
             return (
                 f"Scheduler relaxed: restored full dispatch "
@@ -912,6 +1015,15 @@ class _AdaptiveBackoffController:
     def observe_resources(self, active_groups: List[str]) -> Optional[str]:
         self._sample_resources()
         self.latest_pressure = self._pressure_state()
+        snapshot = self.latest_snapshot
+        if snapshot is None:
+            return None
+        now_ts = self._now_ts(snapshot)
+        if self.latest_pressure == "healthy":
+            if self.healthy_since_ts is None:
+                self.healthy_since_ts = now_ts
+        else:
+            self.healthy_since_ts = None
         if self.latest_pressure == "critical":
             self.pressure_critical_streak += 1
             self.pressure_high_streak += 1
@@ -925,11 +1037,15 @@ class _AdaptiveBackoffController:
         if not self.enabled:
             return None
 
-        snapshot = self.latest_snapshot
-        if snapshot is None:
-            return None
-
         if self.pressure_critical_streak >= _PRESSURE_CRITICAL_STREAK:
+            if not self._can_backoff(now_ts=now_ts, severity="critical"):
+                return self._hold_caps(
+                    reason=(
+                        f"host pressure cpu={snapshot.cpu_percent:.1f}% "
+                        f"load={snapshot.load_ratio:.2f} "
+                        f"mem_avail={snapshot.mem_available_mb:.0f}MiB"
+                    )
+                )
             self.pressure_critical_streak = 0
             self.pressure_high_streak = 0
             return self._reduce_caps(
@@ -939,9 +1055,18 @@ class _AdaptiveBackoffController:
                     f"mem_avail={snapshot.mem_available_mb:.0f}MiB"
                 ),
                 severity="critical",
+                now_ts=now_ts,
             )
 
         if self.pressure_high_streak >= _PRESSURE_HIGH_STREAK:
+            if not self._can_backoff(now_ts=now_ts, severity="moderate"):
+                return self._hold_caps(
+                    reason=(
+                        f"host pressure cpu={snapshot.cpu_percent:.1f}% "
+                        f"load={snapshot.load_ratio:.2f} "
+                        f"mem_avail={snapshot.mem_available_mb:.0f}MiB"
+                    )
+                )
             self.pressure_high_streak = 0
             return self._reduce_caps(
                 reason=(
@@ -950,8 +1075,9 @@ class _AdaptiveBackoffController:
                     f"mem_avail={snapshot.mem_available_mb:.0f}MiB"
                 ),
                 severity="moderate",
+                now_ts=now_ts,
             )
-        return None
+        return self._maybe_relax_caps(trigger="poll", now_ts=now_ts)
 
     def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
         if len(active_groups) >= self.active_worker_cap:
@@ -1050,7 +1176,7 @@ class _AdaptiveBackoffController:
                 self.healthy_completion_streak += 1
                 if self.cooldown_remaining > 0:
                     self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
-                return self._maybe_relax_caps()
+                return self._maybe_relax_caps(trigger="seed")
         else:
             self.healthy_completion_streak = 0
             if self.cooldown_remaining > 0:

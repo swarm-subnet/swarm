@@ -574,6 +574,7 @@ async def _run_process_parallel(
         while completed_batches < len(batch_plan):
             _drain_progress_events()
             _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -582,6 +583,7 @@ async def _run_process_parallel(
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
                 _maybe_poll_scheduler()
+                _dispatch_available_batches()
                 now = time.time()
                 for worker_slot, worker in list(workers.items()):
                     if worker.is_alive() or worker.exitcode in (0, None):
@@ -610,6 +612,7 @@ async def _run_process_parallel(
 
             _drain_progress_events()
             _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
