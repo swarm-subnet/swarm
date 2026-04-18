@@ -249,6 +249,11 @@ async def _run_benchmark_process_mode(
         engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(getattr(run_opts, "heartbeat_sec", 0.0))) * 2.0,
     )
+    pressure_poll_interval_sec = max(
+        0.0,
+        float(getattr(engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+    )
+    last_pressure_poll_at = 0.0
     
     def _active_group_names() -> List[str]:
         return [
@@ -267,6 +272,20 @@ async def _run_benchmark_process_mode(
         worker.start()
         workers[worker_slot] = worker
         return worker
+
+    def _maybe_poll_scheduler(*, force: bool = False) -> None:
+        nonlocal last_pressure_poll_at
+        now = time.monotonic()
+        if (
+            not force
+            and pressure_poll_interval_sec > 0.0
+            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+        ):
+            return
+        last_pressure_poll_at = now
+        note = scheduler.observe_resources(_active_group_names())
+        if note:
+            print(f"[{_ts()}] {note}", flush=True)
 
     for line in scheduler.describe_configuration_lines():
         print(f"[{_ts()}] {line}", flush=True)
@@ -327,9 +346,6 @@ async def _run_benchmark_process_mode(
         _spawn_worker(worker_slot)
 
     def _dispatch_available_batches() -> None:
-        note = scheduler.observe_resources(_active_group_names())
-        if note:
-            print(f"[{_ts()}] {note}", flush=True)
         while pending_batch_ids and len(inflight_batches) < scheduler.active_worker_cap:
             batch_index = _select_next_batch_index(
                 pending_batch_ids=pending_batch_ids,
@@ -423,17 +439,20 @@ async def _run_benchmark_process_mode(
     try:
         for worker_slot in range(effective_workers):
             _spawn_worker(worker_slot)
+        _maybe_poll_scheduler(force=True)
         _dispatch_available_batches()
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
             _drain_progress_events()
+            _maybe_poll_scheduler()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
             try:
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
+                _maybe_poll_scheduler()
                 if any(
                     (not worker.is_alive()) and worker.exitcode not in (0, None)
                     for worker in workers.values()
@@ -451,6 +470,7 @@ async def _run_benchmark_process_mode(
                 continue
 
             _drain_progress_events()
+            _maybe_poll_scheduler()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -481,6 +501,7 @@ async def _run_benchmark_process_mode(
                 float(payload.elapsed_sec),
             )
             completed_batches += 1
+            _maybe_poll_scheduler()
             _dispatch_available_batches()
 
         _drain_progress_events()

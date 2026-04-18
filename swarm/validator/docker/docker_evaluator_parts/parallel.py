@@ -215,6 +215,11 @@ async def _run_process_parallel(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
     )
+    pressure_poll_interval_sec = max(
+        0.0,
+        float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+    )
+    last_pressure_poll_at = 0.0
 
     from swarm.constants import (
         EVAL_SUMMARY_INTERVAL_SEC,
@@ -283,7 +288,16 @@ async def _run_process_parallel(
                 continue
         return active_groups
 
-    def _dispatch_available_batches() -> None:
+    def _maybe_poll_scheduler(*, force: bool = False) -> None:
+        nonlocal last_pressure_poll_at
+        now = time.monotonic()
+        if (
+            not force
+            and pressure_poll_interval_sec > 0.0
+            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+        ):
+            return
+        last_pressure_poll_at = now
         note = scheduler.observe_resources(_active_group_names())
         if note:
             _log_scheduler_note(note)
@@ -293,6 +307,8 @@ async def _run_process_parallel(
                 active_worker_cap=int(scheduler.active_worker_cap),
                 note=str(note),
             )
+
+    def _dispatch_available_batches() -> None:
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
             idle_worker_slots = [
                 slot
@@ -551,11 +567,13 @@ async def _run_process_parallel(
     try:
         for worker_slot in range(effective_workers):
             _spawn_worker(worker_slot)
+        _maybe_poll_scheduler(force=True)
         _dispatch_available_batches()
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
             _drain_progress_events()
+            _maybe_poll_scheduler()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -563,6 +581,7 @@ async def _run_process_parallel(
             try:
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
+                _maybe_poll_scheduler()
                 now = time.time()
                 for worker_slot, worker in list(workers.items()):
                     if worker.is_alive() or worker.exitcode in (0, None):
@@ -590,6 +609,7 @@ async def _run_process_parallel(
                 continue
 
             _drain_progress_events()
+            _maybe_poll_scheduler()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -693,6 +713,7 @@ async def _run_process_parallel(
             worker_last_heartbeat.pop(worker_slot, None)
             worker_started_at.pop(worker_slot, None)
             completed_batches += 1
+            _maybe_poll_scheduler()
             _dispatch_available_batches()
 
             now_ts = time.time()

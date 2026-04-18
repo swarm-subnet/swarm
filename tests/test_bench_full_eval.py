@@ -1076,3 +1076,116 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
     assert len(recorded[0]["seed_results"]) == 1
     assert recorded[0]["seed_results"][0].success is False
     assert seed_events[0]["status"] == "worker_stall_timeout"
+
+
+def test_process_mode_polls_pressure_while_waiting(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+    observe_calls = []
+    original_observe_resources = bench_full_eval._AdaptiveBackoffController.observe_resources
+
+    def _counting_observe_resources(self, active_groups):
+        observe_calls.append(list(active_groups))
+        return original_observe_resources(self, active_groups)
+
+    monkeypatch.setattr(
+        bench_full_eval._AdaptiveBackoffController,
+        "observe_resources",
+        _counting_observe_resources,
+    )
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_PRESSURE_POLL_INTERVAL_SEC",
+        0.05,
+        raising=False,
+    )
+
+    class _FakeProcess:
+        def __init__(self, target, args, name=None, daemon=None):
+            _ = target, name, daemon
+            self.worker_slot = int(args[0])
+            self.task_queue = args[1]
+            self.result_queue = args[2]
+            self.progress_queue = args[3]
+            self._thread = None
+            self._stop = threading.Event()
+            self.exitcode = None
+
+        def start(self):
+            def _run():
+                request = self.task_queue.get()
+                if request is None:
+                    self.exitcode = 0
+                    return
+                self.progress_queue.put(
+                    bench_full_eval._ProcessWorkerHeartbeat(
+                        worker_id=self.worker_slot,
+                        batch_index=request.batch_index,
+                        event_type="batch_started",
+                        ts=time.time(),
+                    )
+                )
+                if self._stop.wait(0.25):
+                    self.exitcode = -15
+                    return
+                self.result_queue.put(
+                    bench_full_eval._ProcessBatchResult(
+                        worker_id=self.worker_slot,
+                        batch_index=request.batch_index,
+                        batch_indices=list(request.batch_indices),
+                        results=[(int(request.uid), True, 12.0, 0.9)],
+                        elapsed_sec=0.25,
+                    )
+                )
+                self.exitcode = 0
+
+            self._thread = threading.Thread(target=_run, daemon=True)
+            self._thread.start()
+
+        def is_alive(self):
+            return bool(self._thread and self._thread.is_alive())
+
+        def join(self, timeout=None):
+            if self._thread is not None:
+                self._thread.join(timeout=timeout)
+
+        def terminate(self):
+            self.exitcode = -15
+            self._stop.set()
+
+    class _FakeCtx:
+        @staticmethod
+        def Queue():
+            return queue.Queue()
+
+        @staticmethod
+        def Process(*args, **kwargs):
+            return _FakeProcess(*args, **kwargs)
+
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: _FakeCtx())
+
+    recorded = []
+    task = SimpleNamespace(
+        map_seed=123456,
+        challenge_type=5,
+        horizon=60.0,
+        moving_platform=False,
+    )
+
+    launched = asyncio.run(
+        bench_full_eval._run_benchmark_process_mode(
+            all_tasks=[task],
+            task_meta=[{"group": "type5_warehouse", "seed": 123456, "challenge_type": 5}],
+            batch_plan=[[0]],
+            uid=7,
+            model_path=model_path,
+            effective_workers=1,
+            record_batch_completion=lambda *args: recorded.append(args),
+            on_seed_done=lambda payload=None: None,
+            run_opts=bench_full_eval._RunOptions(heartbeat_sec=0.0),
+        )
+    )
+
+    assert launched == 1
+    assert len(recorded) == 1
+    assert len(observe_calls) >= 2
