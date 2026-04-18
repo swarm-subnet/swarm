@@ -226,6 +226,7 @@ async def _run_benchmark_process_mode(
     record_batch_completion: Any,
     on_seed_done: Any,
     run_opts: _RunOptions,
+    set_heartbeat_status_provider: Optional[Any] = None,
 ) -> int:
     engine = _engine_facade()
     ctx = engine._benchmark_mp_context()
@@ -234,6 +235,11 @@ async def _run_benchmark_process_mode(
     progress_queue = ctx.Queue()
     workers: Dict[int, Any] = {}
     scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
+    if callable(set_heartbeat_status_provider):
+        try:
+            set_heartbeat_status_provider(scheduler.format_live_status_line)
+        except Exception:
+            pass
     pending_batch_ids: List[int] = list(range(len(batch_plan)))
     inflight_batches: Dict[int, _ProcessBatchRequest] = {}
     worker_active_batches: Dict[int, int] = {}
@@ -541,6 +547,8 @@ async def _run_benchmark(
     done_count = 0
     last_done_at = eval_start
     stop_heartbeat = threading.Event()
+    heartbeat_status_lock = threading.Lock()
+    heartbeat_status_provider: Optional[Any] = None
 
     def _eta_minutes(elapsed_sec: float, done: int) -> float:
         if done <= 0:
@@ -585,6 +593,11 @@ async def _run_benchmark(
                 flush=True,
             )
 
+    def _set_heartbeat_status_provider(provider: Optional[Any]) -> None:
+        nonlocal heartbeat_status_provider
+        with heartbeat_status_lock:
+            heartbeat_status_provider = provider
+
     def _heartbeat() -> None:
         try:
             if heartbeat_sec <= 0:
@@ -599,11 +612,18 @@ async def _run_benchmark(
                 idle_for = now - last_done_snapshot
                 eta_min = _eta_minutes(elapsed, done_snapshot)
                 eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
-                status_line = scheduler.format_live_status_line()
+                with heartbeat_status_lock:
+                    provider = heartbeat_status_provider
+                status_suffix = ""
+                if callable(provider):
+                    try:
+                        status_suffix = f" | {provider()}"
+                    except Exception:
+                        status_suffix = ""
                 print(
                     f"[{_ts()}] Heartbeat: {done_snapshot}/{total_seeds} done | "
                     f"elapsed {elapsed/60.0:.1f}m | last completion {idle_for:.0f}s ago | "
-                    f"ETA {eta_txt} | {status_line}",
+                    f"ETA {eta_txt}{status_suffix}",
                     flush=True,
                 )
         except Exception as e:
@@ -739,6 +759,7 @@ async def _run_benchmark(
                 record_batch_completion=_record_batch_completion,
                 on_seed_done=_on_seed_done,
                 run_opts=run_opts,
+                set_heartbeat_status_provider=_set_heartbeat_status_provider,
             )
 
             if any(r is None for r in results):
@@ -746,6 +767,7 @@ async def _run_benchmark(
     finally:
         stop_heartbeat.set()
         heartbeat_thread.join(timeout=2.0)
+        _set_heartbeat_status_provider(None)
         progress_bar.close()
 
     elapsed = time.time() - eval_start

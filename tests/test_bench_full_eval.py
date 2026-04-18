@@ -797,6 +797,79 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
     assert out[5][(123456, 5)] == 0.5
 
 
+def test_run_benchmark_heartbeat_uses_process_scheduler_status_provider(
+    monkeypatch, tmp_path, capsys
+):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"zip")
+
+    class _FakeEvaluator:
+        _base_ready = True
+
+    def _fake_random_task(sim_dt, seed):
+        _ = sim_dt
+        return SimpleNamespace(
+            map_seed=seed,
+            challenge_type=5,
+            horizon=60.0,
+            moving_platform=False,
+            start=(0.0, 0.0, 0.0),
+        )
+
+    async def _fake_process_mode(**kwargs):
+        kwargs["set_heartbeat_status_provider"](
+            lambda: "cap=3/3 heavy=1/1 pressure=healthy cpu=12.3% load=0.45 mem_avail=12345MiB"
+        )
+        await asyncio.sleep(0.03)
+        kwargs["on_seed_done"](
+            {
+                "map_seed": 123456,
+                "challenge_type": 5,
+                "seed_wall_sec": 0.05,
+                "status": "seed_done",
+            }
+        )
+        kwargs["record_batch_completion"](
+            0,
+            0,
+            [0],
+            [SimpleNamespace(uid=0, success=True, time_sec=1.0, score=0.5)],
+            0.05,
+        )
+        return kwargs["effective_workers"]
+
+    import swarm.validator.docker.docker_evaluator as docker_eval_mod
+    import swarm.validator.task_gen as task_gen
+
+    monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
+    monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_run_benchmark_process_mode",
+        _fake_process_mode,
+    )
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_build_progress_bar",
+        lambda total_seeds: bench_full_eval._NoopProgressBar(),
+    )
+
+    asyncio.run(
+        bench_full_eval._run_benchmark(
+            model_path=model_path,
+            uid=0,
+            type_seeds={"type5_warehouse": [123456]},
+            num_workers=1,
+            run_opts=bench_full_eval._RunOptions(heartbeat_sec=0.01),
+        )
+    )
+
+    combined = capsys.readouterr().out
+    assert "Heartbeat: 0/1 done" in combined or "Heartbeat: 1/1 done" in combined
+    assert "cpu=12.3%" in combined
+    assert "Heartbeat thread error" not in combined
+
+
 def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
