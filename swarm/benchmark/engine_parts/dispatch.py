@@ -501,15 +501,19 @@ class _AdaptiveBackoffController:
     def cost_model(self) -> List[Dict[str, Any]]:
         return _resource_model_rows()
 
-    def status_dict(self) -> Dict[str, Any]:
-        snapshot = self.latest_snapshot
+    def _status_dict(
+        self,
+        *,
+        snapshot: Optional[_ResourceSnapshot],
+        pressure: str,
+    ) -> Dict[str, Any]:
         return {
             "start_worker_cap": int(self.start_worker_cap),
             "active_worker_cap": int(self.active_worker_cap),
             "active_heavy_cap": int(self.active_heavy_cap),
             "max_worker_cap": int(self.max_worker_cap),
             "max_heavy_cap": int(self.max_heavy_cap),
-            "pressure": str(self.latest_pressure),
+            "pressure": str(pressure),
             "cpu_percent": (
                 float(snapshot.cpu_percent)
                 if snapshot is not None
@@ -527,8 +531,19 @@ class _AdaptiveBackoffController:
             ),
         }
 
-    def format_status_line(self) -> str:
-        state = self.status_dict()
+    def status_dict(self) -> Dict[str, Any]:
+        return self._status_dict(
+            snapshot=self.latest_snapshot,
+            pressure=self.latest_pressure,
+        )
+
+    def live_status_dict(self) -> Dict[str, Any]:
+        snapshot = self._snapshot_from_provider()
+        recent = list(self.recent_snapshots)
+        pressure = self._pressure_state_for_samples((recent + [snapshot])[-3:])
+        return self._status_dict(snapshot=snapshot, pressure=pressure)
+
+    def _format_status_line(self, state: Dict[str, Any]) -> str:
         return (
             f"cap={state['active_worker_cap']}/{state['max_worker_cap']} "
             f"heavy={state['active_heavy_cap']}/{state['max_heavy_cap']} "
@@ -537,6 +552,12 @@ class _AdaptiveBackoffController:
             f"load={state['load_ratio']:.2f} "
             f"mem_avail={state['mem_available_mb']:.0f}MiB"
         )
+
+    def format_status_line(self) -> str:
+        return self._format_status_line(self.status_dict())
+
+    def format_live_status_line(self) -> str:
+        return self._format_status_line(self.live_status_dict())
 
     def describe_configuration_lines(self) -> List[str]:
         lines = [
@@ -659,46 +680,46 @@ class _AdaptiveBackoffController:
             int(batch_id),
         )
 
-    def _sample_resources(self) -> _ResourceSnapshot:
+    def _snapshot_from_provider(self) -> _ResourceSnapshot:
         if callable(self.resource_provider):
             raw = self.resource_provider()
             if isinstance(raw, _ResourceSnapshot):
-                snapshot = raw
-            else:
-                raw_dict = raw if isinstance(raw, dict) else {}
-                snapshot = _ResourceSnapshot(
-                    cpu_percent=float(
-                        getattr(raw, "cpu_percent", raw_dict.get("cpu_percent", 0.0))
-                    ),
-                    load_ratio=float(
-                        getattr(raw, "load_ratio", raw_dict.get("load_ratio", 0.0))
-                    ),
-                    mem_available_mb=float(
-                        getattr(
-                            raw,
-                            "mem_available_mb",
-                            raw_dict.get("mem_available_mb", 0.0),
-                        )
-                    ),
-                    mem_total_mb=float(
-                        getattr(
-                            raw,
-                            "mem_total_mb",
-                            raw_dict.get("mem_total_mb", self.machine_total_ram_mb),
-                        )
-                    ),
-                    ts=float(getattr(raw, "ts", raw_dict.get("ts", 0.0))),
-                )
-        else:
-            snapshot = _sample_resource_snapshot(self.machine_vcpus)
+                return raw
+            raw_dict = raw if isinstance(raw, dict) else {}
+            return _ResourceSnapshot(
+                cpu_percent=float(
+                    getattr(raw, "cpu_percent", raw_dict.get("cpu_percent", 0.0))
+                ),
+                load_ratio=float(
+                    getattr(raw, "load_ratio", raw_dict.get("load_ratio", 0.0))
+                ),
+                mem_available_mb=float(
+                    getattr(
+                        raw,
+                        "mem_available_mb",
+                        raw_dict.get("mem_available_mb", 0.0),
+                    )
+                ),
+                mem_total_mb=float(
+                    getattr(
+                        raw,
+                        "mem_total_mb",
+                        raw_dict.get("mem_total_mb", self.machine_total_ram_mb),
+                    )
+                ),
+                ts=float(getattr(raw, "ts", raw_dict.get("ts", 0.0))),
+            )
+        return _sample_resource_snapshot(self.machine_vcpus)
+
+    def _sample_resources(self) -> _ResourceSnapshot:
+        snapshot = self._snapshot_from_provider()
         self.latest_snapshot = snapshot
         self.recent_snapshots.append(snapshot)
         return snapshot
 
-    def _pressure_state(self) -> str:
-        if not self.recent_snapshots:
+    def _pressure_state_for_samples(self, samples: List[_ResourceSnapshot]) -> str:
+        if not samples:
             return "unknown"
-        samples = list(self.recent_snapshots)[-3:]
         cpu_values = [float(sample.cpu_percent) for sample in samples if sample.cpu_percent > 0.0]
         avg_cpu = sum(cpu_values) / len(cpu_values) if cpu_values else 0.0
         load_values = [float(sample.load_ratio) for sample in samples if sample.load_ratio > 0.0]
@@ -723,6 +744,9 @@ class _AdaptiveBackoffController:
         ):
             return "healthy"
         return "neutral"
+
+    def _pressure_state(self) -> str:
+        return self._pressure_state_for_samples(list(self.recent_snapshots)[-3:])
 
     def _cpu_budget_units(self) -> float:
         return max(

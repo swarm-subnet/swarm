@@ -299,6 +299,45 @@ def test_scheduler_cold_starts_low_with_single_heavy_slot():
     assert controller.active_heavy_cap == 1
 
 
+def test_scheduler_live_status_line_samples_without_mutating_state():
+    samples = iter(
+        [
+            {
+                "cpu_percent": 12.5,
+                "load_ratio": 0.18,
+                "mem_available_mb": 30000.0,
+                "mem_total_mb": 65536.0,
+                "ts": 1.0,
+            },
+            {
+                "cpu_percent": 44.0,
+                "load_ratio": 0.52,
+                "mem_available_mb": 28000.0,
+                "mem_total_mb": 65536.0,
+                "ts": 2.0,
+            },
+        ]
+    )
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=8,
+        machine_vcpus=8,
+        machine_total_ram_mb=65536,
+        resource_provider=lambda: next(samples),
+    )
+
+    controller.observe_resources([])
+    baseline = controller.status_dict()
+    recent_samples = len(controller.recent_snapshots)
+
+    live_line = controller.format_live_status_line()
+
+    assert "cpu=44.0%" in live_line
+    assert "load=0.52" in live_line
+    assert "mem_avail=28000MiB" in live_line
+    assert controller.status_dict() == baseline
+    assert len(controller.recent_snapshots) == recent_samples
+
+
 def test_scheduler_relaxes_faster_and_raises_heavy_cap_earlier():
     controller = bench_full_eval._AdaptiveBackoffController(
         requested_workers=12,

@@ -599,9 +599,11 @@ async def _run_benchmark(
                 idle_for = now - last_done_snapshot
                 eta_min = _eta_minutes(elapsed, done_snapshot)
                 eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
+                status_line = scheduler.format_live_status_line()
                 print(
                     f"[{_ts()}] Heartbeat: {done_snapshot}/{total_seeds} done | "
-                    f"elapsed {elapsed/60.0:.1f}m | last completion {idle_for:.0f}s ago | ETA {eta_txt}",
+                    f"elapsed {elapsed/60.0:.1f}m | last completion {idle_for:.0f}s ago | "
+                    f"ETA {eta_txt} | {status_line}",
                     flush=True,
                 )
         except Exception as e:
