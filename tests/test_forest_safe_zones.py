@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from swarm.core.env_builder import generation as generation_mod
 from swarm.core.forest_generator_parts import hills as hills_mod
 from swarm.core.forest_generator_parts import placement as placement_mod
@@ -127,3 +129,12 @@ def test_spawn_hills_is_visual_only(monkeypatch) -> None:
         "basePosition": [0.0, 0.0, 0.0],
         "physicsClientId": 5,
     }
+
+
+def test_forest_hills_cache_defaults_under_repo_state() -> None:
+    cache_path = Path(hills_mod._merged_hills_obj_path())
+
+    assert cache_path == (
+        Path(hills_mod.STATE_DIR) / "forest" / "terrain_cache" / "forest_hills_v12.obj"
+    )
+    assert "assets" not in cache_path.parts

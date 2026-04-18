@@ -17,9 +17,12 @@ from swarm.constants import (
     TYPE_2_WORLD_RANGE,
 )
 
-_ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))))), "assets")
-_TERRAIN_CACHE_DIR = os.path.join(_ASSETS_DIR, "open_terrain")
+_PACKAGE_DIR = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+_ASSETS_DIR = os.path.join(_PACKAGE_DIR, "assets")
+_STATE_DIR = os.path.join(_PACKAGE_DIR, "state")
+_TERRAIN_CACHE_DIR = os.path.join(_STATE_DIR, "open_terrain")
 _TERRAIN_TEXTURE_RES = 512
 _TERRAIN_SIZE = 80.0
 _TERRAIN_RES = 110

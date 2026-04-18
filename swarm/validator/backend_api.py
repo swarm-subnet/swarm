@@ -302,23 +302,11 @@ class BackendApiClient:
         validator_hotkey: str,
         validator_stake: float,
         screening_score: float,
-        passed: bool,
     ) -> Dict[str, Any]:
-        """Submit screening result.
-
-        Args:
-            uid: Miner UID
-            validator_hotkey: This validator's hotkey (sent in auth headers)
-            validator_stake: This validator's stake (not used, backend gets from chain)
-            screening_score: Score from 200 private seeds
-            passed: Whether model passed screening threshold
-
-        Returns:
-            Backend response or error dict.
-        """
+        """Submit screening score; pass/fail is derived from stake-weighted consensus."""
         return await self._post_signed(
             f"/validators/models/{uid}/screening",
-            {"score": screening_score, "passed": passed, "benchmark_version": BENCHMARK_VERSION},
+            {"score": screening_score, "benchmark_version": BENCHMARK_VERSION},
         )
 
     # ──────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "swarm-benchmark"
+name = "swarm-sotapilot"
 dynamic = ["version", "dependencies"]
 description = "Open autonomous drone navigation benchmark and CLI"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -48,6 +48,14 @@ include = ["swarm*", "neurons*", "scripts*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.py[cod]"]
+"swarm" = [
+  "assets/Drone_flying.gif",
+  "assets/Drone_flying_FPV.gif",
+  "assets/Drone_flying.mp4",
+  "assets/map_images/*",
+  "assets/maps/forest/terrain_cache/*",
+  "assets/open_terrain/*",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "swarm.__version__" }

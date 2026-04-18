@@ -1,10 +1,9 @@
 import json
-import os
 import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import bittensor as bt
 
@@ -22,28 +21,24 @@ EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
 _MAX_SEED = 2**32 - 1
 
 
-def _compute_raw_week(ts: Optional[float] = None) -> int:
-    if ts is None:
-        ts = time.time()
-    anchor_ts = EPOCH_ANCHOR_UTC.timestamp()
-    return int((ts - anchor_ts) // EPOCH_DURATION_SECONDS)
-
-
 def _generate_random_seeds(count: int) -> List[int]:
     rng = random.SystemRandom()
     return [rng.randint(0, _MAX_SEED) for _ in range(count)]
 
 
 class BenchmarkSeedManager:
+    """Per-epoch screening and benchmark seeds."""
 
     def __init__(self) -> None:
         EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
-        self.epoch_number = self._raw_to_epoch(_compute_raw_week())
         self.seeds: List[int] = []
         self.current_epoch_requires_state_invalidation = False
+        self._pending_publications: List[dict] = []
 
-        self._publish_unpublished_epochs()
-        self._load_or_generate_seeds(invalidate_local_state_on_regenerate=True)
+        self.epoch_number = self._latest_local_epoch()
+        if self.epoch_number > 0:
+            self._publish_unpublished_epochs()
+            self._load_or_generate_seeds(invalidate_local_state_on_regenerate=True)
 
         bt.logging.info(
             f"BenchmarkSeedManager: epoch={self.epoch_number}, "
@@ -51,8 +46,17 @@ class BenchmarkSeedManager:
             f"{BENCHMARK_TOTAL_SEED_COUNT - BENCHMARK_SCREENING_SEED_COUNT} benchmark)"
         )
 
-    def _raw_to_epoch(self, raw_week: int) -> int:
-        return raw_week + 1
+    def _latest_local_epoch(self) -> int:
+        """Return the highest epoch number found in EPOCH_SEEDS_DIR, or 0."""
+        best = 0
+        for path in EPOCH_SEEDS_DIR.glob("epoch_*.json"):
+            try:
+                candidate = int(path.stem.split("_", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            if candidate > best:
+                best = candidate
+        return best
 
     def _epoch_to_raw(self, epoch: int) -> int:
         return epoch - 1
@@ -135,30 +139,12 @@ class BenchmarkSeedManager:
             p for p in self._pending_publications if p.get("epoch_number") != epoch
         ]
 
-    def check_epoch_transition(self) -> bool:
-        current = self._raw_to_epoch(_compute_raw_week())
-        return current != self.epoch_number
-
-    def advance_to_new_epoch(self) -> int:
-        old_epoch = self.epoch_number
-        self.epoch_number = self._raw_to_epoch(_compute_raw_week())
-
-        old_file = self._epoch_file(old_epoch)
-        if old_file.exists():
-            try:
-                data = json.loads(old_file.read_text())
-                if not data.get("published", False):
-                    self._pending_publications.append(data)
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-        self._load_or_generate_seeds(invalidate_local_state_on_regenerate=False)
-        bt.logging.info(f"Epoch transition: {old_epoch} → {self.epoch_number}")
-        return old_epoch
-
     def align_to_epoch(self, epoch: int) -> int | None:
-        """Align local seed state to the authoritative backend benchmark epoch."""
-        if epoch <= 0 or epoch <= self.epoch_number:
+        """Align local seed state to the epoch reported by ``/sync``.
+
+        Accepts moves in either direction so stray local state cannot desync.
+        """
+        if epoch <= 0 or epoch == self.epoch_number:
             return None
 
         old_epoch = self.epoch_number

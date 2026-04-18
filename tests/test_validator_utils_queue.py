@@ -23,7 +23,6 @@ def _queue_item(model_path: Path, model_hash: str = "hash1", uid: int = 1) -> di
         "status": "pending",
         "registered": False,
         "screening_recorded": False,
-        "screening_passed": None,
         "score_recorded": False,
         "retry_attempts": 0,
         "next_retry_at": 0,
@@ -101,7 +100,6 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
@@ -175,7 +173,6 @@ def test_process_normal_queue_item_updates_runtime_tracker(monkeypatch, tmp_path
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
@@ -246,13 +243,23 @@ def test_process_normal_queue_item_register_retry(monkeypatch, tmp_path: Path):
     assert "register failed" in item["last_error"]
 
 
-def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatch, tmp_path: Path):
+def test_process_normal_queue_item_backend_cancels_benchmark_authorization(monkeypatch, tmp_path: Path):
     model_path = tmp_path / "UID_1.zip"
     model_path.write_bytes(b"zip-bytes")
 
     key = "1:hash1"
     queue = {"items": {key: _queue_item(model_path)}}
     validator = _validator()
+
+    auth_phases: list[str] = []
+
+    async def _authorize_task(_uid, phase, **_kwargs):
+        auth_phases.append(str(phase))
+        if phase == "BENCHMARK":
+            return {"authorized": False, "reason": "model already completed", "decision_version": 1}
+        return {"authorized": True, "reason": "ok", "task_id": 1, "decision_version": 1}
+
+    validator.backend_api.authorize_task = _authorize_task
 
     marked: list[tuple[int, str]] = []
     full_called = {"value": False}
@@ -279,14 +286,9 @@ def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatc
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: False)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _unexpected_evaluate)
-    monkeypatch.setattr(
-        validator_utils,
-        "set_cached_score",
-        lambda *args, **kwargs: None,
-    )
+    monkeypatch.setattr(validator_utils, "set_cached_score", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         validator_utils,
         "mark_model_hash_processed",
@@ -304,11 +306,12 @@ def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatc
     )
 
     item = queue["items"][key]
-    assert item["status"] == "completed"
+    assert item["status"] == "cancelled"
     assert item["screening_recorded"] is True
     assert item["score_recorded"] is False
     assert full_called["value"] is False
     assert marked == [(1, "hash1")]
+    assert "BENCHMARK" in auth_phases
 
 
 def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_path: Path):
@@ -346,7 +349,6 @@ def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_pat
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
@@ -420,7 +422,6 @@ def test_process_normal_queue_item_uses_cached_scores(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _fail_if_called)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fail_if_called)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
     monkeypatch.setattr(validator_utils, "set_cached_score", lambda *args, **kwargs: None)
@@ -501,7 +502,6 @@ def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch
                 "updated_at": 15.0,
                 "retry_attempts": 0,
                 "next_retry_at": 0,
-                "screening_passed": None,
                 "assignment_id": 3,
                 "backend_authorized": True,
                 "backend_decision_version": 7,
@@ -515,7 +515,7 @@ def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch
                 "retry_attempts": 2,
                 "next_retry_at": 150.0,
                 "last_error": "waiting for lease",
-                "screening_passed": True,
+                "screening_recorded": True,
             },
             "13:hash13": {
                 "uid": 13,
@@ -526,7 +526,6 @@ def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch
                 "retry_attempts": 0,
                 "next_retry_at": 0,
                 "last_error": "backend authorization failed",
-                "screening_passed": False,
             },
         }
     }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from swarm.core.maps.open import builder as open_builder
 
 
@@ -51,3 +53,20 @@ def test_spawn_terrain_keeps_grass_tint_when_applying_texture(monkeypatch) -> No
     assert dummy_p.change_visual_calls[0]["textureUniqueId"] == 77
     assert dummy_p.change_visual_calls[0]["rgbaColor"] == open_builder._TERRAIN_BASE_RGBA
     assert dummy_p.change_visual_calls[0]["specularColor"] == open_builder._TERRAIN_SPECULAR
+
+
+def test_open_terrain_cache_defaults_under_repo_state() -> None:
+    cache_dir = Path(open_builder._TERRAIN_CACHE_DIR)
+
+    assert cache_dir == Path(open_builder._STATE_DIR) / "open_terrain"
+    assert "assets" not in cache_dir.parts
+
+
+def test_terrain_obj_path_uses_state_cache_dir() -> None:
+    terrain_path = Path(open_builder._terrain_obj_path(123))
+
+    assert terrain_path == (
+        Path(open_builder._STATE_DIR)
+        / "open_terrain"
+        / "open_terrain_v2_s123.obj"
+    )

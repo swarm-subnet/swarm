@@ -199,7 +199,6 @@ def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str, str]]) ->
             "registered": False,
             "from_backend": True,
             "screening_recorded": False,
-            "screening_passed": None,
             "score_recorded": False,
             "retry_attempts": 0,
             "next_retry_at": 0,
@@ -240,7 +239,7 @@ def _format_queue_timestamp(ts: float | int | None) -> str | None:
 
 
 def _queue_phase(item: Dict[str, Any]) -> str:
-    if item.get("screening_passed") is True:
+    if item.get("screening_recorded"):
         return "benchmark"
     if str(item.get("status", "")).startswith("benchmark"):
         return "benchmark"

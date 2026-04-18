@@ -33,6 +33,42 @@ def _merge_per_type_averages(
         merged[key] = float(np.mean(combined)) if combined else 0.0
     return merged
 
+
+def _partition_assigned_tasks(sync_data: dict) -> tuple[List[dict], List[dict]]:
+    """Split assigned_tasks into reeval items and pending-model entries.
+
+    The rest of the forward loop consumes two legacy shapes:
+    ``{"uid", "reason", "model_hash", "github_url"}`` for re-eval work
+    and ``{"uid", "model_hash", "github_url"}`` for new screening or
+    benchmark work. Multiple assigned_tasks for the same pending uid
+    collapse into one entry so the model is downloaded only once.
+    """
+    reeval: List[dict] = []
+    pending: List[dict] = []
+    seen_pending: set = set()
+    for task in sync_data.get("assigned_tasks", []) or []:
+        uid = task.get("uid")
+        model_hash = task.get("model_hash") or ""
+        github_url = task.get("github_url") or ""
+        if uid is None or not model_hash or not github_url:
+            continue
+        phase = task.get("phase")
+        if phase == "REEVAL":
+            reeval.append({
+                "uid": uid,
+                "reason": task.get("reeval_reason") or "version_transition",
+                "model_hash": model_hash,
+                "github_url": github_url,
+            })
+        elif phase in ("SCREENING", "BENCHMARK") and uid not in seen_pending:
+            seen_pending.add(uid)
+            pending.append({
+                "uid": uid,
+                "model_hash": model_hash,
+                "github_url": github_url,
+            })
+    return reeval, pending
+
 from .backend_api import BackendApiClient
 from .docker.docker_evaluator import DockerSecureEvaluator
 from .runtime_telemetry import tracker_call
@@ -121,48 +157,6 @@ async def forward(self) -> None:
                 bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
 
         # ──────────────────────────────────────────────────────────────
-        # STEP 0.5: Epoch transition detection
-        # ──────────────────────────────────────────────────────────────
-        if self.seed_manager.check_epoch_transition():
-            old_epoch = self.seed_manager.advance_to_new_epoch()
-            tracker_call(
-                self,
-                "mark_epoch_transition",
-                old_epoch=old_epoch,
-                new_epoch=self.seed_manager.epoch_number,
-            )
-            bt.logging.info(
-                f"Epoch transition: {old_epoch} -> {self.seed_manager.epoch_number}"
-            )
-
-            for pub in self.seed_manager.get_pending_publications():
-                ep = pub.get("epoch_number")
-                try:
-                    await self.backend_api.publish_epoch_seeds(
-                        epoch_number=ep,
-                        seeds=pub.get("seeds", []),
-                        started_at=pub.get("started_at", ""),
-                        ended_at=pub.get("ended_at", ""),
-                        benchmark_version=pub.get("benchmark_version"),
-                    )
-                    self.seed_manager.mark_epoch_published(ep)
-                    bt.logging.info(f"Published epoch {ep} seeds to backend")
-                except Exception as e:
-                    bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
-            cleanup_started = asyncio.get_running_loop().time()
-            self.docker_evaluator.cleanup()
-            tracker_call(
-                self,
-                "mark_docker_cleanup",
-                duration_sec=asyncio.get_running_loop().time() - cleanup_started,
-                reason="epoch_transition",
-            )
-            clear_normal_model_queue()
-            clear_benchmark_cache()
-            self._epoch_just_transitioned = True
-            bt.logging.info("Epoch transition: killed Docker, cleared queue and cache")
-
-        # ──────────────────────────────────────────────────────────────
         # STEP 1: Sync with backend
         # ──────────────────────────────────────────────────────────────
         bt.logging.info("📡 Syncing with backend...")
@@ -172,8 +166,7 @@ async def forward(self) -> None:
         if sync_data.get("fallback"):
             bt.logging.warning("Backend unavailable — burning 100% emissions")
 
-        self._current_top = sync_data.get("current_top", {})
-        reeval_queue = sync_data.get("reeval_queue", [])
+        reeval_queue, pending_models = _partition_assigned_tasks(sync_data)
         backend_epoch = int(
             sync_data.get("benchmark_epoch")
             or sync_data.get("current_epoch")
@@ -183,7 +176,7 @@ async def forward(self) -> None:
             self,
             "mark_backend_sync_completed",
             fallback=bool(sync_data.get("fallback", False)),
-            pending_models_count=len(sync_data.get("pending_models", [])),
+            pending_models_count=len(pending_models),
             reeval_queue_count=len(reeval_queue),
             leaderboard_version=sync_data.get("leaderboard_version"),
             error=str(sync_data.get("error", "")),
@@ -202,10 +195,6 @@ async def forward(self) -> None:
                 )
 
         epoch_just_transitioned = getattr(self, '_epoch_just_transitioned', False)
-        if epoch_just_transitioned and self._current_top.get("uid") is not None:
-            champion_uid = self._current_top["uid"]
-            reeval_queue.insert(0, {"uid": champion_uid, "reason": "epoch_transition"})
-            bt.logging.info(f"👑 Champion UID {champion_uid} queued for epoch re-evaluation")
 
         # ──────────────────────────────────────────────────────────────
         # STEP 2: Apply weights from backend
@@ -240,10 +229,12 @@ async def forward(self) -> None:
                 f"Backend unavailable: skipping {len(reeval_queue)} cached re-eval item(s)"
             )
             if epoch_just_transitioned:
-                bt.logging.info("Keeping epoch transition flag — will retry champion re-eval next cycle")
+                bt.logging.info("Backend unavailable after epoch transition — will retry re-eval queue next cycle")
             else:
                 self._epoch_just_transitioned = False
         else:
+            if reeval_queue:
+                await _ensure_models_from_backend(self, reeval_queue)
             epoch_reeval_succeeded = not epoch_just_transitioned
             for reeval_item in reeval_queue:
                 uid = reeval_item.get("uid")
@@ -366,7 +357,7 @@ async def forward(self) -> None:
             )
             pending = []
         else:
-            pending = sync_data.get("pending_models", [])
+            pending = pending_models
             if pending:
                 bt.logging.info(f"Backend reports {len(pending)} pending model(s)")
 
