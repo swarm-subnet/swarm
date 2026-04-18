@@ -181,6 +181,111 @@ def test_visualize_invokes_visualizer_main(monkeypatch):
     assert "--gpu" in captured["argv"]
 
 
+def test_visualize_inferrs_type_from_seed_when_omitted(monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    monkeypatch.setattr(cli, "_infer_benchmark_type_from_seed", lambda seed: 4)
+    monkeypatch.setattr(
+        "scripts.visualize_map.main",
+        lambda argv: captured.setdefault("argv", list(argv)),
+    )
+
+    rc = cli.main(["visualize", "--seed", "657398"])
+
+    assert rc == 0
+    assert captured["argv"][:4] == ["--type", "4", "--seed", "657398"]
+
+
+def test_visualize_lists_failed_seeds_from_summary(tmp_path, capsys):
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "group_results": {
+                    "type1_city": [{"seed": 101, "score": 0.50, "success": True, "sim_time": 9.0}],
+                    "type2_open": [{"seed": 202, "score": 0.01, "success": False, "sim_time": 8.0}],
+                    "type3_mountain": [{"seed": 303, "score": 0.02, "success": False, "sim_time": 7.0}],
+                    "type4_village": [],
+                    "type5_warehouse": [],
+                    "type6_forest": [],
+                }
+            }
+        )
+    )
+
+    rc = cli.main(["visualize", "--summary-json", str(summary_path), "--failed"])
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "Failed benchmark seeds" in output
+    assert "seed 202" in output
+    assert "seed 303" in output
+    assert "--failed-index N" in output
+
+
+def test_visualize_failed_index_opens_matching_failed_seed(monkeypatch, tmp_path):
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "group_results": {
+                    "type1_city": [{"seed": 101, "score": 0.50, "success": True, "sim_time": 9.0}],
+                    "type2_open": [{"seed": 202, "score": 0.01, "success": False, "sim_time": 8.0}],
+                    "type3_mountain": [{"seed": 303, "score": 0.02, "success": False, "sim_time": 7.0}],
+                    "type4_village": [],
+                    "type5_warehouse": [],
+                    "type6_forest": [],
+                }
+            }
+        )
+    )
+    captured: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        "scripts.visualize_map.main",
+        lambda argv: captured.setdefault("argv", list(argv)),
+    )
+
+    rc = cli.main(
+        ["visualize", "--summary-json", str(summary_path), "--failed-index", "2"]
+    )
+
+    assert rc == 0
+    assert captured["argv"][:4] == ["--type", "3", "--seed", "303"]
+
+
+def test_visualize_inferrs_type_from_seed_file(monkeypatch, tmp_path):
+    seed_file = tmp_path / "seeds.json"
+    seed_file.write_text(
+        json.dumps(
+            {
+                "type1_city": [101],
+                "type2_open": [202],
+                "type3_mountain": [303],
+                "type4_village": [404],
+                "type5_warehouse": [505],
+                "type6_forest": [606],
+            }
+        )
+    )
+    captured: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        "scripts.visualize_map.main",
+        lambda argv: captured.setdefault("argv", list(argv)),
+    )
+
+    rc = cli.main(["visualize", "--seed-file", str(seed_file), "--seed", "404"])
+
+    assert rc == 0
+    assert captured["argv"][:4] == ["--type", "4", "--seed", "404"]
+
+
+def test_visualize_rejects_failed_mode_without_summary_json(capsys):
+    rc = cli.main(["visualize", "--failed"])
+
+    assert rc == 1
+    assert "--failed" in capsys.readouterr().err
+
+
 def test_visualize_reports_failure(monkeypatch, capsys):
     monkeypatch.setattr(
         "scripts.visualize_map.main",

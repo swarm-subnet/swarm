@@ -18,7 +18,7 @@
 import sys
 from pathlib import Path
 
-__version__ = "4.0.1.0"
+__version__ = "4.0.2.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
 

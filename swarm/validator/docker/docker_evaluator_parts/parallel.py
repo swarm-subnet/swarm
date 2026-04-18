@@ -27,6 +27,8 @@ from swarm.validator.runtime_telemetry import tracker_call
 
 from ._shared import _docker_evaluator_facade
 
+_MAX_TIMEOUT_RETRIES = 10
+
 
 def _benchmark_engine():
     import swarm.benchmark.engine as bench_engine
@@ -105,6 +107,78 @@ def _log_scheduler_note(note: str) -> None:
         bt.logging.info(note)
 
 
+def _seed_status(seed_meta: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(seed_meta, dict):
+        return ""
+    return str(seed_meta.get("status", "")).strip()
+
+
+def _build_result_seed_meta(
+    meta: Optional[dict[str, Any]],
+    *,
+    uid: int,
+    result_obj: ValidationResult,
+    status: str,
+) -> Dict[str, Any]:
+    return {
+        "uid": int(uid),
+        "map_seed": int(meta.get("seed", -1)) if isinstance(meta, dict) else -1,
+        "challenge_type": int(meta.get("challenge_type", -1)) if isinstance(meta, dict) else -1,
+        "horizon_sec": float(meta.get("horizon", 0.0)) if isinstance(meta, dict) else 0.0,
+        "moving_platform": bool(meta.get("moving_platform", False)) if isinstance(meta, dict) else False,
+        "status": status,
+        "success": bool(result_obj.success),
+        "sim_time_sec": float(result_obj.time_sec),
+        "seed_wall_sec": 0.0,
+        "step_idx": 0,
+        "error": "",
+    }
+
+
+def _summary_bucket_for_result(
+    bench_engine: Any,
+    *,
+    status: str,
+    result_obj: Optional[ValidationResult],
+    is_infra_failure: bool = False,
+) -> str:
+    if bench_engine._is_backoff_timeout_status(status):
+        return "timeout"
+    if is_infra_failure or bench_engine._is_backoff_infra_status(status):
+        return "runtime"
+    if result_obj is not None and bool(result_obj.success):
+        return "ok"
+    return "failed"
+
+
+def _pop_batch_seed_meta(
+    batch_seed_meta: dict[int, Dict[str, Any]],
+    *,
+    batch_index: int,
+    meta: Optional[dict[str, Any]],
+    uid: int,
+    result_obj: Optional[ValidationResult] = None,
+    fallback_seed_meta: Optional[Dict[str, Any]] = None,
+    prefer_fallback: bool = False,
+) -> Dict[str, Any]:
+    observed = batch_seed_meta.pop(int(batch_index), None)
+    if prefer_fallback and fallback_seed_meta is not None:
+        return fallback_seed_meta
+    if isinstance(observed, dict):
+        return observed
+    if fallback_seed_meta is not None:
+        return fallback_seed_meta
+    if result_obj is None:
+        result_obj = ValidationResult(int(uid), False, 0.0, 0.0)
+    status = "seed_done" if bool(result_obj.success) else "seed_failed"
+    return _build_result_seed_meta(
+        meta,
+        uid=uid,
+        result_obj=result_obj,
+        status=status,
+    )
+
+
 async def _run_process_parallel(
     *,
     all_tasks: list,
@@ -134,13 +208,25 @@ async def _run_process_parallel(
     results: list[Optional[ValidationResult]] = [None] * len(all_tasks)
     scheduler = bench_engine._AdaptiveBackoffController(requested_workers=effective_workers)
     pending_batch_ids = list(range(len(batch_plan)))
+    batch_seed_meta: dict[int, Dict[str, Any]] = {}
+    batch_retry_counts: dict[int, int] = {}
+    timeout_retries_used = 0
     stall_timeout_sec = max(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
     )
 
-    from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_PER_SEED_SEC, EVAL_SUMMARY_INTERVAL_SEC
-    wall_timeout = GLOBAL_EVAL_BASE_SEC + GLOBAL_EVAL_PER_SEED_SEC
+    from swarm.constants import (
+        EVAL_SUMMARY_INTERVAL_SEC,
+        GLOBAL_EVAL_BASE_SEC,
+        GLOBAL_EVAL_CAP_SEC,
+        GLOBAL_EVAL_PER_SEED_SEC,
+    )
+
+    max_batch_size = max((len(indices) for indices in batch_plan), default=1)
+    wall_timeout = GLOBAL_EVAL_BASE_SEC + (GLOBAL_EVAL_PER_SEED_SEC * max_batch_size)
+    if GLOBAL_EVAL_CAP_SEC > 0:
+        wall_timeout = min(wall_timeout, GLOBAL_EVAL_CAP_SEC)
     bt.logging.info(
         f"    {len(all_tasks)} seeds | {effective_workers} workers | "
         f"timeout={wall_timeout:.0f}s | backoff={'on' if scheduler.enabled else 'off'}"
@@ -235,8 +321,9 @@ async def _run_process_parallel(
                 active_worker_cap=int(scheduler.active_worker_cap),
             )
 
-    def _observe_seed(seed_meta: Optional[Dict[str, Any]]) -> None:
-        _emit_seed_complete(on_seed_complete, seed_meta)
+    def _observe_seed(batch_index: int, seed_meta: Optional[Dict[str, Any]]) -> None:
+        if isinstance(seed_meta, dict):
+            batch_seed_meta[int(batch_index)] = dict(seed_meta)
         note = scheduler.observe_seed(seed_meta)
         if note:
             _log_scheduler_note(note)
@@ -259,7 +346,10 @@ async def _run_process_parallel(
                 if event.event_type == "batch_started":
                     worker_started_at[worker_slot] = float(event.ts)
                 continue
-            _observe_seed(getattr(event, "seed_meta", None))
+            _observe_seed(
+                int(getattr(event, "batch_index", -1)),
+                getattr(event, "seed_meta", None),
+            )
 
     def _complete_failed_request(
         worker_slot: int,
@@ -296,13 +386,21 @@ async def _run_process_parallel(
                     error=error,
                     elapsed_sec=elapsed_sec,
                 )
-            _observe_seed(seed_meta)
+            _observe_seed(int(request.batch_index), seed_meta)
+            _emit_seed_complete(on_seed_complete, seed_meta)
 
         for idx in request.batch_indices:
             vr = ValidationResult(int(uid), False, 0.0, 0.0)
             results[idx] = vr
             meta = task_meta[idx] if idx < len(task_meta) else None
-            _record_seed_result(vr, meta, is_infra_failure=True)
+            _record_seed_result(
+                vr,
+                meta,
+                status=str(status),
+                is_runtime_failure=True,
+            )
+
+        batch_seed_meta.pop(int(request.batch_index), None)
 
         worker_active_requests.pop(worker_slot, None)
         worker_last_heartbeat.pop(worker_slot, None)
@@ -330,38 +428,59 @@ async def _run_process_parallel(
 
     _TYPE_PREFIX = re.compile(r"^type\d+_")
     seed_stats: dict[str, Any] = {
-        "ok": 0, "failed": 0, "timeout": 0,
+        "ok": 0,
+        "failed": 0,
+        "timeout": 0,
+        "runtime": 0,
+        "retried_timeout": 0,
         "scores": [],
         "per_type": {},
     }
+    last_summary_chunk_done = 0
 
     def _type_name(meta: Optional[dict]) -> str:
         raw = meta.get("group", "unknown") if meta else "unknown"
         return _TYPE_PREFIX.sub("", raw)
 
-    def _record_seed_result(result_obj: Any, meta: Optional[dict], is_infra_failure: bool = False) -> None:
+    def _seed_label(meta: Optional[dict]) -> str:
+        seed_id = meta.get("seed", "?") if meta else "?"
+        return f"{_type_name(meta)}:{seed_id}"
+
+    def _record_seed_result(
+        result_obj: Any,
+        meta: Optional[dict],
+        *,
+        status: str,
+        is_runtime_failure: bool = False,
+    ) -> None:
         if result_obj is None:
-            seed_stats["timeout"] += 1
-            return
+            result_obj = ValidationResult(int(uid), False, 0.0, 0.0)
         score = float(result_obj.score) if result_obj else 0.0
-        success = bool(result_obj.success) if result_obj else False
         seed_stats["scores"].append(score)
         tname = _type_name(meta)
         if tname not in seed_stats["per_type"]:
             seed_stats["per_type"][tname] = []
         seed_stats["per_type"][tname].append(score)
-        if is_infra_failure:
-            seed_stats["timeout"] += 1
-            seed_id = meta.get("seed", "?") if meta else "?"
-            seed_stats.setdefault("timeout_seeds", []).append(f"{tname}:{seed_id}")
-        elif success:
-            seed_stats["ok"] += 1
-        else:
-            seed_stats["failed"] += 1
+        bucket = _summary_bucket_for_result(
+            bench_engine,
+            status=str(status),
+            result_obj=result_obj,
+            is_infra_failure=is_runtime_failure,
+        )
+        seed_stats[bucket] += 1
+        if bucket == "timeout":
+            seed_stats.setdefault("timeout_seeds", []).append(_seed_label(meta))
+        elif bucket == "runtime":
+            seed_stats.setdefault("runtime_seeds", []).append(_seed_label(meta))
+
+    def _record_timeout_retry(meta: Optional[dict]) -> None:
+        seed_stats["retried_timeout"] += 1
+        seed_stats.setdefault("retried_timeout_seeds", []).append(_seed_label(meta))
 
     def _log_summary() -> None:
+        nonlocal last_summary_chunk_done
         chunk_done = len(seed_stats["scores"])
-        if chunk_done == 0:
+        if chunk_done == 0 or chunk_done == last_summary_chunk_done:
             return
         overall_done = prior_seeds_done + chunk_done
         overall_total = prior_total_seeds if prior_total_seeds > 0 else len(all_tasks)
@@ -373,14 +492,28 @@ async def _run_process_parallel(
             for t, s in sorted(seed_stats["per_type"].items()) if s
         )
         active = len(worker_active_requests)
-        counts = f"{seed_stats['ok']} ok, {seed_stats['failed']} failed, {seed_stats['timeout']} timeout"
+        counts = (
+            f"{seed_stats['ok']} ok, {seed_stats['failed']} failed, "
+            f"{seed_stats['timeout']} timeout, {seed_stats['runtime']} runtime, "
+            f"{seed_stats['retried_timeout']} retried_timeout"
+        )
         line = (
             f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
-            f"{counts} | {type_parts} | {active}/{effective_workers} workers"
+            f"{counts} | {type_parts} | {active}/{effective_workers} workers "
+            f"(cap={scheduler.active_worker_cap})"
         )
         bt.logging.info(line)
+        last_summary_chunk_done = chunk_done
+        if seed_stats.get("retried_timeout_seeds"):
+            bt.logging.info(
+                f"  retried_timeouts: {', '.join(seed_stats['retried_timeout_seeds'])}"
+            )
         if seed_stats.get("timeout_seeds"):
             bt.logging.info(f"  timeouts: {', '.join(seed_stats['timeout_seeds'])}")
+        if seed_stats.get("runtime_seeds"):
+            bt.logging.info(
+                f"  runtime_failures: {', '.join(seed_stats['runtime_seeds'])}"
+            )
 
     last_summary_time = time.time()
 
@@ -468,11 +601,61 @@ async def _run_process_parallel(
                 _dispatch_available_batches()
                 continue
 
+            prebuilt_seed_meta: dict[int, Dict[str, Any]] = {}
+            if len(request.batch_indices) == 1:
+                idx = int(request.batch_indices[0])
+                vr = ValidationResult(*payload.results[0])
+                meta = task_meta[idx] if idx < len(task_meta) else None
+                final_seed_meta = _pop_batch_seed_meta(
+                    batch_seed_meta,
+                    batch_index=int(request.batch_index),
+                    meta=meta,
+                    uid=uid,
+                    result_obj=vr,
+                )
+                final_status = _seed_status(final_seed_meta)
+                prior_retries = int(batch_retry_counts.get(int(request.batch_index), 0))
+                if (
+                    bench_engine._is_backoff_timeout_status(final_status)
+                    and prior_retries < 1
+                    and timeout_retries_used < _MAX_TIMEOUT_RETRIES
+                ):
+                    timeout_retries_used += 1
+                    batch_retry_counts[int(request.batch_index)] = prior_retries + 1
+                    _record_timeout_retry(meta)
+                    bt.logging.warning(
+                        f"[Validator eval] retrying timed-out seed {_seed_label(meta)} "
+                        f"for UID {uid} (retry {prior_retries + 1}/1, "
+                        f"global retries {timeout_retries_used}/{_MAX_TIMEOUT_RETRIES}, "
+                        f"status={final_status})"
+                    )
+                    worker_active_requests.pop(worker_slot, None)
+                    worker_last_heartbeat.pop(worker_slot, None)
+                    worker_started_at.pop(worker_slot, None)
+                    pending_batch_ids.append(int(request.batch_index))
+                    _dispatch_available_batches()
+                    continue
+                prebuilt_seed_meta[idx] = final_seed_meta
+
             for idx, packed in zip(request.batch_indices, payload.results):
                 vr = ValidationResult(*packed)
                 results[idx] = vr
                 meta = task_meta[idx] if idx < len(task_meta) else None
-                _record_seed_result(vr, meta, is_infra_failure=(vr.score == 0.0))
+                final_seed_meta = prebuilt_seed_meta.pop(int(idx), None)
+                if final_seed_meta is None:
+                    final_seed_meta = _pop_batch_seed_meta(
+                        batch_seed_meta,
+                        batch_index=int(request.batch_index),
+                        meta=meta,
+                        uid=uid,
+                        result_obj=vr,
+                    )
+                _emit_seed_complete(on_seed_complete, final_seed_meta)
+                _record_seed_result(
+                    vr,
+                    meta,
+                    status=_seed_status(final_seed_meta),
+                )
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
@@ -486,6 +669,7 @@ async def _run_process_parallel(
                 last_summary_time = now_ts
 
         _drain_progress_events()
+        _log_summary()
         return [
             result if result is not None else ValidationResult(int(uid), False, 0.0, 0.0)
             for result in results

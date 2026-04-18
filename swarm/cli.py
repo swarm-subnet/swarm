@@ -81,6 +81,30 @@ REPORT_FIELD_PATTERNS = {
 }
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+BENCH_GROUP_ORDER = [
+    "type1_city",
+    "type2_open",
+    "type3_mountain",
+    "type4_village",
+    "type5_warehouse",
+    "type6_forest",
+]
+BENCH_GROUP_TO_TYPE = {
+    "type1_city": 1,
+    "type2_open": 2,
+    "type3_mountain": 3,
+    "type4_village": 4,
+    "type5_warehouse": 5,
+    "type6_forest": 6,
+}
+TYPE_LABELS = {
+    1: "city",
+    2: "open",
+    3: "mountain",
+    4: "village",
+    5: "warehouse",
+    6: "forest",
+}
 
 
 @dataclass
@@ -89,6 +113,13 @@ class DoctorCheck:
     ok: bool
     detail: str
     required: bool = True
+
+
+@dataclass(frozen=True)
+class VisualizeTarget:
+    challenge_type: int
+    seed: Optional[int] = None
+    note: Optional[str] = None
 
 
 def _check_module_available(module_name: str) -> DoctorCheck:
@@ -401,10 +432,212 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         return 1
 
 
-def _build_visualize_argv(args: argparse.Namespace) -> list[str]:
-    argv = ["--type", str(args.type)]
-    if args.seed is not None:
-        argv.extend(["--seed", str(args.seed)])
+def _group_label(group_name: str) -> str:
+    challenge_type = BENCH_GROUP_TO_TYPE.get(str(group_name))
+    if challenge_type is None:
+        return str(group_name)
+    return TYPE_LABELS.get(int(challenge_type), str(group_name))
+
+
+def _load_visualize_summary_groups(summary_json: Path) -> dict[str, list[dict[str, Any]]]:
+    payload = json.loads(Path(summary_json).read_text())
+    raw_groups = payload.get("group_results")
+    if not isinstance(raw_groups, dict):
+        raise ValueError("Summary JSON missing group_results.")
+
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for group_name in BENCH_GROUP_ORDER:
+        rows = raw_groups.get(group_name, [])
+        if not isinstance(rows, list):
+            raise ValueError(f"Summary JSON group_results[{group_name}] must be a list.")
+        normalized[group_name] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError(f"Summary JSON row for {group_name} is not an object.")
+            normalized[group_name].append(dict(row))
+    return normalized
+
+
+def _load_visualize_seed_groups(seed_file: Path) -> dict[str, list[int]]:
+    payload = json.loads(Path(seed_file).read_text())
+    if not isinstance(payload, dict):
+        raise ValueError("Seed file must contain a JSON object mapping benchmark groups to seed lists.")
+
+    normalized: dict[str, list[int]] = {}
+    for group_name in BENCH_GROUP_ORDER:
+        rows = payload.get(group_name, [])
+        if not isinstance(rows, list):
+            raise ValueError(f"Seed file group {group_name} must be a list.")
+        normalized[group_name] = [int(seed) for seed in rows]
+    return normalized
+
+
+def _lookup_seed_type_in_summary(summary_json: Path, seed: int) -> int:
+    groups = _load_visualize_summary_groups(summary_json)
+    matches = [
+        BENCH_GROUP_TO_TYPE[group_name]
+        for group_name in BENCH_GROUP_ORDER
+        for row in groups[group_name]
+        if int(row.get("seed", -1)) == int(seed)
+    ]
+    unique = sorted(set(int(match) for match in matches))
+    if not unique:
+        raise ValueError(f"Seed {seed} was not found in summary JSON: {summary_json}")
+    if len(unique) > 1:
+        raise ValueError(
+            f"Seed {seed} appeared under multiple challenge types in summary JSON: {summary_json}"
+        )
+    return unique[0]
+
+
+def _lookup_seed_type_in_seed_file(seed_file: Path, seed: int) -> int:
+    groups = _load_visualize_seed_groups(seed_file)
+    matches = [
+        BENCH_GROUP_TO_TYPE[group_name]
+        for group_name in BENCH_GROUP_ORDER
+        if int(seed) in groups[group_name]
+    ]
+    unique = sorted(set(int(match) for match in matches))
+    if not unique:
+        raise ValueError(f"Seed {seed} was not found in seed file: {seed_file}")
+    if len(unique) > 1:
+        raise ValueError(
+            f"Seed {seed} appeared under multiple challenge types in seed file: {seed_file}"
+        )
+    return unique[0]
+
+
+def _infer_benchmark_type_from_seed(seed: int) -> int:
+    from swarm.constants import SIM_DT
+    from swarm.validator.task_gen import random_task
+
+    task = random_task(sim_dt=SIM_DT, seed=int(seed))
+    return int(task.challenge_type)
+
+
+def _load_failed_visualize_rows(summary_json: Path) -> list[dict[str, Any]]:
+    groups = _load_visualize_summary_groups(summary_json)
+    failed_rows: list[dict[str, Any]] = []
+    for group_name in BENCH_GROUP_ORDER:
+        challenge_type = BENCH_GROUP_TO_TYPE[group_name]
+        for row in groups[group_name]:
+            if bool(row.get("success", False)):
+                continue
+            failed_rows.append(
+                {
+                    "group": group_name,
+                    "challenge_type": int(challenge_type),
+                    "seed": int(row["seed"]),
+                    "score": float(row.get("score", 0.0)),
+                    "sim_time": float(row.get("sim_time", 0.0)),
+                    "execution_status": str(row.get("execution_status", "unknown")),
+                }
+            )
+    return failed_rows
+
+
+def _print_failed_visualize_rows(summary_json: Path, failed_rows: Sequence[dict[str, Any]]) -> None:
+    print(f"Failed benchmark seeds from {summary_json}:")
+    if not failed_rows:
+        print("  none")
+        return
+
+    for idx, row in enumerate(failed_rows, start=1):
+        label = _group_label(str(row["group"]))
+        print(
+            f"  {idx:>2}. seed {int(row['seed'])}  "
+            f"type {int(row['challenge_type'])} ({label})  "
+            f"score={float(row['score']):.4f}  sim={float(row['sim_time']):.2f}s  "
+            f"status={row['execution_status']}"
+        )
+    print()
+    print("Re-run with `swarm visualize --summary-json <path> --failed-index N` to inspect one.")
+
+
+def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTarget]:
+    failed_mode = bool(args.failed or args.failed_index is not None)
+
+    if failed_mode:
+        if args.summary_json is None:
+            raise ValueError("`--failed` and `--failed-index` require `--summary-json`.")
+        if args.seed is not None or args.type is not None or args.seed_file is not None:
+            raise ValueError(
+                "`--failed` and `--failed-index` cannot be combined with `--seed`, `--type`, or `--seed-file`."
+            )
+        failed_rows = _load_failed_visualize_rows(Path(args.summary_json))
+        if args.failed_index is None:
+            _print_failed_visualize_rows(Path(args.summary_json), failed_rows)
+            return None
+
+        failed_index = int(args.failed_index)
+        if failed_index <= 0:
+            raise ValueError("`--failed-index` must be a positive 1-based index.")
+        if failed_index > len(failed_rows):
+            raise ValueError(
+                f"`--failed-index` {failed_index} is out of range for {len(failed_rows)} failed seeds."
+            )
+        row = failed_rows[failed_index - 1]
+        return VisualizeTarget(
+            challenge_type=int(row["challenge_type"]),
+            seed=int(row["seed"]),
+            note=(
+                f"Reviewing failed seed {int(row['seed'])} as "
+                f"type {int(row['challenge_type'])} ({_group_label(str(row['group']))}) "
+                f"from {args.summary_json}."
+            ),
+        )
+
+    if args.seed is None:
+        if args.type is None:
+            raise ValueError(
+                "Provide `--type`, or provide `--seed` so the type can be inferred, "
+                "or use `--summary-json --failed`."
+            )
+        return VisualizeTarget(challenge_type=int(args.type), seed=None)
+
+    inferred_type: int | None = None
+    inferred_note: str | None = None
+    if args.summary_json is not None:
+        inferred_type = _lookup_seed_type_in_summary(Path(args.summary_json), int(args.seed))
+        inferred_note = (
+            f"Resolved seed {int(args.seed)} to type {inferred_type} "
+            f"({TYPE_LABELS.get(inferred_type, 'unknown')}) from {args.summary_json}."
+        )
+    elif args.seed_file is not None:
+        inferred_type = _lookup_seed_type_in_seed_file(Path(args.seed_file), int(args.seed))
+        inferred_note = (
+            f"Resolved seed {int(args.seed)} to type {inferred_type} "
+            f"({TYPE_LABELS.get(inferred_type, 'unknown')}) from {args.seed_file}."
+        )
+    elif args.type is None:
+        inferred_type = _infer_benchmark_type_from_seed(int(args.seed))
+        inferred_note = (
+            f"Resolved seed {int(args.seed)} to benchmark type {inferred_type} "
+            f"({TYPE_LABELS.get(inferred_type, 'unknown')})."
+        )
+
+    if args.type is not None:
+        if inferred_type is not None and int(args.type) != int(inferred_type):
+            raise ValueError(
+                f"Explicit `--type {int(args.type)}` does not match the inferred type "
+                f"{int(inferred_type)} for seed {int(args.seed)}."
+            )
+        return VisualizeTarget(challenge_type=int(args.type), seed=int(args.seed))
+
+    if inferred_type is None:
+        raise ValueError("Could not resolve a challenge type for visualization.")
+
+    return VisualizeTarget(
+        challenge_type=int(inferred_type),
+        seed=int(args.seed),
+        note=inferred_note,
+    )
+
+
+def _build_visualize_argv(args: argparse.Namespace, target: VisualizeTarget) -> list[str]:
+    argv = ["--type", str(target.challenge_type)]
+    if target.seed is not None:
+        argv.extend(["--seed", str(target.seed)])
     argv.extend(["--speed", str(args.speed)])
     argv.extend(["--boost", str(args.boost)])
     argv.extend(["--camera", str(args.camera)])
@@ -425,10 +658,18 @@ def _build_visualize_argv(args: argparse.Namespace) -> list[str]:
 
 def _cmd_visualize(args: argparse.Namespace) -> int:
     try:
+        target = _resolve_visualize_target(args)
+        if target is None:
+            return 0
+        if target.note:
+            print(target.note)
         from scripts.visualize_map import main as visualize_main
 
-        visualize_main(_build_visualize_argv(args))
+        visualize_main(_build_visualize_argv(args, target))
         return 0
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except (SystemExit, KeyboardInterrupt):
         return 1
     except Exception as exc:
@@ -945,12 +1186,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     visualize_parser = subparsers.add_parser(
         "visualize",
-        help="Open an interactive visualizer for a specific map type and seed.",
+        help="Open an interactive visualizer for a specific benchmark seed or map type.",
     )
     visualize_parser.add_argument(
         "--type",
         type=int,
-        required=True,
+        default=None,
         choices=[1, 2, 3, 4, 5, 6],
         help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest).",
     )
@@ -958,7 +1199,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--seed",
         type=int,
         default=None,
-        help="Map seed. If omitted, a random valid seed is chosen.",
+        help=(
+            "Map seed. If `--type` is omitted, infer the type from `--summary-json`, "
+            "`--seed-file`, or the seed's deterministic benchmark assignment."
+        ),
+    )
+    visualize_parser.add_argument(
+        "--seed-file",
+        type=Path,
+        default=None,
+        help="Saved benchmark seed JSON used for seed->type lookup.",
+    )
+    visualize_parser.add_argument(
+        "--summary-json",
+        type=Path,
+        default=None,
+        help="Benchmark summary JSON used for failed-seed review and seed->type lookup.",
+    )
+    visualize_parser.add_argument(
+        "--failed",
+        action="store_true",
+        help="List failed seeds from `--summary-json` for review.",
+    )
+    visualize_parser.add_argument(
+        "--failed-index",
+        type=int,
+        default=None,
+        help="1-based failed-seed index from `--summary-json` to open directly.",
     )
     visualize_parser.add_argument(
         "--speed",

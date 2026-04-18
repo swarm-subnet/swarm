@@ -21,12 +21,22 @@ class HeartbeatManager:
         self._session_id = 0
         self._active = False
         self._queue: Optional[list] = None
+        self._active_task: Optional[dict] = None
+        self._backend_decision_version: Optional[int] = None
 
     def set_queue(self, queue: list) -> None:
         with self._lock:
             self._queue = queue
 
-    def start(self, status: str, uid: int, total: int, queue: Optional[list] = None) -> None:
+    def start(
+        self,
+        status: str,
+        uid: int,
+        total: int,
+        queue: Optional[list] = None,
+        active_task: Optional[dict] = None,
+        backend_decision_version: Optional[int] = None,
+    ) -> None:
         with self._lock:
             self._session_id += 1
             self._status = status
@@ -37,6 +47,19 @@ class HeartbeatManager:
             self._active = True
             if queue is not None:
                 self._queue = queue
+            if active_task is not None:
+                self._active_task = active_task
+            elif queue is not None:
+                matched = next((item for item in queue if int(item.get("uid", -1)) == uid), None)
+                if matched is not None:
+                    self._active_task = {
+                        "uid": uid,
+                        "phase": matched.get("phase"),
+                        "assignment_id": matched.get("assignment_id"),
+                        "epoch_number": matched.get("epoch_number"),
+                        "benchmark_version": matched.get("benchmark_version"),
+                    }
+            self._backend_decision_version = backend_decision_version
 
         asyncio.run_coroutine_threadsafe(
             self._safe_heartbeat(0, self._session_id),
@@ -95,6 +118,8 @@ class HeartbeatManager:
             uid = self._uid
             total = self._total
             queue = list(self._queue) if self._queue is not None else None
+            active_task = dict(self._active_task) if self._active_task is not None else None
+            decision_version = self._backend_decision_version
 
         try:
             await asyncio.wait_for(
@@ -104,6 +129,8 @@ class HeartbeatManager:
                     progress=progress,
                     total_seeds=total,
                     queue=queue,
+                    active_task=active_task,
+                    backend_decision_version=decision_version,
                 ),
                 timeout=2.0
             )
@@ -113,9 +140,14 @@ class HeartbeatManager:
     async def _send_idle(self) -> None:
         with self._lock:
             queue = list(self._queue) if self._queue is not None else []
+            decision_version = self._backend_decision_version
         try:
             await asyncio.wait_for(
-                self.backend_api.post_heartbeat(status="idle", queue=queue),
+                self.backend_api.post_heartbeat(
+                    status="idle",
+                    queue=queue,
+                    backend_decision_version=decision_version,
+                ),
                 timeout=2.0
             )
         except Exception:

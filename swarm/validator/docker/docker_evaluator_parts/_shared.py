@@ -48,7 +48,7 @@ from swarm.utils.env_factory import make_env
 from swarm.utils.hash import sha256sum
 from swarm.validator.reward import flight_reward
 
-_HEAVY_CHALLENGE_TYPES = frozenset({3, 5})
+_HEAVY_CHALLENGE_TYPES = frozenset({3, 4, 5, 6})
 
 _THREAD_CAP_ENV_VARS = (
     "OMP_NUM_THREADS",

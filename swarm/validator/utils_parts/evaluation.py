@@ -7,10 +7,7 @@ import numpy as np
 
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
-    SCREENING_BOOTSTRAP_THRESHOLD,
     SCREENING_CHECKPOINT_SIZE,
-    SCREENING_EARLY_FAIL_FACTORS,
-    SCREENING_MIN_IMPROVEMENT,
     SCREENING_TEMPLATE,
     SEED_SCORE_BATCH_MAX,
     SIM_DT,
@@ -122,23 +119,11 @@ async def _evaluate_seeds(
     return all_scores, per_type_scores, seed_details
 
 
-def _get_screening_threshold(self) -> float:
-    """Compute the screening pass/fail threshold from the current top model."""
-    current_top = getattr(self, '_current_top', None)
-    if not current_top or not current_top.get('score'):
-        return float(SCREENING_BOOTSTRAP_THRESHOLD)
-    return float(current_top.get('score', 0.0)) + SCREENING_MIN_IMPROVEMENT
-
-
 async def _run_screening(
     self, uid: int, model_path: Path
 ) -> Tuple[float, List[float], Dict[str, List[float]]]:
-    """Run screening benchmark with early termination on clearly failing/passing models.
-
-    Returns (avg_score, all_scores, per_type_scores).
-    """
+    """Run screening seeds and stream per-seed scores. Returns (avg, all, per_type)."""
     screening_seeds = self.seed_manager.get_screening_seeds()
-    threshold = _get_screening_threshold(self)
     total_seeds = len(screening_seeds)
 
     template_cycle = (SCREENING_TEMPLATE * ((total_seeds // len(SCREENING_TEMPLATE)) + 1))[:total_seeds]
@@ -161,12 +146,22 @@ async def _run_screening(
         "mark_screening_started",
         uid=int(uid),
         total_seeds=int(total_seeds),
-        threshold=float(threshold),
     )
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb_queue = getattr(self, '_heartbeat_queue', None)
-    hb.start("evaluating_screening", uid, total_seeds, queue=hb_queue)
+    decision_version = None
+    if hb_queue:
+        matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
+        if matched is not None:
+            decision_version = matched.get("backend_decision_version")
+    hb.start(
+        "evaluating_screening",
+        uid,
+        total_seeds,
+        queue=hb_queue,
+        backend_decision_version=decision_version,
+    )
 
     all_per_type: Dict[str, List[float]] = {
         "city": [], "open": [], "mountain": [],
@@ -180,7 +175,6 @@ async def _run_screening(
         ))
         if not checkpoints or checkpoints[-1] < total_seeds:
             checkpoints.append(total_seeds)
-        completion_note = ""
         for checkpoint in checkpoints:
             batch_seeds = screening_seeds[len(all_scores):checkpoint]
             batch_tasks = screening_tasks[len(all_scores):checkpoint]
@@ -226,18 +220,6 @@ async def _run_screening(
                 running_median=float(running_avg),
                 note=f"checkpoint {evaluated}/{total_seeds}",
             )
-
-            fail_factor = SCREENING_EARLY_FAIL_FACTORS.get(evaluated)
-            if fail_factor is not None and running_avg < threshold * fail_factor:
-                completion_note = (
-                    f"early_fail {evaluated}/{total_seeds} avg={running_avg:.4f}"
-                )
-                bt.logging.info(
-                    f"⏩ Screening early fail for UID {uid}: "
-                    f"avg={running_avg:.4f} < {threshold * fail_factor:.4f} "
-                    f"after {evaluated}/{total_seeds} seeds"
-                )
-                break
     finally:
         hb.finish()
 
@@ -249,7 +231,6 @@ async def _run_screening(
         evaluated=len(all_scores),
         total_seeds=int(total_seeds),
         median_score=float(avg_score),
-        note=completion_note,
     )
     bt.logging.info(
         f"📊 Screening result for UID {uid}: "
@@ -276,7 +257,18 @@ async def _run_full_benchmark(
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
     hb_queue = getattr(self, '_heartbeat_queue', None)
-    hb.start("evaluating_benchmark", uid, len(benchmark_seeds), queue=hb_queue)
+    decision_version = None
+    if hb_queue:
+        matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
+        if matched is not None:
+            decision_version = matched.get("backend_decision_version")
+    hb.start(
+        "evaluating_benchmark",
+        uid,
+        len(benchmark_seeds),
+        queue=hb_queue,
+        backend_decision_version=decision_version,
+    )
 
     try:
         all_scores, per_type_raw, details = await _utils_facade()._evaluate_seeds(
@@ -321,27 +313,3 @@ async def _run_full_benchmark(
     return avg_score, per_type_avgs, all_scores, per_type_raw
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Scoring & detection helpers
-# ──────────────────────────────────────────────────────────────────────────
-
-def _passes_screening(self, screening_score: float) -> bool:
-    """Check if screening score meets the threshold."""
-    current_top = getattr(self, '_current_top', None)
-
-    if not current_top or not current_top.get('score'):
-        threshold = SCREENING_BOOTSTRAP_THRESHOLD
-        passed = screening_score >= threshold
-        bt.logging.info(
-            f"Screening (bootstrap mode): {screening_score:.4f} >= {threshold} = {passed}"
-        )
-        return passed
-
-    top_score = current_top.get('score', 0.0)
-    threshold = top_score + SCREENING_MIN_IMPROVEMENT
-    passed = screening_score >= threshold
-    bt.logging.info(
-        f"Screening: {screening_score:.4f} >= {threshold:.4f} "
-        f"(top {top_score:.4f} + {SCREENING_MIN_IMPROVEMENT}) = {passed}"
-    )
-    return passed

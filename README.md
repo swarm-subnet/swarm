@@ -242,6 +242,8 @@ Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its o
 <!-- GETTING STARTED -->
 ## Getting Started
 
+> **One shot per hotkey.** Each hotkey commits a single model, lifetime. Train and benchmark locally until the model consistently beats **champion + 0.015**, then submit.
+
 <table>
 <tr>
 <td align="center" width="50%">

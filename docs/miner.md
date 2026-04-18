@@ -20,6 +20,7 @@ Train an autonomous drone pilot, benchmark it against 1,000 procedurally generat
     <li><a href="#scoring">Scoring</a></li>
     <li><a href="#benchmark-system">Benchmark System</a></li>
     <li><a href="#docker-whitelist">Docker Whitelist</a></li>
+    <li><a href="#faq">FAQ</a></li>
     <li><a href="#troubleshooting">Troubleshooting</a></li>
     <li><a href="#support">Support</a></li>
   </ol>
@@ -238,6 +239,8 @@ git push
 
 ### 4. Submit
 
+> **One-shot.** Each hotkey can commit one model, lifetime. The chain scanner ignores any later commitment from the same hotkey, and the database enforces a one-model-per-hotkey constraint. Benchmark locally and only commit when the model consistently beats **champion + 0.015**. To try a different model, a new hotkey and subnet registration are required.
+
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
 1. Keep your GitHub repo **private**
@@ -323,14 +326,14 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 
 ### How Your Model Is Evaluated
 
-1. **Miner** submits GitHub URL to backend (one-shot, goes offline)
-2. **Backend** downloads `submission.zip`, computes SHA-256, verifies README hash
-3. **Validator** syncs with backend, downloads your model from GitHub, verifies hash
-4. **Validator** runs your agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — quick filter, must score >= **champion + 0.015** (or >= 0.01 if no champion)
-   - **Full benchmark** (800 seeds) — complete evaluation across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
-5. **Final score** = average of all 1,000 seed results
-6. **Winner-take-all** — #1 scorer receives emissions
+1. **Miner** commits the GitHub URL on-chain (one-shot, then goes offline)
+2. **Backend** detects the commit. The chain scanner polls every ~3 minutes, so registration completes within **3–5 minutes** of chain-commit finalization. The backend downloads `submission.zip`, verifies the SHA-256 and README hashes, and adds the model to the pending queue
+3. **Validators** sync the pending queue, download the model directly from the miner's GitHub repo, and verify the hash against the backend record
+4. Each validator runs the agent in a sandboxed Docker container:
+   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear **champion + 0.015** (or >= 0.01 if no champion)
+   - **Full benchmark** (800 seeds) — remaining seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
+5. Final score and pass/fail are determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
+6. **Winner-take-all** — the highest-scoring model receives emissions
 
 ### Epoch Rotation
 
@@ -367,6 +370,52 @@ swarm-bullet3, swarm-drone-gym
 ```
 
 Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC).
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## FAQ
+
+### When will my score show up on the leaderboard?
+
+Validators process the pending model queue in submission order, one item at a time per validator. Expected latency depends on queue depth:
+
+- **Short queue** — first score reported within 10–30 minutes of submission.
+- **Busy queue** — add the screening + benchmark time for each model ahead.
+- **Epoch rollover freeze** — new-model work is paused briefly before each epoch transition and resumes after seed rotation.
+
+The leaderboard reshuffles once stake-weighted consensus settles across validators.
+
+### What happens if my model fails screening?
+
+The hotkey is done. Each hotkey can commit **one model, lifetime** — any later commitment from the same hotkey is ignored. A failed model stays recorded against that hotkey; to compete again, register a new hotkey and submit from it.
+
+Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats **champion + 0.015** across all environment types.
+
+### Can I update my submission after committing?
+
+No. A hotkey gets a single commitment. Validators (and the backend) see only the first registered model for that hotkey — subsequent chain commitments are ignored. To submit a different model, use a different hotkey.
+
+### I submitted, but I don't see a score yet. What should I check?
+
+Common causes:
+
+- **Repo still private** — validators cannot download it. Make the repo public after the chain commit finalizes.
+- **README hash mismatch** — `README.md` in the repo must be a byte-exact copy of `swarm/templates/README.md`. Any modification causes rejection.
+- **Non-whitelisted package in `requirements.txt`** — see the [Docker Whitelist](#docker-whitelist).
+- **Submission exceeds 50 MiB** — compressed size limit is enforced.
+- **No validators online** — check [swarm124.com](https://swarm124.com) for validator activity.
+
+If none apply, contact the team on [Discord](https://discord.gg/8dPqPDw7GC).
+
+### How often are weights updated on-chain?
+
+Validators set weights each forward cycle (a few minutes). Once consensus settles on a new champion, the next weight-set propagates the change across the subnet.
+
+### What if two miners submit the same model?
+
+Duplicate submission hashes are rejected and duplicate GitHub URLs are rejected. The earliest on-chain committer is accepted. To guard against front-running, follow: **private repo → chain commit → wait for finalization → make repo public** (see [GitHub Repo Setup](#github-repo-setup)).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 

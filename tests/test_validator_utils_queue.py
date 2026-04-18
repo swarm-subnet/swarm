@@ -23,7 +23,6 @@ def _queue_item(model_path: Path, model_hash: str = "hash1", uid: int = 1) -> di
         "status": "pending",
         "registered": False,
         "screening_recorded": False,
-        "screening_passed": None,
         "score_recorded": False,
         "retry_attempts": 0,
         "next_retry_at": 0,
@@ -42,6 +41,15 @@ def _validator(epoch: int = 7) -> SimpleNamespace:
         _ = kwargs
         return {"recorded": True}
 
+    async def _authorize_task(*args, **kwargs):
+        _ = args, kwargs
+        return {
+            "authorized": True,
+            "reason": "ok",
+            "task_id": 1,
+            "decision_version": 1,
+        }
+
     return SimpleNamespace(
         seed_manager=SimpleNamespace(
             epoch_number=epoch,
@@ -50,6 +58,7 @@ def _validator(epoch: int = 7) -> SimpleNamespace:
         backend_api=SimpleNamespace(
             post_heartbeat=_post_heartbeat,
             post_seed_scores_batch=_post_seed_scores_batch,
+            authorize_task=_authorize_task,
         ),
         metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
     )
@@ -91,7 +100,6 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
@@ -165,7 +173,6 @@ def test_process_normal_queue_item_updates_runtime_tracker(monkeypatch, tmp_path
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
@@ -236,13 +243,23 @@ def test_process_normal_queue_item_register_retry(monkeypatch, tmp_path: Path):
     assert "register failed" in item["last_error"]
 
 
-def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatch, tmp_path: Path):
+def test_process_normal_queue_item_backend_cancels_benchmark_authorization(monkeypatch, tmp_path: Path):
     model_path = tmp_path / "UID_1.zip"
     model_path.write_bytes(b"zip-bytes")
 
     key = "1:hash1"
     queue = {"items": {key: _queue_item(model_path)}}
     validator = _validator()
+
+    auth_phases: list[str] = []
+
+    async def _authorize_task(_uid, phase, **_kwargs):
+        auth_phases.append(str(phase))
+        if phase == "BENCHMARK":
+            return {"authorized": False, "reason": "model already completed", "decision_version": 1}
+        return {"authorized": True, "reason": "ok", "task_id": 1, "decision_version": 1}
+
+    validator.backend_api.authorize_task = _authorize_task
 
     marked: list[tuple[int, str]] = []
     full_called = {"value": False}
@@ -269,14 +286,9 @@ def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatc
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: False)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _unexpected_evaluate)
-    monkeypatch.setattr(
-        validator_utils,
-        "set_cached_score",
-        lambda *args, **kwargs: None,
-    )
+    monkeypatch.setattr(validator_utils, "set_cached_score", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         validator_utils,
         "mark_model_hash_processed",
@@ -294,11 +306,12 @@ def test_process_normal_queue_item_screening_fail_short_circuits_full(monkeypatc
     )
 
     item = queue["items"][key]
-    assert item["status"] == "completed"
+    assert item["status"] == "cancelled"
     assert item["screening_recorded"] is True
     assert item["score_recorded"] is False
     assert full_called["value"] is False
     assert marked == [(1, "hash1")]
+    assert "BENCHMARK" in auth_phases
 
 
 def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_path: Path):
@@ -336,7 +349,6 @@ def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_pat
 
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _run_screening)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
@@ -410,7 +422,6 @@ def test_process_normal_queue_item_uses_cached_scores(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(validator_utils, "_register_new_model_with_ack", _register)
     monkeypatch.setattr(validator_utils, "_run_screening", _fail_if_called)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _fail_if_called)
-    monkeypatch.setattr(validator_utils, "_passes_screening", lambda *args, **kwargs: True)
     monkeypatch.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
     monkeypatch.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
     monkeypatch.setattr(validator_utils, "set_cached_score", lambda *args, **kwargs: None)
@@ -476,3 +487,56 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
     assert all_scores == [0.25, 0.75]
     assert per_type_scores["forest"] == [0.25]
     assert per_type_scores["moving_platform"] == [0.75]
+
+
+def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch):
+    monkeypatch.setattr(validator_utils.time, "time", lambda: 100.0)
+
+    queue = {
+        "items": {
+            "11:hash11": {
+                "uid": 11,
+                "model_hash": "hash11",
+                "status": "pending",
+                "created_at": 10.0,
+                "updated_at": 15.0,
+                "retry_attempts": 0,
+                "next_retry_at": 0,
+                "assignment_id": 3,
+                "backend_authorized": True,
+                "backend_decision_version": 7,
+            },
+            "12:hash12": {
+                "uid": 12,
+                "model_hash": "hash12",
+                "status": "retry",
+                "created_at": 20.0,
+                "updated_at": 25.0,
+                "retry_attempts": 2,
+                "next_retry_at": 150.0,
+                "last_error": "waiting for lease",
+                "screening_recorded": True,
+            },
+            "13:hash13": {
+                "uid": 13,
+                "model_hash": "hash13",
+                "status": "cancelled",
+                "created_at": 30.0,
+                "updated_at": 35.0,
+                "retry_attempts": 0,
+                "next_retry_at": 0,
+                "last_error": "backend authorization failed",
+            },
+        }
+    }
+
+    snapshot = validator_utils.build_heartbeat_queue_snapshot(queue)
+
+    assert [entry["uid"] for entry in snapshot] == [11, 12, 13]
+    assert snapshot[0]["assignment_id"] == 3
+    assert snapshot[0]["processable"] is True
+    assert snapshot[1]["phase"] == "benchmark"
+    assert snapshot[1]["processable"] is False
+    assert snapshot[1]["blocked_reason"] == "waiting for lease"
+    assert snapshot[2]["status"] == "cancelled"
+    assert snapshot[2]["blocked_reason"] == "backend authorization failed"

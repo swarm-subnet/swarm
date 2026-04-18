@@ -32,9 +32,12 @@ from .engine_parts.dispatch import (
     _PARENT_WORKER_HEARTBEAT_SEC,
     _PARENT_WORKER_STALL_TIMEOUT_SEC,
     _build_worker_stall_seed_meta,
+    _is_backoff_infra_status,
+    _is_backoff_timeout_status,
     _is_clean_execution_status,
     _max_heavy_active,
     _select_next_batch_index,
+    _worker_cap_levels,
 )
 from .engine_parts.entry import main
 from .engine_parts.reporting import _print_results
@@ -78,6 +81,8 @@ __all__ = [
     "_create_prepared_benchmark_evaluator",
     "_debug_profile_options",
     "_find_seeds",
+    "_is_backoff_infra_status",
+    "_is_backoff_timeout_status",
     "_infer_bench_group",
     "_infer_uid_from_model_path",
     "_is_clean_execution_status",
@@ -93,6 +98,7 @@ __all__ = [
     "_select_next_batch_index",
     "_temporary_env",
     "_ts",
+    "_worker_cap_levels",
     "main",
 ]
 

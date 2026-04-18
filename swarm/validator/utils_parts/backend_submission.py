@@ -40,14 +40,12 @@ async def _submit_screening_with_ack(
     validator_hotkey: str,
     validator_stake: float,
     screening_score: float,
-    passed: bool,
 ) -> Tuple[bool, bool, str]:
     response = await self.backend_api.post_screening(
         uid=uid,
         validator_hotkey=validator_hotkey,
         validator_stake=validator_stake,
         screening_score=screening_score,
-        passed=passed,
     )
 
     if response.get("recorded", False):
