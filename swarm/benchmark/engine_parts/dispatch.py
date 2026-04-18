@@ -67,9 +67,9 @@ _RESOURCE_COSTS = {
 }
 _GROUP_BASE_RESOURCE_COSTS = {
     "type1_city": _SeedResourceCost("light", 0.90, 2200.0, 0),
-    "type2_open": _SeedResourceCost("light", 0.95, 2300.0, 0),
+    "type2_open": _SeedResourceCost("medium", 1.05, 2550.0, 1),
     "type5_warehouse": _SeedResourceCost("medium", 1.05, 2650.0, 1),
-    "type4_village": _SeedResourceCost("medium", 1.10, 2900.0, 1),
+    "type4_village": _SeedResourceCost("heavy", 1.20, 3150.0, 2),
     "type3_mountain": _SeedResourceCost("heavy", 1.25, 3300.0, 2),
     "type6_forest": _SeedResourceCost("heavy", 1.35, 3600.0, 2),
 }
@@ -78,9 +78,9 @@ _GROUP_RESOURCE_CLASS = {
     for group_name, cost in _GROUP_BASE_RESOURCE_COSTS.items()
 }
 _RESOURCE_CLASS_GROUPS = {
-    "light": ("type1_city", "type2_open"),
-    "medium": ("type5_warehouse", "type4_village"),
-    "heavy": ("type3_mountain", "type6_forest"),
+    "light": ("type1_city",),
+    "medium": ("type2_open", "type5_warehouse"),
+    "heavy": ("type4_village", "type3_mountain", "type6_forest"),
 }
 _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 1,
@@ -96,9 +96,7 @@ _GROUP_FROM_CHALLENGE_TYPE = {
 }
 _BACKOFF_ACTIVE_WORKERS = 2
 _BACKOFF_COOLDOWN_COMPLETIONS = 4
-_COLD_START_SMALL_WORKERS = 2
-_COLD_START_LARGE_WORKERS = 3
-_COLD_START_LARGE_THRESHOLD = 6
+_COLD_START_WORKERS = 3
 _PRESSURE_HIGH_CPU_PERCENT = 88.0
 _PRESSURE_CRITICAL_CPU_PERCENT = 94.0
 _PRESSURE_HEALTHY_CPU_PERCENT = 72.0
@@ -143,6 +141,7 @@ _PROFILE_WINDOW = 12
 _PROFILE_MIN_TRUSTED_SAMPLES_FOR_DEMOTION = 4
 _RELAX_FAST_STREAK = 2
 _RELAX_NORMAL_STREAK = 3
+_RAMP_FAST_UNTIL_WORKERS = 8
 
 
 @dataclass
@@ -352,9 +351,7 @@ def _initial_worker_cap(max_worker_cap: int) -> int:
     worker_cap = max(1, int(max_worker_cap))
     if worker_cap <= 1:
         return 1
-    if worker_cap >= _COLD_START_LARGE_THRESHOLD:
-        return min(worker_cap, _COLD_START_LARGE_WORKERS)
-    return min(worker_cap, _COLD_START_SMALL_WORKERS)
+    return min(worker_cap, _COLD_START_WORKERS)
 
 
 def _seed_runtime_ratio(seed_meta: Optional[Dict[str, Any]]) -> float:
@@ -449,6 +446,7 @@ class _AdaptiveBackoffController:
         default_factory=lambda: deque(maxlen=_RESOURCE_WINDOW)
     )
     group_profiles: Dict[str, _GroupRuntimeProfile] = field(default_factory=dict)
+    group_dispatch_counts: Counter = field(default_factory=Counter)
     latest_pressure: str = "unknown"
     latest_snapshot: Optional[_ResourceSnapshot] = None
 
@@ -641,18 +639,23 @@ class _AdaptiveBackoffController:
     def _cost_for_group(self, group_name: str) -> _SeedResourceCost:
         return self._learned_cost_for_group(group_name)
 
+    def note_group_dispatched(self, group_name: str) -> None:
+        self.group_dispatch_counts[str(group_name)] += 1
+
     def dispatch_sort_key(self, group_name: str, batch_id: int) -> Tuple[int, int, float, float, int]:
         cost = self._cost_for_group(group_name)
         profile = self.group_profiles.get(str(group_name))
+        dispatch_count = int(self.group_dispatch_counts.get(str(group_name), 0))
         expected_wall = float(profile.wall_sec_ema) if profile and profile.wall_sec_ema > 0.0 else 0.0
         warmup_penalty = 0
-        if self.active_worker_cap <= max(self.start_worker_cap, _COLD_START_SMALL_WORKERS):
+        if self.active_worker_cap <= self.start_worker_cap and int(cost.heavy_tokens) >= 2:
             warmup_penalty = int(cost.heavy_tokens)
         return (
             int(warmup_penalty),
+            int(dispatch_count),
+            float(expected_wall),
             int(cost.heavy_tokens),
             float(cost.cpu_units),
-            float(expected_wall),
             int(batch_id),
         )
 
@@ -799,7 +802,7 @@ class _AdaptiveBackoffController:
             return None
         min_streak = (
             _RELAX_FAST_STREAK
-            if self.active_worker_cap < min(self.max_worker_cap, 6)
+            if self.active_worker_cap < min(self.max_worker_cap, _RAMP_FAST_UNTIL_WORKERS)
             else _RELAX_NORMAL_STREAK
         )
         if self.healthy_completion_streak < min_streak:
@@ -807,14 +810,14 @@ class _AdaptiveBackoffController:
         previous_worker_cap = int(self.active_worker_cap)
         previous_heavy_cap = int(self.active_heavy_cap)
         if self.active_worker_cap < self.max_worker_cap:
-            self.active_worker_cap += 1
+            worker_step = 2 if self.active_worker_cap < min(self.max_worker_cap, _RAMP_FAST_UNTIL_WORKERS) else 1
+            self.active_worker_cap = min(self.max_worker_cap, self.active_worker_cap + worker_step)
         target_heavy_cap = self._default_heavy_cap_for_current_workers(self.active_worker_cap)
-        if (
-            self.active_heavy_cap < target_heavy_cap
-            and self.healthy_completion_streak >= max(min_streak + 1, 3)
-            and self.active_worker_cap >= 4
-        ):
-            self.active_heavy_cap += 1
+        if self.active_heavy_cap < target_heavy_cap:
+            if self.active_worker_cap >= 5:
+                self.active_heavy_cap = min(target_heavy_cap, max(self.active_heavy_cap + 1, 2))
+            elif self.healthy_completion_streak >= max(min_streak + 1, 3) and self.active_worker_cap >= 4:
+                self.active_heavy_cap += 1
         self.active_heavy_cap = min(self.active_heavy_cap, target_heavy_cap)
         if (
             self.active_worker_cap == previous_worker_cap

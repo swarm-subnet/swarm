@@ -332,7 +332,8 @@ def _print_results(
     }
 
     total_extrap_worker_sec = 0.0
-    print("  Extrapolation to 1,000 seeds (using measured per-seed worker time):")
+    observed_parallelism = max(1.0, min(float(workers_used), float(effective_parallelism)))
+    print("  Extrapolation to 1,000 seeds (using measured per-seed worker time and observed effective parallelism):")
     for group, count in dist.items():
         rows = group_results.get(group, [])
         if rows:
@@ -350,10 +351,11 @@ def _print_results(
         )
 
     print()
-    est_wall_1000 = total_extrap_worker_sec / workers_used
+    est_wall_1000 = total_extrap_worker_sec / observed_parallelism
     est_avg_seed_1000 = est_wall_1000 / 1000.0
     est_tput_1000 = (1000.0 / est_wall_1000 * 60.0) if est_wall_1000 > 0 else 0.0
     print(f"    Workers used:              {workers_used}")
+    print(f"    Parallelism basis:         {observed_parallelism:.2f}x observed")
     print(f"    Estimated worker-time:     {total_extrap_worker_sec:.0f}s")
     print(f"    Estimated wall-clock:      {est_wall_1000:.0f}s ({est_wall_1000 / 60.0:.1f} min)")
     print(f"    Estimated avg wall / seed: {est_avg_seed_1000:.2f}s")
@@ -399,6 +401,7 @@ def _print_results(
         "batch_stats": [asdict(stat) for stat in batch_stats],
         "extrapolation_1000_seeds": {
             "workers_used": workers_used,
+            "parallelism_basis": observed_parallelism,
             "total_seed_worker_sec": total_extrap_worker_sec,
             "estimated_wall_clock_sec": est_wall_1000,
             "estimated_avg_wall_per_seed_sec": est_avg_seed_1000,

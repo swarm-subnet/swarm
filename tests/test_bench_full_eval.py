@@ -93,9 +93,9 @@ def test_build_worker_stall_seed_meta_marks_failure():
 
 def test_resource_class_assignments_match_expected_groups():
     assert bench_full_eval._resource_class_for_group("type1_city") == "light"
-    assert bench_full_eval._resource_class_for_group("type2_open") == "light"
+    assert bench_full_eval._resource_class_for_group("type2_open") == "medium"
     assert bench_full_eval._resource_class_for_group("type5_warehouse") == "medium"
-    assert bench_full_eval._resource_class_for_group("type4_village") == "medium"
+    assert bench_full_eval._resource_class_for_group("type4_village") == "heavy"
     assert bench_full_eval._resource_class_for_group("type3_mountain") == "heavy"
     assert bench_full_eval._resource_class_for_group("type6_forest") == "heavy"
 
@@ -104,7 +104,7 @@ def test_select_next_batch_index_prefers_light_when_heavy_is_already_active():
     batch_plan = [[0], [1], [2]]
     task_meta = [
         {"group": "type3_mountain"},
-        {"group": "type5_warehouse"},
+        {"group": "type2_open"},
         {"group": "type1_city"},
     ]
     scheduler = bench_full_eval._AdaptiveBackoffController(
@@ -119,6 +119,32 @@ def test_select_next_batch_index_prefers_light_when_heavy_is_already_active():
         task_meta=task_meta,
         active_batch_ids=[0],
         active_worker_cap=2,
+        scheduler=scheduler,
+    )
+
+    assert selected == 2
+
+
+def test_select_next_batch_index_mixes_groups_before_draining_first_group():
+    batch_plan = [[0], [1], [2]]
+    task_meta = [
+        {"group": "type1_city"},
+        {"group": "type1_city"},
+        {"group": "type2_open"},
+    ]
+    scheduler = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+    scheduler.note_group_dispatched("type1_city")
+
+    selected = bench_full_eval._select_next_batch_index(
+        pending_batch_ids=[1, 2],
+        batch_plan=batch_plan,
+        task_meta=task_meta,
+        active_batch_ids=[],
+        active_worker_cap=3,
         scheduler=scheduler,
     )
 
@@ -271,6 +297,33 @@ def test_scheduler_cold_starts_low_with_single_heavy_slot():
     assert controller.start_worker_cap == 3
     assert controller.active_worker_cap == 3
     assert controller.active_heavy_cap == 1
+
+
+def test_scheduler_relaxes_faster_and_raises_heavy_cap_earlier():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+    controller.latest_pressure = "healthy"
+
+    note = None
+    for idx in range(2):
+        note = controller.observe_seed(
+            {
+                "status": "seed_done",
+                "map_seed": 3000 + idx,
+                "challenge_type": 1,
+                "sim_time_sec": 12.0,
+                "seed_wall_sec": 48.0,
+                "horizon_sec": 60.0,
+            },
+            group_name="type1_city",
+        )
+
+    assert note is not None and "Scheduler relaxed" in note
+    assert controller.active_worker_cap == 5
+    assert controller.active_heavy_cap == 2
 
 
 def test_scheduler_promotes_light_group_when_observed_runtime_is_expensive():

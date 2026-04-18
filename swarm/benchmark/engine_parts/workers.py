@@ -266,7 +266,7 @@ async def _run_benchmark_process_mode(
         print(f"[{_ts()}] {line}", flush=True)
     print(
         f"[{_ts()}] Dispatch policy: cold-start ramp enabled "
-        f"(light_groups=city,open; medium_groups=warehouse,village; heavy_groups=mountain,forest; "
+        f"(light_groups=city; medium_groups=open,warehouse; heavy_groups=village,mountain,forest; "
         f"mountain<=1, scheduler_heavy_cap={scheduler.active_heavy_cap}/"
         f"{_max_heavy_active(scheduler.active_worker_cap)})"
     )
@@ -358,6 +358,7 @@ async def _run_benchmark_process_mode(
                 task_total=len(all_tasks),
             )
             inflight_batches[batch_index] = request
+            scheduler.note_group_dispatched(group_name)
             task_queue.put(request)
 
     def _check_for_stalled_workers() -> int:
