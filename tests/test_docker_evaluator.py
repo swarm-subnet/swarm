@@ -773,6 +773,83 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
     assert any("1 failed, 0 timeout, 0 runtime, 0 retried_timeout" in line for line in log_lines)
 
 
+def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=5,
+        map_seed=3301,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 61,
+                            "map_seed": 3301,
+                            "challenge_type": 5,
+                            "status": "seed_done",
+                            "success": True,
+                            "sim_time_sec": 12.0,
+                            "seed_wall_sec": 40.0,
+                            "step_idx": 120,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(61, True, 12.0, 0.9)],
+                    "elapsed_sec": 40.0,
+                }
+            ]
+        },
+    )
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(
+        bench_full_eval._AdaptiveBackoffController,
+        "format_status_line",
+        lambda self: "stale-status",
+    )
+    monkeypatch.setattr(
+        bench_full_eval._AdaptiveBackoffController,
+        "format_live_status_line",
+        lambda self: "live-status",
+    )
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type5_warehouse",
+                    "seed": 3301,
+                    "challenge_type": 5,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=61,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=None,
+            phase_label="eval",
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert any("live-status" in line for line in log_lines)
+    assert not any("stale-status" in line for line in log_lines)
+
+
 def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
     tasks = [
         SimpleNamespace(challenge_type=3),

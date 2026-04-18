@@ -531,7 +531,7 @@ async def _run_process_parallel(
         line = (
             f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
             f"{counts} | {type_parts} | {active}/{effective_workers} workers "
-            f"({scheduler.format_status_line()})"
+            f"({scheduler.format_live_status_line()})"
         )
         bt.logging.info(line)
         last_summary_chunk_done = chunk_done
