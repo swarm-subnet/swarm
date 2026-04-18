@@ -9,7 +9,18 @@ except Exception:  # pragma: no cover - optional dependency in tests.
 
 from swarm.constants import available_vcpu_count
 
-from ._shared import Any, Counter, Dict, List, Optional, Tuple, dataclass, deque, field
+from ._shared import (
+    Any,
+    Counter,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    BENCH_GROUP_TO_TYPE,
+    dataclass,
+    deque,
+    field,
+)
 
 
 @dataclass(frozen=True)
@@ -29,53 +40,65 @@ class _ResourceSnapshot:
     ts: float
 
 
-_GROUP_RESOURCE_CLASS = {
-    "type1_city": "light",
-    "type2_open": "light",
-    "type5_warehouse": "medium",
-    "type6_forest": "medium",
-    "type4_village": "heavy",
-    "type3_mountain": "heavy",
+_CLASS_RANK = {
+    "light": 0,
+    "medium": 1,
+    "heavy": 2,
 }
 _RESOURCE_COSTS = {
     "light": _SeedResourceCost(
         resource_class="light",
         cpu_units=0.90,
-        ram_mb=2300.0,
+        ram_mb=2200.0,
         heavy_tokens=0,
     ),
     "medium": _SeedResourceCost(
         resource_class="medium",
         cpu_units=1.15,
-        ram_mb=3000.0,
+        ram_mb=2850.0,
         heavy_tokens=1,
     ),
     "heavy": _SeedResourceCost(
         resource_class="heavy",
-        cpu_units=1.40,
-        ram_mb=3800.0,
+        cpu_units=1.35,
+        ram_mb=3600.0,
         heavy_tokens=2,
     ),
 }
+_GROUP_BASE_RESOURCE_COSTS = {
+    "type1_city": _SeedResourceCost("light", 0.90, 2200.0, 0),
+    "type2_open": _SeedResourceCost("light", 0.95, 2300.0, 0),
+    "type5_warehouse": _SeedResourceCost("medium", 1.05, 2650.0, 1),
+    "type4_village": _SeedResourceCost("medium", 1.10, 2900.0, 1),
+    "type3_mountain": _SeedResourceCost("heavy", 1.25, 3300.0, 2),
+    "type6_forest": _SeedResourceCost("heavy", 1.35, 3600.0, 2),
+}
+_GROUP_RESOURCE_CLASS = {
+    group_name: cost.resource_class
+    for group_name, cost in _GROUP_BASE_RESOURCE_COSTS.items()
+}
 _RESOURCE_CLASS_GROUPS = {
     "light": ("type1_city", "type2_open"),
-    "medium": ("type5_warehouse", "type6_forest"),
-    "heavy": ("type4_village", "type3_mountain"),
-}
-_GROUP_DISPATCH_WEIGHTS = {
-    "type1_city": 1,
-    "type2_open": 1,
-    "type5_warehouse": 2,
-    "type6_forest": 2,
-    "type4_village": 3,
-    "type3_mountain": 3,
+    "medium": ("type5_warehouse", "type4_village"),
+    "heavy": ("type3_mountain", "type6_forest"),
 }
 _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 1,
 }
-_HEAVY_GROUPS = frozenset(_RESOURCE_CLASS_GROUPS["heavy"])
+_HEAVY_GROUPS = frozenset(
+    group_name
+    for group_name, cost in _GROUP_BASE_RESOURCE_COSTS.items()
+    if cost.resource_class == "heavy"
+)
+_GROUP_FROM_CHALLENGE_TYPE = {
+    int(challenge_type): group_name
+    for group_name, challenge_type in BENCH_GROUP_TO_TYPE.items()
+}
 _BACKOFF_ACTIVE_WORKERS = 2
 _BACKOFF_COOLDOWN_COMPLETIONS = 4
+_COLD_START_SMALL_WORKERS = 2
+_COLD_START_LARGE_WORKERS = 3
+_COLD_START_LARGE_THRESHOLD = 6
 _PRESSURE_HIGH_CPU_PERCENT = 88.0
 _PRESSURE_CRITICAL_CPU_PERCENT = 94.0
 _PRESSURE_HEALTHY_CPU_PERCENT = 72.0
@@ -116,6 +139,26 @@ _NON_RESOURCE_FAILURE_STATUSES = frozenset(
         "rpc_connection_failed",
     }
 )
+_PROFILE_WINDOW = 12
+_PROFILE_MIN_TRUSTED_SAMPLES_FOR_DEMOTION = 4
+_RELAX_FAST_STREAK = 2
+_RELAX_NORMAL_STREAK = 3
+
+
+@dataclass
+class _GroupRuntimeProfile:
+    samples: int = 0
+    trusted_samples: int = 0
+    timeout_like_count: int = 0
+    calibration_spike_count: int = 0
+    wall_sec_ema: float = 0.0
+    ratio_ema: float = 0.0
+    recent_wall_sec: deque[float] = field(
+        default_factory=lambda: deque(maxlen=_PROFILE_WINDOW)
+    )
+    recent_ratio: deque[float] = field(
+        default_factory=lambda: deque(maxlen=_PROFILE_WINDOW)
+    )
 
 
 def _detect_total_ram_mb() -> float:
@@ -187,12 +230,46 @@ def _default_ram_reserve_mb(total_ram_mb: float) -> float:
     return max(2048.0, min(6144.0, float(total_ram_mb) * 0.12))
 
 
+def _group_name_from_challenge_type(challenge_type: Any) -> Optional[str]:
+    try:
+        return _GROUP_FROM_CHALLENGE_TYPE.get(int(challenge_type))
+    except Exception:
+        return None
+
+
+def _resource_class_rank(resource_class: str) -> int:
+    return int(_CLASS_RANK.get(str(resource_class), 1))
+
+
+def _resource_class_from_rank(rank: int) -> str:
+    normalized = max(0, min(2, int(rank)))
+    for resource_class, resource_rank in _CLASS_RANK.items():
+        if resource_rank == normalized:
+            return resource_class
+    return "medium"
+
+
+def _resource_class_from_heavy_tokens(heavy_tokens: int) -> str:
+    if int(heavy_tokens) >= 2:
+        return "heavy"
+    if int(heavy_tokens) >= 1:
+        return "medium"
+    return "light"
+
+
+def _base_resource_cost_for_group(group_name: str) -> _SeedResourceCost:
+    return _GROUP_BASE_RESOURCE_COSTS.get(
+        str(group_name),
+        _RESOURCE_COSTS["medium"],
+    )
+
+
 def _resource_class_for_group(group_name: str) -> str:
-    return str(_GROUP_RESOURCE_CLASS.get(str(group_name), "medium"))
+    return str(_base_resource_cost_for_group(group_name).resource_class)
 
 
 def _resource_cost_for_group(group_name: str) -> _SeedResourceCost:
-    return _RESOURCE_COSTS[_resource_class_for_group(group_name)]
+    return _base_resource_cost_for_group(group_name)
 
 
 def _resource_cost_dict_for_group(group_name: str) -> Dict[str, Any]:
@@ -208,14 +285,32 @@ def _resource_cost_dict_for_group(group_name: str) -> Dict[str, Any]:
 def _resource_model_rows() -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for resource_class in ("light", "medium", "heavy"):
-        cost = _RESOURCE_COSTS[resource_class]
+        group_names = list(_RESOURCE_CLASS_GROUPS[resource_class])
+        if group_names:
+            cpu_units = sum(
+                float(_base_resource_cost_for_group(group_name).cpu_units)
+                for group_name in group_names
+            ) / float(len(group_names))
+            ram_mb = sum(
+                float(_base_resource_cost_for_group(group_name).ram_mb)
+                for group_name in group_names
+            ) / float(len(group_names))
+            heavy_tokens = max(
+                int(_base_resource_cost_for_group(group_name).heavy_tokens)
+                for group_name in group_names
+            )
+        else:
+            fallback = _RESOURCE_COSTS[resource_class]
+            cpu_units = float(fallback.cpu_units)
+            ram_mb = float(fallback.ram_mb)
+            heavy_tokens = int(fallback.heavy_tokens)
         rows.append(
             {
-                "resource_class": cost.resource_class,
-                "groups": list(_RESOURCE_CLASS_GROUPS[resource_class]),
-                "cpu_units": float(cost.cpu_units),
-                "ram_mb": float(cost.ram_mb),
-                "heavy_tokens": int(cost.heavy_tokens),
+                "resource_class": resource_class,
+                "groups": group_names,
+                "cpu_units": float(cpu_units),
+                "ram_mb": float(ram_mb),
+                "heavy_tokens": int(heavy_tokens),
             }
         )
     return rows
@@ -223,10 +318,6 @@ def _resource_model_rows() -> List[Dict[str, Any]]:
 
 def _is_clean_execution_status(status: str) -> bool:
     return status == "seed_done"
-
-
-def _group_dispatch_weight(group_name: str) -> int:
-    return int(_GROUP_DISPATCH_WEIGHTS.get(group_name, 1))
 
 
 def _max_heavy_active(active_worker_cap: int) -> int:
@@ -255,6 +346,37 @@ def _worker_cap_levels(requested_workers: int) -> Tuple[int, ...]:
         if current != levels[-1]:
             levels.append(current)
     return tuple(levels)
+
+
+def _initial_worker_cap(max_worker_cap: int) -> int:
+    worker_cap = max(1, int(max_worker_cap))
+    if worker_cap <= 1:
+        return 1
+    if worker_cap >= _COLD_START_LARGE_THRESHOLD:
+        return min(worker_cap, _COLD_START_LARGE_WORKERS)
+    return min(worker_cap, _COLD_START_SMALL_WORKERS)
+
+
+def _seed_runtime_ratio(seed_meta: Optional[Dict[str, Any]]) -> float:
+    if not isinstance(seed_meta, dict):
+        return 0.0
+    try:
+        wall_sec = max(0.0, float(seed_meta.get("seed_wall_sec", 0.0)))
+    except Exception:
+        wall_sec = 0.0
+    try:
+        sim_time_sec = max(0.0, float(seed_meta.get("sim_time_sec", 0.0)))
+    except Exception:
+        sim_time_sec = 0.0
+    try:
+        horizon_sec = max(0.0, float(seed_meta.get("horizon_sec", 0.0)))
+    except Exception:
+        horizon_sec = 0.0
+    reference_sim = sim_time_sec if sim_time_sec > 0.0 else horizon_sec
+    reference_sim = max(10.0, reference_sim)
+    if wall_sec <= 0.0:
+        return 0.0
+    return wall_sec / reference_sim
 
 
 def _seed_has_calibration_spike(seed_meta: Optional[Dict[str, Any]]) -> bool:
@@ -309,6 +431,7 @@ class _AdaptiveBackoffController:
     machine_vcpus: Optional[int] = None
     machine_total_ram_mb: Optional[float] = None
     resource_provider: Optional[Any] = None
+    start_worker_cap: int = field(init=False)
     active_worker_cap: int = field(init=False)
     active_heavy_cap: int = field(init=False)
     worker_cap_levels: Tuple[int, ...] = field(init=False)
@@ -325,6 +448,7 @@ class _AdaptiveBackoffController:
     recent_snapshots: deque[_ResourceSnapshot] = field(
         default_factory=lambda: deque(maxlen=_RESOURCE_WINDOW)
     )
+    group_profiles: Dict[str, _GroupRuntimeProfile] = field(default_factory=dict)
     latest_pressure: str = "unknown"
     latest_snapshot: Optional[_ResourceSnapshot] = None
 
@@ -354,13 +478,16 @@ class _AdaptiveBackoffController:
             ),
         )
         self.worker_cap_levels = _worker_cap_levels(self.max_worker_cap)
-        self.active_worker_cap = self.worker_cap_levels[0]
+        self.start_worker_cap = _initial_worker_cap(self.max_worker_cap)
+        self.active_worker_cap = self.start_worker_cap
         self.max_heavy_cap = _max_heavy_active(self.max_worker_cap)
-        self.active_heavy_cap = self.max_heavy_cap
+        self.active_heavy_cap = min(1, self.max_heavy_cap)
+        for group_name in _GROUP_BASE_RESOURCE_COSTS:
+            self.group_profiles.setdefault(group_name, _GroupRuntimeProfile())
 
     @property
     def enabled(self) -> bool:
-        return self.max_worker_cap > _BACKOFF_ACTIVE_WORKERS
+        return self.max_worker_cap > 1
 
     def machine_summary(self) -> Dict[str, Any]:
         return {
@@ -368,6 +495,7 @@ class _AdaptiveBackoffController:
             "machine_vcpus": int(self.machine_vcpus),
             "machine_total_ram_mb": float(self.machine_total_ram_mb),
             "ram_reserve_mb": float(self.ram_reserve_mb),
+            "start_worker_cap": int(self.start_worker_cap),
             "max_worker_cap": int(self.max_worker_cap),
             "max_heavy_cap": int(self.max_heavy_cap),
         }
@@ -378,6 +506,7 @@ class _AdaptiveBackoffController:
     def status_dict(self) -> Dict[str, Any]:
         snapshot = self.latest_snapshot
         return {
+            "start_worker_cap": int(self.start_worker_cap),
             "active_worker_cap": int(self.active_worker_cap),
             "active_heavy_cap": int(self.active_heavy_cap),
             "max_worker_cap": int(self.max_worker_cap),
@@ -417,17 +546,115 @@ class _AdaptiveBackoffController:
                 "Scheduler machine: "
                 f"vcpus={self.machine_vcpus} total_ram={self.machine_total_ram_mb / 1024.0:.1f}GiB "
                 f"reserve_ram={self.ram_reserve_mb / 1024.0:.1f}GiB "
-                f"max_workers={self.max_worker_cap} max_heavy={self.max_heavy_cap}"
+                f"start_workers={self.start_worker_cap} max_workers={self.max_worker_cap} "
+                f"start_heavy={self.active_heavy_cap} max_heavy={self.max_heavy_cap}"
             )
         ]
         for row in self.cost_model():
             lines.append(
-                "Scheduler cost model: "
+                "Scheduler cost prior: "
                 f"{row['resource_class']} groups={','.join(row['groups'])} "
                 f"cpu={row['cpu_units']:.2f} ram={row['ram_mb']:.0f}MiB "
                 f"heavy_tokens={row['heavy_tokens']}"
             )
         return lines
+
+    def _profile_for_group(self, group_name: str) -> _GroupRuntimeProfile:
+        return self.group_profiles.setdefault(str(group_name), _GroupRuntimeProfile())
+
+    def _learning_weight(self) -> float:
+        if self.latest_pressure in {"high"}:
+            return 0.35
+        if self.latest_pressure == "critical":
+            return 0.0
+        return 1.0
+
+    def _profile_reference_ratio(self, profile: _GroupRuntimeProfile) -> float:
+        if profile.recent_ratio:
+            avg_recent = sum(float(v) for v in profile.recent_ratio) / float(len(profile.recent_ratio))
+            return max(float(profile.ratio_ema), float(avg_recent))
+        return float(profile.ratio_ema)
+
+    def _profile_reference_wall(self, profile: _GroupRuntimeProfile) -> float:
+        if profile.recent_wall_sec:
+            avg_recent = sum(float(v) for v in profile.recent_wall_sec) / float(len(profile.recent_wall_sec))
+            return max(float(profile.wall_sec_ema), float(avg_recent))
+        return float(profile.wall_sec_ema)
+
+    def _learned_cost_for_group(self, group_name: str) -> _SeedResourceCost:
+        base_cost = _base_resource_cost_for_group(group_name)
+        profile = self.group_profiles.get(str(group_name))
+        if profile is None or profile.samples <= 0:
+            return base_cost
+
+        ratio_ref = self._profile_reference_ratio(profile)
+        wall_ref = self._profile_reference_wall(profile)
+        timeout_rate = float(profile.timeout_like_count) / float(max(1, profile.samples))
+        calibration_rate = float(profile.calibration_spike_count) / float(max(1, profile.samples))
+
+        learned_rank = _resource_class_rank(base_cost.resource_class)
+        if timeout_rate >= 0.30 or wall_ref >= 220.0 or ratio_ref >= 8.0:
+            learned_rank = 2
+        elif timeout_rate >= 0.12 or wall_ref >= 110.0 or ratio_ref >= 4.5:
+            learned_rank = 1
+        else:
+            learned_rank = 0
+
+        prior_rank = _resource_class_rank(base_cost.resource_class)
+        if profile.trusted_samples < _PROFILE_MIN_TRUSTED_SAMPLES_FOR_DEMOTION:
+            target_rank = max(prior_rank, learned_rank)
+        else:
+            target_rank = max(max(0, prior_rank - 1), learned_rank)
+
+        resource_class = _resource_class_from_rank(target_rank)
+        tier_cost = _RESOURCE_COSTS[resource_class]
+        cpu_floor = (
+            float(base_cost.cpu_units) * 0.90
+            if target_rank < prior_rank
+            else float(base_cost.cpu_units)
+        )
+        ram_floor = (
+            float(base_cost.ram_mb) * 0.90
+            if target_rank < prior_rank
+            else float(base_cost.ram_mb)
+        )
+        cpu_units = max(float(tier_cost.cpu_units), cpu_floor)
+        ram_mb = max(float(tier_cost.ram_mb), ram_floor)
+        heavy_tokens = int(tier_cost.heavy_tokens)
+
+        if target_rank == 2:
+            cpu_units = max(cpu_units, 1.30 + (0.10 * calibration_rate))
+            ram_mb = max(ram_mb, 3400.0 + (400.0 * timeout_rate))
+            heavy_tokens = max(heavy_tokens, 2)
+        elif target_rank == 1:
+            cpu_units = max(cpu_units, 1.05 + (0.08 * timeout_rate))
+            ram_mb = max(ram_mb, 2700.0 + (250.0 * timeout_rate))
+            heavy_tokens = max(heavy_tokens, 1)
+
+        return _SeedResourceCost(
+            resource_class=_resource_class_from_heavy_tokens(heavy_tokens),
+            cpu_units=float(cpu_units),
+            ram_mb=float(ram_mb),
+            heavy_tokens=int(heavy_tokens),
+        )
+
+    def _cost_for_group(self, group_name: str) -> _SeedResourceCost:
+        return self._learned_cost_for_group(group_name)
+
+    def dispatch_sort_key(self, group_name: str, batch_id: int) -> Tuple[int, int, float, float, int]:
+        cost = self._cost_for_group(group_name)
+        profile = self.group_profiles.get(str(group_name))
+        expected_wall = float(profile.wall_sec_ema) if profile and profile.wall_sec_ema > 0.0 else 0.0
+        warmup_penalty = 0
+        if self.active_worker_cap <= max(self.start_worker_cap, _COLD_START_SMALL_WORKERS):
+            warmup_penalty = int(cost.heavy_tokens)
+        return (
+            int(warmup_penalty),
+            int(cost.heavy_tokens),
+            float(cost.cpu_units),
+            float(expected_wall),
+            int(batch_id),
+        )
 
     def _sample_resources(self) -> _ResourceSnapshot:
         if callable(self.resource_provider):
@@ -498,8 +725,8 @@ class _AdaptiveBackoffController:
         return max(
             float(_RESOURCE_COSTS["heavy"].cpu_units),
             min(
-                float(self.machine_vcpus) * 1.20,
-                float(max(1, self.active_worker_cap)) * 1.25,
+                float(self.machine_vcpus) * 1.10,
+                float(max(1, self.active_worker_cap)) * 1.15,
             ),
         )
 
@@ -507,7 +734,7 @@ class _AdaptiveBackoffController:
         return max(0.0, float(self.machine_total_ram_mb) - float(self.ram_reserve_mb))
 
     def _heavy_token_budget(self) -> int:
-        return max(2, int(self.active_worker_cap))
+        return max(2, int(self.active_worker_cap) + max(0, int(self.active_heavy_cap) - 1))
 
     def _active_group_costs(self, active_groups: List[str]) -> Dict[str, float]:
         cpu_units = 0.0
@@ -515,7 +742,7 @@ class _AdaptiveBackoffController:
         heavy_tokens = 0
         heavy_count = 0
         for group_name in active_groups:
-            cost = _resource_cost_for_group(group_name)
+            cost = self._cost_for_group(group_name)
             cpu_units += float(cost.cpu_units)
             ram_mb += float(cost.ram_mb)
             heavy_tokens += int(cost.heavy_tokens)
@@ -539,14 +766,14 @@ class _AdaptiveBackoffController:
         previous_heavy_cap = int(self.active_heavy_cap)
         if severity == "critical":
             next_worker_cap = max(
-                2 if self.max_worker_cap > 1 else 1,
+                self.start_worker_cap if self.max_worker_cap > 1 else 1,
                 min(self.active_worker_cap - 2, int(self.active_worker_cap * 0.7)),
             )
             next_heavy_cap = max(1, min(self.active_heavy_cap - 1, next_worker_cap))
             self.cooldown_remaining = max(self.cooldown_remaining, _BACKOFF_COOLDOWN_COMPLETIONS + 2)
         else:
             next_worker_cap = max(
-                2 if self.max_worker_cap > 1 else 1,
+                self.start_worker_cap if self.max_worker_cap > 1 else 1,
                 self.active_worker_cap - 1,
             )
             next_heavy_cap = max(1, min(self.active_heavy_cap, self._default_heavy_cap_for_current_workers(next_worker_cap)))
@@ -568,16 +795,25 @@ class _AdaptiveBackoffController:
         )
 
     def _maybe_relax_caps(self) -> Optional[str]:
-        if self.cooldown_remaining > 0 or self.latest_pressure != "healthy":
+        if self.cooldown_remaining > 0 or self.latest_pressure not in {"healthy", "neutral"}:
             return None
-        if self.healthy_completion_streak < 3:
+        min_streak = (
+            _RELAX_FAST_STREAK
+            if self.active_worker_cap < min(self.max_worker_cap, 6)
+            else _RELAX_NORMAL_STREAK
+        )
+        if self.healthy_completion_streak < min_streak:
             return None
         previous_worker_cap = int(self.active_worker_cap)
         previous_heavy_cap = int(self.active_heavy_cap)
         if self.active_worker_cap < self.max_worker_cap:
             self.active_worker_cap += 1
         target_heavy_cap = self._default_heavy_cap_for_current_workers(self.active_worker_cap)
-        if self.active_heavy_cap < target_heavy_cap and self.healthy_completion_streak >= 4:
+        if (
+            self.active_heavy_cap < target_heavy_cap
+            and self.healthy_completion_streak >= max(min_streak + 1, 3)
+            and self.active_worker_cap >= 4
+        ):
             self.active_heavy_cap += 1
         self.active_heavy_cap = min(self.active_heavy_cap, target_heavy_cap)
         if (
@@ -586,7 +822,7 @@ class _AdaptiveBackoffController:
         ):
             return None
         self.healthy_completion_streak = 0
-        self.cooldown_remaining = 2 if self.active_worker_cap < self.max_worker_cap else 0
+        self.cooldown_remaining = 1 if self.active_worker_cap < self.max_worker_cap else 0
         if self.active_worker_cap >= self.max_worker_cap and self.active_heavy_cap >= self.max_heavy_cap:
             return (
                 f"Scheduler relaxed: restored full dispatch "
@@ -597,6 +833,53 @@ class _AdaptiveBackoffController:
             f"Scheduler relaxed: workers {previous_worker_cap}->{self.active_worker_cap}, "
             f"heavy {previous_heavy_cap}->{self.active_heavy_cap}"
         )
+
+    def _observe_group_profile(
+        self,
+        group_name: Optional[str],
+        seed_meta: Optional[Dict[str, Any]],
+        *,
+        timeout_like: bool,
+        calibration_spike: bool,
+    ) -> None:
+        resolved_group = str(group_name) if group_name else None
+        if resolved_group is None and isinstance(seed_meta, dict):
+            resolved_group = _group_name_from_challenge_type(seed_meta.get("challenge_type"))
+        if not resolved_group:
+            return
+        profile = self._profile_for_group(resolved_group)
+        profile.samples += 1
+        if timeout_like:
+            profile.timeout_like_count += 1
+        if calibration_spike:
+            profile.calibration_spike_count += 1
+
+        wall_sec = 0.0
+        try:
+            wall_sec = max(0.0, float(seed_meta.get("seed_wall_sec", 0.0))) if isinstance(seed_meta, dict) else 0.0
+        except Exception:
+            wall_sec = 0.0
+        ratio = _seed_runtime_ratio(seed_meta)
+        if wall_sec > 0.0:
+            profile.recent_wall_sec.append(float(wall_sec))
+        if ratio > 0.0:
+            profile.recent_ratio.append(float(ratio))
+
+        trust = self._learning_weight()
+        if trust <= 0.0 or wall_sec <= 0.0:
+            return
+        profile.trusted_samples += 1
+        alpha = 0.35 if profile.trusted_samples <= 4 else 0.20
+        alpha *= trust
+        if profile.wall_sec_ema <= 0.0:
+            profile.wall_sec_ema = float(wall_sec)
+        else:
+            profile.wall_sec_ema = ((1.0 - alpha) * float(profile.wall_sec_ema)) + (alpha * float(wall_sec))
+        if ratio > 0.0:
+            if profile.ratio_ema <= 0.0:
+                profile.ratio_ema = float(ratio)
+            else:
+                profile.ratio_ema = ((1.0 - alpha) * float(profile.ratio_ema)) + (alpha * float(ratio))
 
     def observe_resources(self, active_groups: List[str]) -> Optional[str]:
         self._sample_resources()
@@ -645,7 +928,7 @@ class _AdaptiveBackoffController:
     def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
         if len(active_groups) >= self.active_worker_cap:
             return False
-        cost = _resource_cost_for_group(group_name)
+        cost = self._cost_for_group(group_name)
         class_name = cost.resource_class
         active_costs = self._active_group_costs(active_groups)
         group_limit = int(_GROUP_CONCURRENCY_LIMITS.get(group_name, self.active_worker_cap))
@@ -691,13 +974,20 @@ class _AdaptiveBackoffController:
         timeout_issue = _is_backoff_timeout_status(status)
         soft_signal = status in _RESOURCE_SOFT_SIGNAL_STATUSES
         calibration_spike = _seed_has_calibration_spike(seed_meta)
+        timeout_like = timeout_issue or soft_signal
 
         signal = "clean"
         if hard_issue:
             signal = "hard"
-        elif timeout_issue or soft_signal or calibration_spike:
+        elif timeout_like or calibration_spike:
             signal = "soft"
         self.recent_outcome_signals.append(signal)
+        self._observe_group_profile(
+            group_name,
+            seed_meta,
+            timeout_like=timeout_like,
+            calibration_spike=calibration_spike,
+        )
 
         reason: Optional[str] = None
         severity = "moderate"
@@ -706,7 +996,7 @@ class _AdaptiveBackoffController:
             severity = "critical" if self.latest_pressure == "critical" else "moderate"
         elif timeout_issue and self.latest_pressure in {"high", "critical"}:
             reason = f"timeout under {self.latest_pressure} pressure ({status} {_format_seed_desc(seed_meta)})"
-        elif timeout_issue and self._recent_signal_count("soft") >= 3:
+        elif timeout_issue and self._recent_signal_count("soft") >= 4:
             reason = f"repeated timeout-like outcomes ({status} {_format_seed_desc(seed_meta)})"
         elif soft_signal and self.latest_pressure == "critical":
             reason = f"resource-sensitive failure under critical pressure ({status} {_format_seed_desc(seed_meta)})"
@@ -778,8 +1068,14 @@ def _select_next_batch_index(
         return None
     candidate_pool = preferred if preferred else pending_batch_ids
 
-    def _sort_key(batch_id: int) -> Tuple[int, int]:
+    def _sort_key(batch_id: int) -> Tuple[Any, ...]:
         group_name = str(task_meta[batch_plan[batch_id][0]]["group"])
-        return (_group_dispatch_weight(group_name), -batch_id)
+        if scheduler is not None:
+            return scheduler.dispatch_sort_key(group_name, batch_id)
+        return (
+            int(1 if group_name in _HEAVY_GROUPS else 0),
+            int(_GROUP_CONCURRENCY_LIMITS.get(group_name, active_worker_cap)),
+            int(batch_id),
+        )
 
-    return max(candidate_pool, key=_sort_key)
+    return min(candidate_pool, key=_sort_key)

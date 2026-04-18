@@ -230,8 +230,9 @@ def _print_results(
     print()
 
     resource_cost_model = _resource_model_rows()
+    group_summary: Dict[str, Dict[str, Any]] = {}
     resource_class_summary: Dict[str, Dict[str, Any]] = {}
-    print("  Scheduler cost model (initial estimate):")
+    print("  Scheduler cost model (initial prior):")
     for row in resource_cost_model:
         print(
             f"    {row['resource_class']:<6} groups={','.join(row['groups'])} "
@@ -240,7 +241,30 @@ def _print_results(
         )
     print()
 
-    print("  Observed by resource class:")
+    print("  Observed by group:")
+    for group_name in group_order:
+        group_rows = group_results.get(group_name, [])
+        if not group_rows:
+            continue
+        summary = _rows_summary(group_rows)
+        estimated_cost = _resource_cost_dict_for_group(group_name)
+        group_summary[group_name] = {
+            "estimated_cost": estimated_cost,
+            **summary,
+        }
+        print(
+            f"    {group_name:<18} prior={estimated_cost['resource_class']:<6} "
+            f"seeds={summary['seed_count']:<3} "
+            f"success={summary['success_count']}/{summary['seed_count']} "
+            f"clean={summary['execution_success_count']}/{summary['seed_count']} "
+            f"avg_wall={summary['avg_wall_sec']:.1f}s "
+            f"p90={summary['p90_wall_sec']:.1f}s "
+            f"avg_proc={summary['avg_processing_wall_sec']:.1f}s "
+            f"avg_sim={summary['avg_sim_sec']:.1f}s "
+            f"wall/sim={summary['avg_wall_per_sim_ratio']:.2f}x"
+        )
+    print()
+
     for resource_class in ("light", "medium", "heavy"):
         class_rows = [row for row in all_rows if str(row["resource_class"]) == resource_class]
         if not class_rows:
@@ -262,17 +286,6 @@ def _print_results(
             ),
             **summary,
         }
-        print(
-            f"    {resource_class:<6} seeds={summary['seed_count']:<3} "
-            f"success={summary['success_count']}/{summary['seed_count']} "
-            f"clean={summary['execution_success_count']}/{summary['seed_count']} "
-            f"avg_wall={summary['avg_wall_sec']:.1f}s "
-            f"p90={summary['p90_wall_sec']:.1f}s "
-            f"max={summary['max_wall_sec']:.1f}s "
-            f"avg_proc={summary['avg_processing_wall_sec']:.1f}s "
-            f"avg_sim={summary['avg_sim_sec']:.1f}s"
-        )
-    print()
 
     expensive_seed_rows = sorted(
         all_rows,
@@ -379,6 +392,7 @@ def _print_results(
         },
         "execution_status_counts": dict(sorted(execution_status_counts.items())),
         "resource_cost_model_estimate": resource_cost_model,
+        "group_summary": group_summary,
         "resource_class_summary": resource_class_summary,
         "top_expensive_seeds": expensive_seed_rows,
         "group_results": {g: rs for g, rs in group_results.items()},

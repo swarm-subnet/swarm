@@ -95,9 +95,9 @@ def test_resource_class_assignments_match_expected_groups():
     assert bench_full_eval._resource_class_for_group("type1_city") == "light"
     assert bench_full_eval._resource_class_for_group("type2_open") == "light"
     assert bench_full_eval._resource_class_for_group("type5_warehouse") == "medium"
-    assert bench_full_eval._resource_class_for_group("type6_forest") == "medium"
-    assert bench_full_eval._resource_class_for_group("type4_village") == "heavy"
+    assert bench_full_eval._resource_class_for_group("type4_village") == "medium"
     assert bench_full_eval._resource_class_for_group("type3_mountain") == "heavy"
+    assert bench_full_eval._resource_class_for_group("type6_forest") == "heavy"
 
 
 def test_select_next_batch_index_prefers_light_when_heavy_is_already_active():
@@ -128,7 +128,7 @@ def test_select_next_batch_index_prefers_light_when_heavy_is_already_active():
 def test_select_next_batch_index_waits_when_only_extra_heavy_seed_is_pending():
     batch_plan = [[0], [1]]
     task_meta = [
-        {"group": "type4_village"},
+        {"group": "type6_forest"},
         {"group": "type3_mountain"},
     ]
     scheduler = bench_full_eval._AdaptiveBackoffController(
@@ -153,7 +153,7 @@ def test_select_next_batch_index_allows_heavy_seed_when_capacity_is_available():
     batch_plan = [[0], [1]]
     task_meta = [
         {"group": "type1_city"},
-        {"group": "type4_village"},
+        {"group": "type6_forest"},
     ]
     scheduler = bench_full_eval._AdaptiveBackoffController(
         requested_workers=3,
@@ -200,7 +200,9 @@ def test_scheduler_ignores_non_resource_failure_statuses():
         note = controller.observe_seed({"status": status, "map_seed": 10, "challenge_type": 2})
         assert note is None
 
-    assert controller.active_worker_cap == controller.max_worker_cap == 8
+    assert controller.start_worker_cap == 3
+    assert controller.active_worker_cap == controller.start_worker_cap
+    assert controller.max_worker_cap == 8
 
 
 def test_scheduler_reduces_cap_on_critical_pressure_and_relaxes_after_recovery():
@@ -229,6 +231,8 @@ def test_scheduler_reduces_cap_on_critical_pressure_and_relaxes_after_recovery()
         machine_total_ram_mb=65536,
         resource_provider=_provider,
     )
+    controller.active_worker_cap = 8
+    controller.active_heavy_cap = 3
 
     note_one = controller.observe_resources([])
     note_two = controller.observe_resources([])
@@ -254,6 +258,71 @@ def test_scheduler_reduces_cap_on_critical_pressure_and_relaxes_after_recovery()
 
     assert controller.active_worker_cap > 5
     assert any(note and "Scheduler relaxed" in note for note in relax_notes)
+
+
+def test_scheduler_cold_starts_low_with_single_heavy_slot():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+
+    assert controller.max_worker_cap == 12
+    assert controller.start_worker_cap == 3
+    assert controller.active_worker_cap == 3
+    assert controller.active_heavy_cap == 1
+
+
+def test_scheduler_promotes_light_group_when_observed_runtime_is_expensive():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+    controller.latest_pressure = "healthy"
+
+    for idx in range(4):
+        controller.observe_seed(
+            {
+                "status": "seed_done",
+                "map_seed": 1000 + idx,
+                "challenge_type": 1,
+                "sim_time_sec": 20.0,
+                "seed_wall_sec": 190.0,
+                "horizon_sec": 60.0,
+            },
+            group_name="type1_city",
+        )
+
+    learned = controller._cost_for_group("type1_city")
+    assert learned.resource_class == "heavy"
+    assert learned.heavy_tokens == 2
+
+
+def test_scheduler_can_demote_heavy_group_one_step_after_consistent_healthy_samples():
+    controller = bench_full_eval._AdaptiveBackoffController(
+        requested_workers=12,
+        machine_vcpus=12,
+        machine_total_ram_mb=65536,
+    )
+    controller.latest_pressure = "healthy"
+
+    for idx in range(5):
+        controller.observe_seed(
+            {
+                "status": "seed_done",
+                "map_seed": 2000 + idx,
+                "challenge_type": 3,
+                "sim_time_sec": 20.0,
+                "seed_wall_sec": 36.0,
+                "horizon_sec": 60.0,
+            },
+            group_name="type3_mountain",
+        )
+
+    learned = controller._cost_for_group("type3_mountain")
+    assert learned.resource_class == "medium"
+    assert learned.heavy_tokens == 1
 
 
 def test_save_and_load_type_seeds(tmp_path):

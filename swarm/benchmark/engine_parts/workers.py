@@ -28,7 +28,6 @@ from ._shared import (
 )
 from .config import _build_progress_bar, _temporary_env, _ts
 from .dispatch import (
-    _BACKOFF_ACTIVE_WORKERS,
     _PARENT_WORKER_HEARTBEAT_SEC,
     _PARENT_WORKER_STALL_TIMEOUT_SEC,
     _AdaptiveBackoffController,
@@ -266,18 +265,20 @@ async def _run_benchmark_process_mode(
     for line in scheduler.describe_configuration_lines():
         print(f"[{_ts()}] {line}", flush=True)
     print(
-        f"[{_ts()}] Dispatch policy: resource-aware scheduling enabled "
-        f"(heavy_groups=mountain,village; medium_groups=warehouse,forest; "
+        f"[{_ts()}] Dispatch policy: cold-start ramp enabled "
+        f"(light_groups=city,open; medium_groups=warehouse,village; heavy_groups=mountain,forest; "
         f"mountain<=1, scheduler_heavy_cap={scheduler.active_heavy_cap}/"
         f"{_max_heavy_active(scheduler.active_worker_cap)})"
     )
     if scheduler.enabled:
         print(
             f"[{_ts()}] Adaptive scheduler: enabled "
-            f"(levels={scheduler.worker_cap_levels}, min_cap={_BACKOFF_ACTIVE_WORKERS})"
+            f"(cold_start={scheduler.start_worker_cap}/{scheduler.max_worker_cap}, "
+            f"heavy_start={scheduler.active_heavy_cap}/{scheduler.max_heavy_cap}, "
+            f"backoff_levels={scheduler.worker_cap_levels})"
         )
     else:
-        print(f"[{_ts()}] Adaptive scheduler: disabled (requested workers <= {_BACKOFF_ACTIVE_WORKERS})")
+        print(f"[{_ts()}] Adaptive scheduler: disabled (single-worker run)")
     print(
         f"[{_ts()}] Parent worker stall watchdog: "
         f"{stall_timeout_sec:.1f}s without worker heartbeat -> discard seed and replace worker"
