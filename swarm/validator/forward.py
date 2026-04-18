@@ -256,17 +256,17 @@ async def forward(self) -> None:
                         f"👑 Champion UID {uid}: {len(all_seeds)} seeds directly (no screening)"
                     )
                     full_score, per_type_scores, full_scores, _ = await _run_full_benchmark(
-                        self, uid, model_path, seeds=all_seeds
+                        self, uid, model_path, seeds=all_seeds, reeval=True,
                     )
                     screening_score = full_score
                     screening_scores = []
                     combined_scores = full_scores
                 else:
                     screening_score, screening_scores, scr_per_type = await _run_screening(
-                        self, uid, model_path
+                        self, uid, model_path, reeval=True,
                     )
                     full_score, _, full_scores, bench_per_type = await _run_full_benchmark(
-                        self, uid, model_path
+                        self, uid, model_path, reeval=True,
                     )
                     combined_scores = screening_scores + full_scores
                     per_type_scores = _merge_per_type_averages(scr_per_type, bench_per_type)

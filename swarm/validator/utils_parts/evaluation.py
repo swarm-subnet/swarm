@@ -120,9 +120,13 @@ async def _evaluate_seeds(
 
 
 async def _run_screening(
-    self, uid: int, model_path: Path
+    self, uid: int, model_path: Path, reeval: bool = False
 ) -> Tuple[float, List[float], Dict[str, List[float]]]:
-    """Run screening seeds and stream per-seed scores. Returns (avg, all, per_type)."""
+    """Run screening seeds and stream per-seed scores. Returns (avg, all, per_type).
+
+    When ``reeval`` is True the heartbeat labels the active task as REEVAL so the
+    backend consistency check accepts screening work on a champion/evaluated model.
+    """
     screening_seeds = self.seed_manager.get_screening_seeds()
     total_seeds = len(screening_seeds)
 
@@ -155,11 +159,13 @@ async def _run_screening(
         matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
         if matched is not None:
             decision_version = matched.get("backend_decision_version")
+    active_task = {"uid": uid, "phase": "REEVAL"} if reeval else None
     hb.start(
         "evaluating_screening",
         uid,
         total_seeds,
         queue=hb_queue,
+        active_task=active_task,
         backend_decision_version=decision_version,
     )
 
@@ -240,11 +246,15 @@ async def _run_screening(
 
 
 async def _run_full_benchmark(
-    self, uid: int, model_path: Path, seeds: Optional[List[int]] = None
+    self, uid: int, model_path: Path, seeds: Optional[List[int]] = None,
+    reeval: bool = False,
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
     Returns (avg_score, per_type_avgs, all_scores, per_type_raw).
+
+    When ``reeval`` is True the heartbeat labels the active task as REEVAL so the
+    backend consistency check accepts benchmark work on a champion/evaluated model.
     """
     benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
     tracker_call(
@@ -262,11 +272,13 @@ async def _run_full_benchmark(
         matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
         if matched is not None:
             decision_version = matched.get("backend_decision_version")
+    active_task = {"uid": uid, "phase": "REEVAL"} if reeval else None
     hb.start(
         "evaluating_benchmark",
         uid,
         len(benchmark_seeds),
         queue=hb_queue,
+        active_task=active_task,
         backend_decision_version=decision_version,
     )
 
