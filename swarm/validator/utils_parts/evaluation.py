@@ -1,16 +1,16 @@
 import asyncio
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import bittensor as bt
 import numpy as np
 
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
-    SCREENING_CHECKPOINT_SIZE,
+    MAX_INFLIGHT_SEED_UPLOADS,
     SCREENING_TEMPLATE,
-    SEED_SCORE_BATCH_MAX,
     SIM_DT,
+    UNIFIED_CHUNK_SIZE,
 )
 from swarm.validator.task_gen import random_task, screening_task
 from swarm.validator.runtime_telemetry import tracker_call
@@ -18,10 +18,19 @@ from swarm.validator.runtime_telemetry import tracker_call
 from .heartbeat import HeartbeatManager
 
 
+_EMPTY_PER_TYPE = (
+    "city", "open", "mountain", "village", "warehouse", "forest", "moving_platform",
+)
+
+
 def _utils_facade():
     from swarm.validator import utils as validator_utils
 
     return validator_utils
+
+
+def _empty_per_type() -> Dict[str, List[float]]:
+    return {name: [] for name in _EMPTY_PER_TYPE}
 
 
 async def _evaluate_seeds(
@@ -38,10 +47,7 @@ async def _evaluate_seeds(
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
     """Evaluate a model on multiple seeds using parallel Docker containers."""
     all_scores = []
-    per_type_scores = {
-        "city": [], "open": [], "mountain": [],
-        "village": [], "warehouse": [], "forest": [], "moving_platform": [],
-    }
+    per_type_scores = _empty_per_type()
 
     challenge_type_to_name = {
         1: "city",
@@ -119,6 +125,148 @@ async def _evaluate_seeds(
     return all_scores, per_type_scores, seed_details
 
 
+async def _run_streaming_phase(
+    self,
+    uid: int,
+    model_path: Path,
+    seeds: List[int],
+    *,
+    phase_description: str,
+    seed_offset: int,
+    epoch_number: int,
+    hb: HeartbeatManager,
+    pre_built_tasks: Optional[List] = None,
+    re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None,
+    on_chunk_complete: Optional[Callable[..., None]] = None,
+    chunk_size: int = UNIFIED_CHUNK_SIZE,
+    max_inflight: int = MAX_INFLIGHT_SEED_UPLOADS,
+    evaluator_prior_done: int = 0,
+    evaluator_total_seeds: Optional[int] = None,
+) -> Tuple[List[float], Dict[str, List[float]], List[dict], Optional[str]]:
+    """Evaluate seeds in chunks, streaming scores with fire-and-forget uploads.
+
+    The caller owns heartbeat lifecycle and outer telemetry. Returns accumulated
+    scores, per-type scores, seed details, and an optional cancel reason when
+    ``re_authorize`` reports the task is no longer authorized.
+    """
+    all_scores: List[float] = []
+    all_per_type: Dict[str, List[float]] = _empty_per_type()
+    all_details: List[dict] = []
+    inflight: List[asyncio.Task] = []
+    failed_batches: List[List[dict]] = []
+    cancel_reason: Optional[str] = None
+    total_for_evaluator = (
+        evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
+    )
+
+    async def _safe_upload(batch: List[dict]) -> None:
+        try:
+            result = await self.backend_api.post_seed_scores_batch(
+                model_uid=uid, epoch_number=epoch_number, scores=batch,
+            )
+        except Exception as exc:
+            bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
+            failed_batches.append(batch)
+            return
+        if not result or not result.get("recorded"):
+            failed_batches.append(batch)
+
+    async def _wait_for_slot() -> None:
+        while len(inflight) >= max_inflight:
+            done, _pending = await asyncio.wait(
+                inflight, return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                if task in inflight:
+                    inflight.remove(task)
+
+    async def _drain_inflight() -> None:
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
+            inflight.clear()
+
+    try:
+        for chunk_start in range(0, len(seeds), chunk_size):
+            if re_authorize is not None:
+                await _drain_inflight()
+                auth = await re_authorize()
+                if not auth or not auth.get("authorized"):
+                    cancel_reason = str(auth.get("reason") if auth else "unauthorized")
+                    break
+
+            batch_seeds = seeds[chunk_start:chunk_start + chunk_size]
+            batch_tasks = (
+                pre_built_tasks[chunk_start:chunk_start + chunk_size]
+                if pre_built_tasks is not None else None
+            )
+            if not batch_seeds:
+                break
+
+            prior_avg = float(np.mean(all_scores)) if all_scores else 0.0
+            batch_scores, batch_per_type, batch_details = await _utils_facade()._evaluate_seeds(
+                self, uid, model_path, batch_seeds,
+                f"{phase_description} [{chunk_start + 1}..{chunk_start + len(batch_seeds)}]",
+                on_seed_complete=hb.on_seed_complete,
+                prior_seeds_done=evaluator_prior_done + len(all_scores),
+                prior_total_seeds=total_for_evaluator,
+                prior_avg=prior_avg,
+                pre_built_tasks=batch_tasks,
+            )
+
+            seed_batch = [
+                {
+                    "seed_index": seed_offset + chunk_start + j,
+                    "score": detail["score"],
+                    "map_type": detail["map_type"],
+                }
+                for j, detail in enumerate(batch_details)
+                if detail.get("map_type") != "unknown"
+            ]
+            if seed_batch:
+                await _wait_for_slot()
+                inflight.append(asyncio.create_task(_safe_upload(seed_batch)))
+
+            all_scores.extend(batch_scores)
+            for type_name, scores in batch_per_type.items():
+                if type_name in all_per_type:
+                    all_per_type[type_name].extend(scores)
+            all_details.extend(batch_details)
+
+            if on_chunk_complete is not None:
+                try:
+                    on_chunk_complete(
+                        evaluated=len(all_scores),
+                        total=len(seeds),
+                        running_avg=float(np.mean(all_scores)) if all_scores else 0.0,
+                        chunk_scores=list(batch_scores),
+                        chunk_per_type={k: list(v) for k, v in batch_per_type.items()},
+                        chunk_details=list(batch_details),
+                    )
+                except Exception as exc:
+                    bt.logging.warning(f"on_chunk_complete callback failed for UID {uid}: {exc}")
+    finally:
+        await _drain_inflight()
+        if failed_batches:
+            retry_queue = list(failed_batches)
+            failed_batches.clear()
+            for batch in retry_queue:
+                try:
+                    result = await self.backend_api.post_seed_scores_batch(
+                        model_uid=uid, epoch_number=epoch_number, scores=batch,
+                    )
+                except Exception as exc:
+                    bt.logging.warning(
+                        f"Final retry of {len(batch)} seed scores failed for UID {uid}: {exc}"
+                    )
+                    continue
+                if not result or not result.get("recorded"):
+                    bt.logging.warning(
+                        f"Final retry of {len(batch)} seed scores not recorded for UID {uid}"
+                    )
+
+    return all_scores, all_per_type, all_details, cancel_reason
+
+
 async def _run_screening(
     self, uid: int, model_path: Path, reeval: bool = False
 ) -> Tuple[float, List[float], Dict[str, List[float]]]:
@@ -130,8 +278,10 @@ async def _run_screening(
     screening_seeds = self.seed_manager.get_screening_seeds()
     total_seeds = len(screening_seeds)
 
-    template_cycle = (SCREENING_TEMPLATE * ((total_seeds // len(SCREENING_TEMPLATE)) + 1))[:total_seeds]
-    screening_tasks = []
+    template_cycle = (
+        SCREENING_TEMPLATE * ((total_seeds // len(SCREENING_TEMPLATE)) + 1)
+    )[:total_seeds]
+    screening_tasks: List = []
     for seed, slot in zip(screening_seeds, template_cycle):
         try:
             screening_tasks.append(screening_task(
@@ -169,63 +319,30 @@ async def _run_screening(
         backend_decision_version=decision_version,
     )
 
-    all_per_type: Dict[str, List[float]] = {
-        "city": [], "open": [], "mountain": [],
-        "village": [], "warehouse": [], "forest": [], "moving_platform": [],
-    }
+    def _on_chunk(**info) -> None:
+        tracker_call(
+            self,
+            "mark_screening_progress",
+            uid=int(uid),
+            progress=int(info["evaluated"]),
+            total_seeds=int(info["total"]),
+            running_median=float(info["running_avg"]),
+            note=f"checkpoint {info['evaluated']}/{info['total']}",
+        )
 
     try:
-        all_scores: List[float] = []
-        checkpoints = list(range(
-            SCREENING_CHECKPOINT_SIZE, total_seeds + 1, SCREENING_CHECKPOINT_SIZE
-        ))
-        if not checkpoints or checkpoints[-1] < total_seeds:
-            checkpoints.append(total_seeds)
-        for checkpoint in checkpoints:
-            batch_seeds = screening_seeds[len(all_scores):checkpoint]
-            batch_tasks = screening_tasks[len(all_scores):checkpoint]
-            if not batch_seeds:
-                break
-
-            batch_start = len(all_scores)
-            batch_scores, batch_per_type, batch_details = await _utils_facade()._evaluate_seeds(
-                self, uid, model_path, batch_seeds,
-                f"screening [{batch_start + 1}..{checkpoint}]",
-                on_seed_complete=hb.on_seed_complete,
-                pre_built_tasks=batch_tasks,
-            )
-            try:
-                seed_batch = [
-                    {"seed_index": batch_start + j, "score": d["score"], "map_type": d["map_type"]}
-                    for j, d in enumerate(batch_details) if d.get("map_type") != "unknown"
-                ]
-                if seed_batch:
-                    await self.backend_api.post_seed_scores_batch(
-                        model_uid=uid,
-                        epoch_number=self.seed_manager.epoch_number,
-                        scores=seed_batch,
-                    )
-            except Exception as e:
-                bt.logging.warning(f"Screening seed score upload failed for UID {uid}: {e}")
-            all_scores.extend(batch_scores)
-            for type_name, scores in batch_per_type.items():
-                if type_name in all_per_type:
-                    all_per_type[type_name].extend(scores)
-
-            evaluated = len(all_scores)
-            if evaluated < SCREENING_CHECKPOINT_SIZE:
-                continue
-
-            running_avg = float(np.mean(all_scores))
-            tracker_call(
-                self,
-                "mark_screening_progress",
-                uid=int(uid),
-                progress=int(evaluated),
-                total_seeds=int(total_seeds),
-                running_median=float(running_avg),
-                note=f"checkpoint {evaluated}/{total_seeds}",
-            )
+        all_scores, all_per_type, _details, _cancel = await _run_streaming_phase(
+            self,
+            uid,
+            model_path,
+            screening_seeds,
+            phase_description="screening",
+            seed_offset=0,
+            epoch_number=self.seed_manager.epoch_number,
+            hb=hb,
+            pre_built_tasks=screening_tasks,
+            on_chunk_complete=_on_chunk,
+        )
     finally:
         hb.finish()
 
@@ -257,12 +374,16 @@ async def _run_full_benchmark(
     backend consistency check accepts benchmark work on a champion/evaluated model.
     """
     benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
+    seed_offset = 0 if seeds is not None else BENCHMARK_SCREENING_SEED_COUNT
+    total_seeds = len(benchmark_seeds)
+    note = "full benchmark" if seeds is None else "custom seeds"
+
     tracker_call(
         self,
         "mark_benchmark_started",
         uid=int(uid),
-        total_seeds=len(benchmark_seeds),
-        note="full benchmark" if seeds is None else "custom seeds",
+        total_seeds=total_seeds,
+        note=note,
     )
 
     hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
@@ -276,39 +397,39 @@ async def _run_full_benchmark(
     hb.start(
         "evaluating_benchmark",
         uid,
-        len(benchmark_seeds),
+        total_seeds,
         queue=hb_queue,
         active_task=active_task,
         backend_decision_version=decision_version,
     )
 
-    try:
-        all_scores, per_type_raw, details = await _utils_facade()._evaluate_seeds(
-            self, uid, model_path, benchmark_seeds, "full benchmark",
-            on_seed_complete=hb.on_seed_complete
+    def _on_chunk(**info) -> None:
+        tracker_call(
+            self,
+            "mark_benchmark_progress",
+            uid=int(uid),
+            progress=int(info["evaluated"]),
+            total_seeds=int(info["total"]),
+            note=f"checkpoint {info['evaluated']}/{info['total']}",
         )
-        try:
-            seed_offset = 0 if seeds is not None else BENCHMARK_SCREENING_SEED_COUNT
-            seed_batch = [
-                {"seed_index": seed_offset + i, "score": d["score"], "map_type": d["map_type"]}
-                for i, d in enumerate(details) if d.get("map_type") != "unknown"
-            ]
-            for chunk_start in range(0, len(seed_batch), SEED_SCORE_BATCH_MAX):
-                chunk = seed_batch[chunk_start:chunk_start + SEED_SCORE_BATCH_MAX]
-                if chunk:
-                    await self.backend_api.post_seed_scores_batch(
-                        model_uid=uid,
-                        epoch_number=self.seed_manager.epoch_number,
-                        scores=chunk,
-                    )
-        except Exception as e:
-            bt.logging.warning(f"Seed score upload failed for UID {uid}: {e}")
+
+    try:
+        all_scores, per_type_raw, _details, _cancel = await _run_streaming_phase(
+            self,
+            uid,
+            model_path,
+            benchmark_seeds,
+            phase_description="full benchmark",
+            seed_offset=seed_offset,
+            epoch_number=self.seed_manager.epoch_number,
+            hb=hb,
+            on_chunk_complete=_on_chunk,
+        )
     finally:
         hb.finish()
 
     avg_score = float(np.mean(all_scores)) if all_scores else 0.0
-
-    per_type_avgs = {}
+    per_type_avgs: Dict[str, float] = {}
     for type_name, scores in per_type_raw.items():
         per_type_avgs[type_name] = float(np.mean(scores)) if scores else 0.0
 
@@ -317,11 +438,9 @@ async def _run_full_benchmark(
         "mark_benchmark_completed",
         uid=int(uid),
         evaluated=len(all_scores),
-        total_seeds=len(benchmark_seeds),
+        total_seeds=total_seeds,
         median_score=float(avg_score),
-        note="full benchmark" if seeds is None else "custom seeds",
+        note=note,
     )
     bt.logging.info(f"📊 Full benchmark result for UID {uid}: avg={avg_score:.4f}")
     return avg_score, per_type_avgs, all_scores, per_type_raw
-
-

@@ -234,6 +234,11 @@ SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this marg
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
 
+# Unified streaming chunk size used by screening, benchmark, and reeval phases.
+# Smaller chunks give fresher UI updates at the cost of more seed-score uploads.
+UNIFIED_CHUNK_SIZE = 10
+MAX_INFLIGHT_SEED_UPLOADS = 3
+
 # Screening template — 50 standardised entries, cycled 4× for 200 screening seeds
 def _build_screening_template() -> list[dict]:
     slots: list[dict] = []
