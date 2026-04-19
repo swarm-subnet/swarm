@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from swarm.constants import N_DOCKER_WORKERS
+
 from ._shared import (
     Any,
     Dict,
@@ -164,8 +166,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Number of seeds per benchmark map group (default: 3).",
     )
     parser.add_argument(
-        "--workers", type=int, default=2,
-        help="Number of parallel Docker workers (default: 2).",
+        "--workers", type=int, default=N_DOCKER_WORKERS,
+        help="Number of parallel Docker workers (default: available vCPUs, capped at 12).",
     )
     parser.add_argument(
         "--log-out", type=Path, default=None,
@@ -258,6 +260,8 @@ def _active_runtime_overrides() -> Dict[str, str]:
         "SWARM_DOCKER_WORKER_CPUS_OVERRIDE",
         "SWARM_DOCKER_WORKER_MEMORY_OVERRIDE",
         "SWARM_DOCKER_WORKER_CPUSETS",
+        "SWARM_HOST_WORKER_MEMORY_MB",
+        "SWARM_HOST_WORKER_CPUSETS",
     ]
     active: Dict[str, str] = {}
     for key in keys:
@@ -266,5 +270,7 @@ def _active_runtime_overrides() -> Dict[str, str]:
             active[key] = value
     for key, value in os.environ.items():
         if key.startswith("SWARM_DOCKER_WORKER_CPUSET_CPUS_") and value not in ("",):
+            active[key] = value
+        if key.startswith("SWARM_HOST_WORKER_CPUSET_CPUS_") and value not in ("",):
             active[key] = value
     return active

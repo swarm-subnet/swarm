@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from swarm.constants import N_DOCKER_WORKERS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
@@ -1138,8 +1139,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--workers",
         type=int,
-        default=2,
-        help="Parallel workers for benchmark.",
+        default=N_DOCKER_WORKERS,
+        help="Parallel workers for benchmark (default: available vCPUs, capped at 12).",
     )
     benchmark_parser.add_argument(
         "--log-out",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from ._shared import (
     BENCH_GROUP_TO_TYPE,
     Any,
@@ -26,7 +28,6 @@ from ._shared import (
 )
 from .config import _build_progress_bar, _temporary_env, _ts
 from .dispatch import (
-    _BACKOFF_ACTIVE_WORKERS,
     _PARENT_WORKER_HEARTBEAT_SEC,
     _PARENT_WORKER_STALL_TIMEOUT_SEC,
     _AdaptiveBackoffController,
@@ -35,6 +36,7 @@ from .dispatch import (
     _max_heavy_active,
     _select_next_batch_index,
 )
+from swarm.config import HostWorkerRuntimeSettings
 
 
 def _engine_facade():
@@ -72,12 +74,51 @@ def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float]:
     )
 
 
+def _apply_host_worker_limits(process_slot: int) -> None:
+    settings = HostWorkerRuntimeSettings.from_env()
+    limits = settings.resolve_worker_limits(process_slot)
+
+    cpuset = limits.cpuset_cpus
+    if cpuset:
+        try:
+            allowed = settings.parse_cpuset_spec(cpuset)
+            if allowed and hasattr(os, "sched_setaffinity"):
+                os.sched_setaffinity(0, allowed)
+        except Exception:
+            pass
+
+    memory_mb = limits.memory_mb
+    if memory_mb is None or memory_mb <= 0:
+        return
+    try:
+        import resource
+    except Exception:
+        return
+    limit_bytes = int(memory_mb) * 1024 * 1024
+    for resource_name in ("RLIMIT_AS", "RLIMIT_DATA"):
+        try:
+            resource_id = getattr(resource, resource_name, None)
+            if resource_id is None:
+                continue
+            soft, hard = resource.getrlimit(resource_id)
+            new_soft = limit_bytes
+            new_hard = limit_bytes
+            if hard not in (resource.RLIM_INFINITY, -1):
+                new_hard = min(int(hard), limit_bytes)
+            if soft not in (resource.RLIM_INFINITY, -1):
+                new_soft = min(int(soft), limit_bytes)
+            resource.setrlimit(resource_id, (new_soft, new_hard))
+        except Exception:
+            pass
+
+
 def _benchmark_worker_main(
     process_slot: int,
     task_queue: Any,
     result_queue: Any,
     progress_queue: Any,
 ) -> None:
+    _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -185,6 +226,7 @@ async def _run_benchmark_process_mode(
     record_batch_completion: Any,
     on_seed_done: Any,
     run_opts: _RunOptions,
+    set_heartbeat_status_provider: Optional[Any] = None,
 ) -> int:
     engine = _engine_facade()
     ctx = engine._benchmark_mp_context()
@@ -193,6 +235,11 @@ async def _run_benchmark_process_mode(
     progress_queue = ctx.Queue()
     workers: Dict[int, Any] = {}
     scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
+    if callable(set_heartbeat_status_provider):
+        try:
+            set_heartbeat_status_provider(scheduler.format_live_status_line)
+        except Exception:
+            pass
     pending_batch_ids: List[int] = list(range(len(batch_plan)))
     inflight_batches: Dict[int, _ProcessBatchRequest] = {}
     worker_active_batches: Dict[int, int] = {}
@@ -202,6 +249,18 @@ async def _run_benchmark_process_mode(
         engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(getattr(run_opts, "heartbeat_sec", 0.0))) * 2.0,
     )
+    pressure_poll_interval_sec = max(
+        0.0,
+        float(getattr(engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+    )
+    last_pressure_poll_at = 0.0
+    
+    def _active_group_names() -> List[str]:
+        return [
+            str(task_meta[batch_plan[batch_id][0]]["group"])
+            for batch_id in inflight_batches.keys()
+            if batch_plan[batch_id]
+        ]
 
     def _spawn_worker(worker_slot: int) -> Any:
         worker = ctx.Process(
@@ -214,27 +273,37 @@ async def _run_benchmark_process_mode(
         workers[worker_slot] = worker
         return worker
 
+    def _maybe_poll_scheduler(*, force: bool = False) -> None:
+        nonlocal last_pressure_poll_at
+        now = time.monotonic()
+        if (
+            not force
+            and pressure_poll_interval_sec > 0.0
+            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+        ):
+            return
+        last_pressure_poll_at = now
+        note = scheduler.observe_resources(_active_group_names())
+        if note:
+            print(f"[{_ts()}] {note}", flush=True)
+
+    for line in scheduler.describe_configuration_lines():
+        print(f"[{_ts()}] {line}", flush=True)
     print(
-        f"[{_ts()}] Dispatch policy: heavy-aware scheduling enabled "
-        f"(heavy_groups=mountain,village,warehouse,forest; "
-        f"mountain<=1, warehouse<=1, max_heavy={_max_heavy_active(scheduler.active_worker_cap)})"
+        f"[{_ts()}] Dispatch policy: cold-start ramp enabled "
+        f"(light_groups=city; medium_groups=open,warehouse; heavy_groups=village,mountain,forest; "
+        f"mountain<=1, scheduler_heavy_cap={scheduler.active_heavy_cap}/"
+        f"{_max_heavy_active(scheduler.active_worker_cap)})"
     )
     if scheduler.enabled:
-        from .dispatch import (
-            _BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE,
-            _BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC,
-            _BACKOFF_COOLDOWN_COMPLETIONS,
-        )
-
         print(
-            f"[{_ts()}] Adaptive backoff: enabled "
-            f"(levels={scheduler.worker_cap_levels}, min_cap={_BACKOFF_ACTIVE_WORKERS}, "
-            f"cooldown={_BACKOFF_COOLDOWN_COMPLETIONS} seeds, "
-            f"calibration spike>={_BACKOFF_CALIBRATION_OVERHEAD_SPIKE_SEC*1000:.0f}ms "
-            f"or cpu_factor>={_BACKOFF_CALIBRATION_CPU_FACTOR_SPIKE:.2f}x)"
+            f"[{_ts()}] Adaptive scheduler: enabled "
+            f"(cold_start={scheduler.start_worker_cap}/{scheduler.max_worker_cap}, "
+            f"heavy_start={scheduler.active_heavy_cap}/{scheduler.max_heavy_cap}, "
+            f"backoff_levels={scheduler.worker_cap_levels})"
         )
     else:
-        print(f"[{_ts()}] Adaptive backoff: disabled (requested workers <= {_BACKOFF_ACTIVE_WORKERS})")
+        print(f"[{_ts()}] Adaptive scheduler: disabled (single-worker run)")
     print(
         f"[{_ts()}] Parent worker stall watchdog: "
         f"{stall_timeout_sec:.1f}s without worker heartbeat -> discard seed and replace worker"
@@ -254,7 +323,14 @@ async def _run_benchmark_process_mode(
                 continue
             seed_meta = getattr(event, "seed_meta", None)
             on_seed_done(seed_meta)
-            note = scheduler.observe_seed(seed_meta)
+            group_name: Optional[str] = None
+            try:
+                batch_index = int(getattr(event, "batch_index", -1))
+                if batch_index >= 0 and batch_plan[batch_index]:
+                    group_name = str(task_meta[batch_plan[batch_index][0]]["group"])
+            except Exception:
+                group_name = None
+            note = scheduler.observe_seed(seed_meta, group_name=group_name)
             if note:
                 print(f"[{_ts()}] {note}", flush=True)
 
@@ -277,6 +353,7 @@ async def _run_benchmark_process_mode(
                 task_meta=task_meta,
                 active_batch_ids=list(inflight_batches.keys()),
                 active_worker_cap=scheduler.active_worker_cap,
+                scheduler=scheduler,
             )
             if batch_index is None:
                 return
@@ -289,7 +366,9 @@ async def _run_benchmark_process_mode(
                 f"[{_ts()}] Dispatch batch {batch_index + 1}/{len(batch_plan)} | "
                 f"worker=queued | group={group_name} | seeds={len(batch_indices)} | "
                 f"first_seed={seed_list[0]} | last_seed={seed_list[-1]} | "
-                f"active_limit={scheduler.active_worker_cap}",
+                f"active_limit={scheduler.active_worker_cap} | "
+                f"heavy_limit={scheduler.active_heavy_cap} | "
+                f"{scheduler.format_status_line()}",
                 flush=True,
             )
             request = _ProcessBatchRequest(
@@ -301,6 +380,7 @@ async def _run_benchmark_process_mode(
                 task_total=len(all_tasks),
             )
             inflight_batches[batch_index] = request
+            scheduler.note_group_dispatched(group_name)
             task_queue.put(request)
 
     def _check_for_stalled_workers() -> int:
@@ -359,17 +439,22 @@ async def _run_benchmark_process_mode(
     try:
         for worker_slot in range(effective_workers):
             _spawn_worker(worker_slot)
+        _maybe_poll_scheduler(force=True)
         _dispatch_available_batches()
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
             _drain_progress_events()
+            _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
             try:
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
+                _maybe_poll_scheduler()
+                _dispatch_available_batches()
                 if any(
                     (not worker.is_alive()) and worker.exitcode not in (0, None)
                     for worker in workers.values()
@@ -387,6 +472,8 @@ async def _run_benchmark_process_mode(
                 continue
 
             _drain_progress_events()
+            _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -417,6 +504,7 @@ async def _run_benchmark_process_mode(
                 float(payload.elapsed_sec),
             )
             completed_batches += 1
+            _maybe_poll_scheduler()
             _dispatch_available_batches()
 
         _drain_progress_events()
@@ -483,6 +571,8 @@ async def _run_benchmark(
     done_count = 0
     last_done_at = eval_start
     stop_heartbeat = threading.Event()
+    heartbeat_status_lock = threading.Lock()
+    heartbeat_status_provider: Optional[Any] = None
 
     def _eta_minutes(elapsed_sec: float, done: int) -> float:
         if done <= 0:
@@ -527,6 +617,11 @@ async def _run_benchmark(
                 flush=True,
             )
 
+    def _set_heartbeat_status_provider(provider: Optional[Any]) -> None:
+        nonlocal heartbeat_status_provider
+        with heartbeat_status_lock:
+            heartbeat_status_provider = provider
+
     def _heartbeat() -> None:
         try:
             if heartbeat_sec <= 0:
@@ -541,9 +636,18 @@ async def _run_benchmark(
                 idle_for = now - last_done_snapshot
                 eta_min = _eta_minutes(elapsed, done_snapshot)
                 eta_txt = "--" if eta_min == float("inf") else f"{eta_min:.1f}m"
+                with heartbeat_status_lock:
+                    provider = heartbeat_status_provider
+                status_suffix = ""
+                if callable(provider):
+                    try:
+                        status_suffix = f" | {provider()}"
+                    except Exception:
+                        status_suffix = ""
                 print(
                     f"[{_ts()}] Heartbeat: {done_snapshot}/{total_seeds} done | "
-                    f"elapsed {elapsed/60.0:.1f}m | last completion {idle_for:.0f}s ago | ETA {eta_txt}",
+                    f"elapsed {elapsed/60.0:.1f}m | last completion {idle_for:.0f}s ago | "
+                    f"ETA {eta_txt}{status_suffix}",
                     flush=True,
                 )
         except Exception as e:
@@ -679,6 +783,7 @@ async def _run_benchmark(
                 record_batch_completion=_record_batch_completion,
                 on_seed_done=_on_seed_done,
                 run_opts=run_opts,
+                set_heartbeat_status_provider=_set_heartbeat_status_provider,
             )
 
             if any(r is None for r in results):
@@ -686,6 +791,7 @@ async def _run_benchmark(
     finally:
         stop_heartbeat.set()
         heartbeat_thread.join(timeout=2.0)
+        _set_heartbeat_status_provider(None)
         progress_bar.close()
 
     elapsed = time.time() - eval_start

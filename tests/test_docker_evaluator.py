@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import queue
+import threading
+import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -435,6 +438,23 @@ def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
     assert limits["cpuset_cpus"] == "2-3"
 
 
+def test_host_worker_runtime_settings_use_env_overrides(monkeypatch):
+    from swarm.config import HostWorkerRuntimeSettings
+
+    monkeypatch.setenv("SWARM_HOST_WORKER_MEMORY_MB", "2048")
+    monkeypatch.setenv("SWARM_HOST_WORKER_CPUSETS", "0;1;2-3")
+    limits = HostWorkerRuntimeSettings.from_env().resolve_worker_limits(worker_id=2)
+    assert limits.memory_mb == 2048
+    assert limits.cpuset_cpus == "2-3"
+
+
+def test_host_worker_runtime_parse_cpuset_spec():
+    from swarm.config import HostWorkerRuntimeSettings
+
+    parsed = HostWorkerRuntimeSettings.parse_cpuset_spec("0,2-4,7")
+    assert parsed == {0, 2, 3, 4, 7}
+
+
 def test_calibrate_rpc_overhead_fallback_on_failures(monkeypatch):
     ev = _new_evaluator()
     monkeypatch.setattr(ev, "_serialize_observation", lambda *a, **k: object())
@@ -754,6 +774,215 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
     assert [payload["status"] for payload in callback_payloads] == ["seed_timeout_strikes"]
     assert not any("retrying timed-out seed mountain:3201" in line for line in log_lines)
     assert any("1 failed, 0 timeout, 0 runtime, 0 retried_timeout" in line for line in log_lines)
+
+
+def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=5,
+        map_seed=3301,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 61,
+                            "map_seed": 3301,
+                            "challenge_type": 5,
+                            "status": "seed_done",
+                            "success": True,
+                            "sim_time_sec": 12.0,
+                            "seed_wall_sec": 40.0,
+                            "step_idx": 120,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(61, True, 12.0, 0.9)],
+                    "elapsed_sec": 40.0,
+                }
+            ]
+        },
+    )
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(
+        bench_full_eval._AdaptiveBackoffController,
+        "format_status_line",
+        lambda self: "stale-status",
+    )
+    monkeypatch.setattr(
+        bench_full_eval._AdaptiveBackoffController,
+        "format_live_status_line",
+        lambda self: "live-status",
+    )
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type5_warehouse",
+                    "seed": 3301,
+                    "challenge_type": 5,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=61,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=None,
+            phase_label="eval",
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert any("live-status" in line for line in log_lines)
+    assert not any("stale-status" in line for line in log_lines)
+
+
+def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    observe_calls = []
+    original_observe_resources = bench_full_eval._AdaptiveBackoffController.observe_resources
+
+    def _counting_observe_resources(self, active_groups):
+        observe_calls.append(list(active_groups))
+        return original_observe_resources(self, active_groups)
+
+    monkeypatch.setattr(
+        bench_full_eval._AdaptiveBackoffController,
+        "observe_resources",
+        _counting_observe_resources,
+    )
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_PRESSURE_POLL_INTERVAL_SEC",
+        0.05,
+        raising=False,
+    )
+
+    class _DelayedProcess:
+        def __init__(self, ctx, args):
+            self._ctx = ctx
+            self._args = args
+            self.exitcode = None
+            self._alive = False
+            self._thread = None
+            self._stop = threading.Event()
+
+        def start(self):
+            self._alive = True
+            worker_slot, task_queue, result_queue, progress_queue = self._args
+
+            def _run():
+                request = task_queue.get()
+                if request is None:
+                    self.exitcode = 0
+                    self._alive = False
+                    return
+                progress_queue.put(
+                    self._ctx._bench_engine._ProcessWorkerHeartbeat(
+                        worker_id=int(worker_slot),
+                        batch_index=int(request.batch_index),
+                        event_type="batch_started",
+                        ts=time.time(),
+                    )
+                )
+                if self._stop.wait(0.25):
+                    self.exitcode = -15
+                    self._alive = False
+                    return
+                result_queue.put(
+                    self._ctx._bench_engine._ProcessBatchResult(
+                        worker_id=int(worker_slot),
+                        batch_index=int(request.batch_index),
+                        batch_indices=list(request.batch_indices),
+                        results=[(int(request.uid), True, 12.0, 0.9)],
+                        elapsed_sec=0.25,
+                    )
+                )
+                self.exitcode = 0
+                self._alive = False
+
+            self._thread = threading.Thread(target=_run, daemon=True)
+            self._thread.start()
+
+        def join(self, timeout=None):
+            if self._thread is not None:
+                self._thread.join(timeout=timeout)
+
+        def terminate(self):
+            self.exitcode = -15
+            self._stop.set()
+            self._alive = False
+
+        def is_alive(self):
+            return bool(self._alive)
+
+    class _DelayedCtx:
+        def __init__(self, bench_engine):
+            self._bench_engine = bench_engine
+
+        def Queue(self):
+            return queue.Queue()
+
+        def Process(self, target, args, name, daemon):
+            _ = target, name, daemon
+            return _DelayedProcess(self, args)
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(
+        bench_full_eval,
+        "_benchmark_mp_context",
+        lambda: _DelayedCtx(bench_full_eval),
+    )
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: None)
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: None)
+
+    task = SimpleNamespace(
+        challenge_type=5,
+        map_seed=3401,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type5_warehouse",
+                    "seed": 3401,
+                    "challenge_type": 5,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=62,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=None,
+            phase_label="eval",
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert len(observe_calls) >= 2
 
 
 def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
