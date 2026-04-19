@@ -207,7 +207,7 @@ async def _process_normal_queue_item(
                     )
                     return
                 tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
-                screening_score, screening_scores, screening_per_type = (
+                screening_score, screening_scores, screening_per_type, _ = (
                     await _utils_facade()._run_screening(self, uid, model_path)
                 )
                 item["screening_score"] = float(screening_score)

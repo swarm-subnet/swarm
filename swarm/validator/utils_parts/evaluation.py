@@ -269,14 +269,18 @@ async def _run_streaming_phase(
 
 async def _run_screening(
     self, uid: int, model_path: Path, reeval: bool = False
-) -> Tuple[float, List[float], Dict[str, List[float]]]:
-    """Run screening seeds and stream per-seed scores. Returns (avg, all, per_type).
+) -> Tuple[float, List[float], Dict[str, List[float]], Optional[str]]:
+    """Run screening seeds and stream per-seed scores.
 
-    When ``reeval`` is True the heartbeat labels the active task as REEVAL so the
-    backend consistency check accepts screening work on a champion/evaluated model.
+    Returns (avg, all, per_type, cancel_reason).
+
+    When ``reeval`` is True the heartbeat labels the active task as REEVAL and a
+    backend authorization check runs before each streaming chunk so a stale
+    re-eval can be halted mid-flight.
     """
     screening_seeds = self.seed_manager.get_screening_seeds()
     total_seeds = len(screening_seeds)
+    epoch = self.seed_manager.epoch_number
 
     template_cycle = (
         SCREENING_TEMPLATE * ((total_seeds // len(SCREENING_TEMPLATE)) + 1)
@@ -330,17 +334,26 @@ async def _run_screening(
             note=f"checkpoint {info['evaluated']}/{info['total']}",
         )
 
+    re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None
+    if reeval:
+        async def _reauthorize_reeval() -> dict:
+            return await self.backend_api.authorize_task(
+                uid, "REEVAL", epoch_number=epoch,
+            )
+        re_authorize = _reauthorize_reeval
+
     try:
-        all_scores, all_per_type, _details, _cancel = await _run_streaming_phase(
+        all_scores, all_per_type, _details, cancel_reason = await _run_streaming_phase(
             self,
             uid,
             model_path,
             screening_seeds,
             phase_description="screening",
             seed_offset=0,
-            epoch_number=self.seed_manager.epoch_number,
+            epoch_number=epoch,
             hb=hb,
             pre_built_tasks=screening_tasks,
+            re_authorize=re_authorize,
             on_chunk_complete=_on_chunk,
         )
     finally:
@@ -355,28 +368,37 @@ async def _run_screening(
         total_seeds=int(total_seeds),
         median_score=float(avg_score),
     )
-    bt.logging.info(
-        f"📊 Screening result for UID {uid}: "
-        f"avg={avg_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
-    )
-    return avg_score, all_scores, all_per_type
+    if cancel_reason is None:
+        bt.logging.info(
+            f"📊 Screening result for UID {uid}: "
+            f"avg={avg_score:.4f} ({len(all_scores)}/{total_seeds} seeds)"
+        )
+    else:
+        bt.logging.warning(
+            f"Screening cancelled for UID {uid} after "
+            f"{len(all_scores)}/{total_seeds} seeds: {cancel_reason}"
+        )
+    return avg_score, all_scores, all_per_type, cancel_reason
 
 
 async def _run_full_benchmark(
     self, uid: int, model_path: Path, seeds: Optional[List[int]] = None,
     reeval: bool = False,
-) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]]]:
+) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]], Optional[str]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
-    Returns (avg_score, per_type_avgs, all_scores, per_type_raw).
+    Returns (avg_score, per_type_avgs, all_scores, per_type_raw, cancel_reason).
 
-    When ``reeval`` is True the heartbeat labels the active task as REEVAL so the
-    backend consistency check accepts benchmark work on a champion/evaluated model.
+    When ``reeval`` is True the heartbeat labels the active task as REEVAL and a
+    backend authorization check runs before each streaming chunk so a stale
+    champion re-eval can be halted mid-flight (epoch rollover, admin override,
+    wrong-model edge cases).
     """
     benchmark_seeds = seeds if seeds is not None else self.seed_manager.get_benchmark_seeds()
     seed_offset = 0 if seeds is not None else BENCHMARK_SCREENING_SEED_COUNT
     total_seeds = len(benchmark_seeds)
     note = "full benchmark" if seeds is None else "custom seeds"
+    epoch = self.seed_manager.epoch_number
 
     tracker_call(
         self,
@@ -413,16 +435,25 @@ async def _run_full_benchmark(
             note=f"checkpoint {info['evaluated']}/{info['total']}",
         )
 
+    re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None
+    if reeval:
+        async def _reauthorize_reeval() -> dict:
+            return await self.backend_api.authorize_task(
+                uid, "REEVAL", epoch_number=epoch,
+            )
+        re_authorize = _reauthorize_reeval
+
     try:
-        all_scores, per_type_raw, _details, _cancel = await _run_streaming_phase(
+        all_scores, per_type_raw, _details, cancel_reason = await _run_streaming_phase(
             self,
             uid,
             model_path,
             benchmark_seeds,
             phase_description="full benchmark",
             seed_offset=seed_offset,
-            epoch_number=self.seed_manager.epoch_number,
+            epoch_number=epoch,
             hb=hb,
+            re_authorize=re_authorize,
             on_chunk_complete=_on_chunk,
         )
     finally:
@@ -433,6 +464,7 @@ async def _run_full_benchmark(
     for type_name, scores in per_type_raw.items():
         per_type_avgs[type_name] = float(np.mean(scores)) if scores else 0.0
 
+    completed_note = note if cancel_reason is None else f"{note} (cancelled: {cancel_reason})"
     tracker_call(
         self,
         "mark_benchmark_completed",
@@ -440,7 +472,13 @@ async def _run_full_benchmark(
         evaluated=len(all_scores),
         total_seeds=total_seeds,
         median_score=float(avg_score),
-        note=note,
+        note=completed_note,
     )
-    bt.logging.info(f"📊 Full benchmark result for UID {uid}: avg={avg_score:.4f}")
-    return avg_score, per_type_avgs, all_scores, per_type_raw
+    if cancel_reason is None:
+        bt.logging.info(f"📊 Full benchmark result for UID {uid}: avg={avg_score:.4f}")
+    else:
+        bt.logging.warning(
+            f"Full benchmark cancelled for UID {uid} after "
+            f"{len(all_scores)}/{total_seeds} seeds: {cancel_reason}"
+        )
+    return avg_score, per_type_avgs, all_scores, per_type_raw, cancel_reason

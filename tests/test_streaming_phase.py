@@ -31,10 +31,14 @@ def _make_validator(
         except StopIteration:
             return {"recorded": True}
 
+    async def _authorize_task(*_args, **_kwargs):
+        return {"authorized": True, "reason": "ok"}
+
     return SimpleNamespace(
         backend_api=SimpleNamespace(
             post_heartbeat=_post_heartbeat,
             post_seed_scores_batch=_post_seed_scores_batch,
+            authorize_task=_authorize_task,
         ),
     )
 
@@ -556,8 +560,9 @@ def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
             reeval=True,
         )
 
-    avg, per_type_avgs, scores, per_type_raw = asyncio.run(_run())
+    avg, per_type_avgs, scores, per_type_raw, cancel = asyncio.run(_run())
 
+    assert cancel is None
     assert len(scores) == 20
     assert avg == pytest.approx(0.75)
     assert per_type_avgs["open"] == pytest.approx(0.75)
@@ -620,8 +625,9 @@ def test_run_screening_streams_with_unified_chunks(monkeypatch):
             model_path=Path("/tmp/fake.zip"),
         )
 
-    avg, scores, per_type = asyncio.run(_run())
+    avg, scores, per_type, cancel = asyncio.run(_run())
 
+    assert cancel is None
     assert len(scores) == 25
     assert avg == pytest.approx(0.75)
     assert len(uploads) == 3
@@ -674,8 +680,9 @@ def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
             validator, uid=42, model_path=model_path,
         )
 
-    avg, per_type_avgs, scores, per_type_raw = asyncio.run(_run())
+    avg, per_type_avgs, scores, per_type_raw, cancel = asyncio.run(_run())
 
+    assert cancel is None
     assert len(scores) == 25
     assert avg == pytest.approx(0.81)
     assert [len(b) for b in uploads] == [10, 10, 5]
@@ -715,8 +722,9 @@ def test_run_screening_real_flow_streams_chunks(tmp_path):
             validator, uid=55, model_path=model_path,
         )
 
-    avg, scores, per_type = asyncio.run(_run())
+    avg, scores, per_type, cancel = asyncio.run(_run())
 
+    assert cancel is None
     assert len(scores) == 15
     assert avg == pytest.approx(0.64)
     assert [len(b) for b in uploads] == [10, 5]
@@ -799,7 +807,7 @@ def test_queue_worker_real_flow_streams_and_cancels_on_auth(tmp_path):
         return True, False, ""
 
     async def _run_screening(*args, **kwargs):
-        return 0.85, [0.85], {"city": [0.85]}
+        return 0.85, [0.85], {"city": [0.85]}, None
 
     save_calls: list[bool] = []
 
@@ -908,7 +916,7 @@ def test_queue_worker_real_flow_streams_full_run(tmp_path):
         return True, False, ""
 
     async def _run_screening(*args, **kwargs):
-        return 0.85, [0.85], {"city": [0.85]}
+        return 0.85, [0.85], {"city": [0.85]}, None
 
     import pytest as _pytest
     monkey = _pytest.MonkeyPatch()
@@ -944,3 +952,237 @@ def test_queue_worker_real_flow_streams_full_run(tmp_path):
     assert all_indices == list(range(200, 230))
     assert item["seeds_evaluated"] == 31  # 1 screening + 30 benchmark
     assert item["total_score"] == pytest.approx((0.85 + 0.9 * 30) / 31)
+
+
+# ── Re-eval kill-switch tests ────────────────────────────────────────────
+
+
+def test_run_full_benchmark_reeval_authorizes_every_chunk(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=11,
+        get_benchmark_seeds=lambda: list(range(30)),
+    )
+
+    auth_calls: list[tuple] = []
+
+    async def _authorize(uid, phase, **kwargs):
+        auth_calls.append((int(uid), str(phase), kwargs.get("epoch_number")))
+        return {"authorized": True, "reason": "ok"}
+
+    validator.backend_api.authorize_task = _authorize
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            seeds=list(range(30)), reeval=True,
+        )
+
+    _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 30
+    assert len(auth_calls) == 3
+    assert all(c == (42, "REEVAL", 11) for c in auth_calls)
+
+
+def test_run_full_benchmark_reeval_cancels_mid_flight(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=11,
+        get_benchmark_seeds=lambda: list(range(30)),
+    )
+
+    uploads: list[list[dict]] = []
+
+    async def _capture_upload(**kwargs):
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture_upload
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    call_count = {"n": 0}
+
+    async def _authorize(uid, phase, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] >= 3:
+            return {"authorized": False, "reason": "epoch rotated"}
+        return {"authorized": True, "reason": "ok"}
+
+    validator.backend_api.authorize_task = _authorize
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            seeds=list(range(30)), reeval=True,
+        )
+
+    _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel == "epoch rotated"
+    assert len(scores) == 20
+    assert [len(b) for b in uploads] == [10, 10]
+
+
+def test_run_full_benchmark_non_reeval_skips_authorize(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=11,
+        get_benchmark_seeds=lambda: list(range(20)),
+    )
+
+    auth_calls: list[str] = []
+
+    async def _authorize(*args, **kwargs):
+        auth_calls.append("called")
+        return {"authorized": True}
+
+    validator.backend_api.authorize_task = _authorize
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+        )
+
+    _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 20
+    assert auth_calls == []
+
+
+def test_run_screening_reeval_authorizes_every_chunk(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=3,
+        get_screening_seeds=lambda: list(range(25)),
+    )
+
+    auth_calls: list[tuple] = []
+
+    async def _authorize(uid, phase, **kwargs):
+        auth_calls.append((int(uid), str(phase), kwargs.get("epoch_number")))
+        return {"authorized": True}
+
+    validator.backend_api.authorize_task = _authorize
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator, uid=99, model_path=Path("/tmp/fake.zip"), reeval=True,
+        )
+
+    _avg, scores, _per_type, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 25
+    assert len(auth_calls) == 3
+    assert all(c == (99, "REEVAL", 3) for c in auth_calls)
+
+
+def test_run_screening_reeval_cancels_mid_flight(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=3,
+        get_screening_seeds=lambda: list(range(25)),
+    )
+
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    call_count = {"n": 0}
+
+    async def _authorize(uid, phase, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            return {"authorized": False, "reason": "model banned"}
+        return {"authorized": True}
+
+    validator.backend_api.authorize_task = _authorize
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator, uid=99, model_path=Path("/tmp/fake.zip"), reeval=True,
+        )
+
+    _avg, scores, _per_type, cancel = asyncio.run(_run())
+
+    assert cancel == "model banned"
+    assert len(scores) == 10
+
+
+def test_run_screening_non_reeval_skips_authorize(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=3,
+        get_screening_seeds=lambda: list(range(15)),
+    )
+
+    auth_calls: list[str] = []
+
+    async def _authorize(*args, **kwargs):
+        auth_calls.append("called")
+        return {"authorized": True}
+
+    validator.backend_api.authorize_task = _authorize
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator, uid=99, model_path=Path("/tmp/fake.zip"),
+        )
+
+    _avg, scores, _per_type, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 15
+    assert auth_calls == []
+
+
+def test_run_full_benchmark_reeval_real_flow_cancel(tmp_path):
+    model_path = tmp_path / "UID_77.zip"
+    model_path.write_bytes(b"fake-model")
+
+    uploads: list[list[dict]] = []
+    auth_calls: list[str] = []
+
+    async def _capture_upload(**kwargs):
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    async def _post_heartbeat(**kwargs):
+        return {"ok": True}
+
+    async def _authorize(uid, phase, **kwargs):
+        auth_calls.append(str(phase))
+        if len(auth_calls) >= 3:
+            return {"authorized": False, "reason": "admin override"}
+        return {"authorized": True}
+
+    validator = SimpleNamespace(
+        docker_evaluator=_make_docker_evaluator(score=0.7),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_capture_upload,
+            authorize_task=_authorize,
+        ),
+        seed_manager=SimpleNamespace(
+            epoch_number=7,
+            get_benchmark_seeds=lambda: list(range(700001, 700031)),
+        ),
+    )
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=42, model_path=model_path,
+            seeds=list(range(700001, 700031)), reeval=True,
+        )
+
+    _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel == "admin override"
+    assert len(scores) == 20
+    assert [len(b) for b in uploads] == [10, 10]
+    assert auth_calls == ["REEVAL", "REEVAL", "REEVAL"]
