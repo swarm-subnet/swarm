@@ -1403,3 +1403,143 @@ def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
     assert cancel is not None
     assert "INVALID_SCREENING_IN_FLIGHT" in cancel
     assert len(scores) == 10
+
+
+def test_heartbeat_manager_ignores_none_response():
+    async def _run():
+        class _Api:
+            async def post_heartbeat(self, **_kwargs):
+                return None
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_benchmark", uid=5, total=10)
+        await hb._safe_heartbeat(0, hb._session_id)
+        return hb.should_stop()
+
+    assert asyncio.run(_run()) is None
+
+
+def test_heartbeat_manager_ignores_response_without_stop_required():
+    async def _run():
+        class _Api:
+            async def post_heartbeat(self, **_kwargs):
+                return {"recorded": True, "accepted": True}
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_benchmark", uid=5, total=10)
+        await hb._safe_heartbeat(0, hb._session_id)
+        return hb.should_stop()
+
+    assert asyncio.run(_run()) is None
+
+
+def test_heartbeat_manager_stop_without_conflicts_uses_default_reason():
+    async def _run():
+        class _Api:
+            async def post_heartbeat(self, **_kwargs):
+                return {"recorded": True, "stop_required": True}
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_benchmark", uid=5, total=10)
+        await hb._safe_heartbeat(0, hb._session_id)
+        return hb.should_stop()
+
+    assert asyncio.run(_run()) == "stop_required"
+
+
+def test_heartbeat_manager_handles_post_exception():
+    async def _run():
+        class _Api:
+            async def post_heartbeat(self, **_kwargs):
+                raise RuntimeError("network down")
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_benchmark", uid=5, total=10)
+        await hb._safe_heartbeat(0, hb._session_id)
+        return hb.should_stop()
+
+    assert asyncio.run(_run()) is None
+
+
+def test_heartbeat_manager_ignores_stale_session_response():
+    async def _run():
+        class _Api:
+            async def post_heartbeat(self, **_kwargs):
+                return {"recorded": True, "stop_required": True,
+                        "conflicts": [{"code": "STALE", "message": "old"}]}
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_benchmark", uid=5, total=10)
+        stale_session = hb._session_id
+        hb.start("evaluating_benchmark", uid=6, total=10)
+        await hb._safe_heartbeat(0, stale_session)
+        return hb.should_stop()
+
+    assert asyncio.run(_run()) is None
+
+
+def test_heartbeat_manager_stop_latches_until_next_session():
+    async def _run():
+        responses = [
+            {"stop_required": True, "conflicts": [{"code": "X", "message": "first"}]},
+            {"stop_required": False},
+            {"stop_required": False},
+        ]
+
+        class _Api:
+            def __init__(self):
+                self._idx = 0
+
+            async def post_heartbeat(self, **_kwargs):
+                resp = responses[min(self._idx, len(responses) - 1)]
+                self._idx += 1
+                return resp
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_benchmark", uid=5, total=10)
+        await hb._safe_heartbeat(0, hb._session_id)
+        first = hb.should_stop()
+        await hb._safe_heartbeat(10, hb._session_id)
+        second = hb.should_stop()
+        return first, second
+
+    first, second = asyncio.run(_run())
+    assert first is not None
+    assert "X" in first
+    assert second is not None
+    assert "X" in second
+
+
+def test_streaming_phase_checks_stop_each_chunk(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    call_log: list[int] = []
+
+    def _should_stop():
+        call_log.append(len(call_log))
+        return None
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(50)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                should_stop=_should_stop,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 50
+    assert len(call_log) == 5
