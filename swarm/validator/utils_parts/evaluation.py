@@ -137,6 +137,7 @@ async def _run_streaming_phase(
     hb: HeartbeatManager,
     pre_built_tasks: Optional[List] = None,
     re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None,
+    should_stop: Optional[Callable[[], Optional[str]]] = None,
     on_chunk_complete: Optional[Callable[..., None]] = None,
     chunk_size: int = UNIFIED_CHUNK_SIZE,
     max_inflight: int = MAX_INFLIGHT_SEED_UPLOADS,
@@ -146,8 +147,9 @@ async def _run_streaming_phase(
     """Evaluate seeds in chunks, streaming scores with fire-and-forget uploads.
 
     The caller owns heartbeat lifecycle and outer telemetry. Returns accumulated
-    scores, per-type scores, seed details, and an optional cancel reason when
-    ``re_authorize`` reports the task is no longer authorized.
+    scores, per-type scores, seed details, and an optional cancel reason set
+    either by ``re_authorize`` (task no longer authorized) or ``should_stop``
+    (backend requested stop via heartbeat response).
     """
     all_scores: List[float] = []
     all_per_type: Dict[str, List[float]] = _empty_per_type()
@@ -187,6 +189,13 @@ async def _run_streaming_phase(
 
     try:
         for chunk_start in range(0, len(seeds), chunk_size):
+            if should_stop is not None:
+                stop_reason = should_stop()
+                if stop_reason:
+                    await _drain_inflight()
+                    cancel_reason = f"backend stop_required: {stop_reason}"
+                    break
+
             if re_authorize is not None:
                 await _drain_inflight()
                 auth = await re_authorize()
@@ -354,6 +363,7 @@ async def _run_screening(
             hb=hb,
             pre_built_tasks=screening_tasks,
             re_authorize=re_authorize,
+            should_stop=hb.should_stop,
             on_chunk_complete=_on_chunk,
         )
     finally:
@@ -454,6 +464,7 @@ async def _run_full_benchmark(
             epoch_number=epoch,
             hb=hb,
             re_authorize=re_authorize,
+            should_stop=hb.should_stop,
             on_chunk_complete=_on_chunk,
         )
     finally:

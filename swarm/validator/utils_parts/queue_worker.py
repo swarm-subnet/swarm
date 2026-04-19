@@ -416,6 +416,7 @@ async def _process_normal_queue_item(
                                 epoch_number=epoch,
                                 hb=hb,
                                 re_authorize=_reauthorize_benchmark,
+                                should_stop=hb.should_stop,
                                 on_chunk_complete=_on_chunk,
                                 evaluator_prior_done=done,
                                 evaluator_total_seeds=total_benchmark_seeds,

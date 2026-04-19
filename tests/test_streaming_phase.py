@@ -1186,3 +1186,220 @@ def test_run_full_benchmark_reeval_real_flow_cancel(tmp_path):
     assert len(scores) == 20
     assert [len(b) for b in uploads] == [10, 10]
     assert auth_calls == ["REEVAL", "REEVAL", "REEVAL"]
+
+
+def test_heartbeat_manager_honors_stop_required():
+    responses = [
+        {"recorded": True, "stop_required": False},
+        {
+            "recorded": True,
+            "stop_required": True,
+            "conflicts": [
+                {
+                    "severity": "CRITICAL",
+                    "code": "INVALID_SCREENING_IN_FLIGHT",
+                    "message": "Validator running UID 66 while backend status is SCREENING_FAILED",
+                }
+            ],
+        },
+    ]
+
+    async def _run():
+        class _Api:
+            def __init__(self):
+                self._idx = 0
+
+            async def post_heartbeat(self, **_kwargs):
+                resp = responses[min(self._idx, len(responses) - 1)]
+                self._idx += 1
+                return resp
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_screening", uid=66, total=200)
+        await hb._safe_heartbeat(0, hb._session_id)
+        assert hb.should_stop() is None
+        await hb._safe_heartbeat(10, hb._session_id)
+        return hb.should_stop()
+
+    reason = asyncio.run(_run())
+    assert reason is not None
+    assert "INVALID_SCREENING_IN_FLIGHT" in reason
+    assert "SCREENING_FAILED" in reason
+
+
+def test_heartbeat_manager_start_resets_stop_flag():
+    async def _run():
+        class _Api:
+            async def post_heartbeat(self, **_kwargs):
+                return {"stop_required": True, "conflicts": [{"code": "X", "message": "y"}]}
+
+        hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
+        hb.start("evaluating_screening", uid=1, total=10)
+        await hb._safe_heartbeat(0, hb._session_id)
+        assert hb.should_stop() is not None
+
+        hb.start("evaluating_screening", uid=2, total=10)
+        return hb.should_stop()
+
+    assert asyncio.run(_run()) is None
+
+
+def test_streaming_phase_stops_when_should_stop_fires(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    call_count = {"n": 0}
+
+    def _should_stop():
+        call_count["n"] += 1
+        if call_count["n"] >= 3:
+            return "INVALID_BENCHMARK_IN_FLIGHT: model failed"
+        return None
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(40)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                should_stop=_should_stop,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel = asyncio.run(_run())
+
+    assert cancel == "backend stop_required: INVALID_BENCHMARK_IN_FLIGHT: model failed"
+    assert len(scores) == 20
+
+
+def test_streaming_phase_runs_when_should_stop_clear(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(20)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                should_stop=lambda: None,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 20
+
+
+def test_run_full_benchmark_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
+    model_path = tmp_path / "UID_66.zip"
+    model_path.write_bytes(b"fake-model")
+
+    uploads: list[list[dict]] = []
+
+    async def _capture_upload(**kwargs):
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    async def _post_heartbeat(**_kwargs):
+        return {"recorded": True, "stop_required": False}
+
+    validator = SimpleNamespace(
+        docker_evaluator=_make_docker_evaluator(score=0.5),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_capture_upload,
+        ),
+        seed_manager=SimpleNamespace(
+            epoch_number=4,
+            get_benchmark_seeds=lambda: list(range(900001, 900031)),
+        ),
+    )
+
+    should_stop_calls = {"n": 0}
+    original_should_stop = HeartbeatManager.should_stop
+
+    def _should_stop(self):
+        should_stop_calls["n"] += 1
+        if should_stop_calls["n"] >= 2:
+            return "INVALID_BENCHMARK_IN_FLIGHT: BENCHMARK_FAILED"
+        return original_should_stop(self)
+
+    monkeypatch.setattr(HeartbeatManager, "should_stop", _should_stop)
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=66, model_path=model_path,
+        )
+
+    _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel is not None
+    assert "INVALID_BENCHMARK_IN_FLIGHT" in cancel
+    assert "BENCHMARK_FAILED" in cancel
+    assert len(scores) == 10
+
+
+def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
+    model_path = tmp_path / "UID_66.zip"
+    model_path.write_bytes(b"fake-model")
+
+    uploads: list[list[dict]] = []
+
+    async def _capture_upload(**kwargs):
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    async def _post_heartbeat(**_kwargs):
+        return {"recorded": True, "stop_required": False}
+
+    validator = SimpleNamespace(
+        docker_evaluator=_make_docker_evaluator(score=0.4),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_capture_upload,
+        ),
+        seed_manager=SimpleNamespace(
+            epoch_number=2,
+            get_screening_seeds=lambda: list(range(800001, 800026)),
+        ),
+    )
+
+    should_stop_calls = {"n": 0}
+    original_should_stop = HeartbeatManager.should_stop
+
+    def _should_stop(self):
+        should_stop_calls["n"] += 1
+        if should_stop_calls["n"] >= 2:
+            return "INVALID_SCREENING_IN_FLIGHT: SCREENING_FAILED"
+        return original_should_stop(self)
+
+    monkeypatch.setattr(HeartbeatManager, "should_stop", _should_stop)
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator, uid=66, model_path=model_path,
+        )
+
+    _avg, scores, _per_type, cancel = asyncio.run(_run())
+
+    assert cancel is not None
+    assert "INVALID_SCREENING_IN_FLIGHT" in cancel
+    assert len(scores) == 10
