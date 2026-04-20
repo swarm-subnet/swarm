@@ -59,6 +59,76 @@ def _make_evaluate_stub(score_per_seed: float = 0.75, map_type: str = "city"):
     return _evaluate
 
 
+def test_streaming_phase_forwards_task_id_to_upload(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    posted_task_ids: list = []
+
+    async def _capture(**kwargs):
+        posted_task_ids.append(kwargs.get("task_id"))
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(20)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                task_id=555,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    asyncio.run(_run())
+    assert posted_task_ids == [555, 555]
+
+
+def test_streaming_phase_final_retry_carries_task_id(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    attempts: list[int | None] = []
+
+    async def _flaky(**kwargs):
+        attempts.append(kwargs.get("task_id"))
+        if len(attempts) == 1:
+            return {"recorded": False, "detail": "transient"}
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _flaky
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(10)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                task_id=777,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    asyncio.run(_run())
+    assert attempts == [777, 777]
+
+
 def test_streaming_phase_happy_path(monkeypatch):
     posted_batches: list[list[dict]] = []
     validator = _make_validator()

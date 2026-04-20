@@ -542,17 +542,21 @@ class BackendApiClient:
         model_uid: int,
         epoch_number: int,
         scores: list,
+        task_id: Optional[int] = None,
         retries: int = 3,
     ) -> Dict[str, Any]:
         retries = max(retries, 1)
         last_reason = ""
         result: Dict[str, Any] = {}
+        payload: Dict[str, Any] = {
+            "model_uid": model_uid,
+            "epoch_number": epoch_number,
+            "scores": scores,
+        }
+        if task_id is not None:
+            payload["task_id"] = task_id
         for attempt in range(retries):
-            result = await self._post_signed("/validators/seed-scores", {
-                "model_uid": model_uid,
-                "epoch_number": epoch_number,
-                "scores": scores,
-            })
+            result = await self._post_signed("/validators/seed-scores", payload)
             if result.get("recorded"):
                 return result
             last_reason = str(

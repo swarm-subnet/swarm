@@ -135,6 +135,7 @@ async def _run_streaming_phase(
     seed_offset: int,
     epoch_number: int,
     hb: HeartbeatManager,
+    task_id: Optional[int] = None,
     pre_built_tasks: Optional[List] = None,
     re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None,
     should_stop: Optional[Callable[[], Optional[str]]] = None,
@@ -165,6 +166,7 @@ async def _run_streaming_phase(
         try:
             result = await self.backend_api.post_seed_scores_batch(
                 model_uid=uid, epoch_number=epoch_number, scores=batch,
+                task_id=task_id,
             )
         except Exception as exc:
             bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
@@ -262,6 +264,7 @@ async def _run_streaming_phase(
                 try:
                     result = await self.backend_api.post_seed_scores_batch(
                         model_uid=uid, epoch_number=epoch_number, scores=batch,
+                        task_id=task_id,
                     )
                 except Exception as exc:
                     bt.logging.warning(
@@ -277,7 +280,8 @@ async def _run_streaming_phase(
 
 
 async def _run_screening(
-    self, uid: int, model_path: Path, reeval: bool = False
+    self, uid: int, model_path: Path, reeval: bool = False,
+    task_id: Optional[int] = None,
 ) -> Tuple[float, List[float], Dict[str, List[float]], Optional[str]]:
     """Run screening seeds and stream per-seed scores.
 
@@ -361,6 +365,7 @@ async def _run_screening(
             seed_offset=0,
             epoch_number=epoch,
             hb=hb,
+            task_id=task_id,
             pre_built_tasks=screening_tasks,
             re_authorize=re_authorize,
             should_stop=hb.should_stop,
@@ -393,7 +398,7 @@ async def _run_screening(
 
 async def _run_full_benchmark(
     self, uid: int, model_path: Path, seeds: Optional[List[int]] = None,
-    reeval: bool = False,
+    reeval: bool = False, task_id: Optional[int] = None,
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]], Optional[str]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
@@ -463,6 +468,7 @@ async def _run_full_benchmark(
             seed_offset=seed_offset,
             epoch_number=epoch,
             hb=hb,
+            task_id=task_id,
             re_authorize=re_authorize,
             should_stop=hb.should_stop,
             on_chunk_complete=_on_chunk,

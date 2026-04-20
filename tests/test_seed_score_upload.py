@@ -94,6 +94,45 @@ def test_retry_on_detail_key(mock_sleep, client):
     assert call_count == 2
 
 
+def test_task_id_included_in_payload(client):
+    captured: list[dict] = []
+
+    async def mock_post(endpoint, data):
+        captured.append(data)
+        return {"recorded": 1, "message": "ok"}
+
+    client._post_signed = mock_post
+
+    asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=7,
+            epoch_number=11,
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+            task_id=123,
+        )
+    )
+    assert captured[0]["task_id"] == 123
+
+
+def test_task_id_omitted_when_not_provided(client):
+    captured: list[dict] = []
+
+    async def mock_post(endpoint, data):
+        captured.append(data)
+        return {"recorded": 1, "message": "ok"}
+
+    client._post_signed = mock_post
+
+    asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=7,
+            epoch_number=11,
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+        )
+    )
+    assert "task_id" not in captured[0]
+
+
 def test_no_retry_on_success(client):
     call_count = 0
 

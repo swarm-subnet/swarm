@@ -208,7 +208,9 @@ async def _process_normal_queue_item(
                     return
                 tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
                 screening_score, screening_scores, screening_per_type, _ = (
-                    await _utils_facade()._run_screening(self, uid, model_path)
+                    await _utils_facade()._run_screening(
+                        self, uid, model_path, task_id=item.get("assignment_id"),
+                    )
                 )
                 item["screening_score"] = float(screening_score)
                 item["screening_scores"] = screening_scores
@@ -415,6 +417,7 @@ async def _process_normal_queue_item(
                                 seed_offset=BENCHMARK_SCREENING_SEED_COUNT + done,
                                 epoch_number=epoch,
                                 hb=hb,
+                                task_id=item.get("assignment_id"),
                                 re_authorize=_reauthorize_benchmark,
                                 should_stop=hb.should_stop,
                                 on_chunk_complete=_on_chunk,
