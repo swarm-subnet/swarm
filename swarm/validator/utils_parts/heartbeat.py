@@ -152,7 +152,7 @@ class HeartbeatManager:
                     active_task=active_task,
                     backend_decision_version=decision_version,
                 ),
-                timeout=2.0
+                timeout=10.0
             )
         except Exception:
             return
@@ -190,7 +190,7 @@ class HeartbeatManager:
                     queue=queue,
                     backend_decision_version=decision_version,
                 ),
-                timeout=2.0
+                timeout=10.0
             )
         except Exception:
             pass
