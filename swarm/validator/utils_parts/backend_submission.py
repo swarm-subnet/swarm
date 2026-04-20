@@ -55,6 +55,39 @@ async def _submit_screening_with_ack(
     return False, terminal, reason
 
 
+async def _publish_pending_epoch_seeds(self) -> None:
+    """Publish unpublished past-epoch seed records to the backend.
+
+    Marks an epoch as published only when the backend confirms acceptance,
+    so rejected or failed calls remain pending and are retried on the next
+    forward cycle.
+    """
+    for pub in self.seed_manager.get_pending_publications():
+        ep = pub.get("epoch_number")
+        try:
+            response = await self.backend_api.publish_epoch_seeds(
+                epoch_number=ep,
+                seeds=pub.get("seeds", []),
+                started_at=pub.get("started_at", ""),
+                ended_at=pub.get("ended_at", ""),
+                benchmark_version=pub.get("benchmark_version"),
+            )
+        except Exception as e:
+            bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+            continue
+
+        accepted = isinstance(response, dict) and (
+            response.get("published") or response.get("accepted")
+        )
+        if accepted:
+            self.seed_manager.mark_epoch_published(ep)
+            bt.logging.info(f"Published epoch {ep} seeds to backend")
+        else:
+            bt.logging.warning(
+                f"Backend rejected epoch {ep} publish; will retry next cycle: {response}"
+            )
+
+
 async def _submit_score_with_ack(
     self,
     uid: int,

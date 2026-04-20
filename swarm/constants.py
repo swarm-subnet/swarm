@@ -5,6 +5,7 @@
 # configuration values, limits, and parameters used throughout the system.
 # =============================================================================
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -60,8 +61,30 @@ PROP_EFF = 0.60                         # Propeller efficiency coefficient
 MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
 EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
 
+# Docker worker auto-sizing
+def available_vcpu_count() -> int:
+    try:
+        if hasattr(os, "sched_getaffinity"):
+            count = len(os.sched_getaffinity(0))
+            if count > 0:
+                return int(count)
+    except Exception:
+        pass
+    try:
+        count = os.cpu_count()
+        if count and int(count) > 0:
+            return int(count)
+    except Exception:
+        pass
+    return 1
+
+
+def default_docker_worker_count(*, maximum: int = 12) -> int:
+    return max(1, min(int(maximum), available_vcpu_count()))
+
+
 # Docker parallel workers for validator and benchmark evaluation
-N_DOCKER_WORKERS = 8                    # Bumped from 3→8 for faster parallel seed evaluation
+N_DOCKER_WORKERS = default_docker_worker_count(maximum=12)  # One worker per vCPU, capped at 12
 DOCKER_WORKER_MEMORY = "6g"             # Memory limit per Docker worker container
 DOCKER_WORKER_CPUS = "2"                # CPU limit per Docker worker container
 
@@ -210,6 +233,11 @@ SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this marg
 # Early screening termination — abort screening when outcome is statistically certain
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
+
+# Unified streaming chunk size used by screening, benchmark, and reeval phases.
+# Smaller chunks give fresher UI updates at the cost of more seed-score uploads.
+UNIFIED_CHUNK_SIZE = 10
+MAX_INFLIGHT_SEED_UPLOADS = 3
 
 # Screening template — 50 standardised entries, cycled 4× for 200 screening seeds
 def _build_screening_template() -> list[dict]:

@@ -81,6 +81,7 @@ from .utils import (
     _get_processable_queue_keys,
     _get_validator_stake,
     _process_normal_queue_item,
+    _publish_pending_epoch_seeds,
     _refresh_normal_model_queue,
     _run_full_benchmark,
     _run_screening,
@@ -141,20 +142,7 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         # STEP 0.25: Publish any unpublished old epoch seeds
         # ──────────────────────────────────────────────────────────────
-        for pub in self.seed_manager.get_pending_publications():
-            ep = pub.get("epoch_number")
-            try:
-                await self.backend_api.publish_epoch_seeds(
-                    epoch_number=ep,
-                    seeds=pub.get("seeds", []),
-                    started_at=pub.get("started_at", ""),
-                    ended_at=pub.get("ended_at", ""),
-                    benchmark_version=pub.get("benchmark_version"),
-                )
-                self.seed_manager.mark_epoch_published(ep)
-                bt.logging.info(f"Published epoch {ep} seeds to backend")
-            except Exception as e:
-                bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+        await _publish_pending_epoch_seeds(self)
 
         # ──────────────────────────────────────────────────────────────
         # STEP 1: Sync with backend
@@ -255,19 +243,78 @@ async def forward(self) -> None:
                     bt.logging.info(
                         f"👑 Champion UID {uid}: {len(all_seeds)} seeds directly (no screening)"
                     )
-                    full_score, per_type_scores, full_scores, _ = await _run_full_benchmark(
+                    (
+                        full_score,
+                        per_type_scores,
+                        full_scores,
+                        _,
+                        cancel_reason,
+                    ) = await _run_full_benchmark(
                         self, uid, model_path, seeds=all_seeds, reeval=True,
                     )
+                    if cancel_reason is not None:
+                        tracker_call(
+                            self,
+                            "mark_reeval_completed",
+                            uid=int(uid),
+                            reason=str(reason),
+                            success=False,
+                            total_score=0.0,
+                            error=f"cancelled: {cancel_reason}",
+                        )
+                        bt.logging.warning(
+                            f"Re-eval cancelled mid-flight for UID {uid}: {cancel_reason}"
+                        )
+                        continue
                     screening_score = full_score
                     screening_scores = []
                     combined_scores = full_scores
                 else:
-                    screening_score, screening_scores, scr_per_type = await _run_screening(
+                    (
+                        screening_score,
+                        screening_scores,
+                        scr_per_type,
+                        cancel_reason,
+                    ) = await _run_screening(
                         self, uid, model_path, reeval=True,
                     )
-                    full_score, _, full_scores, bench_per_type = await _run_full_benchmark(
+                    if cancel_reason is not None:
+                        tracker_call(
+                            self,
+                            "mark_reeval_completed",
+                            uid=int(uid),
+                            reason=str(reason),
+                            success=False,
+                            total_score=0.0,
+                            error=f"cancelled during screening: {cancel_reason}",
+                        )
+                        bt.logging.warning(
+                            f"Re-eval screening cancelled for UID {uid}: {cancel_reason}"
+                        )
+                        continue
+                    (
+                        full_score,
+                        _,
+                        full_scores,
+                        bench_per_type,
+                        cancel_reason,
+                    ) = await _run_full_benchmark(
                         self, uid, model_path, reeval=True,
                     )
+                    if cancel_reason is not None:
+                        tracker_call(
+                            self,
+                            "mark_reeval_completed",
+                            uid=int(uid),
+                            reason=str(reason),
+                            success=False,
+                            total_score=0.0,
+                            error=f"cancelled during benchmark: {cancel_reason}",
+                        )
+                        bt.logging.warning(
+                            f"Re-eval benchmark cancelled for UID {uid}: {cancel_reason}"
+                        )
+                        continue
                     combined_scores = screening_scores + full_scores
                     per_type_scores = _merge_per_type_averages(scr_per_type, bench_per_type)
                 all_seeds_count = len(combined_scores)

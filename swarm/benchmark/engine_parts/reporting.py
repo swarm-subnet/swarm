@@ -13,7 +13,65 @@ from ._shared import (
     statistics,
     time,
 )
-from .dispatch import _is_clean_execution_status
+from .dispatch import (
+    _is_clean_execution_status,
+    _resource_class_for_group,
+    _resource_cost_dict_for_group,
+    _resource_model_rows,
+)
+
+
+def _mean(values: List[float]) -> float:
+    return (sum(values) / len(values)) if values else 0.0
+
+
+def _pctl(values: List[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    sorted_values = sorted(float(value) for value in values)
+    idx = max(0, int(round(float(fraction) * len(sorted_values) + 0.5)) - 1)
+    return float(sorted_values[min(idx, len(sorted_values) - 1)])
+
+
+def _rows_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    wall_times = [float(row["wall_time"]) for row in rows if float(row["wall_time"]) > 0.0]
+    processing_walls = [
+        float(row["processing_wall_time"])
+        for row in rows
+        if float(row["processing_wall_time"]) > 0.0
+    ]
+    sim_times = [float(row["sim_time"]) for row in rows]
+    scores = [float(row["score"]) for row in rows]
+    wall_per_sim = [
+        float(row["wall_time"]) / float(row["sim_time"])
+        for row in rows
+        if float(row["sim_time"]) > 0.0
+    ]
+    success_count = sum(1 for row in rows if bool(row["success"]))
+    execution_success_count = sum(1 for row in rows if bool(row["execution_ok"]))
+    return {
+        "seed_count": len(rows),
+        "success_count": success_count,
+        "execution_success_count": execution_success_count,
+        "success_rate": (
+            float(success_count) / float(len(rows))
+            if rows
+            else 0.0
+        ),
+        "execution_success_rate": (
+            float(execution_success_count) / float(len(rows))
+            if rows
+            else 0.0
+        ),
+        "avg_wall_sec": _mean(wall_times),
+        "median_wall_sec": statistics.median(wall_times) if wall_times else 0.0,
+        "p90_wall_sec": _pctl(wall_times, 0.90),
+        "max_wall_sec": max(wall_times) if wall_times else 0.0,
+        "avg_processing_wall_sec": _mean(processing_walls),
+        "avg_sim_sec": _mean(sim_times),
+        "avg_score": _mean(scores),
+        "avg_wall_per_sim_ratio": _mean(wall_per_sim),
+    }
 
 
 def _print_results(
@@ -39,7 +97,7 @@ def _print_results(
 
     group_results: Dict[str, List[Dict[str, Any]]] = {}
     for i, meta in enumerate(task_meta):
-        group = meta["group"]
+        group = str(meta["group"])
         group_results.setdefault(group, [])
 
         result = results[i] if i < len(results) else None
@@ -59,18 +117,26 @@ def _print_results(
         else:
             processing_wall = 0.0
         wall = float(full_wall_by_key.get(seed_key, processing_wall))
+        resource_class = _resource_class_for_group(group)
 
-        group_results[group].append({
-            "seed": meta["seed"],
-            "score": score,
-            "success": success,
-            "sim_time": sim_time,
-            "wall_time": wall,
-            "processing_wall_time": processing_wall,
-            "execution_status": execution_status,
-            "execution_ok": execution_ok,
-            "timeout_zero": wall < 0.5 and i > 0,
-        })
+        group_results[group].append(
+            {
+                "group": group,
+                "seed": int(meta["seed"]),
+                "challenge_type": int(meta["challenge_type"]),
+                "score": score,
+                "success": success,
+                "sim_time": sim_time,
+                "wall_time": wall,
+                "processing_wall_time": processing_wall,
+                "execution_status": execution_status,
+                "execution_ok": execution_ok,
+                "timeout_zero": wall < 0.5 and i > 0,
+                "resource_class": resource_class,
+                "estimated_resource_cost": _resource_cost_dict_for_group(group),
+                "wall_per_sim_ratio": (wall / sim_time) if sim_time > 0.0 else 0.0,
+            }
+        )
 
     print()
     print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}")
@@ -85,14 +151,19 @@ def _print_results(
                 f"  {group:<18} {row['seed']:>8} {row['score']:>7.4f} {ok:>5} "
                 f"{row['sim_time']:>6.2f}s {row['wall_time']:>6.1f}s"
             )
-        walls = [row["wall_time"] for row in group_results[group]]
-        scores = [row["score"] for row in group_results[group]]
-        avg_w = sum(walls) / len(walls) if walls else 0
-        avg_s = sum(scores) / len(scores) if scores else 0
+        walls = [float(row["wall_time"]) for row in group_results[group]]
+        scores = [float(row["score"]) for row in group_results[group]]
+        avg_w = _mean(walls)
+        avg_s = _mean(scores)
         print(f"  {'  -> AVG':<18} {'':>8} {avg_s:>7.4f} {'':>5} {'':>6} {avg_w:>6.1f}s")
         print()
 
-    all_rows = [row for group in group_order if group in group_results for row in group_results[group]]
+    all_rows = [
+        row
+        for group in group_order
+        if group in group_results
+        for row in group_results[group]
+    ]
     all_seed_walls = [float(row["wall_time"]) for row in all_rows if float(row["wall_time"]) > 0.0]
     all_sim_times = [float(row["sim_time"]) for row in all_rows]
     success_count = sum(1 for row in all_rows if bool(row["success"]))
@@ -101,19 +172,18 @@ def _print_results(
     total_seeds = len(all_rows)
     workers_used = max(1, int(num_workers))
 
-    avg_wall_per_seed = (sum(all_seed_walls) / len(all_seed_walls)) if all_seed_walls else 0.0
+    avg_wall_per_seed = _mean(all_seed_walls)
     med_wall_per_seed = statistics.median(all_seed_walls) if all_seed_walls else 0.0
-    if all_seed_walls:
-        sorted_walls = sorted(all_seed_walls)
-        p90_idx = max(0, int(round(0.9 * len(sorted_walls) + 0.5)) - 1)
-        p90_wall_per_seed = sorted_walls[min(p90_idx, len(sorted_walls) - 1)]
-    else:
-        p90_wall_per_seed = 0.0
-    avg_sim_per_seed = (sum(all_sim_times) / len(all_sim_times)) if all_sim_times else 0.0
+    p90_wall_per_seed = _pctl(all_seed_walls, 0.90)
+    avg_sim_per_seed = _mean(all_sim_times)
 
     throughput_seeds_per_min = (total_seeds / elapsed * 60.0) if elapsed > 0 else 0.0
     throughput_per_worker = throughput_seeds_per_min / workers_used
-    total_seed_worker_sec = sum(float(stat.elapsed_sec) for stat in batch_stats) if batch_stats else sum(all_seed_walls)
+    total_seed_worker_sec = (
+        sum(float(stat.elapsed_sec) for stat in batch_stats)
+        if batch_stats
+        else sum(all_seed_walls)
+    )
     effective_parallelism = (total_seed_worker_sec / elapsed) if elapsed > 0 else 0.0
     worker_utilization = min(1.0, effective_parallelism / workers_used) if workers_used > 0 else 0.0
     total_startup_overhead_sec = sum(float(stat.startup_overhead_sec) for stat in batch_stats)
@@ -159,6 +229,85 @@ def _print_results(
     print(f"    Avg startup / container:   {avg_startup_overhead_sec:.1f}s")
     print()
 
+    resource_cost_model = _resource_model_rows()
+    group_summary: Dict[str, Dict[str, Any]] = {}
+    resource_class_summary: Dict[str, Dict[str, Any]] = {}
+    print("  Scheduler cost model (initial prior):")
+    for row in resource_cost_model:
+        print(
+            f"    {row['resource_class']:<6} groups={','.join(row['groups'])} "
+            f"cpu={row['cpu_units']:.2f} ram={row['ram_mb']:.0f}MiB "
+            f"heavy_tokens={row['heavy_tokens']}"
+        )
+    print()
+
+    print("  Observed by group:")
+    for group_name in group_order:
+        group_rows = group_results.get(group_name, [])
+        if not group_rows:
+            continue
+        summary = _rows_summary(group_rows)
+        estimated_cost = _resource_cost_dict_for_group(group_name)
+        group_summary[group_name] = {
+            "estimated_cost": estimated_cost,
+            **summary,
+        }
+        print(
+            f"    {group_name:<18} prior={estimated_cost['resource_class']:<6} "
+            f"seeds={summary['seed_count']:<3} "
+            f"success={summary['success_count']}/{summary['seed_count']} "
+            f"clean={summary['execution_success_count']}/{summary['seed_count']} "
+            f"avg_wall={summary['avg_wall_sec']:.1f}s "
+            f"p90={summary['p90_wall_sec']:.1f}s "
+            f"avg_proc={summary['avg_processing_wall_sec']:.1f}s "
+            f"avg_sim={summary['avg_sim_sec']:.1f}s "
+            f"wall/sim={summary['avg_wall_per_sim_ratio']:.2f}x"
+        )
+    print()
+
+    for resource_class in ("light", "medium", "heavy"):
+        class_rows = [row for row in all_rows if str(row["resource_class"]) == resource_class]
+        if not class_rows:
+            continue
+        summary = _rows_summary(class_rows)
+        resource_class_summary[resource_class] = {
+            "groups": [
+                group_name
+                for group_name in BENCH_GROUP_ORDER
+                if _resource_class_for_group(group_name) == resource_class
+            ],
+            "estimated_cost": next(
+                (
+                    row
+                    for row in resource_cost_model
+                    if str(row["resource_class"]) == resource_class
+                ),
+                {},
+            ),
+            **summary,
+        }
+
+    expensive_seed_rows = sorted(
+        all_rows,
+        key=lambda row: (
+            float(row["wall_time"]),
+            float(row["processing_wall_time"]),
+            float(row["sim_time"]),
+        ),
+        reverse=True,
+    )[: min(10, len(all_rows))]
+    if expensive_seed_rows:
+        print("  Slowest seeds:")
+        for row in expensive_seed_rows:
+            print(
+                f"    {row['group']:<18} seed={int(row['seed'])} "
+                f"class={row['resource_class']} wall={float(row['wall_time']):.1f}s "
+                f"proc={float(row['processing_wall_time']):.1f}s "
+                f"sim={float(row['sim_time']):.1f}s "
+                f"status={row['execution_status']} score={float(row['score']):.4f}"
+            )
+        print()
+
     from math import floor
 
     from swarm.constants import CHALLENGE_TYPE_DISTRIBUTION
@@ -183,12 +332,13 @@ def _print_results(
     }
 
     total_extrap_worker_sec = 0.0
-    print("  Extrapolation to 1,000 seeds (using measured per-seed worker time):")
+    observed_parallelism = max(1.0, min(float(workers_used), float(effective_parallelism)))
+    print("  Extrapolation to 1,000 seeds (using measured per-seed worker time and observed effective parallelism):")
     for group, count in dist.items():
         rows = group_results.get(group, [])
         if rows:
             real_walls = [float(row["wall_time"]) for row in rows if float(row["wall_time"]) > 0.0]
-            avg = sum(real_walls) / len(real_walls) if real_walls else avg_wall_per_seed
+            avg = _mean(real_walls) if real_walls else avg_wall_per_seed
             source = "observed"
         else:
             avg = avg_wall_per_seed
@@ -201,10 +351,11 @@ def _print_results(
         )
 
     print()
-    est_wall_1000 = total_extrap_worker_sec / workers_used
+    est_wall_1000 = total_extrap_worker_sec / observed_parallelism
     est_avg_seed_1000 = est_wall_1000 / 1000.0
     est_tput_1000 = (1000.0 / est_wall_1000 * 60.0) if est_wall_1000 > 0 else 0.0
     print(f"    Workers used:              {workers_used}")
+    print(f"    Parallelism basis:         {observed_parallelism:.2f}x observed")
     print(f"    Estimated worker-time:     {total_extrap_worker_sec:.0f}s")
     print(f"    Estimated wall-clock:      {est_wall_1000:.0f}s ({est_wall_1000 / 60.0:.1f} min)")
     print(f"    Estimated avg wall / seed: {est_avg_seed_1000:.2f}s")
@@ -242,10 +393,15 @@ def _print_results(
             "total_startup_overhead_sec": total_startup_overhead_sec,
         },
         "execution_status_counts": dict(sorted(execution_status_counts.items())),
+        "resource_cost_model_estimate": resource_cost_model,
+        "group_summary": group_summary,
+        "resource_class_summary": resource_class_summary,
+        "top_expensive_seeds": expensive_seed_rows,
         "group_results": {g: rs for g, rs in group_results.items()},
         "batch_stats": [asdict(stat) for stat in batch_stats],
         "extrapolation_1000_seeds": {
             "workers_used": workers_used,
+            "parallelism_basis": observed_parallelism,
             "total_seed_worker_sec": total_extrap_worker_sec,
             "estimated_wall_clock_sec": est_wall_1000,
             "estimated_avg_wall_per_seed_sec": est_avg_seed_1000,

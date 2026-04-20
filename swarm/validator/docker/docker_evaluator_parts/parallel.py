@@ -2,8 +2,8 @@
 
 This mirrors the benchmark scheduler:
 - one seed per batch
-- dynamic weighted dispatch
-- adaptive backoff on unhealthy execution
+- resource-aware dispatch with class-based admission
+- host-pressure-driven cap adjustments
 - parent-side worker stall detection and replacement
 
 The main difference is that validator evaluation degrades failed batches into
@@ -101,7 +101,7 @@ def _failure_seed_meta(
 
 
 def _log_scheduler_note(note: str) -> None:
-    if "Adaptive backoff active" in note or "Adaptive backoff extended" in note:
+    if "Scheduler pressure backoff" in note or "Scheduler pressure hold" in note:
         bt.logging.warning(note)
     else:
         bt.logging.info(note)
@@ -215,6 +215,11 @@ async def _run_process_parallel(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
     )
+    pressure_poll_interval_sec = max(
+        0.0,
+        float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+    )
+    last_pressure_poll_at = 0.0
 
     from swarm.constants import (
         EVAL_SUMMARY_INTERVAL_SEC,
@@ -229,8 +234,10 @@ async def _run_process_parallel(
         wall_timeout = min(wall_timeout, GLOBAL_EVAL_CAP_SEC)
     bt.logging.info(
         f"    {len(all_tasks)} seeds | {effective_workers} workers | "
-        f"timeout={wall_timeout:.0f}s | backoff={'on' if scheduler.enabled else 'off'}"
+        f"timeout={wall_timeout:.0f}s | scheduler={'on' if scheduler.enabled else 'static'}"
     )
+    for line in scheduler.describe_configuration_lines():
+        bt.logging.info(f"    {line}")
 
     def _spawn_worker(worker_slot: int) -> None:
         task_queue = ctx.Queue()
@@ -269,6 +276,38 @@ async def _run_process_parallel(
         _spawn_worker(worker_slot)
         tracker_call(runtime_tracker, "mark_docker_worker_restart", worker_slot=int(worker_slot))
 
+    def _active_group_names() -> list[str]:
+        active_groups: list[str] = []
+        for request in worker_active_requests.values():
+            try:
+                if not request.batch_indices:
+                    continue
+                first_idx = int(request.batch_indices[0])
+                active_groups.append(str(task_meta[first_idx]["group"]))
+            except Exception:
+                continue
+        return active_groups
+
+    def _maybe_poll_scheduler(*, force: bool = False) -> None:
+        nonlocal last_pressure_poll_at
+        now = time.monotonic()
+        if (
+            not force
+            and pressure_poll_interval_sec > 0.0
+            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+        ):
+            return
+        last_pressure_poll_at = now
+        note = scheduler.observe_resources(_active_group_names())
+        if note:
+            _log_scheduler_note(note)
+            tracker_call(
+                runtime_tracker,
+                "mark_docker_backoff",
+                active_worker_cap=int(scheduler.active_worker_cap),
+                note=str(note),
+            )
+
     def _dispatch_available_batches() -> None:
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
             idle_worker_slots = [
@@ -288,6 +327,7 @@ async def _run_process_parallel(
                     int(request.batch_index) for request in worker_active_requests.values()
                 ],
                 active_worker_cap=scheduler.active_worker_cap,
+                scheduler=scheduler,
             )
             if batch_index is None:
                 return
@@ -321,10 +361,16 @@ async def _run_process_parallel(
                 active_worker_cap=int(scheduler.active_worker_cap),
             )
 
-    def _observe_seed(batch_index: int, seed_meta: Optional[Dict[str, Any]]) -> None:
+    def _remember_seed_meta(batch_index: int, seed_meta: Optional[Dict[str, Any]]) -> None:
         if isinstance(seed_meta, dict):
             batch_seed_meta[int(batch_index)] = dict(seed_meta)
-        note = scheduler.observe_seed(seed_meta)
+
+    def _observe_final_seed(
+        meta: Optional[dict[str, Any]],
+        seed_meta: Optional[Dict[str, Any]],
+    ) -> None:
+        group_name = str(meta.get("group", "")) if isinstance(meta, dict) else None
+        note = scheduler.observe_seed(seed_meta, group_name=group_name)
         if note:
             _log_scheduler_note(note)
             tracker_call(
@@ -346,7 +392,7 @@ async def _run_process_parallel(
                 if event.event_type == "batch_started":
                     worker_started_at[worker_slot] = float(event.ts)
                 continue
-            _observe_seed(
+            _remember_seed_meta(
                 int(getattr(event, "batch_index", -1)),
                 getattr(event, "seed_meta", None),
             )
@@ -370,7 +416,7 @@ async def _run_process_parallel(
             worker_slot=int(worker_slot),
             error=str(error),
         )
-        for task in request.tasks:
+        for idx, task in zip(request.batch_indices, request.tasks):
             if status == "worker_stall_timeout":
                 seed_meta = bench_engine._build_worker_stall_seed_meta(
                     task,
@@ -386,7 +432,8 @@ async def _run_process_parallel(
                     error=error,
                     elapsed_sec=elapsed_sec,
                 )
-            _observe_seed(int(request.batch_index), seed_meta)
+            meta = task_meta[int(idx)] if 0 <= int(idx) < len(task_meta) else None
+            _observe_final_seed(meta, seed_meta)
             _emit_seed_complete(on_seed_complete, seed_meta)
 
         for idx in request.batch_indices:
@@ -500,7 +547,7 @@ async def _run_process_parallel(
         line = (
             f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
             f"{counts} | {type_parts} | {active}/{effective_workers} workers "
-            f"(cap={scheduler.active_worker_cap})"
+            f"({scheduler.format_live_status_line()})"
         )
         bt.logging.info(line)
         last_summary_chunk_done = chunk_done
@@ -520,11 +567,14 @@ async def _run_process_parallel(
     try:
         for worker_slot in range(effective_workers):
             _spawn_worker(worker_slot)
+        _maybe_poll_scheduler(force=True)
         _dispatch_available_batches()
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
             _drain_progress_events()
+            _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -532,6 +582,8 @@ async def _run_process_parallel(
             try:
                 payload = result_queue.get(timeout=0.2)
             except queue_mod.Empty:
+                _maybe_poll_scheduler()
+                _dispatch_available_batches()
                 now = time.time()
                 for worker_slot, worker in list(workers.items()):
                     if worker.is_alive() or worker.exitcode in (0, None):
@@ -559,6 +611,8 @@ async def _run_process_parallel(
                 continue
 
             _drain_progress_events()
+            _maybe_poll_scheduler()
+            _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
             if completed_batches >= len(batch_plan):
                 break
@@ -650,6 +704,7 @@ async def _run_process_parallel(
                         uid=uid,
                         result_obj=vr,
                     )
+                _observe_final_seed(meta, final_seed_meta)
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(
                     vr,
@@ -661,6 +716,7 @@ async def _run_process_parallel(
             worker_last_heartbeat.pop(worker_slot, None)
             worker_started_at.pop(worker_slot, None)
             completed_batches += 1
+            _maybe_poll_scheduler()
             _dispatch_available_batches()
 
             now_ts = time.time()

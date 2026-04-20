@@ -159,6 +159,68 @@ class DockerRuntimeSettings:
 
 
 @dataclass(frozen=True)
+class HostWorkerLimits:
+    memory_mb: Optional[int]
+    cpuset_cpus: Optional[str]
+
+
+@dataclass(frozen=True)
+class HostWorkerRuntimeSettings:
+    memory_mb: Optional[int]
+    cpuset_map: Optional[str]
+
+    @classmethod
+    def from_env(cls) -> "HostWorkerRuntimeSettings":
+        raw_memory_mb = env_str("SWARM_HOST_WORKER_MEMORY_MB")
+        memory_mb: Optional[int] = None
+        if raw_memory_mb is not None:
+            try:
+                parsed = int(raw_memory_mb)
+                if parsed > 0:
+                    memory_mb = parsed
+            except (TypeError, ValueError):
+                memory_mb = None
+        return cls(
+            memory_mb=memory_mb,
+            cpuset_map=env_str("SWARM_HOST_WORKER_CPUSETS"),
+        )
+
+    @staticmethod
+    def split_cpuset_map(raw: str) -> list[str]:
+        return DockerRuntimeSettings.split_cpuset_map(raw)
+
+    @staticmethod
+    def parse_cpuset_spec(raw: str) -> set[int]:
+        cpus: set[int] = set()
+        for chunk in str(raw).split(","):
+            part = chunk.strip()
+            if not part:
+                continue
+            if "-" in part:
+                start_txt, end_txt = part.split("-", 1)
+                start = int(start_txt.strip())
+                end = int(end_txt.strip())
+                if end < start:
+                    start, end = end, start
+                for cpu in range(start, end + 1):
+                    cpus.add(int(cpu))
+            else:
+                cpus.add(int(part))
+        return cpus
+
+    def resolve_worker_limits(self, worker_id: int) -> HostWorkerLimits:
+        cpuset = env_str(f"SWARM_HOST_WORKER_CPUSET_CPUS_{worker_id}")
+        if cpuset is None and self.cpuset_map:
+            entries = self.split_cpuset_map(self.cpuset_map)
+            if worker_id < len(entries):
+                cpuset = entries[worker_id]
+        return HostWorkerLimits(
+            memory_mb=self.memory_mb,
+            cpuset_cpus=cpuset,
+        )
+
+
+@dataclass(frozen=True)
 class BackendApiSettings:
     base_url: Optional[str]
 
