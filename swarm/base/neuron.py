@@ -230,7 +230,15 @@ class BaseNeuron(ABC):
         self.version = __version__
 
         bt.logging.info("Parsing versions...")
-        response = requests.get(version_url, timeout=10)
+        try:
+            response = requests.get(version_url, timeout=10)
+        except requests.exceptions.RequestException as e:
+            bt.logging.warning(
+                f"Remote version check failed ({e.__class__.__name__}: {e}); "
+                f"falling back to local __version__={__version__}"
+            )
+            return
+
         bt.logging.info(f"Response: {response.status_code}")
         if response.status_code == 200:
             content = response.text
