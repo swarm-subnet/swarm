@@ -81,6 +81,7 @@ from .utils import (
     _get_processable_queue_keys,
     _get_validator_stake,
     _process_normal_queue_item,
+    _publish_pending_epoch_seeds,
     _refresh_normal_model_queue,
     _run_full_benchmark,
     _run_screening,
@@ -141,20 +142,7 @@ async def forward(self) -> None:
         # ──────────────────────────────────────────────────────────────
         # STEP 0.25: Publish any unpublished old epoch seeds
         # ──────────────────────────────────────────────────────────────
-        for pub in self.seed_manager.get_pending_publications():
-            ep = pub.get("epoch_number")
-            try:
-                await self.backend_api.publish_epoch_seeds(
-                    epoch_number=ep,
-                    seeds=pub.get("seeds", []),
-                    started_at=pub.get("started_at", ""),
-                    ended_at=pub.get("ended_at", ""),
-                    benchmark_version=pub.get("benchmark_version"),
-                )
-                self.seed_manager.mark_epoch_published(ep)
-                bt.logging.info(f"Published epoch {ep} seeds to backend")
-            except Exception as e:
-                bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+        await _publish_pending_epoch_seeds(self)
 
         # ──────────────────────────────────────────────────────────────
         # STEP 1: Sync with backend
