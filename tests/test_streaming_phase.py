@@ -1613,3 +1613,123 @@ def test_streaming_phase_checks_stop_each_chunk(monkeypatch):
     assert cancel is None
     assert len(scores) == 50
     assert len(call_log) == 5
+
+
+def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(
+        "swarm.validator.backend_api.AUTHORIZE_RETRY_BASE_DELAY_SEC", 0.0,
+    )
+
+    calls = {"n": 0}
+
+    async def _re_authorize():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return {"error": "502 Bad Gateway", "transport_failure": True}
+        return {"authorized": True}
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(20)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=10,
+                re_authorize=_re_authorize,
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 20
+    assert calls["n"] >= 3
+
+
+def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
+    from swarm.validator.backend_api import BackendTransportError
+
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(
+        "swarm.validator.backend_api.AUTHORIZE_RETRY_BASE_DELAY_SEC", 0.0,
+    )
+
+    calls = {"n": 0}
+
+    async def _re_authorize():
+        calls["n"] += 1
+        return {"error": "connection reset", "transport_failure": True}
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(20)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=10,
+                re_authorize=_re_authorize,
+            )
+        finally:
+            hb.finish()
+
+    try:
+        asyncio.run(_run())
+    except BackendTransportError as exc:
+        assert "connection reset" in str(exc)
+    else:
+        raise AssertionError("expected BackendTransportError to be raised")
+
+    assert calls["n"] >= 3
+
+
+def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(
+        "swarm.validator.backend_api.AUTHORIZE_RETRY_BASE_DELAY_SEC", 0.0,
+    )
+
+    calls = {"n": 0}
+
+    async def _re_authorize():
+        calls["n"] += 1
+        return {"authorized": False, "reason": "epoch rotated"}
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(30)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=10,
+                re_authorize=_re_authorize,
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel = asyncio.run(_run())
+
+    assert cancel == "epoch rotated"
+    assert calls["n"] == 1

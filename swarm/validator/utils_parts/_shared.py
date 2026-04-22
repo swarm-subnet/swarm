@@ -34,7 +34,12 @@ from swarm.utils.github import (
     validate_github_url,
 )
 from swarm.utils.hash import sha256sum
-from swarm.validator.backend_api import BackendApiClient, classify_backend_failure
+from swarm.validator.backend_api import (
+    BackendApiClient,
+    BackendTransportError,
+    authorize_with_retry,
+    classify_backend_failure,
+)
 from swarm.validator.task_gen import random_task
 
 STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"

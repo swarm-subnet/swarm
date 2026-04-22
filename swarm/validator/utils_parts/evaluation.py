@@ -12,6 +12,7 @@ from swarm.constants import (
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
+from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
 from swarm.validator.task_gen import random_task, screening_task
 from swarm.validator.runtime_telemetry import tracker_call
 
@@ -200,9 +201,12 @@ async def _run_streaming_phase(
 
             if re_authorize is not None:
                 await _drain_inflight()
-                auth = await re_authorize()
-                if not auth or not auth.get("authorized"):
-                    cancel_reason = str(auth.get("reason") if auth else "unauthorized")
+                auth = await authorize_with_retry(
+                    re_authorize,
+                    log_prefix=f"UID {uid} mid-{phase_description}: ",
+                )
+                if not auth.get("authorized"):
+                    cancel_reason = str(auth.get("reason") or "unauthorized")
                     break
 
             batch_seeds = seeds[chunk_start:chunk_start + chunk_size]
