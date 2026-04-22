@@ -33,7 +33,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 import bittensor as bt
 import httpx
@@ -43,6 +43,18 @@ from swarm.constants import BENCHMARK_VERSION
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"
+
+_TRANSPORT_EXCEPTIONS: Tuple[type, ...] = (
+    httpx.TransportError,
+    httpx.TimeoutException,
+)
+
+AUTHORIZE_RETRY_ATTEMPTS = 3
+AUTHORIZE_RETRY_BASE_DELAY_SEC = 2.0
+
+
+class BackendTransportError(RuntimeError):
+    """Raised when the backend cannot be reached after retries."""
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -112,6 +124,42 @@ def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool
         return False, reason
 
     return False, reason
+
+
+async def authorize_with_retry(
+    auth_fn: Callable[[], Awaitable[Dict[str, Any]]],
+    *,
+    attempts: int = AUTHORIZE_RETRY_ATTEMPTS,
+    base_delay: float = AUTHORIZE_RETRY_BASE_DELAY_SEC,
+    log_prefix: str = "",
+) -> Dict[str, Any]:
+    """Call an authorize function, retrying only on transport failures.
+
+    Real denials (``authorized=False`` without ``transport_failure``) and
+    unexpected responses are returned as-is after the first attempt. Transport
+    failures (``transport_failure=True``) trigger exponential backoff retries;
+    if all ``attempts`` exhaust with transport failures, ``BackendTransportError``
+    is raised so the caller can treat it as retryable rather than a cancel.
+    """
+    last: Dict[str, Any] = {}
+    for attempt in range(attempts):
+        last = await auth_fn() or {}
+        if last.get("authorized"):
+            return last
+        if not last.get("transport_failure"):
+            return last
+        if attempt == attempts - 1:
+            break
+        delay = base_delay * (2 ** attempt)
+        bt.logging.warning(
+            f"{log_prefix}authorize transport failure "
+            f"(attempt {attempt + 1}/{attempts}); retrying in {delay:.1f}s"
+        )
+        await asyncio.sleep(delay)
+    raise BackendTransportError(
+        f"{log_prefix}authorize transport failure after {attempts} attempts: "
+        f"{_scrub_url(str(last.get('error', '')))}"
+    )
 
 
 def _load_runtime_state() -> dict:
@@ -217,11 +265,21 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            bt.logging.warning(f"Backend rejected {endpoint}: {e.response.status_code}")
+            status = e.response.status_code
+            bt.logging.warning(f"Backend rejected {endpoint}: {status}")
             try:
-                return e.response.json()
+                payload: Dict[str, Any] = e.response.json()
+                if not isinstance(payload, dict):
+                    payload = {"error": _scrub_url(str(payload)), "status_code": status}
             except Exception:
-                return {"error": _scrub_url(str(e)), "status_code": e.response.status_code}
+                payload = {"error": _scrub_url(str(e)), "status_code": status}
+            if status >= 500:
+                payload.setdefault("transport_failure", True)
+                payload.setdefault("status_code", status)
+            return payload
+        except _TRANSPORT_EXCEPTIONS as e:
+            bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
+            return {"error": _scrub_url(str(e)), "transport_failure": True}
         except Exception as e:
             bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
             return {"error": _scrub_url(str(e))}
@@ -239,6 +297,22 @@ class BackendApiClient:
             resp = await self.client.get(f"{self.base_url}{endpoint}", headers=headers)
             resp.raise_for_status()
             return resp.json()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            bt.logging.warning(f"Backend rejected {endpoint}: {status}")
+            try:
+                payload: Dict[str, Any] = e.response.json()
+                if not isinstance(payload, dict):
+                    payload = {"error": _scrub_url(str(payload)), "status_code": status}
+            except Exception:
+                payload = {"error": _scrub_url(str(e)), "status_code": status}
+            if status >= 500:
+                payload.setdefault("transport_failure", True)
+                payload.setdefault("status_code", status)
+            return payload
+        except _TRANSPORT_EXCEPTIONS as e:
+            bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
+            return {"error": _scrub_url(str(e)), "transport_failure": True}
         except Exception as e:
             bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
             return {"error": _scrub_url(str(e))}

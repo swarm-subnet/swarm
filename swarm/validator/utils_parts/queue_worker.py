@@ -189,7 +189,10 @@ async def _process_normal_queue_item(
             if cached:
                 item["screening_score"] = float(cached.get("screening_score", 0.0))
             else:
-                auth = await _authorize_phase("SCREENING")
+                auth = await authorize_with_retry(
+                    lambda: _authorize_phase("SCREENING"),
+                    log_prefix=f"UID {uid} screening authorize: ",
+                )
                 if not auth.get("authorized"):
                     item["status"] = "cancelled"
                     item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
@@ -334,7 +337,10 @@ async def _process_normal_queue_item(
                 remaining_seeds = all_benchmark_seeds[done:]
 
                 if remaining_seeds:
-                    auth = await _authorize_phase("BENCHMARK")
+                    auth = await authorize_with_retry(
+                        lambda: _authorize_phase("BENCHMARK"),
+                        log_prefix=f"UID {uid} benchmark authorize: ",
+                    )
                     if not auth.get("authorized"):
                         item["status"] = "cancelled"
                         item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
