@@ -166,6 +166,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._cull_step_counter = 0
         self._cull_enabled = False
 
+        self._cached_proj_matrix = None
+
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
     # --------------------------------------------------------------------- #
@@ -427,15 +429,18 @@ class MovingDroneAviary(BaseRLAviary):
             physicsClientId=cli
         )
         
-        aspect = self.IMG_RES[0] / self.IMG_RES[1]
-        DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
-            fov=self._fov,
-            aspect=aspect,
-            nearVal=0.05,
-            farVal=DEPTH_FAR,
-            physicsClientId=cli
-        )
-        
+        DRONE_CAM_PRO = self._cached_proj_matrix
+        if DRONE_CAM_PRO is None:
+            aspect = self.IMG_RES[0] / self.IMG_RES[1]
+            DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
+                fov=self._fov,
+                aspect=aspect,
+                nearVal=0.05,
+                farVal=DEPTH_FAR,
+                physicsClientId=cli
+            )
+            self._cached_proj_matrix = DRONE_CAM_PRO
+
         seg_flag = p.ER_NO_SEGMENTATION_MASK
         depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
         if depth_only_flag is not None:
@@ -458,9 +463,7 @@ class MovingDroneAviary(BaseRLAviary):
     def _get_altitude_distance(self) -> float:
         """Cast single ray downward for ground/altitude detection."""
         cli = getattr(self, "CLIENT", 0)
-        uid = self.DRONE_IDS[0]
-        pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
-        pos = np.asarray(pos, dtype=float)
+        pos = self.pos[0]
 
         ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
         start = [pos[0], pos[1], pos[2] - ray_origin_offset]
@@ -1070,37 +1073,23 @@ class MovingDroneAviary(BaseRLAviary):
         depth = self._process_depth(depth_raw)
 
         state_vec = self._getDroneStateVector(0)
-        obs_12 = np.hstack([
-            state_vec[0:3],
-            state_vec[7:10],
-            state_vec[10:13],
-            state_vec[13:16]
-        ]).astype(np.float32)
 
-        state_full = np.array([obs_12], dtype=np.float32)
+        action_dim = self.action_buffer[0].shape[1] if self.ACTION_BUFFER_SIZE > 0 else 0
+        base_len = 12 + self.ACTION_BUFFER_SIZE * action_dim
+        state_full = np.empty(base_len + 1 + 3, dtype=np.float32)
+
+        state_full[0:3] = state_vec[0:3]
+        state_full[3:6] = state_vec[7:10]
+        state_full[6:9] = state_vec[10:13]
+        state_full[9:12] = state_vec[13:16]
+
+        offset = 12
         for i in range(self.ACTION_BUFFER_SIZE):
-            state_full = np.hstack([state_full, np.array([self.action_buffer[i][0, :]])])
-        state_full = state_full.flatten().astype(np.float32)
+            state_full[offset:offset + action_dim] = self.action_buffer[i][0, :]
+            offset += action_dim
 
-        altitude = self._get_altitude_distance() / MAX_RAY_DISTANCE
-        state_full = np.append(state_full, altitude).astype(np.float32)
-
-        drone_pos = state_vec[0:3]
-        search_area_vector = (self._search_area_center - drone_pos).astype(np.float32)
-        state_full = np.append(state_full, search_area_vector).astype(np.float32)
-
-        actual_state_dim = state_full.shape[0]
-        if actual_state_dim != self._state_dim:
-            self._state_dim = actual_state_dim
-            self.observation_space = spaces.Dict({
-                "depth": self.observation_space["depth"],
-                "state": spaces.Box(
-                    low=-np.inf,
-                    high=np.inf,
-                    shape=(actual_state_dim,),
-                    dtype=np.float32
-                ),
-            })
+        state_full[base_len] = self._get_altitude_distance() / MAX_RAY_DISTANCE
+        state_full[base_len + 1:base_len + 4] = self._search_area_center - state_vec[0:3]
 
         return {
             "depth": depth,
