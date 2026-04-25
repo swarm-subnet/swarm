@@ -59,23 +59,28 @@ def make_core_layout_helpers(
         candidate["_attached_wall"] = attached_wall
         return attached_wall
 
-    def _make_candidate(name, sx, sy, cx, cy, color):
+    def _make_candidate(
+        name, sx, sy, cx, cy, color,
+        *,
+        fits_attach_span=None,
+    ):
         sx_f = float(sx)
         sy_f = float(sy)
         cx_f = float(cx)
         cy_f = float(cy)
-        fits_attach_span = _size_fits_half_span(
-            sx_f, sy_f, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
+        if fits_attach_span is None:
+            fits_attach_span = _size_fits_half_span(
+                sx_f, sy_f, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
+            )
         cand = {
             "name": name,
             "sx": sx_f, "sy": sy_f,
             "cx": cx_f, "cy": cy_f,
             "rgba": color,
-            "_fits_attach_span": fits_attach_span,
+            "_fits_attach_span": bool(fits_attach_span),
         }
         cand["_rect_bounds"] = _rect_bounds(cx_f, cy_f, sx_f, sy_f)
-        cand["_attached_wall"] = _attached_wall_from_area_bounds(sx_f, sy_f, cx_f, cy_f)
+        cand["_attached_wall"] = None
         return cand
 
     def _is_far_from_personnel_door_on_same_wall(candidate):
@@ -160,8 +165,26 @@ def make_core_layout_helpers(
     def _can_place_static(candidate, gap):
         if not bool(candidate.get("_fits_attach_span", True)):
             return False
+        cand_bounds = candidate.get("_rect_bounds")
+        if cand_bounds is None:
+            for other in placed:
+                if _rects_overlap(candidate, other, gap):
+                    return False
+            return True
+        a_min_x, a_max_x, a_min_y, a_max_y = cand_bounds
         for other in placed:
-            if _rects_overlap(candidate, other, gap):
+            other_bounds = other.get("_rect_bounds")
+            if other_bounds is None:
+                if _rects_overlap(candidate, other, gap):
+                    return False
+                continue
+            b_min_x, b_max_x, b_min_y, b_max_y = other_bounds
+            if not (
+                (a_max_x + gap) <= b_min_x
+                or (b_max_x + gap) <= a_min_x
+                or (a_max_y + gap) <= b_min_y
+                or (b_max_y + gap) <= a_min_y
+            ):
                 return False
         return True
 
@@ -203,7 +226,10 @@ def make_core_layout_helpers(
             cx, cy = _wall_attached_center(
                 wall, along, sx, sy, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
             )
-            cand = _make_candidate(name, sx, sy, cx, cy, color)
+            cand = _make_candidate(
+                name, sx, sy, cx, cy, color,
+                fits_attach_span=True,
+            )
             if validator is not None and not validator(cand):
                 return None
             if _can_place(cand, gap):
