@@ -438,6 +438,74 @@ def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
     assert limits["cpuset_cpus"] == "2-3"
 
 
+def test_auto_worker_cpuset_map_partitions_host():
+    from swarm.config import auto_worker_cpuset_map
+
+    assert auto_worker_cpuset_map(n_workers=6, cpus_per_worker=2, total_cpus=12) == (
+        "0,1;2,3;4,5;6,7;8,9;10,11"
+    )
+    assert auto_worker_cpuset_map(n_workers=4, cpus_per_worker=2, total_cpus=8) == (
+        "0,1;2,3;4,5;6,7"
+    )
+    assert auto_worker_cpuset_map(n_workers=2, cpus_per_worker=2, total_cpus=4) == (
+        "0,1;2,3"
+    )
+    assert auto_worker_cpuset_map(n_workers=1, cpus_per_worker=4, total_cpus=8) == "0,1,2,3"
+
+
+def test_auto_worker_cpuset_map_returns_none_when_partition_oversized():
+    from swarm.config import auto_worker_cpuset_map
+
+    assert auto_worker_cpuset_map(n_workers=6, cpus_per_worker=2, total_cpus=8) is None
+    assert auto_worker_cpuset_map(n_workers=1, cpus_per_worker=2, total_cpus=1) is None
+    assert auto_worker_cpuset_map(n_workers=0, cpus_per_worker=2, total_cpus=8) is None
+
+
+def test_resolve_worker_limits_auto_pins_when_env_unset(monkeypatch):
+    monkeypatch.delenv("SWARM_DOCKER_WORKER_CPUSETS", raising=False)
+    for i in range(16):
+        monkeypatch.delenv(f"SWARM_DOCKER_WORKER_CPUSET_CPUS_{i}", raising=False)
+    monkeypatch.setattr("swarm.config.runtime.N_DOCKER_WORKERS", 4)
+    monkeypatch.setattr("swarm.config.runtime.cpus_per_docker_worker", lambda: 2)
+    monkeypatch.setattr("swarm.config.runtime.available_vcpu_count", lambda: 8)
+
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=0)["cpuset_cpus"] == "0,1"
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=1)["cpuset_cpus"] == "2,3"
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=3)["cpuset_cpus"] == "6,7"
+
+
+def test_resolve_worker_limits_skips_auto_pin_on_undersized_host(monkeypatch):
+    monkeypatch.delenv("SWARM_DOCKER_WORKER_CPUSETS", raising=False)
+    for i in range(16):
+        monkeypatch.delenv(f"SWARM_DOCKER_WORKER_CPUSET_CPUS_{i}", raising=False)
+    monkeypatch.setattr("swarm.config.runtime.N_DOCKER_WORKERS", 6)
+    monkeypatch.setattr("swarm.config.runtime.cpus_per_docker_worker", lambda: 2)
+    monkeypatch.setattr("swarm.config.runtime.available_vcpu_count", lambda: 4)
+
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=0)["cpuset_cpus"] is None
+
+
+def test_resolve_worker_limits_env_var_overrides_auto(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSETS", "10-11;12-13")
+    monkeypatch.setattr("swarm.config.runtime.N_DOCKER_WORKERS", 4)
+    monkeypatch.setattr("swarm.config.runtime.cpus_per_docker_worker", lambda: 2)
+    monkeypatch.setattr("swarm.config.runtime.available_vcpu_count", lambda: 16)
+
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=0)["cpuset_cpus"] == "10-11"
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=1)["cpuset_cpus"] == "12-13"
+
+
+def test_resolve_worker_limits_per_worker_env_overrides_auto(monkeypatch):
+    monkeypatch.delenv("SWARM_DOCKER_WORKER_CPUSETS", raising=False)
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_2", "20-21")
+    monkeypatch.setattr("swarm.config.runtime.N_DOCKER_WORKERS", 4)
+    monkeypatch.setattr("swarm.config.runtime.cpus_per_docker_worker", lambda: 2)
+    monkeypatch.setattr("swarm.config.runtime.available_vcpu_count", lambda: 8)
+
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=2)["cpuset_cpus"] == "20-21"
+    assert de.DockerSecureEvaluator._resolve_worker_limits(worker_id=0)["cpuset_cpus"] == "0,1"
+
+
 def test_host_worker_runtime_settings_use_env_overrides(monkeypatch):
     from swarm.config import HostWorkerRuntimeSettings
 
