@@ -70,3 +70,17 @@ def test_make_env_hides_gui_rendering_during_reset(monkeypatch) -> None:
         (dummy_p.COV_ENABLE_RENDERING, 0, 99),
         (dummy_p.COV_ENABLE_RENDERING, 1, 99),
     ]
+
+
+def test_make_env_with_initial_obs_returns_first_observation(monkeypatch) -> None:
+    dummy_p = _DummyPyBullet()
+    monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
+    monkeypatch.setattr(env_factory, "p", dummy_p)
+    monkeypatch.setattr(env_factory.pybullet_data, "getDataPath", lambda: "/tmp")
+
+    task = SimpleNamespace(sim_dt=0.1, map_seed=123)
+    env, obs = env_factory.make_env_with_initial_obs(task, gui=False)
+
+    assert isinstance(env, _DummyEnv)
+    assert tuple(obs["depth"].shape) == (4, 4, 1)
+    assert tuple(obs["state"].shape) == (4,)

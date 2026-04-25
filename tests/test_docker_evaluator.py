@@ -266,7 +266,7 @@ def test_cleanup_env_quietly_closes_env():
 
 def test_submission_template_dir_points_to_swarm_template():
     template_dir = de._submission_template_dir()
-    assert template_dir == Path("swarm/submission_template").resolve()
+    assert template_dir == (Path(__file__).resolve().parents[1] / "swarm" / "submission_template")
     assert (template_dir / "agent.capnp").is_file()
 
 
@@ -336,7 +336,7 @@ def test_setup_base_container_uses_real_docker_paths_after_split(monkeypatch):
 
     assert ev.base_ready is True
     assert len(build_cmds) == 1
-    dockerfile_path = Path("swarm/validator/docker/Dockerfile").resolve()
+    dockerfile_path = Path(__file__).resolve().parents[1] / "swarm" / "validator" / "docker" / "Dockerfile"
     assert build_cmds[0][build_cmds[0].index("-f") + 1] == str(dockerfile_path)
 
 
@@ -509,6 +509,136 @@ def test_calibrate_rpc_overhead_success(monkeypatch):
     expected_overheads = [0.038, 0.048, 0.058, 0.068]
     assert overhead == pytest.approx(np.median(expected_overheads), abs=1e-9)
     assert cpu_factor == pytest.approx(1.0, abs=1e-9)
+
+
+def test_run_multi_seed_rpc_sync_uses_initial_obs_without_extra_reset(monkeypatch):
+    rpc_mod = de.rpc
+    ev = _new_evaluator()
+    monkeypatch.setattr(rpc_mod.capnp, "load", lambda _path: SimpleNamespace(Agent=object()))
+    monkeypatch.setattr(rpc_mod.RpcTraceSettings, "from_env", lambda: SimpleNamespace(enabled=False, trace_every=1, heartbeat_sec=0.0))
+
+    class _Ping:
+        response = "pong"
+
+    class _Cal:
+        benchmarkNs = 12_000_000
+
+    class _ActionTensor:
+        data = np.zeros(5, dtype=np.float32).tobytes()
+        dtype = "float32"
+        shape = [5]
+
+    class _ActionResp:
+        action = _ActionTensor()
+
+    class _Agent:
+        def __init__(self):
+            self.reset_calls = 0
+            self.calibrate_obs = []
+            self.act_obs = []
+
+        async def ping(self, _msg):
+            return _Ping()
+
+        async def reset(self):
+            self.reset_calls += 1
+            return None
+
+        async def calibrate(self, obs):
+            self.calibrate_obs.append(obs)
+            return _Cal()
+
+        async def act(self, obs):
+            self.act_obs.append(obs)
+            return _ActionResp()
+
+    agent = _Agent()
+
+    class _Bootstrap:
+        def cast_as(self, _schema):
+            return agent
+
+    class _Client:
+        def bootstrap(self):
+            return _Bootstrap()
+
+    monkeypatch.setattr(rpc_mod.capnp, "TwoPartyClient", lambda _stream: _Client())
+
+    class _Loop:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(rpc_mod.capnp, "kj_loop", lambda: _Loop())
+
+    class _StreamFactory:
+        @staticmethod
+        async def create_connection(**_kwargs):
+            return object()
+
+    monkeypatch.setattr(rpc_mod.capnp, "AsyncIoStream", _StreamFactory)
+    monkeypatch.setattr(ev, "_serialize_observation", lambda _schema, obs: ("serialized", obs["marker"]))
+    monkeypatch.setattr(rpc_mod, "CALIBRATION_RECAL_INTERVAL", 1)
+    calibration_obs = []
+
+    async def _fake_calibrate(_agent, _schema, obs, uid):
+        calibration_obs.append((uid, obs["marker"]))
+        return 0.01, 1.0
+
+    monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _fake_calibrate)
+
+    closed = []
+
+    class _Env:
+        def __init__(self):
+            self.action_space = SimpleNamespace(
+                low=np.full(5, -1.0, dtype=np.float32),
+                high=np.full(5, 1.0, dtype=np.float32),
+            )
+            self.ACT_TYPE = None
+            self.SPEED_LIMIT = None
+            self.step_calls = 0
+
+        def step(self, _action):
+            self.step_calls += 1
+            return {"marker": "next"}, 0.0, True, False, {
+                "success": True,
+                "min_clearance": 1.0,
+                "collision": False,
+            }
+
+        def close(self):
+            closed.append(True)
+
+    env = _Env()
+    make_calls = []
+
+    def _fake_make_env_with_initial_obs(task, gui=False):
+        make_calls.append((task.map_seed, gui))
+        return env, {"marker": "initial"}
+
+    monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", _fake_make_env_with_initial_obs)
+
+    task = SimpleNamespace(
+        map_seed=77,
+        challenge_type=1,
+        horizon=0.04,
+        start=(0.0, 0.0, 1.0),
+        goal=(1.0, 1.0, 1.0),
+        moving_platform=False,
+    )
+    results = ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000)
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert make_calls == [(77, False)]
+    assert agent.reset_calls == 1
+    assert calibration_obs == [(9, "initial")]
+    assert agent.act_obs == [("serialized", "initial")]
+    assert env.step_calls == 1
+    assert closed == [True]
 
 
 def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
