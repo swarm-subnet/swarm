@@ -621,24 +621,19 @@ async def evaluate_seeds_batch(
 
         rpc_start = time.time()
         max_rpc_wait = 30
-        rpc_check_interval = 2
+        rpc_check_interval = 0.1
         rpc_check_count = 0
         connected = False
         _phase(f"waiting for rpc readiness (max_wait={max_rpc_wait}s)")
 
-        await asyncio.sleep(4)
-
         while time.time() - rpc_start < max_rpc_wait:
             rpc_check_count += 1
-            try:
-                if self._check_rpc_ready(container_name, timeout=5.0):
-                    connected = True
-                    elapsed = time.time() - rpc_start
-                    _phase(f"rpc ready after {elapsed:.1f}s")
-                    break
-            except Exception:
-                pass
-            if trace_rpc and rpc_check_count % 3 == 0:
+            if self._check_rpc_ready(host_port):
+                connected = True
+                elapsed = time.time() - rpc_start
+                _phase(f"rpc ready after {elapsed:.1f}s")
+                break
+            if trace_rpc and rpc_check_count % 30 == 0:
                 waited = time.time() - rpc_start
                 _phase(f"rpc not ready yet ({waited:.1f}s elapsed)")
             await asyncio.sleep(rpc_check_interval)

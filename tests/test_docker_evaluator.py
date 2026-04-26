@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import socket
 import threading
 import time
 import zipfile
@@ -340,21 +341,38 @@ def test_setup_base_container_uses_real_docker_paths_after_split(monkeypatch):
     assert build_cmds[0][build_cmds[0].index("-f") + 1] == str(dockerfile_path)
 
 
-def test_check_rpc_ready(monkeypatch):
+def test_check_rpc_ready_open_port():
     ev = _new_evaluator()
-    monkeypatch.setattr(
-        de.subprocess,
-        "run",
-        lambda *a, **k: _ProcResult(returncode=0, stdout="PID CMD\n1 python main.py\n"),
-    )
-    assert ev._check_rpc_ready("container") is True
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        assert ev._check_rpc_ready(port, timeout=0.5) is True
+    finally:
+        server.close()
 
-    monkeypatch.setattr(
-        de.subprocess,
-        "run",
-        lambda *a, **k: _ProcResult(returncode=0, stdout="PID CMD\n1 sleep infinity\n"),
-    )
-    assert ev._check_rpc_ready("container") is False
+
+def test_check_rpc_ready_closed_port():
+    ev = _new_evaluator()
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.close()
+    assert ev._check_rpc_ready(port, timeout=0.2) is False
+
+
+def test_check_rpc_ready_late_bind():
+    ev = _new_evaluator()
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    assert ev._check_rpc_ready(port, timeout=0.1) is False
+    server.listen(1)
+    try:
+        assert ev._check_rpc_ready(port, timeout=0.5) is True
+    finally:
+        server.close()
 
 
 def test_get_docker_host_ip_and_fallback(monkeypatch):
