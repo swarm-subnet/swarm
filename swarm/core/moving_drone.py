@@ -1,6 +1,7 @@
 # swarm/envs/moving_drone.py
 from __future__ import annotations
 
+import functools
 import math
 import os
 import numpy as np
@@ -37,6 +38,16 @@ from swarm.constants import (
     CULL_MIN_AABB_SPAN, CULL_MIN_FACES, CULL_MIN_TOTAL_FACES,
     SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE,
 )
+
+
+@functools.lru_cache(maxsize=4096)
+def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return 0
+    return data.count(b"\nf ") + (1 if data.startswith(b"f ") else 0)
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -587,14 +598,11 @@ class MovingDroneAviary(BaseRLAviary):
     # --------------------------------------------------------------------- #
     @staticmethod
     def _count_mesh_faces(path: str) -> int:
-        if not os.path.exists(path):
+        try:
+            st = os.stat(path)
+        except OSError:
             return 0
-        count = 0
-        with open(path) as f:
-            for line in f:
-                if line[0:2] == "f ":
-                    count += 1
-        return count
+        return _count_obj_faces_cached(path, st.st_mtime_ns, st.st_size)
 
     def _build_cull_targets(self) -> None:
         """Scan scene bodies and build the cull-target list."""
