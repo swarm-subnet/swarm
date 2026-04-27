@@ -11,6 +11,8 @@ filelock==3.25.2
 swarm-bullet3==2.0.0.2
 # Canonical SDK version for validator/miner environments.
 bittensor==10.2.0
+# bittensor 10.2.0 imports ScaleObj from async-substrate-interface; 2.0.x removed it.
+async-substrate-interface<2.0
 msgpack==1.1.2
 importlib-metadata==9.0.0
 onnxruntime==1.23.2
