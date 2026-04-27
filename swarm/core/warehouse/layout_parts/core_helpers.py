@@ -1,3 +1,4 @@
+from bisect import bisect_right
 from types import SimpleNamespace
 
 from ..constants import (
@@ -59,23 +60,28 @@ def make_core_layout_helpers(
         candidate["_attached_wall"] = attached_wall
         return attached_wall
 
-    def _make_candidate(name, sx, sy, cx, cy, color):
+    def _make_candidate(
+        name, sx, sy, cx, cy, color,
+        *,
+        fits_attach_span=None,
+    ):
         sx_f = float(sx)
         sy_f = float(sy)
         cx_f = float(cx)
         cy_f = float(cy)
-        fits_attach_span = _size_fits_half_span(
-            sx_f, sy_f, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
+        if fits_attach_span is None:
+            fits_attach_span = _size_fits_half_span(
+                sx_f, sy_f, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
+            )
         cand = {
             "name": name,
             "sx": sx_f, "sy": sy_f,
             "cx": cx_f, "cy": cy_f,
             "rgba": color,
-            "_fits_attach_span": fits_attach_span,
+            "_fits_attach_span": bool(fits_attach_span),
         }
         cand["_rect_bounds"] = _rect_bounds(cx_f, cy_f, sx_f, sy_f)
-        cand["_attached_wall"] = _attached_wall_from_area_bounds(sx_f, sy_f, cx_f, cy_f)
+        cand["_attached_wall"] = None
         return cand
 
     def _is_far_from_personnel_door_on_same_wall(candidate):
@@ -157,11 +163,85 @@ def make_core_layout_helpers(
         tol = max(0.5, end_tol_factor * span)
         return abs(along_val - lo) <= tol or abs(along_val - hi) <= tol
 
+    def _wall_forbidden_along_intervals(wall, sx, sy, gap, lo, hi):
+        intervals = []
+
+        test_cx, test_cy = _wall_attached_center(
+            wall, lo, sx, sy, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
+        )
+        a_min_x, a_max_x, a_min_y, a_max_y = _rect_bounds(test_cx, test_cy, sx, sy)
+
+        if wall in ("north", "south"):
+            half_span = sx * 0.5
+            for other in placed:
+                b_bounds = other.get("_rect_bounds")
+                if b_bounds is None:
+                    continue
+                b_min_x, b_max_x, b_min_y, b_max_y = b_bounds
+                if (a_max_y + gap) <= b_min_y or (b_max_y + gap) <= a_min_y:
+                    continue
+                intervals.append((b_min_x - half_span - gap, b_max_x + half_span + gap))
+        else:
+            half_span = sy * 0.5
+            for other in placed:
+                b_bounds = other.get("_rect_bounds")
+                if b_bounds is None:
+                    continue
+                b_min_x, b_max_x, b_min_y, b_max_y = b_bounds
+                if (a_max_x + gap) <= b_min_x or (b_max_x + gap) <= a_min_x:
+                    continue
+                intervals.append((b_min_y - half_span - gap, b_max_y + half_span + gap))
+
+        if (
+            personnel_side == wall
+            and personnel_side in WALL_SLOTS
+            and personnel_span > 0.0
+        ):
+            cand_span = sx if wall in ("north", "south") else sy
+            door_half = (personnel_span * 0.5) + PERSONNEL_DOOR_CLEAR_EXTRA_ALONG + 1.0
+            limit = door_half + cand_span * 0.5 - 1e-6
+            intervals.append((personnel_along - limit, personnel_along + limit))
+
+        if not intervals:
+            return [], []
+
+        intervals.sort()
+        merged = []
+        for a, b in intervals:
+            if b <= lo or a >= hi:
+                continue
+            a = max(a, lo)
+            b = min(b, hi)
+            if merged and a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        starts = [a for a, _ in merged]
+        return merged, starts
+
     def _can_place_static(candidate, gap):
         if not bool(candidate.get("_fits_attach_span", True)):
             return False
+        cand_bounds = candidate.get("_rect_bounds")
+        if cand_bounds is None:
+            for other in placed:
+                if _rects_overlap(candidate, other, gap):
+                    return False
+            return True
+        a_min_x, a_max_x, a_min_y, a_max_y = cand_bounds
         for other in placed:
-            if _rects_overlap(candidate, other, gap):
+            other_bounds = other.get("_rect_bounds")
+            if other_bounds is None:
+                if _rects_overlap(candidate, other, gap):
+                    return False
+                continue
+            b_min_x, b_max_x, b_min_y, b_max_y = other_bounds
+            if not (
+                (a_max_x + gap) <= b_min_x
+                or (b_max_x + gap) <= a_min_x
+                or (a_max_y + gap) <= b_min_y
+                or (b_max_y + gap) <= a_min_y
+            ):
                 return False
         return True
 
@@ -199,11 +279,22 @@ def make_core_layout_helpers(
         if hi < lo:
             return None
 
+        forbidden, forbidden_starts = _wall_forbidden_along_intervals(wall, sx, sy, gap, lo, hi)
+
+        def _is_forbidden_along(along):
+            if not forbidden_starts:
+                return False
+            j = bisect_right(forbidden_starts, along) - 1
+            return j >= 0 and forbidden[j][0] < along < forbidden[j][1]
+
         def _candidate_for_along(along):
             cx, cy = _wall_attached_center(
                 wall, along, sx, sy, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
             )
-            cand = _make_candidate(name, sx, sy, cx, cy, color)
+            cand = _make_candidate(
+                name, sx, sy, cx, cy, color,
+                fits_attach_span=True,
+            )
             if validator is not None and not validator(cand):
                 return None
             if _can_place(cand, gap):
@@ -237,6 +328,8 @@ def make_core_layout_helpers(
                 _push_along(value)
 
         for along in along_values:
+            if _is_forbidden_along(along):
+                continue
             cand = _candidate_for_along(along)
             if cand is not None:
                 return cand

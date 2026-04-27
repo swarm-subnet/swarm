@@ -11,7 +11,13 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
+from swarm.constants import (
+    DOCKER_WORKER_CPUS,
+    DOCKER_WORKER_MEMORY,
+    N_DOCKER_WORKERS,
+    available_vcpu_count,
+    cpus_per_docker_worker,
+)
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -95,6 +101,32 @@ class DockerBatchTimeoutSettings:
         )
 
 
+def auto_worker_cpuset_map(
+    n_workers: Optional[int] = None,
+    cpus_per_worker: Optional[int] = None,
+    total_cpus: Optional[int] = None,
+) -> Optional[str]:
+    """Return a semicolon-joined cpuset map pinning each worker to a dedicated CPU group.
+
+    Each worker ``i`` is assigned the contiguous range
+    ``[i * cpus_per_worker, (i + 1) * cpus_per_worker)``. Returns ``None`` when
+    the requested partition does not fit the host, leaving docker free to
+    schedule.
+    """
+    workers = N_DOCKER_WORKERS if n_workers is None else int(n_workers)
+    per_worker = cpus_per_docker_worker() if cpus_per_worker is None else int(cpus_per_worker)
+    host_cpus = available_vcpu_count() if total_cpus is None else int(total_cpus)
+    if workers <= 0 or per_worker <= 0 or host_cpus <= 0:
+        return None
+    if workers * per_worker > host_cpus:
+        return None
+    entries = [
+        ",".join(str(c) for c in range(i * per_worker, (i + 1) * per_worker))
+        for i in range(workers)
+    ]
+    return ";".join(entries)
+
+
 @dataclass(frozen=True)
 class DockerWorkerLimits:
     cpus: str
@@ -113,13 +145,16 @@ class DockerRuntimeSettings:
 
     @classmethod
     def from_env(cls) -> "DockerRuntimeSettings":
+        cpuset_map = env_str("SWARM_DOCKER_WORKER_CPUSETS")
+        if cpuset_map is None:
+            cpuset_map = auto_worker_cpuset_map()
         return cls(
             thread_caps_enabled=env_bool("SWARM_DOCKER_THREAD_CAPS", False),
             torch_num_threads=env_str("SWARM_TORCH_NUM_THREADS"),
             torch_interop_threads=env_str("SWARM_TORCH_INTEROP_THREADS"),
             cpus_override=env_str("SWARM_DOCKER_WORKER_CPUS_OVERRIDE"),
             memory_override=env_str("SWARM_DOCKER_WORKER_MEMORY_OVERRIDE"),
-            cpuset_map=env_str("SWARM_DOCKER_WORKER_CPUSETS"),
+            cpuset_map=cpuset_map,
         )
 
     @staticmethod

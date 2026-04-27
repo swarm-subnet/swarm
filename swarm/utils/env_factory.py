@@ -73,6 +73,16 @@ def make_env(
         A ready‑to‑use environment that has already been reset and whose world
         (obstacles, safe zone, goal beacon, …) has been spawned.
     """
+    env, _obs = make_env_with_initial_obs(task, gui=gui)
+    return env
+
+
+def make_env_with_initial_obs(
+    task: MapTask,
+    *,
+    gui: bool = False,
+) -> tuple[MovingDroneAviary, dict[str, np.ndarray]]:
+    """Create an env and return the observation produced by its initial reset."""
     ctrl_freq = int(round(1.0 / task.sim_dt))
     common_kwargs = dict(
         gui=gui,
@@ -82,7 +92,6 @@ def make_env(
         pyb_freq=ctrl_freq,
     )
 
-    # Silence the copious PyBullet stdout spam when instantiating the env
     with contextlib.redirect_stdout(io.StringIO()):
         env = MovingDroneAviary(
             task,
@@ -124,4 +133,4 @@ def make_env(
         physicsClientId=cli,
     )
 
-    return env
+    return env, obs

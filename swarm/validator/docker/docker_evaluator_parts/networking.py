@@ -10,17 +10,12 @@ def _find_free_port(self) -> int:
         s.bind(("", 0))
         return s.getsockname()[1]
 
-def _check_rpc_ready(self, container_name: str, timeout: float = 5.0) -> bool:
-    """Check if the RPC server process is running inside the container."""
+def _check_rpc_ready(self, host_port: int, timeout: float = 0.2) -> bool:
+    """Return True if the RPC server is accepting TCP connections on host_port."""
     try:
-        result = subprocess.run(
-            ["docker", "top", container_name],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return result.returncode == 0 and "main.py" in result.stdout
-    except Exception:
+        with socket.create_connection(("127.0.0.1", int(host_port)), timeout=timeout):
+            return True
+    except OSError:
         return False
 
 def _get_docker_host_ip(self) -> str:
