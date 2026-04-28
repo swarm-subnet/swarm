@@ -1,6 +1,22 @@
 from ._shared import *
 
 
+def _format_stop_reason(conflicts: list) -> str:
+    parts: List[str] = []
+    for conflict in conflicts:
+        if not isinstance(conflict, dict):
+            continue
+        code = conflict.get("code") or ""
+        message = conflict.get("message") or conflict.get("title") or ""
+        if code and message:
+            parts.append(f"{code}: {message}")
+        elif code:
+            parts.append(str(code))
+        elif message:
+            parts.append(str(message))
+    return "; ".join(parts) if parts else "stop_required"
+
+
 class HeartbeatManager:
     """Thread-safe heartbeat progress manager for evaluation tracking.
 
@@ -23,6 +39,8 @@ class HeartbeatManager:
         self._queue: Optional[list] = None
         self._active_task: Optional[dict] = None
         self._backend_decision_version: Optional[int] = None
+        self._stop_required = False
+        self._stop_reason: Optional[str] = None
 
     def set_queue(self, queue: list) -> None:
         with self._lock:
@@ -45,6 +63,8 @@ class HeartbeatManager:
             self._progress = 0
             self._last_sent = 0
             self._active = True
+            self._stop_required = False
+            self._stop_reason = None
             if queue is not None:
                 self._queue = queue
             if active_task is not None:
@@ -122,7 +142,7 @@ class HeartbeatManager:
             decision_version = self._backend_decision_version
 
         try:
-            await asyncio.wait_for(
+            response = await asyncio.wait_for(
                 self.backend_api.post_heartbeat(
                     status=status,
                     current_uid=uid,
@@ -132,10 +152,32 @@ class HeartbeatManager:
                     active_task=active_task,
                     backend_decision_version=decision_version,
                 ),
-                timeout=2.0
+                timeout=10.0
             )
         except Exception:
-            pass
+            return
+
+        self._handle_response(response, session_id)
+
+    def _handle_response(self, response: Any, session_id: int) -> None:
+        if not isinstance(response, dict) or not response.get("stop_required"):
+            return
+        conflicts = response.get("conflicts") or []
+        reason = _format_stop_reason(conflicts)
+        with self._lock:
+            if session_id != self._session_id:
+                return
+            already_stopped = self._stop_required
+            self._stop_required = True
+            self._stop_reason = reason
+        if not already_stopped:
+            bt.logging.warning(
+                f"Backend requested stop for UID {self._uid}: {reason}"
+            )
+
+    def should_stop(self) -> Optional[str]:
+        with self._lock:
+            return self._stop_reason if self._stop_required else None
 
     async def _send_idle(self) -> None:
         with self._lock:
@@ -148,7 +190,7 @@ class HeartbeatManager:
                     queue=queue,
                     backend_decision_version=decision_version,
                 ),
-                timeout=2.0
+                timeout=10.0
             )
         except Exception:
             pass

@@ -84,7 +84,7 @@ def test_process_normal_queue_item_happy_path(monkeypatch, tmp_path: Path):
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.8, [0.8], {"city": [], "open": [0.8]}
+        return 0.8, [0.8], {"city": [], "open": [0.8]}, None
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs
@@ -157,7 +157,7 @@ def test_process_normal_queue_item_updates_runtime_tracker(monkeypatch, tmp_path
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.8, [0.8], {"open": [0.8]}
+        return 0.8, [0.8], {"open": [0.8]}, None
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs
@@ -273,7 +273,7 @@ def test_process_normal_queue_item_backend_cancels_benchmark_authorization(monke
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.1, [0.1], {"city": [0.1]}
+        return 0.1, [0.1], {"city": [0.1]}, None
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs
@@ -333,7 +333,7 @@ def test_process_normal_queue_item_terminal_score_rejection(monkeypatch, tmp_pat
 
     async def _run_screening(*args, **kwargs):
         _ = args, kwargs
-        return 0.8, [0.8], {"city": [], "open": [0.8]}
+        return 0.8, [0.8], {"city": [], "open": [0.8]}, None
 
     async def _submit_screening(*args, **kwargs):
         _ = args, kwargs

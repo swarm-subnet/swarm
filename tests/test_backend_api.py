@@ -421,3 +421,146 @@ def test_classify_backend_failure_marks_epoch_mismatch_and_missing_github_as_ter
     )
     assert is_terminal is True
     assert "github_url" in reason
+
+
+def test_post_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _FakeAsyncClient()
+    response = httpx.Response(
+        status_code=502,
+        json={"detail": "Bad Gateway"},
+        request=httpx.Request("POST", "http://backend.local/x"),
+    )
+    fake_http.post_error = httpx.HTTPStatusError(
+        "boom", request=response.request, response=response
+    )
+    client.client = fake_http
+    try:
+        data = _run(client._post_signed("/x", {"a": 1}))
+        assert data.get("transport_failure") is True
+        assert data.get("status_code") == 502
+    finally:
+        _run(client.close())
+
+
+def test_post_signed_4xx_does_not_tag_transport_failure(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _FakeAsyncClient()
+    response = httpx.Response(
+        status_code=409,
+        json={"detail": "already submitted"},
+        request=httpx.Request("POST", "http://backend.local/x"),
+    )
+    fake_http.post_error = httpx.HTTPStatusError(
+        "conflict", request=response.request, response=response
+    )
+    client.client = fake_http
+    try:
+        data = _run(client._post_signed("/x", {"a": 1}))
+        assert "transport_failure" not in data
+        assert data == {"detail": "already submitted"}
+    finally:
+        _run(client.close())
+
+
+def test_post_signed_connection_error_tags_transport_failure(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _FakeAsyncClient()
+    fake_http.post_error = httpx.ConnectError("cannot connect")
+    client.client = fake_http
+    try:
+        data = _run(client._post_signed("/x", {"a": 1}))
+        assert data.get("transport_failure") is True
+        assert "error" in data
+    finally:
+        _run(client.close())
+
+
+def test_post_signed_timeout_tags_transport_failure(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _FakeAsyncClient()
+    fake_http.post_error = httpx.ReadTimeout("read timed out")
+    client.client = fake_http
+    try:
+        data = _run(client._post_signed("/x", {"a": 1}))
+        assert data.get("transport_failure") is True
+    finally:
+        _run(client.close())
+
+
+def test_get_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _FakeAsyncClient()
+    response = httpx.Response(
+        status_code=503,
+        json={"detail": "Service Unavailable"},
+        request=httpx.Request("GET", "http://backend.local/x"),
+    )
+    fake_http.get_error = httpx.HTTPStatusError(
+        "boom", request=response.request, response=response
+    )
+    client.client = fake_http
+    try:
+        data = _run(client._get_signed("/x"))
+        assert data.get("transport_failure") is True
+        assert data.get("status_code") == 503
+    finally:
+        _run(client.close())
+
+
+def test_authorize_with_retry_passes_through_success():
+    async def _auth():
+        return {"authorized": True, "task_id": 42}
+
+    result = _run(
+        backend_api.authorize_with_retry(_auth, attempts=3, base_delay=0.0)
+    )
+    assert result == {"authorized": True, "task_id": 42}
+
+
+def test_authorize_with_retry_does_not_retry_real_denial():
+    calls = {"n": 0}
+
+    async def _auth():
+        calls["n"] += 1
+        return {"authorized": False, "reason": "epoch rotated"}
+
+    result = _run(
+        backend_api.authorize_with_retry(_auth, attempts=3, base_delay=0.0)
+    )
+    assert result == {"authorized": False, "reason": "epoch rotated"}
+    assert calls["n"] == 1
+
+
+def test_authorize_with_retry_recovers_after_transient_failures():
+    calls = {"n": 0}
+
+    async def _auth():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return {"error": "502 Bad Gateway", "transport_failure": True}
+        return {"authorized": True, "task_id": 7}
+
+    result = _run(
+        backend_api.authorize_with_retry(_auth, attempts=5, base_delay=0.0)
+    )
+    assert result == {"authorized": True, "task_id": 7}
+    assert calls["n"] == 3
+
+
+def test_authorize_with_retry_raises_after_exhausting_transients():
+    calls = {"n": 0}
+
+    async def _auth():
+        calls["n"] += 1
+        return {"error": "read timed out", "transport_failure": True}
+
+    try:
+        _run(
+            backend_api.authorize_with_retry(_auth, attempts=3, base_delay=0.0)
+        )
+    except backend_api.BackendTransportError as exc:
+        assert "read timed out" in str(exc)
+    else:
+        raise AssertionError("expected BackendTransportError")
+    assert calls["n"] == 3

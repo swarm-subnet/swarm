@@ -11,7 +11,13 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
+from swarm.constants import (
+    DOCKER_WORKER_CPUS,
+    DOCKER_WORKER_MEMORY,
+    N_DOCKER_WORKERS,
+    available_vcpu_count,
+    cpus_per_docker_worker,
+)
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -95,6 +101,32 @@ class DockerBatchTimeoutSettings:
         )
 
 
+def auto_worker_cpuset_map(
+    n_workers: Optional[int] = None,
+    cpus_per_worker: Optional[int] = None,
+    total_cpus: Optional[int] = None,
+) -> Optional[str]:
+    """Return a semicolon-joined cpuset map pinning each worker to a dedicated CPU group.
+
+    Each worker ``i`` is assigned the contiguous range
+    ``[i * cpus_per_worker, (i + 1) * cpus_per_worker)``. Returns ``None`` when
+    the requested partition does not fit the host, leaving docker free to
+    schedule.
+    """
+    workers = N_DOCKER_WORKERS if n_workers is None else int(n_workers)
+    per_worker = cpus_per_docker_worker() if cpus_per_worker is None else int(cpus_per_worker)
+    host_cpus = available_vcpu_count() if total_cpus is None else int(total_cpus)
+    if workers <= 0 or per_worker <= 0 or host_cpus <= 0:
+        return None
+    if workers * per_worker > host_cpus:
+        return None
+    entries = [
+        ",".join(str(c) for c in range(i * per_worker, (i + 1) * per_worker))
+        for i in range(workers)
+    ]
+    return ";".join(entries)
+
+
 @dataclass(frozen=True)
 class DockerWorkerLimits:
     cpus: str
@@ -113,13 +145,16 @@ class DockerRuntimeSettings:
 
     @classmethod
     def from_env(cls) -> "DockerRuntimeSettings":
+        cpuset_map = env_str("SWARM_DOCKER_WORKER_CPUSETS")
+        if cpuset_map is None:
+            cpuset_map = auto_worker_cpuset_map()
         return cls(
             thread_caps_enabled=env_bool("SWARM_DOCKER_THREAD_CAPS", False),
             torch_num_threads=env_str("SWARM_TORCH_NUM_THREADS"),
             torch_interop_threads=env_str("SWARM_TORCH_INTEROP_THREADS"),
             cpus_override=env_str("SWARM_DOCKER_WORKER_CPUS_OVERRIDE"),
             memory_override=env_str("SWARM_DOCKER_WORKER_MEMORY_OVERRIDE"),
-            cpuset_map=env_str("SWARM_DOCKER_WORKER_CPUSETS"),
+            cpuset_map=cpuset_map,
         )
 
     @staticmethod
@@ -154,6 +189,68 @@ class DockerRuntimeSettings:
         return DockerWorkerLimits(
             cpus=self.cpus_override or DOCKER_WORKER_CPUS,
             memory=self.memory_override or DOCKER_WORKER_MEMORY,
+            cpuset_cpus=cpuset,
+        )
+
+
+@dataclass(frozen=True)
+class HostWorkerLimits:
+    memory_mb: Optional[int]
+    cpuset_cpus: Optional[str]
+
+
+@dataclass(frozen=True)
+class HostWorkerRuntimeSettings:
+    memory_mb: Optional[int]
+    cpuset_map: Optional[str]
+
+    @classmethod
+    def from_env(cls) -> "HostWorkerRuntimeSettings":
+        raw_memory_mb = env_str("SWARM_HOST_WORKER_MEMORY_MB")
+        memory_mb: Optional[int] = None
+        if raw_memory_mb is not None:
+            try:
+                parsed = int(raw_memory_mb)
+                if parsed > 0:
+                    memory_mb = parsed
+            except (TypeError, ValueError):
+                memory_mb = None
+        return cls(
+            memory_mb=memory_mb,
+            cpuset_map=env_str("SWARM_HOST_WORKER_CPUSETS"),
+        )
+
+    @staticmethod
+    def split_cpuset_map(raw: str) -> list[str]:
+        return DockerRuntimeSettings.split_cpuset_map(raw)
+
+    @staticmethod
+    def parse_cpuset_spec(raw: str) -> set[int]:
+        cpus: set[int] = set()
+        for chunk in str(raw).split(","):
+            part = chunk.strip()
+            if not part:
+                continue
+            if "-" in part:
+                start_txt, end_txt = part.split("-", 1)
+                start = int(start_txt.strip())
+                end = int(end_txt.strip())
+                if end < start:
+                    start, end = end, start
+                for cpu in range(start, end + 1):
+                    cpus.add(int(cpu))
+            else:
+                cpus.add(int(part))
+        return cpus
+
+    def resolve_worker_limits(self, worker_id: int) -> HostWorkerLimits:
+        cpuset = env_str(f"SWARM_HOST_WORKER_CPUSET_CPUS_{worker_id}")
+        if cpuset is None and self.cpuset_map:
+            entries = self.split_cpuset_map(self.cpuset_map)
+            if worker_id < len(entries):
+                cpuset = entries[worker_id]
+        return HostWorkerLimits(
+            memory_mb=self.memory_mb,
             cpuset_cpus=cpuset,
         )
 

@@ -1,10 +1,8 @@
-import math
-
 from ._shared import *
 from .heartbeat import HeartbeatManager
 from swarm.validator.runtime_telemetry import tracker_call
 
-from swarm.constants import N_DOCKER_WORKERS, BENCHMARK_TOTAL_SEED_COUNT, BENCHMARK_SCREENING_SEED_COUNT
+from swarm.constants import BENCHMARK_TOTAL_SEED_COUNT, BENCHMARK_SCREENING_SEED_COUNT
 
 
 def _utils_facade():
@@ -191,7 +189,10 @@ async def _process_normal_queue_item(
             if cached:
                 item["screening_score"] = float(cached.get("screening_score", 0.0))
             else:
-                auth = await _authorize_phase("SCREENING")
+                auth = await authorize_with_retry(
+                    lambda: _authorize_phase("SCREENING"),
+                    log_prefix=f"UID {uid} screening authorize: ",
+                )
                 if not auth.get("authorized"):
                     item["status"] = "cancelled"
                     item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
@@ -209,8 +210,10 @@ async def _process_normal_queue_item(
                     )
                     return
                 tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
-                screening_score, screening_scores, screening_per_type = (
-                    await _utils_facade()._run_screening(self, uid, model_path)
+                screening_score, screening_scores, screening_per_type, _ = (
+                    await _utils_facade()._run_screening(
+                        self, uid, model_path, task_id=item.get("assignment_id"),
+                    )
                 )
                 item["screening_score"] = float(screening_score)
                 item["screening_scores"] = screening_scores
@@ -334,7 +337,10 @@ async def _process_normal_queue_item(
                 remaining_seeds = all_benchmark_seeds[done:]
 
                 if remaining_seeds:
-                    auth = await _authorize_phase("BENCHMARK")
+                    auth = await authorize_with_retry(
+                        lambda: _authorize_phase("BENCHMARK"),
+                        log_prefix=f"UID {uid} benchmark authorize: ",
+                    )
                     if not auth.get("authorized"):
                         item["status"] = "cancelled"
                         item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
@@ -381,70 +387,71 @@ async def _process_normal_queue_item(
                         with hb._lock:
                             hb._progress = done
                             hb._last_sent = done
-                    round_size = max(1, math.ceil(total_benchmark_seeds / N_DOCKER_WORKERS))
+
+                    async def _reauthorize_benchmark() -> dict:
+                        return await _authorize_phase("BENCHMARK")
+
+                    def _on_chunk(**info) -> None:
+                        partial_scores.extend(info["chunk_scores"])
+                        for tname, tscores in info["chunk_per_type"].items():
+                            partial_per_type.setdefault(tname, []).extend(tscores)
+                        current_done = len(partial_scores)
+                        item["benchmark_partial_scores"] = partial_scores
+                        item["benchmark_partial_per_type"] = partial_per_type
+                        item["updated_at"] = time.time()
+                        tracker_call(
+                            self,
+                            "mark_queue_item_stage",
+                            queue=queue,
+                            key=key,
+                            item=item,
+                            stage="benchmark",
+                            progress_done=current_done,
+                            progress_total=len(all_benchmark_seeds),
+                            note=f"chunk {current_done}/{len(all_benchmark_seeds)}",
+                        )
+                        _utils_facade().save_normal_model_queue(queue)
+
                     try:
-                        for i in range(0, len(remaining_seeds), round_size):
-                            auth = await _authorize_phase("BENCHMARK")
-                            if not auth.get("authorized"):
-                                item["status"] = "cancelled"
-                                item["last_error"] = (
-                                    f"backend authorization failed mid-benchmark: {auth.get('reason', 'unknown')}"
-                                )
-                                item["updated_at"] = time.time()
-                                _utils_facade().mark_model_hash_processed(uid, model_hash)
-                                tracker_call(
-                                    self,
-                                    "mark_queue_item_stage",
-                                    queue=queue,
-                                    key=key,
-                                    item=item,
-                                    stage="cancelled",
-                                    severity="warning",
-                                    note=item["last_error"],
-                                )
-                                return
-                            chunk = remaining_seeds[i:i + round_size]
-                            prior_avg = float(np.mean(partial_scores)) if partial_scores else 0.0
-                            chunk_scores, chunk_per_type, chunk_details = await _utils_facade()._evaluate_seeds(
-                                self, uid, model_path, chunk,
-                                f"benchmark [{done + 1}..{done + len(chunk)}]",
-                                on_seed_complete=hb.on_seed_complete,
-                                prior_seeds_done=done,
-                                prior_total_seeds=total_benchmark_seeds,
-                                prior_avg=prior_avg,
-                            )
-                            try:
-                                seed_batch = [
-                                    {"seed_index": BENCHMARK_SCREENING_SEED_COUNT + done + j, "score": d["score"], "map_type": d["map_type"]}
-                                    for j, d in enumerate(chunk_details) if d.get("map_type") != "unknown"
-                                ]
-                                if seed_batch:
-                                    await self.backend_api.post_seed_scores_batch(
-                                        model_uid=uid, epoch_number=epoch, scores=seed_batch,
-                                    )
-                            except Exception as seed_err:
-                                bt.logging.warning(f"Seed score upload failed for UID {uid}: {seed_err}")
-                            partial_scores.extend(chunk_scores)
-                            for tname, tscores in chunk_per_type.items():
-                                partial_per_type.setdefault(tname, []).extend(tscores)
-                            done = len(partial_scores)
-                            item["benchmark_partial_scores"] = partial_scores
-                            item["benchmark_partial_per_type"] = partial_per_type
-                            item["updated_at"] = time.time()
-                            tracker_call(
+                        _scores, _per_type, _details, cancel_reason = (
+                            await _utils_facade()._run_streaming_phase(
                                 self,
-                                "mark_queue_item_stage",
-                                queue=queue,
-                                key=key,
-                                item=item,
-                                stage="benchmark",
-                                progress_done=done,
-                                progress_total=len(all_benchmark_seeds),
-                                note=f"chunk {done}/{len(all_benchmark_seeds)}",
+                                uid,
+                                model_path,
+                                remaining_seeds,
+                                phase_description="benchmark",
+                                seed_offset=BENCHMARK_SCREENING_SEED_COUNT + done,
+                                epoch_number=epoch,
+                                hb=hb,
+                                task_id=item.get("assignment_id"),
+                                re_authorize=_reauthorize_benchmark,
+                                should_stop=hb.should_stop,
+                                on_chunk_complete=_on_chunk,
+                                evaluator_prior_done=done,
+                                evaluator_total_seeds=total_benchmark_seeds,
                             )
-                            _utils_facade().save_normal_model_queue(queue)
+                        )
                     finally:
                         hb.finish()
+
+                    if cancel_reason is not None:
+                        item["status"] = "cancelled"
+                        item["last_error"] = (
+                            f"backend authorization failed mid-benchmark: {cancel_reason}"
+                        )
+                        item["updated_at"] = time.time()
+                        _utils_facade().mark_model_hash_processed(uid, model_hash)
+                        tracker_call(
+                            self,
+                            "mark_queue_item_stage",
+                            queue=queue,
+                            key=key,
+                            item=item,
+                            stage="cancelled",
+                            severity="warning",
+                            note=item["last_error"],
+                        )
+                        return
 
                 screening_scores = item.get("screening_scores", [])
                 if not isinstance(screening_scores, list):

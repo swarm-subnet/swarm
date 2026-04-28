@@ -75,47 +75,42 @@ async def _run_refresh_for(self_obj, duration=0.2):
     return task
 
 
-@pytest.mark.asyncio
-async def test_periodic_refresh_applies_weights():
+def test_periodic_refresh_applies_weights():
     """Task must call backend sync and apply weights to self.scores."""
     obj = _make_self()
     obj.backend_api = _FakeBackendApi(weights={"167": 1.0})
-    await _run_refresh_for(obj, duration=0.2)
+    asyncio.run(_run_refresh_for(obj, duration=0.2))
     assert obj.backend_api.sync_calls >= 1
     assert obj.scores[167] > 0, "Weight for UID 167 should be applied"
 
 
-@pytest.mark.asyncio
-async def test_periodic_refresh_skips_on_fallback():
+def test_periodic_refresh_skips_on_fallback():
     """Task must NOT apply weights when backend signals fallback."""
     obj = _make_self()
     obj.backend_api = _FakeBackendApi(weights={"167": 1.0}, fallback=True)
-    await _run_refresh_for(obj, duration=0.2)
+    asyncio.run(_run_refresh_for(obj, duration=0.2))
     assert obj.backend_api.sync_calls >= 1
     assert np.count_nonzero(obj.scores) == 0, "No weights should be applied on fallback"
 
 
-@pytest.mark.asyncio
-async def test_periodic_refresh_survives_sync_exception():
+def test_periodic_refresh_survives_sync_exception():
     """Task must not crash when backend sync raises."""
     obj = _make_self()
     obj.backend_api = _FakeBackendApi(raise_exc=True)
-    task = await _run_refresh_for(obj, duration=0.2)
+    task = asyncio.run(_run_refresh_for(obj, duration=0.2))
     assert obj.backend_api.sync_calls >= 1
     assert task.cancelled() or task.done()
 
 
-@pytest.mark.asyncio
-async def test_periodic_refresh_skips_without_backend_api():
+def test_periodic_refresh_skips_without_backend_api():
     """Task must not crash when backend_api is not yet initialized."""
     obj = _make_self()
-    task = await _run_refresh_for(obj, duration=0.2)
+    task = asyncio.run(_run_refresh_for(obj, duration=0.2))
     assert task.cancelled() or task.done()
     assert np.count_nonzero(obj.scores) == 0
 
 
-@pytest.mark.asyncio
-async def test_concurrent_forward_cancels_refresh_task_on_exit():
+def test_concurrent_forward_cancels_refresh_task_on_exit():
     """concurrent_forward must cancel the refresh task after forwards complete."""
     obj = _make_self()
     obj.backend_api = _FakeBackendApi(weights={"167": 1.0})
@@ -129,6 +124,6 @@ async def test_concurrent_forward_cancels_refresh_task_on_exit():
 
     obj.forward = fake_forward
 
-    await validator_mod.BaseValidatorNeuron.concurrent_forward(obj)
+    asyncio.run(validator_mod.BaseValidatorNeuron.concurrent_forward(obj))
 
     assert forward_done.is_set(), "Forward should have run"
