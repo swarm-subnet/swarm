@@ -95,7 +95,10 @@ db.sqlite3
 db.sqlite3-journal
 remote_videos/
 swarm/assets/open_terrain/
-training_pipeline/
+training_pipeline/artifacts/
+training_pipeline/final_agents/exported/
+training_pipeline/**/__pycache__/
+training_pipeline/**/*.py[cod]
 tests/default_model/*_summary.json
 
 # Flask stuff:
