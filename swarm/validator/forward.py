@@ -9,7 +9,8 @@ import traceback
 import bittensor as bt
 import numpy as np
 
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 import time
 
@@ -32,6 +33,23 @@ def _merge_per_type_averages(
         combined = a.get(key, []) + b.get(key, [])
         merged[key] = float(np.mean(combined)) if combined else 0.0
     return merged
+
+
+def _hash_backend_models(
+    model_paths: Dict[int, Tuple[Path, str]],
+) -> Dict[int, Tuple[Path, str, str]]:
+    """Compute ``(path, sha256, github_url)`` for each backend-assigned model.
+
+    Used to feed ``_refresh_normal_model_queue`` directly from the backend's
+    authoritative assignment list, so cached-on-disk models are still queued.
+    """
+    backend_models: Dict[int, Tuple[Path, str, str]] = {}
+    for uid, (path, github_url) in model_paths.items():
+        try:
+            backend_models[uid] = (path, sha256sum(path), github_url)
+        except Exception as exc:
+            bt.logging.warning(f"Failed to hash model for UID {uid}: {exc}")
+    return backend_models
 
 
 def _partition_assigned_tasks(sync_data: dict) -> tuple[List[dict], List[dict]]:
@@ -411,21 +429,19 @@ async def forward(self) -> None:
         model_paths = await _ensure_models_from_backend(self, pending)
         if not model_paths:
             bt.logging.info("No models to process this cycle")
-            new_models = {}
+            queue = load_normal_model_queue()
         else:
             new_models = _detect_new_models(self, model_paths)
             if new_models:
                 bt.logging.info(
                     f"🆕 Found {len(new_models)} new/changed models for queue"
                 )
-            else:
-                bt.logging.info("No new/changed models detected")
 
-        queue = (
-            _refresh_normal_model_queue(new_models)
-            if new_models
-            else load_normal_model_queue()
-        )
+            # Rebuild the queue from the backend's authoritative assignment
+            # list every cycle, not only when local hashes change. Otherwise
+            # backend-assigned tasks for models already cached on disk are
+            # silently dropped, leaving the validator idle with work pending.
+            queue = _refresh_normal_model_queue(_hash_backend_models(model_paths))
         tracker_call(self, "update_queue_state", queue)
 
         # ──────────────────────────────────────────────────────────────
