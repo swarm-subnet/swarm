@@ -597,8 +597,30 @@ async def _process_normal_queue_item(
         tracker_call(self, "update_queue_state", queue)
         tracker_call(self, "increment_counter", "models_processed_total")
 
+    except BackendTransportError as e:
+        reason = f"backend transport failure: {e}"
+        _utils_facade()._schedule_queue_retry(item, reason)
+        bt.logging.warning(
+            f"UID {item.get('uid')} model rescheduled — backend transport failure; "
+            f"will retry on next forward cycle: {e}"
+        )
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="retry",
+            severity="warning",
+            note=reason,
+        )
     except Exception as e:
-        _utils_facade()._schedule_queue_retry(item, f"queue worker exception: {e}")
+        reason = f"queue worker exception: {e}"
+        _utils_facade()._schedule_queue_retry(item, reason)
+        bt.logging.warning(
+            f"UID {item.get('uid')} model rescheduled after unexpected queue worker error; "
+            f"will retry on next forward cycle: {e}"
+        )
         tracker_call(
             self,
             "mark_queue_item_stage",
@@ -607,7 +629,7 @@ async def _process_normal_queue_item(
             item=item,
             stage="retry",
             severity="error",
-            note=f"queue worker exception: {e}",
+            note=reason,
         )
 
 

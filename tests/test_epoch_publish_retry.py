@@ -8,6 +8,8 @@ import pytest
 
 from swarm.validator import seed_manager as seed_manager_mod
 from swarm.validator.utils_parts.backend_submission import (
+    PUBLISH_BACKOFF_CAP_CYCLES,
+    _publish_backoff_cycles,
     _publish_pending_epoch_seeds,
 )
 
@@ -37,7 +39,7 @@ def _make_manager(monkeypatch, tmp_path):
     return seeds_dir
 
 
-def _make_validator(manager, response_or_exc):
+def _make_validator(manager, response_or_exc, *, forward_count: int = 0):
     calls: list[dict] = []
 
     async def _publish_epoch_seeds(**kwargs):
@@ -51,6 +53,7 @@ def _make_validator(manager, response_or_exc):
     return SimpleNamespace(
         seed_manager=manager,
         backend_api=SimpleNamespace(publish_epoch_seeds=_publish_epoch_seeds),
+        forward_count=forward_count,
     ), calls
 
 
@@ -164,11 +167,104 @@ def test_rejected_publish_retries_on_next_call_and_eventually_succeeds(monkeypat
             return {"error": "backend transient", "status_code": 503}
         return {"published": True}
 
-    validator, _ = _make_validator(manager, _responder)
+    validator, _ = _make_validator(manager, _responder, forward_count=1)
 
     _run(_publish_pending_epoch_seeds(validator))
     assert _is_published_on_disk(seeds_dir, 77) is False
 
+    validator.forward_count = 2
     _run(_publish_pending_epoch_seeds(validator))
     assert _is_published_on_disk(seeds_dir, 77) is True
     assert all(p.get("epoch_number") != 77 for p in manager.get_pending_publications())
+
+
+def test_publish_backoff_cycles_doubles_and_caps():
+    assert _publish_backoff_cycles(0) == 0
+    assert _publish_backoff_cycles(1) == 1
+    assert _publish_backoff_cycles(2) == 2
+    assert _publish_backoff_cycles(3) == 4
+    assert _publish_backoff_cycles(4) == 8
+    assert _publish_backoff_cycles(5) == PUBLISH_BACKOFF_CAP_CYCLES
+    assert _publish_backoff_cycles(50) == PUBLISH_BACKOFF_CAP_CYCLES
+
+
+def test_repeated_rejection_skips_publish_until_backoff_elapses(monkeypatch, tmp_path):
+    seeds_dir = _make_manager(monkeypatch, tmp_path)
+    _write_epoch_file(seeds_dir, 90, [1], published=False)
+    _write_epoch_file(seeds_dir, 91, [2], published=False)
+
+    manager = seed_manager_mod.BenchmarkSeedManager()
+    validator, calls = _make_validator(
+        manager,
+        {"error": "permanent rejection", "status_code": 422},
+        forward_count=10,
+    )
+
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 1
+
+    validator.forward_count = 10
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 1
+
+    validator.forward_count = 11
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 2
+
+    validator.forward_count = 12
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 2
+
+    validator.forward_count = 13
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 3
+
+
+def test_successful_publish_clears_backoff_state(monkeypatch, tmp_path):
+    seeds_dir = _make_manager(monkeypatch, tmp_path)
+    _write_epoch_file(seeds_dir, 100, [1], published=False)
+    _write_epoch_file(seeds_dir, 101, [2], published=False)
+
+    manager = seed_manager_mod.BenchmarkSeedManager()
+    response_box = {"value": {"error": "transient", "status_code": 503}}
+
+    def _responder(_kwargs):
+        return response_box["value"]
+
+    validator, _ = _make_validator(manager, _responder, forward_count=1)
+
+    _run(_publish_pending_epoch_seeds(validator))
+    assert validator._epoch_publish_failures.get(100) == 1
+
+    response_box["value"] = {"published": True}
+    validator.forward_count = 2
+    _run(_publish_pending_epoch_seeds(validator))
+
+    assert 100 not in validator._epoch_publish_failures
+    assert 100 not in validator._epoch_publish_skip_until
+    assert _is_published_on_disk(seeds_dir, 100) is True
+
+
+def test_exception_during_publish_also_triggers_backoff(monkeypatch, tmp_path):
+    seeds_dir = _make_manager(monkeypatch, tmp_path)
+    _write_epoch_file(seeds_dir, 110, [1], published=False)
+    _write_epoch_file(seeds_dir, 111, [2], published=False)
+
+    manager = seed_manager_mod.BenchmarkSeedManager()
+    validator, calls = _make_validator(
+        manager, RuntimeError("network down"), forward_count=5,
+    )
+
+    _run(_publish_pending_epoch_seeds(validator))
+    assert validator._epoch_publish_failures.get(110) == 1
+    assert validator._epoch_publish_skip_until.get(110) == 6
+
+    validator.forward_count = 5
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 1
+
+    validator.forward_count = 6
+    _run(_publish_pending_epoch_seeds(validator))
+    assert len(calls) == 2
+    assert validator._epoch_publish_failures.get(110) == 2
+    assert validator._epoch_publish_skip_until.get(110) == 8

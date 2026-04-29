@@ -185,9 +185,17 @@ def _refresh_normal_model_queue(new_models: Dict[int, Tuple[Path, str, str]]) ->
                 del items[stale_key]
 
         if key in items:
-            items[key]["model_path"] = str(model_path)
-            items[key]["github_url"] = github_url
-            items[key]["updated_at"] = now
+            existing = items[key]
+            if existing.get("status") == "cancelled":
+                existing["status"] = "pending"
+                existing["last_error"] = ""
+                existing["retry_attempts"] = 0
+                existing["next_retry_at"] = 0
+                existing["backend_authorized"] = True
+                existing["backend_reason"] = ""
+            existing["model_path"] = str(model_path)
+            existing["github_url"] = github_url
+            existing["updated_at"] = now
             continue
 
         items[key] = {

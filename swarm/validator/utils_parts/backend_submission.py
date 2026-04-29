@@ -55,15 +55,41 @@ async def _submit_screening_with_ack(
     return False, terminal, reason
 
 
+PUBLISH_BACKOFF_CAP_CYCLES = 12
+
+
+def _publish_backoff_cycles(failures: int) -> int:
+    """Return how many forward cycles to skip before retrying a failed publish.
+
+    Sequence: 1 → 1, 2 → 2, 3 → 4, 4 → 8, 5+ → 12 (capped). Doubles per
+    failure so a permanently broken backend stops spamming logs while
+    transient outages still recover quickly.
+    """
+    if failures <= 0:
+        return 0
+    return min(PUBLISH_BACKOFF_CAP_CYCLES, 2 ** (failures - 1))
+
+
 async def _publish_pending_epoch_seeds(self) -> None:
     """Publish unpublished past-epoch seed records to the backend.
 
     Marks an epoch as published only when the backend confirms acceptance,
-    so rejected or failed calls remain pending and are retried on the next
-    forward cycle.
+    so rejected or failed calls remain pending. Repeatedly failing epochs
+    back off exponentially (up to ``PUBLISH_BACKOFF_CAP_CYCLES``) so
+    permanent rejections do not flood logs every cycle.
     """
+    skip_until: Dict[int, int] = getattr(self, "_epoch_publish_skip_until", {})
+    failures: Dict[int, int] = getattr(self, "_epoch_publish_failures", {})
+    current_cycle = int(getattr(self, "forward_count", 0))
+
     for pub in self.seed_manager.get_pending_publications():
         ep = pub.get("epoch_number")
+        if ep is None:
+            continue
+
+        if current_cycle < skip_until.get(ep, 0):
+            continue
+
         try:
             response = await self.backend_api.publish_epoch_seeds(
                 epoch_number=ep,
@@ -74,6 +100,8 @@ async def _publish_pending_epoch_seeds(self) -> None:
             )
         except Exception as e:
             bt.logging.warning(f"Failed to publish epoch {ep} seeds: {e}")
+            failures[ep] = failures.get(ep, 0) + 1
+            skip_until[ep] = current_cycle + _publish_backoff_cycles(failures[ep])
             continue
 
         accepted = isinstance(response, dict) and (
@@ -81,11 +109,20 @@ async def _publish_pending_epoch_seeds(self) -> None:
         )
         if accepted:
             self.seed_manager.mark_epoch_published(ep)
+            failures.pop(ep, None)
+            skip_until.pop(ep, None)
             bt.logging.info(f"Published epoch {ep} seeds to backend")
         else:
+            failures[ep] = failures.get(ep, 0) + 1
+            backoff = _publish_backoff_cycles(failures[ep])
+            skip_until[ep] = current_cycle + backoff
             bt.logging.warning(
-                f"Backend rejected epoch {ep} publish; will retry next cycle: {response}"
+                f"Backend rejected epoch {ep} publish (attempt {failures[ep]}); "
+                f"retry in {backoff} cycle(s): {response}"
             )
+
+    self._epoch_publish_skip_until = skip_until
+    self._epoch_publish_failures = failures
 
 
 async def _submit_score_with_ack(
