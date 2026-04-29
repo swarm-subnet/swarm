@@ -517,6 +517,7 @@ async def forward(self) -> None:
         tracker_call(self, "mark_forward_failed", error=str(e))
         bt.logging.error(f"Validator forward error: {e}")
         bt.logging.error(traceback.format_exc())
+        await asyncio.sleep(FORWARD_SLEEP_SEC)
 
 
 def _invalidate_local_state_for_regenerated_seeds(self) -> None:
