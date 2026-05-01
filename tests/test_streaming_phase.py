@@ -695,7 +695,7 @@ def test_run_screening_streams_with_unified_chunks(monkeypatch):
             model_path=Path("/tmp/fake.zip"),
         )
 
-    avg, scores, per_type, cancel = asyncio.run(_run())
+    avg, scores, per_type, cancel, _early = asyncio.run(_run())
 
     assert cancel is None
     assert len(scores) == 25
@@ -792,7 +792,7 @@ def test_run_screening_real_flow_streams_chunks(tmp_path):
             validator, uid=55, model_path=model_path,
         )
 
-    avg, scores, per_type, cancel = asyncio.run(_run())
+    avg, scores, per_type, cancel, _early = asyncio.run(_run())
 
     assert cancel is None
     assert len(scores) == 15
@@ -877,7 +877,7 @@ def test_queue_worker_real_flow_streams_and_cancels_on_auth(tmp_path):
         return True, False, ""
 
     async def _run_screening(*args, **kwargs):
-        return 0.85, [0.85], {"city": [0.85]}, None
+        return 0.85, [0.85], {"city": [0.85]}, None, False
 
     save_calls: list[bool] = []
 
@@ -986,7 +986,7 @@ def test_queue_worker_real_flow_streams_full_run(tmp_path):
         return True, False, ""
 
     async def _run_screening(*args, **kwargs):
-        return 0.85, [0.85], {"city": [0.85]}, None
+        return 0.85, [0.85], {"city": [0.85]}, None, False
 
     import pytest as _pytest
     monkey = _pytest.MonkeyPatch()
@@ -1145,7 +1145,7 @@ def test_run_screening_reeval_authorizes_every_chunk(monkeypatch):
             validator, uid=99, model_path=Path("/tmp/fake.zip"), reeval=True,
         )
 
-    _avg, scores, _per_type, cancel = asyncio.run(_run())
+    _avg, scores, _per_type, cancel, _early = asyncio.run(_run())
 
     assert cancel is None
     assert len(scores) == 25
@@ -1177,7 +1177,7 @@ def test_run_screening_reeval_cancels_mid_flight(monkeypatch):
             validator, uid=99, model_path=Path("/tmp/fake.zip"), reeval=True,
         )
 
-    _avg, scores, _per_type, cancel = asyncio.run(_run())
+    _avg, scores, _per_type, cancel, _early = asyncio.run(_run())
 
     assert cancel == "model banned"
     assert len(scores) == 10
@@ -1204,7 +1204,7 @@ def test_run_screening_non_reeval_skips_authorize(monkeypatch):
             validator, uid=99, model_path=Path("/tmp/fake.zip"),
         )
 
-    _avg, scores, _per_type, cancel = asyncio.run(_run())
+    _avg, scores, _per_type, cancel, _early = asyncio.run(_run())
 
     assert cancel is None
     assert len(scores) == 15
@@ -1468,7 +1468,7 @@ def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
             validator, uid=66, model_path=model_path,
         )
 
-    _avg, scores, _per_type, cancel = asyncio.run(_run())
+    _avg, scores, _per_type, cancel, _early = asyncio.run(_run())
 
     assert cancel is not None
     assert "INVALID_SCREENING_IN_FLIGHT" in cancel
