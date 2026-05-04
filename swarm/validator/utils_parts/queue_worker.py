@@ -210,7 +210,7 @@ async def _process_normal_queue_item(
                     )
                     return
                 tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
-                screening_score, screening_scores, screening_per_type, _ = (
+                screening_score, screening_scores, screening_per_type, _, _ = (
                     await _utils_facade()._run_screening(
                         self, uid, model_path, task_id=item.get("assignment_id"),
                     )

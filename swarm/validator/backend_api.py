@@ -33,7 +33,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Tuple
 
 import bittensor as bt
 import httpx
@@ -55,6 +55,10 @@ AUTHORIZE_RETRY_BASE_DELAY_SEC = 2.0
 
 class BackendTransportError(RuntimeError):
     """Raised when the backend cannot be reached after retries."""
+
+
+class BackendProtocolMismatchError(RuntimeError):
+    """Raised on 404/405 from /next-task or /events: backend is too old."""
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -664,3 +668,133 @@ class BackendApiClient:
         if benchmark_version is not None:
             data["benchmark_version"] = benchmark_version
         return await self._post_signed("/validators/epoch/publish", data)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # New-flow endpoints (Plan §3.1, §3.2, §3.3)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def next_task(self) -> Optional[Dict[str, Any]]:
+        """Long-poll for the next task; None if the window times out."""
+        endpoint = "/validators/next-task"
+        body = b""
+        headers = self._sign_request("GET", endpoint, body)
+        headers["X-Benchmark-Version"] = BENCHMARK_VERSION
+
+        try:
+            resp = await self.client.get(
+                f"{self.base_url}{endpoint}", headers=headers,
+            )
+        except _TRANSPORT_EXCEPTIONS as exc:
+            raise BackendTransportError(
+                f"transport failure on {endpoint}: {_scrub_url(exc)}"
+            ) from exc
+
+        if resp.status_code in (404, 405):
+            raise BackendProtocolMismatchError(
+                f"Backend does not implement {endpoint}; upgrade backend "
+                "to 4.0.2.9 before running this validator"
+            )
+        if resp.status_code >= 500:
+            raise BackendTransportError(
+                f"backend {resp.status_code} on {endpoint}"
+            )
+        if resp.status_code >= 400:
+            bt.logging.warning(f"Backend rejected {endpoint}: {resp.status_code}")
+            return None
+
+        try:
+            payload = resp.json()
+        except (ValueError, RuntimeError):
+            return None
+        return payload.get("task") if isinstance(payload, dict) else None
+
+    async def submit_task_result(
+        self,
+        task_id: int,
+        *,
+        score: float,
+        per_type_scores: Dict[str, float],
+        seeds_evaluated: int,
+        early_failed: bool,
+        epoch_number: int,
+    ) -> Dict[str, Any]:
+        """Submit a task result. Backend recomputes the authoritative score."""
+        endpoint = f"/validators/tasks/{task_id}/result"
+        data: Dict[str, Any] = {
+            "score": score,
+            "per_type_scores": per_type_scores,
+            "seeds_evaluated": seeds_evaluated,
+            "early_failed": early_failed,
+            "benchmark_version": BENCHMARK_VERSION,
+            "epoch_number": epoch_number,
+        }
+        return await self._post_signed(endpoint, data)
+
+    async def events(
+        self, last_event_id: Optional[int] = None,
+    ) -> "AsyncIterator[Dict[str, Any]]":
+        """Yield SSE frames as dicts. Caller owns reconnect + Last-Event-ID."""
+        endpoint = "/validators/events"
+        body = b""
+        headers = self._sign_request("GET", endpoint, body)
+        headers["X-Benchmark-Version"] = BENCHMARK_VERSION
+        headers["Accept"] = "text/event-stream"
+        if last_event_id is not None:
+            headers["Last-Event-ID"] = str(last_event_id)
+
+        try:
+            async with self.client.stream(
+                "GET", f"{self.base_url}{endpoint}", headers=headers,
+            ) as resp:
+                if resp.status_code in (404, 405):
+                    raise BackendProtocolMismatchError(
+                        f"Backend does not implement {endpoint}; upgrade "
+                        "backend to 4.0.2.9 before running this validator"
+                    )
+                if resp.status_code >= 400:
+                    raise BackendTransportError(
+                        f"backend {resp.status_code} on {endpoint}"
+                    )
+
+                buffer: list[str] = []
+                async for line in resp.aiter_lines():
+                    if line == "":
+                        if buffer:
+                            event = _parse_sse_block(buffer)
+                            buffer = []
+                            if event is not None:
+                                yield event
+                    else:
+                        buffer.append(line)
+        except _TRANSPORT_EXCEPTIONS as exc:
+            raise BackendTransportError(
+                f"transport failure on {endpoint}: {_scrub_url(exc)}"
+            ) from exc
+
+
+def _parse_sse_block(lines: list[str]) -> Optional[Dict[str, Any]]:
+    """Parse one SSE frame (lines between blank separators) into a dict."""
+    data_parts: list[str] = []
+    event_id: Optional[int] = None
+    for line in lines:
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            data_parts.append(line[5:].lstrip())
+        elif line.startswith("id:"):
+            raw = line[3:].strip()
+            try:
+                event_id = int(raw) if raw else None
+            except ValueError:
+                event_id = None
+    if not data_parts:
+        return None
+    try:
+        payload = json.loads("\n".join(data_parts))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(payload, dict):
+        if event_id is not None and "event_id" not in payload:
+            payload["event_id"] = event_id
+        return payload
+    return None
