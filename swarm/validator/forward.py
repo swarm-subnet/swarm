@@ -36,6 +36,13 @@ from .utils_parts.run_task import run_task
 
 
 async def forward(self) -> None:
+    if not hasattr(self, "_forward_lock"):
+        self._forward_lock = asyncio.Lock()
+    async with self._forward_lock:
+        await _forward_iteration(self)
+
+
+async def _forward_iteration(self) -> None:
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         tracker_call(self, "mark_forward_started", forward_count=self.forward_count)
@@ -172,6 +179,12 @@ def _record_sse_listener_exit(self, task: asyncio.Task) -> None:
         return
     if isinstance(exc, BackendProtocolMismatchError):
         self._sse_fatal = exc
+        cancel_flag = getattr(self, "_cancel_flag", None)
+        wake_flag = getattr(self, "_wake_flag", None)
+        if cancel_flag is not None:
+            cancel_flag.set()
+        if wake_flag is not None:
+            wake_flag.set()
     bt.logging.error(f"SSE listener exited: {exc}")
 
 

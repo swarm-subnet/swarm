@@ -389,14 +389,6 @@ async def _run_screening(
             return f"early_fail_at_{early_fail_state['at']}"
         return hb.should_stop()
 
-    re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None
-    if reeval:
-        async def _reauthorize_reeval() -> dict:
-            return await self.backend_api.authorize_task(
-                uid, "REEVAL", epoch_number=epoch,
-            )
-        re_authorize = _reauthorize_reeval
-
     try:
         all_scores, all_per_type, _details, cancel_reason = await _run_streaming_phase(
             self,
@@ -409,7 +401,6 @@ async def _run_screening(
             hb=hb,
             task_id=task_id,
             pre_built_tasks=screening_tasks,
-            re_authorize=re_authorize,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
         )
@@ -510,14 +501,6 @@ async def _run_full_benchmark(
             note=f"checkpoint {info['evaluated']}/{info['total']}",
         )
 
-    re_authorize: Optional[Callable[[], Awaitable[Dict[str, Any]]]] = None
-    if reeval:
-        async def _reauthorize_reeval() -> dict:
-            return await self.backend_api.authorize_task(
-                uid, "REEVAL", epoch_number=epoch,
-            )
-        re_authorize = _reauthorize_reeval
-
     def _should_stop() -> Optional[str]:
         if cancel_flag is not None and cancel_flag.is_set():
             return "cancel_flag_set"
@@ -534,7 +517,6 @@ async def _run_full_benchmark(
             epoch_number=epoch,
             hb=hb,
             task_id=task_id,
-            re_authorize=re_authorize,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
         )

@@ -55,14 +55,17 @@ async def test_handle_wake_only_sets_wake():
 
 
 @pytest.mark.asyncio
-async def test_handle_resync_resets_last_event_id():
+async def test_handle_resync_keeps_last_event_id():
+    """resync_required must preserve the replay anchor: a same-stream
+    reconnect should resume from there. If the backend ring buffer can't
+    satisfy it, the server emits another resync_required."""
     cancel, wake = _flags()
     listener = sse_module.SseListener(_StubBackendApi([]), cancel, wake)
     listener._last_event_id = 42
-    listener._handle({"type": "resync_required", "event_id": 0})
+    listener._handle({"type": "resync_required", "event_id": 50})
     assert cancel.is_set()
     assert wake.is_set()
-    assert listener._last_event_id is None
+    assert listener._last_event_id == 50
 
 
 @pytest.mark.asyncio

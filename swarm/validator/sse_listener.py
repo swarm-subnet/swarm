@@ -89,13 +89,11 @@ class SseListener:
             self.cancel_flag.set()
             self.wake_flag.set()
         elif event_type in _RESYNC_TYPES:
-            # Drop in-flight state and refresh from /next-task.
+            # Drop in-flight state and refresh from /next-task. Keep
+            # _last_event_id intact so a same-stream restart can replay
+            # from the anchor; if the backend's ring buffer can't satisfy
+            # it, the server will emit another resync_required.
             self.cancel_flag.set()
             self.wake_flag.set()
-            if event_type == "resync_required":
-                # Caller's snapshot anchor is stale; reset so the next
-                # reconnect asks for a fresh subscription instead of
-                # replaying from a non-existent buffer position.
-                self._last_event_id = None
         elif event_type in _WAKE_ONLY_TYPES:
             self.wake_flag.set()
