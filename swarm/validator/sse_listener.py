@@ -52,7 +52,12 @@ class SseListener:
         # Minimum wait between reconnects so a misbehaving proxy that
         # closes the stream immediately can't pin the loop at 100% CPU.
         clean_close_floor = 0.5
+        # A stream that lived this long counts as healthy: routine proxy
+        # idle-timeouts shouldn't escalate the reconnect backoff.
+        healthy_threshold = 10.0
+        loop = asyncio.get_event_loop()
         while True:
+            stream_opened_at = loop.time()
             try:
                 async for event in self.backend_api.events(
                     last_event_id=self._last_event_id,
@@ -66,18 +71,27 @@ class SseListener:
                 )
                 raise
             except BackendTransportError as exc:
+                elapsed = loop.time() - stream_opened_at
                 bt.logging.warning(
-                    f"SSE stream dropped: {exc}; reconnecting in {backoff:.1f}s"
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self._max_backoff)
-            except Exception as exc:
-                bt.logging.warning(
-                    f"SSE listener unexpected error: {exc}; "
+                    f"SSE stream dropped after {elapsed:.1f}s: {exc}; "
                     f"reconnecting in {backoff:.1f}s"
                 )
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self._max_backoff)
+                if elapsed >= healthy_threshold:
+                    backoff = self._initial_backoff
+                else:
+                    backoff = min(backoff * 2, self._max_backoff)
+            except Exception as exc:
+                elapsed = loop.time() - stream_opened_at
+                bt.logging.warning(
+                    f"SSE listener unexpected error after {elapsed:.1f}s: {exc}; "
+                    f"reconnecting in {backoff:.1f}s"
+                )
+                await asyncio.sleep(backoff)
+                if elapsed >= healthy_threshold:
+                    backoff = self._initial_backoff
+                else:
+                    backoff = min(backoff * 2, self._max_backoff)
 
     def _handle(self, event: Dict[str, Any]) -> None:
         event_id = event.get("event_id")
