@@ -309,6 +309,12 @@ async def _run_screening(
     upper = max(seeds_from, min(upper, len(full_seeds)))
     screening_seeds = full_seeds[seeds_from:upper]
     total_seeds = len(screening_seeds)
+    # Cumulative-progress framing for the heartbeat: report the full
+    # screening range as total and the resume offset as already-done so
+    # the dashboard renders honest progress (e.g. 130/200) instead of
+    # 0/(remaining-slice) on resume.
+    heartbeat_total = upper
+    progress_offset = seeds_from
     epoch = self.seed_manager.epoch_number
 
     full_template = (
@@ -363,10 +369,11 @@ async def _run_screening(
     hb.start(
         "evaluating_screening",
         uid,
-        total_seeds,
+        heartbeat_total,
         queue=hb_queue,
         active_task=active_task,
         backend_decision_version=decision_version,
+        progress_offset=progress_offset,
     )
 
     def _on_chunk(**info) -> None:
@@ -458,17 +465,25 @@ async def _run_full_benchmark(
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
             benchmark_seeds = self.seed_manager.seeds[seeds_from:]
             seed_offset = seeds_from
+            heartbeat_total = len(self.seed_manager.seeds)
+            progress_offset = seeds_from
         elif seeds_from is not None and seeds_from > BENCHMARK_SCREENING_SEED_COUNT:
             full_benchmark = self.seed_manager.get_benchmark_seeds()
             offset = seeds_from - BENCHMARK_SCREENING_SEED_COUNT
             benchmark_seeds = full_benchmark[offset:]
             seed_offset = seeds_from
+            heartbeat_total = len(full_benchmark)
+            progress_offset = offset
         else:
             benchmark_seeds = self.seed_manager.get_benchmark_seeds()
             seed_offset = BENCHMARK_SCREENING_SEED_COUNT
+            heartbeat_total = len(benchmark_seeds)
+            progress_offset = 0
     else:
         benchmark_seeds = seeds
         seed_offset = 0
+        heartbeat_total = len(seeds)
+        progress_offset = 0
     total_seeds = len(benchmark_seeds)
     note = "full benchmark" if seeds is None else "custom seeds"
     epoch = self.seed_manager.epoch_number
@@ -498,10 +513,11 @@ async def _run_full_benchmark(
     hb.start(
         "evaluating_benchmark",
         uid,
-        total_seeds,
+        heartbeat_total,
         queue=hb_queue,
         active_task=active_task,
         backend_decision_version=decision_version,
+        progress_offset=progress_offset,
     )
 
     def _on_chunk(**info) -> None:
