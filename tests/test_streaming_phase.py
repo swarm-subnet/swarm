@@ -1710,3 +1710,83 @@ def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
 
     assert cancel == "epoch rotated"
     assert calls["n"] == 1
+
+
+
+def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
+    """Heartbeats sent during screening must carry assignment_id so the
+    backend's consistency report does not flag ACTIVE_HEARTBEAT_MISSING_
+    ASSIGNMENT_ID for new-flow validators."""
+    heartbeat_calls: list[dict] = []
+    validator = _make_validator(heartbeat_calls=heartbeat_calls)
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_screening_seeds=lambda: list(range(20)),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator, uid=314, model_path=Path("/tmp/fake.zip"),
+            task_id=4242,
+        )
+
+    asyncio.run(_run())
+
+    sent_with_active = [c for c in heartbeat_calls if c.get("active_task")]
+    assert sent_with_active, "expected at least one heartbeat with active_task"
+    active = sent_with_active[0]["active_task"]
+    assert active.get("assignment_id") == 4242
+    assert active.get("uid") == 314
+    assert active.get("phase") == "SCREENING"
+    assert active.get("epoch_number") == 12
+
+
+def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
+    heartbeat_calls: list[dict] = []
+    validator = _make_validator(heartbeat_calls=heartbeat_calls)
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_benchmark_seeds=lambda: list(range(20)),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=271, model_path=Path("/tmp/fake.zip"),
+            task_id=8888,
+        )
+
+    asyncio.run(_run())
+
+    sent_with_active = [c for c in heartbeat_calls if c.get("active_task")]
+    assert sent_with_active, "expected at least one heartbeat with active_task"
+    active = sent_with_active[0]["active_task"]
+    assert active.get("assignment_id") == 8888
+    assert active.get("uid") == 271
+    assert active.get("phase") == "BENCHMARK"
+    assert active.get("epoch_number") == 12
+
+
+def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch):
+    heartbeat_calls: list[dict] = []
+    validator = _make_validator(heartbeat_calls=heartbeat_calls)
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_benchmark_seeds=lambda: list(range(20)),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            task_id=999, reeval=True,
+        )
+
+    asyncio.run(_run())
+
+    sent_with_active = [c for c in heartbeat_calls if c.get("active_task")]
+    assert sent_with_active
+    active = sent_with_active[0]["active_task"]
+    assert active.get("phase") == "REEVAL"
+    assert active.get("assignment_id") == 999

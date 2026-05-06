@@ -7,6 +7,7 @@ import numpy as np
 
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
+    BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
     SCREENING_TEMPLATE,
     SIM_DT,
@@ -352,7 +353,13 @@ async def _run_screening(
         matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
         if matched is not None:
             decision_version = matched.get("backend_decision_version")
-    active_task = {"uid": uid, "phase": "REEVAL"} if reeval else None
+    active_task = {
+        "uid": uid,
+        "phase": "REEVAL" if reeval else "SCREENING",
+        "assignment_id": task_id,
+        "epoch_number": epoch,
+        "benchmark_version": BENCHMARK_VERSION,
+    }
     hb.start(
         "evaluating_screening",
         uid,
@@ -481,7 +488,13 @@ async def _run_full_benchmark(
         matched = next((item for item in hb_queue if int(item.get("uid", -1)) == uid), None)
         if matched is not None:
             decision_version = matched.get("backend_decision_version")
-    active_task = {"uid": uid, "phase": "REEVAL"} if reeval else None
+    active_task = {
+        "uid": uid,
+        "phase": "REEVAL" if reeval else "BENCHMARK",
+        "assignment_id": task_id,
+        "epoch_number": epoch,
+        "benchmark_version": BENCHMARK_VERSION,
+    }
     hb.start(
         "evaluating_benchmark",
         uid,
