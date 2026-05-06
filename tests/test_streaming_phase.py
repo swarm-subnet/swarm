@@ -1790,3 +1790,55 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
     active = sent_with_active[0]["active_task"]
     assert active.get("phase") == "REEVAL"
     assert active.get("assignment_id") == 999
+
+
+def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
+    """When resuming benchmark with seeds_from > 200, the heartbeat must
+    report the FULL benchmark range (800) as total and the offset
+    (seeds_from - 200) as already-done. Otherwise the dashboard shows
+    a misleading 0/(remaining) right after a validator restart."""
+    heartbeat_calls: list[dict] = []
+    validator = _make_validator(heartbeat_calls=heartbeat_calls)
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_benchmark_seeds=lambda: list(range(800)),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            task_id=8888, seeds_from=300,
+        )
+
+    asyncio.run(_run())
+
+    sent = [c for c in heartbeat_calls if c.get("active_task")]
+    assert sent
+    initial = sent[0]
+    assert initial["total_seeds"] == 800
+    assert initial["progress"] == 100  # 300 - 200 already done
+
+
+def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
+    heartbeat_calls: list[dict] = []
+    validator = _make_validator(heartbeat_calls=heartbeat_calls)
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_screening_seeds=lambda: list(range(200)),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator, uid=314, model_path=Path("/tmp/fake.zip"),
+            task_id=4242, seeds_from=50,
+        )
+
+    asyncio.run(_run())
+
+    sent = [c for c in heartbeat_calls if c.get("active_task")]
+    assert sent
+    initial = sent[0]
+    assert initial["total_seeds"] == 200
+    assert initial["progress"] == 50

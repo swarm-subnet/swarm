@@ -30,6 +30,7 @@ class HeartbeatManager:
         self.main_loop = main_loop
         self._progress = 0
         self._total = 0
+        self._progress_offset = 0
         self._last_sent = 0
         self._lock = threading.Lock()
         self._status = "idle"
@@ -54,14 +55,16 @@ class HeartbeatManager:
         queue: Optional[list] = None,
         active_task: Optional[dict] = None,
         backend_decision_version: Optional[int] = None,
+        progress_offset: int = 0,
     ) -> None:
         with self._lock:
             self._session_id += 1
             self._status = status
             self._uid = uid
             self._total = total
-            self._progress = 0
-            self._last_sent = 0
+            self._progress_offset = progress_offset
+            self._progress = progress_offset
+            self._last_sent = progress_offset
             self._active = True
             self._stop_required = False
             self._stop_reason = None
@@ -82,7 +85,7 @@ class HeartbeatManager:
             self._backend_decision_version = backend_decision_version
 
         asyncio.run_coroutine_threadsafe(
-            self._safe_heartbeat(0, self._session_id),
+            self._safe_heartbeat(progress_offset, self._session_id),
             self.main_loop
         )
 
