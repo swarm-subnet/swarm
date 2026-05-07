@@ -2,6 +2,8 @@ from ._shared import *
 from .heartbeat import HeartbeatManager
 from swarm.validator.runtime_telemetry import tracker_call
 
+from dataclasses import dataclass
+
 from swarm.constants import BENCHMARK_TOTAL_SEED_COUNT, BENCHMARK_SCREENING_SEED_COUNT
 
 
@@ -11,87 +13,155 @@ def _utils_facade():
     return validator_utils
 
 
-async def _process_normal_queue_item(
-    self,
-    queue: dict,
-    key: str,
-    validator_hotkey: str,
-    validator_stake: float,
-) -> None:
-    items = queue.get("items", {})
-    item = items.get(key)
-    if not item:
-        return
+@dataclass
+class _QueueItemContext:
+    """Mutable shared state for `_process_normal_queue_item` phase helpers."""
 
-    try:
-        uid = int(item.get("uid", -1))
-        model_hash = str(item.get("model_hash", ""))
-        model_path = Path(str(item.get("model_path", "")))
-        github_url = str(item.get("github_url", ""))
+    self: Any
+    queue: dict
+    key: str
+    item: dict
+    validator_hotkey: str
+    validator_stake: float
+    uid: int = -1
+    model_hash: str = ""
+    model_path: Optional[Path] = None
+    github_url: str = ""
+    miner_hotkey: str = ""
+    epoch: int = 0
+    cached: Optional[Any] = None
+    update_heartbeat_entry: Optional[Callable] = None
+    authorize_phase: Optional[Callable] = None
 
-        def _update_heartbeat_entry(**fields) -> None:
-            hb_queue = getattr(self, "_heartbeat_queue", None)
-            if not hb_queue:
-                return
-            for entry in hb_queue:
-                if int(entry.get("uid", -1)) == uid:
-                    for field_name, value in fields.items():
-                        if value is not None:
-                            entry[field_name] = value
-                    break
 
-        async def _authorize_phase(phase: str) -> dict:
-            response = await self.backend_api.authorize_task(
-                uid,
-                phase,
-                assignment_id=item.get("assignment_id"),
-                epoch_number=getattr(self.seed_manager, "epoch_number", None),
-            )
-            item["backend_authorized"] = bool(response.get("authorized", False))
-            item["backend_reason"] = response.get("reason")
-            item["backend_decision_version"] = response.get("decision_version")
-            if response.get("task_id") is not None:
-                item["assignment_id"] = response.get("task_id")
-            if response.get("authorized"):
-                item.pop("last_error", None)
-            _update_heartbeat_entry(
-                assignment_id=item.get("assignment_id"),
-                backend_authorized=item.get("backend_authorized"),
-                backend_reason=item.get("backend_reason"),
-                backend_decision_version=item.get("backend_decision_version"),
-                epoch_number=getattr(self.seed_manager, "epoch_number", None),
-                benchmark_version=BENCHMARK_VERSION,
-            )
-            return response
+async def _setup_phase_context(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    key = ctx.key
+    item = ctx.item
 
-        if uid < 0 or not model_hash:
-            item["status"] = "terminal_rejected"
-            item["last_error"] = "invalid queue item"
-            item["updated_at"] = time.time()
+    uid = int(item.get("uid", -1))
+    model_hash = str(item.get("model_hash", ""))
+    model_path = Path(str(item.get("model_path", "")))
+    github_url = str(item.get("github_url", ""))
+
+    def _update_heartbeat_entry(**fields) -> None:
+        hb_queue = getattr(self, "_heartbeat_queue", None)
+        if not hb_queue:
             return
+        for entry in hb_queue:
+            if int(entry.get("uid", -1)) == uid:
+                for field_name, value in fields.items():
+                    if value is not None:
+                        entry[field_name] = value
+                break
 
-        item["status"] = "processing"
+    async def _authorize_phase(phase: str) -> dict:
+        response = await self.backend_api.authorize_task(
+            uid,
+            phase,
+            assignment_id=item.get("assignment_id"),
+            epoch_number=getattr(self.seed_manager, "epoch_number", None),
+        )
+        item["backend_authorized"] = bool(response.get("authorized", False))
+        item["backend_reason"] = response.get("reason")
+        item["backend_decision_version"] = response.get("decision_version")
+        if response.get("task_id") is not None:
+            item["assignment_id"] = response.get("task_id")
+        if response.get("authorized"):
+            item.pop("last_error", None)
+        _update_heartbeat_entry(
+            assignment_id=item.get("assignment_id"),
+            backend_authorized=item.get("backend_authorized"),
+            backend_reason=item.get("backend_reason"),
+            backend_decision_version=item.get("backend_decision_version"),
+            epoch_number=getattr(self.seed_manager, "epoch_number", None),
+            benchmark_version=BENCHMARK_VERSION,
+        )
+        return response
+
+    ctx.uid = uid
+    ctx.model_hash = model_hash
+    ctx.model_path = model_path
+    ctx.github_url = github_url
+    ctx.update_heartbeat_entry = _update_heartbeat_entry
+    ctx.authorize_phase = _authorize_phase
+
+    if uid < 0 or not model_hash:
+        item["status"] = "terminal_rejected"
+        item["last_error"] = "invalid queue item"
         item["updated_at"] = time.time()
-        tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="processing")
+        return True
 
-        if not model_path.exists():
-            _utils_facade()._schedule_queue_retry(item, "model file missing")
-            tracker_call(
-                self,
-                "mark_queue_item_stage",
-                queue=queue,
-                key=key,
-                item=item,
-                stage="retry",
-                severity="warning",
-                note="model file missing",
-            )
-            return
+    item["status"] = "processing"
+    item["updated_at"] = time.time()
+    tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="processing")
+    return False
 
-        current_hash = _utils_facade().sha256sum(model_path)
-        if current_hash != model_hash:
-            item["status"] = "terminal_rejected"
-            item["last_error"] = "model hash changed before processing"
+
+async def _validate_model_file_phase(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    key = ctx.key
+    item = ctx.item
+    model_path = ctx.model_path
+    model_hash = ctx.model_hash
+
+    if not model_path.exists():
+        _utils_facade()._schedule_queue_retry(item, "model file missing")
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="retry",
+            severity="warning",
+            note="model file missing",
+        )
+        return True
+
+    current_hash = _utils_facade().sha256sum(model_path)
+    if current_hash != model_hash:
+        item["status"] = "terminal_rejected"
+        item["last_error"] = "model hash changed before processing"
+        item["updated_at"] = time.time()
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="terminal_rejected",
+            severity="warning",
+            note="model hash changed before processing",
+        )
+        return True
+
+    return False
+
+
+async def _register_model_phase(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    key = ctx.key
+    item = ctx.item
+    uid = ctx.uid
+    model_hash = ctx.model_hash
+    github_url = ctx.github_url
+    validator_hotkey = ctx.validator_hotkey
+
+    miner_hotkey = ""
+    try:
+        miner_hotkey = self.metagraph.hotkeys[uid]
+    except Exception:
+        pass
+    ctx.miner_hotkey = miner_hotkey
+
+    if not item.get("registered", False):
+        if item.get("from_backend", False):
+            item["registered"] = True
+            item["status"] = "registered"
             item["updated_at"] = time.time()
             tracker_call(
                 self,
@@ -99,99 +169,254 @@ async def _process_normal_queue_item(
                 queue=queue,
                 key=key,
                 item=item,
-                stage="terminal_rejected",
-                severity="warning",
-                note="model hash changed before processing",
+                stage="registered",
             )
-            return
+        else:
+            accepted, terminal, reason = await _utils_facade()._register_new_model_with_ack(
+                self,
+                uid=uid,
+                model_hash=model_hash,
+                validator_hotkey=validator_hotkey,
+                github_url=github_url,
+                miner_hotkey=miner_hotkey,
+            )
+            if not accepted:
+                if terminal:
+                    item["status"] = "terminal_rejected"
+                    item["last_error"] = reason
+                    item["updated_at"] = time.time()
+                    _utils_facade().mark_model_hash_processed(uid, model_hash)
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="terminal_rejected",
+                        severity="warning",
+                        note=str(reason),
+                    )
+                else:
+                    _utils_facade()._schedule_queue_retry(item, f"register failed: {reason}")
+                    tracker_call(
+                        self,
+                        "mark_queue_item_stage",
+                        queue=queue,
+                        key=key,
+                        item=item,
+                        stage="retry",
+                        severity="warning",
+                        note=f"register failed: {reason}",
+                    )
+                return True
 
-        miner_hotkey = ""
-        try:
-            miner_hotkey = self.metagraph.hotkeys[uid]
-        except Exception:
-            pass
+            item["registered"] = True
+            item["status"] = "registered"
+            item["retry_attempts"] = 0
+            item["next_retry_at"] = 0
+            item["last_error"] = ""
+            item["updated_at"] = time.time()
+            tracker_call(
+                self,
+                "mark_queue_item_stage",
+                queue=queue,
+                key=key,
+                item=item,
+                stage="registered",
+            )
 
-        if not item.get("registered", False):
-            if item.get("from_backend", False):
-                item["registered"] = True
-                item["status"] = "registered"
+    return False
+
+
+async def _run_screening_phase(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    key = ctx.key
+    item = ctx.item
+    uid = ctx.uid
+    model_hash = ctx.model_hash
+    model_path = ctx.model_path
+    validator_hotkey = ctx.validator_hotkey
+    validator_stake = ctx.validator_stake
+
+    epoch = self.seed_manager.epoch_number
+    cached = (
+        _utils_facade().get_cached_score(model_hash, epoch)
+        if _utils_facade().has_cached_score(model_hash, epoch)
+        else None
+    )
+    ctx.epoch = epoch
+    ctx.cached = cached
+
+    if item.get("screening_score") is None:
+        if cached:
+            item["screening_score"] = float(cached.get("screening_score", 0.0))
+        else:
+            auth = await authorize_with_retry(
+                lambda: ctx.authorize_phase("SCREENING"),
+                log_prefix=f"UID {uid} screening authorize: ",
+            )
+            if not auth.get("authorized"):
+                item["status"] = "cancelled"
+                item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
                 item["updated_at"] = time.time()
+                _utils_facade().mark_model_hash_processed(uid, model_hash)
                 tracker_call(
                     self,
                     "mark_queue_item_stage",
                     queue=queue,
                     key=key,
                     item=item,
-                    stage="registered",
+                    stage="cancelled",
+                    severity="warning",
+                    note=item["last_error"],
+                )
+                return True
+            tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
+            screening_score, screening_scores, screening_per_type, _, _ = (
+                await _utils_facade()._run_screening(
+                    self, uid, model_path, task_id=item.get("assignment_id"),
+                )
+            )
+            item["screening_score"] = float(screening_score)
+            item["screening_scores"] = screening_scores
+            item["screening_per_type"] = {
+                k: v for k, v in screening_per_type.items() if v
+            }
+        item["updated_at"] = time.time()
+
+    bt.logging.info(
+        f"Screening UID {uid} | score={item.get('screening_score', 0):.4f}"
+    )
+
+    if not item.get("screening_recorded", False):
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="screening_submit",
+        )
+        tracker_call(self, "mark_submission_started", stage="screening", uid=uid, model_hash=model_hash)
+        recorded, terminal, reason = await _utils_facade()._submit_screening_with_ack(
+            self,
+            uid=uid,
+            validator_hotkey=validator_hotkey,
+            validator_stake=validator_stake,
+            screening_score=float(item.get("screening_score", 0.0)),
+        )
+        if not recorded:
+            bt.logging.warning(
+                f"Screening submit failed for UID {uid} | "
+                f"terminal={terminal} | {reason}"
+            )
+            tracker_call(
+                self,
+                "mark_submission_result",
+                stage="screening",
+                uid=uid,
+                success=False,
+                terminal=terminal,
+                reason=str(reason),
+                model_hash=model_hash,
+            )
+            if terminal:
+                item["status"] = "terminal_rejected"
+                item["last_error"] = reason
+                item["updated_at"] = time.time()
+                _utils_facade().mark_model_hash_processed(uid, model_hash)
+                tracker_call(
+                    self,
+                    "mark_queue_item_stage",
+                    queue=queue,
+                    key=key,
+                    item=item,
+                    stage="terminal_rejected",
+                    severity="warning",
+                    note=str(reason),
                 )
             else:
-                accepted, terminal, reason = await _utils_facade()._register_new_model_with_ack(
-                    self,
-                    uid=uid,
-                    model_hash=model_hash,
-                    validator_hotkey=validator_hotkey,
-                    github_url=github_url,
-                    miner_hotkey=miner_hotkey,
-                )
-                if not accepted:
-                    if terminal:
-                        item["status"] = "terminal_rejected"
-                        item["last_error"] = reason
-                        item["updated_at"] = time.time()
-                        _utils_facade().mark_model_hash_processed(uid, model_hash)
-                        tracker_call(
-                            self,
-                            "mark_queue_item_stage",
-                            queue=queue,
-                            key=key,
-                            item=item,
-                            stage="terminal_rejected",
-                            severity="warning",
-                            note=str(reason),
-                        )
-                    else:
-                        _utils_facade()._schedule_queue_retry(item, f"register failed: {reason}")
-                        tracker_call(
-                            self,
-                            "mark_queue_item_stage",
-                            queue=queue,
-                            key=key,
-                            item=item,
-                            stage="retry",
-                            severity="warning",
-                            note=f"register failed: {reason}",
-                        )
-                    return
-
-                item["registered"] = True
-                item["status"] = "registered"
-                item["retry_attempts"] = 0
-                item["next_retry_at"] = 0
-                item["last_error"] = ""
-                item["updated_at"] = time.time()
+                _utils_facade()._schedule_queue_retry(item, f"screening submit failed: {reason}")
                 tracker_call(
                     self,
                     "mark_queue_item_stage",
                     queue=queue,
                     key=key,
                     item=item,
-                    stage="registered",
+                    stage="retry",
+                    severity="warning",
+                    note=f"screening submit failed: {reason}",
                 )
+            return True
 
-        epoch = self.seed_manager.epoch_number
-        cached = (
-            _utils_facade().get_cached_score(model_hash, epoch)
-            if _utils_facade().has_cached_score(model_hash, epoch)
-            else None
+        tracker_call(
+            self,
+            "mark_submission_result",
+            stage="screening",
+            uid=uid,
+            success=True,
+            terminal=False,
+            model_hash=model_hash,
+        )
+        item["screening_recorded"] = True
+        item["status"] = "screening_recorded"
+        item["retry_attempts"] = 0
+        item["next_retry_at"] = 0
+        item["last_error"] = ""
+        item["updated_at"] = time.time()
+        bt.logging.info(f"Screening score submitted to backend for UID {uid}")
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="screening_recorded",
         )
 
-        if item.get("screening_score") is None:
-            if cached:
-                item["screening_score"] = float(cached.get("screening_score", 0.0))
-            else:
+    return False
+
+
+async def _run_benchmark_phase(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    key = ctx.key
+    item = ctx.item
+    uid = ctx.uid
+    model_hash = ctx.model_hash
+    model_path = ctx.model_path
+    epoch = ctx.epoch
+    cached = ctx.cached
+
+    missing_score_payload = (
+        item.get("total_score") is None
+        or not isinstance(item.get("per_type_scores"), dict)
+        or item.get("seeds_evaluated") is None
+    )
+
+    if missing_score_payload:
+        if cached:
+            per_type_scores = cached.get("per_type_scores", {})
+            if not isinstance(per_type_scores, dict):
+                per_type_scores = {}
+            item["full_score"] = float(
+                cached.get("full_score", cached.get("total_score", 0.0))
+            )
+            item["total_score"] = float(cached.get("total_score", 0.0))
+            item["per_type_scores"] = per_type_scores
+            item["seeds_evaluated"] = int(cached.get("seeds_evaluated", BENCHMARK_TOTAL_SEED_COUNT))
+        else:
+            all_benchmark_seeds = self.seed_manager.get_benchmark_seeds()
+            partial_scores = item.get("benchmark_partial_scores", [])
+            partial_per_type = item.get("benchmark_partial_per_type", {})
+            done = len(partial_scores)
+            remaining_seeds = all_benchmark_seeds[done:]
+
+            if remaining_seeds:
                 auth = await authorize_with_retry(
-                    lambda: _authorize_phase("SCREENING"),
-                    log_prefix=f"UID {uid} screening authorize: ",
+                    lambda: ctx.authorize_phase("BENCHMARK"),
+                    log_prefix=f"UID {uid} benchmark authorize: ",
                 )
                 if not auth.get("authorized"):
                     item["status"] = "cancelled"
@@ -208,155 +433,49 @@ async def _process_normal_queue_item(
                         severity="warning",
                         note=item["last_error"],
                     )
-                    return
-                tracker_call(self, "mark_queue_item_stage", queue=queue, key=key, item=item, stage="screening")
-                screening_score, screening_scores, screening_per_type, _, _ = (
-                    await _utils_facade()._run_screening(
-                        self, uid, model_path, task_id=item.get("assignment_id"),
-                    )
-                )
-                item["screening_score"] = float(screening_score)
-                item["screening_scores"] = screening_scores
-                item["screening_per_type"] = {
-                    k: v for k, v in screening_per_type.items() if v
-                }
-            item["updated_at"] = time.time()
-
-        bt.logging.info(
-            f"Screening UID {uid} | score={item.get('screening_score', 0):.4f}"
-        )
-
-        if not item.get("screening_recorded", False):
-            tracker_call(
-                self,
-                "mark_queue_item_stage",
-                queue=queue,
-                key=key,
-                item=item,
-                stage="screening_submit",
-            )
-            tracker_call(self, "mark_submission_started", stage="screening", uid=uid, model_hash=model_hash)
-            recorded, terminal, reason = await _utils_facade()._submit_screening_with_ack(
-                self,
-                uid=uid,
-                validator_hotkey=validator_hotkey,
-                validator_stake=validator_stake,
-                screening_score=float(item.get("screening_score", 0.0)),
-            )
-            if not recorded:
-                bt.logging.warning(
-                    f"Screening submit failed for UID {uid} | "
-                    f"terminal={terminal} | {reason}"
-                )
+                    return True
                 tracker_call(
                     self,
-                    "mark_submission_result",
-                    stage="screening",
-                    uid=uid,
-                    success=False,
-                    terminal=terminal,
-                    reason=str(reason),
-                    model_hash=model_hash,
+                    "mark_queue_item_stage",
+                    queue=queue,
+                    key=key,
+                    item=item,
+                    stage="benchmark",
+                    progress_done=done,
+                    progress_total=len(all_benchmark_seeds),
                 )
-                if terminal:
-                    item["status"] = "terminal_rejected"
-                    item["last_error"] = reason
+                total_benchmark_seeds = len(all_benchmark_seeds)
+                hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
+                hb.start(
+                    "evaluating_benchmark",
+                    uid,
+                    total_benchmark_seeds,
+                    queue=getattr(self, "_heartbeat_queue", None),
+                    active_task={
+                        "uid": uid,
+                        "phase": "BENCHMARK",
+                        "assignment_id": item.get("assignment_id"),
+                        "epoch_number": epoch,
+                        "benchmark_version": BENCHMARK_VERSION,
+                    },
+                    backend_decision_version=item.get("backend_decision_version"),
+                )
+                if done > 0:
+                    with hb._lock:
+                        hb._progress = done
+                        hb._last_sent = done
+
+                async def _reauthorize_benchmark() -> dict:
+                    return await ctx.authorize_phase("BENCHMARK")
+
+                def _on_chunk(**info) -> None:
+                    partial_scores.extend(info["chunk_scores"])
+                    for tname, tscores in info["chunk_per_type"].items():
+                        partial_per_type.setdefault(tname, []).extend(tscores)
+                    current_done = len(partial_scores)
+                    item["benchmark_partial_scores"] = partial_scores
+                    item["benchmark_partial_per_type"] = partial_per_type
                     item["updated_at"] = time.time()
-                    _utils_facade().mark_model_hash_processed(uid, model_hash)
-                    tracker_call(
-                        self,
-                        "mark_queue_item_stage",
-                        queue=queue,
-                        key=key,
-                        item=item,
-                        stage="terminal_rejected",
-                        severity="warning",
-                        note=str(reason),
-                    )
-                else:
-                    _utils_facade()._schedule_queue_retry(item, f"screening submit failed: {reason}")
-                    tracker_call(
-                        self,
-                        "mark_queue_item_stage",
-                        queue=queue,
-                        key=key,
-                        item=item,
-                        stage="retry",
-                        severity="warning",
-                        note=f"screening submit failed: {reason}",
-                    )
-                return
-
-            tracker_call(
-                self,
-                "mark_submission_result",
-                stage="screening",
-                uid=uid,
-                success=True,
-                terminal=False,
-                model_hash=model_hash,
-            )
-            item["screening_recorded"] = True
-            item["status"] = "screening_recorded"
-            item["retry_attempts"] = 0
-            item["next_retry_at"] = 0
-            item["last_error"] = ""
-            item["updated_at"] = time.time()
-            bt.logging.info(f"Screening score submitted to backend for UID {uid}")
-            tracker_call(
-                self,
-                "mark_queue_item_stage",
-                queue=queue,
-                key=key,
-                item=item,
-                stage="screening_recorded",
-            )
-
-        missing_score_payload = (
-            item.get("total_score") is None
-            or not isinstance(item.get("per_type_scores"), dict)
-            or item.get("seeds_evaluated") is None
-        )
-
-        if missing_score_payload:
-            if cached:
-                per_type_scores = cached.get("per_type_scores", {})
-                if not isinstance(per_type_scores, dict):
-                    per_type_scores = {}
-                item["full_score"] = float(
-                    cached.get("full_score", cached.get("total_score", 0.0))
-                )
-                item["total_score"] = float(cached.get("total_score", 0.0))
-                item["per_type_scores"] = per_type_scores
-                item["seeds_evaluated"] = int(cached.get("seeds_evaluated", BENCHMARK_TOTAL_SEED_COUNT))
-            else:
-                all_benchmark_seeds = self.seed_manager.get_benchmark_seeds()
-                partial_scores = item.get("benchmark_partial_scores", [])
-                partial_per_type = item.get("benchmark_partial_per_type", {})
-                done = len(partial_scores)
-                remaining_seeds = all_benchmark_seeds[done:]
-
-                if remaining_seeds:
-                    auth = await authorize_with_retry(
-                        lambda: _authorize_phase("BENCHMARK"),
-                        log_prefix=f"UID {uid} benchmark authorize: ",
-                    )
-                    if not auth.get("authorized"):
-                        item["status"] = "cancelled"
-                        item["last_error"] = f"backend authorization failed: {auth.get('reason', 'unknown')}"
-                        item["updated_at"] = time.time()
-                        _utils_facade().mark_model_hash_processed(uid, model_hash)
-                        tracker_call(
-                            self,
-                            "mark_queue_item_stage",
-                            queue=queue,
-                            key=key,
-                            item=item,
-                            stage="cancelled",
-                            severity="warning",
-                            note=item["last_error"],
-                        )
-                        return
                     tracker_call(
                         self,
                         "mark_queue_item_stage",
@@ -364,166 +483,39 @@ async def _process_normal_queue_item(
                         key=key,
                         item=item,
                         stage="benchmark",
-                        progress_done=done,
+                        progress_done=current_done,
                         progress_total=len(all_benchmark_seeds),
+                        note=f"chunk {current_done}/{len(all_benchmark_seeds)}",
                     )
-                    total_benchmark_seeds = len(all_benchmark_seeds)
-                    hb = HeartbeatManager(self.backend_api, asyncio.get_running_loop())
-                    hb.start(
-                        "evaluating_benchmark",
-                        uid,
-                        total_benchmark_seeds,
-                        queue=getattr(self, "_heartbeat_queue", None),
-                        active_task={
-                            "uid": uid,
-                            "phase": "BENCHMARK",
-                            "assignment_id": item.get("assignment_id"),
-                            "epoch_number": epoch,
-                            "benchmark_version": BENCHMARK_VERSION,
-                        },
-                        backend_decision_version=item.get("backend_decision_version"),
+                    _utils_facade().save_normal_model_queue(queue)
+
+                try:
+                    _scores, _per_type, _details, cancel_reason = (
+                        await _utils_facade()._run_streaming_phase(
+                            self,
+                            uid,
+                            model_path,
+                            remaining_seeds,
+                            phase_description="benchmark",
+                            seed_offset=BENCHMARK_SCREENING_SEED_COUNT + done,
+                            epoch_number=epoch,
+                            hb=hb,
+                            task_id=item.get("assignment_id"),
+                            re_authorize=_reauthorize_benchmark,
+                            should_stop=hb.should_stop,
+                            on_chunk_complete=_on_chunk,
+                            evaluator_prior_done=done,
+                            evaluator_total_seeds=total_benchmark_seeds,
+                        )
                     )
-                    if done > 0:
-                        with hb._lock:
-                            hb._progress = done
-                            hb._last_sent = done
+                finally:
+                    hb.finish()
 
-                    async def _reauthorize_benchmark() -> dict:
-                        return await _authorize_phase("BENCHMARK")
-
-                    def _on_chunk(**info) -> None:
-                        partial_scores.extend(info["chunk_scores"])
-                        for tname, tscores in info["chunk_per_type"].items():
-                            partial_per_type.setdefault(tname, []).extend(tscores)
-                        current_done = len(partial_scores)
-                        item["benchmark_partial_scores"] = partial_scores
-                        item["benchmark_partial_per_type"] = partial_per_type
-                        item["updated_at"] = time.time()
-                        tracker_call(
-                            self,
-                            "mark_queue_item_stage",
-                            queue=queue,
-                            key=key,
-                            item=item,
-                            stage="benchmark",
-                            progress_done=current_done,
-                            progress_total=len(all_benchmark_seeds),
-                            note=f"chunk {current_done}/{len(all_benchmark_seeds)}",
-                        )
-                        _utils_facade().save_normal_model_queue(queue)
-
-                    try:
-                        _scores, _per_type, _details, cancel_reason = (
-                            await _utils_facade()._run_streaming_phase(
-                                self,
-                                uid,
-                                model_path,
-                                remaining_seeds,
-                                phase_description="benchmark",
-                                seed_offset=BENCHMARK_SCREENING_SEED_COUNT + done,
-                                epoch_number=epoch,
-                                hb=hb,
-                                task_id=item.get("assignment_id"),
-                                re_authorize=_reauthorize_benchmark,
-                                should_stop=hb.should_stop,
-                                on_chunk_complete=_on_chunk,
-                                evaluator_prior_done=done,
-                                evaluator_total_seeds=total_benchmark_seeds,
-                            )
-                        )
-                    finally:
-                        hb.finish()
-
-                    if cancel_reason is not None:
-                        item["status"] = "cancelled"
-                        item["last_error"] = (
-                            f"backend authorization failed mid-benchmark: {cancel_reason}"
-                        )
-                        item["updated_at"] = time.time()
-                        _utils_facade().mark_model_hash_processed(uid, model_hash)
-                        tracker_call(
-                            self,
-                            "mark_queue_item_stage",
-                            queue=queue,
-                            key=key,
-                            item=item,
-                            stage="cancelled",
-                            severity="warning",
-                            note=item["last_error"],
-                        )
-                        return
-
-                screening_scores = item.get("screening_scores", [])
-                if not isinstance(screening_scores, list):
-                    screening_scores = []
-                scr_per_type = item.get("screening_per_type", {})
-
-                combined_scores = screening_scores + partial_scores
-                total_score = float(np.mean(combined_scores)) if combined_scores else 0.0
-                full_score = float(np.mean(partial_scores)) if partial_scores else 0.0
-
-                merged_per_type = {}
-                all_type_keys = set(scr_per_type) | set(partial_per_type)
-                for type_key in all_type_keys:
-                    combined = scr_per_type.get(type_key, []) + partial_per_type.get(type_key, [])
-                    merged_per_type[type_key] = float(np.mean(combined)) if combined else 0.0
-
-                item["full_score"] = full_score
-                item["total_score"] = total_score
-                item["per_type_scores"] = merged_per_type
-                item["seeds_evaluated"] = len(combined_scores)
-                item.pop("benchmark_partial_scores", None)
-                item.pop("benchmark_partial_per_type", None)
-            item["updated_at"] = time.time()
-
-        per_type_str = " | ".join(
-            f"{k}={v:.2f}" for k, v in sorted(item.get("per_type_scores", {}).items())
-        )
-        bt.logging.info(
-            f"Benchmark UID {uid} | "
-            f"total={item.get('total_score', 0):.4f} | "
-            f"{item.get('seeds_evaluated', 0)} seeds | {per_type_str}"
-        )
-
-        if not item.get("score_recorded", False):
-            tracker_call(
-                self,
-                "mark_queue_item_stage",
-                queue=queue,
-                key=key,
-                item=item,
-                stage="score_submit",
-            )
-            tracker_call(self, "mark_submission_started", stage="score", uid=uid, model_hash=model_hash)
-            recorded, terminal, reason = await _utils_facade()._submit_score_with_ack(
-                self,
-                uid=uid,
-                validator_hotkey=validator_hotkey,
-                validator_stake=validator_stake,
-                model_hash=model_hash,
-                total_score=float(item.get("total_score", 0.0)),
-                per_type_scores=dict(item.get("per_type_scores", {})),
-                seeds_evaluated=int(item.get("seeds_evaluated", 0) or 0),
-                epoch_number=self.seed_manager.epoch_number,
-            )
-            if not recorded:
-                bt.logging.warning(
-                    f"Score submit failed for UID {uid} | "
-                    f"terminal={terminal} | {reason}"
-                )
-                tracker_call(
-                    self,
-                    "mark_submission_result",
-                    stage="score",
-                    uid=uid,
-                    success=False,
-                    terminal=terminal,
-                    reason=str(reason),
-                    model_hash=model_hash,
-                )
-                if terminal:
-                    item["status"] = "terminal_rejected"
-                    item["last_error"] = reason
+                if cancel_reason is not None:
+                    item["status"] = "cancelled"
+                    item["last_error"] = (
+                        f"backend authorization failed mid-benchmark: {cancel_reason}"
+                    )
                     item["updated_at"] = time.time()
                     _utils_facade().mark_model_hash_processed(uid, model_hash)
                     tracker_call(
@@ -532,70 +524,216 @@ async def _process_normal_queue_item(
                         queue=queue,
                         key=key,
                         item=item,
-                        stage="terminal_rejected",
+                        stage="cancelled",
                         severity="warning",
-                        note=str(reason),
+                        note=item["last_error"],
                     )
-                else:
-                    _utils_facade()._schedule_queue_retry(item, f"score submit failed: {reason}")
-                    tracker_call(
-                        self,
-                        "mark_queue_item_stage",
-                        queue=queue,
-                        key=key,
-                        item=item,
-                        stage="retry",
-                        severity="warning",
-                        note=f"score submit failed: {reason}",
-                    )
-                return
+                    return True
 
+            screening_scores = item.get("screening_scores", [])
+            if not isinstance(screening_scores, list):
+                screening_scores = []
+            scr_per_type = item.get("screening_per_type", {})
+
+            combined_scores = screening_scores + partial_scores
+            total_score = float(np.mean(combined_scores)) if combined_scores else 0.0
+            full_score = float(np.mean(partial_scores)) if partial_scores else 0.0
+
+            merged_per_type = {}
+            all_type_keys = set(scr_per_type) | set(partial_per_type)
+            for type_key in all_type_keys:
+                combined = scr_per_type.get(type_key, []) + partial_per_type.get(type_key, [])
+                merged_per_type[type_key] = float(np.mean(combined)) if combined else 0.0
+
+            item["full_score"] = full_score
+            item["total_score"] = total_score
+            item["per_type_scores"] = merged_per_type
+            item["seeds_evaluated"] = len(combined_scores)
+            item.pop("benchmark_partial_scores", None)
+            item.pop("benchmark_partial_per_type", None)
+        item["updated_at"] = time.time()
+
+    per_type_str = " | ".join(
+        f"{k}={v:.2f}" for k, v in sorted(item.get("per_type_scores", {}).items())
+    )
+    bt.logging.info(
+        f"Benchmark UID {uid} | "
+        f"total={item.get('total_score', 0):.4f} | "
+        f"{item.get('seeds_evaluated', 0)} seeds | {per_type_str}"
+    )
+
+    return False
+
+
+async def _submit_score_phase(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    key = ctx.key
+    item = ctx.item
+    uid = ctx.uid
+    model_hash = ctx.model_hash
+    validator_hotkey = ctx.validator_hotkey
+    validator_stake = ctx.validator_stake
+
+    if not item.get("score_recorded", False):
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="score_submit",
+        )
+        tracker_call(self, "mark_submission_started", stage="score", uid=uid, model_hash=model_hash)
+        recorded, terminal, reason = await _utils_facade()._submit_score_with_ack(
+            self,
+            uid=uid,
+            validator_hotkey=validator_hotkey,
+            validator_stake=validator_stake,
+            model_hash=model_hash,
+            total_score=float(item.get("total_score", 0.0)),
+            per_type_scores=dict(item.get("per_type_scores", {})),
+            seeds_evaluated=int(item.get("seeds_evaluated", 0) or 0),
+            epoch_number=self.seed_manager.epoch_number,
+        )
+        if not recorded:
+            bt.logging.warning(
+                f"Score submit failed for UID {uid} | "
+                f"terminal={terminal} | {reason}"
+            )
             tracker_call(
                 self,
                 "mark_submission_result",
                 stage="score",
                 uid=uid,
-                success=True,
-                terminal=False,
+                success=False,
+                terminal=terminal,
+                reason=str(reason),
                 model_hash=model_hash,
             )
-            item["score_recorded"] = True
-            item["status"] = "completed"
-            item["retry_attempts"] = 0
-            item["next_retry_at"] = 0
-            item["last_error"] = ""
-            item["updated_at"] = time.time()
-            bt.logging.info(f"Score submitted to backend for UID {uid}")
-            tracker_call(
-                self,
-                "mark_queue_item_stage",
-                queue=queue,
-                key=key,
-                item=item,
-                stage="completed",
-            )
+            if terminal:
+                item["status"] = "terminal_rejected"
+                item["last_error"] = reason
+                item["updated_at"] = time.time()
+                _utils_facade().mark_model_hash_processed(uid, model_hash)
+                tracker_call(
+                    self,
+                    "mark_queue_item_stage",
+                    queue=queue,
+                    key=key,
+                    item=item,
+                    stage="terminal_rejected",
+                    severity="warning",
+                    note=str(reason),
+                )
+            else:
+                _utils_facade()._schedule_queue_retry(item, f"score submit failed: {reason}")
+                tracker_call(
+                    self,
+                    "mark_queue_item_stage",
+                    queue=queue,
+                    key=key,
+                    item=item,
+                    stage="retry",
+                    severity="warning",
+                    note=f"score submit failed: {reason}",
+                )
+            return True
 
-        bt.logging.info(
-            f"UID {uid} evaluation complete | "
-            f"screening={item.get('screening_score', 0):.4f} "
-            f"total={item.get('total_score', 0):.4f} | "
-            f"{item.get('seeds_evaluated', 0)} seeds"
+        tracker_call(
+            self,
+            "mark_submission_result",
+            stage="score",
+            uid=uid,
+            success=True,
+            terminal=False,
+            model_hash=model_hash,
+        )
+        item["score_recorded"] = True
+        item["status"] = "completed"
+        item["retry_attempts"] = 0
+        item["next_retry_at"] = 0
+        item["last_error"] = ""
+        item["updated_at"] = time.time()
+        bt.logging.info(f"Score submitted to backend for UID {uid}")
+        tracker_call(
+            self,
+            "mark_queue_item_stage",
+            queue=queue,
+            key=key,
+            item=item,
+            stage="completed",
         )
 
-        _utils_facade().set_cached_score(model_hash, epoch, {
-            "uid": uid,
-            "total_score": float(item.get("total_score", 0.0)),
-            "screening_score": float(item.get("screening_score", 0.0)),
-            "full_score": float(item.get("full_score", item.get("total_score", 0.0))),
-            "per_type_scores": dict(item.get("per_type_scores", {})),
-            "seeds_evaluated": int(item.get("seeds_evaluated", 0) or 0),
-        })
+    return False
 
-        item.pop("screening_scores", None)
-        item.pop("screening_per_type", None)
-        _utils_facade().mark_model_hash_processed(uid, model_hash)
-        tracker_call(self, "update_queue_state", queue)
-        tracker_call(self, "increment_counter", "models_processed_total")
+
+async def _complete_and_cache_phase(ctx: "_QueueItemContext") -> bool:
+    self = ctx.self
+    queue = ctx.queue
+    item = ctx.item
+    uid = ctx.uid
+    model_hash = ctx.model_hash
+    epoch = ctx.epoch
+
+    bt.logging.info(
+        f"UID {uid} evaluation complete | "
+        f"screening={item.get('screening_score', 0):.4f} "
+        f"total={item.get('total_score', 0):.4f} | "
+        f"{item.get('seeds_evaluated', 0)} seeds"
+    )
+
+    _utils_facade().set_cached_score(model_hash, epoch, {
+        "uid": uid,
+        "total_score": float(item.get("total_score", 0.0)),
+        "screening_score": float(item.get("screening_score", 0.0)),
+        "full_score": float(item.get("full_score", item.get("total_score", 0.0))),
+        "per_type_scores": dict(item.get("per_type_scores", {})),
+        "seeds_evaluated": int(item.get("seeds_evaluated", 0) or 0),
+    })
+
+    item.pop("screening_scores", None)
+    item.pop("screening_per_type", None)
+    _utils_facade().mark_model_hash_processed(uid, model_hash)
+    tracker_call(self, "update_queue_state", queue)
+    tracker_call(self, "increment_counter", "models_processed_total")
+    return False
+
+
+async def _process_normal_queue_item(
+    self,
+    queue: dict,
+    key: str,
+    validator_hotkey: str,
+    validator_stake: float,
+) -> None:
+    items = queue.get("items", {})
+    item = items.get(key)
+    if not item:
+        return
+
+    try:
+        ctx = _QueueItemContext(
+            self=self,
+            queue=queue,
+            key=key,
+            item=item,
+            validator_hotkey=validator_hotkey,
+            validator_stake=validator_stake,
+        )
+        if await _setup_phase_context(ctx):
+            return
+        if await _validate_model_file_phase(ctx):
+            return
+        if await _register_model_phase(ctx):
+            return
+        if await _run_screening_phase(ctx):
+            return
+        if await _run_benchmark_phase(ctx):
+            return
+        if await _submit_score_phase(ctx):
+            return
+        await _complete_and_cache_phase(ctx)
 
     except BackendTransportError as e:
         reason = f"backend transport failure: {e}"
