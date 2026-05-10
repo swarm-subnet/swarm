@@ -45,6 +45,7 @@ def build_world(
     start: shared.Optional[shared.Tuple[float, float, float]] = None,
     goal: shared.Optional[shared.Tuple[float, float, float]] = None,
     challenge_type: int = 1,
+    moving_platform: bool = False,
 ) -> shared.Tuple[
     shared.List[int],
     shared.List[int],
@@ -266,8 +267,14 @@ def build_world(
             gx, gy, gz = goal
 
         if challenge_type in (2, 3):
+            orbit_r = (
+                shared.PLATFORM_RADIUS_MAX
+                if (challenge_type == 3 and moving_platform)
+                else 0.0
+            )
             gx, gy, surface_z = _find_flat_platform_spot(
                 cli, gx, gy, shared.START_PLATFORM_RADIUS,
+                orbit_radius=orbit_r,
             )
             adjusted_goal = (gx, gy, surface_z)
         else:

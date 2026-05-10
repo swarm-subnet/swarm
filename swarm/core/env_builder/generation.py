@@ -15,6 +15,8 @@ def _find_flat_platform_spot(
     nudge_distance: float = 2.0,
     nudge_attempts: int = 8,
     clearance: float = 0.15,
+    orbit_radius: float = 0.0,
+    orbit_ring_samples: int = 16,
 ) -> tuple:
     """Find the best (x, y, surface_z) for a platform on mountain terrain.
 
@@ -22,6 +24,10 @@ def _find_flat_platform_spot(
     platform, tries nudging in the direction away from the highest edge.
     Returns (best_x, best_y, safe_surface_z) where safe_surface_z is the max
     terrain height around the platform plus clearance.
+
+    When orbit_radius > 0 the helper also samples a swept disk out to
+    orbit_radius + 0.3 (avoidance margin) + radius (landing pad), so a moving
+    platform's full path stays above the terrain at every angle.
     """
 
     def _sample(cx, cy):
@@ -67,6 +73,23 @@ def _find_flat_platform_spot(
                     best_max_z = nm_z
 
     _, final_max_z, _, _ = _sample(best_x, best_y)
+
+    if orbit_radius > 0:
+        outer = orbit_radius + 0.3 + radius
+        for r_factor, n in (
+            (1.00, orbit_ring_samples),
+            (0.66, max(8, orbit_ring_samples // 2)),
+            (0.33, max(6, orbit_ring_samples // 4)),
+        ):
+            ring = outer * r_factor
+            for k in range(n):
+                ang = 2 * _math.pi * k / n
+                ex = best_x + ring * _math.cos(ang)
+                ey = best_y + ring * _math.sin(ang)
+                ez = _raycast_surface_z(cli, ex, ey)
+                if ez > final_max_z:
+                    final_max_z = ez
+
     safe_z = final_max_z + clearance
     return best_x, best_y, safe_z
 
