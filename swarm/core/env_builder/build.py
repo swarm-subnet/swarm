@@ -269,7 +269,7 @@ def build_world(
         if challenge_type in (2, 3):
             orbit_r = (
                 shared.PLATFORM_RADIUS_MAX
-                if (challenge_type == 3 and moving_platform)
+                if (challenge_type in (2, 3) and moving_platform)
                 else 0.0
             )
             gx, gy, surface_z = _find_flat_platform_spot(
@@ -279,6 +279,29 @@ def build_world(
             adjusted_goal = (gx, gy, surface_z)
         else:
             surface_z = gz
+            if challenge_type == 4 and moving_platform:
+                outer = (
+                    shared.PLATFORM_RADIUS_MAX
+                    + 0.3
+                    + shared.LANDING_PLATFORM_RADIUS
+                )
+                max_top = surface_z
+                exclude_uids = set(start_platform_uids)
+                n_bodies = shared.p.getNumBodies(physicsClientId=cli)
+                for body_idx in range(static_world_body_base, n_bodies):
+                    uid = shared.p.getBodyUniqueId(body_idx, physicsClientId=cli)
+                    if uid in exclude_uids:
+                        continue
+                    mn, mx = shared.p.getAABB(uid, physicsClientId=cli)
+                    if (mx[0] - mn[0]) > 50.0 or (mx[1] - mn[1]) > 50.0:
+                        continue
+                    cx = max(mn[0], min(gx, mx[0]))
+                    cy = max(mn[1], min(gy, mx[1]))
+                    if (gx - cx) ** 2 + (gy - cy) ** 2 <= outer * outer:
+                        if mx[2] > max_top:
+                            max_top = mx[2]
+                surface_z = max(surface_z, max_top + 0.20)
+                adjusted_goal = (gx, gy, surface_z)
 
         goal_platform_surface_z = surface_z
 
