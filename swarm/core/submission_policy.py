@@ -15,6 +15,11 @@ REQUIRED_ROOT_FILES: tuple[str, ...] = ("drone_agent.py",)
 FORBIDDEN_SUFFIXES: tuple[str, ...] = (".exe", ".so", ".dll", ".sh", ".bat", ".pyc")
 MAX_UNCOMPRESSED_BYTES: int = 50 * 1024 * 1024
 
+STRUCTURE_FAILURE_REASON_PREFIXES: tuple[str, ...] = (
+    "missing_required_file:",
+    "forbidden_suffix:",
+)
+
 
 def check_safety(
     zip_path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES
