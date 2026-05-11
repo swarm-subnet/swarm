@@ -384,10 +384,14 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
     try:
+        from swarm.core.submission_policy import REQUIRED_ROOT_FILES
+
         with zipfile.ZipFile(model_path, "r") as zf:
-            if "drone_agent.py" not in zf.namelist():
+            namelist = zf.namelist()
+            missing = [f for f in REQUIRED_ROOT_FILES if f not in namelist]
+            if missing:
                 bt.logging.warning(
-                    f"[Worker {worker_id}] Model {uid} missing drone_agent.py"
+                    f"[Worker {worker_id}] Model {uid} missing required files: {missing}"
                 )
                 _notify_all_failed(status="submission_missing_drone_agent")
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
