@@ -40,12 +40,36 @@ def test_check_safety_rejects_path_traversal(tmp_path):
     assert "Path traversal" in reason
 
 
+def test_check_safety_rejects_absolute_path(tmp_path):
+    z = tmp_path / "bad.zip"
+    _make_zip(z, {"/abs/escape.py": b"x"})
+    ok, reason = check_safety(z)
+    assert not ok
+    assert "Path traversal" in reason
+
+
 def test_check_safety_rejects_symlink(tmp_path):
     z = tmp_path / "bad.zip"
     _make_symlink_zip(z)
     ok, reason = check_safety(z)
     assert not ok
     assert "Symlink" in reason
+
+
+def test_check_safety_rejects_corrupt_archive(tmp_path):
+    z = tmp_path / "corrupt.zip"
+    z.write_bytes(b"not a zip")
+    ok, reason = check_safety(z)
+    assert not ok
+    assert "Corrupted" in reason
+
+
+def test_check_safety_honors_custom_max_uncompressed(tmp_path):
+    z = tmp_path / "ok.zip"
+    _make_zip(z, {"drone_agent.py": b"a" * 1024})
+    ok, reason = check_safety(z, max_uncompressed=512)
+    assert not ok
+    assert "too large" in reason
 
 
 def test_check_safety_rejects_oversized_uncompressed(tmp_path):

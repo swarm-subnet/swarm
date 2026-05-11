@@ -16,7 +16,9 @@ FORBIDDEN_SUFFIXES: tuple[str, ...] = (".exe", ".so", ".dll", ".sh", ".bat", ".p
 MAX_UNCOMPRESSED_BYTES: int = 50 * 1024 * 1024
 
 
-def check_safety(zip_path: Path) -> tuple[bool, str]:
+def check_safety(
+    zip_path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES
+) -> tuple[bool, str]:
     """Reject path traversal, symlinks, corrupt archives, or zip bombs."""
     try:
         with ZipFile(zip_path) as zf:
@@ -28,7 +30,7 @@ def check_safety(zip_path: Path) -> tuple[bool, str]:
                 if stat.S_ISLNK(info.external_attr >> 16):
                     return False, f"Symlink not allowed: {name}"
                 total += info.file_size
-                if total > MAX_UNCOMPRESSED_BYTES:
+                if total > max_uncompressed:
                     return False, f"Uncompressed size too large ({total / 1e6:.1f} MB)"
             return True, "ok"
     except BadZipFile:

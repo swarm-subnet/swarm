@@ -15,6 +15,7 @@ import bittensor as bt
 from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
 from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC
 from swarm.core.model_verify import add_to_blacklist
+from swarm.core.submission_policy import REQUIRED_ROOT_FILES
 from swarm.protocol import ValidationResult
 from swarm.utils.hash import sha256sum
 
@@ -384,8 +385,6 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
     try:
-        from swarm.core.submission_policy import REQUIRED_ROOT_FILES
-
         with zipfile.ZipFile(model_path, "r") as zf:
             namelist = zf.namelist()
             missing = [f for f in REQUIRED_ROOT_FILES if f not in namelist]

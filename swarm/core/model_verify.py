@@ -26,7 +26,11 @@ except ImportError:
     _log = logging.getLogger("swarm.model_verify")
 
 from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
-from swarm.core.submission_policy import check_structure
+from swarm.core.submission_policy import (
+    MAX_UNCOMPRESSED_BYTES,
+    check_safety,
+    check_structure,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -208,15 +212,9 @@ def save_fake_model_for_analysis(
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def zip_is_safe(path: Path, *, max_uncompressed: int = None) -> bool:
-    """Reject dangerous ZIP files via the shared safety policy.
-
-    ``max_uncompressed`` is retained for backwards-compatible call sites
-    but ignored: the policy module owns the size threshold.
-    """
-    from swarm.core.submission_policy import check_safety
-
-    ok, reason = check_safety(path)
+def zip_is_safe(path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES) -> bool:
+    """Reject dangerous ZIP files via the shared safety policy."""
+    ok, reason = check_safety(path, max_uncompressed=max_uncompressed)
     if not ok:
         _log.error(f"ZIP safety check failed: {reason}")
     return ok

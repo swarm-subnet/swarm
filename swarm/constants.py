@@ -57,8 +57,11 @@ PROP_EFF = 0.60                         # Propeller efficiency coefficient
 # MODEL & AI EVALUATION
 # =============================================================================
 
-# Model size and validation limits
-MAX_MODEL_BYTES = 50 * 1024 * 1024      # Maximum compressed model size (50 MiB)
+# Model size and validation limits — sourced from submission_policy so the
+# backend and validator agree on the same ceiling.
+from swarm.core.submission_policy import MAX_UNCOMPRESSED_BYTES as _POLICY_MAX_BYTES
+
+MAX_MODEL_BYTES = _POLICY_MAX_BYTES
 EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
 
 # Docker worker auto-sizing
