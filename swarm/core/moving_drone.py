@@ -939,6 +939,7 @@ class MovingDroneAviary(BaseRLAviary):
             start=self.task.start,
             goal=self.task.goal,
             challenge_type=self.task.challenge_type,
+            moving_platform=getattr(self.task, "moving_platform", False),
         )
 
         if len(result) >= 6:

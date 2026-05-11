@@ -456,6 +456,8 @@ class _AdaptiveBackoffController:
     latest_pressure: str = "unknown"
     latest_snapshot: Optional[_ResourceSnapshot] = None
 
+    # ── Init + machine configuration ────────────────────────────────────────
+
     def __post_init__(self) -> None:
         if self.machine_vcpus is None:
             self.machine_vcpus = available_vcpu_count()
@@ -506,6 +508,8 @@ class _AdaptiveBackoffController:
 
     def cost_model(self) -> List[Dict[str, Any]]:
         return _resource_model_rows()
+
+    # ── Status formatting ───────────────────────────────────────────────────
 
     def _status_dict(
         self,
@@ -583,6 +587,8 @@ class _AdaptiveBackoffController:
                 f"heavy_tokens={row['heavy_tokens']}"
             )
         return lines
+
+    # ── Cost learning ───────────────────────────────────────────────────────
 
     def _profile_for_group(self, group_name: str) -> _GroupRuntimeProfile:
         return self.group_profiles.setdefault(str(group_name), _GroupRuntimeProfile())
@@ -666,6 +672,8 @@ class _AdaptiveBackoffController:
     def _cost_for_group(self, group_name: str) -> _SeedResourceCost:
         return self._learned_cost_for_group(group_name)
 
+    # ── Dispatch + sort key ─────────────────────────────────────────────────
+
     def note_group_dispatched(self, group_name: str) -> None:
         self.group_dispatch_counts[str(group_name)] += 1
 
@@ -685,6 +693,8 @@ class _AdaptiveBackoffController:
             float(cost.cpu_units),
             int(batch_id),
         )
+
+    # ── Resource sampling + pressure detection ──────────────────────────────
 
     def _snapshot_from_provider(self) -> _ResourceSnapshot:
         if callable(self.resource_provider):
@@ -787,6 +797,8 @@ class _AdaptiveBackoffController:
             "heavy_tokens": float(heavy_tokens),
             "heavy_count": float(heavy_count),
         }
+
+    # ── Backoff + relaxation ────────────────────────────────────────────────
 
     def _recent_signal_count(self, signal: str) -> int:
         return sum(1 for item in self.recent_outcome_signals if item == signal)
@@ -965,6 +977,8 @@ class _AdaptiveBackoffController:
             f"heavy {previous_heavy_cap}->{self.active_heavy_cap}"
         )
 
+    # ── Profile observation ─────────────────────────────────────────────────
+
     def _observe_group_profile(
         self,
         group_name: Optional[str],
@@ -1011,6 +1025,8 @@ class _AdaptiveBackoffController:
                 profile.ratio_ema = float(ratio)
             else:
                 profile.ratio_ema = ((1.0 - alpha) * float(profile.ratio_ema)) + (alpha * float(ratio))
+
+    # ── Seed observation + admission (public API) ───────────────────────────
 
     def observe_resources(self, active_groups: List[str]) -> Optional[str]:
         self._sample_resources()
@@ -1182,6 +1198,9 @@ class _AdaptiveBackoffController:
             if self.cooldown_remaining > 0:
                 self.cooldown_remaining = max(0, self.cooldown_remaining - 1)
         return None
+
+
+# ── Batch selector (module-level) ───────────────────────────────────────────
 
 
 def _select_next_batch_index(

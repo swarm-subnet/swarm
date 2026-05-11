@@ -26,6 +26,11 @@ except ImportError:
     _log = logging.getLogger("swarm.model_verify")
 
 from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
+from swarm.core.submission_policy import (
+    MAX_UNCOMPRESSED_BYTES,
+    check_safety,
+    check_structure,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -76,40 +81,27 @@ def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
 
 
 def inspect_model_structure(zip_path: Path) -> Dict:
-    """
-    Inspect RPC agent submission structure.
-    Miners submit only drone_agent.py + model files.
-    Template files (main.py, agent.capnp, agent_server.py) are injected automatically.
-    """
-    try:
-        with ZipFile(zip_path, "r") as zf:
-            file_list = zf.namelist()
+    """Inspect RPC agent submission structure via the shared policy module."""
+    ok, reason = check_structure(zip_path)
+    if ok:
+        return {
+            "submission_type": "rpc",
+            "has_mlp_extractor": True,
+            "suspicious_patterns": [],
+            "class_names": ["RPC Custom Agent"],
+        }
 
-            if "drone_agent.py" not in file_list:
-                return {
-                    "error": "Missing drone_agent.py - RPC agent submission required",
-                    "missing_drone_agent": True,
-                }
+    if reason.startswith("missing_required_file:drone_agent.py"):
+        return {
+            "error": "Missing drone_agent.py - RPC agent submission required",
+            "missing_drone_agent": True,
+        }
 
-            dangerous_files = [
-                f
-                for f in file_list
-                if f.endswith((".exe", ".so", ".dll", ".sh", ".bat", ".pyc"))
-            ]
-            if dangerous_files:
-                return {
-                    "error": f"Dangerous executable files detected: {dangerous_files}"
-                }
+    if reason.startswith("forbidden_suffix:"):
+        suffixes = reason.removeprefix("forbidden_suffix:").split(",")
+        return {"error": f"Dangerous executable files detected: {suffixes}"}
 
-            return {
-                "submission_type": "rpc",
-                "has_mlp_extractor": True,
-                "suspicious_patterns": [],
-                "class_names": ["RPC Custom Agent"],
-            }
-
-    except Exception as e:
-        return {"error": f"ZIP inspection failed: {e}"}
+    return {"error": f"ZIP inspection failed: {reason}"}
 
 
 def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
@@ -220,34 +212,12 @@ def save_fake_model_for_analysis(
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def zip_is_safe(path: Path, *, max_uncompressed: int) -> bool:
-    """Reject dangerous ZIP files without extracting them.
-
-    Checks total uncompressed size and forbids path traversal.
-    """
-    try:
-        with ZipFile(path) as zf:
-            total_uncompressed = 0
-            for info in zf.infolist():
-                name = info.filename
-                if name.startswith(("/", "\\")) or ".." in Path(name).parts:
-                    _log.error(f"ZIP path traversal attempt: {name}")
-                    return False
-
-                total_uncompressed += info.file_size
-                if total_uncompressed > max_uncompressed:
-                    _log.error(
-                        f"ZIP too large when decompressed "
-                        f"({total_uncompressed/1e6:.1f} MB > {max_uncompressed/1e6:.1f} MB)"
-                    )
-                    return False
-            return True
-    except BadZipFile:
-        _log.error("Corrupted ZIP archive.")
-        return False
-    except Exception as e:
-        _log.error(f"ZIP inspection error: {e}")
-        return False
+def zip_is_safe(path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES) -> bool:
+    """Reject dangerous ZIP files via the shared safety policy."""
+    ok, reason = check_safety(path, max_uncompressed=max_uncompressed)
+    if not ok:
+        _log.error(f"ZIP safety check failed: {reason}")
+    return ok
 
 
 # ──────────────────────────────────────────────────────────────────────────
