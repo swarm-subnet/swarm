@@ -229,6 +229,13 @@ REWARD_W_SAFETY = 0.10                  # Weight for safety term in reward calcu
 SAFETY_DISTANCE_SAFE = 1.0              # Full safety score at this clearance (meters)
 SAFETY_DISTANCE_DANGER = 0.2            # Zero safety score at this clearance (meters)
 
+# Landing-zone floor suppression: ignore the supporting floor right under a
+# legitimately low landing platform so the final descent is not penalized for
+# unavoidable proximity to the ground.
+LANDING_FLOOR_MAX_HEIGHT = 0.15         # Max AABB z-extent treated as floor (meters)
+LANDING_COLUMN_PADDING = 0.10           # XY padding around landing radius (meters)
+LANDING_ALTITUDE_BUFFER = 0.10          # Vertical slack above safe distance (meters)
+
 # =============================================================================
 # BENCHMARK SYSTEM
 # =============================================================================
@@ -365,6 +372,12 @@ TYPE_6_H_MIN, TYPE_6_H_MAX = 0.2, 3.0
 TYPE_6_START_H_MIN, TYPE_6_START_H_MAX = 0.2, 3.0
 TYPE_6_HORIZON = HORIZON_SEC
 TYPE_6_SAFETY_DISTANCE_SAFE = 0.6                   # Tighter safety for dense forest (meters)
+
+# Per-challenge override for SAFETY_DISTANCE_SAFE; types not present fall back
+# to the global value.
+SAFETY_DISTANCE_SAFE_BY_TYPE = {
+    6: TYPE_6_SAFETY_DISTANCE_SAFE,
+}
 
 FOREST_MODE_DISTRIBUTION = {
     1: 0.25,   # Normal (green foliage)

@@ -32,6 +32,10 @@ from swarm.constants import (
     PLATFORM_AVOIDANCE_ENABLED, PLATFORM_STEER_ANGLES, PLATFORM_MIN_STEP_M,
     LANDING_PLATFORM_RADIUS,
     SAFETY_DISTANCE_SAFE,
+    SAFETY_DISTANCE_SAFE_BY_TYPE,
+    LANDING_FLOOR_MAX_HEIGHT,
+    LANDING_COLUMN_PADDING,
+    LANDING_ALTITUDE_BUFFER,
     START_PLATFORM_TAKEOFF_BUFFER,
     LANDING_MAX_VZ, LANDING_MAX_VXY_REL, LANDING_MAX_TILT_RAD, LANDING_STABLE_SEC,
     CULL_VISUAL_RADIUS, CULL_PHYSICS_RADIUS, CULL_INTERVAL_STEPS,
@@ -696,6 +700,59 @@ class MovingDroneAviary(BaseRLAviary):
         self._cull_vis_hidden.clear()
         self._cull_phys_disabled.clear()
 
+    def _is_landing_floor_body(self, body_uid: int, drone_pos) -> bool:
+        """Whether ``body_uid`` is the supporting floor under the landing platform
+        and should be ignored by safety scoring during the final descent.
+
+        Suppression is geometry-only and only fires when every gate passes:
+        the map allows a low platform, the platform is genuinely low, the body
+        sits below the platform within safe distance, the body is flat, the
+        body's AABB overlaps the landing column, the drone is in the landing
+        column, and the drone is at landing altitude.
+        """
+        challenge_type = int(getattr(self.task, "challenge_type", 0))
+        if challenge_type not in (1, 4, 5, 6):
+            return False
+
+        safe = SAFETY_DISTANCE_SAFE_BY_TYPE.get(challenge_type, SAFETY_DISTANCE_SAFE)
+        platform_pos = self._current_platform_pos
+        if platform_pos is None:
+            platform_pos = self.GOAL_POS
+        if platform_pos is None:
+            return False
+        if platform_pos[2] >= safe:
+            return False
+
+        cli = getattr(self, "CLIENT", 0)
+        mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+
+        if mx[2] >= platform_pos[2]:
+            return False
+        if (platform_pos[2] - mx[2]) >= safe:
+            return False
+        if (mx[2] - mn[2]) > LANDING_FLOOR_MAX_HEIGHT:
+            return False
+
+        landing_r = LANDING_PLATFORM_RADIUS + DRONE_HULL_RADIUS + LANDING_COLUMN_PADDING
+        landing_r_sq = landing_r * landing_r
+
+        cx = min(max(platform_pos[0], mn[0]), mx[0])
+        cy = min(max(platform_pos[1], mn[1]), mx[1])
+        body_dx = platform_pos[0] - cx
+        body_dy = platform_pos[1] - cy
+        if body_dx * body_dx + body_dy * body_dy > landing_r_sq:
+            return False
+
+        drone_dx = drone_pos[0] - platform_pos[0]
+        drone_dy = drone_pos[1] - platform_pos[1]
+        if drone_dx * drone_dx + drone_dy * drone_dy > landing_r_sq:
+            return False
+
+        if drone_pos[2] > platform_pos[2] + safe + LANDING_ALTITUDE_BUFFER:
+            return False
+
+        return True
+
     def _update_min_clearance(self) -> None:
         """Update minimum obstacle clearance for the episode."""
         if self._collision:
@@ -717,11 +774,14 @@ class MovingDroneAviary(BaseRLAviary):
         overlapping = p.getOverlappingObjects(search_min, search_max, physicsClientId=cli)
 
         if overlapping:
+            drone_pos = self.pos[0, :]
             checked = set()
             for body_uid, _link_idx in overlapping:
                 if body_uid in excluded or body_uid in checked:
                     continue
                 checked.add(body_uid)
+                if self._is_landing_floor_body(body_uid, drone_pos):
+                    continue
 
                 closest = p.getClosestPoints(
                     bodyA=drone_id,
