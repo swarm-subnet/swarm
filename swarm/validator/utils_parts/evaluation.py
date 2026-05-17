@@ -484,6 +484,44 @@ async def _run_full_benchmark(
         seed_offset = 0
         heartbeat_total = len(seeds)
         progress_offset = 0
+
+    # REEVAL of the champion crosses the screening range. Use the same
+    # template there as a new submission's screening pass so both models
+    # are graded on identical slots; fall through to random_task for the
+    # benchmark range and for non-REEVAL callers.
+    pre_built_tasks: Optional[List] = None
+    if (
+        reeval
+        and seeds is None
+        and seeds_from is not None
+        and seeds_from < BENCHMARK_SCREENING_SEED_COUNT
+    ):
+        full_screening_seeds = self.seed_manager.get_screening_seeds()
+        full_template = (
+            SCREENING_TEMPLATE * ((len(full_screening_seeds) // len(SCREENING_TEMPLATE)) + 1)
+        )[: len(full_screening_seeds)]
+        pre_built_tasks = []
+        for i, seed in enumerate(benchmark_seeds):
+            abs_idx = seeds_from + i
+            try:
+                if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
+                    slot = full_template[abs_idx]
+                    task = screening_task(
+                        sim_dt=SIM_DT, seed=seed,
+                        challenge_type=slot["challenge_type"],
+                        distance_range=slot["distance_range"],
+                        goal_height_range=slot.get("goal_height_range"),
+                        moving_platform=slot["moving_platform"],
+                    )
+                else:
+                    task = random_task(sim_dt=SIM_DT, seed=seed)
+            except Exception as e:
+                bt.logging.warning(
+                    f"Failed to create REEVAL task for seed {seed} idx {abs_idx}: {e}"
+                )
+                task = None
+            pre_built_tasks.append(task)
+
     total_seeds = len(benchmark_seeds)
     note = "full benchmark" if seeds is None else "custom seeds"
     epoch = self.seed_manager.epoch_number
@@ -546,6 +584,7 @@ async def _run_full_benchmark(
             epoch_number=epoch,
             hb=hb,
             task_id=task_id,
+            pre_built_tasks=pre_built_tasks,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
         )
