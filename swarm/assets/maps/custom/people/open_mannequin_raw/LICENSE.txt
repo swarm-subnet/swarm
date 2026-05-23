@@ -1,0 +1,6 @@
+Mannequin asset bundle (mannequin_a_raw.obj, .mtl, textures/*)
+
+Generated with MakeHuman Community (https://www.makehumancommunity.org).
+The MakeHuman base mesh and shipped textures are distributed under the
+CC0 / public-domain licence by the MakeHuman Project. This asset bundle
+is released under the same terms (CC0).

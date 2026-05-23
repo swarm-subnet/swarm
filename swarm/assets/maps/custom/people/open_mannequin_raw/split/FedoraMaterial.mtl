@@ -1,0 +1,5 @@
+newmtl FedoraMaterial
+Kd 0.9686 0.9686 0.9686
+Ks 0.02745 0.02745 0.02745
+d 1.0
+map_Kd ../textures/fedora_texture.png

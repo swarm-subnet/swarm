@@ -80,9 +80,6 @@ def _run_multi_seed_rpc_sync(
                 "map_seed": int(getattr(task_obj, "map_seed", -1)),
                 "challenge_type": int(getattr(task_obj, "challenge_type", -1)),
                 "horizon_sec": float(getattr(task_obj, "horizon", 0.0)),
-                "moving_platform": bool(
-                    getattr(task_obj, "moving_platform", False)
-                ),
                 "status": status,
                 "success": bool(success),
                 "sim_time_sec": float(sim_t),
@@ -600,6 +597,8 @@ def _run_multi_seed_rpc_sync(
                         else:
                             min_clearance = info.get("min_clearance", None)
                             collision = info.get("collision", False)
+                            failure_reason = info.get("failure_reason", "NONE")
+                            sar_mode_active = bool(getattr(env, "sar_mode", False))
                             score = flight_reward(
                                 success=success,
                                 t=t_sim,
@@ -608,6 +607,8 @@ def _run_multi_seed_rpc_sync(
                                 min_clearance=min_clearance,
                                 collision=collision,
                                 legitimate_model=True,
+                                failure_reason=failure_reason,
+                                sar_mode=sar_mode_active,
                             )
                             _trace(
                                 f"{task_label} result success={success} "
@@ -632,7 +633,10 @@ def _run_multi_seed_rpc_sync(
                                 info=dict(info),
                             )
                             results.append(
-                                ValidationResult(uid, success, t_sim, score)
+                                ValidationResult(
+                                    uid, success, t_sim, score,
+                                    failure_reason=failure_reason,
+                                )
                             )
                             _emit_seed_complete(
                                 task,

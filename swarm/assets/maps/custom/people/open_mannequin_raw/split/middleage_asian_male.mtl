@@ -1,0 +1,5 @@
+newmtl middleage_asian_male
+Kd 1 0.95 0.85
+Ks 0.02745 0.02745 0.02745
+d 1.0
+map_Kd ../textures/middleage_lightskinned_male_diffuse2.png

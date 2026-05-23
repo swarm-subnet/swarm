@@ -416,7 +416,6 @@ def _build_worker_stall_seed_meta(
         "map_seed": int(getattr(task, "map_seed", -1)),
         "challenge_type": int(getattr(task, "challenge_type", -1)),
         "horizon_sec": float(getattr(task, "horizon", 0.0)),
-        "moving_platform": bool(getattr(task, "moving_platform", False)),
         "status": "worker_stall_timeout",
         "success": False,
         "sim_time_sec": 0.0,

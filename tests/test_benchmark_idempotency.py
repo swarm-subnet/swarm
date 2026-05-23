@@ -41,12 +41,11 @@ def test_run_idempotency_rebuilds_the_same_task_each_time(monkeypatch):
     built_tasks: list[SimpleNamespace] = []
     evaluator_calls: list[tuple[list[SimpleNamespace], int, Path, int]] = []
 
-    def _fake_task_for_seed_and_type(sim_dt, *, seed, challenge_type, moving_platform=None):
+    def _fake_task_for_seed_and_type(sim_dt, *, seed, challenge_type):
         task = SimpleNamespace(
             sim_dt=sim_dt,
             map_seed=seed,
             challenge_type=challenge_type,
-            moving_platform=moving_platform,
             build_index=len(built_tasks) + 1,
         )
         built_tasks.append(task)
@@ -68,7 +67,6 @@ def test_run_idempotency_rebuilds_the_same_task_each_time(monkeypatch):
         seed=101678,
         challenge_type=6,
         runs=3,
-        moving_platform=False,
         worker_id=7,
     )
 
@@ -76,7 +74,6 @@ def test_run_idempotency_rebuilds_the_same_task_each_time(monkeypatch):
     assert [task.build_index for task in built_tasks] == [1, 2, 3]
     assert all(task.map_seed == 101678 for task in built_tasks)
     assert all(task.challenge_type == 6 for task in built_tasks)
-    assert all(task.moving_platform is False for task in built_tasks)
 
     assert len(evaluator_calls) == 3
     assert all(len(tasks) == 1 for tasks, *_ in evaluator_calls)

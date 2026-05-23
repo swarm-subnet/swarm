@@ -51,7 +51,7 @@ def _make_evaluate_stub(score_per_seed: float = 0.75, map_type: str = "city"):
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
         scores = [score_per_seed] * len(seeds)
         per_type = {"city": [], "open": [], "mountain": [], "village": [],
-                    "warehouse": [], "forest": [], "moving_platform": []}
+                    "warehouse": [], "forest": []}
         if map_type in per_type:
             per_type[map_type] = list(scores)
         details = [{"score": score_per_seed, "map_type": map_type} for _ in seeds]
@@ -396,7 +396,7 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
         scores = [0.5] * len(seeds)
         per_type = {name: [] for name in (
-            "city", "open", "mountain", "village", "warehouse", "forest", "moving_platform",
+            "city", "open", "mountain", "village", "warehouse", "forest",
         )}
         details = []
         for i, _seed in enumerate(seeds):
@@ -433,11 +433,11 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
     assert len(details) == 10
     assert uploads == [
         [
-            {"seed_index": 100, "score": 0.5, "map_type": "city"},
-            {"seed_index": 102, "score": 0.5, "map_type": "city"},
-            {"seed_index": 104, "score": 0.5, "map_type": "city"},
-            {"seed_index": 106, "score": 0.5, "map_type": "city"},
-            {"seed_index": 108, "score": 0.5, "map_type": "city"},
+            {"seed_index": 100, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 102, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 104, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 106, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 108, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
         ]
     ]
 
@@ -524,7 +524,7 @@ def test_streaming_phase_forwards_evaluator_prior_done(monkeypatch):
         })
         scores = [0.5] * len(seeds)
         per_type = {name: [] for name in (
-            "city", "open", "mountain", "village", "warehouse", "forest", "moving_platform",
+            "city", "open", "mountain", "village", "warehouse", "forest",
         )}
         per_type["city"] = list(scores)
         details = [{"score": 0.5, "map_type": "city"} for _ in seeds]
@@ -567,7 +567,7 @@ def test_streaming_phase_slices_pre_built_tasks_per_chunk(monkeypatch):
         slices.append(list(kwargs.get("pre_built_tasks") or []))
         scores = [0.5] * len(seeds)
         per_type = {name: [] for name in (
-            "city", "open", "mountain", "village", "warehouse", "forest", "moving_platform",
+            "city", "open", "mountain", "village", "warehouse", "forest",
         )}
         per_type["city"] = list(scores)
         details = [{"score": 0.5, "map_type": "city"} for _ in seeds]

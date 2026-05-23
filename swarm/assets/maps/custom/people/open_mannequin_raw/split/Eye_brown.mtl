@@ -1,0 +1,5 @@
+newmtl Eye_brown
+Kd 1 1 1
+Ks 1 1 1
+d 1.0
+map_Kd ../textures/brown_eye.png

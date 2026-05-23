@@ -13,7 +13,8 @@ repository.  No binary streaming over the wire.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
 import msgpack
@@ -21,6 +22,35 @@ try:
     import bittensor as bt
 except ImportError:
     bt = None
+
+
+SCHEMA_VERSION = "5.0.0"
+
+
+class FailureReason(str, Enum):
+    NONE = "NONE"
+    OBSTACLE_COLLISION = "OBSTACLE_COLLISION"
+    NO_TOUCH_SPHERE = "NO_TOUCH_SPHERE"
+    TILT = "TILT"
+    TIMEOUT = "TIMEOUT"
+    INFEASIBLE = "INFEASIBLE"
+    SPAWN_FAILURE = "SPAWN_FAILURE"
+    EVAL_ERROR = "EVAL_ERROR"
+
+
+_SUPPORTED_SCHEMA_VERSIONS: set[str] = {SCHEMA_VERSION}
+
+
+def normalize_version(s) -> str:
+    if not isinstance(s, str):
+        s = str(s) if s is not None else ""
+    if not s:
+        return s
+    return s[1:] if s[0] in ("V", "v") else s
+
+
+def is_supported_schema(version) -> bool:
+    return normalize_version(version) in _SUPPORTED_SCHEMA_VERSIONS
 
 
 # --------------------------------------------------------------------------- #
@@ -34,16 +64,21 @@ class MapTask:
     sim_dt: float
     horizon: float
     challenge_type: int
-    search_radius: float = 10.0
-    moving_platform: bool = False
-    version: str = "1"
+    version: str = SCHEMA_VERSION
+    search_centre: Tuple[float, float] = (0.0, 0.0)
 
     def pack(self) -> bytes:
         return msgpack.packb(asdict(self), use_bin_type=True)
 
     @staticmethod
     def unpack(blob: bytes) -> "MapTask":
-        return MapTask(**msgpack.unpackb(blob, raw=False))
+        data = msgpack.unpackb(blob, raw=False)
+        data.pop("moving_platform", None)
+        data.pop("search_radius", None)
+        sc = data.get("search_centre")
+        if isinstance(sc, (list, tuple)):
+            data["search_centre"] = tuple(sc)
+        return MapTask(**data)
 
 
 @dataclass(slots=True)
@@ -52,6 +87,7 @@ class ValidationResult:
     success: bool
     time_sec: float
     score: float
+    failure_reason: str = field(default="NONE", kw_only=True)
 
 
 # --------------------------------------------------------------------------- #

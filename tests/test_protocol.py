@@ -11,9 +11,6 @@ def test_map_task_pack_round_trip():
         sim_dt=0.02,
         horizon=60.0,
         challenge_type=5,
-        search_radius=7.5,
-        moving_platform=True,
-        version="1",
     )
     blob = task.pack()
     restored = MapTask.unpack(blob)
@@ -21,7 +18,7 @@ def test_map_task_pack_round_trip():
     assert tuple(restored.start) == task.start
     assert tuple(restored.goal) == task.goal
     assert restored.challenge_type == task.challenge_type
-    assert restored.moving_platform == task.moving_platform
+    assert restored.version == task.version
 
 
 def test_policy_ref_as_dict_includes_github_url():

@@ -14,26 +14,15 @@ from gym_pybullet_drones.utils.enums import (
     DroneModel, Physics, ActionType, ObservationType, ImageType,
 )
 
-# ── project‑level utilities ────────────────────────────────────────────────
-from swarm.core.env_builder import build_world
 from swarm.validator.reward import flight_reward
 from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
-    SEARCH_AREA_NOISE_Z,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
     LIGHT_RANDOMIZATION_ENABLED,
-    PLATFORM_MOVEMENT_PATTERNS,
-    PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX,
-    PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX,
-    PLATFORM_DELAY_MIN, PLATFORM_DELAY_MAX,
-    PLATFORM_TRANSITION_MIN, PLATFORM_TRANSITION_MAX,
-    PLATFORM_LINEAR_DIRECTIONS,
-    PLATFORM_AVOIDANCE_ENABLED, PLATFORM_STEER_ANGLES, PLATFORM_MIN_STEP_M,
-    LANDING_PLATFORM_RADIUS,
     SAFETY_DISTANCE_SAFE,
+    SAFETY_DISTANCE_SAFE_BY_TYPE,
     START_PLATFORM_TAKEOFF_BUFFER,
-    LANDING_MAX_VZ, LANDING_MAX_VXY_REL, LANDING_MAX_TILT_RAD, LANDING_STABLE_SEC,
     CULL_VISUAL_RADIUS, CULL_PHYSICS_RADIUS, CULL_INTERVAL_STEPS,
     CULL_MIN_AABB_SPAN, CULL_MIN_FACES, CULL_MIN_TOTAL_FACES,
     SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE,
@@ -48,6 +37,19 @@ def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
     except OSError:
         return 0
     return data.count(b"\nf ") + (1 if data.startswith(b"f ") else 0)
+
+
+def _inside_safety_patch(contact_point, safety_patch) -> bool:
+    cx, cy = safety_patch.xy
+    dx = float(contact_point[0]) - float(cx)
+    dy = float(contact_point[1]) - float(cy)
+    horiz = math.hypot(dx, dy)
+    if horiz > safety_patch.radius:
+        return False
+    cz = float(contact_point[2])
+    z_low = float(safety_patch.surface_z) - float(safety_patch.z_below)
+    z_high = float(safety_patch.surface_z) + float(safety_patch.z_above)
+    return z_low <= cz <= z_high
 
 
 class MovingDroneAviary(BaseRLAviary):
@@ -75,20 +77,23 @@ class MovingDroneAviary(BaseRLAviary):
         record      : bool         = False,
         obs         : ObservationType = ObservationType.RGB,
         act         : ActionType      = ActionType.RPM,
+        sar_mode    : bool          = False,
     ):
         """
         Parameters
         ----------
         task : MapTask
             Must expose `.start`, `.goal`, `.horizon`, `.sim_dt`.
-        Remaining arguments are forwarded to ``BaseRLAviary`` unchanged.
+        sar_mode : bool
+            Retained for backward compatibility — V5 SAR is the only mode now.
         """
         self.task       = task
         self._original_start = tuple(task.start)
         self._original_goal = tuple(task.goal)
         self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
-        self._moving    = getattr(task, 'moving_platform', False)
+        self.sar_mode   = True
+        self.sar_world  = None
 
         self._time_alive = 0.0
         self._success = False
@@ -97,18 +102,18 @@ class MovingDroneAviary(BaseRLAviary):
         self._prev_score = 0.0
         self._step_processed = False
         self._min_clearance_episode = SAFETY_DISTANCE_SAFE
-        self._landing_stable_time = 0.0
-        self._prev_platform_pos = None
-        self._platform_velocity = np.zeros(3, dtype=np.float32)
-        
-        seed = getattr(task, 'map_seed', 0)
-        
-        self._platform_orbit_center = self.GOAL_POS.copy()
-        self._current_platform_pos = self.GOAL_POS.copy()
-        self._movement_pattern = self._get_movement_pattern_from_seed(seed)
-        self._platform_offsets = []
 
-        self._init_platform_randomization(seed)
+        from swarm.protocol import FailureReason
+        self._failure_reason = FailureReason.NONE.value
+        self._sar_predicate_active = False
+        self._sar_dwell_time = 0.0
+        self._sar_spawn_failed = False
+        self._sar_max_dwell_observed = 0.0
+        self._sar_min_horizontal_distance = float("inf")
+        self._sar_min_sphere_distance = float("inf")
+        self._sar_spawn_attempts = 0
+
+        seed = getattr(task, 'map_seed', 0)
         self._search_area_center = self.GOAL_POS.copy()
 
         fov_rng = np.random.RandomState(seed)
@@ -152,8 +157,10 @@ class MovingDroneAviary(BaseRLAviary):
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
 
         action_dim = self.action_space.shape[-1]
-        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + 3
+        clue_dim = 2 if self.sar_mode else 3
+        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + clue_dim
         self._state_dim = state_dim
+        self._clue_dim = clue_dim
 
         depth_shape = (enhanced_height, enhanced_width, 1)
         self.observation_space = spaces.Dict({
@@ -187,230 +194,6 @@ class MovingDroneAviary(BaseRLAviary):
         """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
     
-    def _get_movement_pattern_from_seed(self, seed: int) -> str:
-        """Deterministically select movement pattern based on seed."""
-        if not self._moving:
-            return "static"
-        rng = np.random.RandomState(seed)
-        rng.rand()
-        rng.rand()
-        rng.rand()
-        rng.rand()
-        pattern_idx = rng.randint(0, len(PLATFORM_MOVEMENT_PATTERNS))
-        return PLATFORM_MOVEMENT_PATTERNS[pattern_idx]
-
-    def _init_platform_randomization(self, seed: int) -> None:
-        """Initialize randomized platform movement parameters."""
-        if not self._moving:
-            self._platform_speed = 0.0
-            self._platform_radius = 0.0
-            self._platform_delay = 0.0
-            self._platform_transition_time = 0.0
-            self._platform_phase = 0.0
-            self._platform_linear_dir = "x"
-            self._platform_linear_angle = 0.0
-            return
-
-        rng = np.random.RandomState((seed + 77777) & 0xFFFFFFFF)
-        self._platform_speed = rng.uniform(PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX)
-        self._platform_radius = rng.uniform(PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX)
-        self._platform_delay = rng.uniform(PLATFORM_DELAY_MIN, PLATFORM_DELAY_MAX)
-        self._platform_transition_time = rng.uniform(PLATFORM_TRANSITION_MIN, PLATFORM_TRANSITION_MAX)
-        self._platform_phase = rng.uniform(0, 2 * np.pi)
-        dir_idx = rng.randint(0, len(PLATFORM_LINEAR_DIRECTIONS))
-        self._platform_linear_dir = PLATFORM_LINEAR_DIRECTIONS[dir_idx]
-        self._platform_linear_angle = rng.uniform(0, 2 * np.pi)
-
-    def _get_orbit_position(self, t_eff: float) -> np.ndarray:
-        """Calculate orbit position for a given effective time."""
-        center = self._platform_orbit_center
-        speed = self._platform_speed
-        radius = self._platform_radius
-        phase = self._platform_phase
-        pattern = self._movement_pattern
-
-        if pattern == "circular":
-            angle = t_eff * speed * 0.3 + phase
-            x = center[0] + radius * math.cos(angle)
-            y = center[1] + radius * math.sin(angle)
-            return np.array([x, y, center[2]], dtype=np.float32)
-
-        elif pattern == "linear":
-            offset = radius * math.sin(t_eff * speed * 0.5 + phase)
-            if self._platform_linear_dir == "x":
-                x = center[0] + offset
-                y = center[1]
-            elif self._platform_linear_dir == "y":
-                x = center[0]
-                y = center[1] + offset
-            else:
-                x = center[0] + offset * math.cos(self._platform_linear_angle)
-                y = center[1] + offset * math.sin(self._platform_linear_angle)
-            return np.array([x, y, center[2]], dtype=np.float32)
-
-        elif pattern == "figure8":
-            angle = t_eff * speed * 0.3 + phase
-            x = center[0] + radius * math.sin(angle)
-            y = center[1] + radius * math.sin(2 * angle) / 2
-            return np.array([x, y, center[2]], dtype=np.float32)
-
-        return np.array(center, dtype=np.float32)
-
-    def _calculate_platform_position(self, t: float) -> np.ndarray:
-        """Calculate platform position at time t with smooth transition."""
-        if not self._moving:
-            return self._platform_orbit_center.copy()
-
-        delay = self._platform_delay
-        transition = self._platform_transition_time
-        center = self._platform_orbit_center
-
-        if t < delay:
-            return np.array(center, dtype=np.float32)
-
-        orbit_start = self._get_orbit_position(0.0)
-
-        if t < delay + transition:
-            t_ratio = (t - delay) / transition
-            t_smooth = t_ratio * t_ratio * (3.0 - 2.0 * t_ratio)
-            return center + t_smooth * (orbit_start - center)
-
-        t_eff = t - delay - transition
-        return self._get_orbit_position(t_eff)
-    
-    def _platform_path_blocked(self, current_pos, target_pos):
-        """Check if path or destination is blocked by obstacles."""
-        cli = getattr(self, "CLIENT", 0)
-        direction = target_pos - current_pos
-        dist = np.linalg.norm(direction[:2])
-        if dist < 0.001:
-            return False, None
-
-        excluded = set(getattr(self, '_end_platform_uids', []))
-        excluded |= set(getattr(self, '_start_platform_uids', []))
-        excluded.add(self.DRONE_IDS[0])
-        excluded.add(getattr(self, 'PLANE_ID', 0))
-
-        offsets = [
-            np.array([0, 0, 0], dtype=np.float32),
-            np.array([LANDING_PLATFORM_RADIUS, 0, 0], dtype=np.float32),
-            np.array([-LANDING_PLATFORM_RADIUS, 0, 0], dtype=np.float32),
-            np.array([0, LANDING_PLATFORM_RADIUS, 0], dtype=np.float32),
-            np.array([0, -LANDING_PLATFORM_RADIUS, 0], dtype=np.float32),
-        ]
-
-        for offset in offsets:
-            ray_from = (current_pos + offset).tolist()
-            ray_to = (target_pos + offset).tolist()
-            result = p.rayTest(ray_from, ray_to, physicsClientId=cli)
-            if result and result[0][0] != -1 and result[0][0] not in excluded:
-                return True, np.array(result[0][3], dtype=np.float32)
-
-        end_uids = getattr(self, '_end_platform_uids', [])
-        if end_uids:
-            plat_uid = end_uids[0]
-            saved_pos, saved_orn = p.getBasePositionAndOrientation(plat_uid, physicsClientId=cli)
-            p.resetBasePositionAndOrientation(plat_uid, target_pos.tolist(), [0, 0, 0, 1], physicsClientId=cli)
-            num_bodies = p.getNumBodies(physicsClientId=cli)
-            for body_idx in range(num_bodies):
-                body_uid = p.getBodyUniqueId(body_idx, physicsClientId=cli)
-                if body_uid in excluded:
-                    continue
-                mn, mx = p.getAABB(body_uid, physicsClientId=cli)
-                if (mx[0] - mn[0]) > 50.0 or (mx[1] - mn[1]) > 50.0:
-                    continue
-                contacts = p.getClosestPoints(plat_uid, body_uid, distance=0.15, physicsClientId=cli)
-                if contacts:
-                    for c in contacts:
-                        if c[8] < 0.15:
-                            p.resetBasePositionAndOrientation(plat_uid, list(saved_pos), list(saved_orn), physicsClientId=cli)
-                            return True, target_pos.copy()
-            p.resetBasePositionAndOrientation(plat_uid, list(saved_pos), list(saved_orn), physicsClientId=cli)
-
-        return False, None
-
-    def _update_moving_platform(self):
-        """Update platform position with obstacle avoidance."""
-        nominal_pos = self._calculate_platform_position(self._time_alive)
-
-        if not self._moving:
-            self._prev_platform_pos = nominal_pos.copy()
-            self._current_platform_pos = nominal_pos
-            self._platform_velocity = np.zeros(3, dtype=np.float32)
-            return
-
-        current = self._current_platform_pos
-        if current is None:
-            current = nominal_pos
-
-        blocked, _ = self._platform_path_blocked(current, nominal_pos)
-
-        if not blocked or not PLATFORM_AVOIDANCE_ENABLED:
-            new_pos = nominal_pos
-        else:
-            direction = nominal_pos - current
-            raw_dist = np.linalg.norm(direction[:2])
-            step = np.clip(raw_dist * 0.3, PLATFORM_MIN_STEP_M, 0.10)
-            base_angle = math.atan2(direction[1], direction[0])
-
-            new_pos = current.copy()
-            for angle_deg in PLATFORM_STEER_ANGLES:
-                angle = base_angle + math.radians(angle_deg)
-                candidate = current.copy()
-                candidate[0] += step * math.cos(angle)
-                candidate[1] += step * math.sin(angle)
-                candidate[2] = nominal_pos[2]
-
-                candidate_blocked, _ = self._platform_path_blocked(current, candidate)
-                if not candidate_blocked:
-                    new_pos = candidate
-                    break
-
-        max_step_dist = self._platform_speed * self._sim_dt * 1.5
-        disp = new_pos - current
-        disp_dist = np.linalg.norm(disp[:2])
-        if disp_dist > max_step_dist > 0:
-            scale = max_step_dist / disp_dist
-            new_pos[0] = current[0] + disp[0] * scale
-            new_pos[1] = current[1] + disp[1] * scale
-
-        center = self._platform_orbit_center
-        rel = new_pos[:2] - center[:2]
-        r = np.linalg.norm(rel)
-        r_max = self._platform_radius + 0.3
-        if r > r_max:
-            new_pos[:2] = center[:2] + rel * (r_max / max(r, 1e-6))
-
-        if self._prev_platform_pos is not None:
-            dt = self._sim_dt
-            if dt > 0:
-                self._platform_velocity = (new_pos - self._prev_platform_pos) / dt
-
-        self._prev_platform_pos = new_pos.copy()
-        self._current_platform_pos = new_pos
-
-        if not hasattr(self, '_end_platform_uids') or not self._end_platform_uids:
-            return
-
-        cli = getattr(self, "CLIENT", 0)
-
-        if not self._platform_offsets and self._end_platform_uids:
-            initial_pos = self._platform_orbit_center
-            for uid in self._end_platform_uids:
-                pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
-                offset = np.array(pos, dtype=np.float32) - initial_pos
-                self._platform_offsets.append(offset)
-
-        for i, uid in enumerate(self._end_platform_uids):
-            offset = self._platform_offsets[i] if i < len(self._platform_offsets) else np.zeros(3)
-            final_pos = new_pos + offset
-            p.resetBasePositionAndOrientation(
-                uid,
-                final_pos.tolist(),
-                [0, 0, 0, 1],
-                physicsClientId=cli
-            )
-
     def _getDroneImages(self, nth_drone, segmentation: bool = False):
         """Get camera images from drone. Returns (rgb, depth, seg) but we only use depth."""
         if self.OBS_TYPE != ObservationType.RGB:
@@ -500,25 +283,12 @@ class MovingDroneAviary(BaseRLAviary):
         depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
         return depth_normalized.astype(np.float32)[..., np.newaxis]
 
-    def _generate_search_area_center(self, seed: int = None) -> np.ndarray:
-        """Generate search area center position with noise for GPS simulation."""
-        if seed is not None:
-            rng = np.random.RandomState(seed)
-        else:
-            rng = self.np_random
-        search_radius = getattr(self.task, 'search_radius', 10.0)
-        noise_xy = rng.uniform(-search_radius, search_radius, size=2)
-        noise_z = rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
-        center = self.GOAL_POS.copy()
-        center[0] += noise_xy[0]
-        center[1] += noise_xy[1]
-        center[2] = max(0.0, center[2] + noise_z)
-        return center
-
     def _check_collision(self) -> tuple:
-        """
-        Inspect contact points and detect collisions.
-        Returns (platform_hit, obstacle_hit) tuple.
+        """Inspect contact points; sets ``_collision`` on any non-ground impact.
+
+        Returns a ``(False, obstacle_hit)`` tuple. Touching a mannequin part
+        (victim) is treated as an obstacle hit — the no-touch sphere governs
+        the CONFIRMED predicate, not contact handling.
         """
         drone_id = self.DRONE_IDS[0]
         contact_points = p.getContactPoints(
@@ -529,10 +299,6 @@ class MovingDroneAviary(BaseRLAviary):
         if not contact_points:
             return False, False
 
-        end_platform_uids = getattr(self, '_end_platform_uids', [])
-        start_platform_uids = getattr(self, '_start_platform_uids', [])
-
-        platform_hit = False
         obstacle_hit = False
 
         for contact in contact_points:
@@ -544,58 +310,15 @@ class MovingDroneAviary(BaseRLAviary):
             if normal_force <= 0.01:
                 continue
 
-            if body_b in end_platform_uids:
-                platform_hit = True
-                continue
-
-            if body_b in start_platform_uids:
-                continue
-
             obstacle_hit = True
             break
 
         if obstacle_hit:
             self._collision = True
 
-        return platform_hit, obstacle_hit
+        return False, obstacle_hit
 
-    def _update_landing_state(self, platform_contact: bool) -> None:
-        """Update landing state machine based on contact and drone state."""
-        if self._success or self._collision:
-            return
 
-        if not platform_contact:
-            self._landing_stable_time = 0.0
-            return
-
-        if self._moving:
-            self._success = True
-            self._t_to_goal = self._time_alive
-            return
-
-        state = self._getDroneStateVector(0)
-        roll, pitch = state[7], state[8]
-        vel = state[10:13]
-
-        vz = abs(vel[2])
-        drone_vxy = vel[0:2]
-        platform_vxy = self._platform_velocity[0:2]
-        rel_vxy = np.linalg.norm(drone_vxy - platform_vxy)
-
-        velocity_ok = vz <= LANDING_MAX_VZ and rel_vxy <= LANDING_MAX_VXY_REL
-        upright_ok = abs(roll) <= LANDING_MAX_TILT_RAD and abs(pitch) <= LANDING_MAX_TILT_RAD
-
-        if velocity_ok and upright_ok:
-            self._landing_stable_time += self._sim_dt
-            if self._landing_stable_time >= LANDING_STABLE_SEC:
-                self._success = True
-                self._t_to_goal = self._time_alive
-        else:
-            self._landing_stable_time = 0.0
-
-    # --------------------------------------------------------------------- #
-    # distance-based culling
-    # --------------------------------------------------------------------- #
     @staticmethod
     def _count_mesh_faces(path: str) -> int:
         try:
@@ -609,9 +332,8 @@ class MovingDroneAviary(BaseRLAviary):
         cli = getattr(self, "CLIENT", 0)
         drone_id = self.DRONE_IDS[0]
         ground_id = getattr(self, "PLANE_ID", 0)
-        end_uids = set(getattr(self, "_end_platform_uids", []))
-        start_uids = set(getattr(self, "_start_platform_uids", []))
-        protected = {drone_id, ground_id} | end_uids | start_uids
+        victim_uids = set(self.sar_world.victim_uids) if self.sar_world else set()
+        protected = {drone_id, ground_id} | victim_uids
 
         targets = []
         total_faces = 0
@@ -696,6 +418,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._cull_vis_hidden.clear()
         self._cull_phys_disabled.clear()
 
+
     def _update_min_clearance(self) -> None:
         """Update minimum obstacle clearance for the episode."""
         if self._collision:
@@ -704,10 +427,14 @@ class MovingDroneAviary(BaseRLAviary):
 
         cli = getattr(self, "CLIENT", 0)
         drone_id = self.DRONE_IDS[0]
-        end_platform_uids = getattr(self, '_end_platform_uids', [])
-        start_platform_uids = getattr(self, '_start_platform_uids', [])
         ground_id = getattr(self, 'PLANE_ID', 0)
-        excluded = {drone_id, -1, ground_id} | set(end_platform_uids) | set(start_platform_uids)
+        excluded = {drone_id, -1, ground_id}
+
+        sar_world = self.sar_world
+        safety_patch = None
+        if sar_world is not None:
+            excluded |= set(sar_world.victim_uids)
+            safety_patch = sar_world.safety_patch
 
         min_dist = SAFETY_DISTANCE_SAFE
 
@@ -717,12 +444,12 @@ class MovingDroneAviary(BaseRLAviary):
         overlapping = p.getOverlappingObjects(search_min, search_max, physicsClientId=cli)
 
         if overlapping:
+            drone_pos = self.pos[0, :]
             checked = set()
             for body_uid, _link_idx in overlapping:
                 if body_uid in excluded or body_uid in checked:
                     continue
                 checked.add(body_uid)
-
                 closest = p.getClosestPoints(
                     bodyA=drone_id,
                     bodyB=body_uid,
@@ -731,6 +458,13 @@ class MovingDroneAviary(BaseRLAviary):
                 )
 
                 for point in closest:
+                    contact = point[6]
+                    if (
+                        safety_patch is not None
+                        and body_uid == safety_patch.support_uid
+                        and _inside_safety_patch(contact, safety_patch)
+                    ):
+                        continue
                     dist = point[8]
                     if dist < min_dist:
                         min_dist = dist
@@ -758,10 +492,16 @@ class MovingDroneAviary(BaseRLAviary):
         self._t_to_goal = None
         self._step_processed = False
         self._min_clearance_episode = SAFETY_DISTANCE_SAFE
-        self._landing_stable_time = 0.0
-        self._prev_platform_pos = None
-        self._platform_velocity = np.zeros(3, dtype=np.float32)
-        self._platform_offsets = []
+
+        from swarm.protocol import FailureReason
+        self._failure_reason = FailureReason.NONE.value
+        self._sar_predicate_active = False
+        self._sar_dwell_time = 0.0
+        self._sar_spawn_failed = False
+        self._sar_max_dwell_observed = 0.0
+        self._sar_min_horizontal_distance = float("inf")
+        self._sar_min_sphere_distance = float("inf")
+
         self._reset_action_buffer()
 
         self._prev_score = flight_reward(
@@ -774,7 +514,17 @@ class MovingDroneAviary(BaseRLAviary):
         )
 
         self._spawn_task_world()
-        self._search_area_center = self._generate_search_area_center(seed=seed)
+        if self.sar_world is not None:
+            sc = self.sar_world.search_centre or (0.0, 0.0)
+            self._search_area_center = np.array(
+                [float(sc[0]), float(sc[1]), 0.0], dtype=float
+            )
+            try:
+                self.task.search_centre = (float(sc[0]), float(sc[1]))
+            except Exception:
+                pass
+        else:
+            self._search_area_center = self.GOAL_POS.copy()
         self._updateAndStoreKinematicInformation()
 
         cli = getattr(self, "CLIENT", 0)
@@ -862,7 +612,6 @@ class MovingDroneAviary(BaseRLAviary):
                 self._preprocessAction(action),
                 (self.NUM_DRONES, 4),
             )
-        self._update_moving_platform()
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if (
                 self.PYB_STEPS_PER_CTRL > 1
@@ -913,10 +662,80 @@ class MovingDroneAviary(BaseRLAviary):
             return
         self._step_processed = True
         self._time_alive += self._sim_dt
-        platform_hit, _ = self._check_collision()
-        self._update_landing_state(platform_hit)
+        self._check_collision()
+        self._sar_step_update()
         self._update_min_clearance()
         self._apply_distance_cull()
+
+    def _sar_drone_state(self):
+        state = self._getDroneStateVector(0)
+        return state[0:3], state[10:13]
+
+    def _sar_check_predicate(self) -> bool:
+        from swarm.constants import (
+            SAR_CONFIRM_HORIZ_RADIUS,
+            SAR_CONFIRM_SPEED_MAX,
+            SAR_HOVER_BAND,
+            SAR_HYSTERESIS_GRACE,
+            SAR_NO_TOUCH_RADIUS,
+        )
+
+        if self.sar_world is None:
+            return False
+
+        pos, vel = self._sar_drone_state()
+        vc = np.asarray(self.sar_world.victim_centre, dtype=float)
+        _, v_max = self.sar_world.victim_aabb
+        victim_top_z = float(v_max[2])
+
+        horiz = float(np.linalg.norm(pos[0:2] - vc[0:2]))
+        height_above = float(pos[2] - victim_top_z)
+        speed = float(np.linalg.norm(vel))
+        dist_3d = float(np.linalg.norm(pos - vc))
+
+        if horiz < self._sar_min_horizontal_distance:
+            self._sar_min_horizontal_distance = horiz
+        if dist_3d < self._sar_min_sphere_distance:
+            self._sar_min_sphere_distance = dist_3d
+
+        grace = SAR_HYSTERESIS_GRACE if self._sar_predicate_active else 0.0
+        horiz_max = SAR_CONFIRM_HORIZ_RADIUS + grace
+        speed_max = SAR_CONFIRM_SPEED_MAX + grace
+        band_lo = SAR_HOVER_BAND[0] - grace
+        band_hi = SAR_HOVER_BAND[1] + grace
+
+        if dist_3d < SAR_NO_TOUCH_RADIUS:
+            return False
+        if horiz > horiz_max:
+            return False
+        if speed > speed_max:
+            return False
+        if not (band_lo <= height_above <= band_hi):
+            return False
+        return True
+
+    def _sar_step_update(self) -> None:
+        from swarm.constants import SAR_DWELL_SEC
+        from swarm.protocol import FailureReason
+
+        if self._sar_spawn_failed:
+            if self._failure_reason == FailureReason.NONE.value:
+                self._failure_reason = FailureReason.SPAWN_FAILURE.value
+            return
+
+        active = self._sar_check_predicate()
+        if active:
+            self._sar_predicate_active = True
+            self._sar_dwell_time += self._sim_dt
+            if self._sar_dwell_time > self._sar_max_dwell_observed:
+                self._sar_max_dwell_observed = self._sar_dwell_time
+            if self._sar_dwell_time >= SAR_DWELL_SEC and not self._success:
+                self._success = True
+                self._t_to_goal = self._time_alive
+                self._failure_reason = FailureReason.NONE.value
+        else:
+            self._sar_predicate_active = False
+            self._sar_dwell_time = 0.0
 
     def _reset_action_buffer(self) -> None:
         """Zero the action history so reset observations do not leak prior episodes."""
@@ -928,68 +747,42 @@ class MovingDroneAviary(BaseRLAviary):
             )
 
     def _spawn_task_world(self):
-        """Rebuild the procedural world defined by self.task."""
+        """Build the SAR scene for this episode."""
+        from swarm.core.env_builder.sar_world import build_sar_world
+        from swarm.core.env_builder.spawn_pipeline import SARSpawnError
+        from swarm.protocol import FailureReason
+
         self.task.start = self._original_start
         self.task.goal = self._original_goal
-
         cli = getattr(self, "CLIENT", 0)
-        result = build_world(
-            seed=self.task.map_seed,
-            cli=cli,
-            start=self.task.start,
-            goal=self.task.goal,
-            challenge_type=self.task.challenge_type,
-            moving_platform=getattr(self.task, "moving_platform", False),
-        )
 
-        if len(result) >= 6:
-            end_platform_uids, start_platform_uids, start_surface_z, goal_surface_z, adj_start, adj_goal = result
-        elif len(result) == 4:
-            end_platform_uids, start_platform_uids, start_surface_z, goal_surface_z = result
-            adj_start = adj_goal = None
-        else:
-            end_platform_uids, start_platform_uids = result
-            start_surface_z = None
-            goal_surface_z = None
-            adj_start = adj_goal = None
-
-        self._end_platform_uids = end_platform_uids if end_platform_uids else []
-        self._start_platform_uids = start_platform_uids if start_platform_uids else []
-
-        if adj_start is not None:
-            self.task.start = adj_start
-        if adj_goal is not None:
-            self.task.goal = adj_goal
+        try:
+            self.sar_world = build_sar_world(
+                cli=cli,
+                seed=self.task.map_seed,
+                challenge_type=self.task.challenge_type,
+                start=self.task.start,
+                goal=self.task.goal,
+            )
+        except SARSpawnError as exc:
+            try:
+                import bittensor as _bt
+                _bt.logging.warning(
+                    f"SAR spawn pipeline exhausted attempts for seed "
+                    f"{self.task.map_seed} challenge_type "
+                    f"{self.task.challenge_type}: {exc}"
+                )
+            except Exception:
+                pass
+            self.sar_world = None
+            self._sar_spawn_failed = True
+            self._failure_reason = FailureReason.SPAWN_FAILURE.value
 
         start_xyz = np.array(self.task.start, dtype=float)
-
-        if start_surface_z is not None:
-            self.task.start = (
-                self.task.start[0],
-                self.task.start[1],
-                start_surface_z + START_PLATFORM_TAKEOFF_BUFFER
-            )
-            start_xyz[2] = start_surface_z + START_PLATFORM_TAKEOFF_BUFFER
-            self.GOAL_POS = np.array(self.task.goal, dtype=float)
-
-        if goal_surface_z is not None:
-            self.task.goal = (
-                self.task.goal[0],
-                self.task.goal[1],
-                goal_surface_z
-            )
-            self.GOAL_POS[2] = goal_surface_z
-
-        self._platform_orbit_center = self.GOAL_POS.copy()
-        self._current_platform_pos = self.GOAL_POS.copy()
-        self._prev_platform_pos = None
-        self._platform_offsets = []
-
         start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-
         p.resetBasePositionAndOrientation(
             self.DRONE_IDS[0],
-            start_xyz,
+            start_xyz.tolist(),
             start_quat,
             physicsClientId=cli,
         )
@@ -997,8 +790,6 @@ class MovingDroneAviary(BaseRLAviary):
         plane_id = getattr(self, "PLANE_ID", None)
         if plane_id is not None:
             if int(getattr(self.task, "challenge_type", 0)) == 2:
-                # TinyRenderer does not reliably hide the default plane via alpha,
-                # so move it far below the custom open-terrain mesh instead.
                 p.resetBasePositionAndOrientation(
                     plane_id,
                     [0.0, 0.0, -1000.0],
@@ -1014,6 +805,7 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """Compute incremental reward based on current state."""
+        sar_mode_active = bool(getattr(self, "sar_mode", False))
         score = flight_reward(
             success=self._success,
             t=(self._t_to_goal if self._success else self._time_alive),
@@ -1021,6 +813,8 @@ class MovingDroneAviary(BaseRLAviary):
             task=self.task,
             min_clearance=self._min_clearance_episode,
             collision=self._collision,
+            failure_reason=getattr(self, "_failure_reason", "NONE"),
+            sar_mode=sar_mode_active,
         )
 
         r_t = score - self._prev_score
@@ -1030,35 +824,98 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
         """Return True if episode ended via collision or goal reached."""
+        from swarm.constants import SAR_NO_TOUCH_RADIUS
+        from swarm.protocol import FailureReason
+
+        if getattr(self, "sar_mode", False):
+            if getattr(self, "_sar_spawn_failed", False):
+                return True
+            if self.sar_world is not None:
+                pos, _ = self._sar_drone_state()
+                vc = np.asarray(self.sar_world.victim_centre, dtype=float)
+                if float(np.linalg.norm(pos - vc)) < SAR_NO_TOUCH_RADIUS:
+                    if not self._success:
+                        self._failure_reason = FailureReason.NO_TOUCH_SPHERE.value
+                    return True
+
+        if self._collision and getattr(self, "sar_mode", False) and not self._success:
+            if self._failure_reason == FailureReason.NONE.value:
+                self._failure_reason = FailureReason.OBSTACLE_COLLISION.value
         return self._collision or self._success
 
     # -------- truncation (timeout / safety) ------------------------------ #
     def _computeTruncated(self) -> bool:
-        """
-        Early termination on excessive tilt or elapsed horizon.
-        """
-        # safety cut‑off
+        """Early termination on excessive tilt, timeout, or SAR infeasibility."""
+        from swarm.protocol import FailureReason
+
+        terminal_already = (
+            self._collision
+            or self._success
+            or self._failure_reason != FailureReason.NONE.value
+        )
+
         state = self._getDroneStateVector(0)
         roll, pitch = state[7], state[8]
         if abs(roll) > self.MAX_TILT_RAD or abs(pitch) > self.MAX_TILT_RAD:
+            if getattr(self, "sar_mode", False) and not terminal_already:
+                self._failure_reason = FailureReason.TILT.value
             return True
 
-        # timeout
-        return self._time_alive >= self.EP_LEN_SEC
+        if self._time_alive >= self.EP_LEN_SEC:
+            if getattr(self, "sar_mode", False) and not terminal_already:
+                self._failure_reason = FailureReason.TIMEOUT.value
+            return True
+
+        if getattr(self, "sar_mode", False) and not terminal_already and self._sar_infeasible():
+            self._failure_reason = FailureReason.INFEASIBLE.value
+            return True
+
+        return False
+
+    def _sar_infeasible(self) -> bool:
+        from swarm.constants import SAR_DWELL_SEC, SAR_SEARCH_RADIUS, SPEED_LIMIT
+
+        if self.sar_world is None:
+            return False
+        time_left = self.EP_LEN_SEC - self._time_alive
+        if time_left <= 0:
+            return False
+        sc = self.sar_world.search_centre
+        if sc is None:
+            return False
+        pos, _ = self._sar_drone_state()
+        dist_to_centre = float(np.linalg.norm(pos[0:2] - np.asarray(sc, dtype=float)))
+        nearest_reachable = max(0.0, dist_to_centre - SAR_SEARCH_RADIUS)
+        min_time_required = nearest_reachable / max(SPEED_LIMIT, 1e-6) + SAR_DWELL_SEC
+        return time_left < min_time_required
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):
         state = self._getDroneStateVector(0)
         dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
-        return {
+        info = {
             "distance_to_goal"    : dist,
             "score"               : self._prev_score,
             "success"             : self._success,
             "collision"           : self._collision,
             "t_to_goal"           : self._t_to_goal,
             "min_clearance"       : self._min_clearance_episode,
-            "landing_stable_time" : self._landing_stable_time,
+            "failure_reason"      : getattr(self, "_failure_reason", "NONE"),
         }
+        if getattr(self, "sar_mode", False):
+            from swarm.protocol import SCHEMA_VERSION
+            info.update({
+                "sar_min_horizontal_distance" : float(self._sar_min_horizontal_distance),
+                "sar_min_sphere_distance"     : float(self._sar_min_sphere_distance),
+                "sar_max_dwell"               : float(self._sar_max_dwell_observed),
+                "sar_spawn_attempts"          : int(self._sar_spawn_attempts),
+                "t_to_confirm"                : (
+                    float(self._t_to_goal) if self._success and self._t_to_goal is not None else None
+                ),
+                "schema_version"              : SCHEMA_VERSION,
+                "task_version"                : str(getattr(self.task, "version", "")),
+            })
+        return info
 
     # -------- observation extension -------------------------------------- #
     def _computeObs(self):
@@ -1085,7 +942,8 @@ class MovingDroneAviary(BaseRLAviary):
 
         action_dim = self.action_buffer[0].shape[1] if self.ACTION_BUFFER_SIZE > 0 else 0
         base_len = 12 + self.ACTION_BUFFER_SIZE * action_dim
-        state_full = np.empty(base_len + 1 + 3, dtype=np.float32)
+        clue_dim = getattr(self, "_clue_dim", 3)
+        state_full = np.empty(base_len + 1 + clue_dim, dtype=np.float32)
 
         state_full[0:3] = state_vec[0:3]
         state_full[3:6] = state_vec[7:10]
@@ -1098,7 +956,8 @@ class MovingDroneAviary(BaseRLAviary):
             offset += action_dim
 
         state_full[base_len] = self._get_altitude_distance() / MAX_RAY_DISTANCE
-        state_full[base_len + 1:base_len + 4] = self._search_area_center - state_vec[0:3]
+        clue_offset = self._search_area_center - state_vec[0:3]
+        state_full[base_len + 1:base_len + 1 + clue_dim] = clue_offset[:clue_dim]
 
         return {
             "depth": depth,

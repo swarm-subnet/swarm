@@ -42,7 +42,6 @@ def run_idempotency(
     seed: int,
     challenge_type: int,
     runs: int,
-    moving_platform: Optional[bool] = None,
     worker_id: int = 0,
 ) -> Dict[str, Any]:
     if runs <= 0:
@@ -58,7 +57,6 @@ def run_idempotency(
             SIM_DT,
             seed=seed,
             challenge_type=challenge_type,
-            moving_platform=moving_platform,
         )
         wall_start = time.perf_counter()
         results = asyncio.run(
@@ -91,7 +89,6 @@ def run_idempotency(
             "uid": int(uid),
             "seed": int(seed),
             "challenge_type": int(challenge_type),
-            "moving_platform": moving_platform,
             "runs_requested": int(runs),
         }
     )

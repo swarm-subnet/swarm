@@ -12,7 +12,7 @@
 **Goal** Stress-test miner drones on harder, but still static environments.
 
 **Key upgrades**  
-- **Larger search space** Pole further away, elevation changes, occluding obstacles. 
+- **Larger search space** Victim further from start, elevation changes, occluding obstacles. 
 
 ## Stage 2 – Advanced Sensing & RL Policy Incentives
 **Goal** Enhanced perception and intelligent navigation policy development.

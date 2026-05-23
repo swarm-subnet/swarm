@@ -62,11 +62,9 @@ def benchmark_scene(label, seed):
     # Pre-build body list (same exclusion logic as _update_min_clearance)
     drone_id = env.DRONE_IDS[0]
     ground_id = getattr(env, "PLANE_ID", 0)
-    excluded = (
-        {drone_id, -1, ground_id}
-        | set(getattr(env, "_end_platform_uids", []))
-        | set(getattr(env, "_start_platform_uids", []))
-    )
+    sar_world = getattr(env, "sar_world", None)
+    victim_uids = set(sar_world.victim_uids) if sar_world else set()
+    excluded = {drone_id, -1, ground_id} | victim_uids
     num_bodies = p.getNumBodies(physicsClientId=cli)
     body_list = [
         p.getBodyUniqueId(i, physicsClientId=cli)

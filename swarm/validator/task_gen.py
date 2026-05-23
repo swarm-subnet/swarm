@@ -7,16 +7,7 @@ from typing import Optional, Tuple
 
 from swarm.constants import (
     CHALLENGE_TYPE_DISTRIBUTION,
-    MOVING_PLATFORM_PROB,
-    MOVING_PLATFORM_SEED_OFFSET,
     RANDOM_START,
-    SEARCH_RADIUS_MAX,
-    SEARCH_RADIUS_MIN,
-    START_PLATFORM,
-    START_PLATFORM_MAX_Z,
-    START_PLATFORM_MIN_Z,
-    START_PLATFORM_RANDOMIZE,
-    START_PLATFORM_SURFACE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
     TYPE_1_H_MAX,
     TYPE_1_H_MIN,
@@ -62,7 +53,7 @@ from swarm.constants import (
     TYPE_6_WORLD_RANGE,
 )
 from swarm.core.mountain_generator import get_global_scale, get_terrain_z
-from swarm.protocol import MapTask
+from swarm.protocol import MapTask, SCHEMA_VERSION
 
 TYPE_PARAMS = {
     1: {
@@ -127,11 +118,8 @@ def _build_task_with_params(
     *,
     challenge_type: int,
     params: dict,
-    moving_platform: bool,
 ) -> MapTask:
     rng = random.Random(seed)
-    search_rng = random.Random(seed + 888888)
-    search_radius = search_rng.uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
 
     if RANDOM_START:
         start = _random_start(rng, params, challenge_type=challenge_type, seed=seed)
@@ -143,11 +131,7 @@ def _build_task_with_params(
             seed=seed,
         )
     else:
-        if START_PLATFORM:
-            start_z = START_PLATFORM_SURFACE_Z + START_PLATFORM_TAKEOFF_BUFFER
-        else:
-            start_z = 1.5
-        start = (0.0, 0.0, start_z)
+        start = (0.0, 0.0, 1.5)
         goal = _goal_from_origin(rng, params)
 
     return MapTask(
@@ -157,9 +141,7 @@ def _build_task_with_params(
         sim_dt=sim_dt,
         horizon=params['horizon'],
         challenge_type=challenge_type,
-        search_radius=search_radius,
-        moving_platform=moving_platform,
-        version="1",
+        version=SCHEMA_VERSION,
     )
 
 
@@ -168,42 +150,13 @@ def _build_task_for_type(
     seed: int,
     *,
     challenge_type: int,
-    moving_platform: Optional[bool],
 ) -> MapTask:
     params = _resolve_params(seed, challenge_type)
-
-    if moving_platform is None:
-        platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
-        resolved = platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
-    else:
-        resolved = bool(moving_platform)
-
     return _build_task_with_params(
         sim_dt, seed,
         challenge_type=challenge_type,
         params=params,
-        moving_platform=resolved,
     )
-
-
-def get_platform_height_for_seed(seed: int, challenge_type: int = 1) -> float:
-    if challenge_type in (3, 4):
-        return 0.0
-    if not START_PLATFORM or not START_PLATFORM_RANDOMIZE:
-        return START_PLATFORM_SURFACE_Z
-
-    params = get_type_params(challenge_type)
-    rng = random.Random(seed)
-
-    if challenge_type == 5:
-        rng.uniform(-params['world_range_x'], params['world_range_x'])
-        rng.uniform(-params['world_range_y'], params['world_range_y'])
-        return rng.uniform(params['start_h_min'], params['start_h_max'])
-
-    world_range = params['world_range']
-    rng.uniform(-world_range, world_range)
-    rng.uniform(-world_range, world_range)
-    return rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
 
 
 def _get_type3_world_range(seed: int) -> float:
@@ -235,12 +188,6 @@ def _random_start(seed_rng: random.Random, params: dict,
         z = terrain_z + START_PLATFORM_TAKEOFF_BUFFER
     elif challenge_type == 4:
         z = START_PLATFORM_TAKEOFF_BUFFER
-    elif START_PLATFORM:
-        if START_PLATFORM_RANDOMIZE:
-            platform_z = seed_rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
-        else:
-            platform_z = START_PLATFORM_SURFACE_Z
-        z = platform_z + START_PLATFORM_TAKEOFF_BUFFER
     else:
         z = seed_rng.uniform(params['start_h_min'], params['start_h_max'])
 
@@ -467,7 +414,6 @@ def random_task(sim_dt: float, seed: Optional[int] = None) -> MapTask:
         sim_dt=sim_dt,
         seed=seed,
         challenge_type=chosen_type,
-        moving_platform=None,
     )
 
 
@@ -476,7 +422,6 @@ def task_for_seed_and_type(
     *,
     seed: int,
     challenge_type: int,
-    moving_platform: Optional[bool] = None,
 ) -> MapTask:
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
@@ -484,7 +429,6 @@ def task_for_seed_and_type(
         sim_dt=sim_dt,
         seed=seed,
         challenge_type=challenge_type,
-        moving_platform=moving_platform,
     )
 
 
@@ -494,21 +438,15 @@ def screening_task(
     *,
     challenge_type: int,
     distance_range: Tuple[float, float],
-    goal_height_range: Optional[Tuple[float, float]],
-    moving_platform: bool,
 ) -> MapTask:
-    """Build a task with controlled type, distance, height, and platform flag."""
+    """Build a task with controlled type and distance range (V5 SAR)."""
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
 
     params = _resolve_params(seed, challenge_type)
     params['r_min'], params['r_max'] = distance_range
-    if goal_height_range is not None and challenge_type not in (3, 4):
-        params['h_min'], params['h_max'] = goal_height_range
-
     return _build_task_with_params(
         sim_dt, seed,
         challenge_type=challenge_type,
         params=params,
-        moving_platform=moving_platform,
     )

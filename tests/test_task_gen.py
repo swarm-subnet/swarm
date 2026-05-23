@@ -13,17 +13,6 @@ def test_get_type_params_returns_default_for_unknown_type():
     assert task_gen.get_type_params(999) == task_gen.TYPE_PARAMS[1]
 
 
-def test_get_platform_height_for_mountain_and_village_is_zero():
-    assert task_gen.get_platform_height_for_seed(123, challenge_type=3) == 0.0
-    assert task_gen.get_platform_height_for_seed(123, challenge_type=4) == 0.0
-
-
-def test_get_platform_height_respects_non_randomized_platform(monkeypatch):
-    monkeypatch.setattr(task_gen, "START_PLATFORM", False)
-    h = task_gen.get_platform_height_for_seed(42, challenge_type=1)
-    assert h == task_gen.START_PLATFORM_SURFACE_Z
-
-
 def test_random_start_for_warehouse_stays_within_bounds():
     rng = random.Random(1234)
     params = task_gen.get_type_params(5)
@@ -74,18 +63,6 @@ def test_task_for_seed_and_type_is_deterministic():
     assert t1.challenge_type == 6
 
 
-def test_task_for_seed_and_type_respects_moving_platform_override():
-    task = task_gen.task_for_seed_and_type(
-        sim_dt=0.02,
-        seed=12345,
-        challenge_type=5,
-        moving_platform=True,
-    )
-
-    assert task.challenge_type == 5
-    assert task.moving_platform is True
-
-
 def test_challenge_type_distribution_is_uniform():
     values = list(CHALLENGE_TYPE_DISTRIBUTION.values())
     assert len(values) == 6
@@ -95,7 +72,6 @@ def test_challenge_type_distribution_is_uniform():
 
 def test_random_task_can_be_forced_to_warehouse(monkeypatch):
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {5: 1.0})
-    monkeypatch.setattr(task_gen, "MOVING_PLATFORM_PROB", {5: 0.0})
     task = task_gen.random_task(sim_dt=0.02, seed=111)
 
     params = task_gen.get_type_params(5)
@@ -107,12 +83,10 @@ def test_random_task_can_be_forced_to_warehouse(monkeypatch):
     assert -params["world_range_y"] <= sy <= params["world_range_y"]
     assert -params["world_range_y"] <= gy <= params["world_range_y"]
     assert params["h_min"] <= gz <= params["h_max"]
-    assert task.moving_platform is False
 
 
 def test_random_task_type3_uses_terrain_surface(monkeypatch):
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {3: 1.0})
-    monkeypatch.setattr(task_gen, "MOVING_PLATFORM_PROB", {3: 0.0})
     task = task_gen.random_task(sim_dt=0.02, seed=321)
 
     sx, sy, sz = task.start

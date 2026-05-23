@@ -163,8 +163,6 @@ def test_evaluate_seeds_failed_result_gets_real_map_type():
     class FakeTask:
         def __init__(self, ct):
             self.challenge_type = ct
-            self.moving_platform = False
-
     tasks = [FakeTask(1), FakeTask(3), FakeTask(5)]
     results = [MagicMock(score=0.8)]
 

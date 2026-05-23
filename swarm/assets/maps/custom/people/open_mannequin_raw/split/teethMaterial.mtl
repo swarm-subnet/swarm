@@ -1,0 +1,5 @@
+newmtl teethMaterial
+Kd 0.64 0.64 0.64
+Ks 0.8549 0.8549 0.8549
+d 1.0
+map_Kd ../textures/teeth.png

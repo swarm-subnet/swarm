@@ -94,7 +94,7 @@ class _ProcessBatchResult:
     worker_id: int
     batch_index: int
     batch_indices: List[int]
-    results: List[Tuple[int, bool, float, float]]
+    results: List[Tuple[int, bool, float, float, str]]
     elapsed_sec: float
     error: Optional[str] = None
     traceback_text: Optional[str] = None

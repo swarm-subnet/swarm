@@ -65,13 +65,29 @@ def _create_prepared_benchmark_evaluator():
     return evaluator
 
 
-def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float]:
+def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
+    reason = getattr(result, "failure_reason", "NONE")
+    reason_str = reason.value if hasattr(reason, "value") else str(reason)
     return (
         int(getattr(result, "uid")),
         bool(getattr(result, "success")),
         float(getattr(result, "time_sec")),
         float(getattr(result, "score")),
+        reason_str,
     )
+
+
+def _unpack_validation_result(packed):
+    from swarm.protocol import ValidationResult
+    if len(packed) >= 5:
+        return ValidationResult(
+            int(packed[0]),
+            bool(packed[1]),
+            float(packed[2]),
+            float(packed[3]),
+            failure_reason=str(packed[4]),
+        )
+    return ValidationResult(*packed)
 
 
 def _apply_host_worker_limits(process_slot: int) -> None:
@@ -490,8 +506,6 @@ async def _run_benchmark_process_mode(
                     f"{payload.error}\n{payload.traceback_text or ''}".rstrip()
                 )
 
-            from swarm.protocol import ValidationResult
-
             inflight_batches.pop(int(payload.batch_index), None)
             worker_active_batches.pop(int(payload.worker_id), None)
             worker_last_heartbeat.pop(int(payload.worker_id), None)
@@ -500,7 +514,7 @@ async def _run_benchmark_process_mode(
                 int(payload.worker_id),
                 int(payload.batch_index),
                 list(payload.batch_indices),
-                [ValidationResult(*packed) for packed in payload.results],
+                [_unpack_validation_result(packed) for packed in payload.results],
                 float(payload.elapsed_sec),
             )
             completed_batches += 1
@@ -548,7 +562,6 @@ async def _run_benchmark(
                 "seed": s,
                 "challenge_type": task.challenge_type,
                 "horizon": task.horizon,
-                "moving_platform": getattr(task, "moving_platform", False),
             })
 
     print(f"[{_ts()}] Initializing DockerSecureEvaluator...")

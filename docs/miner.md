@@ -130,7 +130,7 @@ Submissions must be ≤ **50 MiB** compressed.
 | `depth` | (128, 128, 1) | Normalized depth map (0.5m – 20m range) |
 | `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
-The search area provides a direction toward the goal with up to ±10m noise. The drone must use its depth sensor to find the actual landing platform.
+The search clue is a 2D (Δx, Δy) offset sampled uniformly inside a 30m circle around the victim's true XY (no Z component in V5). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
 
 ### Action Space
 
@@ -300,23 +300,24 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 
 | Term | Weight | Description |
 |------|--------|-------------|
-| **Success** | 0.45 | 1.0 if valid landing, 0.0 otherwise |
+| **Success** | 0.45 | 1.0 if CONFIRMED, 0.0 otherwise |
 | **Time** | 0.45 | 1.0 if within target time, decays linearly to 0.0 at horizon |
 | **Safety** | 0.10 | 1.0 if min clearance ≥ safe distance, 0.0 if ≤ 0.2m, linear between (safe = 1.0m default, 0.6m for Forest) |
 
-Collision with any obstacle sets the score to **0.01** (grace for legitimate models).
+Non-success failures (collision, no-touch sphere, infeasible, spawn-failure, tilt, timeout) score **0.01** participation for legitimate models. Evaluator errors and illegitimate models score 0.0.
 
-### Landing Requirements
+### CONFIRMED Requirements (V5 Search-and-Rescue)
 
-**Static platforms** — hold stable for 0.5 seconds:
+All four conditions must hold continuously for 2.0 seconds:
 
 | Condition | Threshold |
 |-----------|-----------|
-| Vertical velocity | ≤ 0.5 m/s |
-| Horizontal velocity | ≤ 0.6 m/s (relative to platform) |
-| Tilt (roll / pitch) | ≤ 15° |
+| Drone speed | < 1.0 m/s |
+| Horizontal distance to victim | ≤ 2.0 m |
+| Height above victim's AABB top | 2.0 - 4.0 m |
+| Distance from 0.8 m no-touch sphere | strictly outside |
 
-**Moving platforms** — City, Open, Mountain, and Village maps have a chance of spawning a moving landing platform (circular, linear, or figure-8 patterns). Warehouse and Forest maps always use static platforms. For moving targets, contact with the platform counts as success (no stable hold needed). Your model should be prepared for both.
+Boundaries get a 10 cm / 0.1 m·s⁻¹ hysteresis grace once the predicate is already active, except the no-touch sphere which stays strict.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 

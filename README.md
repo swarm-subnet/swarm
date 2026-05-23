@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v4.0.0-green?style=flat-square" /></a>
+  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v5.0.0-green?style=flat-square" /></a>
   <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
   <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white" /></a>
   <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=flat-square&logo=googlechrome&logoColor=white" /></a>
@@ -63,7 +63,7 @@ Delivery, inspection, search and rescue — autonomous drones are being deployed
 The rules are simple:
 - Your model gets a **128×128 depth image** and a **state vector**
 - It outputs **velocity commands** to fly the drone
-- It has **60 seconds** to navigate to a landing platform
+- It has **60 seconds** to locate a humanoid victim on the ground and hover steadily over them for 2 seconds (Search-and-Rescue, V5)
 - It must do this across **cities, mountains, warehouses, forests, open terrain, and more** — environments it has never seen before
 
 The best model wins. That's it. Powered by the [Bittensor](https://bittensor.com) network (Subnet 124).
@@ -210,7 +210,7 @@ swarm report                                          # View results
 
 <br/>
 
-Your model receives a depth image and flight state at 50 Hz. It outputs 5D velocity commands. The drone has 60 seconds to navigate to a landing platform and touch down safely.
+Your model receives a depth image and flight state at 30 Hz. It outputs 5D velocity commands. The drone has 60 seconds to find a humanoid victim on the ground, hover 2-4m above them within 2m horizontal, slower than 1 m/s, for 2 continuous seconds (V5 Search-and-Rescue).
 
 There are no waypoints, no GPS, no obstacle coordinates. The model must learn to read the depth image and react — just like a real pilot would.
 
@@ -223,7 +223,7 @@ There are no waypoints, no GPS, no obstacle coordinates. The model must learn to
 
 | Component | Weight | What It Measures |
 |-----------|--------|-----------------|
-| **Success** | 45% | Did the drone land on the platform? |
+| **Success** | 45% | Did the drone CONFIRM over the victim (2 s continuous hover)? |
 | **Speed** | 45% | How fast, relative to the time limit? |
 | **Safety** | 10% | Minimum clearance from obstacles during flight |
 

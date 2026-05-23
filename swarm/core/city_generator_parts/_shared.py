@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 
 import pybullet as p
 
-from swarm.constants import CITY_VARIANT_DISTRIBUTION, LANDING_PLATFORM_RADIUS
+from swarm.constants import CITY_VARIANT_DISTRIBUTION, GOAL_AREA_CLEARANCE
 
 # ---------------------------------------------------------------------------
 # SECTION 1: Constants & asset paths

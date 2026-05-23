@@ -46,8 +46,6 @@ DEPTH_MIN_M = 0.5                       # Minimum useful depth range (meters)
 DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
 # Search area parameters
 SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
-SEARCH_RADIUS_MIN = 0.0                 # Minimum per-seed search radius (meters)
-SEARCH_RADIUS_MAX = 10.0                # Maximum per-seed search radius (meters)
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
 # Propulsion efficiency
@@ -162,29 +160,15 @@ DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to e
 ALTITUDE_RAY_INSET = 0.09                   # Inset from hull edge for altitude ray origin (meters)
 MAX_RAY_DISTANCE = 20.0                     # Downward LiDAR maximum detection range (meters)
 
-# Landing and positioning parameters
-LANDING_PLATFORM_RADIUS = 0.6          # Landing platform acceptance radius (meters)
-PLATFORM = True                         # Enable landing platform rendering
-START_PLATFORM = True                  # Enable solid start platform spawn
-START_PLATFORM_RADIUS = 0.6
-START_PLATFORM_HEIGHT = 0.2            # Physical height of the start platform (meters)
-START_PLATFORM_SURFACE_Z = 0.2         # Absolute Z height of the platform surface (meters)
-START_PLATFORM_TAKEOFF_BUFFER = 0.121   # Initial clearance above platform surface (meters)
-START_PLATFORM_RANDOMIZE = True        # Enable random platform heights when random start is used
-START_PLATFORM_MIN_Z = 0.2             # Minimum platform surface height when randomizing (meters)
-START_PLATFORM_MAX_Z = 10             # Maximum platform surface height when randomizing (meters)
-HOVER_SEC = 0                           # Required hover duration for mission success (seconds)
+# Drone start positioning
+START_PLATFORM_TAKEOFF_BUFFER = 0.121   # Initial clearance above the surface (meters)
+HOVER_SEC = 0                           # Legacy field kept until reward.py drops it
 SAFE_Z = 3                              # Default cruise altitude (meters)
-GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
-MAX_YAW_RATE = 3.141                    # Maximum yaw rotation rate (rad/s) - 180 degrees per second
+MAX_YAW_RATE = 3.141                    # Maximum yaw rotation rate (rad/s)
+GOAL_AREA_CLEARANCE = 0.6               # Required clearance from buildings/obstacles at the goal XY (meters)
 
-# Landing detection parameters
-LANDING_MAX_VZ = 0.5                    # Maximum vertical velocity for valid landing (m/s)
-LANDING_MAX_VXY_REL = 0.6               # Maximum horizontal velocity relative to platform (m/s)
-LANDING_MAX_TILT_RAD = 0.26             # Maximum roll/pitch for valid landing (~15 degrees)
-LANDING_STABLE_SEC = 0.5                # Required stable contact duration for success (seconds)
-# Goal generation ranges (legacy defaults)
+# Goal generation ranges
 SAFE_ZONE_RADIUS = 2.0                  # Minimum clearance around obstacles (meters)
 MAX_ATTEMPTS_PER_OBS = 100              # Maximum retry attempts when placing obstacles
 # Goal platform colors
@@ -255,28 +239,37 @@ SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
 UNIFIED_CHUNK_SIZE = 10
 MAX_INFLIGHT_SEED_UPLOADS = 3
 
-# Screening template — 50 standardised entries, cycled 4× for 200 screening seeds
-def _build_screening_template() -> list[dict]:
-    slots: list[dict] = []
+# =============================================================================
+# SAR (Search-and-Rescue) thresholds and scoring constants
+# =============================================================================
 
-    city_static      = dict(challenge_type=1, distance_range=(15, 25), goal_height_range=(0.3, 0.8), moving_platform=False)
-    city_moving      = dict(challenge_type=1, distance_range=(15, 25), goal_height_range=(0.3, 0.8), moving_platform=True)
-    open_static      = dict(challenge_type=2, distance_range=(14, 20), goal_height_range=(4.0, 7.0), moving_platform=False)
-    open_moving      = dict(challenge_type=2, distance_range=(14, 20), goal_height_range=(4.0, 7.0), moving_platform=True)
-    mountain_static  = dict(challenge_type=3, distance_range=(30, 55), goal_height_range=None, moving_platform=False)
-    mountain_moving  = dict(challenge_type=3, distance_range=(30, 55), goal_height_range=None, moving_platform=True)
-    village_static   = dict(challenge_type=4, distance_range=(25, 45), goal_height_range=None, moving_platform=False)
-    village_moving   = dict(challenge_type=4, distance_range=(25, 45), goal_height_range=None, moving_platform=True)
-    warehouse_static = dict(challenge_type=5, distance_range=(10, 22), goal_height_range=(1.0, 6.0), moving_platform=False)
-    forest_static    = dict(challenge_type=6, distance_range=(15, 28), goal_height_range=(0.5, 2.0), moving_platform=False)
+SAR_CONFIRM_HORIZ_RADIUS = 2.0       # m — horizontal distance to victim for CONFIRMED
+SAR_HOVER_BAND = (2.0, 4.0)          # m — height above victim AABB top
+SAR_CONFIRM_SPEED_MAX = 1.0          # m/s — max drone speed for CONFIRMED
+SAR_HYSTERESIS_GRACE = 0.1           # m / m·s⁻¹ — boundary grace
+SAR_NO_TOUCH_RADIUS = 0.8            # m — terminal-failure sphere around victim
+SAR_DWELL_SEC = 2.0                  # s — continuous predicate hold required
+SAR_SEARCH_RADIUS = 30.0             # m — search clue circle radius
+SAR_SWEEP_WIDTH = 24.0               # m — assumed sweep width for target-time
+SAR_TIME_TERM_BUFFER = 1.03          # multiplier on the Candidate-C target time
+
+
+def _build_sar_screening_template() -> list[dict]:
+    slots: list[dict] = []
+    city_slot      = dict(challenge_type=1, distance_range=(15, 25))
+    open_slot      = dict(challenge_type=2, distance_range=(14, 20))
+    mountain_slot  = dict(challenge_type=3, distance_range=(30, 55))
+    village_slot   = dict(challenge_type=4, distance_range=(25, 45))
+    warehouse_slot = dict(challenge_type=5, distance_range=(10, 22))
+    forest_slot    = dict(challenge_type=6, distance_range=(15, 28))
 
     pools = [
-        [city_static]*6      + [city_moving]*2,
-        [open_static]*2      + [open_moving]*6,
-        [mountain_static]*6  + [mountain_moving]*2,
-        [village_static]*7   + [village_moving]*2,
-        [warehouse_static]*9,
-        [forest_static]*8,
+        [city_slot]      * 8,
+        [open_slot]      * 8,
+        [mountain_slot]  * 8,
+        [village_slot]   * 9,
+        [warehouse_slot] * 9,
+        [forest_slot]    * 8,
     ]
     for i in range(max(len(p) for p in pools)):
         for pool in pools:
@@ -284,11 +277,11 @@ def _build_screening_template() -> list[dict]:
                 slots.append(pool[i])
 
     if len(slots) != 50:
-        raise RuntimeError(f"Screening template must have 50 entries, got {len(slots)}")
+        raise RuntimeError(f"SAR screening template must have 50 entries, got {len(slots)}")
     return slots
 
 
-SCREENING_TEMPLATE: list[dict] = _build_screening_template()
+SAR_SCREENING_TEMPLATE: list[dict] = _build_sar_screening_template()
 
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION
@@ -366,6 +359,12 @@ TYPE_6_START_H_MIN, TYPE_6_START_H_MAX = 0.2, 3.0
 TYPE_6_HORIZON = HORIZON_SEC
 TYPE_6_SAFETY_DISTANCE_SAFE = 0.6                   # Tighter safety for dense forest (meters)
 
+# Per-challenge override for SAFETY_DISTANCE_SAFE; types not present fall back
+# to the global value.
+SAFETY_DISTANCE_SAFE_BY_TYPE = {
+    6: TYPE_6_SAFETY_DISTANCE_SAFE,
+}
+
 FOREST_MODE_DISTRIBUTION = {
     1: 0.25,   # Normal (green foliage)
     2: 0.25,   # Autumn (orange/yellow)
@@ -379,31 +378,6 @@ FOREST_DIFFICULTY_DISTRIBUTION = {
 }
 assert abs(sum(FOREST_MODE_DISTRIBUTION.values()) - 1.0) < 0.001
 assert abs(sum(FOREST_DIFFICULTY_DISTRIBUTION.values()) - 1.0) < 0.001
-
-# =============================================================================
-# MOVING PLATFORM (challenge variant, applies to any map type)
-# =============================================================================
-
-MOVING_PLATFORM_PROB = {
-    1: 0.25,
-    2: 0.80,
-    3: 0.25,
-    4: 0.25,
-    5: 0.00,
-    6: 0.00,
-}
-MOVING_PLATFORM_SEED_OFFSET = 555555
-
-PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
-PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2
-PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX = 2.0, 4.0
-PLATFORM_DELAY_MIN, PLATFORM_DELAY_MAX = 0.0, 2.0
-PLATFORM_TRANSITION_MIN, PLATFORM_TRANSITION_MAX = 2.5, 3.5
-PLATFORM_LINEAR_DIRECTIONS = ["x", "y", "xy"]
-
-PLATFORM_AVOIDANCE_ENABLED = True
-PLATFORM_STEER_ANGLES = [20, -20, 40, -40, 60, -60, 80, -80, 120, -120, 160, -160, 180]
-PLATFORM_MIN_STEP_M = 0.05
 
 # =============================================================================
 # DISTANCE-BASED CULLING

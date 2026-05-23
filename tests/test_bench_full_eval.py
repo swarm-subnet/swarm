@@ -73,7 +73,6 @@ def test_build_worker_stall_seed_meta_marks_failure():
         map_seed=123,
         challenge_type=5,
         horizon=60.0,
-        moving_platform=False,
     )
 
     meta = bench_full_eval._build_worker_stall_seed_meta(
@@ -650,7 +649,6 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
         "seed": seed,
         "challenge_type": 5,
         "horizon": 60.0,
-        "moving_platform": False,
     }]
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
@@ -703,7 +701,6 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
         "seed": seed,
         "challenge_type": 5,
         "horizon": 60.0,
-        "moving_platform": False,
     }]
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
@@ -783,7 +780,6 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
         "seed": seed,
         "challenge_type": 5,
         "horizon": 60.0,
-        "moving_platform": False,
     }]
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
@@ -856,7 +852,6 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
             map_seed=seed,
             challenge_type=5,
             horizon=60.0,
-            moving_platform=False,
             start=(0.0, 0.0, 0.0),
         )
 
@@ -915,7 +910,6 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
             map_seed=seed,
             challenge_type=5,
             horizon=60.0,
-            moving_platform=False,
             start=(0.0, 0.0, 0.0),
         )
 
@@ -981,7 +975,6 @@ def test_run_benchmark_heartbeat_uses_process_scheduler_status_provider(
             map_seed=seed,
             challenge_type=5,
             horizon=60.0,
-            moving_platform=False,
             start=(0.0, 0.0, 0.0),
         )
 
@@ -1223,7 +1216,6 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
         map_seed=123456,
         challenge_type=5,
         horizon=60.0,
-        moving_platform=False,
     )
 
     launched = asyncio.run(
@@ -1338,7 +1330,6 @@ def test_process_mode_polls_pressure_while_waiting(monkeypatch, tmp_path):
         map_seed=123456,
         challenge_type=5,
         horizon=60.0,
-        moving_platform=False,
     )
 
     launched = asyncio.run(

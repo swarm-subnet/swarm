@@ -16,7 +16,13 @@ from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
 from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC
 from swarm.core.model_verify import add_to_blacklist
 from swarm.core.submission_policy import REQUIRED_ROOT_FILES
-from swarm.protocol import ValidationResult
+from swarm.protocol import (
+    FailureReason,
+    SCHEMA_VERSION,
+    ValidationResult,
+    is_supported_schema,
+    normalize_version,
+)
 from swarm.utils.hash import sha256sum
 
 from ._shared import _docker_evaluator_facade, _submission_template_dir
@@ -298,7 +304,6 @@ def _init_batch_state(ctx: _BatchContext) -> None:
             "map_seed": int(getattr(task_obj, "map_seed", -1)),
             "challenge_type": int(getattr(task_obj, "challenge_type", -1)),
             "horizon_sec": float(getattr(task_obj, "horizon", 0.0)),
-            "moving_platform": bool(getattr(task_obj, "moving_platform", False)),
             "status": status,
             "success": False,
             "sim_time_sec": 0.0,
@@ -367,12 +372,42 @@ def _init_batch_state(ctx: _BatchContext) -> None:
     )
 
 
+def check_task_versions(
+    uid: int, worker_id: int, tasks: list
+) -> Optional[list]:
+    for task in tasks:
+        task_version = getattr(task, "version", None)
+        if task_version is None:
+            continue
+        if not is_supported_schema(task_version):
+            bt.logging.warning(
+                f"[Worker {worker_id}] UID {uid} task schema {task_version!r} not in allow-list; rejecting batch"
+            )
+            return [
+                ValidationResult(
+                    uid, False, 0.0, 0.0,
+                    failure_reason=FailureReason.EVAL_ERROR.value,
+                )
+                for _ in tasks
+            ]
+        if normalize_version(task_version) != SCHEMA_VERSION:
+            bt.logging.warning(
+                f"[Worker {worker_id}] UID {uid} task schema {task_version!r} supported but not current ({SCHEMA_VERSION})"
+            )
+    return None
+
+
 def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
     uid = ctx.uid
     worker_id = ctx.worker_id
     tasks = ctx.tasks
     model_path = ctx.model_path
     _notify_all_failed = ctx.helpers.notify_all_failed
+
+    schema_reject = check_task_versions(uid, worker_id, tasks)
+    if schema_reject is not None:
+        _notify_all_failed(status="unsupported_schema_version")
+        return schema_reject
 
     if not model_path.is_file():
         bt.logging.warning(f"[Worker {worker_id}] Model path missing: {model_path}")

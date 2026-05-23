@@ -713,7 +713,6 @@ def test_run_multi_seed_rpc_sync_uses_initial_obs_without_extra_reset(monkeypatc
         horizon=0.04,
         start=(0.0, 0.0, 1.0),
         goal=(1.0, 1.0, 1.0),
-        moving_platform=False,
     )
     results = ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000)
 
@@ -840,7 +839,6 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
         challenge_type=4,
         map_seed=3101,
         horizon=60.0,
-        moving_platform=False,
     )
     scripted_context = _ScriptedContext(
         bench_full_eval,
@@ -900,7 +898,6 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
                     "seed": 3101,
                     "challenge_type": 4,
                     "horizon": 60.0,
-                    "moving_platform": False,
                 }
             ],
             batch_plan=[[0]],
@@ -928,7 +925,6 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
         challenge_type=3,
         map_seed=3201,
         horizon=60.0,
-        moving_platform=False,
     )
     scripted_context = _ScriptedContext(
         bench_full_eval,
@@ -971,7 +967,6 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
                     "seed": 3201,
                     "challenge_type": 3,
                     "horizon": 60.0,
-                    "moving_platform": False,
                 }
             ],
             batch_plan=[[0]],
@@ -999,7 +994,6 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
         challenge_type=5,
         map_seed=3301,
         horizon=60.0,
-        moving_platform=False,
     )
     scripted_context = _ScriptedContext(
         bench_full_eval,
@@ -1051,7 +1045,6 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
                     "seed": 3301,
                     "challenge_type": 5,
                     "horizon": 60.0,
-                    "moving_platform": False,
                 }
             ],
             batch_plan=[[0]],
@@ -1173,7 +1166,6 @@ def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path
         challenge_type=5,
         map_seed=3401,
         horizon=60.0,
-        moving_platform=False,
     )
     results = asyncio.run(
         de.parallel._run_process_parallel(
@@ -1184,7 +1176,6 @@ def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path
                     "seed": 3401,
                     "challenge_type": 5,
                     "horizon": 60.0,
-                    "moving_platform": False,
                 }
             ],
             batch_plan=[[0]],

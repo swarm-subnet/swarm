@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Optional
 import bittensor as bt
 
 from swarm.constants import N_DOCKER_WORKERS
+from swarm.benchmark.engine_parts.workers import _unpack_validation_result
 from swarm.protocol import ValidationResult
 from swarm.validator.runtime_telemetry import tracker_call
 
@@ -90,7 +91,6 @@ def _failure_seed_meta(
         "map_seed": _task_seed(task, -1),
         "challenge_type": _task_challenge_type(task),
         "horizon_sec": float(getattr(task, "horizon", 0.0)),
-        "moving_platform": bool(getattr(task, "moving_platform", False)),
         "status": status,
         "success": False,
         "sim_time_sec": 0.0,
@@ -125,7 +125,6 @@ def _build_result_seed_meta(
         "map_seed": int(meta.get("seed", -1)) if isinstance(meta, dict) else -1,
         "challenge_type": int(meta.get("challenge_type", -1)) if isinstance(meta, dict) else -1,
         "horizon_sec": float(meta.get("horizon", 0.0)) if isinstance(meta, dict) else 0.0,
-        "moving_platform": bool(meta.get("moving_platform", False)) if isinstance(meta, dict) else False,
         "status": status,
         "success": bool(result_obj.success),
         "sim_time_sec": float(result_obj.time_sec),
@@ -658,7 +657,7 @@ async def _run_process_parallel(
             prebuilt_seed_meta: dict[int, Dict[str, Any]] = {}
             if len(request.batch_indices) == 1:
                 idx = int(request.batch_indices[0])
-                vr = ValidationResult(*payload.results[0])
+                vr = _unpack_validation_result(payload.results[0])
                 meta = task_meta[idx] if idx < len(task_meta) else None
                 final_seed_meta = _pop_batch_seed_meta(
                     batch_seed_meta,
@@ -692,7 +691,7 @@ async def _run_process_parallel(
                 prebuilt_seed_meta[idx] = final_seed_meta
 
             for idx, packed in zip(request.batch_indices, payload.results):
-                vr = ValidationResult(*packed)
+                vr = _unpack_validation_result(packed)
                 results[idx] = vr
                 meta = task_meta[idx] if idx < len(task_meta) else None
                 final_seed_meta = prebuilt_seed_meta.pop(int(idx), None)
@@ -789,7 +788,18 @@ async def evaluate_seeds_parallel(
             task_total=len(tasks),
         )
 
-    from .batch import prepare_model_image, remove_model_image
+    from .batch import check_task_versions, prepare_model_image, remove_model_image
+
+    schema_reject = check_task_versions(uid, 0, tasks)
+    if schema_reject is not None:
+        tracker_call(
+            runtime_tracker,
+            "mark_docker_worker_failure",
+            status="unsupported_schema_version",
+            worker_slot=0,
+            error=f"uid {uid} task schema version not supported",
+        )
+        return schema_reject
 
     model_image = prepare_model_image(self, uid, model_path)
 
@@ -799,7 +809,6 @@ async def evaluate_seeds_parallel(
             "seed": _task_seed(task, index),
             "challenge_type": _task_challenge_type(task),
             "horizon": float(getattr(task, "horizon", 0.0)),
-            "moving_platform": bool(getattr(task, "moving_platform", False)),
         }
         for index, task in enumerate(tasks)
     ]

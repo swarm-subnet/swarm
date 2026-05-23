@@ -1,0 +1,5 @@
+newmtl male_casualsuit02
+Kd 1 1 1
+Ks 0.02745 0.02745 0.02745
+d 1.0
+map_Kd ../textures/male_casualsuit02_diffuse.png

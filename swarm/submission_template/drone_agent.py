@@ -3,43 +3,51 @@ import numpy as np
 
 class DroneFlightController:
     """
-    Swarm Subnet 124 - Autonomous Drone Flight Controller
-    
+    Swarm Subnet 124 — Autonomous Drone Flight Controller (V5 Search-and-Rescue)
+
     Implement your navigation policy in this class. The controller receives
     observations from a simulated drone and must output flight commands to
-    navigate from start to goal while avoiding obstacles.
-    
+    locate a humanoid victim on the ground and hover over it.
+
     Observation Space:
         Dictionary with two keys:
-        - "depth": numpy array (128, 128, 1) - Normalized depth map [0,1] for 0.5-20m range
-        - "state": numpy array (N,) - flight state vector containing:
-            * Position (x, y, z) in meters
-            * Orientation (roll, pitch, yaw)
-            * Linear velocities (vel_x, vel_y, vel_z) in m/s
-            * Angular velocities (roll_rate, pitch_rate, yaw_rate) in rad/s
-            * Action history (previous actions)
-            * Altitude (normalized)
-            * Search area vector (relative x, y, z) - ±10m accuracy in X/Y
-    
+        - "depth": numpy array (128, 128, 1) — normalized depth map [0,1] for the
+          0.5-20m range. Use this to find the victim with vision.
+        - "state": numpy array (N,) — flight state vector. Index ranges:
+            [0:3]   drone position (x, y, z) in meters
+            [3:6]   orientation (roll, pitch, yaw)
+            [6:9]   linear velocities (vx, vy, vz) m/s
+            [9:12]  angular velocities (wx, wy, wz) rad/s
+            [12:12+A] action history (A = ACTION_BUFFER_SIZE × action_dim)
+            [12+A]  altitude (normalized)
+            [12+A+1:12+A+3] search-clue offset (Δx, Δy) — 2D, victim XY is
+              somewhere within a 30 m circle around this clue. No Z component.
+
+    Mission (V5 Search-and-Rescue):
+        - You receive a noisy 2D coordinate inside a 30 m circle around the
+          victim's true XY. There is no Z in the clue.
+        - Travel to the area, use depth to find the victim, then hover 2-4 m
+          above the victim's AABB top, within 2 m horizontal distance, at less
+          than 1.0 m/s speed, for 2 continuous seconds.
+        - The victim has a 0.8 m no-touch sphere — entering it ends the
+          episode as a terminal failure.
+
     Action Space:
         numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
         - dir_x, dir_y, dir_z: direction components, range [-1, 1]
         - speed: thrust multiplier, range [0, 1]
-        - yaw: target yaw angle normalized, range [-1, 1] maps to [-π, π]
-    
-    Mission Objectives:
-        - Navigate to goal landing platform within time limit
-        - Avoid all obstacles (collision = mission failure)
-        - Land precisely within platform radius
-        - Maximize speed while maintaining safety
+        - yaw: target yaw normalized, range [-1, 1] maps to [-π, π]
 
     Scoring:
         score = 0.45 × success + 0.45 × time + 0.10 × safety
+        Successful CONFIRMED returns the full scoring stack.
+        Legitimate non-success failures (collision, no-touch-sphere,
+        infeasible, spawn-failure, tilt, timeout) return 0.01 participation.
 
     Constraints:
         - Max velocity: 3.0 m/s (enforced by validator)
         - Max yaw rate: 3.141 rad/s (180°/s)
-        - Simulation rate: 50 Hz
+        - Simulation rate: 30 Hz control / 30 Hz physics
     """
     
     def __init__(self):

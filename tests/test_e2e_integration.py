@@ -425,7 +425,6 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
             "mountain": [],
             "village": [],
             "warehouse": [],
-            "moving_platform": [],
         }
         return [0.8], per_type
 

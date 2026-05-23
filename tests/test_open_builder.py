@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from swarm.core.maps.open import builder as open_builder
@@ -7,7 +8,10 @@ from swarm.core.maps.open import builder as open_builder
 
 class _DummyPyBullet:
     GEOM_MESH = 1
+    GEOM_BOX = 2
     GEOM_FORCE_CONCAVE_TRIMESH = 2
+    JOINT_FIXED = 4
+    VISUAL_SHAPE_DOUBLE_SIDED = 8
 
     def __init__(self) -> None:
         self.collision_calls: list[dict] = []
@@ -35,6 +39,9 @@ class _DummyPyBullet:
                 **kwargs,
             }
         )
+
+    def getQuaternionFromEuler(self, values):
+        return tuple(values)
 
 
 def test_spawn_terrain_keeps_grass_tint_when_applying_texture(monkeypatch) -> None:
@@ -70,3 +77,5 @@ def test_terrain_obj_path_uses_state_cache_dir() -> None:
         / "open_terrain"
         / "open_terrain_v2_s123.obj"
     )
+
+

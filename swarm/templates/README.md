@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v4.0.0-green?style=flat-square" /></a>
+  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v5.0.0-green?style=flat-square" /></a>
   <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
   <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white" /></a>
   <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=flat-square&logo=googlechrome&logoColor=white" /></a>
@@ -182,7 +182,7 @@ Models trained on the Swarm benchmark don't stay in simulation — **they fly on
 
 <br/>
 
-The drone sees the world through a **128×128 depth image** and knows its own position, velocity, and orientation. A neural network maps these raw inputs directly to **3D velocity commands** — steering toward the goal while avoiding every obstacle in its path.
+The drone sees the world through a **128×128 depth image** and knows its own position, velocity, and orientation. It also receives a **2D search clue** sampled within 30 m of a humanoid victim on the ground. A neural network maps these raw inputs to **3D velocity commands** — the drone must find the victim, then **hover 2–4 m above** at less than **1 m/s** for **2 continuous seconds** to register a CONFIRMED rescue.
 
 **No pre-built maps. No obstacle positions. Everything is learned from experience.**
 
@@ -230,7 +230,7 @@ The `.zip` contains the agent's `DroneFlightController` class and trained weight
 
 | Component | Weight | What It Measures |
 |-----------|--------|-----------------|
-| **Success** | 45% | Did the drone reach the goal? |
+| **Success** | 45% | Did the drone CONFIRM over the victim (2 s steady hover)? |
 | **Speed** | 45% | How fast relative to the time limit? |
 | **Safety** | 10% | Minimum clearance from obstacles |
 

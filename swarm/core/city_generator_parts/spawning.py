@@ -387,7 +387,7 @@ def _spawn_buildings(cli, buildings, blocks, city_type, tile_size,
             block_types[block_id] = building_type
             block_styles[block_id] = "suburban" if building_type == "house" else "commercial"
 
-    platform_r = LANDING_PLATFORM_RADIUS
+    platform_r = GOAL_AREA_CLEARANCE
     for b in buildings:
         rect = b.rect
         if difficulty == 3 and b.type != "tower":

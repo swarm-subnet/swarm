@@ -16,6 +16,7 @@ All weights sum to one. The final score is clamped to ``[0, 1]``.
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -30,15 +31,26 @@ from swarm.constants import (
     REWARD_W_TIME,
     SAFETY_DISTANCE_DANGER,
     SAFETY_DISTANCE_SAFE,
+    SAFETY_DISTANCE_SAFE_BY_TYPE,
+    SAR_DWELL_SEC,
+    SAR_SEARCH_RADIUS,
+    SAR_SWEEP_WIDTH,
+    SAR_TIME_TERM_BUFFER,
     SPEED_LIMIT,
-    TYPE_6_SAFETY_DISTANCE_SAFE,
 )
 
-SAFETY_DISTANCE_SAFE_BY_TYPE = {
-    6: TYPE_6_SAFETY_DISTANCE_SAFE,
-}
-
 __all__ = ["flight_reward"]
+
+
+PARTICIPATION_REASONS = frozenset({
+    "OBSTACLE_COLLISION",
+    "NO_TOUCH_SPHERE",
+    "INFEASIBLE",
+    "SPAWN_FAILURE",
+    "TILT",
+    "TIMEOUT",
+})
+PARTICIPATION_REWARD = 0.01
 
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
@@ -54,6 +66,21 @@ def _calculate_target_time(task: "MapTask") -> float:
 
     min_time = (distance / SPEED_LIMIT) + HOVER_SEC
     return min_time * 1.06
+
+
+def _calculate_sar_target_time(task: "MapTask") -> float:
+    """Candidate-C SAR target time: travel + sweep + dwell, with buffer."""
+    sc = getattr(task, "search_centre", None)
+    if sc is None:
+        sc = (0.0, 0.0)
+    sx, sy = float(task.start[0]), float(task.start[1])
+    d = math.hypot(sx - float(sc[0]), sy - float(sc[1]))
+    sweep = 0.70 * math.pi * (SAR_SEARCH_RADIUS ** 2) / max(
+        SAR_SWEEP_WIDTH * SPEED_LIMIT, 1e-6
+    )
+    return SAR_TIME_TERM_BUFFER * (
+        d / max(SPEED_LIMIT, 1e-6) + sweep + SAR_DWELL_SEC
+    )
 
 
 def _calculate_safety_term(
@@ -82,6 +109,8 @@ def flight_reward(
     w_t: float = REWARD_W_TIME,
     w_safety: float = REWARD_W_SAFETY,
     legitimate_model: bool = True,
+    failure_reason: str = "NONE",
+    sar_mode: bool = False,
 ) -> float:
     """Compute the reward for a single flight mission.
 
@@ -90,7 +119,7 @@ def flight_reward(
     success
         ``True`` if the mission successfully reached its objective.
     t
-        Time (in seconds) taken to reach the goal.
+        Time (in seconds) taken to complete the mission.
     horizon
         Maximum time allowed to complete the mission.
     task
@@ -115,20 +144,29 @@ def flight_reward(
     if horizon <= 0:
         raise ValueError("'horizon' must be positive")
 
+    if not legitimate_model or failure_reason == "EVAL_ERROR":
+        return 0.0
+
+    if not success:
+        if failure_reason in PARTICIPATION_REASONS:
+            return PARTICIPATION_REWARD
+        if not sar_mode and legitimate_model and t > 0.0:
+            return PARTICIPATION_REWARD
+        return 0.0
+
     if collision:
         if legitimate_model and t > 0.0:
-            return 0.01
+            return PARTICIPATION_REWARD
         return 0.0
 
-    success_term = 1.0 if success else 0.0
-
-    if success_term == 0.0:
-        if legitimate_model and t > 0.0:
-            return 0.01
-        return 0.0
+    success_term = 1.0
 
     if task is not None:
-        target_time = _calculate_target_time(task)
+        target_time = (
+            _calculate_sar_target_time(task)
+            if sar_mode
+            else _calculate_target_time(task)
+        )
 
         if t <= target_time:
             time_term = 1.0

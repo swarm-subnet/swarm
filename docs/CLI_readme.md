@@ -51,33 +51,6 @@ swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 swarm benchmark --model Submission/submission.zip --workers 3 --relax-timeouts --rpc-verbosity low
 ```
 
-### `swarm visualize`
-
-Opens an interactive map viewer for a specific map type. If `--seed` is omitted, Swarm chooses a random valid seed for that map type.
-
-```bash
-# Visualize a random city seed
-swarm visualize --type 1
-
-# Visualize a specific warehouse seed
-swarm visualize --type 5 --seed 323518
-
-# Override viewer tuning
-swarm visualize --type 1 --width 960 --height 540 --render-scale 0.7 --render-distance 100 --render-fps 20 --sim-fps 20
-
-# Try GPU-backed rendering through Bullet EGL
-swarm visualize --type 1 --gpu
-```
-
-Controls:
-- `W / S`: forward / backward
-- `A / D`: strafe left / right
-- `Arrow Up / Arrow Down`: climb / descend
-- `Q / E`: yaw left / right
-- `Shift + key`: boost movement
-- `R`: reset to start
-- `Esc`: quit
-
 ### `swarm model verify`
 
 Validates a submission ZIP against Swarm rules — checks structure, size limits, path safety, and `drone_agent.py` compliance.
@@ -145,41 +118,6 @@ Expected data files:
 - `swarm/state/validator_events.jsonl`
 
 If those files do not exist yet, start the validator first so telemetry can be written.
-
-### `swarm video`
-
-Renders mp4 flight videos of a model navigating through a map. Supports single seeds or batch replay from a benchmark seed file.
-
-```bash
-# Record a chase-cam video of seed 42 on a city map
-swarm video --model submission.zip --seed 42 --type 1
-
-# Record all camera angles
-swarm video --model submission.zip --seed 42 --type 3 --mode all
-
-# Batch replay from a benchmark seed file
-swarm video --model submission.zip --seed-file benchmark_seeds.json
-
-# Higher quality output
-swarm video --model submission.zip --seed 42 --type 1 --width 1920 --height 1080 --fps 30
-```
-
-Requires either `--seed-file`, or both `--seed` and `--type`.
-
-Camera modes: `chase` (default), `fpv`, `depth`, `overview`, `all`.
-
-Replay backends: `local` (fast in-process replay) or `benchmark` (default, exact Docker/RPC replay matching validator scoring).
-
-Additional options:
-
-- `--out <dir>` — output directory for mp4 files.
-- `--chase-back <m>`, `--chase-up <m>`, `--chase-fov <deg>` — chase camera positioning.
-- `--fpv-fov <deg>`, `--overview-fov <deg>` — field of view for other modes.
-- `--skip-existing` — skip seeds whose mp4 outputs already exist.
-- `--save-actions <path>` — save recorded actions for deterministic replay.
-- `--replay-actions <path>` — replay pre-recorded actions instead of running the policy.
-- `--summary-json <path>` — benchmark summary JSON for replay verification.
-- `--progress-file <path>` — JSON progress path for monitoring generation status.
 
 ### `swarm champion`
 

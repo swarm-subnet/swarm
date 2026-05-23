@@ -1,0 +1,5 @@
+newmtl braid01
+Kd 1 1 1
+Ks 0.04706 0.04706 0.04706
+d 1.0
+map_Kd ../textures/braid01_diffuse.png

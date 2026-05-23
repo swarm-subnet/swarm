@@ -453,8 +453,8 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
     model_path.write_bytes(b"zip-bytes")
 
     tasks = [
-        SimpleNamespace(challenge_type=6, moving_platform=False),
-        SimpleNamespace(challenge_type=6, moving_platform=True),
+        SimpleNamespace(challenge_type=6),
+        SimpleNamespace(challenge_type=6),
     ]
 
     def _fake_random_task(*args, **kwargs):
@@ -485,8 +485,8 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
     )
 
     assert all_scores == [0.25, 0.75]
-    assert per_type_scores["forest"] == [0.25]
-    assert per_type_scores["moving_platform"] == [0.75]
+    assert per_type_scores["forest"] == [0.25, 0.75]
+    assert "moving_platform" not in per_type_scores
 
 
 def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch):
