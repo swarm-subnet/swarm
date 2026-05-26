@@ -85,6 +85,7 @@ def test_load_runtime_state_missing_file_returns_defaults(monkeypatch, tmp_path)
     state = backend_api._load_runtime_state()
     assert state == {
         "last_weights": {},
+        "last_kings": [],
         "reeval_queue": [],
         "assigned_tasks": [],
         "rollout": {},

@@ -144,16 +144,18 @@ class BaseValidatorNeuron(BaseNeuron):
         outdated champion weights. This task keeps self.scores fresh while
         forwards are in progress.
         """
-        from swarm.validator.utils import _apply_backend_weights_to_scores
+        from swarm.validator.utils import (
+            _apply_backend_weights_to_scores,
+            compute_koth_weights_from_sync,
+        )
         while True:
             try:
                 await asyncio.sleep(WEIGHT_REFRESH_SEC)
                 if not hasattr(self, "backend_api"):
                     continue
                 data = await self.backend_api.sync()
-                if data.get("fallback"):
-                    continue
-                _apply_backend_weights_to_scores(self, data.get("weights", {}))
+                local_weights = compute_koth_weights_from_sync(data)
+                _apply_backend_weights_to_scores(self, local_weights)
             except asyncio.CancelledError:
                 break
             except Exception as e:

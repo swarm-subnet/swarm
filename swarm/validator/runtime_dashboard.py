@@ -75,6 +75,7 @@ def render_runtime_dashboard(
     docker = snapshot.get("docker", {})
     weights = snapshot.get("weights", {})
     chain_sync = snapshot.get("chain_sync", {})
+    koth = snapshot.get("koth", {})
     counters = snapshot.get("counters", {})
 
     output: list[str] = []
@@ -236,6 +237,42 @@ def render_runtime_dashboard(
             ],
         )
     )
+
+    # King of the Hill — the 5-king window emitted by the backend's /sync.
+    koth_window = list(koth.get("active_window") or [])
+    output.append("")
+    output.append("King of the Hill")
+    if not koth_window:
+        output.append(
+            "  no king yet — backend lineage empty"
+            f"  (last update {_fmt_age(koth.get('last_updated_at'), current_time)})"
+        )
+    else:
+        output.append(
+            "  "
+            f"{'rank':>5} {'uid':>6} {'score':>7} {'weight':>8}  {'crowned@epoch':>14}"
+        )
+        for entry in koth_window:
+            if not isinstance(entry, dict):
+                continue
+            rank = entry.get("rank")
+            rank_label = f"{int(rank):>5}" if isinstance(rank, int) else "    -"
+            uid = entry.get("uid")
+            uid_label = f"{int(uid):>6}" if isinstance(uid, int) else "     -"
+            score = entry.get("score")
+            score_label = f"{float(score):.4f}" if isinstance(score, (int, float)) else "  -"
+            weight = entry.get("weight")
+            weight_label = (
+                f"{100.0 * float(weight):.1f}%" if isinstance(weight, (int, float)) else "    -"
+            )
+            crowned = entry.get("crowned_at_epoch")
+            crowned_label = (
+                f"{int(crowned):>14}" if isinstance(crowned, int) else "             -"
+            )
+            output.append(
+                f"  {rank_label} {uid_label} {score_label:>7} {weight_label:>8}  {crowned_label}"
+            )
+
     output.append("")
     output.append("Queue Items")
     output.append(

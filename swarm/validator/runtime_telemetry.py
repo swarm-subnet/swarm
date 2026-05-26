@@ -164,6 +164,13 @@ class ValidatorRuntimeTracker:
                 "last_error": "",
                 "last_nonzero_uids": 0,
             },
+            "koth": {
+                # Last received king-of-the-hill window from /validators/sync.
+                # Each entry: {lineage_id, rank, uid, hotkey, score, weight,
+                #              crowned_at_epoch}.
+                "active_window": [],
+                "last_updated_at": None,
+            },
             "chain_sync": {
                 "in_progress": False,
                 "context": "",
@@ -373,6 +380,20 @@ class ValidatorRuntimeTracker:
                 error=str(error),
                 force_snapshot=True,
             )
+
+    def update_koth_window(self, kings: list[dict]) -> None:
+        """Replace the cached king-of-the-hill window from /validators/sync.
+
+        ``kings`` is the list of dicts received in SyncResponse.kings.
+        Persists immediately so ``swarm monitor`` (which reads the JSON
+        file) reflects the latest backend response without waiting for the
+        next periodic flush.
+        """
+        now = time.time()
+        with self._lock:
+            self.snapshot["koth"]["active_window"] = list(kings)
+            self.snapshot["koth"]["last_updated_at"] = now
+            self._persist_snapshot_locked(force=False)
 
     def mark_reeval_started(
         self,
