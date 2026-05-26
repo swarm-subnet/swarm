@@ -240,6 +240,10 @@ Final score = 0.45 × success + 0.45 × time_bonus + 0.10 × safety_bonus
 
 Models are ranked by **average score across 1,000 seeds** — consistency matters more than lucky runs. To claim the top spot, a new model must beat the current champion by at least **+0.015**.
 
+### Emissions — King of the Hill
+
+Subnet emissions are split among the **last 5 champions**, not just the current one. Each king's share is weighted by how much they improved the network's best score when they were crowned, with **harder late-stage jumps weighted more than easy early-stage jumps of the same size**. Past kings keep earning automatically until they age out of the 5-king window. Full spec at [docs/king_of_the_hill.md](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- TRAIN YOUR OWN -->

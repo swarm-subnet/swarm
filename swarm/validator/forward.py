@@ -31,6 +31,8 @@ from .sse_listener import SseListener
 from .utils import (
     _apply_backend_weights_to_scores,
     _publish_pending_epoch_seeds,
+    compute_koth_weights_from_sync,
+    stamp_local_weights_on_kings,
 )
 from .utils_parts.run_task import run_task
 
@@ -80,12 +82,12 @@ async def _forward_iteration(self) -> None:
                     f"{self.seed_manager.epoch_number}"
                 )
 
-        backend_weights = (
-            sync_data.get("weights", {})
-            if not sync_data.get("fallback")
-            else self.backend_api.get_cached_weights()
-        )
-        _apply_backend_weights_to_scores(self, backend_weights)
+        local_koth_weights = compute_koth_weights_from_sync(sync_data)
+        _apply_backend_weights_to_scores(self, local_koth_weights)
+
+        kings_payload = sync_data.get("kings") or []
+        stamped = stamp_local_weights_on_kings(kings_payload)
+        tracker_call(self, "update_koth_window", stamped)
 
         await _publish_pending_epoch_seeds(self)
 

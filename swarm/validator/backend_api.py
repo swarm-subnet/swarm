@@ -176,6 +176,7 @@ def _load_runtime_state() -> dict:
         bt.logging.warning(f"Runtime state load failed: {e}")
     return {
         "last_weights": {},
+        "last_kings": [],
         "reeval_queue": [],
         "assigned_tasks": [],
         "leaderboard_version": 0,
@@ -229,7 +230,12 @@ class BackendApiClient:
         return self._runtime_state.get("last_sync", 0)
 
     def get_cached_weights(self) -> dict:
+        """Advisory only; the apply path uses get_cached_kings()."""
         return self._runtime_state.get("last_weights", {})
+
+    def get_cached_kings(self) -> list:
+        """Cached king lineage from the last successful sync."""
+        return self._runtime_state.get("last_kings", [])
 
     async def close(self) -> None:
         """Close HTTP client."""
@@ -415,19 +421,7 @@ class BackendApiClient:
     # GET /validators/sync
     # ──────────────────────────────────────────────────────────────────────
     async def sync(self) -> Dict[str, Any]:
-        """Get current weights and re-eval queue from backend.
-
-        Returns:
-            {
-                "current_top": {"uid": 42, "score": 0.847, "model_hash": "..."},
-                "weights": {"42": 1.0, "0": 0.0},
-                "reeval_queue": [{"uid": 42, "reason": "7_day_reeval"}],
-                "leaderboard_version": 15
-            }
-
-            If backend is down, returns cached data with fallback=True.
-            The forward loop burns 100% when fallback is active.
-        """
+        """Get king lineage + re-eval queue. `kings` is authoritative; `weights` advisory."""
         try:
             data = await self._get_signed(
                 "/validators/sync",
@@ -453,6 +447,7 @@ class BackendApiClient:
                     )
 
                 self._runtime_state["last_weights"] = data.get("weights", {})
+                self._runtime_state["last_kings"] = data.get("kings", [])
                 self._runtime_state["reeval_queue"] = reeval_queue
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
@@ -480,18 +475,20 @@ class BackendApiClient:
                     "benchmark_epoch": benchmark_epoch,
                     "current_epoch": benchmark_epoch,
                     "latest_reported_epoch": data.get("latest_reported_epoch"),
+                    "kings": data.get("kings", []),
                 }
 
             raise Exception(data.get("error", "Unknown error"))
 
         except Exception as e:
             bt.logging.warning(
-                f"Backend API error (sync): {_scrub_url(e)} — fallback active, emissions will burn"
+                f"Backend API error (sync): {_scrub_url(e)} — fallback active, using cached kings (burn if empty)"
             )
 
             return {
                 "current_top": self._runtime_state.get("current_top", {}),
                 "weights": self._runtime_state.get("last_weights", {}),
+                "kings": self._runtime_state.get("last_kings", []),
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
                 "pending_models": [],
