@@ -341,8 +341,8 @@ Past kings keep earning automatically. There is nothing to claim or maintain —
 4. Each validator runs the agent in a sandboxed Docker container:
    - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear **champion + 0.015** (or >= 0.01 if no champion)
    - **Full benchmark** (800 seeds) — remaining seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
-5. Final score and pass/fail are determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
-6. **Winner-take-all** — the highest-scoring model receives emissions
+5. Final score is a **stake-weighted average of the consensus-set validators' reports**; pass/fail uses that same weighted score against the `+0.015` threshold. Full rules at [docs/scoring.md](scoring.md). No single validator can block or advance a model on its own
+6. Emissions are split across the 5 most recent champions — see [docs/king_of_the_hill.md](king_of_the_hill.md)
 
 ### Epoch Rotation
 
