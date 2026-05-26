@@ -1,0 +1,22 @@
+{
+  "manifest_version": "submission_manifest.v1",
+  "manifest_filename": "submission_manifest.json",
+  "legacy_fallback": {
+    "enabled": true,
+    "default_family_id": "cf_search_and_rescue",
+    "artifact_path": "submission.zip"
+  },
+  "repo_layout_rules": {
+    "manifest_path": "submission_manifest.json",
+    "readme_path": "README.md",
+    "artifacts_dir": "artifacts",
+    "artifact_extension": ".zip"
+  },
+  "required_artifact_fields": [
+    "family_id",
+    "interface_version",
+    "artifact_path",
+    "sha256",
+    "metadata"
+  ]
+}

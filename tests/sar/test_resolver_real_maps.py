@@ -1,4 +1,4 @@
-"""B.3.3 — fuzz 2000 random XY positions per map family and assert minimum
+"""B.3.3 — fuzz 2000 random XY positions per environment type and assert minimum
 acceptance rates. Catches resolver bugs that synthetic tests miss."""
 from __future__ import annotations
 

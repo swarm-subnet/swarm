@@ -11,6 +11,8 @@ from ._shared import (
     json,
     random,
 )
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, build_random_task
+from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP
 
 
 def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
@@ -24,9 +26,21 @@ def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
     return None
 
 
-def _normalize_type_seeds(raw: Any) -> Dict[str, List[int]]:
+def _normalize_type_seeds(raw: Any, *, family_id: str) -> Dict[str, List[int]]:
     if not isinstance(raw, dict):
-        raise ValueError("Seed file must contain a JSON object mapping benchmark groups to seed lists.")
+        raise ValueError(
+            "Seed file must contain a JSON object mapping benchmark groups to seed lists."
+        )
+
+    if "type_seeds" in raw:
+        envelope_family_id = str(raw.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID)
+        if envelope_family_id != family_id:
+            raise ValueError(
+                f"Seed file family_id mismatch: expected {family_id}, got {envelope_family_id}"
+            )
+        raw = raw.get("type_seeds")
+        if not isinstance(raw, dict):
+            raise ValueError("Seed file type_seeds must be a JSON object.")
 
     normalized: Dict[str, List[int]] = {}
     missing = [group for group in BENCH_GROUP_ORDER if group not in raw]
@@ -42,42 +56,51 @@ def _normalize_type_seeds(raw: Any) -> Dict[str, List[int]]:
     return normalized
 
 
-def _load_type_seeds(seed_file: Path) -> Dict[str, List[int]]:
-    return _normalize_type_seeds(json.loads(seed_file.read_text()))
+def _load_type_seeds(
+    seed_file: Path,
+    *,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+) -> Dict[str, List[int]]:
+    return _normalize_type_seeds(json.loads(seed_file.read_text()), family_id=family_id)
 
 
-def _save_type_seeds(seed_file: Path, type_seeds: Dict[str, List[int]]) -> None:
+def _save_type_seeds(
+    seed_file: Path,
+    type_seeds: Dict[str, List[int]],
+    *,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+) -> None:
     seed_file.parent.mkdir(parents=True, exist_ok=True)
-    seed_file.write_text(json.dumps(type_seeds, indent=2, sort_keys=True))
+    payload = {
+        "schema_version": "challenge_family_seed_file.v1",
+        "family_id": family_id,
+        "type_seeds": type_seeds,
+    }
+    seed_file.write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def _infer_bench_group(challenge_type: int, seed: int) -> Optional[str]:
     _ = seed
-    if challenge_type == 1:
-        return "type1_city"
-    if challenge_type == 2:
-        return "type2_open"
-    if challenge_type == 3:
-        return "type3_mountain"
-    if challenge_type == 4:
-        return "type4_village"
-    if challenge_type == 5:
-        return "type5_warehouse"
-    if challenge_type == 6:
-        return "type6_forest"
-    return None
+    return CHALLENGE_TYPE_TO_BENCHMARK_GROUP.get(challenge_type)
 
 
-def _find_seeds(seeds_per_group: int) -> Dict[str, List[int]]:
+def _find_seeds(
+    seeds_per_group: int,
+    *,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+) -> Dict[str, List[int]]:
     from swarm.constants import SIM_DT
-    from swarm.validator.task_gen import random_task
 
     groups: Dict[str, List[int]] = {g: [] for g in BENCH_GROUP_ORDER}
 
     seed = random.randint(100000, 900000)
     max_search = seed + 500000
     while seed < max_search:
-        task = random_task(sim_dt=SIM_DT, seed=seed)
+        task = build_random_task(
+            sim_dt=SIM_DT,
+            seed=seed,
+            family_id=family_id,
+        )
         group = _infer_bench_group(int(task.challenge_type), seed)
         if group is not None and group in groups and len(groups[group]) < seeds_per_group:
             groups[group].append(seed)

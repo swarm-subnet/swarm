@@ -2,10 +2,11 @@ import hashlib
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import bittensor as bt
 
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.config import DockerRuntimeSettings, env_bool
 from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
 
@@ -34,7 +35,25 @@ def __init__(self):
     # Only initialize attributes on first instantiation
     if not hasattr(self, "base_image"):
         self.base_image = "swarm_evaluator_base:latest"
+    if not hasattr(self, "last_fake_model_info"):
         self.last_fake_model_info = None
+    if not hasattr(self, "base_images"):
+        self.base_images = {"base": self.base_image}
+    else:
+        self.base_images.setdefault("base", self.base_image)
+        self.base_image = self.base_images["base"]
+    if not hasattr(self, "family_runtime_profiles"):
+        self.family_runtime_profiles = {}
+    if not hasattr(self, "last_runtime_profile_info"):
+        self.last_runtime_profile_info = None
+    if not hasattr(self, "last_selected_run_image"):
+        self.last_selected_run_image = None
+    if not hasattr(self, "last_selected_worker_limits"):
+        self.last_selected_worker_limits = None
+    if not hasattr(self, "last_selected_runtime_profile"):
+        self.last_selected_runtime_profile = None
+    if not hasattr(self, "last_selected_runtime_env"):
+        self.last_selected_runtime_env = None
 
     if not evaluator_cls._base_ready:
         self._setup_base_container()
@@ -66,18 +85,49 @@ def _docker_env_overrides(cls) -> dict[str, str]:
     settings = DockerRuntimeSettings.from_env()
     return settings.docker_env_overrides(_THREAD_CAP_ENV_VARS)
 
+
+@staticmethod
+def _coerce_runtime_profile(profile: Optional[Any]) -> Optional[ChallengeFamilyRuntimeProfile]:
+    if profile is None:
+        return None
+    if isinstance(profile, ChallengeFamilyRuntimeProfile):
+        return profile
+    if isinstance(profile, dict):
+        return ChallengeFamilyRuntimeProfile.from_mapping(profile)
+    raise TypeError(f"Unsupported runtime profile payload: {type(profile)!r}")
+
 @staticmethod
 def _split_worker_cpuset_map(raw: str) -> list[str]:
     return DockerRuntimeSettings.split_cpuset_map(raw)
 
 @classmethod
-def _resolve_worker_limits(cls, worker_id: int) -> dict[str, Optional[str]]:
+def _resolve_worker_limits(
+    cls,
+    worker_id: int,
+    runtime_profile: Optional[Any] = None,
+) -> dict[str, Optional[str]]:
+    profile = cls._coerce_runtime_profile(runtime_profile)
     limits = DockerRuntimeSettings.from_env().resolve_worker_limits(worker_id)
-    return {
+    resolved = {
         "cpus": limits.cpus if limits.cpus not in (None, "") else DOCKER_WORKER_CPUS,
         "memory": limits.memory if limits.memory not in (None, "") else DOCKER_WORKER_MEMORY,
         "cpuset_cpus": limits.cpuset_cpus if limits.cpuset_cpus not in (None, "") else None,
     }
+    if profile is not None:
+        if profile.docker_worker_cpus not in (None, ""):
+            resolved["cpus"] = str(profile.docker_worker_cpus)
+        if profile.docker_worker_memory not in (None, ""):
+            resolved["memory"] = str(profile.docker_worker_memory)
+    return resolved
+
+
+def _resolve_base_image_for_key(self, image_key: str) -> str:
+    normalized = str(image_key or "base").strip() or "base"
+    env_name = f"SWARM_DOCKER_BASE_IMAGE_{normalized.upper()}"
+    env_override = os.getenv(env_name)
+    if env_override:
+        return env_override
+    return str(getattr(self, "base_images", {}).get(normalized, self.base_image))
 
 def _calculate_docker_hash(self) -> str:
     """Calculate hash of all source files that go into the Docker image."""

@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from swarm.domain_model import BENCHMARK_GROUP_TO_CHALLENGE_TYPE
+
 try:
     from tqdm import tqdm as _tqdm
 except Exception:  # pragma: no cover - fallback path when tqdm is unavailable.
@@ -33,22 +35,8 @@ if str(REPO_ROOT) not in sys.path:
 
 _UID_RE = re.compile(r"uid[_-]?(\d+)", re.IGNORECASE)
 
-BENCH_GROUP_ORDER = [
-    "type1_city",
-    "type2_open",
-    "type3_mountain",
-    "type4_village",
-    "type5_warehouse",
-    "type6_forest",
-]
-BENCH_GROUP_TO_TYPE = {
-    "type1_city": 1,
-    "type2_open": 2,
-    "type3_mountain": 3,
-    "type4_village": 4,
-    "type5_warehouse": 5,
-    "type6_forest": 6,
-}
+BENCH_GROUP_ORDER = list(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
+BENCH_GROUP_TO_TYPE = dict(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
 
 
 @dataclass
@@ -87,6 +75,7 @@ class _ProcessBatchRequest:
     model_path: str
     task_total: int
     model_image: Optional[str] = None
+    runtime_profile: Optional[Dict[str, Any]] = None
 
 
 @dataclass

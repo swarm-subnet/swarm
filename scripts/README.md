@@ -15,11 +15,11 @@ This directory contains repository-level executable utilities.
 - `test_timings.py`
   - Local timing breakdown tool for simulator step costs.
 - `sar_spawn_audit.py`
-  - SAR spawn-pipeline audit: runs many seeds per map family and asserts the failure rate stays below the target threshold. Intended as the nightly audit.
+  - SAR spawn-pipeline audit: runs many seeds per environment type and asserts the failure rate stays below the target threshold. Intended as the nightly audit.
 - `sar_baseline_audit.py`
   - Records a baseline policy's success/failure profile on SAR seeds so the network has a "minimum competence" reference point.
 - `sar_horizon_audit.py`
-  - Sweeps episode horizons and reports per-map confirm rates; used to validate the chosen horizon.
+  - Sweeps episode horizons and reports per-environment confirm rates; used to validate the chosen horizon.
 - `prebake_mannequin_parts.py`
   - One-shot mannequin prebake — splits a MakeHuman raw OBJ/MTL into the per-material parts the runtime loads. Run when adding a new character asset.
 

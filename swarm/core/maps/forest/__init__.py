@@ -1,4 +1,4 @@
-"""Type 6 forest map family."""
+"""Type 6 forest challenge environment."""
 
 from swarm.core.forest_generator import build_forest
 

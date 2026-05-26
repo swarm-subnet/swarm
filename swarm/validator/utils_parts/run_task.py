@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 import bittensor as bt
 import numpy as np
 
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.constants import MODEL_DIR
 from swarm.utils.hash import sha256sum
 
@@ -36,6 +37,7 @@ async def run_task(
     uid = int(task.get("uid", -1))
     phase = str(task.get("phase", ""))
     task_id = task.get("task_id")
+    family_id = str(task.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID)
     seeds_from = int(task.get("seeds_from", 0))
     seeds_to = int(task.get("seeds_to", 0))
     epoch = int(
@@ -70,6 +72,7 @@ async def run_task(
             model_path,
             reeval=False,
             task_id=task_id,
+            family_id=family_id,
             seeds_from=seeds_from,
             seeds_to=seeds_to,
             cancel_flag=cancel_flag,
@@ -86,6 +89,7 @@ async def run_task(
             model_path,
             reeval=(phase == "REEVAL"),
             task_id=task_id,
+            family_id=family_id,
             cancel_flag=cancel_flag,
             seeds_from=seeds_from,
         )

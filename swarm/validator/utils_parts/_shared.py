@@ -40,7 +40,6 @@ from swarm.validator.backend_api import (
     authorize_with_retry,
     classify_backend_failure,
 )
-from swarm.validator.task_gen import random_task
 
 STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"
 NORMAL_MODEL_QUEUE_FILE = STATE_DIR / "normal_model_queue.json"

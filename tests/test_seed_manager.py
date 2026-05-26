@@ -19,10 +19,19 @@ def _patch_paths(monkeypatch, module, tmp_path):
     return seeds_dir
 
 
-def _write_epoch_file(seeds_dir, epoch: int, seeds: list[int], *, published: bool = False) -> None:
+def _write_epoch_file(
+    seeds_dir,
+    epoch: int,
+    seeds: list[int],
+    *,
+    family_id: str = "cf_search_and_rescue",
+    published: bool = False,
+) -> None:
     seeds_dir.mkdir(parents=True, exist_ok=True)
-    (seeds_dir / f"epoch_{epoch}.json").write_text(json.dumps({
+    suffix = ".json" if family_id == "cf_search_and_rescue" else f"__{family_id}.json"
+    (seeds_dir / f"epoch_{epoch}{suffix}").write_text(json.dumps({
         "epoch_number": epoch,
+        "family_id": family_id,
         "seeds": seeds,
         "published": published,
     }))
@@ -194,3 +203,88 @@ def test_align_to_epoch_realigns_backward_when_local_is_ahead(seed_manager_modul
     assert aligned_from == 9999
     assert manager.epoch_number == 40
     assert (seeds_dir / "epoch_40.json").exists()
+
+
+def test_manager_keeps_distinct_seed_sets_per_family_same_epoch(
+    seed_manager_module, monkeypatch, tmp_path,
+):
+    m = seed_manager_module
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
+    monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
+
+    _write_epoch_file(
+        seeds_dir, 51, [11, 12, 13, 14], family_id="cf_search_and_rescue", published=True
+    )
+    _write_epoch_file(
+        seeds_dir, 51, [21, 22, 23, 24], family_id="cf_autopilot", published=True
+    )
+
+    manager = m.BenchmarkSeedManager()
+    assert manager.get_all_seeds("cf_search_and_rescue") == [11, 12, 13, 14]
+    assert manager.get_all_seeds("cf_autopilot") == [21, 22, 23, 24]
+    assert manager.get_screening_seeds("cf_search_and_rescue") == [11]
+    assert manager.get_screening_seeds("cf_autopilot") == [21]
+    assert manager.get_benchmark_seeds("cf_search_and_rescue") == [12, 13, 14]
+    assert manager.get_benchmark_seeds("cf_autopilot") == [22, 23, 24]
+
+
+def test_mark_epoch_published_scopes_to_epoch_and_family(
+    seed_manager_module, monkeypatch, tmp_path,
+):
+    m = seed_manager_module
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
+    monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
+
+    _write_epoch_file(
+        seeds_dir, 10, [1, 2, 3, 4], family_id="cf_search_and_rescue", published=False
+    )
+    _write_epoch_file(
+        seeds_dir, 10, [5, 6, 7, 8], family_id="cf_autopilot", published=False
+    )
+    _write_epoch_file(
+        seeds_dir, 11, [9, 9, 9, 9], family_id="cf_search_and_rescue", published=True
+    )
+
+    manager = m.BenchmarkSeedManager()
+    manager.mark_epoch_published(10, family_id="cf_search_and_rescue")
+
+    sar_payload = json.loads((seeds_dir / "epoch_10.json").read_text())
+    auto_payload = json.loads((seeds_dir / "epoch_10__cf_autopilot.json").read_text())
+    assert sar_payload["published"] is True
+    assert auto_payload["published"] is False
+    assert manager.get_pending_publications("cf_search_and_rescue") == []
+    assert any(
+        item.get("epoch_number") == 10 and item.get("family_id") == "cf_autopilot"
+        for item in manager.get_pending_publications("cf_autopilot")
+    )
+
+
+def test_align_to_epoch_preserves_pending_publications_per_family(
+    seed_manager_module, monkeypatch, tmp_path,
+):
+    m = seed_manager_module
+    seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
+    monkeypatch.setattr(m, "BENCHMARK_SCREENING_SEED_COUNT", 1)
+
+    _write_epoch_file(
+        seeds_dir, 10, [1, 2, 3, 4], family_id="cf_search_and_rescue", published=False
+    )
+    _write_epoch_file(
+        seeds_dir, 10, [5, 6, 7, 8], family_id="cf_autopilot", published=False
+    )
+
+    manager = m.BenchmarkSeedManager()
+    manager.align_to_epoch(15)
+
+    pending = manager.get_pending_publications()
+    assert any(
+        item.get("epoch_number") == 10 and item.get("family_id") == "cf_search_and_rescue"
+        for item in pending
+    )
+    assert any(
+        item.get("epoch_number") == 10 and item.get("family_id") == "cf_autopilot"
+        for item in pending
+    )

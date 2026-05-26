@@ -4,6 +4,8 @@ include docs/CLI_readme.md
 prune tests
 recursive-include swarm/assets *
 recursive-include swarm/submission_template *
+recursive-include swarm/domain_model *.json
+recursive-include swarm/submission_manifest *.json
 recursive-include swarm/templates *
 recursive-include swarm/validator/docker *
 recursive-exclude swarm/assets/open_terrain *

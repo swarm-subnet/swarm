@@ -53,6 +53,7 @@ def test_random_task_is_deterministic_for_fixed_seed():
     t1 = task_gen.random_task(sim_dt=0.02, seed=12345)
     t2 = task_gen.random_task(sim_dt=0.02, seed=12345)
     assert t1 == t2
+    assert t1.family_id == "cf_search_and_rescue"
 
 
 def test_task_for_seed_and_type_is_deterministic():
@@ -61,6 +62,37 @@ def test_task_for_seed_and_type_is_deterministic():
 
     assert t1 == t2
     assert t1.challenge_type == 6
+
+
+def test_screening_task_preserves_explicit_family_id():
+    task = task_gen.screening_task(
+        sim_dt=0.02,
+        seed=777,
+        challenge_type=3,
+        distance_range=(18.0, 24.0),
+        family_id="cf_search_and_rescue",
+    )
+
+    assert task.family_id == "cf_search_and_rescue"
+
+
+def test_screening_task_is_deterministic_for_fixed_seed_and_range():
+    first = task_gen.screening_task(
+        sim_dt=0.02,
+        seed=888,
+        challenge_type=4,
+        distance_range=(20.0, 26.0),
+        family_id="cf_search_and_rescue",
+    )
+    second = task_gen.screening_task(
+        sim_dt=0.02,
+        seed=888,
+        challenge_type=4,
+        distance_range=(20.0, 26.0),
+        family_id="cf_search_and_rescue",
+    )
+
+    assert first == second
 
 
 def test_challenge_type_distribution_is_uniform():

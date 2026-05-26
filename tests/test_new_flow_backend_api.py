@@ -138,6 +138,7 @@ def test_submit_task_result_posts_signed_payload(monkeypatch):
     assert captured["data"]["seeds_evaluated"] == 200
     assert captured["data"]["early_failed"] is False
     assert captured["data"]["epoch_number"] == 5
+    assert captured["data"]["metric_breakdown"] == {"city": 0.4, "open": 0.5}
     assert captured["data"]["per_type_scores"] == {"city": 0.4, "open": 0.5}
 
 

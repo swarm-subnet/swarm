@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import msgpack
+
 from swarm.protocol import MapTask, PolicyRef, PolicySynapse, ValidationResult
 
 
@@ -18,7 +20,38 @@ def test_map_task_pack_round_trip():
     assert tuple(restored.start) == task.start
     assert tuple(restored.goal) == task.goal
     assert restored.challenge_type == task.challenge_type
+    assert restored.family_id == task.family_id
     assert restored.version == task.version
+
+
+def test_map_task_unpack_infers_family_id_for_legacy_payloads():
+    sar_blob = msgpack.packb(
+        {
+            "map_seed": 1,
+            "start": (0.0, 0.0, 1.0),
+            "goal": (1.0, 1.0, 1.0),
+            "sim_dt": 0.02,
+            "horizon": 60.0,
+            "challenge_type": 2,
+            "version": "5.0.0",
+        },
+        use_bin_type=True,
+    )
+    autopilot_blob = msgpack.packb(
+        {
+            "map_seed": 2,
+            "start": (0.0, 0.0, 1.0),
+            "goal": (2.0, 2.0, 2.0),
+            "sim_dt": 0.02,
+            "horizon": 45.0,
+            "challenge_type": 1,
+            "version": "4.2.0",
+        },
+        use_bin_type=True,
+    )
+
+    assert MapTask.unpack(sar_blob).family_id == "cf_search_and_rescue"
+    assert MapTask.unpack(autopilot_blob).family_id == "cf_autopilot"
 
 
 def test_policy_ref_as_dict_includes_github_url():

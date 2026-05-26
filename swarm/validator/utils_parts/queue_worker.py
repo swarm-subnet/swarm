@@ -1,5 +1,6 @@
 from ._shared import *
 from .heartbeat import HeartbeatManager
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.validator.runtime_telemetry import tracker_call
 
 from dataclasses import dataclass
@@ -49,8 +50,10 @@ async def _setup_phase_context(ctx: "_QueueItemContext") -> bool:
         hb_queue = getattr(self, "_heartbeat_queue", None)
         if not hb_queue:
             return
+        family_id = str(item.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID)
         for entry in hb_queue:
-            if int(entry.get("uid", -1)) == uid:
+            entry_family_id = str(entry.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID)
+            if int(entry.get("uid", -1)) == uid and entry_family_id == family_id:
                 for field_name, value in fields.items():
                     if value is not None:
                         entry[field_name] = value
@@ -62,6 +65,7 @@ async def _setup_phase_context(ctx: "_QueueItemContext") -> bool:
             phase,
             assignment_id=item.get("assignment_id"),
             epoch_number=getattr(self.seed_manager, "epoch_number", None),
+            family_id=str(item.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID),
         )
         item["backend_authorized"] = bool(response.get("authorized", False))
         item["backend_reason"] = response.get("reason")
@@ -305,6 +309,7 @@ async def _run_screening_phase(ctx: "_QueueItemContext") -> bool:
             validator_hotkey=validator_hotkey,
             validator_stake=validator_stake,
             screening_score=float(item.get("screening_score", 0.0)),
+            family_id=str(item.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID),
         )
         if not recorded:
             bt.logging.warning(
@@ -455,6 +460,7 @@ async def _run_benchmark_phase(ctx: "_QueueItemContext") -> bool:
                         "uid": uid,
                         "phase": "BENCHMARK",
                         "assignment_id": item.get("assignment_id"),
+                        "family_id": str(item.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID),
                         "epoch_number": epoch,
                         "benchmark_version": BENCHMARK_VERSION,
                     },
@@ -595,6 +601,7 @@ async def _submit_score_phase(ctx: "_QueueItemContext") -> bool:
             per_type_scores=dict(item.get("per_type_scores", {})),
             seeds_evaluated=int(item.get("seeds_evaluated", 0) or 0),
             epoch_number=self.seed_manager.epoch_number,
+            family_id=str(item.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID),
         )
         if not recorded:
             bt.logging.warning(

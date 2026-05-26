@@ -38,3 +38,24 @@ def test_mountain_env_renders_depth_without_er_depth_only() -> None:
         assert "distance_to_goal" in info
     finally:
         env.close()
+
+
+def test_autopilot_env_bootstrap_uses_runtime_profile() -> None:
+    task = task_for_seed_and_type(
+        sim_dt=SIM_DT,
+        seed=657392,
+        challenge_type=1,
+        family_id="cf_autopilot",
+    )
+    env = make_env(task, gui=False)
+    try:
+        assert getattr(env, "sar_mode", None) is False
+        obs, reward, terminated, truncated, info = env.step(
+            np.zeros((1, 5), dtype=np.float32)
+        )
+        assert np.isfinite(obs["depth"]).all()
+        assert np.isfinite(float(reward))
+        assert isinstance(bool(terminated), bool)
+        assert isinstance(bool(truncated), bool)
+    finally:
+        env.close()

@@ -1,0 +1,487 @@
+{
+  "schema_version": "2026-05-25",
+  "entity_types": {
+    "challenge_family": {
+      "description": "Top-level challenge family that owns rules, scoring, emissions, and supported environments.",
+      "id_prefix": "cf_",
+      "ids": [
+        "cf_autopilot",
+        "cf_search_and_rescue"
+      ]
+    },
+    "challenge_instance": {
+      "description": "Single generated evaluation unit inside a challenge family.",
+      "id_prefix": "ci_",
+      "id_template": "ci_<challenge_family_slug>_<environment_type>_<benchmark_version>_<seed>",
+      "required_dimensions": [
+        "challenge_family",
+        "environment_type",
+        "benchmark_version",
+        "seed"
+      ]
+    },
+    "skill": {
+      "description": "Capability measured by a challenge family.",
+      "id_prefix": "sk_",
+      "ids": [
+        "sk_autonomous_navigation",
+        "sk_search_and_rescue"
+      ]
+    },
+    "market_vertical": {
+      "description": "Deployment market represented by a challenge family.",
+      "id_prefix": "mv_",
+      "ids": [
+        "mv_general_autonomy",
+        "mv_public_safety"
+      ]
+    }
+  },
+  "enum_types": {
+    "family_state": [
+      "incubating",
+      "active",
+      "archived"
+    ],
+    "emissions_state": [
+      "incubating",
+      "active",
+      "saturated",
+      "archived",
+      "regression"
+    ],
+    "environment_type": [
+      "city",
+      "open",
+      "mountain",
+      "village",
+      "warehouse",
+      "forest"
+    ]
+  },
+  "skills": {
+    "sk_autonomous_navigation": {
+      "skill_id": "sk_autonomous_navigation",
+      "name": "Autonomous Navigation",
+      "description": "Navigate safely and efficiently toward mission goals in changing environments.",
+      "display": {
+        "label": "Autonomous Navigation",
+        "short_label": "Navigation",
+        "slug": "autonomous-navigation"
+      }
+    },
+    "sk_search_and_rescue": {
+      "skill_id": "sk_search_and_rescue",
+      "name": "Search and Rescue",
+      "description": "Search an area under uncertainty, prioritize likely targets, and complete rescue-oriented missions.",
+      "display": {
+        "label": "Search and Rescue",
+        "short_label": "SAR",
+        "slug": "search-and-rescue"
+      }
+    }
+  },
+  "market_verticals": {
+    "mv_general_autonomy": {
+      "market_vertical_id": "mv_general_autonomy",
+      "name": "General Autonomy",
+      "description": "Cross-cutting autonomy capabilities that transfer across multiple drone missions.",
+      "display": {
+        "label": "General Autonomy",
+        "short_label": "Autonomy",
+        "slug": "general-autonomy"
+      }
+    },
+    "mv_public_safety": {
+      "market_vertical_id": "mv_public_safety",
+      "name": "Public Safety",
+      "description": "Emergency-response, first-responder, and civic-protection missions.",
+      "display": {
+        "label": "Public Safety",
+        "short_label": "Public Safety",
+        "slug": "public-safety"
+      }
+    }
+  },
+  "score_schemas": {
+    "ss_navigation_v1": {
+      "score_schema_id": "ss_navigation_v1",
+      "name": "Navigation Benchmark Score",
+      "description": "Normalized navigation benchmark for safe, efficient waypoint completion.",
+      "normalized_score_range": [
+        0.0,
+        1.0
+      ],
+      "primary_metric": "mission_score",
+      "metrics": [
+        {
+          "metric_id": "mission_score",
+          "label": "Mission Score",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        },
+        {
+          "metric_id": "collision_free_rate",
+          "label": "Collision-Free Rate",
+          "kind": "ratio",
+          "objective": "maximize",
+          "unit": "ratio"
+        },
+        {
+          "metric_id": "path_efficiency",
+          "label": "Path Efficiency",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        },
+        {
+          "metric_id": "control_smoothness",
+          "label": "Control Smoothness",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        }
+      ]
+    },
+    "ss_search_and_rescue_v1": {
+      "score_schema_id": "ss_search_and_rescue_v1",
+      "name": "Search and Rescue Benchmark Score",
+      "description": "Normalized mission score for search coverage, target discovery, and safe completion under uncertainty.",
+      "normalized_score_range": [
+        0.0,
+        1.0
+      ],
+      "primary_metric": "mission_score",
+      "metrics": [
+        {
+          "metric_id": "mission_score",
+          "label": "Mission Score",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        },
+        {
+          "metric_id": "target_discovery_rate",
+          "label": "Target Discovery Rate",
+          "kind": "ratio",
+          "objective": "maximize",
+          "unit": "ratio"
+        },
+        {
+          "metric_id": "area_coverage",
+          "label": "Area Coverage",
+          "kind": "ratio",
+          "objective": "maximize",
+          "unit": "ratio"
+        },
+        {
+          "metric_id": "navigation_safety",
+          "label": "Navigation Safety",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        }
+      ]
+    }
+  },
+  "challenge_families": {
+    "cf_autopilot": {
+      "family_id": "cf_autopilot",
+      "name": "Autopilot / Navigation",
+      "description": "Baseline family for safe goal-directed navigation, obstacle avoidance, and control quality.",
+      "display": {
+        "label": "Autopilot / Navigation",
+        "short_label": "Autopilot",
+        "slug": "autopilot"
+      },
+      "family_state": "active",
+      "emissions_state": "active",
+      "skill_ids": [
+        "sk_autonomous_navigation"
+      ],
+      "market_vertical_ids": [
+        "mv_general_autonomy"
+      ],
+      "environment_types": [
+        "city",
+        "open",
+        "mountain",
+        "village",
+        "warehouse",
+        "forest"
+      ],
+      "score_schema_id": "ss_navigation_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
+        "early_fail_checkpoints": {
+          "50": 0.5,
+          "100": 0.7,
+          "150": 0.85
+        }
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.015
+      }
+    },
+    "cf_search_and_rescue": {
+      "family_id": "cf_search_and_rescue",
+      "name": "Search and Rescue",
+      "description": "Mission family for uncertain-area search, target discovery, coverage optimization, and rescue-oriented planning.",
+      "display": {
+        "label": "Search and Rescue",
+        "short_label": "SAR",
+        "slug": "search-and-rescue"
+      },
+      "family_state": "incubating",
+      "emissions_state": "incubating",
+      "skill_ids": [
+        "sk_autonomous_navigation",
+        "sk_search_and_rescue"
+      ],
+      "market_vertical_ids": [
+        "mv_public_safety"
+      ],
+      "environment_types": [
+        "city",
+        "open",
+        "mountain",
+        "village",
+        "warehouse",
+        "forest"
+      ],
+      "score_schema_id": "ss_search_and_rescue_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.02,
+        "min_improvement": 0.02,
+        "early_fail_checkpoints": {
+          "50": 0.45,
+          "100": 0.65,
+          "150": 0.8
+        }
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.02
+      }
+    }
+  },
+  "policy_interfaces": {
+    "cf_autopilot:submission_zip.v1": {
+      "family_id": "cf_autopilot",
+      "interface_version": "submission_zip.v1",
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "depth",
+          "state"
+        ],
+        "fields": {
+          "depth": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              128,
+              128,
+              1
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              "dynamic"
+            ],
+            "rank": 1,
+            "minimum_length": 16,
+            "semantic_channels": [
+              "position_xyz",
+              "orientation_rpy",
+              "linear_velocity_xyz",
+              "angular_velocity_xyz",
+              "action_history",
+              "altitude_norm",
+              "goal_offset_xyz"
+            ]
+          }
+        }
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": [
+          5
+        ],
+        "component_names": [
+          "dir_x",
+          "dir_y",
+          "dir_z",
+          "speed",
+          "yaw"
+        ],
+        "lower_bound": [
+          -1.0,
+          -1.0,
+          -1.0,
+          0.0,
+          -1.0
+        ],
+        "upper_bound": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "smoke_test_observation": {
+        "depth": {
+          "shape": [
+            128,
+            128,
+            1
+          ],
+          "fill": 0.25
+        },
+        "state": {
+          "shape": [
+            115
+          ],
+          "fill": 0.0
+        }
+      }
+    },
+    "cf_search_and_rescue:submission_zip.v1": {
+      "family_id": "cf_search_and_rescue",
+      "interface_version": "submission_zip.v1",
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "depth",
+          "state"
+        ],
+        "fields": {
+          "depth": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              128,
+              128,
+              1
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              "dynamic"
+            ],
+            "rank": 1,
+            "minimum_length": 16,
+            "semantic_channels": [
+              "position_xyz",
+              "orientation_rpy",
+              "linear_velocity_xyz",
+              "angular_velocity_xyz",
+              "action_history",
+              "altitude_norm",
+              "search_clue_offset_xyz"
+            ]
+          }
+        }
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": [
+          5
+        ],
+        "component_names": [
+          "dir_x",
+          "dir_y",
+          "dir_z",
+          "speed",
+          "yaw"
+        ],
+        "lower_bound": [
+          -1.0,
+          -1.0,
+          -1.0,
+          0.0,
+          -1.0
+        ],
+        "upper_bound": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "smoke_test_observation": {
+        "depth": {
+          "shape": [
+            128,
+            128,
+            1
+          ],
+          "fill": 0.25
+        },
+        "state": {
+          "shape": [
+            115
+          ],
+          "fill": 0.0
+        }
+      }
+    }
+  },
+  "legacy_aliases": {
+    "challenge_type_to_environment_type": {
+      "1": "city",
+      "2": "open",
+      "3": "mountain",
+      "4": "village",
+      "5": "warehouse",
+      "6": "forest"
+    },
+    "benchmark_group_to_environment_type": {
+      "type1_city": "city",
+      "type2_open": "open",
+      "type3_mountain": "mountain",
+      "type4_village": "village",
+      "type5_warehouse": "warehouse",
+      "type6_forest": "forest"
+    },
+    "field_renames": {
+      "challenge_type": "environment_type",
+      "map_type": "environment_type"
+    }
+  }
+}

@@ -53,7 +53,7 @@ swarm benchmark --model Submission/submission.zip --workers 3 --relax-timeouts -
 
 ### `swarm model verify`
 
-Validates a submission ZIP against Swarm rules — checks structure, size limits, path safety, and `drone_agent.py` compliance.
+Validates a submission ZIP against Swarm rules — checks structure, size limits, path safety, family policy-contract compatibility, and a local runtime smoke test for `DroneFlightController.act()`.
 
 ```bash
 swarm model verify --model Submission/submission.zip
@@ -61,13 +61,43 @@ swarm model verify --model Submission/submission.zip
 
 ### `swarm model package`
 
-Bundles a source folder into `Submission/submission.zip` (default path). Automatically includes `drone_agent.py`, `requirements.txt` (if present), and model artifacts (`.pt`, `.pth`, `.onnx`, `.zip`, etc.).
+Bundles a source folder into `Submission/submission.zip` (default path). Automatically includes `drone_agent.py`, `requirements.txt` (if present), model artifacts (`.pt`, `.pth`, `.onnx`, `.zip`, etc.), and a generated `swarm_policy_contract.json`.
 
 ```bash
 swarm model package --source ./my_agent
 
 # Custom output path
 swarm model package --source ./my_agent --output Submission/submission.zip --overwrite
+
+# Explicit family selection
+swarm model package --source ./my_agent --family-id cf_autopilot
+```
+
+### `swarm repo package`
+
+Builds or updates a repo-root multi-family submission layout. This writes artifact ZIPs under `artifacts/<family_id>/submission.zip` and updates `submission_manifest.json`.
+
+```bash
+# Package two families at once
+swarm repo package \
+  --repo-root ./my_submission_repo \
+  --family-source cf_search_and_rescue=./sar_agent \
+  --family-source cf_autopilot=./autopilot_agent
+
+# Update one family later without replacing the others
+swarm repo package \
+  --repo-root ./my_submission_repo \
+  --source ./autopilot_agent_v2 \
+  --family-id cf_autopilot \
+  --overwrite
+```
+
+### `swarm repo verify`
+
+Validates `submission_manifest.json`, artifact hashes/paths, family policy contracts, and runtime smoke tests for every published artifact in a repo layout.
+
+```bash
+swarm repo verify --repo-root ./my_submission_repo --strict-manifest
 ```
 
 ### `swarm model test`

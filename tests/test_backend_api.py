@@ -87,6 +87,8 @@ def test_load_runtime_state_missing_file_returns_defaults(monkeypatch, tmp_path)
         "last_weights": {},
         "reeval_queue": [],
         "assigned_tasks": [],
+        "rollout": {},
+        "validator_compatibility": {},
         "leaderboard_version": 0,
         "last_sync": 0,
         "benchmark_epoch": 0,
@@ -119,6 +121,7 @@ def test_sign_request_with_wallet_contains_expected_fields(monkeypatch, tmp_path
         assert headers["X-Validator-Signature"] == "0102"
         assert "X-Validator-Nonce" in headers
         assert "X-Validator-Timestamp" in headers
+        assert headers["X-Swarm-Validator-Contract"] == "family_sync.v1"
     finally:
         _run(client.close())
 
@@ -153,8 +156,69 @@ def test_authorize_task_posts_expected_payload(monkeypatch, tmp_path):
         assert captured["endpoint"] == "/validators/tasks/authorize"
         assert captured["data"]["uid"] == 114
         assert captured["data"]["phase"] == "BENCHMARK"
+        assert captured["data"]["family_id"] == "cf_search_and_rescue"
         assert captured["data"]["assignment_id"] == 7
         assert captured["data"]["epoch_number"] == 3
+    finally:
+        _run(client.close())
+
+
+def test_post_screening_includes_family_id(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+        captured = {}
+
+        async def _fake_post(endpoint, data):
+            captured["endpoint"] = endpoint
+            captured["data"] = data
+            return {"recorded": True}
+
+        monkeypatch.setattr(client, "_post_signed", _fake_post)
+        result = _run(
+            client.post_screening(
+                uid=114,
+                validator_hotkey="validator-hotkey",
+                validator_stake=5000.0,
+                screening_score=0.61,
+                family_id="cf_autopilot",
+            )
+        )
+        assert result == {"recorded": True}
+        assert captured["endpoint"] == "/validators/models/114/screening"
+        assert captured["data"]["family_id"] == "cf_autopilot"
+    finally:
+        _run(client.close())
+
+
+def test_post_score_includes_family_id(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+        captured = {}
+
+        async def _fake_post(endpoint, data):
+            captured["endpoint"] = endpoint
+            captured["data"] = data
+            return {"recorded": True}
+
+        monkeypatch.setattr(client, "_post_signed", _fake_post)
+        result = _run(
+            client.post_score(
+                uid=115,
+                validator_hotkey="validator-hotkey",
+                validator_stake=5000.0,
+                model_hash="a" * 64,
+                total_score=0.77,
+                per_type_scores={"city": 0.77},
+                seeds_evaluated=800,
+                epoch_number=9,
+                family_id="cf_autopilot",
+            )
+        )
+        assert result == {"recorded": True}
+        assert captured["endpoint"] == "/validators/models/115/score"
+        assert captured["data"]["family_id"] == "cf_autopilot"
+        assert captured["data"]["metric_breakdown"] == {"city": 0.77}
+        assert captured["data"]["per_type_scores"] == {"city": 0.77}
     finally:
         _run(client.close())
 
@@ -177,13 +241,14 @@ def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
                 progress=10,
                 total_seeds=800,
                 queue=[{"uid": 114, "phase": "benchmark", "status": "benchmark", "enqueue_time": "2026-04-15T17:00:00Z"}],
-                active_task={"uid": 114, "phase": "BENCHMARK", "assignment_id": 9},
+                active_task={"uid": 114, "phase": "BENCHMARK", "assignment_id": 9, "family_id": "cf_autopilot"},
                 backend_decision_version=12,
             )
         )
         assert result == {"recorded": True}
         assert captured["endpoint"] == "/validators/heartbeat"
         assert captured["data"]["active_task"]["assignment_id"] == 9
+        assert captured["data"]["active_task"]["family_id"] == "cf_autopilot"
         assert captured["data"]["backend_decision_version"] == 12
     finally:
         _run(client.close())
@@ -273,18 +338,33 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
             return {
                 "current_champion": {
                     "uid": 2,
+                    "family_id": "cf_search_and_rescue",
                     "benchmark_score": 0.91,
                     "model_hash": "abc",
                 },
                 "weights": {"2": 1.0},
-                "reeval_queue": [{"uid": 2, "reason": "reeval"}],
+                "reeval_queue": [{"uid": 2, "family_id": "cf_search_and_rescue", "reason": "reeval"}],
                 "leaderboard_version": 9,
+                "rollout": {
+                    "mode": "staged",
+                    "default_family_id": "cf_search_and_rescue",
+                    "enabled_family_ids": ["cf_search_and_rescue"],
+                    "required_validator_contract": "family_sync.v1",
+                },
+                "validator_compatibility": {
+                    "validator_contract": "family_sync.v1",
+                    "compatible": True,
+                    "upgrade_required": False,
+                    "safe_family_ids": ["cf_search_and_rescue"],
+                    "reason": "validator_contract_accepted",
+                },
                 "benchmark_epoch": 7,
                 "assigned_tasks": [
                     {
                         "task_id": 5,
                         "uid": 3,
                         "phase": "SCREENING",
+                        "family_id": "cf_autopilot",
                         "status": "QUEUED",
                         "priority": 20,
                         "assigned_at": "2026-04-15T18:00:00Z",
@@ -293,6 +373,7 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
                 "pending_models": [
                     {
                         "uid": 3,
+                        "family_id": "cf_autopilot",
                         "model_hash": "pending-hash",
                         "github_url": "https://github.com/example/pending-model",
                     }
@@ -302,13 +383,21 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
         monkeypatch.setattr(client, "_get_signed", _fake_get)
         result = _run(client.sync())
         assert result["current_top"]["uid"] == 2
+        assert result["current_top"]["family_id"] == "cf_search_and_rescue"
         assert result["weights"] == {"2": 1.0}
+        assert result["reeval_queue"] == [
+            {"uid": 2, "family_id": "cf_search_and_rescue", "reason": "reeval"}
+        ]
         assert result["leaderboard_version"] == 9
         assert result["benchmark_epoch"] == 7
         assert result["assigned_tasks"][0]["task_id"] == 5
+        assert result["assigned_tasks"][0]["family_id"] == "cf_autopilot"
+        assert result["rollout"]["mode"] == "staged"
+        assert result["validator_compatibility"]["compatible"] is True
         assert result["pending_models"] == [
             {
                 "uid": 3,
+                "family_id": "cf_autopilot",
                 "model_hash": "pending-hash",
                 "github_url": "https://github.com/example/pending-model",
             }
@@ -324,6 +413,8 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         "last_weights": {"7": 1.0},
         "reeval_queue": [{"uid": 7, "reason": "cached"}],
         "assigned_tasks": [{"task_id": 11, "uid": 7, "phase": "SCREENING", "status": "QUEUED"}],
+        "rollout": {"mode": "single_family"},
+        "validator_compatibility": {"compatible": True},
         "leaderboard_version": 3,
         "last_sync": 1,
         "benchmark_epoch": 8,
@@ -341,6 +432,8 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         assert result["weights"] == {"7": 1.0}
         assert result["current_top"] == {"uid": 7}
         assert result["assigned_tasks"] == [{"task_id": 11, "uid": 7, "phase": "SCREENING", "status": "QUEUED"}]
+        assert result["rollout"] == {"mode": "single_family"}
+        assert result["validator_compatibility"] == {"compatible": True}
         assert result["benchmark_epoch"] == 8
     finally:
         _run(client.close())
@@ -385,6 +478,7 @@ def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
             assert endpoint == "/validators/epoch/publish"
             assert data == {
                 "epoch_number": 7,
+                "family_id": "cf_autopilot",
                 "seeds": [11, 12, 13],
                 "started_at": "2026-03-25T10:00:00Z",
                 "ended_at": "2026-03-25T10:10:00Z",
@@ -396,6 +490,7 @@ def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
         result = _run(
             client.publish_epoch_seeds(
                 epoch_number=7,
+                family_id="cf_autopilot",
                 seeds=[11, 12, 13],
                 started_at="2026-03-25T10:00:00Z",
                 ended_at="2026-03-25T10:10:00Z",

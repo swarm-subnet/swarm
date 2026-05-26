@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import queue
 import sys
 import threading
@@ -588,8 +589,15 @@ def test_scheduler_can_demote_heavy_group_one_step_after_consistent_healthy_samp
 def test_save_and_load_type_seeds(tmp_path):
     seed_file = tmp_path / "seeds.json"
     payload = {group: [i + 1] for i, group in enumerate(bench_full_eval.BENCH_GROUP_ORDER)}
-    bench_full_eval._save_type_seeds(seed_file, payload)
-    assert bench_full_eval._load_type_seeds(seed_file) == payload
+    bench_full_eval._save_type_seeds(seed_file, payload, family_id="cf_autopilot")
+    assert bench_full_eval._load_type_seeds(seed_file, family_id="cf_autopilot") == payload
+
+
+def test_load_type_seeds_accepts_legacy_payload(tmp_path):
+    seed_file = tmp_path / "legacy-seeds.json"
+    payload = {group: [i + 1] for i, group in enumerate(bench_full_eval.BENCH_GROUP_ORDER)}
+    seed_file.write_text(json.dumps(payload))
+    assert bench_full_eval._load_type_seeds(seed_file, family_id="cf_search_and_rescue") == payload
 
 
 def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):

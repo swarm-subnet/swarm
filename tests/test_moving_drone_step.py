@@ -23,8 +23,6 @@ def test_step_runs_collision_bookkeeping_after_physics(monkeypatch) -> None:
     env._step_processed = False
     env._collision = False
     env._success = False
-    env.sar_mode = True
-    env.sar_world = None
     env.action_space = spaces.Box(
         low=-1.0,
         high=1.0,
@@ -52,7 +50,7 @@ def test_step_runs_collision_bookkeeping_after_physics(monkeypatch) -> None:
         return False, False
 
     env._check_collision = _check_collision
-    env._sar_step_update = lambda: order.append("sar_step")
+    env._family_post_step_update = lambda: order.append("family_step")
     env._update_min_clearance = lambda: order.append("clearance")
     env._apply_distance_cull = lambda: order.append("cull")
     env._computeObs = lambda: {}
@@ -64,5 +62,5 @@ def test_step_runs_collision_bookkeeping_after_physics(monkeypatch) -> None:
     moving_drone_mod.MovingDroneAviary.step(env, np.zeros((1, 4), dtype=np.float32))
 
     assert order.index("step_sim") < order.index("collision_check")
-    assert order.index("collision_check") < order.index("sar_step")
+    assert order.index("collision_check") < order.index("family_step")
     assert abs(env._time_alive - (1.0 / env.CTRL_FREQ)) < 1e-9

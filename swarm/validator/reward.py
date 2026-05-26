@@ -39,7 +39,16 @@ from swarm.constants import (
     SPEED_LIMIT,
 )
 
-__all__ = ["flight_reward"]
+__all__ = [
+    "PARTICIPATION_REASONS",
+    "PARTICIPATION_REWARD",
+    "_calculate_safety_term",
+    "_calculate_sar_target_time",
+    "_calculate_target_time",
+    "_clamp",
+    "calculate_time_term",
+    "flight_reward",
+]
 
 
 PARTICIPATION_REASONS = frozenset({
@@ -95,6 +104,22 @@ def _calculate_safety_term(
     if min_clearance <= SAFETY_DISTANCE_DANGER:
         return 0.0
     return (min_clearance - SAFETY_DISTANCE_DANGER) / (safe - SAFETY_DISTANCE_DANGER)
+
+
+def calculate_time_term(
+    *,
+    t: float,
+    horizon: float,
+    target_time: Optional[float],
+) -> float:
+    """Calculate a normalized time-efficiency term in ``[0, 1]``."""
+    if target_time is None:
+        return _clamp(1.0 - t / horizon)
+    if t <= target_time:
+        return 1.0
+    if horizon <= target_time:
+        return 0.0
+    return _clamp(1.0 - (t - target_time) / (horizon - target_time))
 
 
 def flight_reward(
@@ -161,21 +186,14 @@ def flight_reward(
 
     success_term = 1.0
 
+    target_time = None
     if task is not None:
         target_time = (
             _calculate_sar_target_time(task)
             if sar_mode
             else _calculate_target_time(task)
         )
-
-        if t <= target_time:
-            time_term = 1.0
-        elif horizon <= target_time:
-            time_term = 0.0
-        else:
-            time_term = _clamp(1.0 - (t - target_time) / (horizon - target_time))
-    else:
-        time_term = _clamp(1.0 - t / horizon)
+    time_term = calculate_time_term(t=t, horizon=horizon, target_time=target_time)
 
     challenge_type = getattr(task, "challenge_type", 0) if task is not None else 0
     if min_clearance is not None:

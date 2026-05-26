@@ -17,6 +17,29 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from swarm.constants import N_DOCKER_WORKERS
+from swarm.domain_model import (
+    BENCHMARK_GROUP_TO_CHALLENGE_TYPE,
+    CHALLENGE_FAMILY_IDS,
+    CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
+)
+from swarm.policy_interface import (
+    POLICY_CONTRACT_FILENAME,
+    PolicyInterfaceError,
+    render_artifact_policy_contract,
+    resolve_policy_interface_version,
+    smoke_test_policy_package,
+    verify_policy_package_contract,
+)
+from swarm.submission_manifest import (
+    LEGACY_FALLBACK,
+    REPO_LAYOUT_RULES,
+    SUBMISSION_MANIFEST_FILENAME,
+    SubmissionArtifact,
+    SubmissionManifestError,
+    load_submission_manifest,
+    validate_submission_repo,
+    write_submission_manifest,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
@@ -83,30 +106,9 @@ REPORT_FIELD_PATTERNS = {
 }
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-BENCH_GROUP_ORDER = [
-    "type1_city",
-    "type2_open",
-    "type3_mountain",
-    "type4_village",
-    "type5_warehouse",
-    "type6_forest",
-]
-BENCH_GROUP_TO_TYPE = {
-    "type1_city": 1,
-    "type2_open": 2,
-    "type3_mountain": 3,
-    "type4_village": 4,
-    "type5_warehouse": 5,
-    "type6_forest": 6,
-}
-TYPE_LABELS = {
-    1: "city",
-    2: "open",
-    3: "mountain",
-    4: "village",
-    5: "warehouse",
-    6: "forest",
-}
+BENCH_GROUP_ORDER = list(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
+BENCH_GROUP_TO_TYPE = dict(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
+TYPE_LABELS = dict(CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE)
 
 
 @dataclass
@@ -115,6 +117,22 @@ class DoctorCheck:
     ok: bool
     detail: str
     required: bool = True
+
+
+@dataclass(frozen=True)
+class PackagedModelArtifact:
+    family_id: str
+    interface_version: str
+    output_zip: Path
+    sha256: str
+    packaged_files_count: int
+
+
+@dataclass(frozen=True)
+class RepoPackageSource:
+    family_id: str
+    source_dir: Path
+    interface_version: str | None = None
 
 
 
@@ -467,23 +485,31 @@ def _collect_packable_files(source_dir: Path) -> list[Path]:
     return files
 
 
-def _cmd_model_package(args: argparse.Namespace) -> int:
-    source_dir = Path(args.source)
-    output_zip = Path(args.output)
+def _sha256sum(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
 
+
+def _package_model_artifact(
+    *,
+    source_dir: Path,
+    output_zip: Path,
+    family_id: str,
+    interface_version: str | None,
+    overwrite: bool,
+) -> PackagedModelArtifact:
     if not source_dir.is_dir():
-        print(f"Source directory not found: {source_dir}", file=sys.stderr)
-        return 1
+        raise ValueError(f"Source directory not found: {source_dir}")
     drone_agent = source_dir / "drone_agent.py"
     if not drone_agent.exists():
-        print("Source must contain drone_agent.py", file=sys.stderr)
-        return 1
-    if output_zip.exists() and not args.overwrite:
-        print(
-            f"Output already exists: {output_zip} (use --overwrite to replace)",
-            file=sys.stderr,
+        raise ValueError("Source must contain drone_agent.py")
+    if output_zip.exists() and not overwrite:
+        raise ValueError(
+            f"Output already exists: {output_zip} (use --overwrite to replace)"
         )
-        return 1
 
     output_zip.parent.mkdir(parents=True, exist_ok=True)
     files_to_pack = _collect_packable_files(source_dir)
@@ -491,12 +517,153 @@ def _cmd_model_package(args: argparse.Namespace) -> int:
         files_to_pack.append(drone_agent)
         files_to_pack.sort()
 
+    try:
+        interface_version = resolve_policy_interface_version(
+            family_id,
+            interface_version,
+        )
+        policy_contract_json = render_artifact_policy_contract(
+            family_id,
+            interface_version,
+        )
+    except PolicyInterfaceError as exc:
+        raise ValueError(str(exc)) from exc
+
     with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         for file_path in files_to_pack:
             zf.write(file_path, arcname=str(file_path.relative_to(source_dir)))
+        zf.writestr(POLICY_CONTRACT_FILENAME, policy_contract_json)
 
-    print(f"Created package: {output_zip}")
-    print(f"Files included: {len(files_to_pack)}")
+    return PackagedModelArtifact(
+        family_id=family_id,
+        interface_version=interface_version,
+        output_zip=output_zip,
+        sha256=_sha256sum(output_zip),
+        packaged_files_count=len(files_to_pack) + 1,
+    )
+
+
+def _default_repo_artifact_relpath(family_id: str) -> str:
+    artifact_basename = Path(str(LEGACY_FALLBACK["artifact_path"])).name
+    return (
+        Path(REPO_LAYOUT_RULES["artifacts_dir"]) / family_id / artifact_basename
+    ).as_posix()
+
+
+def _parse_repo_family_source(raw_value: str) -> RepoPackageSource:
+    family_and_version, separator, source_token = raw_value.partition("=")
+    if not separator or not source_token.strip():
+        raise ValueError(
+            "invalid_family_source:expected FAMILY_ID=PATH or FAMILY_ID@INTERFACE_VERSION=PATH"
+        )
+    family_id, version_separator, interface_version = family_and_version.partition("@")
+    family_id = family_id.strip()
+    if family_id not in CHALLENGE_FAMILY_IDS:
+        raise ValueError(f"unsupported_family_id:{family_id}")
+    normalized_version = interface_version.strip() if version_separator else None
+    return RepoPackageSource(
+        family_id=family_id,
+        source_dir=Path(source_token.strip()),
+        interface_version=normalized_version or None,
+    )
+
+
+def _resolve_repo_package_sources(args: argparse.Namespace) -> list[RepoPackageSource]:
+    specs: list[RepoPackageSource] = []
+    for raw_value in args.family_source or ():
+        specs.append(_parse_repo_family_source(raw_value))
+
+    if args.source is not None or args.family_id is not None:
+        if args.source is None or args.family_id is None:
+            raise ValueError("repo_package_requires_source_and_family_id_together")
+        specs.append(
+            RepoPackageSource(
+                family_id=str(args.family_id),
+                source_dir=Path(args.source),
+                interface_version=args.interface_version,
+            )
+        )
+
+    if not specs:
+        raise ValueError("no_family_sources_specified")
+
+    seen_family_ids: set[str] = set()
+    for spec in specs:
+        if spec.family_id in seen_family_ids:
+            raise ValueError(f"duplicate_family_id:{spec.family_id}")
+        seen_family_ids.add(spec.family_id)
+    return specs
+
+
+def _inspect_submission_repo(
+    repo_root: Path,
+    *,
+    allow_legacy_fallback: bool = True,
+) -> tuple[bool, str, list[dict[str, Any]]]:
+    ok, reason, manifest = validate_submission_repo(
+        repo_root,
+        allow_legacy_fallback=allow_legacy_fallback,
+    )
+    if not ok or manifest is None:
+        return False, reason, []
+
+    artifact_reports: list[dict[str, Any]] = []
+    first_failure = "ok"
+    repo_ok = True
+    for artifact in manifest.artifacts:
+        artifact_file = repo_root / artifact.artifact_path
+        contract_ok, contract_reason, contract = verify_policy_package_contract(artifact_file)
+        smoke_ok = False
+        smoke_reason = "skipped_due_to_contract_failure"
+        if contract_ok:
+            smoke_ok, smoke_reason = smoke_test_policy_package(artifact_file)
+        compliant = bool(contract_ok and smoke_ok)
+        artifact_reports.append(
+            {
+                "family_id": artifact.family_id,
+                "artifact_path": artifact.artifact_path,
+                "sha256": artifact.sha256,
+                "interface_version": artifact.interface_version,
+                "metadata": dict(artifact.metadata),
+                "policy_contract_ok": contract_ok,
+                "policy_contract_reason": contract_reason,
+                "runtime_smoke_ok": smoke_ok,
+                "runtime_smoke_reason": smoke_reason,
+                "legacy_fallback_used": manifest.legacy_fallback_used,
+                "compliant": compliant,
+                "policy_contract": contract,
+            }
+        )
+        if not compliant and repo_ok:
+            repo_ok = False
+            first_failure = (
+                f"policy_contract:{artifact.family_id}:{contract_reason}"
+                if not contract_ok
+                else f"runtime_smoke:{artifact.family_id}:{smoke_reason}"
+            )
+
+    return repo_ok, first_failure, artifact_reports
+
+
+def _cmd_model_package(args: argparse.Namespace) -> int:
+    source_dir = Path(args.source)
+    output_zip = Path(args.output)
+    try:
+        packaged = _package_model_artifact(
+            source_dir=source_dir,
+            output_zip=output_zip,
+            family_id=str(args.family_id),
+            interface_version=args.interface_version,
+            overwrite=bool(args.overwrite),
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(f"Created package: {packaged.output_zip}")
+    print(f"Files included: {packaged.packaged_files_count}")
+    print(f"Policy family: {packaged.family_id}")
+    print(f"Policy interface: {packaged.interface_version}")
     return 0
 
 
@@ -519,7 +686,18 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
     zip_safe = zip_is_safe(model_path, max_uncompressed=max_uncompressed)
     inspection = inspect_model_structure(model_path)
     status, reason = classify_model_validity(inspection)
-    compliant = bool(size_ok and zip_safe and status == "legitimate")
+    contract_ok, contract_reason, contract = verify_policy_package_contract(model_path)
+    smoke_ok = False
+    smoke_reason = "skipped_due_to_contract_failure"
+    if contract_ok:
+        smoke_ok, smoke_reason = smoke_test_policy_package(model_path)
+    compliant = bool(
+        size_ok
+        and zip_safe
+        and status == "legitimate"
+        and contract_ok
+        and smoke_ok
+    )
 
     payload = {
         "model": str(model_path),
@@ -530,6 +708,11 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
         "zip_safe": zip_safe,
         "status": status,
         "reason": reason,
+        "policy_contract_ok": contract_ok,
+        "policy_contract_reason": contract_reason,
+        "runtime_smoke_ok": smoke_ok,
+        "runtime_smoke_reason": smoke_reason,
+        "policy_contract": contract,
         "inspection": inspection,
     }
 
@@ -538,8 +721,112 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
     print(f"Status: {payload['status']}")
     print(f"Reason: {payload['reason']}")
     print(f"Size: {payload['size_bytes']} bytes (limit {payload['size_limit_bytes']})")
+    print(f"Policy contract: {payload['policy_contract_ok']} ({payload['policy_contract_reason']})")
+    if payload["policy_contract"] is not None:
+        print(f"Policy family: {payload['policy_contract']['family_id']}")
+        print(f"Policy interface: {payload['policy_contract']['interface_version']}")
+    print(f"Runtime smoke: {payload['runtime_smoke_ok']} ({payload['runtime_smoke_reason']})")
 
     return 0 if compliant else 1
+
+
+def _cmd_repo_package(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    repo_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        package_sources = _resolve_repo_package_sources(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    existing_artifacts: dict[str, SubmissionArtifact] = {}
+    manifest_path = repo_root / SUBMISSION_MANIFEST_FILENAME
+    if manifest_path.exists():
+        try:
+            existing_manifest = load_submission_manifest(manifest_path)
+        except SubmissionManifestError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        existing_artifacts = {
+            artifact.family_id: artifact for artifact in existing_manifest.artifacts
+        }
+
+    packaged_artifacts: list[PackagedModelArtifact] = []
+    for spec in package_sources:
+        artifact_relpath = _default_repo_artifact_relpath(spec.family_id)
+        artifact_output = repo_root / artifact_relpath
+        try:
+            packaged = _package_model_artifact(
+                source_dir=spec.source_dir,
+                output_zip=artifact_output,
+                family_id=spec.family_id,
+                interface_version=spec.interface_version,
+                overwrite=bool(args.overwrite),
+            )
+        except ValueError as exc:
+            print(f"{spec.family_id}: {exc}", file=sys.stderr)
+            return 1
+
+        existing_artifacts[spec.family_id] = SubmissionArtifact(
+            family_id=packaged.family_id,
+            interface_version=packaged.interface_version,
+            artifact_path=artifact_relpath,
+            sha256=packaged.sha256,
+            metadata={
+                "packaged_with": "swarm_cli",
+                "source_dir_name": spec.source_dir.name,
+            },
+        )
+        packaged_artifacts.append(packaged)
+
+    write_submission_manifest(repo_root, tuple(existing_artifacts.values()))
+
+    print(f"Repo root: {repo_root}")
+    print(f"Manifest: {repo_root / SUBMISSION_MANIFEST_FILENAME}")
+    print(f"Artifacts updated: {len(packaged_artifacts)}")
+    for packaged in packaged_artifacts:
+        print(
+            f"- {packaged.family_id}: {packaged.output_zip} "
+            f"({packaged.interface_version}, sha256={packaged.sha256[:12]}...)"
+        )
+    print("Run `swarm repo verify --repo-root <path>` before publishing.")
+    return 0
+
+
+def _cmd_repo_verify(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    if not repo_root.is_dir():
+        print(f"Repo root not found: {repo_root}", file=sys.stderr)
+        return 1
+
+    repo_ok, reason, artifact_reports = _inspect_submission_repo(
+        repo_root,
+        allow_legacy_fallback=not args.strict_manifest,
+    )
+
+    manifest_path = repo_root / SUBMISSION_MANIFEST_FILENAME
+    print(f"Repo: {repo_root}")
+    print(f"Manifest path: {manifest_path}")
+    print(f"Compliant: {repo_ok}")
+    if not artifact_reports:
+        print(f"Reason: {reason}")
+        return 0 if repo_ok else 1
+
+    for report in artifact_reports:
+        print(f"Family: {report['family_id']}")
+        print(f"Artifact: {report['artifact_path']}")
+        print(
+            "Policy contract: "
+            f"{report['policy_contract_ok']} ({report['policy_contract_reason']})"
+        )
+        print(
+            "Runtime smoke: "
+            f"{report['runtime_smoke_ok']} ({report['runtime_smoke_reason']})"
+        )
+    if not repo_ok:
+        print(f"Reason: {reason}")
+    return 0 if repo_ok else 1
 
 
 def _cmd_model_test(args: argparse.Namespace) -> int:
@@ -935,6 +1222,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite output zip if it exists.",
     )
+    model_package_parser.add_argument(
+        "--family-id",
+        choices=sorted(CHALLENGE_FAMILY_IDS),
+        default="cf_search_and_rescue",
+        help="Challenge family implemented by this artifact.",
+    )
+    model_package_parser.add_argument(
+        "--interface-version",
+        default=None,
+        help=(
+            "Explicit policy interface version. Defaults to the first supported "
+            "version for the selected family."
+        ),
+    )
     model_package_parser.set_defaults(func=_cmd_model_package)
 
     model_test_parser = model_subparsers.add_parser(
@@ -948,6 +1249,72 @@ def build_parser() -> argparse.ArgumentParser:
         help="Source directory containing drone_agent.py.",
     )
     model_test_parser.set_defaults(func=_cmd_model_test)
+
+    repo_parser = subparsers.add_parser(
+        "repo",
+        help="Repository-level multi-family packaging and verification.",
+    )
+    repo_subparsers = repo_parser.add_subparsers(dest="repo_command", required=True)
+
+    repo_package_parser = repo_subparsers.add_parser(
+        "package",
+        help="Build or update a multi-family submission repo manifest and artifacts.",
+    )
+    repo_package_parser.add_argument(
+        "--repo-root",
+        type=Path,
+        required=True,
+        help="Repo root where submission_manifest.json and artifacts/ live.",
+    )
+    repo_package_parser.add_argument(
+        "--family-source",
+        action="append",
+        default=[],
+        help=(
+            "Family source mapping in the form FAMILY_ID=PATH or "
+            "FAMILY_ID@INTERFACE_VERSION=PATH. May be repeated."
+        ),
+    )
+    repo_package_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="Single-family source directory shortcut.",
+    )
+    repo_package_parser.add_argument(
+        "--family-id",
+        choices=sorted(CHALLENGE_FAMILY_IDS),
+        default=None,
+        help="Single-family shortcut for --source.",
+    )
+    repo_package_parser.add_argument(
+        "--interface-version",
+        default=None,
+        help="Optional interface version for the single-family shortcut.",
+    )
+    repo_package_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite targeted artifact ZIPs if they already exist.",
+    )
+    repo_package_parser.set_defaults(func=_cmd_repo_package)
+
+    repo_verify_parser = repo_subparsers.add_parser(
+        "verify",
+        help="Verify a repo-root submission manifest and all published artifacts.",
+    )
+    repo_verify_parser.add_argument(
+        "--repo-root",
+        type=Path,
+        required=True,
+        help="Repo root containing submission_manifest.json.",
+    )
+    repo_verify_parser.add_argument(
+        "--strict-manifest",
+        action="store_true",
+        help="Require submission_manifest.json and disable legacy submission.zip fallback.",
+    )
+    repo_verify_parser.set_defaults(func=_cmd_repo_verify)
 
     report_parser = subparsers.add_parser(
         "report",

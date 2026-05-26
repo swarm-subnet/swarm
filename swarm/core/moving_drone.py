@@ -14,7 +14,7 @@ from gym_pybullet_drones.utils.enums import (
     DroneModel, Physics, ActionType, ObservationType, ImageType,
 )
 
-from swarm.validator.reward import flight_reward
+from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
 from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
@@ -57,8 +57,8 @@ class MovingDroneAviary(BaseRLAviary):
     Single‑drone environment whose *start*, *goal* and *horizon* are supplied
     via an external `MapTask`.
 
-    The per‑step reward is the **increment** of `flight_reward`, so it can be
-    fed directly to PPO/TD3/etc. without extra shaping.
+    The per-step reward is the incremental change in the family-owned rollout
+    score so training loops can consume it without additional shaping.
     """
     MAX_TILT_RAD: float = 1.047         # safety cut‑off for roll / pitch (rad)
     _fov: float = 90.0
@@ -85,15 +85,16 @@ class MovingDroneAviary(BaseRLAviary):
         task : MapTask
             Must expose `.start`, `.goal`, `.horizon`, `.sim_dt`.
         sar_mode : bool
-            Retained for backward compatibility — V5 SAR is the only mode now.
+            Backward-compatible family runtime hint. The active challenge
+            family may normalize or ignore it.
         """
         self.task       = task
         self._original_start = tuple(task.start)
         self._original_goal = tuple(task.goal)
         self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
-        self.sar_mode   = True
-        self.sar_world  = None
+        self.family_runtime = runtime_family_for_task(task)
+        self.sar_mode = bool(sar_mode)
 
         self._time_alive = 0.0
         self._success = False
@@ -105,16 +106,13 @@ class MovingDroneAviary(BaseRLAviary):
 
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
-        self._sar_predicate_active = False
-        self._sar_dwell_time = 0.0
-        self._sar_spawn_failed = False
-        self._sar_max_dwell_observed = 0.0
-        self._sar_min_horizontal_distance = float("inf")
-        self._sar_min_sphere_distance = float("inf")
-        self._sar_spawn_attempts = 0
 
         seed = getattr(task, 'map_seed', 0)
         self._search_area_center = self.GOAL_POS.copy()
+        self.family_runtime.initialise_env_state(
+            self,
+            requested_mode=bool(sar_mode),
+        )
 
         fov_rng = np.random.RandomState(seed)
         fov_rng.rand()
@@ -157,7 +155,7 @@ class MovingDroneAviary(BaseRLAviary):
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
 
         action_dim = self.action_space.shape[-1]
-        clue_dim = 2 if self.sar_mode else 3
+        clue_dim = int(self.family_runtime.state_clue_dim(task))
         state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + clue_dim
         self._state_dim = state_dim
         self._clue_dim = clue_dim
@@ -332,8 +330,10 @@ class MovingDroneAviary(BaseRLAviary):
         cli = getattr(self, "CLIENT", 0)
         drone_id = self.DRONE_IDS[0]
         ground_id = getattr(self, "PLANE_ID", 0)
-        victim_uids = set(self.sar_world.victim_uids) if self.sar_world else set()
-        protected = {drone_id, ground_id} | victim_uids
+        protected = (
+            {drone_id, ground_id}
+            | set(self.family_runtime.protected_body_uids(self))
+        )
 
         targets = []
         total_faces = 0
@@ -430,11 +430,8 @@ class MovingDroneAviary(BaseRLAviary):
         ground_id = getattr(self, 'PLANE_ID', 0)
         excluded = {drone_id, -1, ground_id}
 
-        sar_world = self.sar_world
-        safety_patch = None
-        if sar_world is not None:
-            excluded |= set(sar_world.victim_uids)
-            safety_patch = sar_world.safety_patch
+        excluded |= set(self.family_runtime.protected_body_uids(self))
+        safety_patch = self.family_runtime.safety_patch(self)
 
         min_dist = SAFETY_DISTANCE_SAFE
 
@@ -495,36 +492,22 @@ class MovingDroneAviary(BaseRLAviary):
 
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
-        self._sar_predicate_active = False
-        self._sar_dwell_time = 0.0
-        self._sar_spawn_failed = False
-        self._sar_max_dwell_observed = 0.0
-        self._sar_min_horizontal_distance = float("inf")
-        self._sar_min_sphere_distance = float("inf")
+        self.family_runtime.reset_env_state(self)
 
         self._reset_action_buffer()
 
-        self._prev_score = flight_reward(
+        self._prev_score = evaluate_rollout(
+            task=self.task,
             success=False,
             t=0.0,
             horizon=self.EP_LEN_SEC,
-            task=None,
             min_clearance=self._min_clearance_episode,
             collision=self._collision,
-        )
+            legitimate_model=True,
+            failure_reason=self._failure_reason,
+        ).score
 
-        self._spawn_task_world()
-        if self.sar_world is not None:
-            sc = self.sar_world.search_centre or (0.0, 0.0)
-            self._search_area_center = np.array(
-                [float(sc[0]), float(sc[1]), 0.0], dtype=float
-            )
-            try:
-                self.task.search_centre = (float(sc[0]), float(sc[1]))
-            except Exception:
-                pass
-        else:
-            self._search_area_center = self.GOAL_POS.copy()
+        self.family_runtime.spawn_task_world(self)
         self._updateAndStoreKinematicInformation()
 
         cli = getattr(self, "CLIENT", 0)
@@ -663,79 +646,24 @@ class MovingDroneAviary(BaseRLAviary):
         self._step_processed = True
         self._time_alive += self._sim_dt
         self._check_collision()
-        self._sar_step_update()
+        self._family_post_step_update()
         self._update_min_clearance()
         self._apply_distance_cull()
 
+    def _family_post_step_update(self) -> None:
+        self.family_runtime.post_step_update(self)
+
+    def _legacy_sar_runtime(self):
+        return self.family_runtime
+
     def _sar_drone_state(self):
-        state = self._getDroneStateVector(0)
-        return state[0:3], state[10:13]
+        return self._legacy_sar_runtime().legacy_sar_drone_state(self)
 
     def _sar_check_predicate(self) -> bool:
-        from swarm.constants import (
-            SAR_CONFIRM_HORIZ_RADIUS,
-            SAR_CONFIRM_SPEED_MAX,
-            SAR_HOVER_BAND,
-            SAR_HYSTERESIS_GRACE,
-            SAR_NO_TOUCH_RADIUS,
-        )
-
-        if self.sar_world is None:
-            return False
-
-        pos, vel = self._sar_drone_state()
-        vc = np.asarray(self.sar_world.victim_centre, dtype=float)
-        _, v_max = self.sar_world.victim_aabb
-        victim_top_z = float(v_max[2])
-
-        horiz = float(np.linalg.norm(pos[0:2] - vc[0:2]))
-        height_above = float(pos[2] - victim_top_z)
-        speed = float(np.linalg.norm(vel))
-        dist_3d = float(np.linalg.norm(pos - vc))
-
-        if horiz < self._sar_min_horizontal_distance:
-            self._sar_min_horizontal_distance = horiz
-        if dist_3d < self._sar_min_sphere_distance:
-            self._sar_min_sphere_distance = dist_3d
-
-        grace = SAR_HYSTERESIS_GRACE if self._sar_predicate_active else 0.0
-        horiz_max = SAR_CONFIRM_HORIZ_RADIUS + grace
-        speed_max = SAR_CONFIRM_SPEED_MAX + grace
-        band_lo = SAR_HOVER_BAND[0] - grace
-        band_hi = SAR_HOVER_BAND[1] + grace
-
-        if dist_3d < SAR_NO_TOUCH_RADIUS:
-            return False
-        if horiz > horiz_max:
-            return False
-        if speed > speed_max:
-            return False
-        if not (band_lo <= height_above <= band_hi):
-            return False
-        return True
+        return self._legacy_sar_runtime().legacy_sar_check_predicate(self)
 
     def _sar_step_update(self) -> None:
-        from swarm.constants import SAR_DWELL_SEC
-        from swarm.protocol import FailureReason
-
-        if self._sar_spawn_failed:
-            if self._failure_reason == FailureReason.NONE.value:
-                self._failure_reason = FailureReason.SPAWN_FAILURE.value
-            return
-
-        active = self._sar_check_predicate()
-        if active:
-            self._sar_predicate_active = True
-            self._sar_dwell_time += self._sim_dt
-            if self._sar_dwell_time > self._sar_max_dwell_observed:
-                self._sar_max_dwell_observed = self._sar_dwell_time
-            if self._sar_dwell_time >= SAR_DWELL_SEC and not self._success:
-                self._success = True
-                self._t_to_goal = self._time_alive
-                self._failure_reason = FailureReason.NONE.value
-        else:
-            self._sar_predicate_active = False
-            self._sar_dwell_time = 0.0
+        self._legacy_sar_runtime().legacy_sar_step_update(self)
 
     def _reset_action_buffer(self) -> None:
         """Zero the action history so reset observations do not leak prior episodes."""
@@ -747,105 +675,41 @@ class MovingDroneAviary(BaseRLAviary):
             )
 
     def _spawn_task_world(self):
-        """Build the SAR scene for this episode."""
-        from swarm.core.env_builder.sar_world import build_sar_world
-        from swarm.core.env_builder.spawn_pipeline import SARSpawnError
-        from swarm.protocol import FailureReason
-
-        self.task.start = self._original_start
-        self.task.goal = self._original_goal
-        cli = getattr(self, "CLIENT", 0)
-
-        try:
-            self.sar_world = build_sar_world(
-                cli=cli,
-                seed=self.task.map_seed,
-                challenge_type=self.task.challenge_type,
-                start=self.task.start,
-                goal=self.task.goal,
-            )
-        except SARSpawnError as exc:
-            try:
-                import bittensor as _bt
-                _bt.logging.warning(
-                    f"SAR spawn pipeline exhausted attempts for seed "
-                    f"{self.task.map_seed} challenge_type "
-                    f"{self.task.challenge_type}: {exc}"
-                )
-            except Exception:
-                pass
-            self.sar_world = None
-            self._sar_spawn_failed = True
-            self._failure_reason = FailureReason.SPAWN_FAILURE.value
-
-        start_xyz = np.array(self.task.start, dtype=float)
-        start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-        p.resetBasePositionAndOrientation(
-            self.DRONE_IDS[0],
-            start_xyz.tolist(),
-            start_quat,
-            physicsClientId=cli,
-        )
-
-        plane_id = getattr(self, "PLANE_ID", None)
-        if plane_id is not None:
-            if int(getattr(self.task, "challenge_type", 0)) == 2:
-                p.resetBasePositionAndOrientation(
-                    plane_id,
-                    [0.0, 0.0, -1000.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                    physicsClientId=cli,
-                )
-            p.changeVisualShape(
-                plane_id, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli,
-            )
-
-        self._build_cull_targets()
+        """Backward-compatible SAR wrapper retained for legacy tests."""
+        self.family_runtime.spawn_task_world(self)
 
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """Compute incremental reward based on current state."""
-        sar_mode_active = bool(getattr(self, "sar_mode", False))
-        score = flight_reward(
+        evaluation = evaluate_rollout(
+            task=self.task,
             success=self._success,
             t=(self._t_to_goal if self._success else self._time_alive),
             horizon=self.EP_LEN_SEC,
-            task=self.task,
             min_clearance=self._min_clearance_episode,
             collision=self._collision,
+            legitimate_model=True,
             failure_reason=getattr(self, "_failure_reason", "NONE"),
-            sar_mode=sar_mode_active,
         )
 
-        r_t = score - self._prev_score
-        self._prev_score = score
-        return float(r_t)
+        reward = self.family_runtime.compute_training_reward(
+            env=self,
+            evaluation=evaluation,
+            previous_score=float(self._prev_score),
+        )
+        self._prev_score = float(evaluation.score)
+        return float(reward)
 
     # -------- termination ------------------------------------------------ #
     def _computeTerminated(self) -> bool:
         """Return True if episode ended via collision or goal reached."""
-        from swarm.constants import SAR_NO_TOUCH_RADIUS
-        from swarm.protocol import FailureReason
-
-        if getattr(self, "sar_mode", False):
-            if getattr(self, "_sar_spawn_failed", False):
-                return True
-            if self.sar_world is not None:
-                pos, _ = self._sar_drone_state()
-                vc = np.asarray(self.sar_world.victim_centre, dtype=float)
-                if float(np.linalg.norm(pos - vc)) < SAR_NO_TOUCH_RADIUS:
-                    if not self._success:
-                        self._failure_reason = FailureReason.NO_TOUCH_SPHERE.value
-                    return True
-
-        if self._collision and getattr(self, "sar_mode", False) and not self._success:
-            if self._failure_reason == FailureReason.NONE.value:
-                self._failure_reason = FailureReason.OBSTACLE_COLLISION.value
+        if self.family_runtime.compute_terminated(self):
+            return True
         return self._collision or self._success
 
     # -------- truncation (timeout / safety) ------------------------------ #
     def _computeTruncated(self) -> bool:
-        """Early termination on excessive tilt, timeout, or SAR infeasibility."""
+        """Early termination through the active family runtime."""
         from swarm.protocol import FailureReason
 
         terminal_already = (
@@ -856,38 +720,15 @@ class MovingDroneAviary(BaseRLAviary):
 
         state = self._getDroneStateVector(0)
         roll, pitch = state[7], state[8]
-        if abs(roll) > self.MAX_TILT_RAD or abs(pitch) > self.MAX_TILT_RAD:
-            if getattr(self, "sar_mode", False) and not terminal_already:
-                self._failure_reason = FailureReason.TILT.value
-            return True
-
-        if self._time_alive >= self.EP_LEN_SEC:
-            if getattr(self, "sar_mode", False) and not terminal_already:
-                self._failure_reason = FailureReason.TIMEOUT.value
-            return True
-
-        if getattr(self, "sar_mode", False) and not terminal_already and self._sar_infeasible():
-            self._failure_reason = FailureReason.INFEASIBLE.value
-            return True
-
-        return False
+        return self.family_runtime.compute_truncated(
+            self,
+            terminal_already=terminal_already,
+            roll=float(roll),
+            pitch=float(pitch),
+        )
 
     def _sar_infeasible(self) -> bool:
-        from swarm.constants import SAR_DWELL_SEC, SAR_SEARCH_RADIUS, SPEED_LIMIT
-
-        if self.sar_world is None:
-            return False
-        time_left = self.EP_LEN_SEC - self._time_alive
-        if time_left <= 0:
-            return False
-        sc = self.sar_world.search_centre
-        if sc is None:
-            return False
-        pos, _ = self._sar_drone_state()
-        dist_to_centre = float(np.linalg.norm(pos[0:2] - np.asarray(sc, dtype=float)))
-        nearest_reachable = max(0.0, dist_to_centre - SAR_SEARCH_RADIUS)
-        min_time_required = nearest_reachable / max(SPEED_LIMIT, 1e-6) + SAR_DWELL_SEC
-        return time_left < min_time_required
+        return self._legacy_sar_runtime().legacy_sar_infeasible(self)
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):
@@ -902,19 +743,7 @@ class MovingDroneAviary(BaseRLAviary):
             "min_clearance"       : self._min_clearance_episode,
             "failure_reason"      : getattr(self, "_failure_reason", "NONE"),
         }
-        if getattr(self, "sar_mode", False):
-            from swarm.protocol import SCHEMA_VERSION
-            info.update({
-                "sar_min_horizontal_distance" : float(self._sar_min_horizontal_distance),
-                "sar_min_sphere_distance"     : float(self._sar_min_sphere_distance),
-                "sar_max_dwell"               : float(self._sar_max_dwell_observed),
-                "sar_spawn_attempts"          : int(self._sar_spawn_attempts),
-                "t_to_confirm"                : (
-                    float(self._t_to_goal) if self._success and self._t_to_goal is not None else None
-                ),
-                "schema_version"              : SCHEMA_VERSION,
-                "task_version"                : str(getattr(self.task, "version", "")),
-            })
+        info.update(self.family_runtime.build_info(self))
         return info
 
     # -------- observation extension -------------------------------------- #
@@ -956,7 +785,10 @@ class MovingDroneAviary(BaseRLAviary):
             offset += action_dim
 
         state_full[base_len] = self._get_altitude_distance() / MAX_RAY_DISTANCE
-        clue_offset = self._search_area_center - state_vec[0:3]
+        clue_offset = np.asarray(
+            self.family_runtime.clue_offset(self, state_vec),
+            dtype=np.float32,
+        )
         state_full[base_len + 1:base_len + 1 + clue_dim] = clue_offset[:clue_dim]
 
         return {

@@ -26,7 +26,7 @@ from swarm.benchmark.engine_parts.workers import _unpack_validation_result
 from swarm.protocol import ValidationResult
 from swarm.validator.runtime_telemetry import tracker_call
 
-from ._shared import _docker_evaluator_facade
+from ._shared import _docker_evaluator_facade, _runtime_profile_from_payload
 
 _MAX_TIMEOUT_RETRIES = 10
 
@@ -194,6 +194,7 @@ async def _run_process_parallel(
     prior_avg: float = 0.0,
     heartbeat_sec: float = 30.0,
     model_image: Optional[str] = None,
+    runtime_profile: Optional[dict[str, Any]] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -219,6 +220,7 @@ async def _run_process_parallel(
         float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
     )
     last_pressure_poll_at = 0.0
+    resolved_runtime_profile = _runtime_profile_from_payload(runtime_profile, all_tasks)
 
     from swarm.constants import (
         EVAL_SUMMARY_INTERVAL_SEC,
@@ -228,12 +230,28 @@ async def _run_process_parallel(
     )
 
     max_batch_size = max((len(indices) for indices in batch_plan), default=1)
-    wall_timeout = GLOBAL_EVAL_BASE_SEC + (GLOBAL_EVAL_PER_SEED_SEC * max_batch_size)
-    if GLOBAL_EVAL_CAP_SEC > 0:
-        wall_timeout = min(wall_timeout, GLOBAL_EVAL_CAP_SEC)
+    profile_base_sec = (
+        float(resolved_runtime_profile.global_eval_base_sec)
+        if resolved_runtime_profile.global_eval_base_sec is not None
+        else float(GLOBAL_EVAL_BASE_SEC)
+    )
+    profile_per_seed_sec = (
+        float(resolved_runtime_profile.global_eval_per_seed_sec)
+        if resolved_runtime_profile.global_eval_per_seed_sec is not None
+        else float(GLOBAL_EVAL_PER_SEED_SEC)
+    )
+    profile_cap_sec = (
+        float(resolved_runtime_profile.global_eval_cap_sec)
+        if resolved_runtime_profile.global_eval_cap_sec is not None
+        else float(GLOBAL_EVAL_CAP_SEC)
+    )
+    wall_timeout = profile_base_sec + (profile_per_seed_sec * max_batch_size)
+    if profile_cap_sec > 0:
+        wall_timeout = min(wall_timeout, profile_cap_sec)
     bt.logging.info(
         f"    {len(all_tasks)} seeds | {effective_workers} workers | "
-        f"timeout={wall_timeout:.0f}s | scheduler={'on' if scheduler.enabled else 'static'}"
+        f"timeout={wall_timeout:.0f}s | scheduler={'on' if scheduler.enabled else 'static'} "
+        f"| profile={resolved_runtime_profile.profile_name}"
     )
     for line in scheduler.describe_configuration_lines():
         bt.logging.info(f"    {line}")
@@ -342,6 +360,7 @@ async def _run_process_parallel(
                 model_path=str(model_path),
                 task_total=len(all_tasks),
                 model_image=model_image,
+                runtime_profile=resolved_runtime_profile.as_dict(),
             )
             worker_active_requests[worker_slot] = request
             now = time.time()
@@ -767,6 +786,7 @@ async def evaluate_seeds_parallel(
 
     if num_workers is None:
         num_workers = N_DOCKER_WORKERS
+    runtime_profile = _runtime_profile_from_payload(None, tasks)
     effective_workers = max(1, min(int(num_workers), len(tasks)))
     runtime_tracker = getattr(self, "runtime_tracker", None)
     tracker_call(
@@ -786,6 +806,7 @@ async def evaluate_seeds_parallel(
             on_seed_complete=on_seed_complete,
             task_offset=0,
             task_total=len(tasks),
+            runtime_profile_payload=runtime_profile.as_dict(),
         )
 
     from .batch import check_task_versions, prepare_model_image, remove_model_image
@@ -801,7 +822,12 @@ async def evaluate_seeds_parallel(
         )
         return schema_reject
 
-    model_image = prepare_model_image(self, uid, model_path)
+    model_image = prepare_model_image(
+        self,
+        uid,
+        model_path,
+        runtime_profile_payload=runtime_profile.as_dict(),
+    )
 
     task_meta = [
         {
@@ -830,6 +856,7 @@ async def evaluate_seeds_parallel(
             prior_total_seeds=prior_total_seeds,
             prior_avg=prior_avg,
             model_image=model_image,
+            runtime_profile=runtime_profile.as_dict(),
         )
     finally:
         if model_image:

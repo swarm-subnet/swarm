@@ -38,6 +38,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Tupl
 import bittensor as bt
 import httpx
 
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.config import BackendApiSettings
 from swarm.constants import BENCHMARK_VERSION
 
@@ -51,6 +52,7 @@ _TRANSPORT_EXCEPTIONS: Tuple[type, ...] = (
 
 AUTHORIZE_RETRY_ATTEMPTS = 3
 AUTHORIZE_RETRY_BASE_DELAY_SEC = 2.0
+VALIDATOR_CONTRACT_VERSION = "family_sync.v1"
 
 
 class BackendTransportError(RuntimeError):
@@ -109,6 +111,8 @@ def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool
             "404",
             "benchmark epoch mismatch",
             "not eligible for benchmark scoring",
+            "family_id is required",
+            "unknown_challenge_family",
         )
         if any(pattern in text for pattern in terminal_patterns):
             return True, reason
@@ -178,6 +182,8 @@ def _load_runtime_state() -> dict:
         "last_weights": {},
         "reeval_queue": [],
         "assigned_tasks": [],
+        "rollout": {},
+        "validator_compatibility": {},
         "leaderboard_version": 0,
         "last_sync": 0,
         "benchmark_epoch": 0,
@@ -254,6 +260,7 @@ class BackendApiClient:
             "X-Validator-Signature": signature,
             "X-Validator-Nonce": nonce,
             "X-Validator-Timestamp": timestamp,
+            "X-Swarm-Validator-Contract": VALIDATOR_CONTRACT_VERSION,
         }
 
     async def _post_signed(self, endpoint: str, data: dict) -> Dict[str, Any]:
@@ -380,11 +387,16 @@ class BackendApiClient:
         validator_hotkey: str,
         validator_stake: float,
         screening_score: float,
+        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     ) -> Dict[str, Any]:
         """Submit screening score; pass/fail is derived from stake-weighted consensus."""
         return await self._post_signed(
             f"/validators/models/{uid}/screening",
-            {"score": screening_score, "benchmark_version": BENCHMARK_VERSION},
+            {
+                "score": screening_score,
+                "family_id": family_id,
+                "benchmark_version": BENCHMARK_VERSION,
+            },
         )
 
     # ──────────────────────────────────────────────────────────────────────
@@ -400,11 +412,14 @@ class BackendApiClient:
         per_type_scores: Dict[str, float],
         seeds_evaluated: int,
         epoch_number: Optional[int] = None,
+        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     ) -> Dict[str, Any]:
         data = {
             "score": total_score,
+            "metric_breakdown": per_type_scores,
             "per_type_scores": per_type_scores,
             "seeds_evaluated": seeds_evaluated,
+            "family_id": family_id,
             "benchmark_version": BENCHMARK_VERSION,
         }
         if epoch_number is not None:
@@ -441,6 +456,7 @@ class BackendApiClient:
                 if current_champion:
                     current_top = {
                         "uid": current_champion.get("uid"),
+                        "family_id": current_champion.get("family_id"),
                         "score": current_champion.get("benchmark_score"),
                         "model_hash": current_champion.get("model_hash"),
                     }
@@ -449,7 +465,11 @@ class BackendApiClient:
                 reeval_queue = []
                 for item in data.get("reeval_queue", []):
                     reeval_queue.append(
-                        {"uid": item.get("uid"), "reason": item.get("reason")}
+                        {
+                            "uid": item.get("uid"),
+                            "family_id": item.get("family_id"),
+                            "reason": item.get("reason"),
+                        }
                     )
 
                 self._runtime_state["last_weights"] = data.get("weights", {})
@@ -457,6 +477,10 @@ class BackendApiClient:
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
                 self._runtime_state["assigned_tasks"] = data.get("assigned_tasks", [])
+                self._runtime_state["rollout"] = data.get("rollout", {})
+                self._runtime_state["validator_compatibility"] = data.get(
+                    "validator_compatibility", {}
+                )
                 self._runtime_state["leaderboard_version"] = data.get("leaderboard_version", 0)
                 self._runtime_state["benchmark_epoch"] = data.get(
                     "benchmark_epoch", data.get("current_epoch", 0)
@@ -477,6 +501,8 @@ class BackendApiClient:
                     "leaderboard_version": data.get("leaderboard_version", 0),
                     "pending_models": pending_models,
                     "assigned_tasks": data.get("assigned_tasks", []),
+                    "rollout": data.get("rollout", {}),
+                    "validator_compatibility": data.get("validator_compatibility", {}),
                     "benchmark_epoch": benchmark_epoch,
                     "current_epoch": benchmark_epoch,
                     "latest_reported_epoch": data.get("latest_reported_epoch"),
@@ -496,6 +522,10 @@ class BackendApiClient:
                 "leaderboard_version": 0,
                 "pending_models": [],
                 "assigned_tasks": self._runtime_state.get("assigned_tasks", []),
+                "rollout": self._runtime_state.get("rollout", {}),
+                "validator_compatibility": self._runtime_state.get(
+                    "validator_compatibility", {}
+                ),
                 "benchmark_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "current_epoch": self._runtime_state.get("benchmark_epoch", 0),
                 "fallback": True,
@@ -509,10 +539,12 @@ class BackendApiClient:
         *,
         assignment_id: Optional[int] = None,
         epoch_number: Optional[int] = None,
+        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     ) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "uid": uid,
             "phase": phase,
+            "family_id": family_id,
             "benchmark_version": BENCHMARK_VERSION,
         }
         if assignment_id is not None:
@@ -621,6 +653,7 @@ class BackendApiClient:
         epoch_number: int,
         scores: list,
         task_id: Optional[int] = None,
+        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
         retries: int = 3,
     ) -> Dict[str, Any]:
         retries = max(retries, 1)
@@ -629,7 +662,15 @@ class BackendApiClient:
         payload: Dict[str, Any] = {
             "model_uid": model_uid,
             "epoch_number": epoch_number,
-            "scores": scores,
+            "family_id": family_id,
+            "scores": [
+                {
+                    **score,
+                    "metric_key": score.get("metric_key") or score.get("map_type"),
+                    "map_type": score.get("map_type") or score.get("metric_key"),
+                }
+                for score in scores
+            ],
         }
         if task_id is not None:
             payload["task_id"] = task_id
@@ -654,6 +695,7 @@ class BackendApiClient:
     async def publish_epoch_seeds(
         self,
         epoch_number: int,
+        family_id: str,
         seeds: list[int],
         started_at: str,
         ended_at: str,
@@ -661,6 +703,7 @@ class BackendApiClient:
     ) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "epoch_number": epoch_number,
+            "family_id": family_id,
             "seeds": seeds,
             "started_at": started_at,
             "ended_at": ended_at,
@@ -722,6 +765,7 @@ class BackendApiClient:
         endpoint = f"/validators/tasks/{task_id}/result"
         data: Dict[str, Any] = {
             "score": score,
+            "metric_breakdown": per_type_scores,
             "per_type_scores": per_type_scores,
             "seeds_evaluated": seeds_evaluated,
             "early_failed": early_failed,

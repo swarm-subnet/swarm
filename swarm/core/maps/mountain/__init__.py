@@ -1,4 +1,4 @@
-"""Type 3 mountain map family."""
+"""Type 3 mountain challenge environment."""
 
 from swarm.core import mountain_generator as _mountain_generator
 

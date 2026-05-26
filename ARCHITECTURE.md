@@ -78,8 +78,8 @@ This is the preferred place for new runtime env parsing. Avoid scattering new `o
 - [moving_drone.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/moving_drone.py): main drone simulation environment
 - [env_builder/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/env_builder): world assembly, generation, and cache helpers
 
-### Map Family Entry Points
-- [swarm/core/maps/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps): canonical map-family entrypoints
+### Environment Type Entry Points
+- [swarm/core/maps/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps): canonical environment-type entrypoints
 - [city/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/city)
 - [open/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/open)
 - [village/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/village)
@@ -87,7 +87,7 @@ This is the preferred place for new runtime env parsing. Avoid scattering new `o
 - [forest/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/forest)
 - [warehouse/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/warehouse)
 
-These packages are the preferred boundary for map-family-specific logic. If you are adding or changing a map family, start here.
+These packages are the preferred boundary for environment-type-specific logic. If you are adding or changing an environment type, start here.
 
 ### Large Generator Packages
 Legacy public modules still exist as compatibility facades, but their implementations now live in focused packages:
@@ -174,14 +174,14 @@ Do not add new scattered env parsing unless there is a very strong reason.
 - mixing backend I/O, Docker control, and core simulation logic in one module
 - introducing new star-import facades when explicit imports are practical
 - placing reusable library logic in `scripts/`
-- putting map-family-specific logic outside `swarm/core/maps/` and its implementation packages
+- putting environment-type-specific logic outside `swarm/core/maps/` and its implementation packages
 - adding new files that are only differentiated by size, not by responsibility
 
 ## Current Architectural Intent
 This repo is moving toward:
 - thin public facades
 - focused implementation packages
-- map-family boundaries that match the problem domain
+- environment-type boundaries that match the problem domain
 - validator and benchmark runtimes that share execution ideas without collapsing into one monolith
 - typed runtime configuration instead of scattered env reads
 

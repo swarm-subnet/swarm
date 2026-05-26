@@ -89,6 +89,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(f"[{_ts()}] UID: {uid} (from --uid)")
         print(f"[{_ts()}] Workers requested: {requested_workers}")
         print(f"[{_ts()}] Workers effective:  {effective_workers}")
+        print(f"[{_ts()}] Challenge family: {args.family_id}")
         print(f"[{_ts()}] Profile: debug")
         print(f"[{_ts()}] RPC verbosity: {args.rpc_verbosity}")
         print(f"[{_ts()}] Host parallelism: process")
@@ -106,16 +107,26 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         if args.seed_file is not None:
             print(f"[{_ts()}] Loading seeds from {args.seed_file}...")
-            type_seeds = engine._load_type_seeds(args.seed_file)
+            type_seeds = engine._load_type_seeds(
+                args.seed_file,
+                family_id=args.family_id,
+            )
         else:
             if args.seed_search_rng is not None:
                 print(f"[{_ts()}] Seed search RNG: {args.seed_search_rng}")
                 import random
                 random.seed(args.seed_search_rng)
             print(f"[{_ts()}] Finding {args.seeds_per_group} seeds per group...")
-            type_seeds = engine._find_seeds(args.seeds_per_group)
+            type_seeds = engine._find_seeds(
+                args.seeds_per_group,
+                family_id=args.family_id,
+            )
         if args.save_seed_file is not None:
-            engine._save_type_seeds(args.save_seed_file, type_seeds)
+            engine._save_type_seeds(
+                args.save_seed_file,
+                type_seeds,
+                family_id=args.family_id,
+            )
             print(f"[{_ts()}] Saved seed file: {args.save_seed_file}")
         total_seeds = sum(len(v) for v in type_seeds.values())
         for group, seeds in type_seeds.items():
@@ -141,6 +152,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 type_seeds,
                 effective_workers,
                 run_opts=run_opts,
+                family_id=args.family_id,
             )
         )
     except BaseException as exc:

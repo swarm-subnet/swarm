@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import shutil
 import socket
 import threading
 import time
@@ -13,6 +14,7 @@ import numpy as np
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.protocol import ValidationResult
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
@@ -28,6 +30,7 @@ class _ProcResult:
 def _new_evaluator() -> de.DockerSecureEvaluator:
     ev = de.DockerSecureEvaluator.__new__(de.DockerSecureEvaluator)
     ev.base_image = "swarm_evaluator_base:latest"
+    ev.base_images = {"base": ev.base_image}
     ev.base_ready = True
     de.DockerSecureEvaluator._base_ready = True
     return ev
@@ -456,6 +459,34 @@ def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
     assert limits["cpuset_cpus"] == "2-3"
 
 
+def test_resolve_worker_limits_accepts_runtime_profile_overrides(monkeypatch):
+    monkeypatch.delenv("SWARM_DOCKER_WORKER_CPUS_OVERRIDE", raising=False)
+    monkeypatch.delenv("SWARM_DOCKER_WORKER_MEMORY_OVERRIDE", raising=False)
+    profile = ChallengeFamilyRuntimeProfile(
+        family_id="cf_search_and_rescue",
+        docker_worker_cpus="1.5",
+        docker_worker_memory="5g",
+    )
+
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(
+        worker_id=0,
+        runtime_profile=profile,
+    )
+
+    assert limits["cpus"] == "1.5"
+    assert limits["memory"] == "5g"
+
+
+def test_resolve_base_image_for_key_uses_mapping_and_env_override(monkeypatch):
+    ev = _new_evaluator()
+    ev.base_images["mission"] = "swarm_evaluator_mission:latest"
+
+    assert ev._resolve_base_image_for_key("mission") == "swarm_evaluator_mission:latest"
+
+    monkeypatch.setenv("SWARM_DOCKER_BASE_IMAGE_MISSION", "custom-mission-image:dev")
+    assert ev._resolve_base_image_for_key("mission") == "custom-mission-image:dev"
+
+
 def test_auto_worker_cpuset_map_partitions_host():
     from swarm.config import auto_worker_cpuset_map
 
@@ -731,9 +762,9 @@ def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
     tasks = [
-        SimpleNamespace(challenge_type=3, map_seed=1001, seed_id=0),
-        SimpleNamespace(challenge_type=2, map_seed=1002, seed_id=1),
-        SimpleNamespace(challenge_type=6, map_seed=1003, seed_id=2),
+        SimpleNamespace(challenge_type=3, map_seed=1001, seed_id=0, family_id="cf_search_and_rescue"),
+        SimpleNamespace(challenge_type=2, map_seed=1002, seed_id=1, family_id="cf_search_and_rescue"),
+        SimpleNamespace(challenge_type=6, map_seed=1003, seed_id=2, family_id="cf_search_and_rescue"),
     ]
     callback_payloads = []
     captured = {}
@@ -742,6 +773,7 @@ def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
         captured["batch_plan"] = kwargs["batch_plan"]
         captured["effective_workers"] = kwargs["effective_workers"]
         captured["task_meta"] = kwargs["task_meta"]
+        captured["runtime_profile"] = kwargs["runtime_profile"]
         for task in kwargs["all_tasks"]:
             kwargs["on_seed_complete"](
                 {
@@ -774,6 +806,8 @@ def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
         "type2_open",
         "type6_forest",
     ]
+    assert captured["runtime_profile"]["family_id"] == "cf_search_and_rescue"
+    assert captured["runtime_profile"]["profile_name"] == "search_and_rescue"
     assert [payload["status"] for payload in callback_payloads] == [
         "seed_done",
         "seed_done",
@@ -786,16 +820,17 @@ def test_evaluate_seeds_parallel_uses_default_worker_count_of_three(monkeypatch,
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
     tasks = [
-        SimpleNamespace(challenge_type=1, map_seed=2001),
-        SimpleNamespace(challenge_type=2, map_seed=2002),
-        SimpleNamespace(challenge_type=3, map_seed=2003),
-        SimpleNamespace(challenge_type=4, map_seed=2004),
-        SimpleNamespace(challenge_type=5, map_seed=2005),
+        SimpleNamespace(challenge_type=1, map_seed=2001, family_id="cf_autopilot"),
+        SimpleNamespace(challenge_type=2, map_seed=2002, family_id="cf_autopilot"),
+        SimpleNamespace(challenge_type=3, map_seed=2003, family_id="cf_autopilot"),
+        SimpleNamespace(challenge_type=4, map_seed=2004, family_id="cf_autopilot"),
+        SimpleNamespace(challenge_type=5, map_seed=2005, family_id="cf_autopilot"),
     ]
     captured = {}
 
     async def _fake_run_process_parallel(**kwargs):
         captured["effective_workers"] = kwargs["effective_workers"]
+        captured["runtime_profile"] = kwargs["runtime_profile"]
         return [ValidationResult(kwargs["uid"], True, 1.0, 0.5) for _ in kwargs["all_tasks"]]
 
     monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
@@ -803,6 +838,8 @@ def test_evaluate_seeds_parallel_uses_default_worker_count_of_three(monkeypatch,
 
     assert len(results) == 5
     assert captured["effective_workers"] == min(len(tasks), de.parallel.N_DOCKER_WORKERS)
+    assert captured["runtime_profile"]["family_id"] == "cf_autopilot"
+    assert captured["runtime_profile"]["profile_name"] == "autopilot_navigation"
 
 
 def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
@@ -1222,8 +1259,8 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
     tasks = [
-        SimpleNamespace(challenge_type=3, map_seed=3001),
-        SimpleNamespace(challenge_type=1, map_seed=3002),
+        SimpleNamespace(challenge_type=3, map_seed=3001, family_id="cf_search_and_rescue"),
+        SimpleNamespace(challenge_type=1, map_seed=3002, family_id="cf_search_and_rescue"),
     ]
     captured = {}
 
@@ -1235,11 +1272,13 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
         on_seed_complete=None,
         task_offset=0,
         task_total=None,
+        runtime_profile_payload=None,
     ):
         captured["chunk"] = list(chunk)
         captured["worker_id"] = worker_id
         captured["task_offset"] = task_offset
         captured["task_total"] = task_total
+        captured["runtime_profile_payload"] = dict(runtime_profile_payload or {})
         _ = model_path, on_seed_complete
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in chunk]
 
@@ -1257,6 +1296,59 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
     assert captured["worker_id"] == 0
     assert captured["task_offset"] == 0
     assert captured["task_total"] == 2
+    assert captured["runtime_profile_payload"]["family_id"] == "cf_search_and_rescue"
+    assert captured["runtime_profile_payload"]["profile_name"] == "search_and_rescue"
+
+
+def test_setup_workspace_uses_runtime_profile_for_image_limits_and_bootstrap(monkeypatch, tmp_path):
+    ev = _new_evaluator()
+    ev.base_images["mission"] = "swarm_evaluator_mission:latest"
+    model_path = tmp_path / "model.zip"
+    with zipfile.ZipFile(model_path, "w") as zf:
+        zf.writestr("drone_agent.py", "print('ok')\n")
+
+    monkeypatch.setattr(ev, "_get_docker_host_ip", lambda: "172.17.0.1")
+
+    ctx = de.batch._BatchContext(
+        self=ev,
+        tasks=[SimpleNamespace(map_seed=1, challenge_type=1, family_id="cf_autopilot")],
+        uid=77,
+        model_path=model_path,
+        worker_id=0,
+        model_image=None,
+        runtime_profile_payload=ChallengeFamilyRuntimeProfile(
+            family_id="cf_autopilot",
+            profile_name="custom_navigation",
+            resource_class="navigation",
+            image_key="mission",
+            env_bootstrap={"sar_mode": False},
+            docker_env={"EXTRA_FLAG": "1"},
+            docker_worker_cpus="1.25",
+            docker_worker_memory="3g",
+        ).as_dict(),
+        helpers=de.batch._BatchHelpers(
+            phase=lambda *_args, **_kwargs: None,
+            on_seed_complete_guarded=lambda *_args, **_kwargs: None,
+            build_failure_seed_meta=lambda *_args, **_kwargs: {},
+            notify_all_failed=lambda *_args, **_kwargs: None,
+            run_docker_cmd_quiet=lambda *_args, **_kwargs: None,
+            cleanup_tmpdir_quiet=lambda path: None,
+        ),
+    )
+
+    try:
+        early = de.batch._setup_workspace(ctx)
+        assert early is None
+        assert ctx.run_image == "swarm_evaluator_mission:latest"
+        assert ctx.worker_limits["cpus"] == "1.25"
+        assert ctx.worker_limits["memory"] == "3g"
+        assert ctx.docker_envs["SWARM_RUNTIME_PROFILE"] == "custom_navigation"
+        assert ctx.docker_envs["SWARM_RUNTIME_IMAGE_KEY"] == "mission"
+        assert ctx.docker_envs["SWARM_BOOTSTRAP_SAR_MODE"] == "0"
+        assert ctx.docker_envs["EXTRA_FLAG"] == "1"
+    finally:
+        if ctx.tmpdir:
+            shutil.rmtree(ctx.tmpdir, ignore_errors=True)
 
 
 def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):

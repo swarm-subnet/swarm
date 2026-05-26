@@ -29,7 +29,7 @@ _MAX_FAILURE_RATE = 0.02
 
 
 # Plan B.4.3 asks for 5000 seeds × 6 maps at <=0.5% failure rate. Map build
-# averages ~5-30s per seed depending on map family (warehouse is heaviest),
+# averages ~5-30s per seed depending on environment type (warehouse is heaviest),
 # so the full 5000-seed audit cannot run in CI. We sample 100 seeds × 6 maps
 # at a 2% threshold here — strong enough to catch a real pipeline regression;
 # the full 5000-seed audit ships as the nightly script in D.3.2.

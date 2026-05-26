@@ -19,6 +19,8 @@ import capnp
 import numpy as np
 from gym_pybullet_drones.utils.enums import ActionType
 
+from swarm.challenge_families import runtime_profile_for_tasks
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import (
     CALIBRATION_BENCHMARK_REF_NS,
     CALIBRATION_CPU_FACTOR_CAP,
@@ -46,7 +48,6 @@ from swarm.core.model_verify import add_to_blacklist
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env
 from swarm.utils.hash import sha256sum
-from swarm.validator.reward import flight_reward
 
 _HEAVY_CHALLENGE_TYPES = frozenset({3, 4, 5, 6})
 
@@ -143,6 +144,30 @@ def _cleanup_env_quietly(env: object) -> None:
     except Exception:
         pass
     gc.collect()
+
+
+def _runtime_profile_from_payload(
+    payload: Optional[dict[str, object]],
+    tasks: list,
+) -> ChallengeFamilyRuntimeProfile:
+    if isinstance(payload, dict) and payload:
+        return ChallengeFamilyRuntimeProfile.from_mapping(payload)
+    return runtime_profile_for_tasks(tasks)
+
+
+def _runtime_profile_env(profile: ChallengeFamilyRuntimeProfile) -> dict[str, str]:
+    env = dict(profile.docker_env)
+    env.setdefault("SWARM_CHALLENGE_FAMILY_ID", str(profile.family_id))
+    env.setdefault("SWARM_RUNTIME_PROFILE", str(profile.profile_name))
+    env.setdefault("SWARM_RUNTIME_RESOURCE_CLASS", str(profile.resource_class))
+    env.setdefault("SWARM_RUNTIME_IMAGE_KEY", str(profile.image_key))
+    for key, value in dict(profile.env_bootstrap).items():
+        env_key = f"SWARM_BOOTSTRAP_{str(key).upper()}"
+        if isinstance(value, bool):
+            env[env_key] = "1" if value else "0"
+        else:
+            env[env_key] = str(value)
+    return env
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

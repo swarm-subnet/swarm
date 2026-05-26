@@ -9,6 +9,8 @@ import capnp
 import numpy as np
 from gym_pybullet_drones.utils.enums import ActionType
 
+from swarm.challenge_families import evaluate_rollout
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_RECAL_INTERVAL,
@@ -23,11 +25,11 @@ from swarm.constants import (
 )
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
-from swarm.validator.reward import flight_reward
 
 from ._shared import (
     _cleanup_env_quietly,
     _docker_evaluator_facade,
+    _runtime_profile_from_payload,
     _submission_template_dir,
 )
 from swarm.config import RpcTraceSettings
@@ -44,6 +46,7 @@ def _run_multi_seed_rpc_sync(
     progress_state: Optional[dict] = None,
     task_offset: int = 0,
     task_total: Optional[int] = None,
+    runtime_profile_payload: Optional[dict] = None,
 ) -> list:
     """Run multiple seeds through the same RPC connection.
 
@@ -56,6 +59,27 @@ def _run_multi_seed_rpc_sync(
     trace_rpc = trace_settings.enabled
     trace_every = trace_settings.trace_every
     trace_heartbeat_sec = trace_settings.heartbeat_sec
+    runtime_profile = _runtime_profile_from_payload(runtime_profile_payload, tasks)
+    ping_timeout_sec = float(
+        runtime_profile.rpc_ping_timeout_sec
+        if runtime_profile.rpc_ping_timeout_sec is not None
+        else RPC_PING_TIMEOUT_SEC
+    )
+    reset_timeout_sec = float(
+        runtime_profile.rpc_reset_timeout_sec
+        if runtime_profile.rpc_reset_timeout_sec is not None
+        else RPC_RESET_TIMEOUT_SEC
+    )
+    first_step_timeout_sec = float(
+        runtime_profile.rpc_first_step_timeout_sec
+        if runtime_profile.rpc_first_step_timeout_sec is not None
+        else RPC_FIRST_STEP_TIMEOUT_SEC
+    )
+    default_step_timeout_sec = float(
+        runtime_profile.rpc_step_timeout_sec
+        if runtime_profile.rpc_step_timeout_sec is not None
+        else RPC_STEP_TIMEOUT_SEC
+    )
 
     def _emit_seed_complete(
         task_obj=None,
@@ -205,7 +229,7 @@ def _run_multi_seed_rpc_sync(
 
                     _set_phase("rpc_ping", task="n/a", step=attempt, sim_t=0.0)
                     ping_response = await asyncio.wait_for(
-                        agent.ping("test"), timeout=RPC_PING_TIMEOUT_SEC
+                        agent.ping("test"), timeout=ping_timeout_sec
                     )
                     if ping_response.response != "pong":
                         raise RuntimeError(
@@ -219,12 +243,12 @@ def _run_multi_seed_rpc_sync(
                 except asyncio.TimeoutError:
                     _trace(
                         f"ping timeout on attempt {attempt}/{max_ping_attempts} "
-                        f"({RPC_PING_TIMEOUT_SEC}s)"
+                        f"({ping_timeout_sec}s)"
                     )
                     if attempt >= max_ping_attempts:
                         bt.logging.warning(
                             f"UID {uid}: RPC ping timeout after {max_ping_attempts} attempts "
-                            f"({RPC_PING_TIMEOUT_SEC}s each)"
+                            f"({ping_timeout_sec}s each)"
                         )
                         for failed_task in tasks:
                             _emit_seed_complete(
@@ -269,9 +293,9 @@ def _run_multi_seed_rpc_sync(
                     )
                 return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
-            calibrated_timeout = RPC_STEP_TIMEOUT_SEC
+            calibrated_timeout = default_step_timeout_sec
             rpc_overhead_sec = max(
-                RPC_STEP_TIMEOUT_SEC - MINER_COMPUTE_BUDGET_SEC, 0.010
+                default_step_timeout_sec - MINER_COMPUTE_BUDGET_SEC, 0.010
             )
             cpu_factor = 1.0
             calibrated = False
@@ -324,7 +348,7 @@ def _run_multi_seed_rpc_sync(
                                 "agent_reset", task=task_label, step=0, sim_t=0.0
                             )
                             await asyncio.wait_for(
-                                agent.reset(), timeout=RPC_RESET_TIMEOUT_SEC
+                                agent.reset(), timeout=reset_timeout_sec
                             )
                         except Exception as e:
                             _trace(
@@ -392,7 +416,7 @@ def _run_multi_seed_rpc_sync(
                         ):
                             step_idx += 1
                             step_timeout = (
-                                RPC_FIRST_STEP_TIMEOUT_SEC
+                                first_step_timeout_sec
                                 if is_first_step
                                 else calibrated_timeout
                             )
@@ -598,18 +622,17 @@ def _run_multi_seed_rpc_sync(
                             min_clearance = info.get("min_clearance", None)
                             collision = info.get("collision", False)
                             failure_reason = info.get("failure_reason", "NONE")
-                            sar_mode_active = bool(getattr(env, "sar_mode", False))
-                            score = flight_reward(
+                            evaluation = evaluate_rollout(
+                                task=task,
                                 success=success,
                                 t=t_sim,
                                 horizon=task.horizon,
-                                task=task,
                                 min_clearance=min_clearance,
                                 collision=collision,
                                 legitimate_model=True,
                                 failure_reason=failure_reason,
-                                sar_mode=sar_mode_active,
                             )
+                            score = evaluation.score
                             _trace(
                                 f"{task_label} result success={success} "
                                 f"score={score:.4f} t_sim={t_sim:.2f}s"
@@ -636,6 +659,7 @@ def _run_multi_seed_rpc_sync(
                                 ValidationResult(
                                     uid, success, t_sim, score,
                                     failure_reason=failure_reason,
+                                    metrics=dict(evaluation.metrics),
                                 )
                             )
                             _emit_seed_complete(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D.3.2 audit — SAR spawn-pipeline failure rate per map family.
+"""D.3.2 audit — SAR spawn-pipeline failure rate per environment type.
 
 Target: ≤ 0.5% SARSpawnError rate per map at the full 5000-seed sample
 size. Run before the cutover.
@@ -9,7 +9,7 @@ Usage:
     python3 scripts/sar_spawn_audit.py --n-seeds 500         # smoke
     python3 scripts/sar_spawn_audit.py --maps city,warehouse # subset
 
-Exit code 0 when every map family clears the threshold, 1 otherwise.
+Exit code 0 when every environment type clears the threshold, 1 otherwise.
 """
 from __future__ import annotations
 

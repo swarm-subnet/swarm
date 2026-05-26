@@ -118,6 +118,7 @@ def _build_task_with_params(
     *,
     challenge_type: int,
     params: dict,
+    family_id: str = "cf_search_and_rescue",
 ) -> MapTask:
     rng = random.Random(seed)
 
@@ -141,6 +142,7 @@ def _build_task_with_params(
         sim_dt=sim_dt,
         horizon=params['horizon'],
         challenge_type=challenge_type,
+        family_id=family_id,
         version=SCHEMA_VERSION,
     )
 
@@ -150,12 +152,14 @@ def _build_task_for_type(
     seed: int,
     *,
     challenge_type: int,
+    family_id: str = "cf_search_and_rescue",
 ) -> MapTask:
     params = _resolve_params(seed, challenge_type)
     return _build_task_with_params(
         sim_dt, seed,
         challenge_type=challenge_type,
         params=params,
+        family_id=family_id,
     )
 
 
@@ -402,7 +406,12 @@ def _goal_from_origin(seed_rng: random.Random, params: dict) -> Tuple[float, flo
     return x, y, z
 
 
-def random_task(sim_dt: float, seed: Optional[int] = None) -> MapTask:
+def random_task(
+    sim_dt: float,
+    seed: Optional[int] = None,
+    *,
+    family_id: str = "cf_search_and_rescue",
+) -> MapTask:
     if seed is None:
         seed = random.randrange(2**32)
     challenge_types = list(CHALLENGE_TYPE_DISTRIBUTION.keys())
@@ -414,6 +423,7 @@ def random_task(sim_dt: float, seed: Optional[int] = None) -> MapTask:
         sim_dt=sim_dt,
         seed=seed,
         challenge_type=chosen_type,
+        family_id=family_id,
     )
 
 
@@ -422,6 +432,7 @@ def task_for_seed_and_type(
     *,
     seed: int,
     challenge_type: int,
+    family_id: str = "cf_search_and_rescue",
 ) -> MapTask:
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
@@ -429,6 +440,7 @@ def task_for_seed_and_type(
         sim_dt=sim_dt,
         seed=seed,
         challenge_type=challenge_type,
+        family_id=family_id,
     )
 
 
@@ -438,6 +450,7 @@ def screening_task(
     *,
     challenge_type: int,
     distance_range: Tuple[float, float],
+    family_id: str = "cf_search_and_rescue",
 ) -> MapTask:
     """Build a task with controlled type and distance range (V5 SAR)."""
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
@@ -449,4 +462,5 @@ def screening_task(
         sim_dt, seed,
         challenge_type=challenge_type,
         params=params,
+        family_id=family_id,
     )

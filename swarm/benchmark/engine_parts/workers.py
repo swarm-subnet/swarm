@@ -37,6 +37,7 @@ from .dispatch import (
     _select_next_batch_index,
 )
 from swarm.config import HostWorkerRuntimeSettings
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 
 
 def _engine_facade():
@@ -198,6 +199,7 @@ def _benchmark_worker_main(
                         task_offset=request.batch_indices[0] if request.batch_indices else 0,
                         task_total=request.task_total,
                         model_image=getattr(request, "model_image", None),
+                        runtime_profile_payload=getattr(request, "runtime_profile", None),
                     )
                 )
                 result_queue.put(
@@ -544,16 +546,21 @@ async def _run_benchmark(
     type_seeds: Dict[str, List[int]],
     num_workers: int,
     run_opts: _RunOptions,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
 ) -> tuple:
+    from swarm.challenge_families import build_random_task
     from swarm.constants import SIM_DT
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
-    from swarm.validator.task_gen import random_task
 
     all_tasks = []
     task_meta: List[Dict[str, Any]] = []
     for group_name, seeds in type_seeds.items():
         for s in seeds:
-            task = random_task(sim_dt=SIM_DT, seed=s)
+            task = build_random_task(
+                sim_dt=SIM_DT,
+                seed=s,
+                family_id=family_id,
+            )
             all_tasks.append(task)
             bench_type = BENCH_GROUP_TO_TYPE.get(group_name, int(task.challenge_type))
             task_meta.append({

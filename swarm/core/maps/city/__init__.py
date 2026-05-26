@@ -1,4 +1,4 @@
-"""Type 1 city map family."""
+"""Type 1 city challenge environment."""
 
 from swarm.core import city_generator as _city_generator
 
@@ -10,4 +10,3 @@ for _name in __all__:
 del _city_generator
 if "_name" in globals():
     del _name
-

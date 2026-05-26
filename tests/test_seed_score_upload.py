@@ -1,4 +1,4 @@
-"""Test seed score upload fixes: map_type resolution, retry logic."""
+"""Test seed score upload fixes: metric_key/map_type resolution, retry logic."""
 from __future__ import annotations
 
 import asyncio
@@ -133,6 +133,28 @@ def test_task_id_omitted_when_not_provided(client):
     assert "task_id" not in captured[0]
 
 
+def test_family_id_included_in_seed_score_payload(client):
+    captured: list[dict] = []
+
+    async def mock_post(endpoint, data):
+        captured.append(data)
+        return {"recorded": 1, "message": "ok"}
+
+    client._post_signed = mock_post
+
+    asyncio.run(
+        client.post_seed_scores_batch(
+            model_uid=7,
+            epoch_number=11,
+            family_id="cf_autopilot",
+            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+        )
+    )
+    assert captured[0]["family_id"] == "cf_autopilot"
+    assert captured[0]["scores"][0]["metric_key"] == "city"
+    assert captured[0]["scores"][0]["map_type"] == "city"
+
+
 def test_no_retry_on_success(client):
     call_count = 0
 
@@ -172,7 +194,7 @@ def test_evaluate_seeds_failed_result_gets_real_map_type():
     for i, task in enumerate(tasks):
         if task is None:
             all_scores.append(0.0)
-            seed_details.append({"score": 0.0, "map_type": "unknown"})
+            seed_details.append({"score": 0.0, "metric_key": "unknown", "map_type": "unknown"})
             continue
 
         if task_idx < len(results):
@@ -180,15 +202,15 @@ def test_evaluate_seeds_failed_result_gets_real_map_type():
             score = result.score if result else 0.0
             all_scores.append(score)
             type_name = challenge_type_to_name.get(task.challenge_type, "unknown")
-            seed_details.append({"score": score, "map_type": type_name})
+            seed_details.append({"score": score, "metric_key": type_name, "map_type": type_name})
             task_idx += 1
         else:
             type_name = challenge_type_to_name.get(task.challenge_type, "unknown")
             all_scores.append(0.0)
-            seed_details.append({"score": 0.0, "map_type": type_name})
+            seed_details.append({"score": 0.0, "metric_key": type_name, "map_type": type_name})
 
     assert len(seed_details) == 3
-    assert seed_details[0] == {"score": 0.8, "map_type": "city"}
-    assert seed_details[1] == {"score": 0.0, "map_type": "mountain"}
-    assert seed_details[2] == {"score": 0.0, "map_type": "warehouse"}
+    assert seed_details[0] == {"score": 0.8, "metric_key": "city", "map_type": "city"}
+    assert seed_details[1] == {"score": 0.0, "metric_key": "mountain", "map_type": "mountain"}
+    assert seed_details[2] == {"score": 0.0, "metric_key": "warehouse", "map_type": "warehouse"}
     assert all(d["map_type"] != "unknown" for d in seed_details)

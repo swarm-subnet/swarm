@@ -3,7 +3,7 @@
 
 Runs a scripted policy (fly to search_centre, sweep, hover at the victim)
 and reports success rate / mean confirm time / failure_reason distribution
-per map family. Plan asks for 1000 seeds per map.
+per environment type. Plan asks for 1000 seeds per environment.
 
 This is a deployment-only sanity check; the threshold is set during the
 cutover runbook, not by code, because the baseline policy is intentionally

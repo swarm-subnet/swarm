@@ -1,4 +1,4 @@
-"""Type 5 warehouse map family."""
+"""Type 5 warehouse challenge environment."""
 
 from swarm.core.warehouse import build_warehouse_map
 

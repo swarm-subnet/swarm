@@ -18,10 +18,19 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _write_epoch_file(seeds_dir, epoch: int, seeds: list[int], *, published: bool = False) -> None:
+def _write_epoch_file(
+    seeds_dir,
+    epoch: int,
+    seeds: list[int],
+    *,
+    family_id: str = "cf_search_and_rescue",
+    published: bool = False,
+) -> None:
     seeds_dir.mkdir(parents=True, exist_ok=True)
-    (seeds_dir / f"epoch_{epoch}.json").write_text(json.dumps({
+    suffix = ".json" if family_id == "cf_search_and_rescue" else f"__{family_id}.json"
+    (seeds_dir / f"epoch_{epoch}{suffix}").write_text(json.dumps({
         "epoch_number": epoch,
+        "family_id": family_id,
         "seeds": seeds,
         "started_at": "2026-04-01T00:00:00+00:00",
         "ended_at": "2026-04-01T01:00:00+00:00",
@@ -57,8 +66,11 @@ def _make_validator(manager, response_or_exc, *, forward_count: int = 0):
     ), calls
 
 
-def _is_published_on_disk(seeds_dir, epoch: int) -> bool:
-    data = json.loads((seeds_dir / f"epoch_{epoch}.json").read_text())
+def _is_published_on_disk(
+    seeds_dir, epoch: int, *, family_id: str = "cf_search_and_rescue"
+) -> bool:
+    suffix = ".json" if family_id == "cf_search_and_rescue" else f"__{family_id}.json"
+    data = json.loads((seeds_dir / f"epoch_{epoch}{suffix}").read_text())
     return bool(data.get("published", False))
 
 
@@ -234,14 +246,14 @@ def test_successful_publish_clears_backoff_state(monkeypatch, tmp_path):
     validator, _ = _make_validator(manager, _responder, forward_count=1)
 
     _run(_publish_pending_epoch_seeds(validator))
-    assert validator._epoch_publish_failures.get(100) == 1
+    assert validator._epoch_publish_failures.get((100, "cf_search_and_rescue")) == 1
 
     response_box["value"] = {"published": True}
     validator.forward_count = 2
     _run(_publish_pending_epoch_seeds(validator))
 
-    assert 100 not in validator._epoch_publish_failures
-    assert 100 not in validator._epoch_publish_skip_until
+    assert (100, "cf_search_and_rescue") not in validator._epoch_publish_failures
+    assert (100, "cf_search_and_rescue") not in validator._epoch_publish_skip_until
     assert _is_published_on_disk(seeds_dir, 100) is True
 
 
@@ -256,15 +268,76 @@ def test_exception_during_publish_also_triggers_backoff(monkeypatch, tmp_path):
     )
 
     _run(_publish_pending_epoch_seeds(validator))
-    assert validator._epoch_publish_failures.get(110) == 1
-    assert validator._epoch_publish_skip_until.get(110) == 6
+    assert validator._epoch_publish_failures.get((110, "cf_search_and_rescue")) == 1
+    assert validator._epoch_publish_skip_until.get((110, "cf_search_and_rescue")) == 6
+
+
+def test_publish_pending_epoch_seeds_forwards_family_id(monkeypatch, tmp_path):
+    seeds_dir = _make_manager(monkeypatch, tmp_path)
+    _write_epoch_file(
+        seeds_dir, 51, [1], family_id="cf_autopilot", published=False
+    )
+    _write_epoch_file(
+        seeds_dir, 60, [0], family_id="cf_search_and_rescue", published=True
+    )
+
+    manager = seed_manager_mod.BenchmarkSeedManager()
+    validator, calls = _make_validator(manager, {"published": True})
+
+    _run(_publish_pending_epoch_seeds(validator))
+
+    assert calls[0]["family_id"] == "cf_autopilot"
+
+
+def test_publish_marks_only_matching_family_record_published(monkeypatch, tmp_path):
+    seeds_dir = _make_manager(monkeypatch, tmp_path)
+    _write_epoch_file(seeds_dir, 51, [1], family_id="cf_search_and_rescue", published=False)
+    _write_epoch_file(seeds_dir, 51, [2], family_id="cf_autopilot", published=False)
+    _write_epoch_file(seeds_dir, 60, [0], family_id="cf_search_and_rescue", published=True)
+
+    manager = seed_manager_mod.BenchmarkSeedManager()
+
+    def _responder(kwargs):
+        if kwargs["family_id"] == "cf_autopilot":
+            return {"published": True}
+        return {"error": "keep pending"}
+
+    validator, _ = _make_validator(manager, _responder)
+
+    _run(_publish_pending_epoch_seeds(validator))
+
+    assert _is_published_on_disk(seeds_dir, 51, family_id="cf_autopilot") is True
+    assert _is_published_on_disk(seeds_dir, 51, family_id="cf_search_and_rescue") is False
+
+
+def test_publish_backoff_state_is_per_epoch_and_family(monkeypatch, tmp_path):
+    seeds_dir = _make_manager(monkeypatch, tmp_path)
+    _write_epoch_file(seeds_dir, 90, [1], family_id="cf_search_and_rescue", published=False)
+    _write_epoch_file(seeds_dir, 90, [2], family_id="cf_autopilot", published=False)
+    _write_epoch_file(seeds_dir, 91, [3], family_id="cf_search_and_rescue", published=True)
+
+    manager = seed_manager_mod.BenchmarkSeedManager()
+
+    def _responder(kwargs):
+        if kwargs["family_id"] == "cf_search_and_rescue":
+            return {"error": "transient", "status_code": 503}
+        return {"published": True}
+
+    validator, calls = _make_validator(manager, _responder, forward_count=5)
+    _run(_publish_pending_epoch_seeds(validator))
+
+    assert validator._epoch_publish_failures[(90, "cf_search_and_rescue")] == 1
+    assert (90, "cf_autopilot") not in validator._epoch_publish_failures
+    assert _is_published_on_disk(seeds_dir, 90, family_id="cf_autopilot") is True
+    assert _is_published_on_disk(seeds_dir, 90, family_id="cf_search_and_rescue") is False
+    assert {call["family_id"] for call in calls} == {"cf_search_and_rescue", "cf_autopilot"}
 
     validator.forward_count = 5
     _run(_publish_pending_epoch_seeds(validator))
-    assert len(calls) == 1
+    assert len(calls) == 2
 
     validator.forward_count = 6
     _run(_publish_pending_epoch_seeds(validator))
-    assert len(calls) == 2
-    assert validator._epoch_publish_failures.get(110) == 2
-    assert validator._epoch_publish_skip_until.get(110) == 8
+    assert len(calls) == 3
+    assert validator._epoch_publish_failures[(90, "cf_search_and_rescue")] == 2
+    assert validator._epoch_publish_skip_until[(90, "cf_search_and_rescue")] == 8

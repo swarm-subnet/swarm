@@ -18,6 +18,7 @@ import pybullet_data
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
 # ─── project‑level imports ────────────────────────────────────────────────────
+from swarm.challenge_families import runtime_profile_for_task
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.protocol                import MapTask
 from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE, SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE
@@ -84,15 +85,14 @@ def make_env_with_initial_obs(
 ) -> tuple[MovingDroneAviary, dict[str, np.ndarray]]:
     """Create an env and return the observation produced by its initial reset."""
     ctrl_freq = int(round(1.0 / task.sim_dt))
-    from swarm.protocol import normalize_version
-    sar_mode = normalize_version(getattr(task, "version", "")).startswith("5.")
+    runtime_profile = runtime_profile_for_task(task)
     common_kwargs = dict(
         gui=gui,
         record=False,
         obs=ObservationType.RGB,
         ctrl_freq=ctrl_freq,
         pyb_freq=ctrl_freq,
-        sar_mode=sar_mode,
+        **dict(runtime_profile.env_bootstrap),
     )
 
     with contextlib.redirect_stdout(io.StringIO()):

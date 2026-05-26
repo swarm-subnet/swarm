@@ -433,11 +433,11 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
     assert len(details) == 10
     assert uploads == [
         [
-            {"seed_index": 100, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
-            {"seed_index": 102, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
-            {"seed_index": 104, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
-            {"seed_index": 106, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
-            {"seed_index": 108, "score": 0.5, "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 100, "score": 0.5, "metric_key": "city", "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 102, "score": 0.5, "metric_key": "city", "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 104, "score": 0.5, "metric_key": "city", "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 106, "score": 0.5, "metric_key": "city", "map_type": "city", "failure_reason": "NONE"},
+            {"seed_index": 108, "score": 0.5, "metric_key": "city", "map_type": "city", "failure_reason": "NONE"},
         ]
     ]
 
@@ -955,11 +955,16 @@ def test_queue_worker_real_flow_streams_full_run(tmp_path):
             get_benchmark_seeds=lambda: list(range(600001, 600031)),
         ),
         metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
+        _heartbeat_queue=[
+            {"uid": 1, "family_id": "cf_search_and_rescue", "backend_decision_version": 0},
+            {"uid": 1, "family_id": "cf_autopilot", "backend_decision_version": 0},
+        ],
     )
 
     key = "1:hash1"
     item = {
         "uid": 1,
+        "family_id": "cf_autopilot",
         "model_hash": "hash1",
         "model_path": str(model_path),
         "status": "pending",
@@ -1022,6 +1027,14 @@ def test_queue_worker_real_flow_streams_full_run(tmp_path):
     assert all_indices == list(range(200, 230))
     assert item["seeds_evaluated"] == 31  # 1 screening + 30 benchmark
     assert item["total_score"] == pytest.approx((0.85 + 0.9 * 30) / 31)
+    matching = next(entry for entry in validator._heartbeat_queue if entry["family_id"] == "cf_autopilot")
+    untouched = next(entry for entry in validator._heartbeat_queue if entry["family_id"] == "cf_search_and_rescue")
+    assert matching["assignment_id"] == 1
+    assert matching["backend_decision_version"] == 1
+    assert "assignment_id" not in untouched
+    sent_with_active = [call for call in heartbeats if call.get("active_task")]
+    assert sent_with_active
+    assert sent_with_active[0]["active_task"]["family_id"] == "cf_autopilot"
 
 
 # ── Re-eval kill-switch tests ────────────────────────────────────────────
@@ -1739,6 +1752,7 @@ def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
     assert active.get("assignment_id") == 4242
     assert active.get("uid") == 314
     assert active.get("phase") == "SCREENING"
+    assert active.get("family_id") == "cf_search_and_rescue"
     assert active.get("epoch_number") == 12
 
 
@@ -1765,6 +1779,7 @@ def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
     assert active.get("assignment_id") == 8888
     assert active.get("uid") == 271
     assert active.get("phase") == "BENCHMARK"
+    assert active.get("family_id") == "cf_search_and_rescue"
     assert active.get("epoch_number") == 12
 
 
@@ -1790,6 +1805,7 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
     active = sent_with_active[0]["active_task"]
     assert active.get("phase") == "REEVAL"
     assert active.get("assignment_id") == 999
+    assert active.get("family_id") == "cf_search_and_rescue"
 
 
 def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
@@ -1842,3 +1858,129 @@ def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
     initial = sent[0]
     assert initial["total_seeds"] == 200
     assert initial["progress"] == 50
+
+
+def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_screening_seeds=lambda family_id="cf_search_and_rescue": (
+            list(range(100, 160)) if family_id == "cf_autopilot" else list(range(200))
+        ),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    captured_tasks: list[tuple[list[int], str]] = []
+
+    def _fake_screening_tasks(*, sim_dt, seeds, family_id, offset, total_seed_count):
+        _ = sim_dt, offset, total_seed_count
+        captured_tasks.append((list(seeds), family_id))
+        return [SimpleNamespace(challenge_type=1) for _ in seeds]
+
+    monkeypatch.setattr(validator_evaluation, "build_screening_tasks", _fake_screening_tasks)
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator,
+            uid=314,
+            model_path=Path("/tmp/fake.zip"),
+            family_id="cf_autopilot",
+            task_id=4242,
+            seeds_from=50,
+        )
+
+    asyncio.run(_run())
+    assert captured_tasks == [(list(range(150, 160)), "cf_autopilot")]
+
+
+def test_run_screening_ignores_mismatched_family_early_fail_rules(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_screening_seeds=lambda family_id="cf_search_and_rescue": list(range(60)),
+    )
+    monkeypatch.setattr(
+        validator_utils,
+        "_evaluate_seeds",
+        _make_evaluate_stub(score_per_seed=0.10),
+    )
+
+    async def _run():
+        return await validator_evaluation._run_screening(
+            validator,
+            uid=315,
+            model_path=Path("/tmp/fake.zip"),
+            family_id="cf_autopilot",
+            task_id=4243,
+            early_fail_rules={
+                "family_id": "cf_search_and_rescue",
+                "threshold": 1.0,
+                "checkpoints": {"50": 1.0},
+            },
+        )
+
+    avg_score, all_scores, _per_type, cancel_reason, early_failed = asyncio.run(_run())
+
+    assert avg_score == pytest.approx(0.10)
+    assert len(all_scores) == 60
+    assert cancel_reason is None
+    assert early_failed is False
+
+
+def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=12,
+        get_benchmark_seeds=lambda family_id="cf_search_and_rescue": (
+            list(range(1000, 1010)) if family_id == "cf_autopilot" else list(range(800))
+        ),
+    )
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator,
+            uid=42,
+            model_path=Path("/tmp/fake.zip"),
+            family_id="cf_autopilot",
+            task_id=8888,
+            seeds_from=205,
+        )
+
+    avg, _per_type, scores, _raw, _cancel = asyncio.run(_run())
+    assert avg == pytest.approx(0.75)
+    assert len(scores) == 5
+
+
+def test_run_streaming_phase_uploads_family_local_seed_indices(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    uploads: list[list[int]] = []
+
+    async def _capture(**kwargs):
+        uploads.append([item["seed_index"] for item in kwargs["scores"]])
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(5)),
+                phase_description="benchmark",
+                family_id="cf_autopilot",
+                seed_offset=205,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=5,
+            )
+        finally:
+            hb.finish()
+
+    asyncio.run(_run())
+    assert uploads == [[205, 206, 207, 208, 209]]

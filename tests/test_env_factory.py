@@ -33,6 +33,7 @@ class _DummyPyBullet:
 class _DummyEnv:
     def __init__(self, task, **_kwargs) -> None:
         self.task = task
+        self.kwargs = dict(_kwargs)
         self._state_dim = 4
         self.observation_space = {
             "depth": spaces.Box(low=0.0, high=1.0, shape=(4, 4, 1), dtype=np.float32),
@@ -57,7 +58,12 @@ def test_make_env_hides_gui_rendering_during_reset(monkeypatch) -> None:
     monkeypatch.setattr(env_factory.pybullet_data, "getDataPath", lambda: "/tmp")
     monkeypatch.setattr(env_factory.time, "sleep", lambda _seconds: None)
 
-    task = SimpleNamespace(sim_dt=0.1, map_seed=123)
+    task = SimpleNamespace(
+        sim_dt=0.1,
+        map_seed=123,
+        version="5.0.0",
+        family_id="cf_search_and_rescue",
+    )
     env_factory.make_env(task, gui=True)
 
     assert dummy_p.calls == [
@@ -78,9 +84,48 @@ def test_make_env_with_initial_obs_returns_first_observation(monkeypatch) -> Non
     monkeypatch.setattr(env_factory, "p", dummy_p)
     monkeypatch.setattr(env_factory.pybullet_data, "getDataPath", lambda: "/tmp")
 
-    task = SimpleNamespace(sim_dt=0.1, map_seed=123)
+    task = SimpleNamespace(
+        sim_dt=0.1,
+        map_seed=123,
+        version="5.0.0",
+        family_id="cf_search_and_rescue",
+    )
     env, obs = env_factory.make_env_with_initial_obs(task, gui=False)
 
     assert isinstance(env, _DummyEnv)
     assert tuple(obs["depth"].shape) == (4, 4, 1)
     assert tuple(obs["state"].shape) == (4,)
+
+
+def test_make_env_with_initial_obs_uses_family_runtime_kwargs(monkeypatch) -> None:
+    dummy_p = _DummyPyBullet()
+    monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
+    monkeypatch.setattr(env_factory, "p", dummy_p)
+    monkeypatch.setattr(env_factory.pybullet_data, "getDataPath", lambda: "/tmp")
+
+    task = SimpleNamespace(
+        sim_dt=0.1,
+        map_seed=123,
+        version="5.0.0",
+        family_id="cf_search_and_rescue",
+    )
+    env, _obs = env_factory.make_env_with_initial_obs(task, gui=False)
+
+    assert env.kwargs["sar_mode"] is True
+
+
+def test_make_env_with_initial_obs_uses_autopilot_runtime_kwargs(monkeypatch) -> None:
+    dummy_p = _DummyPyBullet()
+    monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
+    monkeypatch.setattr(env_factory, "p", dummy_p)
+    monkeypatch.setattr(env_factory.pybullet_data, "getDataPath", lambda: "/tmp")
+
+    task = SimpleNamespace(
+        sim_dt=0.1,
+        map_seed=123,
+        version="4.9.0",
+        family_id="cf_autopilot",
+    )
+    env, _obs = env_factory.make_env_with_initial_obs(task, gui=False)
+
+    assert env.kwargs["sar_mode"] is False

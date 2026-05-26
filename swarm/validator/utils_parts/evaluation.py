@@ -5,24 +5,27 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import bittensor as bt
 import numpy as np
 
+from swarm.challenge_families import (
+    DEFAULT_RUNTIME_FAMILY_ID,
+    screening_policy_for_family,
+    build_random_task,
+    build_screening_tasks,
+)
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
-    SAR_SCREENING_TEMPLATE,
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
+from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
 from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
-from swarm.validator.task_gen import random_task, screening_task
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
 
 
-_EMPTY_PER_TYPE = (
-    "city", "open", "mountain", "village", "warehouse", "forest",
-)
+_EMPTY_PER_TYPE = ENVIRONMENT_TYPES
 
 
 def _utils_facade():
@@ -35,11 +38,20 @@ def _empty_per_type() -> Dict[str, List[float]]:
     return {name: [] for name in _EMPTY_PER_TYPE}
 
 
+def _seed_manager_call(seed_manager, method_name: str, family_id: str):
+    method = getattr(seed_manager, method_name)
+    try:
+        return method(family_id=family_id)
+    except TypeError:
+        return method()
+
+
 async def _evaluate_seeds(
     self,
     uid: int,
     model_path: Path,
     seeds: List[int],
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     description: str = "benchmark",
     on_seed_complete: Optional[Callable[[], None]] = None,
     prior_seeds_done: int = 0,
@@ -50,15 +62,6 @@ async def _evaluate_seeds(
     """Evaluate a model on multiple seeds using parallel Docker containers."""
     all_scores = []
     per_type_scores = _empty_per_type()
-
-    challenge_type_to_name = {
-        1: "city",
-        2: "open",
-        3: "mountain",
-        4: "village",
-        5: "warehouse",
-        6: "forest",
-    }
 
     model_hash_short = ""
     try:
@@ -74,7 +77,11 @@ async def _evaluate_seeds(
         tasks = []
         for seed in seeds:
             try:
-                task = random_task(sim_dt=SIM_DT, seed=seed)
+                task = build_random_task(
+                    sim_dt=SIM_DT,
+                    seed=seed,
+                    family_id=family_id,
+                )
                 tasks.append(task)
             except Exception as e:
                 bt.logging.warning(f"Failed to create task for seed {seed}: {e}")
@@ -102,25 +109,56 @@ async def _evaluate_seeds(
     for i, task in enumerate(tasks):
         if task is None:
             all_scores.append(0.0)
-            seed_details.append({"score": 0.0, "map_type": "unknown", "failure_reason": "NONE"})
+            seed_details.append(
+                {
+                    "score": 0.0,
+                    "metric_key": "unknown",
+                    "map_type": "unknown",
+                    "failure_reason": "NONE",
+                    "metrics": {},
+                }
+            )
             continue
 
         if task_idx < len(results):
             result = results[task_idx]
             score = result.score if result else 0.0
             reason = getattr(result, "failure_reason", "NONE") if result else "NONE"
+            metrics = dict(getattr(result, "metrics", {}) or {})
             all_scores.append(score)
 
-            type_name = challenge_type_to_name.get(task.challenge_type, "unknown")
+            type_name = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(
+                task.challenge_type,
+                "unknown",
+            )
             if type_name in per_type_scores:
                 per_type_scores[type_name].append(score)
 
-            seed_details.append({"score": score, "map_type": type_name, "failure_reason": reason})
+            seed_details.append(
+                {
+                    "score": score,
+                    "metric_key": type_name,
+                    "map_type": type_name,
+                    "failure_reason": reason,
+                    "metrics": metrics,
+                }
+            )
             task_idx += 1
         else:
-            type_name = challenge_type_to_name.get(task.challenge_type, "unknown")
+            type_name = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(
+                task.challenge_type,
+                "unknown",
+            )
             all_scores.append(0.0)
-            seed_details.append({"score": 0.0, "map_type": type_name, "failure_reason": "NONE"})
+            seed_details.append(
+                {
+                    "score": 0.0,
+                    "metric_key": type_name,
+                    "map_type": type_name,
+                    "failure_reason": "NONE",
+                    "metrics": {},
+                }
+            )
 
     bt.logging.info(f"✅ {description} complete for UID {uid}: {len(all_scores)} seeds evaluated")
     return all_scores, per_type_scores, seed_details
@@ -133,6 +171,7 @@ async def _run_streaming_phase(
     seeds: List[int],
     *,
     phase_description: str,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     seed_offset: int,
     epoch_number: int,
     hb: HeartbeatManager,
@@ -168,6 +207,7 @@ async def _run_streaming_phase(
             result = await self.backend_api.post_seed_scores_batch(
                 model_uid=uid, epoch_number=epoch_number, scores=batch,
                 task_id=task_id,
+                family_id=family_id,
             )
         except Exception as exc:
             bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
@@ -219,8 +259,15 @@ async def _run_streaming_phase(
 
             prior_avg = float(np.mean(all_scores)) if all_scores else 0.0
             batch_scores, batch_per_type, batch_details = await _utils_facade()._evaluate_seeds(
-                self, uid, model_path, batch_seeds,
-                f"{phase_description} [{chunk_start + 1}..{chunk_start + len(batch_seeds)}]",
+                self,
+                uid,
+                model_path,
+                batch_seeds,
+                family_id=family_id,
+                description=(
+                    f"{phase_description} "
+                    f"[{chunk_start + 1}..{chunk_start + len(batch_seeds)}]"
+                ),
                 on_seed_complete=hb.on_seed_complete,
                 prior_seeds_done=evaluator_prior_done + len(all_scores),
                 prior_total_seeds=total_for_evaluator,
@@ -232,11 +279,12 @@ async def _run_streaming_phase(
                 {
                     "seed_index": seed_offset + chunk_start + j,
                     "score": detail["score"],
+                    "metric_key": detail.get("metric_key") or detail["map_type"],
                     "map_type": detail["map_type"],
                     "failure_reason": detail.get("failure_reason", "NONE"),
                 }
                 for j, detail in enumerate(batch_details)
-                if detail.get("map_type") != "unknown"
+                if (detail.get("metric_key") or detail.get("map_type")) != "unknown"
             ]
             if seed_batch:
                 await _wait_for_slot()
@@ -270,6 +318,7 @@ async def _run_streaming_phase(
                     result = await self.backend_api.post_seed_scores_batch(
                         model_uid=uid, epoch_number=epoch_number, scores=batch,
                         task_id=task_id,
+                        family_id=family_id,
                     )
                 except Exception as exc:
                     bt.logging.warning(
@@ -288,6 +337,7 @@ async def _run_screening(
     self, uid: int, model_path: Path, reeval: bool = False,
     task_id: Optional[int] = None,
     *,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     seeds_from: int = 0,
     seeds_to: Optional[int] = None,
     cancel_flag: Optional[asyncio.Event] = None,
@@ -304,7 +354,9 @@ async def _run_screening(
     the backend's payload shape: ``{"threshold": float, "checkpoints":
     {"50": 0.50, "100": 0.70, "150": 0.85}}``.
     """
-    full_seeds = self.seed_manager.get_screening_seeds()
+    full_seeds = _seed_manager_call(
+        self.seed_manager, "get_screening_seeds", family_id
+    )
     upper = seeds_to if seeds_to is not None else len(full_seeds)
     upper = max(seeds_from, min(upper, len(full_seeds)))
     screening_seeds = full_seeds[seeds_from:upper]
@@ -317,31 +369,43 @@ async def _run_screening(
     progress_offset = seeds_from
     epoch = self.seed_manager.epoch_number
 
-    full_template = (
-        SAR_SCREENING_TEMPLATE * ((len(full_seeds) // len(SAR_SCREENING_TEMPLATE)) + 1)
-    )[: len(full_seeds)]
-    template_cycle = full_template[seeds_from:upper]
     screening_tasks: List = []
-    for seed, slot in zip(screening_seeds, template_cycle):
-        try:
-            screening_tasks.append(screening_task(
-                sim_dt=SIM_DT, seed=seed,
-                challenge_type=slot["challenge_type"],
-                distance_range=slot["distance_range"],
-            ))
-        except Exception as e:
-            bt.logging.warning(f"Failed to create screening task for seed {seed}: {e}")
-            screening_tasks.append(None)
+    try:
+        screening_tasks = build_screening_tasks(
+            sim_dt=SIM_DT,
+            seeds=screening_seeds,
+            family_id=family_id,
+            offset=seeds_from,
+            total_seed_count=len(full_seeds),
+        )
+    except Exception as e:
+        bt.logging.warning(f"Failed to create screening tasks: {e}")
+        screening_tasks = [None for _ in screening_seeds]
 
     early_fail_state = {"triggered": False, "at": None}
     checkpoint_thresholds: Dict[int, float] = {}
     if early_fail_rules:
-        threshold = float(early_fail_rules.get("threshold", 0.0))
-        for raw_n, raw_factor in (early_fail_rules.get("checkpoints") or {}).items():
-            try:
-                checkpoint_thresholds[int(raw_n)] = float(raw_factor) * threshold
-            except (TypeError, ValueError):
-                continue
+        policy_family_id = str(
+            early_fail_rules.get("family_id") or family_id
+        )
+        if policy_family_id != family_id:
+            bt.logging.warning(
+                f"Ignoring mismatched early-fail rules for UID {uid}: "
+                f"task family={family_id} rules family={policy_family_id}"
+            )
+        else:
+            threshold = float(early_fail_rules.get("threshold", 0.0))
+            raw_checkpoints = early_fail_rules.get("checkpoints")
+            if raw_checkpoints is None:
+                raw_checkpoints = (
+                    screening_policy_for_family(family_id)
+                    .get("early_fail_checkpoints", {})
+                )
+            for raw_n, raw_factor in (raw_checkpoints or {}).items():
+                try:
+                    checkpoint_thresholds[int(raw_n)] = float(raw_factor) * threshold
+                except (TypeError, ValueError):
+                    continue
 
     tracker_call(
         self,
@@ -361,6 +425,7 @@ async def _run_screening(
         "uid": uid,
         "phase": "REEVAL" if reeval else "SCREENING",
         "assignment_id": task_id,
+        "family_id": family_id,
         "epoch_number": epoch,
         "benchmark_version": BENCHMARK_VERSION,
     }
@@ -408,6 +473,7 @@ async def _run_screening(
             model_path,
             screening_seeds,
             phase_description="screening",
+            family_id=family_id,
             seed_offset=seeds_from,
             epoch_number=epoch,
             hb=hb,
@@ -445,6 +511,7 @@ async def _run_full_benchmark(
     self, uid: int, model_path: Path, seeds: Optional[List[int]] = None,
     reeval: bool = False, task_id: Optional[int] = None,
     *,
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     cancel_flag: Optional[asyncio.Event] = None,
     seeds_from: Optional[int] = None,
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]], Optional[str]]:
@@ -461,19 +528,26 @@ async def _run_full_benchmark(
         # REEVAL covers all 1000 seeds; benchmark covers only 200..999.
         # Caller signals REEVAL by passing seeds_from < 200.
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
-            benchmark_seeds = self.seed_manager.seeds[seeds_from:]
+            all_family_seeds = _seed_manager_call(
+                self.seed_manager, "get_all_seeds", family_id
+            )
+            benchmark_seeds = all_family_seeds[seeds_from:]
             seed_offset = seeds_from
-            heartbeat_total = len(self.seed_manager.seeds)
+            heartbeat_total = len(all_family_seeds)
             progress_offset = seeds_from
         elif seeds_from is not None and seeds_from > BENCHMARK_SCREENING_SEED_COUNT:
-            full_benchmark = self.seed_manager.get_benchmark_seeds()
+            full_benchmark = _seed_manager_call(
+                self.seed_manager, "get_benchmark_seeds", family_id
+            )
             offset = seeds_from - BENCHMARK_SCREENING_SEED_COUNT
             benchmark_seeds = full_benchmark[offset:]
             seed_offset = seeds_from
             heartbeat_total = len(full_benchmark)
             progress_offset = offset
         else:
-            benchmark_seeds = self.seed_manager.get_benchmark_seeds()
+            benchmark_seeds = _seed_manager_call(
+                self.seed_manager, "get_benchmark_seeds", family_id
+            )
             seed_offset = BENCHMARK_SCREENING_SEED_COUNT
             heartbeat_total = len(benchmark_seeds)
             progress_offset = 0
@@ -494,23 +568,27 @@ async def _run_full_benchmark(
         and seeds_from is not None
         and seeds_from < BENCHMARK_SCREENING_SEED_COUNT
     ):
-        full_screening_seeds = self.seed_manager.get_screening_seeds()
-        full_template = (
-            SAR_SCREENING_TEMPLATE * ((len(full_screening_seeds) // len(SAR_SCREENING_TEMPLATE)) + 1)
-        )[: len(full_screening_seeds)]
+        full_screening_seeds = _seed_manager_call(
+            self.seed_manager, "get_screening_seeds", family_id
+        )
         pre_built_tasks = []
         for i, seed in enumerate(benchmark_seeds):
             abs_idx = seeds_from + i
             try:
                 if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
-                    slot = full_template[abs_idx]
-                    task = screening_task(
-                        sim_dt=SIM_DT, seed=seed,
-                        challenge_type=slot["challenge_type"],
-                        distance_range=slot["distance_range"],
-                    )
+                    task = build_screening_tasks(
+                        sim_dt=SIM_DT,
+                        seeds=[seed],
+                        family_id=family_id,
+                        offset=abs_idx,
+                        total_seed_count=len(full_screening_seeds),
+                    )[0]
                 else:
-                    task = random_task(sim_dt=SIM_DT, seed=seed)
+                    task = build_random_task(
+                        sim_dt=SIM_DT,
+                        seed=seed,
+                        family_id=family_id,
+                    )
             except Exception as e:
                 bt.logging.warning(
                     f"Failed to create REEVAL task for seed {seed} idx {abs_idx}: {e}"
@@ -541,6 +619,7 @@ async def _run_full_benchmark(
         "uid": uid,
         "phase": "REEVAL" if reeval else "BENCHMARK",
         "assignment_id": task_id,
+        "family_id": family_id,
         "epoch_number": epoch,
         "benchmark_version": BENCHMARK_VERSION,
     }
@@ -576,6 +655,7 @@ async def _run_full_benchmark(
             model_path,
             benchmark_seeds,
             phase_description="full benchmark",
+            family_id=family_id,
             seed_offset=seed_offset,
             epoch_number=epoch,
             hb=hb,

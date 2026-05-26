@@ -311,6 +311,7 @@ def _print_results(
     from math import floor
 
     from swarm.constants import CHALLENGE_TYPE_DISTRIBUTION
+    from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP
 
     def _allocate(total: int, weights: Dict[Any, float], keys: List[Any]) -> Dict[Any, int]:
         raw = {k: max(0.0, float(weights.get(k, 0.0))) * total for k in keys}
@@ -323,12 +324,8 @@ def _print_results(
 
     type_counts = _allocate(1000, CHALLENGE_TYPE_DISTRIBUTION, [1, 2, 3, 4, 5, 6])
     dist = {
-        "type1_city": type_counts[1],
-        "type2_open": type_counts[2],
-        "type3_mountain": type_counts[3],
-        "type4_village": type_counts[4],
-        "type5_warehouse": type_counts[5],
-        "type6_forest": type_counts[6],
+        group_name: type_counts[challenge_type]
+        for challenge_type, group_name in CHALLENGE_TYPE_TO_BENCHMARK_GROUP.items()
     }
 
     total_extrap_worker_sec = 0.0

@@ -7,6 +7,27 @@ import zipfile
 from types import SimpleNamespace
 
 from swarm import cli
+from swarm.policy_interface import POLICY_CONTRACT_FILENAME, render_artifact_policy_contract
+
+
+def _write_smoke_ready_agent(src, *, speed: float = 0.5):
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "drone_agent.py").write_text(
+        "\n".join(
+            [
+                "import numpy as np",
+                "",
+                "class DroneFlightController:",
+                "    def reset(self):",
+                "        return None",
+                "",
+                "    def act(self, observation):",
+                f"        return np.array([0.0, 0.0, 0.0, {speed}, 0.0], dtype=np.float32)",
+                "",
+            ]
+        )
+    )
+    (src / "weights.pt").write_bytes(b"weights")
 
 
 def test_doctor_text_output_with_mocked_checks(monkeypatch, capsys):
@@ -153,13 +174,36 @@ def test_benchmark_fails_if_model_missing(capsys, tmp_path):
 def test_model_verify_passes_for_valid_rpc_submission(tmp_path, capsys):
     model_zip = tmp_path / "submission.zip"
     with zipfile.ZipFile(model_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("drone_agent.py", "class DroneFlightController:\n    pass\n")
+        zf.writestr(
+            "drone_agent.py",
+            "\n".join(
+                [
+                    "import numpy as np",
+                    "",
+                    "class DroneFlightController:",
+                    "    def reset(self):",
+                    "        return None",
+                    "",
+                    "    def act(self, observation):",
+                    "        return np.array([0.0, 0.0, 0.0, 0.5, 0.0], dtype=np.float32)",
+                    "",
+                ]
+            ),
+        )
+        zf.writestr(
+            POLICY_CONTRACT_FILENAME,
+            render_artifact_policy_contract(
+                "cf_search_and_rescue",
+                "submission_zip.v1",
+            ),
+        )
 
     rc = cli.main(["model", "verify", "--model", str(model_zip)])
     assert rc == 0
     output = capsys.readouterr().out
     assert "Model:" in output
     assert "Compliant: True" in output
+    assert "Runtime smoke: True (ok)" in output
 
 
 def test_model_verify_fails_if_missing_drone_agent(tmp_path):
@@ -185,8 +229,37 @@ def test_model_package_creates_zip(tmp_path):
     assert out_zip.exists()
     with zipfile.ZipFile(out_zip) as zf:
         names = set(zf.namelist())
+        contract = json.loads(zf.read(POLICY_CONTRACT_FILENAME).decode("utf-8"))
     assert "drone_agent.py" in names
     assert "policy.pt" in names
+    assert POLICY_CONTRACT_FILENAME in names
+    assert contract["family_id"] == "cf_search_and_rescue"
+    assert contract["interface_version"] == "submission_zip.v1"
+
+
+def test_model_package_supports_family_override(tmp_path):
+    src = tmp_path / "agent"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "drone_agent.py").write_text("class DroneFlightController:\n    pass\n")
+    out_zip = tmp_path / "submission.zip"
+
+    rc = cli.main(
+        [
+            "model",
+            "package",
+            "--source",
+            str(src),
+            "--output",
+            str(out_zip),
+            "--family-id",
+            "cf_autopilot",
+        ]
+    )
+
+    assert rc == 0
+    with zipfile.ZipFile(out_zip) as zf:
+        contract = json.loads(zf.read(POLICY_CONTRACT_FILENAME).decode("utf-8"))
+    assert contract["family_id"] == "cf_autopilot"
 
 
 def test_model_package_requires_overwrite_for_existing_output(tmp_path):
@@ -221,6 +294,149 @@ def test_model_package_skips_pycache_files(tmp_path):
         names = set(zf.namelist())
     assert "__pycache__/drone_agent.cpython-310.pyc" not in names
     assert "weights.pt" in names
+
+
+def test_repo_package_creates_multi_family_manifest_and_artifacts(tmp_path):
+    repo_root = tmp_path / "submission_repo"
+    sar_src = tmp_path / "sar_agent"
+    autopilot_src = tmp_path / "autopilot_agent"
+    _write_smoke_ready_agent(sar_src, speed=0.5)
+    _write_smoke_ready_agent(autopilot_src, speed=0.4)
+
+    rc = cli.main(
+        [
+            "repo",
+            "package",
+            "--repo-root",
+            str(repo_root),
+            "--family-source",
+            f"cf_search_and_rescue={sar_src}",
+            "--family-source",
+            f"cf_autopilot={autopilot_src}",
+        ]
+    )
+
+    assert rc == 0
+    manifest_path = repo_root / "submission_manifest.json"
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text())
+    assert [item["family_id"] for item in manifest["artifacts"]] == [
+        "cf_autopilot",
+        "cf_search_and_rescue",
+    ]
+    assert (repo_root / "artifacts" / "cf_autopilot" / "submission.zip").exists()
+    assert (repo_root / "artifacts" / "cf_search_and_rescue" / "submission.zip").exists()
+
+
+def test_repo_package_supports_single_family_incremental_updates(tmp_path):
+    repo_root = tmp_path / "submission_repo"
+    sar_src = tmp_path / "sar_agent"
+    autopilot_src = tmp_path / "autopilot_agent"
+    _write_smoke_ready_agent(sar_src, speed=0.5)
+    _write_smoke_ready_agent(autopilot_src, speed=0.4)
+
+    assert (
+        cli.main(
+            [
+                "repo",
+                "package",
+                "--repo-root",
+                str(repo_root),
+                "--family-source",
+                f"cf_search_and_rescue={sar_src}",
+            ]
+        )
+        == 0
+    )
+    assert (
+        cli.main(
+            [
+                "repo",
+                "package",
+                "--repo-root",
+                str(repo_root),
+                "--source",
+                str(autopilot_src),
+                "--family-id",
+                "cf_autopilot",
+            ]
+        )
+        == 0
+    )
+
+    manifest = json.loads((repo_root / "submission_manifest.json").read_text())
+    assert {item["family_id"] for item in manifest["artifacts"]} == {
+        "cf_search_and_rescue",
+        "cf_autopilot",
+    }
+
+
+def test_repo_verify_passes_for_packaged_multi_family_repo(tmp_path, capsys):
+    repo_root = tmp_path / "submission_repo"
+    sar_src = tmp_path / "sar_agent"
+    autopilot_src = tmp_path / "autopilot_agent"
+    _write_smoke_ready_agent(sar_src, speed=0.5)
+    _write_smoke_ready_agent(autopilot_src, speed=0.4)
+
+    assert (
+        cli.main(
+            [
+                "repo",
+                "package",
+                "--repo-root",
+                str(repo_root),
+                "--family-source",
+                f"cf_search_and_rescue={sar_src}",
+                "--family-source",
+                f"cf_autopilot={autopilot_src}",
+            ]
+        )
+        == 0
+    )
+
+    rc = cli.main(["repo", "verify", "--repo-root", str(repo_root), "--strict-manifest"])
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "Compliant: True" in output
+    assert "Family: cf_autopilot" in output
+    assert "Family: cf_search_and_rescue" in output
+    assert "Runtime smoke: True (ok)" in output
+
+
+def test_repo_verify_rejects_bad_artifact_and_surfaces_family_id(tmp_path, capsys):
+    repo_root = tmp_path / "submission_repo"
+    sar_src = tmp_path / "sar_agent"
+    autopilot_src = tmp_path / "autopilot_agent"
+    _write_smoke_ready_agent(sar_src, speed=0.5)
+    _write_smoke_ready_agent(autopilot_src, speed=0.4)
+
+    assert (
+        cli.main(
+            [
+                "repo",
+                "package",
+                "--repo-root",
+                str(repo_root),
+                "--family-source",
+                f"cf_search_and_rescue={sar_src}",
+                "--family-source",
+                f"cf_autopilot={autopilot_src}",
+            ]
+        )
+        == 0
+    )
+
+    bad_artifact = repo_root / "artifacts" / "cf_autopilot" / "submission.zip"
+    with zipfile.ZipFile(bad_artifact, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("drone_agent.py", "class DroneFlightController:\n    pass\n")
+
+    rc = cli.main(["repo", "verify", "--repo-root", str(repo_root), "--strict-manifest"])
+
+    assert rc == 1
+    output = capsys.readouterr().out
+    assert "Compliant: False" in output
+    assert "Reason: artifact_hash_mismatch:cf_autopilot:artifacts/cf_autopilot/submission.zip" in output
 
 
 def test_model_test_fails_for_invalid_requirements(tmp_path):

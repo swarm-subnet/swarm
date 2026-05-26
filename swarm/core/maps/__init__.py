@@ -1,2 +1,1 @@
-"""Canonical map-family package for benchmark environments."""
-
+"""Canonical environment-type package for benchmark environments."""

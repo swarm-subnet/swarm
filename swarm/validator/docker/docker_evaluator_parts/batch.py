@@ -25,7 +25,12 @@ from swarm.protocol import (
 )
 from swarm.utils.hash import sha256sum
 
-from ._shared import _docker_evaluator_facade, _submission_template_dir
+from ._shared import (
+    _docker_evaluator_facade,
+    _runtime_profile_env,
+    _runtime_profile_from_payload,
+    _submission_template_dir,
+)
 
 
 def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
@@ -39,6 +44,7 @@ def prepare_model_image(
     self,
     uid: int,
     model_path: Path,
+    runtime_profile_payload: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     """Build a per-model Docker image with pip dependencies pre-installed.
 
@@ -53,7 +59,15 @@ def prepare_model_image(
     try:
         current_uid = os.getuid()
         current_gid = os.getgid()
-        worker_limits = self._resolve_worker_limits(0)
+        runtime_profile = (
+            _runtime_profile_from_payload(runtime_profile_payload, [])
+            if runtime_profile_payload is not None
+            else None
+        )
+        worker_limits = self._resolve_worker_limits(0, runtime_profile=runtime_profile)
+        run_image = self.base_image
+        if runtime_profile is not None:
+            run_image = self._resolve_base_image_for_key(runtime_profile.image_key)
 
         tmpdir = tempfile.mkdtemp()
         os.chmod(tmpdir, 0o755)
@@ -117,9 +131,14 @@ def prepare_model_image(
             "--cap-drop", "ALL",
             "--network", "bridge",
             "-v", f"{submission_dir}:/workspace/submission:rw",
-            self.base_image,
-            "bash", "/workspace/submission/startup.sh",
         ]
+        if runtime_profile is not None:
+            for key, value in _runtime_profile_env(runtime_profile).items():
+                cmd.extend(["-e", f"{key}={value}"])
+        cmd.extend([
+            run_image,
+            "bash", "/workspace/submission/startup.sh",
+        ])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             bt.logging.warning(f"UID {uid}: pip container start failed: {result.stderr[:200]}")
@@ -219,6 +238,7 @@ class _BatchContext:
     task_offset: int = 0
     task_total: Optional[int] = None
     model_image: Optional[str] = None
+    runtime_profile_payload: Optional[dict[str, Any]] = None
 
     # Trace + sync primitives (built in _init_batch_state)
     trace_rpc: bool = False
@@ -241,6 +261,7 @@ class _BatchContext:
     worker_limits: Optional[dict] = None
     docker_envs: Optional[dict] = None
     validator_ip: Optional[str] = None
+    runtime_profile: Optional[Any] = None
 
     # Pip / readiness flags
     pip_done: bool = False
@@ -465,12 +486,14 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     tasks = ctx.tasks
     model_path = ctx.model_path
     model_image = ctx.model_image
+    runtime_profile = _runtime_profile_from_payload(ctx.runtime_profile_payload, tasks)
     _notify_all_failed = ctx.helpers.notify_all_failed
 
     current_uid = os.getuid()
     current_gid = os.getgid()
-    worker_limits = self._resolve_worker_limits(worker_id)
+    worker_limits = self._resolve_worker_limits(worker_id, runtime_profile=runtime_profile)
     docker_envs = self._docker_env_overrides()
+    docker_envs.update(_runtime_profile_env(runtime_profile))
 
     tmpdir = tempfile.mkdtemp()
     ctx.tmpdir = tmpdir  # set BEFORE chown/chmod so outer finally cleans up if either raises
@@ -521,7 +544,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
     validator_ip = self._get_docker_host_ip()
-    run_image = model_image or self.base_image
+    run_image = model_image or self._resolve_base_image_for_key(runtime_profile.image_key)
 
     if has_requirements:
         bt.logging.info(
@@ -548,6 +571,17 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     ctx.has_requirements = has_requirements
     ctx.run_image = run_image
     ctx.validator_ip = validator_ip
+    ctx.runtime_profile = runtime_profile
+    self.last_selected_runtime_profile = runtime_profile.as_dict()
+    self.last_selected_worker_limits = dict(worker_limits)
+    self.last_selected_runtime_env = dict(docker_envs)
+    self.last_selected_run_image = str(run_image)
+    self.last_runtime_profile_info = {
+        "family_id": runtime_profile.family_id,
+        "profile_name": runtime_profile.profile_name,
+        "resource_class": runtime_profile.resource_class,
+        "image_key": runtime_profile.image_key,
+    }
     return None
 
 
@@ -866,18 +900,38 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
     progress_state = ctx.progress_state
     task_offset = ctx.task_offset
     task_total = ctx.task_total
+    runtime_profile = ctx.runtime_profile
     _phase = ctx.helpers.phase
     _on_seed_complete_guarded = ctx.helpers.on_seed_complete_guarded
     _run_docker_cmd_quiet = ctx.helpers.run_docker_cmd_quiet
     _notify_all_failed = ctx.helpers.notify_all_failed
 
     try:
-        base_batch_timeout = min(
-            GLOBAL_EVAL_BASE_SEC + GLOBAL_EVAL_PER_SEED_SEC * len(tasks),
-            GLOBAL_EVAL_CAP_SEC,
+        profile_base_sec = (
+            float(runtime_profile.global_eval_base_sec)
+            if runtime_profile is not None and runtime_profile.global_eval_base_sec is not None
+            else float(GLOBAL_EVAL_BASE_SEC)
         )
+        profile_per_seed_sec = (
+            float(runtime_profile.global_eval_per_seed_sec)
+            if runtime_profile is not None and runtime_profile.global_eval_per_seed_sec is not None
+            else float(GLOBAL_EVAL_PER_SEED_SEC)
+        )
+        profile_cap_sec = (
+            float(runtime_profile.global_eval_cap_sec)
+            if runtime_profile is not None and runtime_profile.global_eval_cap_sec is not None
+            else float(GLOBAL_EVAL_CAP_SEC)
+        )
+        base_batch_timeout = profile_base_sec + profile_per_seed_sec * len(tasks)
+        if profile_cap_sec > 0:
+            base_batch_timeout = min(base_batch_timeout, profile_cap_sec)
         timeout_settings = DockerBatchTimeoutSettings.from_env()
-        timeout_multiplier = timeout_settings.multiplier
+        profile_timeout_multiplier = (
+            float(runtime_profile.batch_timeout_multiplier)
+            if runtime_profile is not None
+            else 1.0
+        )
+        timeout_multiplier = timeout_settings.multiplier * profile_timeout_multiplier
         batch_timeout = base_batch_timeout * timeout_multiplier
         hard_cap_timeout = timeout_settings.hard_cap_sec
         if hard_cap_timeout > 0:
@@ -921,6 +975,7 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                     progress_state,
                     task_offset,
                     task_total,
+                    runtime_profile.as_dict() if runtime_profile is not None else None,
                 )
             except Exception as e:
                 rpc_payload["error"] = e
@@ -1117,6 +1172,7 @@ async def evaluate_seeds_batch(
     task_offset: int = 0,
     task_total: Optional[int] = None,
     model_image: Optional[str] = None,
+    runtime_profile_payload: Optional[dict[str, Any]] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1144,6 +1200,7 @@ async def evaluate_seeds_batch(
         task_offset=task_offset,
         task_total=task_total,
         model_image=model_image,
+        runtime_profile_payload=runtime_profile_payload,
     )
 
     _init_batch_state(ctx)
