@@ -231,7 +231,7 @@ There are no waypoints, no GPS, no obstacle coordinates. The model must learn to
 score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-Ranking is by **average score across 1,000 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + 0.015) before running the full benchmark.
+Ranking is by **average score across 1,000 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + improvement floor, see [docs/scoring.md](docs/scoring.md)) before running the full benchmark.
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its own 1,000 seeds per epoch. All seeds are published on [swarm124.com](https://swarm124.com) for transparency.
 
@@ -242,7 +242,7 @@ Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its o
 <!-- GETTING STARTED -->
 ## Getting Started
 
-> **One shot per hotkey.** Each hotkey commits a single model, lifetime. Train and benchmark locally until the model consistently beats **champion + 0.015**, then submit.
+> **One shot per hotkey.** Each hotkey commits a single model, lifetime. Train and benchmark locally until the model consistently clears the **improvement floor** (full curve at [docs/scoring.md](docs/scoring.md); a safe rule of thumb is +0.015 above the current champion), then submit.
 
 <table>
 <tr>

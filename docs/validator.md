@@ -289,7 +289,7 @@ pm2 start --name auto_update_validator \
    Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
 
 3. **Screening (200 seeds)**
-   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears **champion + 0.015** (or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
+   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears **champion + improvement floor** (see [docs/scoring.md](scoring.md) for the curve; or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
 
 4. **Full benchmark (800 seeds)**
    Models that advance are evaluated on the remaining 800 seeds across all six environment types, in parallel Docker containers.

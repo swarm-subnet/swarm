@@ -39,7 +39,7 @@ When a benchmark cycle finishes and a new model is crowned champion, that model 
 
 Winner-take-all has two failure modes that KotH addresses:
 
-1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add `0.015` of noise to pass the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, that miner's tiny jump translates to a tiny share — most of the emissions stay with the past kings whose jumps were larger.
+1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add just enough noise to clear the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, that miner's tiny jump translates to a tiny share — most of the emissions stay with the past kings whose jumps were larger.
 
 2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying for the next four dethronings — proportional to the real contribution.
 
@@ -141,9 +141,9 @@ No. The subnet enforces **one model per hotkey, lifetime**. A hotkey that has be
 
 Their share continues to flow to their hotkey. Past kings are never re-evaluated; the share is locked in at crowning. The on-chain emission goes to the original hotkey regardless of whether the public repo is still available.
 
-### Why is there a minimum jump (0.015) to take the throne?
+### Why is there a minimum jump to take the throne?
 
-The crowning floor (`champion + 0.015`) is an anti-noise threshold. Without it, the network would re-elect a "new" champion every time a benchmark produced a 0.0001 score variance. The floor is unchanged by KotH.
+The crowning floor (`champion + improvement_floor(champion_score)`) is an anti-noise threshold. Without it, the network would re-elect a "new" champion every time a benchmark produced a 0.0001 score variance. The floor is `0.015` while the champion is below `0.50` and decays toward `0.005` as the champion approaches `1.00`. Full curve at [docs/scoring.md](scoring.md). The floor is unchanged by KotH.
 
 ### What if the subnet emission rate changes?
 
@@ -161,7 +161,7 @@ Yes — this is a known limit of the V5.0.0 design. A team running multiple hotk
 
 | Term | Meaning |
 |---|---|
-| **King** | A model that took the throne by passing the screening + benchmark and beating the previous champion by ≥ 0.015. |
+| **King** | A model that took the throne by passing the screening + benchmark and clearing the improvement floor above the previous champion (see [docs/scoring.md](scoring.md)). |
 | **Lineage** | The permanent ordered list of every king ever, stored by the backend. |
 | **Active window** | The current 5 kings whose shares are summed and used for emissions. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
@@ -169,6 +169,6 @@ Yes — this is a known limit of the V5.0.0 design. A team running multiple hotk
 | **Headroom-adjusted jump** | The jump divided by the remaining headroom, capped to prevent singularity. |
 | **Share** | The percentage of subnet emissions a king receives. Sums to 100% across all 5 active kings. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
-| **Crowning floor** | The fixed minimum improvement (0.015) required to dethrone the current champion. |
+| **Crowning floor** | The minimum improvement required to dethrone the current champion. Flat at `0.015` while the champion is below `0.50`, decaying to `0.005` at champion score `1.00`. See [docs/scoring.md](scoring.md). |
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>

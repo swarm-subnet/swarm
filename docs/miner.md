@@ -239,7 +239,7 @@ git push
 
 ### 4. Submit
 
-> **One-shot.** Each hotkey can commit one model, lifetime. The chain scanner ignores any later commitment from the same hotkey, and the database enforces a one-model-per-hotkey constraint. Benchmark locally and only commit when the model consistently beats **champion + 0.015**. To try a different model, a new hotkey and subnet registration are required.
+> **One-shot.** Each hotkey can commit one model, lifetime. The chain scanner ignores any later commitment from the same hotkey, and the database enforces a one-model-per-hotkey constraint. Benchmark locally and only commit when the model consistently clears the **improvement floor** (champion + 0.015 while the champion is below 0.50, smoothly relaxing toward champion + 0.005 as the champion approaches 1.00 — full curve at [docs/scoring.md](scoring.md)). To try a different model, a new hotkey and subnet registration are required.
 
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
@@ -323,7 +323,7 @@ Boundaries get a 10 cm / 0.1 m·s⁻¹ hysteresis grace once the predicate is al
 
 Subnet emissions are **not** winner-take-all. They are split among the **last 5 champions** (current king plus the four most recent past kings), weighted by how much each one improved the network's best score when they were crowned.
 
-The harder the jump, the larger the share. A late-stage jump from 0.92 → 0.95 earns more than the same absolute jump earlier in the curve, because there is less remaining headroom near a perfect score. A copycat model that barely clears the +0.015 floor earns almost nothing; a real innovation that closes a big chunk of the remaining headroom earns a dominant share for the next four dethronings.
+The harder the jump, the larger the share. A late-stage jump from 0.92 → 0.95 earns more than the same absolute jump earlier in the curve, because there is less remaining headroom near a perfect score. A copycat model that barely clears the improvement floor earns almost nothing; a real innovation that closes a big chunk of the remaining headroom earns a dominant share for the next four dethronings.
 
 Past kings keep earning automatically. There is nothing to claim or maintain — once you have been crowned, your share is locked in and flows to your hotkey until you age out of the 5-king window. The formula and edge cases are in [docs/king_of_the_hill.md](king_of_the_hill.md).
 
@@ -339,9 +339,9 @@ Past kings keep earning automatically. There is nothing to claim or maintain —
 2. **Backend** detects the commit. The chain scanner polls every ~3 minutes, so registration completes within **3–5 minutes** of chain-commit finalization. The backend downloads `submission.zip`, verifies the SHA-256 and README hashes, and adds the model to the pending queue
 3. **Validators** sync the pending queue, download the model directly from the miner's GitHub repo, and verify the hash against the backend record
 4. Each validator runs the agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear **champion + 0.015** (or >= 0.01 if no champion)
+   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear **champion + improvement floor** (`0.015` while champion <= `0.50`, decaying toward `0.005` near `1.00`; or `>= 0.01` if no champion yet)
    - **Full benchmark** (800 seeds) — remaining seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
-5. Final score is a **stake-weighted average of the consensus-set validators' reports**; pass/fail uses that same weighted score against the `+0.015` threshold. Full rules at [docs/scoring.md](scoring.md). No single validator can block or advance a model on its own
+5. Final score is a **stake-weighted average of the consensus-set validators' reports**; pass/fail uses that same weighted score against the dynamic improvement floor. Full rules at [docs/scoring.md](scoring.md). No single validator can block or advance a model on its own
 6. Emissions are split across the 5 most recent champions — see [docs/king_of_the_hill.md](king_of_the_hill.md)
 
 ### Epoch Rotation
@@ -357,7 +357,7 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 | Total seeds per epoch | 1,000 |
 | Screening seeds | 200 |
 | Full benchmark seeds | 800 |
-| Screening threshold | >= champion score + 0.015 (or >= 0.01 bootstrap) |
+| Screening threshold | >= champion score + dynamic floor (0.015 → 0.005, see [docs/scoring.md](scoring.md)); >= 0.01 bootstrap if no champion |
 | Max submission size | 50 MiB (compressed) |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -400,7 +400,7 @@ The leaderboard reshuffles once stake-weighted consensus settles across validato
 
 The hotkey is done. Each hotkey can commit **one model, lifetime** — any later commitment from the same hotkey is ignored. A failed model stays recorded against that hotkey; to compete again, register a new hotkey and submit from it.
 
-Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats **champion + 0.015** across all environment types.
+Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently clears the **improvement floor** (full curve at [docs/scoring.md](scoring.md); a safe rule of thumb is +0.015 above the current champion's score) across all environment types.
 
 ### Can I update my submission after committing?
 
