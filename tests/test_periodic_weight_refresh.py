@@ -30,7 +30,7 @@ def _apply_stub(self_obj, weights):
         except (TypeError, ValueError):
             continue
 
-def _compute_koth_stub(sync_data):
+def _compute_koth_stub(sync_data, *, metagraph=None):
     from swarm.validator import koth as _koth
     entries = []
     for raw in sync_data.get("kings") or []:

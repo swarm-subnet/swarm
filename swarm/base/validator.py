@@ -154,7 +154,9 @@ class BaseValidatorNeuron(BaseNeuron):
                 if not hasattr(self, "backend_api"):
                     continue
                 data = await self.backend_api.sync()
-                local_weights = compute_koth_weights_from_sync(data)
+                local_weights = compute_koth_weights_from_sync(
+                    data, metagraph=self.metagraph
+                )
                 _apply_backend_weights_to_scores(self, local_weights)
             except asyncio.CancelledError:
                 break

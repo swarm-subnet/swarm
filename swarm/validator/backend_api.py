@@ -468,6 +468,9 @@ class BackendApiClient:
 
                 self._runtime_state["last_weights"] = data.get("weights", {})
                 self._runtime_state["last_kings"] = data.get("kings", [])
+                self._runtime_state["last_kings_by_family"] = data.get("kings_by_family", {})
+                self._runtime_state["last_family_shares"] = data.get("family_shares", {})
+                self._runtime_state["last_burn_extra"] = data.get("burn_extra", 0.0)
                 self._runtime_state["reeval_queue"] = reeval_queue
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
@@ -502,6 +505,9 @@ class BackendApiClient:
                     "current_epoch": benchmark_epoch,
                     "latest_reported_epoch": data.get("latest_reported_epoch"),
                     "kings": data.get("kings", []),
+                    "kings_by_family": data.get("kings_by_family", {}),
+                    "family_shares": data.get("family_shares", {}),
+                    "burn_extra": data.get("burn_extra", 0.0),
                 }
 
             raise Exception(data.get("error", "Unknown error"))
@@ -515,6 +521,9 @@ class BackendApiClient:
                 "current_top": self._runtime_state.get("current_top", {}),
                 "weights": self._runtime_state.get("last_weights", {}),
                 "kings": self._runtime_state.get("last_kings", []),
+                "kings_by_family": self._runtime_state.get("last_kings_by_family", {}),
+                "family_shares": self._runtime_state.get("last_family_shares", {}),
+                "burn_extra": self._runtime_state.get("last_burn_extra", 0.0),
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
                 "pending_models": [],

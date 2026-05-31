@@ -14,12 +14,14 @@ Scores are clamped to [0, 1] before subtracting.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 
 HEADROOM_EPS: float = 0.05
 WINDOW_SIZE: int = 5
+RESERVED_BURN_UID: int = 0
 
 
 class MalformedKingEntry(ValueError):
@@ -37,6 +39,7 @@ class KingEntry:
     crowned_at_epoch: int
     lineage_id: Optional[int] = None
     manual_override_drop: bool = False
+    family_id: str = "cf_autopilot"
 
     @classmethod
     def from_sync_dict(cls, data: Mapping[str, Any]) -> "KingEntry":
@@ -65,15 +68,19 @@ class KingEntry:
             crowned_at_epoch=crowned_at_epoch,
             lineage_id=lineage_id,
             manual_override_drop=manual_override_drop,
+            family_id=str(data.get("family_id", "cf_autopilot")),
         )
 
 
 def _clamp_unit(value: float) -> float:
-    if value < 0.0:
+    v = float(value)
+    if not math.isfinite(v):
         return 0.0
-    if value > 1.0:
+    if v < 0.0:
+        return 0.0
+    if v > 1.0:
         return 1.0
-    return value
+    return v
 
 
 def jump_delta(score: float, prev_score: float) -> float:
@@ -178,3 +185,53 @@ def active_window(
     if len(eligible) <= window:
         return eligible
     return eligible[-window:]
+
+
+# ---------------------------------------------------------------------------
+# Cross-family combine (mirror of swarm-backend app/koth.py).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CombinedWeights:
+    miner_raw: Dict[int, float]
+    burn_extra: float
+    dropped_share: float
+
+
+def default_uid_validator(entry: KingEntry) -> bool:
+    """Backend-side validity (no metagraph): reject the reserved burn UID."""
+    return int(entry.uid) != RESERVED_BURN_UID and int(entry.uid) >= 0
+
+
+def combine_family_weights(
+    family_shares: Mapping[str, float],
+    kings_by_family: Mapping[str, Iterable[KingEntry]],
+    *,
+    is_valid_uid: Callable[[KingEntry], bool],
+    eps: float = HEADROOM_EPS,
+) -> CombinedWeights:
+    """weight(uid) = sum over families f of family_share(f) * koth_share(uid, f).
+
+    burn_extra (families with no positive row share) and dropped_share (invalid
+    rows within a paying family) are mutually exclusive per family.
+    """
+    miner_raw: Dict[int, float] = {}
+    burn_extra = 0.0
+    dropped_share = 0.0
+
+    for family_id, share in family_shares.items():
+        rows = list(kings_by_family.get(family_id, []))
+        row_shares = compute_row_weights(rows, eps=eps)
+        if sum(row_shares) <= 0.0:
+            burn_extra += float(share)
+            continue
+        for entry, row_share in zip(rows, row_shares):
+            if row_share <= 0.0:
+                continue
+            contrib = float(share) * row_share
+            if is_valid_uid(entry):
+                miner_raw[int(entry.uid)] = miner_raw.get(int(entry.uid), 0.0) + contrib
+            else:
+                dropped_share += contrib
+
+    return CombinedWeights(miner_raw=miner_raw, burn_extra=burn_extra, dropped_share=dropped_share)

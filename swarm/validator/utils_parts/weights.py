@@ -1,5 +1,6 @@
 from ._shared import *
 
+from swarm.constants import UID_ZERO
 from swarm.validator import koth as _koth
 
 
@@ -8,24 +9,77 @@ _advisory_warn_state: Dict[str, float] = {"last_log_ts": 0.0}
 _ADVISORY_WARN_INTERVAL_SEC: float = 60.0
 
 
-def compute_koth_weights_from_sync(sync_data: Dict[str, Any]) -> Dict[int, float]:
-    """Local {uid: weight} from sync kings; advisory backend weights ignored."""
-    raw_kings = sync_data.get("kings") or []
+def _parse_king_entries(rows: Any) -> list:
     entries = []
-    for raw in raw_kings:
+    for raw in rows or []:
         if not isinstance(raw, dict):
             continue
         try:
             entries.append(_koth.KingEntry.from_sync_dict(raw))
         except _koth.MalformedKingEntry as exc:
             bt.logging.warning(f"KotH: dropping malformed king entry: {exc}")
-            continue
+    return entries
 
-    local_weights = _koth.compute_weights(entries)
+
+def _make_uid_validator(metagraph: Any):
+    """is_valid_uid for the combine: reject UID0 / out-of-range / re-registered
+    hotkeys so their share burns. Falls back to UID0-only when no metagraph.
+
+    Bounds-checks against len(hotkeys), and treats any lookup error (e.g. a
+    list/np-array shape mismatch during a metagraph refresh) as invalid -> burn,
+    so a transient metagraph state can never raise and abort weight setting.
+    """
+    if metagraph is None:
+        return _koth.default_uid_validator
+    hotkeys = list(getattr(metagraph, "hotkeys", []) or [])
+    n = len(hotkeys)
+
+    def _valid(entry: "_koth.KingEntry") -> bool:
+        uid = int(entry.uid)
+        if uid == UID_ZERO or uid < 0 or uid >= n:
+            return False
+        try:
+            return hotkeys[uid] == entry.hotkey
+        except (IndexError, TypeError):
+            return False
+
+    return _valid
+
+
+def compute_koth_weights_from_sync(
+    sync_data: Dict[str, Any], *, metagraph: Any = None
+) -> Dict[int, float]:
+    """Local {uid: weight} from the sync payload; advisory backend weights ignored.
+
+    Per-family when the payload carries ``kings_by_family`` + ``family_shares``
+    (weight = Σ family_share · koth_share); otherwise falls back to the flat
+    single-family ``kings`` list.
+    """
+    family_shares = sync_data.get("family_shares") or {}
+    kings_by_family_raw = sync_data.get("kings_by_family") or {}
+
+    if family_shares and kings_by_family_raw:
+        kings_by_family = {
+            str(fid): _parse_king_entries(rows)
+            for fid, rows in kings_by_family_raw.items()
+        }
+        shares = {str(k): float(v) for k, v in family_shares.items()}
+        combined = _koth.combine_family_weights(
+            shares, kings_by_family, is_valid_uid=_make_uid_validator(metagraph)
+        )
+        local_weights = combined.miner_raw
+    else:
+        local_weights = _koth.compute_weights(_parse_king_entries(sync_data.get("kings")))
 
     if not sync_data.get("fallback"):
         advisory = sync_data.get("weights") or {}
         if advisory:
+            # Soft, rate-limited diagnostic. Some divergence is EXPECTED and
+            # correct: the validator applies live-metagraph chain identity
+            # (re-registered-hotkey detection) that the backend cannot, so the
+            # validator may legitimately burn a king's share the backend kept.
+            # Eligibility ownership: backend owns repo-eligibility (already
+            # filtered in kings_by_family); validator owns chain identity.
             _maybe_warn_advisory_divergence(advisory, local_weights)
 
     return local_weights
@@ -119,40 +173,35 @@ def _apply_backend_weights_to_scores(self, backend_weights: Dict[Any, Any]) -> N
 
 
 def _apply_backend_weights_to_scores_unlocked(self, backend_weights: Dict[Any, Any]) -> None:
+    """Apply the per-family KotH miner map with explicit burn.
+
+    Each weight is already an ABSOLUTE fraction of total emissions
+    (family_allocation × koth_share), so miner[uid] = raw[uid] directly and
+    UID0 = 1 - Σ miner. No keep-fraction scaling and no proportional rescale:
+    an unallocated family slice, a warming-up family's throttled remainder, an
+    empty family (absent from backend_weights), and any invalid row (burn UID /
+    out-of-range / non-finite) all genuinely burn rather than being
+    redistributed onto the surviving miners.
+    """
     self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
-    if not backend_weights:
-        if BURN_EMISSIONS and 0 <= UID_ZERO < self.metagraph.n:
-            self.scores[UID_ZERO] = 1.0
-        return
-
-    uids_list = []
-    weights_list = []
-
-    for uid_str, weight in backend_weights.items():
+    distributed = 0.0
+    for uid_str, weight in (backend_weights or {}).items():
         try:
             uid = int(uid_str)
-            parsed_weight = float(weight)
-            if uid < 0 or uid >= self.metagraph.n:
-                continue
-            uids_list.append(uid)
-            weights_list.append(parsed_weight)
+            raw = float(weight)
         except (ValueError, TypeError):
             continue
+        if uid == UID_ZERO or uid < 0 or uid >= self.metagraph.n:
+            continue
+        if not np.isfinite(raw) or raw <= 0.0:
+            continue
+        self.scores[uid] = raw
+        distributed += raw
 
-    if not uids_list:
-        if BURN_EMISSIONS and 0 <= UID_ZERO < self.metagraph.n:
-            self.scores[UID_ZERO] = 1.0
-        return
+    if distributed > 1.0:
+        self.scores /= distributed
+        distributed = 1.0
 
-    uids_np = np.array(uids_list, dtype=np.int64)
-    weights_np = np.array(weights_list, dtype=np.float32)
-
-    if BURN_EMISSIONS and UID_ZERO not in uids_np and 0 <= UID_ZERO < self.metagraph.n:
-        total_weight = weights_np.sum()
-        if total_weight > 0:
-            weights_np *= KEEP_FRACTION / total_weight
-        uids_np = np.concatenate(([UID_ZERO], uids_np))
-        weights_np = np.concatenate(([BURN_FRACTION], weights_np))
-
-    self.scores[uids_np] = weights_np
+    if BURN_EMISSIONS and 0 <= UID_ZERO < self.metagraph.n:
+        self.scores[UID_ZERO] = max(0.0, 1.0 - float(distributed))
