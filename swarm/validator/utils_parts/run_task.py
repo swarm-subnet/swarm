@@ -20,11 +20,12 @@ import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.constants import MODEL_DIR
+from swarm.constants import BENCHMARK_VERSION, MODEL_DIR
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
 from .model_fetch import _ensure_models_from_backend
+from .screening_gate import record_champion_seed_scores
 
 
 async def run_task(
@@ -97,6 +98,23 @@ async def run_task(
         seeds_evaluated = seeds_from + len(all_scores)
         sanity_score = float(avg) if all_scores else 0.0
         early_failed = False
+        if phase == "REEVAL" and all_scores:
+            champion = getattr(self.backend_api, "current_top", {}) or {}
+            if (
+                champion.get("model_hash") == model_hash
+                and str(champion.get("family_id") or "") == family_id
+            ):
+                family_seeds = self.seed_manager.get_all_seeds(family_id=family_id)
+                seed_values = family_seeds[seeds_from:seeds_from + len(all_scores)]
+                record_champion_seed_scores(
+                    self,
+                    family_id=family_id,
+                    epoch=epoch,
+                    model_hash=model_hash,
+                    benchmark_version=BENCHMARK_VERSION,
+                    seeds=seed_values,
+                    scores=all_scores,
+                )
     else:
         bt.logging.warning(f"run_task: unsupported phase {phase}")
         return

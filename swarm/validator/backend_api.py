@@ -235,6 +235,11 @@ class BackendApiClient:
     def last_sync_ts(self) -> float:
         return self._runtime_state.get("last_sync", 0)
 
+    @property
+    def current_top(self) -> dict:
+        """Current champion summary from the last sync (uid, family_id, score, model_hash)."""
+        return self._runtime_state.get("current_top", {})
+
     def get_cached_weights(self) -> dict:
         """Advisory only; the apply path uses get_cached_kings()."""
         return self._runtime_state.get("last_weights", {})

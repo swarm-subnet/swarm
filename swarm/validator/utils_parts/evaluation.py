@@ -7,7 +7,6 @@ import numpy as np
 
 from swarm.challenge_families import (
     DEFAULT_RUNTIME_FAMILY_ID,
-    screening_policy_for_family,
     build_random_task,
     build_screening_tasks,
 )
@@ -15,6 +14,7 @@ from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
+    SCREENING_EARLY_STOP_Z,
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
@@ -23,6 +23,12 @@ from swarm.validator.backend_api import BackendTransportError, authorize_with_re
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
+from .screening_gate import (
+    cannot_reach_bar,
+    champion_reference,
+    copy_metrics,
+    is_blatant_copy,
+)
 
 
 _EMPTY_PER_TYPE = ENVIRONMENT_TYPES
@@ -347,12 +353,14 @@ async def _run_screening(
 
     Returns ``(avg, all_scores, per_type, cancel_reason, early_failed)``.
 
-    ``seeds_from`` / ``seeds_to`` carve a sub-range out of the epoch's
-    full screening seed list — used for resuming an early-failed task.
-    ``cancel_flag`` is set by the SSE listener; when set the streaming
-    phase aborts at the next chunk boundary. ``early_fail_rules`` follows
-    the backend's payload shape: ``{"threshold": float, "checkpoints":
-    {"50": 0.50, "100": 0.70, "150": 0.85}}``.
+    ``seeds_from`` / ``seeds_to`` carve a sub-range out of the epoch's full
+    screening seed list — used for resuming an interrupted task. ``cancel_flag``
+    is set by the SSE listener; when set the streaming phase aborts at the next
+    chunk boundary. ``early_fail_rules`` carries the champion bar as
+    ``{"threshold": float}``; the validator early-stops a candidate at the
+    ``SCREENING_EARLY_STOP_Z`` checkpoints when it provably cannot reach that
+    bar, and flags champion copies via the per-seed reference. The early-stop
+    only runs on a full first pass (``seeds_from == 0``).
     """
     full_seeds = _seed_manager_call(
         self.seed_manager, "get_screening_seeds", family_id
@@ -382,30 +390,33 @@ async def _run_screening(
         bt.logging.warning(f"Failed to create screening tasks: {e}")
         screening_tasks = [None for _ in screening_seeds]
 
-    early_fail_state = {"triggered": False, "at": None}
-    checkpoint_thresholds: Dict[int, float] = {}
-    if early_fail_rules:
-        policy_family_id = str(
-            early_fail_rules.get("family_id") or family_id
-        )
+    early_fail_state = {"triggered": False, "at": None, "reason": None}
+    cumulative_scores: List[float] = []
+    checkpoints_fired: set = set()
+    threshold = 0.0
+    gate_active = early_fail_rules is not None and seeds_from == 0
+    if gate_active:
+        policy_family_id = str(early_fail_rules.get("family_id") or family_id)
         if policy_family_id != family_id:
             bt.logging.warning(
                 f"Ignoring mismatched early-fail rules for UID {uid}: "
                 f"task family={family_id} rules family={policy_family_id}"
             )
+            gate_active = False
         else:
             threshold = float(early_fail_rules.get("threshold", 0.0))
-            raw_checkpoints = early_fail_rules.get("checkpoints")
-            if raw_checkpoints is None:
-                raw_checkpoints = (
-                    screening_policy_for_family(family_id)
-                    .get("early_fail_checkpoints", {})
-                )
-            for raw_n, raw_factor in (raw_checkpoints or {}).items():
-                try:
-                    checkpoint_thresholds[int(raw_n)] = float(raw_factor) * threshold
-                except (TypeError, ValueError):
-                    continue
+            if threshold <= 0.0:
+                gate_active = False
+    champion_ref = (
+        champion_reference(self, family_id, epoch, screening_seeds)
+        if gate_active
+        else None
+    )
+    if gate_active and champion_ref is None:
+        bt.logging.debug(
+            f"Screening copy-check has no champion reference for UID {uid} "
+            f"({family_id}); loser early-stop still active"
+        )
 
     tracker_call(
         self,
@@ -442,6 +453,7 @@ async def _run_screening(
     def _on_chunk(**info) -> None:
         evaluated = int(info["evaluated"])
         running_avg = float(info["running_avg"])
+        cumulative_scores.extend(info.get("chunk_scores", []))
         tracker_call(
             self,
             "mark_screening_progress",
@@ -451,19 +463,47 @@ async def _run_screening(
             running_median=running_avg,
             note=f"checkpoint {evaluated}/{info['total']}",
         )
-        # Early-fail: at each declared checkpoint, abort if the running
-        # average is below the per-checkpoint threshold the backend set.
-        absolute = seeds_from + evaluated
-        floor = checkpoint_thresholds.get(absolute)
-        if floor is not None and running_avg < floor:
-            early_fail_state["triggered"] = True
-            early_fail_state["at"] = absolute
+        if not gate_active:
+            return
+        for checkpoint, z in sorted(SCREENING_EARLY_STOP_Z.items()):
+            if evaluated < checkpoint or checkpoint in checkpoints_fired:
+                continue
+            checkpoints_fired.add(checkpoint)
+            scores = cumulative_scores[:checkpoint]
+            if cannot_reach_bar(scores, threshold, z):
+                early_fail_state.update(triggered=True, at=checkpoint, reason="loser")
+                bt.logging.info(
+                    f"🛑 Screening early-stop UID {uid}: loser at {checkpoint} seeds "
+                    f"(avg {float(np.mean(scores)):.4f} < bar {threshold:.4f})"
+                )
+                return
+            if champion_ref is not None:
+                champ = [
+                    champion_ref[s]
+                    for s in screening_seeds[:checkpoint]
+                    if s in champion_ref
+                ]
+                if len(champ) == checkpoint:
+                    corr, sd_gap, mean_gap = copy_metrics(scores, champ)
+                    bt.logging.info(
+                        f"copy-check UID {uid} @{checkpoint}: r={corr:.3f} "
+                        f"sd_gap={sd_gap:.3f} mean_gap={mean_gap:+.4f}"
+                    )
+                    if is_blatant_copy(corr, sd_gap, mean_gap, checkpoint):
+                        early_fail_state.update(
+                            triggered=True, at=checkpoint, reason="copy"
+                        )
+                        bt.logging.warning(
+                            f"🛑 Screening early-stop UID {uid}: champion copy at "
+                            f"{checkpoint} seeds (r={corr:.3f}, sd_gap={sd_gap:.3f})"
+                        )
+                        return
 
     def _should_stop() -> Optional[str]:
         if cancel_flag is not None and cancel_flag.is_set():
             return "cancel_flag_set"
         if early_fail_state["triggered"]:
-            return f"early_fail_at_{early_fail_state['at']}"
+            return f"early_fail_{early_fail_state['reason']}_at_{early_fail_state['at']}"
         return hb.should_stop()
 
     try:

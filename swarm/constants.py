@@ -234,6 +234,20 @@ SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this marg
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
 
+# Fair screening early-stop: reject a candidate only when an optimistic one-sided
+# bound on its mean still cannot reach the champion bar. Checkpoint -> z value
+# (family-wise across the expected per-epoch model count). The 50 look is gentle
+# (catches only clearly-hopeless models); 100 and 150 tighten as evidence grows.
+SCREENING_EARLY_STOP_Z = {50: 4.2, 100: 3.9, 150: 3.4}
+SCREENING_EARLY_STOP_SIGMA_FLOOR = 0.22    # Lower bound on the per-seed score SD
+
+# Champion-copy detection on shared seeds. Metrics are logged on every check; the
+# hard-stop fires only for near-identical clones (calibrate before tightening).
+COPY_MIN_SEEDS = 100
+COPY_CORR_MIN = 0.995
+COPY_SD_MAX = 0.03
+COPY_MEAN_MAX = 0.002
+
 # Unified streaming chunk size used by screening, benchmark, and reeval phases.
 # Smaller chunks give fresher UI updates at the cost of more seed-score uploads.
 UNIFIED_CHUNK_SIZE = 10
