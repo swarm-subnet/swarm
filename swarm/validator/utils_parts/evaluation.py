@@ -25,7 +25,7 @@ from swarm.validator.runtime_telemetry import tracker_call
 from .heartbeat import HeartbeatManager
 from .screening_gate import (
     cannot_reach_bar,
-    champion_reference,
+    champion_seed_reference,
     copy_metrics,
     is_blatant_copy,
 )
@@ -404,19 +404,12 @@ async def _run_screening(
             )
             gate_active = False
         else:
-            threshold = float(early_fail_rules.get("threshold", 0.0))
-            if threshold <= 0.0:
+            try:
+                threshold = float(early_fail_rules.get("threshold", 0.0))
+            except (TypeError, ValueError):
+                threshold = 0.0
+            if not np.isfinite(threshold) or threshold <= 0.0:
                 gate_active = False
-    champion_ref = (
-        champion_reference(self, family_id, epoch, screening_seeds)
-        if gate_active
-        else None
-    )
-    if gate_active and champion_ref is None:
-        bt.logging.debug(
-            f"Screening copy-check has no champion reference for UID {uid} "
-            f"({family_id}); loser early-stop still active"
-        )
 
     tracker_call(
         self,
@@ -477,27 +470,27 @@ async def _run_screening(
                     f"(avg {float(np.mean(scores)):.4f} < bar {threshold:.4f})"
                 )
                 return
-            if champion_ref is not None:
-                champ = [
-                    champion_ref[s]
-                    for s in screening_seeds[:checkpoint]
-                    if s in champion_ref
-                ]
-                if len(champ) == checkpoint:
-                    corr, sd_gap, mean_gap = copy_metrics(scores, champ)
-                    bt.logging.info(
-                        f"copy-check UID {uid} @{checkpoint}: r={corr:.3f} "
-                        f"sd_gap={sd_gap:.3f} mean_gap={mean_gap:+.4f}"
-                    )
-                    if is_blatant_copy(corr, sd_gap, mean_gap, checkpoint):
-                        early_fail_state.update(
-                            triggered=True, at=checkpoint, reason="copy"
-                        )
-                        bt.logging.warning(
-                            f"🛑 Screening early-stop UID {uid}: champion copy at "
-                            f"{checkpoint} seeds (r={corr:.3f}, sd_gap={sd_gap:.3f})"
-                        )
-                        return
+            seeds_so_far = screening_seeds[:checkpoint]
+            champ_ref = champion_seed_reference(self, family_id, epoch, seeds_so_far)
+            if not champ_ref or len(champ_ref) < checkpoint:
+                bt.logging.debug(
+                    f"copy-check skipped UID {uid} @{checkpoint}: champion coverage "
+                    f"{len(champ_ref or {})}/{checkpoint}"
+                )
+                continue
+            champ = [champ_ref[s] for s in seeds_so_far]
+            corr, sd_gap, mean_gap = copy_metrics(scores, champ)
+            bt.logging.info(
+                f"copy-check UID {uid} @{checkpoint}: r={corr:.3f} "
+                f"sd_gap={sd_gap:.3f} mean_gap={mean_gap:+.4f}"
+            )
+            if is_blatant_copy(corr, sd_gap, mean_gap, checkpoint):
+                early_fail_state.update(triggered=True, at=checkpoint, reason="copy")
+                bt.logging.warning(
+                    f"🛑 Screening early-stop UID {uid}: champion copy at "
+                    f"{checkpoint} seeds (r={corr:.3f}, sd_gap={sd_gap:.3f})"
+                )
+                return
 
     def _should_stop() -> Optional[str]:
         if cancel_flag is not None and cancel_flag.is_set():

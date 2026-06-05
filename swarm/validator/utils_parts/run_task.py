@@ -20,12 +20,12 @@ import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.constants import BENCHMARK_VERSION, MODEL_DIR
+from swarm.constants import BENCHMARK_SCREENING_SEED_COUNT, BENCHMARK_VERSION, MODEL_DIR
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
 from .model_fetch import _ensure_models_from_backend
-from .screening_gate import record_champion_seed_scores
+from .screening_gate import cache_screening_seed_scores
 
 
 async def run_task(
@@ -83,6 +83,9 @@ async def run_task(
         per_type_avgs = _per_type_means(per_type_raw)
         seeds_evaluated = seeds_from + len(all_scores)
         sanity_score = float(avg) if all_scores else 0.0
+        _cache_screening_range(
+            self, model_hash, family_id, epoch, seeds_from, all_scores, reeval=False
+        )
     elif phase in ("BENCHMARK", "REEVAL"):
         result = await _run_full_benchmark(
             self,
@@ -98,23 +101,10 @@ async def run_task(
         seeds_evaluated = seeds_from + len(all_scores)
         sanity_score = float(avg) if all_scores else 0.0
         early_failed = False
-        if phase == "REEVAL" and all_scores:
-            champion = getattr(self.backend_api, "current_top", {}) or {}
-            if (
-                champion.get("model_hash") == model_hash
-                and str(champion.get("family_id") or "") == family_id
-            ):
-                family_seeds = self.seed_manager.get_all_seeds(family_id=family_id)
-                seed_values = family_seeds[seeds_from:seeds_from + len(all_scores)]
-                record_champion_seed_scores(
-                    self,
-                    family_id=family_id,
-                    epoch=epoch,
-                    model_hash=model_hash,
-                    benchmark_version=BENCHMARK_VERSION,
-                    seeds=seed_values,
-                    scores=all_scores,
-                )
+        if phase == "REEVAL":
+            _cache_screening_range(
+                self, model_hash, family_id, epoch, seeds_from, all_scores, reeval=True
+            )
     else:
         bt.logging.warning(f"run_task: unsupported phase {phase}")
         return
@@ -153,3 +143,41 @@ def _per_type_means(per_type_raw: Dict[str, list]) -> Dict[str, float]:
         for name, values in per_type_raw.items()
         if values
     }
+
+
+def _cache_screening_range(
+    self,
+    model_hash: str,
+    family_id: str,
+    epoch: int,
+    seeds_from: int,
+    scores: list,
+    *,
+    reeval: bool,
+) -> None:
+    """Persist the screening-range per-seed scores. Best-effort: never blocks eval."""
+    if not scores:
+        return
+    try:
+        if reeval:
+            n_screen = min(len(scores), BENCHMARK_SCREENING_SEED_COUNT - seeds_from)
+            if n_screen <= 0:
+                return
+            seed_values = self.seed_manager.get_all_seeds(family_id=family_id)[
+                seeds_from:seeds_from + n_screen
+            ]
+            scores = scores[:n_screen]
+        else:
+            seed_values = self.seed_manager.get_screening_seeds(family_id=family_id)[
+                seeds_from:seeds_from + len(scores)
+            ]
+        cache_screening_seed_scores(
+            model_hash=model_hash,
+            family_id=family_id,
+            epoch=epoch,
+            benchmark_version=BENCHMARK_VERSION,
+            seeds=seed_values,
+            scores=scores,
+        )
+    except Exception as exc:
+        bt.logging.warning(f"run_task: skipped screening-score cache: {exc}")

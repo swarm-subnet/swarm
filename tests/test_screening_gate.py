@@ -1,17 +1,31 @@
 import types
 
+import pytest
+
 from swarm.constants import BENCHMARK_VERSION, COPY_SD_MAX
+from swarm.validator.utils_parts import screening_gate
 from swarm.validator.utils_parts.screening_gate import (
+    cache_screening_seed_scores,
     cannot_reach_bar,
-    champion_reference,
+    champion_seed_reference,
     copy_metrics,
     is_blatant_copy,
-    record_champion_seed_scores,
 )
 
 BAR = 0.888  # champion 0.873 + 0.015 margin
 Z100 = 3.9
 CHAMPION = [0.95 if i % 3 else 0.45 for i in range(120)]
+
+
+@pytest.fixture(autouse=True)
+def _tmp_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(screening_gate, "_CACHE_FILE", tmp_path / "screening.json")
+
+
+def _validator(current_top):
+    return types.SimpleNamespace(
+        backend_api=types.SimpleNamespace(current_top=current_top)
+    )
 
 
 def test_clear_loser_is_cut():
@@ -67,52 +81,79 @@ def test_too_few_seeds_is_not_a_copy():
     assert is_blatant_copy(corr, sd_gap, mean_gap, 50) is False
 
 
-def _validator(current_top):
-    return types.SimpleNamespace(backend_api=types.SimpleNamespace(current_top=current_top))
-
-
-def test_champion_reference_returns_scores_when_current():
-    v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
-    record_champion_seed_scores(
-        v, family_id="cf_autopilot", epoch=10, model_hash="abc",
-        benchmark_version=BENCHMARK_VERSION, seeds=[11, 22, 33], scores=[0.9, 0.8, 0.7],
+def _record(model_hash, epoch, seeds, scores, family_id="cf_autopilot"):
+    cache_screening_seed_scores(
+        model_hash=model_hash, family_id=family_id, epoch=epoch,
+        benchmark_version=BENCHMARK_VERSION, seeds=seeds, scores=scores,
     )
-    ref = champion_reference(v, "cf_autopilot", 10, [11, 22, 33])
-    assert ref == {11: 0.9, 22: 0.8, 33: 0.7}
 
 
-def test_champion_reference_skips_on_hash_mismatch():
+def test_reference_returns_scores_for_current_champion():
+    _record("abc", 10, [11, 22, 33], [0.9, 0.8, 0.7])
+    v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11, 22, 33]) == {
+        11: 0.9, 22: 0.8, 33: 0.7,
+    }
+
+
+def test_reference_skips_on_hash_mismatch():
+    _record("OLD", 10, [11, 22], [0.9, 0.8])
     v = _validator({"family_id": "cf_autopilot", "model_hash": "NEW"})
-    record_champion_seed_scores(
-        v, family_id="cf_autopilot", epoch=10, model_hash="OLD",
-        benchmark_version=BENCHMARK_VERSION, seeds=[11, 22], scores=[0.9, 0.8],
-    )
-    assert champion_reference(v, "cf_autopilot", 10, [11, 22]) is None
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11, 22]) is None
 
 
-def test_champion_reference_skips_on_epoch_mismatch():
+def test_reference_skips_on_epoch_mismatch():
+    _record("abc", 9, [11], [0.9])
     v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
-    record_champion_seed_scores(
-        v, family_id="cf_autopilot", epoch=9, model_hash="abc",
-        benchmark_version=BENCHMARK_VERSION, seeds=[11], scores=[0.9],
-    )
-    assert champion_reference(v, "cf_autopilot", 10, [11]) is None
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11]) is None
 
 
-def test_champion_reference_none_without_cache():
+def test_reference_skips_on_wrong_family():
+    _record("abc", 10, [11], [0.9])
+    v = _validator({"family_id": "cf_search_and_rescue", "model_hash": "abc"})
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11]) is None
+
+
+def test_reference_none_without_cache():
     v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
-    assert champion_reference(v, "cf_autopilot", 10, [11]) is None
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11]) is None
 
 
-def test_record_merges_partial_reeval_coverage():
+def test_cache_survives_restart():
+    # The cache is on disk and read fresh on each lookup, so a fresh validator
+    # object (as after a restart) still resolves the scores.
+    _record("abc", 10, [11, 22], [0.9, 0.8])
+    fresh = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
+    assert champion_seed_reference(fresh, "cf_autopilot", 10, [11, 22]) == {
+        11: 0.9, 22: 0.8,
+    }
+
+
+def test_cache_merges_partial_coverage():
+    _record("abc", 10, [11, 22], [0.9, 0.8])
+    _record("abc", 10, [33], [0.7])
     v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
-    record_champion_seed_scores(
-        v, family_id="cf_autopilot", epoch=10, model_hash="abc",
-        benchmark_version=BENCHMARK_VERSION, seeds=[11, 22], scores=[0.9, 0.8],
-    )
-    record_champion_seed_scores(
-        v, family_id="cf_autopilot", epoch=10, model_hash="abc",
-        benchmark_version=BENCHMARK_VERSION, seeds=[33], scores=[0.7],
-    )
-    ref = champion_reference(v, "cf_autopilot", 10, [11, 22, 33])
-    assert ref == {11: 0.9, 22: 0.8, 33: 0.7}
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11, 22, 33]) == {
+        11: 0.9, 22: 0.8, 33: 0.7,
+    }
+
+
+def test_cache_prunes_previous_epoch():
+    _record("old", 9, [11], [0.9])
+    _record("new", 10, [22], [0.8])
+    v_old = _validator({"family_id": "cf_autopilot", "model_hash": "old"})
+    assert champion_seed_reference(v_old, "cf_autopilot", 9, [11]) is None
+    v_new = _validator({"family_id": "cf_autopilot", "model_hash": "new"})
+    assert champion_seed_reference(v_new, "cf_autopilot", 10, [22]) == {22: 0.8}
+
+
+def test_reference_safe_on_unparseable_cache():
+    screening_gate._CACHE_FILE.write_text("not json {")
+    v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11]) is None
+
+
+def test_reference_safe_on_wrong_shape_cache():
+    screening_gate._CACHE_FILE.write_text("[]")
+    v = _validator({"family_id": "cf_autopilot", "model_hash": "abc"})
+    assert champion_seed_reference(v, "cf_autopilot", 10, [11]) is None
