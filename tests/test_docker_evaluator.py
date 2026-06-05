@@ -992,6 +992,171 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
     assert any("1 failed, 0 timeout, 0 runtime, 0 retried_timeout" in line for line in log_lines)
 
 
+def test_is_rpc_transport_status_classifies_transport_failures():
+    assert bench_full_eval._is_rpc_transport_status("rpc_connect_failed")
+    assert bench_full_eval._is_rpc_transport_status("rpc_ping_timeout")
+    assert bench_full_eval._is_rpc_transport_status("seed_rpc_disconnected")
+    assert not bench_full_eval._is_rpc_transport_status("seed_timeout_strikes")
+    assert not bench_full_eval._is_rpc_transport_status("seed_exception")
+    assert not bench_full_eval._is_rpc_transport_status("seed_done")
+    assert not bench_full_eval._is_rpc_transport_status("rpc_connection_failed")
+
+
+def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=4,
+        map_seed=3401,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 61,
+                            "map_seed": 3401,
+                            "challenge_type": 4,
+                            "status": "seed_rpc_disconnected",
+                            "success": False,
+                            "sim_time_sec": 3.0,
+                            "seed_wall_sec": 5.0,
+                            "step_idx": 20,
+                            "error": "[Errno 32] Broken pipe",
+                        }
+                    ],
+                    "results": [(61, False, 3.0, 0.0)],
+                    "elapsed_sec": 5.0,
+                },
+                {
+                    "seed_events": [
+                        {
+                            "uid": 61,
+                            "map_seed": 3401,
+                            "challenge_type": 4,
+                            "status": "seed_done",
+                            "success": True,
+                            "sim_time_sec": 18.0,
+                            "seed_wall_sec": 300.0,
+                            "step_idx": 180,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(61, True, 18.0, 0.8)],
+                    "elapsed_sec": 18.0,
+                },
+            ]
+        },
+    )
+    callback_payloads = []
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type4_village",
+                    "seed": 3401,
+                    "challenge_type": 4,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=61,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=lambda payload=None: callback_payloads.append(payload),
+            phase_label="eval",
+        )
+    )
+
+    assert scripted_context.attempts == {0: 2}
+    assert len(results) == 1
+    assert results[0].success is True
+    assert results[0].score == pytest.approx(0.8)
+    assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
+    assert any("retrying RPC-transport seed village:3401" in line for line in log_lines)
+    assert any("1 retried_rpc_transport" in line for line in log_lines)
+
+
+def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=4,
+        map_seed=3402,
+        horizon=60.0,
+        moving_platform=False,
+    )
+    disconnect_attempt = {
+        "seed_events": [
+            {
+                "uid": 62,
+                "map_seed": 3402,
+                "challenge_type": 4,
+                "status": "seed_rpc_disconnected",
+                "success": False,
+                "sim_time_sec": 3.0,
+                "seed_wall_sec": 5.0,
+                "step_idx": 20,
+                "error": "[Errno 32] Broken pipe",
+            }
+        ],
+        "results": [(62, False, 3.0, 0.0)],
+        "elapsed_sec": 5.0,
+    }
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {0: [disconnect_attempt, disconnect_attempt]},
+    )
+    callback_payloads = []
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type4_village",
+                    "seed": 3402,
+                    "challenge_type": 4,
+                    "horizon": 60.0,
+                    "moving_platform": False,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=62,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=lambda payload=None: callback_payloads.append(payload),
+            phase_label="eval",
+        )
+    )
+
+    assert scripted_context.attempts == {0: 2}
+    assert len(results) == 1
+    assert results[0].success is False
+    assert results[0].score == pytest.approx(0.0)
+    assert [payload["status"] for payload in callback_payloads] == ["seed_rpc_disconnected"]
+    assert len([line for line in log_lines if "retrying RPC-transport seed" in line]) == 1
+
+
 def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
