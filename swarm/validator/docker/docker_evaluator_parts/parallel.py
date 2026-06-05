@@ -28,6 +28,7 @@ from swarm.validator.runtime_telemetry import tracker_call
 from ._shared import _docker_evaluator_facade
 
 _MAX_TIMEOUT_RETRIES = 10
+_MAX_RPC_TRANSPORT_RETRIES = 15
 
 
 def _benchmark_engine():
@@ -210,7 +211,9 @@ async def _run_process_parallel(
     pending_batch_ids = list(range(len(batch_plan)))
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
     batch_retry_counts: dict[int, int] = {}
+    rpc_transport_retry_counts: dict[int, int] = {}
     timeout_retries_used = 0
+    rpc_transport_retries_used = 0
     stall_timeout_sec = max(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
@@ -480,6 +483,7 @@ async def _run_process_parallel(
         "timeout": 0,
         "runtime": 0,
         "retried_timeout": 0,
+        "retried_rpc_transport": 0,
         "scores": [],
         "per_type": {},
     }
@@ -524,6 +528,10 @@ async def _run_process_parallel(
         seed_stats["retried_timeout"] += 1
         seed_stats.setdefault("retried_timeout_seeds", []).append(_seed_label(meta))
 
+    def _record_rpc_transport_retry(meta: Optional[dict]) -> None:
+        seed_stats["retried_rpc_transport"] += 1
+        seed_stats.setdefault("retried_rpc_transport_seeds", []).append(_seed_label(meta))
+
     def _log_summary() -> None:
         nonlocal last_summary_chunk_done
         chunk_done = len(seed_stats["scores"])
@@ -542,7 +550,8 @@ async def _run_process_parallel(
         counts = (
             f"{seed_stats['ok']} ok, {seed_stats['failed']} failed, "
             f"{seed_stats['timeout']} timeout, {seed_stats['runtime']} runtime, "
-            f"{seed_stats['retried_timeout']} retried_timeout"
+            f"{seed_stats['retried_timeout']} retried_timeout, "
+            f"{seed_stats['retried_rpc_transport']} retried_rpc_transport"
         )
         line = (
             f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
@@ -554,6 +563,10 @@ async def _run_process_parallel(
         if seed_stats.get("retried_timeout_seeds"):
             bt.logging.info(
                 f"  retried_timeouts: {', '.join(seed_stats['retried_timeout_seeds'])}"
+            )
+        if seed_stats.get("retried_rpc_transport_seeds"):
+            bt.logging.info(
+                f"  retried_rpc_transports: {', '.join(seed_stats['retried_rpc_transport_seeds'])}"
             )
         if seed_stats.get("timeout_seeds"):
             bt.logging.info(f"  timeouts: {', '.join(seed_stats['timeout_seeds'])}")
@@ -681,6 +694,32 @@ async def _run_process_parallel(
                         f"[Validator eval] retrying timed-out seed {_seed_label(meta)} "
                         f"for UID {uid} (retry {prior_retries + 1}/1, "
                         f"global retries {timeout_retries_used}/{_MAX_TIMEOUT_RETRIES}, "
+                        f"status={final_status})"
+                    )
+                    worker_active_requests.pop(worker_slot, None)
+                    worker_last_heartbeat.pop(worker_slot, None)
+                    worker_started_at.pop(worker_slot, None)
+                    pending_batch_ids.append(int(request.batch_index))
+                    _dispatch_available_batches()
+                    continue
+                prior_transport_retries = int(
+                    rpc_transport_retry_counts.get(int(request.batch_index), 0)
+                )
+                if (
+                    bench_engine._is_rpc_transport_status(final_status)
+                    and prior_transport_retries < 1
+                    and rpc_transport_retries_used < _MAX_RPC_TRANSPORT_RETRIES
+                ):
+                    _observe_final_seed(meta, final_seed_meta)
+                    rpc_transport_retries_used += 1
+                    rpc_transport_retry_counts[int(request.batch_index)] = (
+                        prior_transport_retries + 1
+                    )
+                    _record_rpc_transport_retry(meta)
+                    bt.logging.warning(
+                        f"[Validator eval] retrying RPC-transport seed {_seed_label(meta)} "
+                        f"for UID {uid} (retry {prior_transport_retries + 1}/1, "
+                        f"global retries {rpc_transport_retries_used}/{_MAX_RPC_TRANSPORT_RETRIES}, "
                         f"status={final_status})"
                     )
                     worker_active_requests.pop(worker_slot, None)
