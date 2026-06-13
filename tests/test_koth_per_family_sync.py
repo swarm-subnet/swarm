@@ -59,6 +59,20 @@ def test_falls_back_to_flat_kings_when_no_family_fields():
     assert set(w) == {5, 6}
 
 
+def test_empty_family_shares_with_kings_burns_not_flat_fallback():
+    # Every family score-gated to zero: backend sends family_shares={} but still
+    # ships the display window. The modern per-family path must yield full burn,
+    # NOT fall back to the flat `kings` list and pay those kings.
+    sync = {
+        "family_shares": {},
+        "kings_by_family": {
+            "cf_autopilot": [_king(5, 0.5, 0.0, "cf_autopilot"), _king(6, 0.7, 0.5, "cf_autopilot")],
+        },
+        "kings": [_king(5, 0.5, 0.0, "cf_autopilot"), _king(6, 0.7, 0.5, "cf_autopilot")],
+    }
+    assert compute_koth_weights_from_sync(sync) == {}
+
+
 def test_reregistered_hotkey_is_dropped_to_burn():
     # uid 11's live hotkey no longer matches the king's recorded hotkey -> burn.
     class _MG:

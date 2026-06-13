@@ -58,7 +58,11 @@ def compute_koth_weights_from_sync(
     family_shares = sync_data.get("family_shares") or {}
     kings_by_family_raw = sync_data.get("kings_by_family") or {}
 
-    if family_shares and kings_by_family_raw:
+    # A modern payload always carries kings_by_family; use the per-family path
+    # even when family_shares is empty (every family score-gated to zero -> full
+    # burn), so we converge with the backend instead of falling back to the flat
+    # window. Only a legacy payload (no kings_by_family) takes the flat path.
+    if kings_by_family_raw:
         kings_by_family = {
             str(fid): _parse_king_entries(rows)
             for fid, rows in kings_by_family_raw.items()

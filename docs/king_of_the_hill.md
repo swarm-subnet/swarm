@@ -110,13 +110,14 @@ The cap (`0.05`) prevents the formula from blowing up as scores approach 1.0. Th
 
 ## Per-family emissions
 
-Each family runs its own 5-king window. Two levels decide a UID's final weight:
+Each family runs its own 5-king window. Three levels decide a UID's final weight:
 
 ```
 1.  family_share(f)   — how big a slice family f gets of the emission pool
-2.  koth_share(uid,f) — the UID's share WITHIN family f (the formula above)
+2.  best_score(f)     — how much of that slice is actually earned (0…1)
+3.  koth_share(uid,f) — the UID's share WITHIN family f (the formula above)
 
-weight(uid) = sum over families f of  family_share(f) × koth_share(uid, f)
+weight(uid) = sum over families f of  family_share(f) × best_score(f) × koth_share(uid, f)
 ```
 
 A hotkey that is a king in two families earns from both — the contributions add.
@@ -137,12 +138,25 @@ archived           0.0   (does not participate)
 family_share(f) = emission_allocation(f) × status_weight(f)
 ```
 
-Example — Autopilot allocation `0.10` `active` (1.0), SAR allocation `0.10` `incubating` (0.25):
+### Pay for accuracy: the score gate
+
+A family only pays out as much of its slice as its **best model actually earns**. The family's slice is multiplied by `best_score(f)` — the current champion's benchmark score in `0…1` — and the rest **burns**. A family half-solved pays half its slice.
 
 ```
-family_share(Autopilot) = 0.10 × 1.00 = 0.100   (10%)
-family_share(SAR)       = 0.10 × 0.25 = 0.025   (2.5%)
-burned                  = 1 − 0.125   = 0.875   (87.5%)
+paid(f)   = family_share(f) × best_score(f)
+burned(f) = family_share(f) × (1 − best_score(f))
+```
+
+`best_score` is the champion's **live** score (it refreshes each epoch on re-eval), and it is applied by the backend so every validator gates the same way. The 5-king split is unchanged — `best_score` only decides how much of the slice is paid versus burned, not how the paid part is divided among the kings.
+
+Example — Autopilot allocation `0.10` `active` (1.0) with a champion at score `0.80`, SAR allocation `0.10` `incubating` (0.25) with a champion at `0.50`:
+
+```
+family_share(Autopilot) = 0.10 × 1.00          = 0.100
+paid(Autopilot)         = 0.100 × 0.80          = 0.080   (8%)
+family_share(SAR)       = 0.10 × 0.25           = 0.025
+paid(SAR)               = 0.025 × 0.50          = 0.0125  (1.25%)
+burned                  = 1 − 0.080 − 0.0125    = 0.9075  (90.75%)
 ```
 
 Raising, throttling, or archiving one family does **not** change another's share — each family's slice is independent.
