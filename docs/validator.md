@@ -43,15 +43,29 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docke
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# 6. Add your user to docker group (avoid sudo)
-sudo usermod -aG docker $USER
-
-# 7. Start and enable Docker service
+# 6. Start and enable Docker service
 sudo systemctl start docker
 sudo systemctl enable docker
-
-# 8. Log out and back in (or reboot) to apply group membership
 ```
+
+### Recommended hardening
+
+Run the validator under its own user instead of your login account:
+
+```bash
+sudo useradd -m -s /bin/bash swarm-validator
+sudo usermod -aG docker swarm-validator
+```
+
+Keep evaluation containers isolated from each other by setting `"icc": false`
+in `/etc/docker/daemon.json`:
+
+```bash
+echo '{ "icc": false }' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
+
+For an extra layer you can run [rootless Docker](https://docs.docker.com/engine/security/rootless/).
 
 ### Verify Docker
 
@@ -327,7 +341,7 @@ Follow the Docker installation section above.
 Permission denied while trying to connect to Docker daemon
 ```
 ```bash
-sudo usermod -aG docker $USER
+sudo usermod -aG docker swarm-validator   # the dedicated validator user
 # Log out and back in
 ```
 

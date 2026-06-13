@@ -44,6 +44,11 @@ def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
             continue
 
         line = line.split(";")[0].strip()
+        if " " in line:
+            bt.logging.warning(
+                f"UID {uid}: Unexpected token after requirement: {raw_line.strip()!r}"
+            )
+            return False
         name = re.split(r"[>=<!~\[]", line)[0].strip()
         if not name:
             continue
