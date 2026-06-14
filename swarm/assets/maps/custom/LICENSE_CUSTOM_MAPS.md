@@ -11,6 +11,11 @@ This license applies to:
 Project maps
 Custom assets created or modified by Abdulla Alnasser under assets/custom/*
 
+Exception: The mixed-origin assets under
+assets/custom/people/lost_person_characters/* are not claimed as entirely
+authored or owned by Abdulla Alnasser. Their individual source and license
+status are documented in that folder's manifest.json and SOURCE.txt files.
+
 ---
 
 Ownership

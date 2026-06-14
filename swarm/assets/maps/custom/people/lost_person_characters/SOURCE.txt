@@ -1,0 +1,7 @@
+Source: Quaternius - Character Packs
+URL: https://quaternius.com/
+License: CC0
+
+Twenty characters in this folder are sourced from Quaternius.
+The applicable characters are identified in manifest.json.
+The remaining characters are AI-generated or AI-modified assets.
