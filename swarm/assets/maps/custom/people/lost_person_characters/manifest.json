@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "name": "Lost Person Character Assets",
+  "purpose": "Character targets for Search and Rescue tasks and lost-person simulation scenarios in Swarm.",
+  "character_count": 32,
+  "scale_note": "Apply the scale value exactly as supplied for each character.",
+  "license_document": "../../LICENSE_CUSTOM_MAPS.md",
+  "classification_basis": "Contributor declaration and visual matching against the official Quaternius pack pages.",
+  "characters": [
+    {
+      "index": 1,
+      "key": "lost_person_01_casual_male",
+      "folder": "01_casual_male_purple_hoodie",
+      "model": "01_casual_male_purple_hoodie/asset_files/lost_person_01_casual_male/model.obj",
+      "height_m": 1.89,
+      "scale": 1.0362,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 2,
+      "key": "lost_person_02_adventurer_male",
+      "folder": "02_adult_male_hiker_backpack",
+      "model": "02_adult_male_hiker_backpack/asset_files/lost_person_02_adventurer_male/model.obj",
+      "height_m": 1.89,
+      "scale": 1.04,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 3,
+      "key": "lost_person_03_adventurer_female",
+      "folder": "03_adult_female_hiker_backpack",
+      "model": "03_adult_female_hiker_backpack/asset_files/lost_person_03_adventurer_female/model.obj",
+      "height_m": 1.785,
+      "scale": 1.0009,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 4,
+      "key": "lost_person_04_casual_female",
+      "folder": "04_adult_female_white_tshirt_orange_pants",
+      "model": "04_adult_female_white_tshirt_orange_pants/asset_files/lost_person_04_casual_female/model.obj",
+      "height_m": 1.785,
+      "scale": 0.9882,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 5,
+      "key": "lost_person_05_child_female",
+      "folder": "05_child_female_pink_sweater",
+      "model": "05_child_female_pink_sweater/asset_files/lost_person_05_child_female/model.obj",
+      "height_m": 1.365,
+      "scale": 0.7968,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 6,
+      "key": "lost_person_06_child_male",
+      "folder": "06_child_male_blue_hoodie",
+      "model": "06_child_male_blue_hoodie/asset_files/lost_person_06_child_male/model.obj",
+      "height_m": 1.365,
+      "scale": 0.7863,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 7,
+      "key": "lost_person_07_child_male_bicycle",
+      "folder": "07_child_male_bicycle",
+      "model": "07_child_male_bicycle/asset_files/lost_person_07_child_male_bicycle/model.obj",
+      "height_m": 1.365,
+      "scale": 0.7837,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 8,
+      "key": "lost_person_08_child_female_umbrella",
+      "folder": "08_child_female_yellow_raincoat_umbrella",
+      "model": "08_child_female_yellow_raincoat_umbrella/asset_files/lost_person_08_child_female_umbrella/model.obj",
+      "height_m": 1.51,
+      "scale": 0.7968,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 9,
+      "key": "lost_person_09_business_female",
+      "folder": "09_adult_female_black_business_suit",
+      "model": "09_adult_female_black_business_suit/asset_files/lost_person_09_business_female/model.obj",
+      "height_m": 1.785,
+      "scale": 0.9916,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 10,
+      "key": "lost_person_10_business_male",
+      "folder": "10_adult_male_navy_business_suit",
+      "model": "10_adult_male_navy_business_suit/asset_files/lost_person_10_business_male/model.obj",
+      "height_m": 1.89,
+      "scale": 1.0411,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 11,
+      "key": "lost_person_11_worker_a",
+      "folder": "11_construction_worker_yellow_helmet",
+      "model": "11_construction_worker_yellow_helmet/asset_files/lost_person_11_worker_a/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9874,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 12,
+      "key": "lost_person_12_worker_b",
+      "folder": "12_construction_worker_yellow_helmet_variant",
+      "model": "12_construction_worker_yellow_helmet_variant/asset_files/lost_person_12_worker_b/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9906,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 13,
+      "key": "lost_person_13_casual_character",
+      "folder": "13_adult_male_gray_tshirt_red_shoes",
+      "model": "13_adult_male_gray_tshirt_red_shoes/asset_files/lost_person_13_casual_character/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9927,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 14,
+      "key": "lost_person_14_beach_character",
+      "folder": "14_adult_male_beach_tank_shorts",
+      "model": "14_adult_male_beach_tank_shorts/asset_files/lost_person_14_beach_character/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9893,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 15,
+      "key": "lost_person_15_farmer",
+      "folder": "15_adult_male_farmer_cowboy_hat",
+      "model": "15_adult_male_farmer_cowboy_hat/asset_files/lost_person_15_farmer/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9932,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 16,
+      "key": "lost_person_16_male_long_sleeve",
+      "folder": "16_tall_male_green_long_sleeve",
+      "model": "16_tall_male_green_long_sleeve/asset_files/lost_person_16_male_long_sleeve/model.obj",
+      "height_m": 1.89,
+      "scale": 0.3925,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 17,
+      "key": "lost_person_17_male_shirt",
+      "folder": "17_adult_male_maroon_shirt",
+      "model": "17_adult_male_maroon_shirt/asset_files/lost_person_17_male_shirt/model.obj",
+      "height_m": 1.89,
+      "scale": 0.3917,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 18,
+      "key": "lost_person_18_male_casual",
+      "folder": "18_adult_male_gray_tshirt_black_shorts",
+      "model": "18_adult_male_gray_tshirt_black_shorts/asset_files/lost_person_18_male_casual/model.obj",
+      "height_m": 1.89,
+      "scale": 0.3925,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 19,
+      "key": "lost_person_19_male_suit",
+      "folder": "19_male_black_suit_white_hair",
+      "model": "19_male_black_suit_white_hair/asset_files/lost_person_19_male_suit/model.obj",
+      "height_m": 1.89,
+      "scale": 0.3925,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Men Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 20,
+      "key": "lost_person_20_formal_female",
+      "folder": "20_adult_female_green_dress",
+      "model": "20_adult_female_green_dress/asset_files/lost_person_20_formal_female/model.obj",
+      "height_m": 1.785,
+      "scale": 0.9943,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Ultimate Modular Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 21,
+      "key": "lost_person_21_female_dress",
+      "folder": "21_adult_female_red_dress",
+      "model": "21_adult_female_red_dress/asset_files/lost_person_21_female_dress/model.obj",
+      "height_m": 1.785,
+      "scale": 0.3832,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 22,
+      "key": "lost_person_22_female_tank_top",
+      "folder": "22_adult_female_gray_tank_top",
+      "model": "22_adult_female_gray_tank_top/asset_files/lost_person_22_female_tank_top/model.obj",
+      "height_m": 1.785,
+      "scale": 0.383,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 23,
+      "key": "lost_person_23_female_alternative",
+      "folder": "23_adult_female_magenta_shirt",
+      "model": "23_adult_female_magenta_shirt/asset_files/lost_person_23_female_alternative/model.obj",
+      "height_m": 1.785,
+      "scale": 0.3858,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 24,
+      "key": "lost_person_24_female_casual",
+      "folder": "24_adult_female_green_tshirt",
+      "model": "24_adult_female_green_tshirt/asset_files/lost_person_24_female_casual/model.obj",
+      "height_m": 1.785,
+      "scale": 0.3856,
+      "origin": "open-source",
+      "license": "CC0-1.0",
+      "source": {
+        "creator": "Quaternius",
+        "pack": "Animated Women Pack",
+        "url": "https://quaternius.com/"
+      }
+    },
+    {
+      "index": 25,
+      "key": "lost_person_25_winter_survivor",
+      "folder": "25_winter_survivor_bent_over",
+      "model": "25_winter_survivor_bent_over/asset_files/lost_person_25_winter_survivor/model.obj",
+      "height_m": 1.8,
+      "scale": 0.946,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 26,
+      "key": "lost_person_26_adult_male_seated_waving",
+      "folder": "26_seated_male_waving_blue_jacket",
+      "model": "26_seated_male_waving_blue_jacket/asset_files/lost_person_26_adult_male_seated_waving/model.obj",
+      "height_m": 1.45,
+      "scale": 0.7917,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 27,
+      "key": "lost_person_27_adult_male_snow_buried",
+      "folder": "27_snow_buried_adult_male",
+      "model": "27_snow_buried_adult_male/asset_files/lost_person_27_adult_male_snow_buried/model.obj",
+      "height_m": 0.3125,
+      "scale": 0.9515,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 28,
+      "key": "lost_person_28_adult_male_winter_jacket",
+      "folder": "28_adult_male_blue_winter_jacket",
+      "model": "28_adult_male_blue_winter_jacket/asset_files/lost_person_28_adult_male_winter_jacket/model.obj",
+      "height_m": 1.89,
+      "scale": 0.9953,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 29,
+      "key": "snow_asset_01_fanted_man",
+      "folder": "29_prone_adult_male_blue_shirt",
+      "model": "29_prone_adult_male_blue_shirt/asset_files/snow_asset_01_fanted_man/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9460872197807917,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 30,
+      "key": "snow_asset_02_snow_boy",
+      "folder": "30_child_male_skier_blue_jacket",
+      "model": "30_child_male_skier_blue_jacket/asset_files/snow_asset_02_snow_boy/model.obj",
+      "height_m": 1.35,
+      "scale": 0.7125849361655857,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 31,
+      "key": "snow_asset_03_untitled",
+      "folder": "31_adult_male_winter_hiker_gray_parka",
+      "model": "31_adult_male_winter_hiker_gray_parka/asset_files/snow_asset_03_untitled/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9490197153573533,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    },
+    {
+      "index": 32,
+      "key": "snow_asset_04_fbx_pack_b",
+      "folder": "32_child_female_winter_hiker_teal_jacket",
+      "model": "32_child_female_winter_hiker_teal_jacket/asset_files/snow_asset_04_fbx_pack_b/model.obj",
+      "height_m": 1.8,
+      "scale": 0.9459335891558174,
+      "origin": "AI-generated/modified",
+      "license": "Bittensor & Swarm Training License (Open Use) v1.1",
+      "source": "Contributor-created with generative AI; modification level not specified per asset."
+    }
+  ]
+}
