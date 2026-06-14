@@ -19,6 +19,7 @@ from swarm.constants import (
     UNIFIED_CHUNK_SIZE,
 )
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
+from swarm.protocol import FailureReason
 from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
 from swarm.validator.runtime_telemetry import tracker_call
 
@@ -291,6 +292,7 @@ async def _run_streaming_phase(
                 }
                 for j, detail in enumerate(batch_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"
+                and detail.get("failure_reason") != FailureReason.INFRA.value
             ]
             if seed_batch:
                 await _wait_for_slot()

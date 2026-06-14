@@ -143,8 +143,12 @@ def champion_seed_reference(
     or its screening scores are not cached for this epoch and version).
     """
     try:
-        current = getattr(validator.backend_api, "current_top", {}) or {}
-        if str(current.get("family_id") or "") != family_id:
+        by_family = getattr(validator.backend_api, "top_by_family", {}) or {}
+        current = by_family.get(family_id)
+        if not current:
+            legacy = getattr(validator.backend_api, "current_top", {}) or {}
+            current = legacy if str(legacy.get("family_id") or "") == family_id else None
+        if not current:
             return None
         model_hash = current.get("model_hash")
         if not model_hash:

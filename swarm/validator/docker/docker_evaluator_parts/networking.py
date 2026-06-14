@@ -4,8 +4,20 @@ from typing import Optional
 
 import bittensor as bt
 
+# Each worker owns a disjoint port band so parallel workers never race for a host port.
+_PORT_BASE = 49200
+_PORT_STRIDE = 20
 
-def _find_free_port(self) -> int:
+
+def _find_free_port(self, worker_id: int = 0) -> int:
+    base = _PORT_BASE + int(worker_id) * _PORT_STRIDE
+    for candidate in range(base, base + _PORT_STRIDE):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", candidate))
+                return candidate
+            except OSError:
+                continue
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]

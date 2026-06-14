@@ -198,7 +198,7 @@ class BaseValidatorNeuron(BaseNeuron):
         allow_initial_step: bool = False,
     ) -> bool:
         with self._subtensor_lock:
-            if allow_initial_step and not self._weights_ready_for_setting:
+            if not self._weights_ready_for_setting:
                 return False
             if not self._should_set_weights_due(allow_initial_step=allow_initial_step):
                 return False
@@ -400,15 +400,17 @@ class BaseValidatorNeuron(BaseNeuron):
                 else:
                     scores_snapshot = np.array(self.scores, copy=True)
 
-                if np.isnan(scores_snapshot).any():
-                    bt.logging.warning(
-                        "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
-                    )
+                scores_snapshot = np.nan_to_num(scores_snapshot, nan=0.0, posinf=0.0, neginf=0.0)
 
                 norm = np.linalg.norm(scores_snapshot, ord=1, axis=0, keepdims=True)
 
+                # All-zero/non-finite scores -> refuse, else process_weights_for_netuid emits uniform weights.
                 if np.any(norm == 0) or np.isnan(norm).any():
-                    norm = np.ones_like(norm)
+                    bt.logging.warning(
+                        "Refusing to set weights: score vector is all-zero / non-finite "
+                        "(no backend weights applied yet)."
+                    )
+                    return False
 
                 raw_weights = scores_snapshot / norm
 

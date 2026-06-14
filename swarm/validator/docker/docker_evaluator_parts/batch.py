@@ -471,7 +471,7 @@ def _setup_pretry_state(ctx: _BatchContext) -> None:
     _phase = ctx.helpers.phase
 
     ctx.container_name = f"swarm_eval_{uid}_w{worker_id}_{int(time.time() * 1000)}"
-    ctx.host_port = self._find_free_port()
+    ctx.host_port = self._find_free_port(worker_id)
 
     _phase(
         f"prepare container={ctx.container_name} host_port={ctx.host_port} seeds={len(tasks)}"

@@ -240,6 +240,11 @@ class BackendApiClient:
         """Current champion summary from the last sync (uid, family_id, score, model_hash)."""
         return self._runtime_state.get("current_top", {})
 
+    @property
+    def top_by_family(self) -> dict:
+        """Per-family champion summaries from the last sync, keyed by family_id."""
+        return self._runtime_state.get("top_by_family", {})
+
     def get_cached_weights(self) -> dict:
         """Advisory only; the apply path uses get_cached_kings()."""
         return self._runtime_state.get("last_weights", {})
@@ -295,9 +300,11 @@ class BackendApiClient:
                     payload = {"error": _scrub_url(str(payload)), "status_code": status}
             except Exception:
                 payload = {"error": _scrub_url(str(e)), "status_code": status}
+            # Non-2xx is a failure: guarantee an "error" key so sync never reads a rejection as success.
+            payload.setdefault("error", f"HTTP {status}")
+            payload.setdefault("status_code", status)
             if status >= 500:
                 payload.setdefault("transport_failure", True)
-                payload.setdefault("status_code", status)
             return payload
         except _TRANSPORT_EXCEPTIONS as e:
             bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
@@ -328,9 +335,11 @@ class BackendApiClient:
                     payload = {"error": _scrub_url(str(payload)), "status_code": status}
             except Exception:
                 payload = {"error": _scrub_url(str(e)), "status_code": status}
+            # Non-2xx is a failure: guarantee an "error" key so sync never reads a rejection as success.
+            payload.setdefault("error", f"HTTP {status}")
+            payload.setdefault("status_code", status)
             if status >= 500:
                 payload.setdefault("transport_failure", True)
-                payload.setdefault("status_code", status)
             return payload
         except _TRANSPORT_EXCEPTIONS as e:
             bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
@@ -460,6 +469,15 @@ class BackendApiClient:
                         "model_hash": current_champion.get("model_hash"),
                     }
 
+                top_by_family = {}
+                for fid, champ in (data.get("champions_by_family", {}) or {}).items():
+                    top_by_family[fid] = {
+                        "uid": champ.get("uid"),
+                        "family_id": champ.get("family_id", fid),
+                        "score": champ.get("benchmark_score"),
+                        "model_hash": champ.get("model_hash"),
+                    }
+
                 # Map reeval_queue to use uid
                 reeval_queue = []
                 for item in data.get("reeval_queue", []):
@@ -479,6 +497,7 @@ class BackendApiClient:
                 self._runtime_state["reeval_queue"] = reeval_queue
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
+                self._runtime_state["top_by_family"] = top_by_family
                 self._runtime_state["assigned_tasks"] = data.get("assigned_tasks", [])
                 self._runtime_state["rollout"] = data.get("rollout", {})
                 self._runtime_state["validator_compatibility"] = data.get(

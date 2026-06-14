@@ -10,6 +10,34 @@ def _king(uid, score, prev, family_id, hotkey=None):
     }
 
 
+def test_burn_seat_uid0_holds_denominator_and_burns():
+    # A dropped/stale seat arrives as the reserved burn UID (0). It stays in the
+    # row-share denominator but pays nobody, so the survivor's share is the same as
+    # if the burn seat were a normal king — proving burn, not redistribution.
+    paying = {
+        "family_shares": {"cf_autopilot": 1.0},
+        "kings_by_family": {
+            "cf_autopilot": [
+                _king(11, 0.4, 0.0, "cf_autopilot"),
+                _king(12, 0.6, 0.4, "cf_autopilot"),
+            ],
+        },
+    }
+    burning = {
+        "family_shares": {"cf_autopilot": 1.0},
+        "kings_by_family": {
+            "cf_autopilot": [
+                _king(0, 0.4, 0.0, "cf_autopilot"),     # burn seat, same score/prev
+                _king(12, 0.6, 0.4, "cf_autopilot"),
+            ],
+        },
+    }
+    w_pay = compute_koth_weights_from_sync(paying)
+    w_burn = compute_koth_weights_from_sync(burning)
+    assert 0 not in w_burn                       # burn UID never paid
+    assert abs(w_burn[12] - w_pay[12]) < 1e-9    # survivor's share unchanged -> the slice burned
+
+
 def test_per_family_payload_combines_across_families():
     sync = {
         "family_shares": {"cf_autopilot": 0.8, "cf_search_and_rescue": 0.2},

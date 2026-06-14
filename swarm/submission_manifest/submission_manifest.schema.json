@@ -3,7 +3,7 @@
   "manifest_filename": "submission_manifest.json",
   "legacy_fallback": {
     "enabled": true,
-    "default_family_id": "cf_search_and_rescue",
+    "default_family_id": "cf_autopilot",
     "artifact_path": "submission.zip"
   },
   "repo_layout_rules": {

@@ -270,7 +270,9 @@ def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
 
     try:
         data = _run(client._post_signed("/x", {"a": 1}))
-        assert data == {"detail": "bad"}
+        assert data["detail"] == "bad"
+        assert data["error"] == "HTTP 400"
+        assert data["status_code"] == 400
     finally:
         _run(client.close())
 
@@ -554,7 +556,8 @@ def test_post_signed_4xx_does_not_tag_transport_failure(monkeypatch, tmp_path):
     try:
         data = _run(client._post_signed("/x", {"a": 1}))
         assert "transport_failure" not in data
-        assert data == {"detail": "already submitted"}
+        assert data["detail"] == "already submitted"
+        assert data["status_code"] == 409
     finally:
         _run(client.close())
 

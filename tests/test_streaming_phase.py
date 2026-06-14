@@ -59,6 +59,58 @@ def _make_evaluate_stub(score_per_seed: float = 0.75, map_type: str = "city"):
     return _evaluate
 
 
+def _make_evaluate_stub_with_infra(infra_local_index: int, score_per_seed: float = 0.75, map_type: str = "city"):
+    async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        scores = [score_per_seed] * len(seeds)
+        per_type = {"city": [], "open": [], "mountain": [], "village": [],
+                    "warehouse": [], "forest": []}
+        per_type[map_type] = list(scores)
+        details = [
+            {
+                "score": score_per_seed,
+                "map_type": map_type,
+                "failure_reason": "INFRA" if j == infra_local_index else "NONE",
+            }
+            for j in range(len(seeds))
+        ]
+        return scores, per_type, details
+    return _evaluate
+
+
+def test_streaming_phase_excludes_infra_seeds_from_upload(monkeypatch):
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub_with_infra(2))
+
+    uploaded_indices: list = []
+
+    async def _capture(**kwargs):
+        uploaded_indices.extend(s["seed_index"] for s in kwargs.get("scores", []))
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=Path("/tmp/fake.zip"),
+                seeds=list(range(20)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    asyncio.run(_run())
+    # Two chunks of 10; local index 2 -> global seed_index 2 and 12 are infra -> not uploaded.
+    assert sorted(uploaded_indices) == [i for i in range(20) if i not in (2, 12)]
+
+
 def test_streaming_phase_forwards_task_id_to_upload(monkeypatch):
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())

@@ -96,6 +96,23 @@ def test_reference_returns_scores_for_current_champion():
     }
 
 
+def test_reference_uses_per_family_champion_when_current_top_differs():
+    _record("sar-hash", 10, [11, 22], [0.6, 0.7], family_id="cf_search_and_rescue")
+    v = types.SimpleNamespace(
+        backend_api=types.SimpleNamespace(
+            current_top={"family_id": "cf_autopilot", "model_hash": "ap-hash"},
+            top_by_family={
+                "cf_search_and_rescue": {
+                    "family_id": "cf_search_and_rescue", "model_hash": "sar-hash",
+                },
+            },
+        )
+    )
+    assert champion_seed_reference(v, "cf_search_and_rescue", 10, [11, 22]) == {
+        11: 0.6, 22: 0.7,
+    }
+
+
 def test_reference_skips_on_hash_mismatch():
     _record("OLD", 10, [11, 22], [0.9, 0.8])
     v = _validator({"family_id": "cf_autopilot", "model_hash": "NEW"})

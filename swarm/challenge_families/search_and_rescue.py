@@ -393,7 +393,8 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         pos, _ = _sar_drone_state(env)
         dist_to_centre = float(np.linalg.norm(pos[0:2] - np.asarray(sc, dtype=float)))
         nearest_reachable = max(0.0, dist_to_centre - SAR_SEARCH_RADIUS)
-        min_time_required = nearest_reachable / max(SPEED_LIMIT, 1e-6) + SAR_DWELL_SEC
+        dwell_remaining = max(0.0, SAR_DWELL_SEC - env._sar_dwell_time)
+        min_time_required = nearest_reachable / max(SPEED_LIMIT, 1e-6) + dwell_remaining
         return bool(time_left < min_time_required)
 
     def compute_truncated(

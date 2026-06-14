@@ -23,7 +23,7 @@ import bittensor as bt
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
-from swarm.protocol import ValidationResult
+from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.runtime_telemetry import tracker_call
 
 from ._shared import _docker_evaluator_facade, _runtime_profile_from_payload
@@ -688,7 +688,11 @@ async def _run_process_parallel(
                 final_status = _seed_status(final_seed_meta)
                 prior_retries = int(batch_retry_counts.get(int(request.batch_index), 0))
                 if (
-                    bench_engine._is_backoff_timeout_status(final_status)
+                    (
+                        bench_engine._is_backoff_timeout_status(final_status)
+                        # transient (e.g. host port briefly taken) -> retry, don't score 0
+                        or final_status == "container_start_failed"
+                    )
                     and prior_retries < 1
                     and timeout_retries_used < _MAX_TIMEOUT_RETRIES
                 ):
@@ -722,13 +726,17 @@ async def _run_process_parallel(
                         uid=uid,
                         result_obj=vr,
                     )
+                seed_status = _seed_status(final_seed_meta)
+                if vr is not None and (
+                    bench_engine._is_backoff_timeout_status(seed_status)
+                    or seed_status == "container_start_failed"
+                ):
+                    # Infra failure, not a real 0 — flag it so the upload skips it
+                    # and the seed is re-dispatched on resume instead of scored 0.
+                    vr.failure_reason = FailureReason.INFRA.value
                 _observe_final_seed(meta, final_seed_meta)
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
-                _record_seed_result(
-                    vr,
-                    meta,
-                    status=_seed_status(final_seed_meta),
-                )
+                _record_seed_result(vr, meta, status=seed_status)
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
