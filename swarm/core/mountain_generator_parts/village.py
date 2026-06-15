@@ -458,6 +458,8 @@ def _spawn_village_roads(
         scale_vec = [ROAD_WIDTH, ROAD_WIDTH, ROAD_WIDTH]
         vis, col = cache.get(cli, path, scale_vec, ROAD_COLOR)
         rot = math.radians(tile.rotation) + math.radians(90)
+        if tile.type == "straight_h":
+            rot += math.radians(90)
         orn = p.getQuaternionFromEuler([1.5708, 0, rot])
         fx = tile.x - offset + ROAD_WIDTH / 2
         fy = tile.y - offset + ROAD_WIDTH / 2

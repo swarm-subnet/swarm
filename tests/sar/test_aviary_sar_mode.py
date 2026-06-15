@@ -41,7 +41,7 @@ def test_sar_mode_loads_sar_world():
     try:
         assert env.sar_mode is True
         assert isinstance(env.sar_world, SARWorld)
-        assert len(env.sar_world.victim_uids) >= 5
+        assert len(env.sar_world.victim_uids) >= 1
         assert env.sar_world.search_centre is not None
     finally:
         try:

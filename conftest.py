@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,20 @@ def _ensure_repo_on_syspath() -> None:
         sys.path.insert(0, repo_str)
 
 
+def _configure_xdist_worker() -> None:
+    worker = os.getenv("PYTEST_XDIST_WORKER")
+    if not worker:
+        return
+    if not os.getenv("SWARM_TERRAIN_CACHE_DIR"):
+        cache_dir = Path(tempfile.gettempdir()) / "swarm_terrain_cache" / worker
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["SWARM_TERRAIN_CACHE_DIR"] = str(cache_dir)
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(var, "1")
+
+
 _ensure_repo_on_syspath()
+_configure_xdist_worker()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -64,7 +64,7 @@ def _parse_mtl_materials(mtl_path: Optional[str]) -> dict[str, dict]:
     return materials
 
 
-def _prebake(obj_path: str, out_dir: str) -> Iterable[str]:
+def _prebake(obj_path: str, out_dir: str, scale: float = 1.0) -> Iterable[str]:
     mtl_path = _obj_mtl_path(obj_path)
     material_info = _parse_mtl_materials(mtl_path)
 
@@ -81,7 +81,7 @@ def _prebake(obj_path: str, out_dir: str) -> Iterable[str]:
                 continue
             if line.startswith("v "):
                 parts = line.split()
-                vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                vertices.append((float(parts[1]) * scale, float(parts[2]) * scale, float(parts[3]) * scale))
                 continue
             if line.startswith("vt "):
                 parts = line.split()
@@ -221,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--obj", default=str(default_obj), help="source .obj path")
     parser.add_argument("--out-dir", default=str(default_out), help="output directory for split parts")
+    parser.add_argument("--scale", type=float, default=1.0, help="uniform scale applied to vertices")
     args = parser.parse_args(argv)
 
     obj_path = os.fspath(args.obj)
@@ -229,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"missing source OBJ: {obj_path}", file=sys.stderr)
         return 2
 
-    written = list(_prebake(obj_path, out_dir))
+    written = list(_prebake(obj_path, out_dir, scale=args.scale))
     print(f"wrote {len(written)} parts into {out_dir}")
     for path in written:
         print(f"  {os.path.relpath(path)}")

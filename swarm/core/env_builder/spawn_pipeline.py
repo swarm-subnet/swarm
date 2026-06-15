@@ -7,12 +7,13 @@ import pybullet as p
 
 from .sar_types import BodyCategory
 from .surface_resolver import SurfaceHit, resolve_surface
-from .victim import accepted_categories_for
+from .victim import accepted_categories_for, terrain_slope_deg
 
 
 MAX_SPAWN_ATTEMPTS = 50
 NO_TOUCH_SPHERE_RADIUS = 0.8
 HOVER_COLUMN_TOP_Z = 5.0
+MAX_SPAWN_SLOPE_DEG = 22.0
 
 
 class SARSpawnError(RuntimeError):
@@ -111,6 +112,12 @@ def find_spawn_xy(
             last_reason = "no_support_hit"
             if on_attempt is not None:
                 on_attempt(attempt, "no_support_hit", x, y)
+            continue
+        if (terrain_slope_deg(cli, x, y, hit.surface_z, radius=0.4) > MAX_SPAWN_SLOPE_DEG
+                or terrain_slope_deg(cli, x, y, hit.surface_z, radius=1.0) > MAX_SPAWN_SLOPE_DEG):
+            last_reason = "too_steep"
+            if on_attempt is not None:
+                on_attempt(attempt, "too_steep", x, y)
             continue
         if not _hover_column_clear(
             cli, x, y, hit.surface_z, body_tags=body_tags, support_uid=hit.support_uid,

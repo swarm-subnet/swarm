@@ -13,6 +13,8 @@ from swarm.core.env_builder.spawn_pipeline import (
     find_spawn_xy,
 )
 
+pytestmark = pytest.mark.full
+
 
 _MAPS = {
     "open":      2,

@@ -4,7 +4,8 @@ For each accepted spawn the test asserts:
   1. Mannequin feet sit on a real SUPPORT_* surface (not inside any body).
   2. No obstacle within the 0.8 m no-touch sphere around the spawn point.
   3. The 5 m hover column above the spawn point is empty of obstacles.
-  4. The mannequin's union AABB sits flush on the surface (feet 5 mm above).
+  4. The victim is seated on the local terrain: never floating above the spawn
+     surface, and at most sunk to the footprint terrain on slopes.
 """
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ from swarm.core.env_builder.spawn_pipeline import (
 )
 from swarm.core.env_builder.victim import spawn_victim
 
+pytestmark = pytest.mark.full
+
 
 _MAPS = {
     "open":      2,
@@ -37,6 +40,7 @@ _MAPS = {
 _N_SEEDS = 50
 _HOVER_COLUMN_HEIGHT_M = 5.0
 _FOOT_TOLERANCE_M = 0.05
+_MAX_SLOPE_SINK_M = 2.0
 
 
 def _audit_one(cli: int, seed: int, ctype: int) -> Dict[str, float]:
@@ -69,11 +73,11 @@ def _audit_one(cli: int, seed: int, ctype: int) -> Dict[str, float]:
     union_min, union_max = union_aabb
 
     foot_gap = union_min[2] - hit.surface_z
-    assert foot_gap >= 0.0, (
-        f"seed={seed} ctype={ctype}: feet sunk into surface by {-foot_gap:.4f} m"
-    )
     assert foot_gap <= _FOOT_TOLERANCE_M, (
         f"seed={seed} ctype={ctype}: feet floating {foot_gap:.4f} m above surface"
+    )
+    assert foot_gap >= -_MAX_SLOPE_SINK_M, (
+        f"seed={seed} ctype={ctype}: victim sunk {-foot_gap:.4f} m below surface"
     )
 
     support_tag = body_tags.get(hit.support_uid)

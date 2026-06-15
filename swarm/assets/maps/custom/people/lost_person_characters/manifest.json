@@ -20,7 +20,14 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "forest",
+        "open"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 2,
@@ -35,7 +42,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "forest",
+        "open"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 3,
@@ -50,7 +62,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "forest",
+        "open"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 4,
@@ -65,7 +82,14 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "forest",
+        "open"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 5,
@@ -76,7 +100,13 @@
       "scale": 0.7968,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "village",
+        "city",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 6,
@@ -87,7 +117,13 @@
       "scale": 0.7863,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "village",
+        "city",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 7,
@@ -98,7 +134,12 @@
       "scale": 0.7837,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "village",
+        "city"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 8,
@@ -109,7 +150,13 @@
       "scale": 0.7968,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "village",
+        "city",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 9,
@@ -124,7 +171,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 10,
@@ -139,7 +191,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 11,
@@ -154,7 +211,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "warehouse",
+        "city"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 12,
@@ -169,7 +231,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "warehouse",
+        "city"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 13,
@@ -184,7 +251,15 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open",
+        "forest",
+        "warehouse"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 14,
@@ -199,7 +274,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "open",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 15,
@@ -214,7 +294,13 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "village",
+        "open",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 16,
@@ -229,7 +315,15 @@
         "creator": "Quaternius",
         "pack": "Animated Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open",
+        "forest",
+        "warehouse"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 17,
@@ -244,7 +338,15 @@
         "creator": "Quaternius",
         "pack": "Animated Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open",
+        "forest",
+        "warehouse"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 18,
@@ -259,7 +361,15 @@
         "creator": "Quaternius",
         "pack": "Animated Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open",
+        "forest",
+        "warehouse"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 19,
@@ -274,7 +384,12 @@
         "creator": "Quaternius",
         "pack": "Animated Men Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 20,
@@ -289,7 +404,12 @@
         "creator": "Quaternius",
         "pack": "Ultimate Modular Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 21,
@@ -304,7 +424,12 @@
         "creator": "Quaternius",
         "pack": "Animated Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 22,
@@ -319,7 +444,13 @@
         "creator": "Quaternius",
         "pack": "Animated Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 23,
@@ -334,7 +465,14 @@
         "creator": "Quaternius",
         "pack": "Animated Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 24,
@@ -349,7 +487,14 @@
         "creator": "Quaternius",
         "pack": "Animated Women Pack",
         "url": "https://quaternius.com/"
-      }
+      },
+      "maps": [
+        "city",
+        "village",
+        "open",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 25,
@@ -360,7 +505,11 @@
       "scale": 0.946,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain"
+      ],
+      "max_slope_deg": 40.0
     },
     {
       "index": 26,
@@ -371,7 +520,13 @@
       "scale": 0.7917,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain",
+        "forest",
+        "village"
+      ],
+      "max_slope_deg": 36.0
     },
     {
       "index": 27,
@@ -382,7 +537,11 @@
       "scale": 0.9515,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain"
+      ],
+      "max_slope_deg": 85.0
     },
     {
       "index": 28,
@@ -393,7 +552,13 @@
       "scale": 0.9953,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain",
+        "village",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 29,
@@ -404,7 +569,14 @@
       "scale": 0.9460872197807917,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "forest",
+        "open",
+        "village",
+        "mountain"
+      ],
+      "max_slope_deg": 85.0
     },
     {
       "index": 30,
@@ -415,7 +587,11 @@
       "scale": 0.7125849361655857,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 31,
@@ -426,7 +602,12 @@
       "scale": 0.9490197153573533,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain",
+        "forest"
+      ],
+      "max_slope_deg": 30.0
     },
     {
       "index": 32,
@@ -437,7 +618,14 @@
       "scale": 0.9459335891558174,
       "origin": "AI-generated/modified",
       "license": "Bittensor & Swarm Training License (Open Use) v1.1",
-      "source": "Contributor-created with generative AI; modification level not specified per asset."
+      "source": "Contributor-created with generative AI; modification level not specified per asset.",
+      "maps": [
+        "mountain",
+        "village"
+      ],
+      "max_slope_deg": 30.0
     }
-  ]
+  ],
+  "maps_note": "maps lists the challenge environments each character is suitable for. mountain is the snow environment; village carries light snow.",
+  "max_slope_note": "max_slope_deg: the steepest terrain (degrees) this victim looks correct on. Standing victims ~30; collapsed/lying poses higher. Selection drops victims whose max_slope_deg is below the spawn-point slope, so steep edges only get believable poses. Placement stays random."
 }

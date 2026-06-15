@@ -48,19 +48,15 @@ def test_per_map_all_bodies_tagged(sar_pybullet, name, ctype):
     assert support_tags, f"{name}: no SUPPORT_* body found"
 
 
-def test_no_untagged_bodies_anywhere(sar_pybullet):
-    """Runtime equivalent of the grep check: every body in every SAR-active
-    map build must be in body_tags."""
-    for name, ctype in _CHALLENGE_TYPES.items():
-        cli = sar_pybullet
-        # Reset between maps to avoid uid accumulation across builds
-        import pybullet as p
-        p.resetSimulation(physicsClientId=cli)
-        tagger = build_and_tag_map(
-            cli, seed=50 + ctype, challenge_type=ctype,
-            start=(0.0, 0.0, 1.5), goal=(10.0, 10.0, 1.5),
-        )
-        scene = set(enumerate_bodies(cli))
-        tagged = set(tagger.body_tags.keys())
-        missing = scene - tagged
-        assert not missing, f"{name}: untagged bodies {sorted(missing)}"
+@pytest.mark.parametrize("name,ctype", list(_CHALLENGE_TYPES.items()))
+def test_no_untagged_bodies_anywhere(sar_pybullet, name, ctype):
+    """Runtime equivalent of the grep check: every body in a SAR-active map
+    build must be in body_tags. Split per map so the builds parallelize."""
+    tagger = build_and_tag_map(
+        sar_pybullet, seed=50 + ctype, challenge_type=ctype,
+        start=(0.0, 0.0, 1.5), goal=(10.0, 10.0, 1.5),
+    )
+    scene = set(enumerate_bodies(sar_pybullet))
+    tagged = set(tagger.body_tags.keys())
+    missing = scene - tagged
+    assert not missing, f"{name}: untagged bodies {sorted(missing)}"

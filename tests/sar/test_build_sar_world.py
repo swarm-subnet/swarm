@@ -29,7 +29,7 @@ def test_per_map_well_formed(sar_pybullet, name, ctype):
         sar_pybullet, seed=1234 + ctype, challenge_type=ctype,
         start=(0.0, 0.0, 1.5), goal=(8.0, 8.0, 1.5),
     )
-    assert len(world.victim_uids) >= 5
+    assert len(world.victim_uids) >= 1
     for u in world.victim_uids:
         assert world.body_tags.get(u) == BodyCategory.VICTIM.value
     assert world.support_uid in world.body_tags

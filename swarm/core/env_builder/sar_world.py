@@ -9,8 +9,8 @@ from .body_tagger import BodyTagger
 from .sar_tagging import build_and_tag_map, enumerate_bodies, tag_world_after_build
 from .sar_types import SafetyPatch, SARWorld
 from .search_clue import sample_search_centre
-from .spawn_pipeline import find_spawn_xy
-from .victim import spawn_victim
+from .spawn_pipeline import SARSpawnError, find_spawn_xy
+from .victim import select_victim_split_dir, spawn_victim, terrain_slope_deg
 
 
 def build_sar_world(
@@ -35,6 +35,12 @@ def build_sar_world(
     )
 
     rng = random.Random(seed ^ 0xA5A5A5A5)
+    slope_deg = terrain_slope_deg(cli, spawn_x, spawn_y, hit.surface_z)
+    split_dir = select_victim_split_dir(seed, challenge_type, slope_deg=slope_deg)
+    if split_dir is None:
+        raise SARSpawnError(
+            f"no victim asset available for challenge_type={challenge_type}"
+        )
     victim_uids, union_aabb, victim_centre = spawn_victim(
         cli,
         surface_x=spawn_x,
@@ -42,6 +48,7 @@ def build_sar_world(
         surface_z=hit.surface_z,
         rng=rng,
         tagger=tagger,
+        split_dir=split_dir,
     )
 
     n_after = p.getNumBodies(physicsClientId=cli)

@@ -65,6 +65,30 @@ def make_aabb_collision_shape(
     )
 
 
+def _srgb(c: float) -> float:
+    c = 0.0 if c < 0.0 else (1.0 if c > 1.0 else c)
+    return 1.055 * (c ** (1.0 / 2.4)) - 0.055 if c > 0.0031308 else 12.92 * c
+
+
+def _part_rgba(obj_path: str | Path) -> List[float]:
+    mtl_path = Path(obj_path).with_suffix(".mtl")
+    if not mtl_path.exists():
+        return [1.0, 1.0, 1.0, 1.0]
+    kd = None
+    with open(mtl_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            low = line.strip().lower()
+            if low.startswith("map_kd"):
+                return [1.0, 1.0, 1.0, 1.0]
+            if low.startswith("kd ") and kd is None:
+                vals = line.split()
+                if len(vals) >= 4:
+                    kd = [float(vals[1]), float(vals[2]), float(vals[3])]
+    if kd is None:
+        return [1.0, 1.0, 1.0, 1.0]
+    return [_srgb(kd[0]), _srgb(kd[1]), _srgb(kd[2]), 1.0]
+
+
 def spawn_split_material_mesh(
     cli: int,
     *,
@@ -86,12 +110,13 @@ def spawn_split_material_mesh(
 
     uids: list[int] = []
     for index, part_path in enumerate(parts):
+        rgba = _part_rgba(part_path)
         if flags:
             visual_id = p.createVisualShape(
                 p.GEOM_MESH,
                 fileName=part_path,
                 meshScale=[1.0, 1.0, 1.0],
-                rgbaColor=[1.0, 1.0, 1.0, 1.0],
+                rgbaColor=rgba,
                 flags=flags,
                 physicsClientId=cli,
             )
@@ -100,7 +125,7 @@ def spawn_split_material_mesh(
                 p.GEOM_MESH,
                 fileName=part_path,
                 meshScale=[1.0, 1.0, 1.0],
-                rgbaColor=[1.0, 1.0, 1.0, 1.0],
+                rgbaColor=rgba,
                 physicsClientId=cli,
             )
         uid = p.createMultiBody(

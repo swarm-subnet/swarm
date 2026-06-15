@@ -59,7 +59,7 @@ STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"
 
 VILLAGE_SIZE = 100.0
 ROAD_WIDTH = 6.0
-HOUSE_SCALE = 2.0
+HOUSE_SCALE = 5.0
 HOUSE_GAP = 0.3
 
 CAR_ASSETS = [
