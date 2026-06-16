@@ -17,7 +17,10 @@ from swarm.constants import (
     SAR_SCREENING_TEMPLATE,
     SAR_SEARCH_RADIUS,
     SPEED_LIMIT,
+    START_PLATFORM_TAKEOFF_BUFFER,
 )
+from swarm.core.env_builder.body_tagger import BodyTagger
+from swarm.core.env_builder.platform import build_start_platform, surface_z_at
 from swarm.core.env_builder.sar_world import build_sar_world
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
@@ -235,7 +238,8 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         return tasks
 
     def protected_body_uids(self, env: Any) -> set[int]:
-        return set(env.sar_world.victim_uids) if env.sar_world is not None else set()
+        base = set(env.sar_world.victim_uids) if env.sar_world is not None else set()
+        return base | set(getattr(env, "_platform_uids", frozenset()))
 
     def safety_patch(self, env: Any) -> Any | None:
         if env.sar_world is None:
@@ -269,6 +273,17 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
             env.sar_world = None
             env._sar_spawn_failed = True
             env._failure_reason = FailureReason.SPAWN_FAILURE.value
+
+        # Start platform only: the goal is the victim, not a landing pad.
+        env._platform_uids = frozenset()
+        if env.sar_world is not None:
+            sx, sy = float(env.task.start[0]), float(env.task.start[1])
+            surf = surface_z_at(cli, sx, sy)
+            pad_uids, pad_top = build_start_platform(
+                BodyTagger(cli), cli, sx, sy, surf, int(env.task.challenge_type),
+            )
+            env._platform_uids = frozenset(pad_uids)
+            env.task.start = (sx, sy, pad_top + START_PLATFORM_TAKEOFF_BUFFER)
 
         start_xyz = np.array(env.task.start, dtype=float)
         start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])

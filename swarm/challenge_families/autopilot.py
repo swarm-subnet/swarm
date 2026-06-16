@@ -6,6 +6,8 @@ from typing import Any, Optional
 import numpy as np
 import pybullet as p
 
+from swarm.constants import START_PLATFORM_TAKEOFF_BUFFER
+from swarm.core.env_builder.platform_placement import build_autopilot_world
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import FailureReason, SCHEMA_VERSION
@@ -21,14 +23,36 @@ from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile
 
 
 AUTOPILOT_GOAL_REACH_RADIUS_M = 1.0
-_AUTOPILOT_SCREENING_TEMPLATE: tuple[dict[str, Any], ...] = (
-    {"challenge_type": 1, "distance_range": (16.0, 26.0)},
-    {"challenge_type": 2, "distance_range": (16.0, 24.0)},
-    {"challenge_type": 3, "distance_range": (28.0, 52.0)},
-    {"challenge_type": 4, "distance_range": (24.0, 42.0)},
-    {"challenge_type": 5, "distance_range": (10.0, 20.0)},
-    {"challenge_type": 6, "distance_range": (16.0, 28.0)},
-)
+
+
+def _build_autopilot_screening_template() -> tuple[dict[str, Any], ...]:
+    def slot(challenge_type: int, distance_range: tuple[float, float], moving: bool) -> dict[str, Any]:
+        return {"challenge_type": challenge_type, "distance_range": distance_range, "moving_platform": moving}
+
+    city = ((16.0, 26.0))
+    open_ = ((16.0, 24.0))
+    mountain = ((28.0, 52.0))
+    village = ((24.0, 42.0))
+    warehouse = ((10.0, 20.0))
+    forest = ((16.0, 28.0))
+
+    pools = [
+        [slot(1, city, False)] * 6 + [slot(1, city, True)] * 2,
+        [slot(2, open_, False)] * 2 + [slot(2, open_, True)] * 6,
+        [slot(3, mountain, False)] * 6 + [slot(3, mountain, True)] * 2,
+        [slot(4, village, False)] * 7 + [slot(4, village, True)] * 2,
+        [slot(5, warehouse, False)] * 9,
+        [slot(6, forest, False)] * 8,
+    ]
+    template: list[dict[str, Any]] = []
+    for i in range(max(len(pool) for pool in pools)):
+        for pool in pools:
+            if i < len(pool):
+                template.append(pool[i])
+    return tuple(template)
+
+
+_AUTOPILOT_SCREENING_TEMPLATE: tuple[dict[str, Any], ...] = _build_autopilot_screening_template()
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -215,6 +239,10 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
             }
             if _supports_keyword_arg(legacy_task_gen.screening_task, "family_id"):
                 kwargs["family_id"] = self.family_id
+            if "moving_platform" in slot and _supports_keyword_arg(
+                legacy_task_gen.screening_task, "moving_platform"
+            ):
+                kwargs["moving_platform"] = slot["moving_platform"]
             tasks.append(legacy_task_gen.screening_task(**kwargs))
         return tasks
 
@@ -223,17 +251,64 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         env.task.goal = env._original_goal
         cli = getattr(env, "CLIENT", 0)
 
+        static_world_body_base = p.getNumBodies(physicsClientId=cli)
         tagger = build_and_tag_map(
             cli=cli,
             seed=env.task.map_seed,
             challenge_type=env.task.challenge_type,
             start=env.task.start,
             goal=env.task.goal,
+            safe_zone_radius=0.0,
             sar_mode=False,
         )
+
+        moving_platform = bool(getattr(env.task, "moving_platform", False))
+        (
+            end_uids,
+            start_uids,
+            start_surface_z,
+            goal_surface_z,
+            adj_start,
+            adj_goal,
+        ) = build_autopilot_world(
+            tagger,
+            cli,
+            env.task.map_seed,
+            env.task.start,
+            env.task.goal,
+            int(env.task.challenge_type),
+            moving_platform,
+            static_world_body_base,
+        )
+
         env._autopilot_world_tags = dict(tagger.body_tags)
+        env._end_platform_uids = list(end_uids)
+        env._start_platform_uids = list(start_uids)
+        env._platform_uids = frozenset(end_uids) | frozenset(start_uids)
+
+        if adj_start is not None:
+            env.task.start = adj_start
+        if adj_goal is not None:
+            env.task.goal = adj_goal
 
         start_xyz = np.array(env.task.start, dtype=float)
+        if start_surface_z is not None:
+            env.task.start = (
+                env.task.start[0],
+                env.task.start[1],
+                start_surface_z + START_PLATFORM_TAKEOFF_BUFFER,
+            )
+            start_xyz[2] = start_surface_z + START_PLATFORM_TAKEOFF_BUFFER
+            env.GOAL_POS = np.array(env.task.goal, dtype=float)
+        if goal_surface_z is not None:
+            env.task.goal = (env.task.goal[0], env.task.goal[1], goal_surface_z)
+            env.GOAL_POS[2] = goal_surface_z
+
+        env._platform_orbit_center = env.GOAL_POS.copy()
+        env._current_platform_pos = env.GOAL_POS.copy()
+        env._prev_platform_pos = None
+        env._platform_offsets = []
+
         start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
         p.resetBasePositionAndOrientation(
             env.DRONE_IDS[0],
@@ -260,6 +335,9 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
 
         env._build_cull_targets()
 
+    def protected_body_uids(self, env: Any) -> set[int]:
+        return set(getattr(env, "_platform_uids", frozenset()))
+
     def post_step_update(self, env: Any) -> None:
         if env._collision:
             return
@@ -268,9 +346,8 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         if distance_to_goal < env._autopilot_min_goal_distance:
             env._autopilot_min_goal_distance = distance_to_goal
 
-        if distance_to_goal <= env._autopilot_goal_reach_radius_m and not env._success:
-            env._success = True
-            env._t_to_goal = env._time_alive
+        env._update_landing_state(bool(getattr(env, "_platform_hit", False)))
+        if env._success:
             env._failure_reason = FailureReason.NONE.value
 
     def compute_terminated(self, env: Any) -> bool:

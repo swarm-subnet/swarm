@@ -68,6 +68,7 @@ class MapTask:
     family_id: str = "cf_search_and_rescue"
     version: str = SCHEMA_VERSION
     search_centre: Tuple[float, float] = (0.0, 0.0)
+    moving_platform: bool = False
 
     def pack(self) -> bytes:
         return msgpack.packb(asdict(self), use_bin_type=True)
@@ -75,7 +76,6 @@ class MapTask:
     @staticmethod
     def unpack(blob: bytes) -> "MapTask":
         data = msgpack.unpackb(blob, raw=False)
-        data.pop("moving_platform", None)
         data.pop("search_radius", None)
         if not data.get("family_id"):
             version = normalize_version(data.get("version", ""))

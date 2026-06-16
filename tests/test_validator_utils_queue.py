@@ -472,7 +472,7 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
         docker_evaluator=SimpleNamespace(evaluate_seeds_parallel=_fake_parallel),
     )
 
-    monkeypatch.setattr(validator_evaluation, "random_task", _fake_random_task)
+    monkeypatch.setattr(validator_evaluation, "build_random_task", _fake_random_task)
 
     all_scores, per_type_scores, _details = asyncio.run(
         validator_utils._evaluate_seeds(
@@ -486,7 +486,7 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
 
     assert all_scores == [0.25, 0.75]
     assert per_type_scores["forest"] == [0.25, 0.75]
-    assert "moving_platform" not in per_type_scores
+    assert per_type_scores["moving_platform"] == []
 
 
 def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch):

@@ -7,7 +7,14 @@ from typing import Optional, Tuple
 
 from swarm.constants import (
     CHALLENGE_TYPE_DISTRIBUTION,
+    MOVING_PLATFORM_PROB,
+    MOVING_PLATFORM_SEED_OFFSET,
     RANDOM_START,
+    START_PLATFORM,
+    START_PLATFORM_MAX_Z,
+    START_PLATFORM_MIN_Z,
+    START_PLATFORM_RANDOMIZE,
+    START_PLATFORM_SURFACE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
     TYPE_1_H_MAX,
     TYPE_1_H_MIN,
@@ -119,11 +126,14 @@ def _build_task_with_params(
     challenge_type: int,
     params: dict,
     family_id: str = "cf_search_and_rescue",
+    moving_platform: bool = False,
 ) -> MapTask:
     rng = random.Random(seed)
 
     if RANDOM_START:
-        start = _random_start(rng, params, challenge_type=challenge_type, seed=seed)
+        start = _random_start(
+            rng, params, challenge_type=challenge_type, seed=seed, family_id=family_id,
+        )
         goal = _goal_from_start(
             rng,
             start,
@@ -144,7 +154,19 @@ def _build_task_with_params(
         challenge_type=challenge_type,
         family_id=family_id,
         version=SCHEMA_VERSION,
+        moving_platform=moving_platform,
     )
+
+
+def _resolve_moving_platform(
+    seed: int, challenge_type: int, family_id: str, moving_platform: Optional[bool],
+) -> bool:
+    if family_id != "cf_autopilot":
+        return False
+    if moving_platform is not None:
+        return bool(moving_platform)
+    platform_rng = random.Random((seed + MOVING_PLATFORM_SEED_OFFSET) & 0xFFFFFFFF)
+    return platform_rng.random() < MOVING_PLATFORM_PROB.get(challenge_type, 0.0)
 
 
 def _build_task_for_type(
@@ -153,13 +175,16 @@ def _build_task_for_type(
     *,
     challenge_type: int,
     family_id: str = "cf_search_and_rescue",
+    moving_platform: Optional[bool] = None,
 ) -> MapTask:
     params = _resolve_params(seed, challenge_type)
+    resolved = _resolve_moving_platform(seed, challenge_type, family_id, moving_platform)
     return _build_task_with_params(
         sim_dt, seed,
         challenge_type=challenge_type,
         params=params,
         family_id=family_id,
+        moving_platform=resolved,
     )
 
 
@@ -175,7 +200,8 @@ def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
 
 
 def _random_start(seed_rng: random.Random, params: dict,
-                  challenge_type: int = 1, seed: int = 0) -> Tuple[float, float, float]:
+                  challenge_type: int = 1, seed: int = 0,
+                  family_id: str = "cf_search_and_rescue") -> Tuple[float, float, float]:
     if challenge_type == 5:
         x = seed_rng.uniform(-params['world_range_x'], params['world_range_x'])
         y = seed_rng.uniform(-params['world_range_y'], params['world_range_y'])
@@ -192,6 +218,12 @@ def _random_start(seed_rng: random.Random, params: dict,
         z = terrain_z + START_PLATFORM_TAKEOFF_BUFFER
     elif challenge_type == 4:
         z = START_PLATFORM_TAKEOFF_BUFFER
+    elif family_id == "cf_autopilot" and START_PLATFORM:
+        if START_PLATFORM_RANDOMIZE:
+            platform_z = seed_rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
+        else:
+            platform_z = START_PLATFORM_SURFACE_Z
+        z = platform_z + START_PLATFORM_TAKEOFF_BUFFER
     else:
         z = seed_rng.uniform(params['start_h_min'], params['start_h_max'])
 
@@ -433,6 +465,7 @@ def task_for_seed_and_type(
     seed: int,
     challenge_type: int,
     family_id: str = "cf_search_and_rescue",
+    moving_platform: Optional[bool] = None,
 ) -> MapTask:
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
@@ -441,6 +474,7 @@ def task_for_seed_and_type(
         seed=seed,
         challenge_type=challenge_type,
         family_id=family_id,
+        moving_platform=moving_platform,
     )
 
 
@@ -451,6 +485,7 @@ def screening_task(
     challenge_type: int,
     distance_range: Tuple[float, float],
     family_id: str = "cf_search_and_rescue",
+    moving_platform: Optional[bool] = None,
 ) -> MapTask:
     """Build a task with controlled type and distance range (V5 SAR)."""
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
@@ -458,9 +493,11 @@ def screening_task(
 
     params = _resolve_params(seed, challenge_type)
     params['r_min'], params['r_max'] = distance_range
+    resolved = _resolve_moving_platform(seed, challenge_type, family_id, moving_platform)
     return _build_task_with_params(
         sim_dt, seed,
         challenge_type=challenge_type,
         params=params,
         family_id=family_id,
+        moving_platform=resolved,
     )

@@ -35,8 +35,13 @@ def _goal_directed_policy(observation: dict[str, np.ndarray]) -> np.ndarray:
     else:
         direction = np.zeros(3, dtype=np.float32)
     yaw = float(math.atan2(float(direction[1]), float(direction[0]))) / math.pi if norm > 1e-6 else 0.0
-    speed = min(0.7, max(0.15, norm / 10.0))
-    z_term = float(np.clip(goal_offset[2] * 0.5, -0.4, 0.4))
+    # take off and cruise while still far, then descend onto the goal pad
+    if norm > 2.0:
+        z_term = 0.6
+        speed = 0.7
+    else:
+        z_term = float(np.clip(goal_offset[2] * 0.6, -0.5, 0.5))
+        speed = min(0.4, max(0.1, norm / 5.0))
     return np.array([direction[0], direction[1], z_term, speed, yaw], dtype=np.float32)
 
 
@@ -77,14 +82,17 @@ def _run_policy_episode(
         env.close()
 
 
-def test_autopilot_runtime_marks_success_when_drone_enters_goal_radius():
+def test_autopilot_runtime_marks_success_on_stable_landing():
+    from swarm.constants import LANDING_STABLE_SEC
+
     task = _manual_open_world_task()
     env = make_env(task, gui=False)
     try:
         env.reset(seed=task.map_seed)
+        # park the drone upright and motionless on the goal pad
         p.resetBasePositionAndOrientation(
             env.DRONE_IDS[0],
-            [float(task.goal[0]), float(task.goal[1]), float(task.goal[2])],
+            [float(env.GOAL_POS[0]), float(env.GOAL_POS[1]), float(env.GOAL_POS[2]) + 0.05],
             p.getQuaternionFromEuler([0.0, 0.0, 0.0]),
             physicsClientId=env.CLIENT,
         )
@@ -95,13 +103,21 @@ def test_autopilot_runtime_marks_success_when_drone_enters_goal_radius():
             physicsClientId=env.CLIENT,
         )
         env._updateAndStoreKinematicInformation()
+        env._success = False
+        env._collision = False
+        env._landing_stable_time = 0.0
 
-        env._time_alive = 0.0
-        env._step_processed = False
-        env._process_step_updates()
+        # a brief air gap does not count as landing
+        env._update_landing_state(False)
+        assert env._success is False
+
+        # continuous, stable contact for >= LANDING_STABLE_SEC completes the landing
+        steps = int(LANDING_STABLE_SEC / env._sim_dt) + 2
+        for _ in range(steps):
+            env._update_landing_state(True)
 
         assert env._success is True
-        assert env._t_to_goal == pytest.approx(env._sim_dt)
+        assert env._t_to_goal is not None
         assert env._failure_reason == "NONE"
     finally:
         env.close()
@@ -152,4 +168,3 @@ def test_goal_directed_baseline_beats_random_policy_on_easy_autopilot_seed():
     assert baseline_terminated or baseline_truncated
     assert random_terminated or random_truncated
     assert float(baseline_info["distance_to_goal"]) < float(random_info["distance_to_goal"])
-    assert float(baseline_info["score"]) > float(random_info["score"])

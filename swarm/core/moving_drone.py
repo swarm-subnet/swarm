@@ -23,6 +23,13 @@ from swarm.constants import (
     SAFETY_DISTANCE_SAFE,
     SAFETY_DISTANCE_SAFE_BY_TYPE,
     START_PLATFORM_TAKEOFF_BUFFER,
+    LANDING_PLATFORM_RADIUS, LANDING_FLOOR_MAX_HEIGHT,
+    LANDING_COLUMN_PADDING, LANDING_ALTITUDE_BUFFER,
+    LANDING_MAX_VZ, LANDING_MAX_VXY_REL, LANDING_MAX_TILT_RAD, LANDING_STABLE_SEC,
+    PLATFORM_MOVEMENT_PATTERNS, PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX,
+    PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX, PLATFORM_DELAY_MIN, PLATFORM_DELAY_MAX,
+    PLATFORM_TRANSITION_MIN, PLATFORM_TRANSITION_MAX, PLATFORM_LINEAR_DIRECTIONS,
+    PLATFORM_AVOIDANCE_ENABLED, PLATFORM_STEER_ANGLES, PLATFORM_MIN_STEP_M,
     CULL_VISUAL_RADIUS, CULL_PHYSICS_RADIUS, CULL_INTERVAL_STEPS,
     CULL_MIN_AABB_SPAN, CULL_MIN_FACES, CULL_MIN_TOTAL_FACES,
     SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE,
@@ -108,6 +115,20 @@ class MovingDroneAviary(BaseRLAviary):
         self._failure_reason = FailureReason.NONE.value
 
         seed = getattr(task, 'map_seed', 0)
+
+        self._moving = getattr(task, 'moving_platform', False)
+        self._landing_stable_time = 0.0
+        self._platform_velocity = np.zeros(3, dtype=np.float32)
+        self._platform_orbit_center = self.GOAL_POS.copy()
+        self._current_platform_pos = self.GOAL_POS.copy()
+        self._prev_platform_pos = None
+        self._movement_pattern = self._get_movement_pattern_from_seed(seed)
+        self._platform_offsets = []
+        self._init_platform_randomization(seed)
+        self._end_platform_uids = []
+        self._start_platform_uids = []
+        self._platform_hit = False
+
         self._search_area_center = self.GOAL_POS.copy()
         self.family_runtime.initialise_env_state(
             self,
@@ -191,7 +212,313 @@ class MovingDroneAviary(BaseRLAviary):
     def _sim_dt(self) -> float:
         """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
-    
+
+    def _get_movement_pattern_from_seed(self, seed: int) -> str:
+        """Deterministically select movement pattern based on seed."""
+        if not self._moving:
+            return "static"
+        rng = np.random.RandomState(seed)
+        rng.rand()
+        rng.rand()
+        rng.rand()
+        rng.rand()
+        pattern_idx = rng.randint(0, len(PLATFORM_MOVEMENT_PATTERNS))
+        return PLATFORM_MOVEMENT_PATTERNS[pattern_idx]
+
+    def _init_platform_randomization(self, seed: int) -> None:
+        """Initialize randomized platform movement parameters."""
+        if not self._moving:
+            self._platform_speed = 0.0
+            self._platform_radius = 0.0
+            self._platform_delay = 0.0
+            self._platform_transition_time = 0.0
+            self._platform_phase = 0.0
+            self._platform_linear_dir = "x"
+            self._platform_linear_angle = 0.0
+            return
+
+        rng = np.random.RandomState((seed + 77777) & 0xFFFFFFFF)
+        self._platform_speed = rng.uniform(PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX)
+        self._platform_radius = rng.uniform(PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX)
+        self._platform_delay = rng.uniform(PLATFORM_DELAY_MIN, PLATFORM_DELAY_MAX)
+        self._platform_transition_time = rng.uniform(PLATFORM_TRANSITION_MIN, PLATFORM_TRANSITION_MAX)
+        self._platform_phase = rng.uniform(0, 2 * np.pi)
+        dir_idx = rng.randint(0, len(PLATFORM_LINEAR_DIRECTIONS))
+        self._platform_linear_dir = PLATFORM_LINEAR_DIRECTIONS[dir_idx]
+        self._platform_linear_angle = rng.uniform(0, 2 * np.pi)
+
+    def _get_orbit_position(self, t_eff: float) -> np.ndarray:
+        """Calculate orbit position for a given effective time."""
+        center = self._platform_orbit_center
+        speed = self._platform_speed
+        radius = self._platform_radius
+        phase = self._platform_phase
+        pattern = self._movement_pattern
+
+        if pattern == "circular":
+            angle = t_eff * speed * 0.3 + phase
+            x = center[0] + radius * math.cos(angle)
+            y = center[1] + radius * math.sin(angle)
+            return np.array([x, y, center[2]], dtype=np.float32)
+
+        elif pattern == "linear":
+            offset = radius * math.sin(t_eff * speed * 0.5 + phase)
+            if self._platform_linear_dir == "x":
+                x = center[0] + offset
+                y = center[1]
+            elif self._platform_linear_dir == "y":
+                x = center[0]
+                y = center[1] + offset
+            else:
+                x = center[0] + offset * math.cos(self._platform_linear_angle)
+                y = center[1] + offset * math.sin(self._platform_linear_angle)
+            return np.array([x, y, center[2]], dtype=np.float32)
+
+        elif pattern == "figure8":
+            angle = t_eff * speed * 0.3 + phase
+            x = center[0] + radius * math.sin(angle)
+            y = center[1] + radius * math.sin(2 * angle) / 2
+            return np.array([x, y, center[2]], dtype=np.float32)
+
+        return np.array(center, dtype=np.float32)
+
+    def _calculate_platform_position(self, t: float) -> np.ndarray:
+        """Calculate platform position at time t with smooth transition."""
+        if not self._moving:
+            return self._platform_orbit_center.copy()
+
+        delay = self._platform_delay
+        transition = self._platform_transition_time
+        center = self._platform_orbit_center
+
+        if t < delay:
+            return np.array(center, dtype=np.float32)
+
+        orbit_start = self._get_orbit_position(0.0)
+
+        if t < delay + transition:
+            t_ratio = (t - delay) / transition
+            t_smooth = t_ratio * t_ratio * (3.0 - 2.0 * t_ratio)
+            return center + t_smooth * (orbit_start - center)
+
+        t_eff = t - delay - transition
+        return self._get_orbit_position(t_eff)
+
+    def _platform_path_blocked(self, current_pos, target_pos):
+        """Check if path or destination is blocked by obstacles."""
+        cli = getattr(self, "CLIENT", 0)
+        direction = target_pos - current_pos
+        dist = np.linalg.norm(direction[:2])
+        if dist < 0.001:
+            return False, None
+
+        excluded = set(getattr(self, '_end_platform_uids', []))
+        excluded |= set(getattr(self, '_start_platform_uids', []))
+        excluded.add(self.DRONE_IDS[0])
+        excluded.add(getattr(self, 'PLANE_ID', 0))
+
+        offsets = [
+            np.array([0, 0, 0], dtype=np.float32),
+            np.array([LANDING_PLATFORM_RADIUS, 0, 0], dtype=np.float32),
+            np.array([-LANDING_PLATFORM_RADIUS, 0, 0], dtype=np.float32),
+            np.array([0, LANDING_PLATFORM_RADIUS, 0], dtype=np.float32),
+            np.array([0, -LANDING_PLATFORM_RADIUS, 0], dtype=np.float32),
+        ]
+
+        for offset in offsets:
+            ray_from = (current_pos + offset).tolist()
+            ray_to = (target_pos + offset).tolist()
+            result = p.rayTest(ray_from, ray_to, physicsClientId=cli)
+            if result and result[0][0] != -1 and result[0][0] not in excluded:
+                return True, np.array(result[0][3], dtype=np.float32)
+
+        end_uids = getattr(self, '_end_platform_uids', [])
+        if end_uids:
+            plat_uid = end_uids[0]
+            saved_pos, saved_orn = p.getBasePositionAndOrientation(plat_uid, physicsClientId=cli)
+            p.resetBasePositionAndOrientation(plat_uid, target_pos.tolist(), [0, 0, 0, 1], physicsClientId=cli)
+            num_bodies = p.getNumBodies(physicsClientId=cli)
+            for body_idx in range(num_bodies):
+                body_uid = p.getBodyUniqueId(body_idx, physicsClientId=cli)
+                if body_uid in excluded:
+                    continue
+                mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+                if (mx[0] - mn[0]) > 50.0 or (mx[1] - mn[1]) > 50.0:
+                    continue
+                contacts = p.getClosestPoints(plat_uid, body_uid, distance=0.15, physicsClientId=cli)
+                if contacts:
+                    for c in contacts:
+                        if c[8] < 0.15:
+                            p.resetBasePositionAndOrientation(plat_uid, list(saved_pos), list(saved_orn), physicsClientId=cli)
+                            return True, target_pos.copy()
+            p.resetBasePositionAndOrientation(plat_uid, list(saved_pos), list(saved_orn), physicsClientId=cli)
+
+        return False, None
+
+    def _update_moving_platform(self):
+        """Update platform position with obstacle avoidance."""
+        nominal_pos = self._calculate_platform_position(self._time_alive)
+
+        if not self._moving:
+            self._prev_platform_pos = nominal_pos.copy()
+            self._current_platform_pos = nominal_pos
+            self._platform_velocity = np.zeros(3, dtype=np.float32)
+            return
+
+        current = self._current_platform_pos
+        if current is None:
+            current = nominal_pos
+
+        blocked, _ = self._platform_path_blocked(current, nominal_pos)
+
+        if not blocked or not PLATFORM_AVOIDANCE_ENABLED:
+            new_pos = nominal_pos
+        else:
+            direction = nominal_pos - current
+            raw_dist = np.linalg.norm(direction[:2])
+            step = np.clip(raw_dist * 0.3, PLATFORM_MIN_STEP_M, 0.10)
+            base_angle = math.atan2(direction[1], direction[0])
+
+            new_pos = current.copy()
+            for angle_deg in PLATFORM_STEER_ANGLES:
+                angle = base_angle + math.radians(angle_deg)
+                candidate = current.copy()
+                candidate[0] += step * math.cos(angle)
+                candidate[1] += step * math.sin(angle)
+                candidate[2] = nominal_pos[2]
+
+                candidate_blocked, _ = self._platform_path_blocked(current, candidate)
+                if not candidate_blocked:
+                    new_pos = candidate
+                    break
+
+        max_step_dist = self._platform_speed * self._sim_dt * 1.5
+        disp = new_pos - current
+        disp_dist = np.linalg.norm(disp[:2])
+        if disp_dist > max_step_dist > 0:
+            scale = max_step_dist / disp_dist
+            new_pos[0] = current[0] + disp[0] * scale
+            new_pos[1] = current[1] + disp[1] * scale
+
+        center = self._platform_orbit_center
+        rel = new_pos[:2] - center[:2]
+        r = np.linalg.norm(rel)
+        r_max = self._platform_radius + 0.3
+        if r > r_max:
+            new_pos[:2] = center[:2] + rel * (r_max / max(r, 1e-6))
+
+        if self._prev_platform_pos is not None:
+            dt = self._sim_dt
+            if dt > 0:
+                self._platform_velocity = (new_pos - self._prev_platform_pos) / dt
+
+        self._prev_platform_pos = new_pos.copy()
+        self._current_platform_pos = new_pos
+
+        if not hasattr(self, '_end_platform_uids') or not self._end_platform_uids:
+            return
+
+        cli = getattr(self, "CLIENT", 0)
+
+        if not self._platform_offsets and self._end_platform_uids:
+            initial_pos = self._platform_orbit_center
+            for uid in self._end_platform_uids:
+                pos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
+                offset = np.array(pos, dtype=np.float32) - initial_pos
+                self._platform_offsets.append(offset)
+
+        for i, uid in enumerate(self._end_platform_uids):
+            offset = self._platform_offsets[i] if i < len(self._platform_offsets) else np.zeros(3)
+            final_pos = new_pos + offset
+            p.resetBasePositionAndOrientation(
+                uid,
+                final_pos.tolist(),
+                [0, 0, 0, 1],
+                physicsClientId=cli
+            )
+
+    def _update_landing_state(self, platform_contact: bool) -> None:
+        """Update landing state machine based on contact and drone state."""
+        if self._success or self._collision:
+            return
+
+        if not platform_contact:
+            self._landing_stable_time = 0.0
+            return
+
+        if self._moving:
+            self._success = True
+            self._t_to_goal = self._time_alive
+            return
+
+        state = self._getDroneStateVector(0)
+        roll, pitch = state[7], state[8]
+        vel = state[10:13]
+
+        vz = abs(vel[2])
+        drone_vxy = vel[0:2]
+        platform_vxy = self._platform_velocity[0:2]
+        rel_vxy = np.linalg.norm(drone_vxy - platform_vxy)
+
+        velocity_ok = vz <= LANDING_MAX_VZ and rel_vxy <= LANDING_MAX_VXY_REL
+        upright_ok = abs(roll) <= LANDING_MAX_TILT_RAD and abs(pitch) <= LANDING_MAX_TILT_RAD
+
+        if velocity_ok and upright_ok:
+            self._landing_stable_time += self._sim_dt
+            if self._landing_stable_time >= LANDING_STABLE_SEC:
+                self._success = True
+                self._t_to_goal = self._time_alive
+        else:
+            self._landing_stable_time = 0.0
+
+    def _is_landing_floor_body(self, body_uid: int, drone_pos) -> bool:
+        """Whether ``body_uid`` is the supporting floor under the landing platform
+        and should be ignored by safety scoring during the final descent."""
+        if getattr(self, "sar_mode", False):
+            return False
+        challenge_type = int(getattr(self.task, "challenge_type", 0))
+        if challenge_type not in (1, 4, 5, 6):
+            return False
+
+        safe = SAFETY_DISTANCE_SAFE_BY_TYPE.get(challenge_type, SAFETY_DISTANCE_SAFE)
+        platform_pos = self._current_platform_pos
+        if platform_pos is None:
+            platform_pos = self.GOAL_POS
+        if platform_pos is None:
+            return False
+        if platform_pos[2] >= safe:
+            return False
+
+        cli = getattr(self, "CLIENT", 0)
+        mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+
+        if mx[2] >= platform_pos[2]:
+            return False
+        if (platform_pos[2] - mx[2]) >= safe:
+            return False
+        if (mx[2] - mn[2]) > LANDING_FLOOR_MAX_HEIGHT:
+            return False
+
+        landing_r = LANDING_PLATFORM_RADIUS + DRONE_HULL_RADIUS + LANDING_COLUMN_PADDING
+        landing_r_sq = landing_r * landing_r
+
+        cx = min(max(platform_pos[0], mn[0]), mx[0])
+        cy = min(max(platform_pos[1], mn[1]), mx[1])
+        body_dx = platform_pos[0] - cx
+        body_dy = platform_pos[1] - cy
+        if body_dx * body_dx + body_dy * body_dy > landing_r_sq:
+            return False
+
+        drone_dx = drone_pos[0] - platform_pos[0]
+        drone_dy = drone_pos[1] - platform_pos[1]
+        if drone_dx * drone_dx + drone_dy * drone_dy > landing_r_sq:
+            return False
+
+        if drone_pos[2] > platform_pos[2] + safe + LANDING_ALTITUDE_BUFFER:
+            return False
+
+        return True
+
     def _getDroneImages(self, nth_drone, segmentation: bool = False):
         """Get camera images from drone. Returns (rgb, depth, seg) but we only use depth."""
         if self.OBS_TYPE != ObservationType.RGB:
@@ -282,11 +609,12 @@ class MovingDroneAviary(BaseRLAviary):
         return depth_normalized.astype(np.float32)[..., np.newaxis]
 
     def _check_collision(self) -> tuple:
-        """Inspect contact points; sets ``_collision`` on any non-ground impact.
+        """Inspect contact points; sets ``_collision`` on any non-platform impact.
 
-        Returns a ``(False, obstacle_hit)`` tuple. Touching a mannequin part
-        (victim) is treated as an obstacle hit — the no-touch sphere governs
-        the CONFIRMED predicate, not contact handling.
+        Returns a ``(platform_hit, obstacle_hit)`` tuple. ``platform_hit`` is True when
+        the drone touches a goal-platform pad (the landing target). Touching a mannequin
+        part (victim) is treated as an obstacle hit — the no-touch sphere governs the
+        CONFIRMED predicate, not contact handling.
         """
         drone_id = self.DRONE_IDS[0]
         contact_points = p.getContactPoints(
@@ -297,6 +625,12 @@ class MovingDroneAviary(BaseRLAviary):
         if not contact_points:
             return False, False
 
+        # Pads are landing targets, not obstacles; SAR also exempts the ground plane.
+        end_platform_uids = getattr(self, '_end_platform_uids', ())
+        exempt = {drone_id} | getattr(self, "_platform_uids", frozenset())
+        if getattr(self, "sar_mode", False):
+            exempt = exempt | {getattr(self, "PLANE_ID", 0)}
+        platform_hit = False
         obstacle_hit = False
 
         for contact in contact_points:
@@ -308,13 +642,19 @@ class MovingDroneAviary(BaseRLAviary):
             if normal_force <= 0.01:
                 continue
 
+            if body_b in end_platform_uids:
+                platform_hit = True
+                continue
+            if body_b in exempt:
+                continue
+
             obstacle_hit = True
             break
 
         if obstacle_hit:
             self._collision = True
 
-        return False, obstacle_hit
+        return platform_hit, obstacle_hit
 
 
     @staticmethod
@@ -447,6 +787,8 @@ class MovingDroneAviary(BaseRLAviary):
                 if body_uid in excluded or body_uid in checked:
                     continue
                 checked.add(body_uid)
+                if self._is_landing_floor_body(body_uid, drone_pos):
+                    continue
                 closest = p.getClosestPoints(
                     bodyA=drone_id,
                     bodyB=body_uid,
@@ -489,6 +831,11 @@ class MovingDroneAviary(BaseRLAviary):
         self._t_to_goal = None
         self._step_processed = False
         self._min_clearance_episode = SAFETY_DISTANCE_SAFE
+        self._landing_stable_time = 0.0
+        self._prev_platform_pos = None
+        self._platform_velocity = np.zeros(3, dtype=np.float32)
+        self._platform_offsets = []
+        self._platform_hit = False
 
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
@@ -595,6 +942,7 @@ class MovingDroneAviary(BaseRLAviary):
                 self._preprocessAction(action),
                 (self.NUM_DRONES, 4),
             )
+        self._update_moving_platform()
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if (
                 self.PYB_STEPS_PER_CTRL > 1
@@ -645,7 +993,8 @@ class MovingDroneAviary(BaseRLAviary):
             return
         self._step_processed = True
         self._time_alive += self._sim_dt
-        self._check_collision()
+        platform_hit, _ = self._check_collision()
+        self._platform_hit = platform_hit
         self._family_post_step_update()
         self._update_min_clearance()
         self._apply_distance_cull()

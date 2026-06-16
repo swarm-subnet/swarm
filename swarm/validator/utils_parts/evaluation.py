@@ -32,7 +32,7 @@ from .screening_gate import (
 )
 
 
-_EMPTY_PER_TYPE = ENVIRONMENT_TYPES
+_EMPTY_PER_TYPE = tuple(ENVIRONMENT_TYPES) + ("moving_platform",)
 
 
 def _utils_facade():
@@ -138,7 +138,9 @@ async def _evaluate_seeds(
                 task.challenge_type,
                 "unknown",
             )
-            if type_name in per_type_scores:
+            if getattr(task, "moving_platform", False):
+                per_type_scores["moving_platform"].append(score)
+            elif type_name in per_type_scores:
                 per_type_scores[type_name].append(score)
 
             seed_details.append(

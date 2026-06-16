@@ -162,6 +162,28 @@ MAX_RAY_DISTANCE = 20.0                     # Downward LiDAR maximum detection r
 
 # Drone start positioning
 START_PLATFORM_TAKEOFF_BUFFER = 0.121   # Initial clearance above the surface (meters)
+
+# Start / goal platform geometry
+PLATFORM = True                         # Enable goal/landing platform rendering (autopilot)
+START_PLATFORM = True                   # Enable solid start platform spawn
+START_PLATFORM_RADIUS = 0.6
+START_PLATFORM_HEIGHT = 0.2             # Physical height of the start platform (meters)
+START_PLATFORM_SURFACE_Z = 0.2          # Default absolute Z of the platform surface (meters)
+START_PLATFORM_RANDOMIZE = True         # Randomize platform height when a random start is used
+START_PLATFORM_MIN_Z = 0.2              # Min platform surface height when randomizing (meters)
+START_PLATFORM_MAX_Z = 10               # Max platform surface height when randomizing (meters)
+LANDING_PLATFORM_RADIUS = 0.6           # Landing platform acceptance radius (meters)
+GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
+
+# Landing detection parameters
+LANDING_MAX_VZ = 0.5                    # Max vertical velocity for a valid landing (m/s)
+LANDING_MAX_VXY_REL = 0.6               # Max horizontal velocity relative to platform (m/s)
+LANDING_MAX_TILT_RAD = 0.26             # Max roll/pitch for a valid landing (~15 degrees)
+LANDING_STABLE_SEC = 0.5                # Required stable contact duration for success (seconds)
+LANDING_FLOOR_MAX_HEIGHT = 0.15         # Max AABB z-extent treated as floor (meters)
+LANDING_COLUMN_PADDING = 0.10           # XY padding around landing radius (meters)
+LANDING_ALTITUDE_BUFFER = 0.10          # Vertical slack above safe distance (meters)
+
 HOVER_SEC = 0                           # Legacy field kept until reward.py drops it
 SAFE_Z = 3                              # Default cruise altitude (meters)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
@@ -387,6 +409,31 @@ FOREST_DIFFICULTY_DISTRIBUTION = {
 }
 assert abs(sum(FOREST_MODE_DISTRIBUTION.values()) - 1.0) < 0.001
 assert abs(sum(FOREST_DIFFICULTY_DISTRIBUTION.values()) - 1.0) < 0.001
+
+# =============================================================================
+# MOVING PLATFORM (challenge variant, applies to any map type)
+# =============================================================================
+
+MOVING_PLATFORM_PROB = {
+    1: 0.25,
+    2: 0.80,
+    3: 0.25,
+    4: 0.25,
+    5: 0.00,
+    6: 0.00,
+}
+MOVING_PLATFORM_SEED_OFFSET = 555555
+
+PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
+PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2
+PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX = 2.0, 4.0
+PLATFORM_DELAY_MIN, PLATFORM_DELAY_MAX = 0.0, 2.0
+PLATFORM_TRANSITION_MIN, PLATFORM_TRANSITION_MAX = 2.5, 3.5
+PLATFORM_LINEAR_DIRECTIONS = ["x", "y", "xy"]
+
+PLATFORM_AVOIDANCE_ENABLED = True
+PLATFORM_STEER_ANGLES = [20, -20, 40, -40, 60, -60, 80, -80, 120, -120, 160, -160, 180]
+PLATFORM_MIN_STEP_M = 0.05
 
 # =============================================================================
 # DISTANCE-BASED CULLING
