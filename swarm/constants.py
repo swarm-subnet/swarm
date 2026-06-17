@@ -126,6 +126,7 @@ RPC_STEP_TIMEOUT_SEC = 0.500            # Per agent.act() call fallback (seconds
 RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for model warmup/JIT (seconds)
 RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() between seeds (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
+RPC_CONNECT_MAX_WAIT_SEC = 60.0         # Total budget to reach a serving RPC agent; covers slow cold model loads
 RPC_MAX_STRIKES_PER_SEED = 15           # Timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 600.0            # Base overhead for global worker timeout (seconds); one-seed validator batches get ~600s wall-clock
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
@@ -143,6 +144,15 @@ CALIBRATION_RECAL_INTERVAL = 100        # Re-calibrate every N seeds to catch th
 CALIBRATION_WARN_OVERHEAD_MS = 30.0     # Log warning when calibrated overhead exceeds this (ms)
 CALIBRATION_WARN_CPU_FACTOR = 1.5       # Log warning when CPU factor exceeds this
 EVAL_SUMMARY_INTERVAL_SEC = 60          # Periodic evaluation progress summary interval (seconds)
+
+# Reference-time normalization (baseline-relative, hardware-fair per-act scoring)
+SPEED_FACTOR_MIN = 0.25                  # Lower guard against an invalid calibration measurement
+SPEED_FACTOR_MAX_ELIGIBLE = 3.0          # Beyond this the host is too slow to score fairly; it self-excludes
+HARD_CAP_REF_SEC = 1.25                  # Per-act ceiling in baseline-equivalent seconds before a hard timeout
+HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the per-act hard cap (seconds)
+HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before failing the seed
+FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
+FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in baseline-equivalent seconds
 
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files

@@ -12,8 +12,8 @@ from typing import Any, Callable, Optional
 
 import bittensor as bt
 
-from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
-from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC
+from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings, use_reference_calibration
+from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC, SIM_DT
 from swarm.core.model_verify import add_to_blacklist
 from swarm.core.submission_policy import REQUIRED_ROOT_FILES
 from swarm.protocol import (
@@ -24,6 +24,15 @@ from swarm.protocol import (
     normalize_version,
 )
 from swarm.utils.hash import sha256sum
+from swarm.validator.calibration import (
+    CALIBRATION_STATE,
+    baseline_model_available,
+    baseline_model_path,
+    load_baseline_manifest,
+    normalize_speed_factor,
+    percentile,
+)
+from swarm.validator.task_gen import task_for_seed_and_type
 
 from ._shared import (
     _docker_evaluator_facade,
@@ -31,6 +40,8 @@ from ._shared import (
     _runtime_profile_from_payload,
     _submission_template_dir,
 )
+
+_CALIBRATION_MAX_AGE_SEC = 6 * 3600  # re-measure the host speed factor at least this often
 
 
 def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
@@ -239,6 +250,7 @@ class _BatchContext:
     task_total: Optional[int] = None
     model_image: Optional[str] = None
     runtime_profile_payload: Optional[dict[str, Any]] = None
+    speed_factor: Optional[float] = None
 
     # Trace + sync primitives (built in _init_batch_state)
     trace_rpc: bool = False
@@ -976,6 +988,7 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                     task_offset,
                     task_total,
                     runtime_profile.as_dict() if runtime_profile is not None else None,
+                    ctx.speed_factor,
                 )
             except Exception as e:
                 rpc_payload["error"] = e
@@ -1161,6 +1174,90 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
         _phase("container cleaned up")
 
 
+async def _run_baseline_calibration(self, worker_id: int):
+    """Measure this worker's speed factor against the committed baseline model."""
+    manifest = load_baseline_manifest()
+    model = manifest["baseline_model"]
+    measurement = manifest.get("measurement", {})
+    seeds = [int(s) for s in measurement.get("sample_seeds", [1001])]
+    warmup = int(measurement.get("warmup_steps", 1))
+    tasks = [
+        task_for_seed_and_type(
+            SIM_DT,
+            seed=seed,
+            challenge_type=int(model["run_as_challenge_type"]),
+            family_id=str(model["run_as_family_id"]),
+        )
+        for seed in seeds
+    ]
+
+    act_ms: list[float] = []
+    overhead = {"ms": 0.0}
+
+    def _observer(event: dict) -> None:
+        if event.get("event") != "step":
+            return
+        if int(event.get("step_idx", 0)) > warmup:
+            value = float(event.get("act_ms", 0.0))
+            if value > 0.0:
+                act_ms.append(value)
+
+    def _on_seed(meta=None) -> None:
+        if isinstance(meta, dict) and meta.get("calibration_overhead_sec") is not None:
+            overhead["ms"] = float(meta["calibration_overhead_sec"]) * 1000.0
+
+    try:
+        await evaluate_seeds_batch(
+            self,
+            tasks,
+            0,
+            baseline_model_path(),
+            worker_id=worker_id,
+            on_seed_complete=_on_seed,
+            rollout_observer=_observer,
+            is_calibration_run=True,
+        )
+    except Exception as e:
+        bt.logging.warning(f"[Worker {worker_id}] baseline calibration failed: {e}")
+        return None
+
+    compute = [a - overhead["ms"] for a in act_ms if a - overhead["ms"] > 0.0]
+    if len(compute) < 100:
+        bt.logging.warning(
+            f"[Worker {worker_id}] baseline calibration produced {len(compute)} samples; "
+            f"falling back to legacy timing"
+        )
+        return None
+
+    local_p90 = percentile(compute, 90)
+    try:
+        speed = normalize_speed_factor(local_p90)
+    except ValueError as e:
+        bt.logging.warning(f"[Worker {worker_id}] invalid speed factor: {e}")
+        return None
+
+    CALIBRATION_STATE.set(worker_id, speed, overhead["ms"], manifest["calibration_version"])
+    summary = (
+        f"[Worker {worker_id}] reference calibration: speed_factor={speed.factor:.2f}x "
+        f"(local_p90={local_p90:.0f}ms / owner_p90={speed.owner_p90_ms:.0f}ms, n={len(compute)})"
+    )
+    if speed.eligible:
+        bt.logging.info(summary)
+    else:
+        bt.logging.warning(summary + " — host much slower than the baseline; scores may be noisier")
+    return speed
+
+
+async def _ensure_worker_speed_factor(self, worker_id: int) -> Optional[float]:
+    """Return the cached/freshly-measured speed factor, or None to use legacy timing."""
+    if not baseline_model_available():
+        return None
+    if CALIBRATION_STATE.is_stale(worker_id, max_age_sec=_CALIBRATION_MAX_AGE_SEC):
+        await _run_baseline_calibration(self, worker_id)
+    entry = CALIBRATION_STATE.get(worker_id)
+    return entry.speed.factor if entry is not None else None
+
+
 async def evaluate_seeds_batch(
     self,
     tasks: list,
@@ -1173,6 +1270,7 @@ async def evaluate_seeds_batch(
     task_total: Optional[int] = None,
     model_image: Optional[str] = None,
     runtime_profile_payload: Optional[dict[str, Any]] = None,
+    is_calibration_run: bool = False,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1208,6 +1306,9 @@ async def evaluate_seeds_batch(
     early = _validate_inputs(ctx)
     if early is not None:
         return early
+
+    if not is_calibration_run and use_reference_calibration():
+        ctx.speed_factor = await _ensure_worker_speed_factor(self, worker_id)
 
     _setup_pretry_state(ctx)
 

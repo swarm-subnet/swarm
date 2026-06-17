@@ -1,0 +1,18 @@
+{
+  "calibration_version": "swarm-ref-v1",
+  "scope": "all_challenge_families",
+  "baseline_model": {
+    "artifact": "baseline_model.zip",
+    "sha256": "83914e7129334129b70aad961ae9498364320b55154bc480452e6a4ce50a5123",
+    "run_as_family_id": "cf_autopilot",
+    "run_as_challenge_type": 2
+  },
+  "owner_compute_p90_ms": 260.8,
+  "owner_overhead_ms": 28.3,
+  "measurement": {
+    "sample_seeds": [1001, 1002],
+    "sample_count": 890,
+    "warmup_steps": 1,
+    "docker_worker_cpus": "2"
+  }
+}

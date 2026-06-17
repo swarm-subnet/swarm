@@ -14,7 +14,13 @@ from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_RECAL_INTERVAL,
+    FIRST_STEP_BUDGET_REF_SEC,
+    FIRST_STEP_HARD_CAP_REF_SEC,
+    HARD_CAP_MARGIN_SEC,
+    HARD_CAP_REF_SEC,
+    HARD_CAP_STRIKES_PER_SEED,
     MINER_COMPUTE_BUDGET_SEC,
+    RPC_CONNECT_MAX_WAIT_SEC,
     RPC_FIRST_STEP_TIMEOUT_SEC,
     RPC_MAX_STRIKES_PER_SEED,
     RPC_PING_TIMEOUT_SEC,
@@ -25,6 +31,7 @@ from swarm.constants import (
 )
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
+from swarm.validator.calibration import act_hard_cap_sec, judge_act
 
 from ._shared import (
     _cleanup_env_quietly,
@@ -32,7 +39,7 @@ from ._shared import (
     _runtime_profile_from_payload,
     _submission_template_dir,
 )
-from swarm.config import RpcTraceSettings
+from swarm.config import RpcTraceSettings, use_reference_calibration
 
 
 def _run_multi_seed_rpc_sync(
@@ -47,12 +54,19 @@ def _run_multi_seed_rpc_sync(
     task_offset: int = 0,
     task_total: Optional[int] = None,
     runtime_profile_payload: Optional[dict] = None,
+    speed_factor: Optional[float] = None,
 ) -> list:
     """Run multiple seeds through the same RPC connection.
 
     This reuses the container for all seeds, calling agent.reset() between each.
     Much faster than creating a new container per seed.
+
+    When ``speed_factor`` is provided and reference calibration is enabled, each
+    act() is judged in baseline-equivalent time (hardware-fair scoring); otherwise
+    the legacy per-step calibrated timeout is used.
     """
+    reference_enabled = use_reference_calibration()
+    use_ref = speed_factor is not None and reference_enabled
     schema_file = _submission_template_dir() / "agent.capnp"
     agent_capnp = capnp.load(str(schema_file))
     trace_settings = RpcTraceSettings.from_env()
@@ -205,7 +219,12 @@ def _run_multi_seed_rpc_sync(
         async with capnp.kj_loop():
             stream = None
             agent = None
-            max_ping_attempts = 6
+            # Reference mode: retries sized to the connect budget (each attempt ~ ping_timeout + 2s backoff).
+            max_ping_attempts = (
+                max(6, int(RPC_CONNECT_MAX_WAIT_SEC / (ping_timeout_sec + 2.0)))
+                if reference_enabled
+                else 6
+            )
 
             for attempt in range(1, max_ping_attempts + 1):
                 if stop_event is not None and stop_event.is_set():
@@ -299,6 +318,23 @@ def _run_multi_seed_rpc_sync(
             )
             cpu_factor = 1.0
             calibrated = False
+
+            def _ref_hard_caps(overhead_sec: float) -> tuple[float, float]:
+                return (
+                    act_hard_cap_sec(
+                        speed_factor, overhead_sec,
+                        ref_sec=HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
+                    ),
+                    act_hard_cap_sec(
+                        speed_factor, overhead_sec,
+                        ref_sec=FIRST_STEP_HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
+                    ),
+                )
+
+            if use_ref:
+                act_hard_cap, first_hard_cap = _ref_hard_caps(rpc_overhead_sec)
+            else:
+                act_hard_cap, first_hard_cap = calibrated_timeout, first_step_timeout_sec
             for task_idx, task in enumerate(tasks):
                 if stop_event is not None and stop_event.is_set():
                     remaining = len(tasks) - task_idx
@@ -371,22 +407,38 @@ def _run_multi_seed_rpc_sync(
                                 step=0,
                                 sim_t=0.0,
                             )
-                            (
-                                rpc_overhead_sec,
-                                cpu_factor,
-                            ) = await self._calibrate_rpc_overhead_async(
-                                agent, agent_capnp, obs, uid
-                            )
+                            if use_ref:
+                                rpc_overhead_sec = await _measure_rpc_overhead_via_ping(
+                                    agent, uid, ping_timeout_sec
+                                )
+                                cpu_factor = 1.0
+                            else:
+                                (
+                                    rpc_overhead_sec,
+                                    cpu_factor,
+                                ) = await self._calibrate_rpc_overhead_async(
+                                    agent, agent_capnp, obs, uid
+                                )
                             calibrated_timeout = (
                                 (MINER_COMPUTE_BUDGET_SEC * cpu_factor)
                                 + rpc_overhead_sec
                                 + CALIBRATION_MARGIN_SEC
                             )
                             calibrated = True
-                            _trace(
-                                f"{phase_label} step timeout={calibrated_timeout*1000:.1f}ms "
-                                f"(overhead={rpc_overhead_sec*1000:.1f}ms cpu_factor={cpu_factor:.2f}x)"
-                            )
+                            if use_ref:
+                                act_hard_cap, first_hard_cap = _ref_hard_caps(rpc_overhead_sec)
+                                cpu_factor = speed_factor
+                                calibrated_timeout = act_hard_cap
+                                _trace(
+                                    f"{phase_label} speed_factor={speed_factor:.2f}x "
+                                    f"overhead={rpc_overhead_sec*1000:.1f}ms "
+                                    f"hard_cap={act_hard_cap*1000:.0f}ms budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms"
+                                )
+                            else:
+                                _trace(
+                                    f"{phase_label} step timeout={calibrated_timeout*1000:.1f}ms "
+                                    f"(overhead={rpc_overhead_sec*1000:.1f}ms cpu_factor={cpu_factor:.2f}x)"
+                                )
 
                         _emit_rollout_event(
                             "seed_ready",
@@ -402,6 +454,7 @@ def _run_multi_seed_rpc_sync(
                         success = False
                         info = {}
                         strikes = 0
+                        hard_cap_hits = 0
                         is_first_step = True
                         step_idx = 0
                         rpc_disconnected = False
@@ -415,11 +468,17 @@ def _run_multi_seed_rpc_sync(
                             stop_event is not None and stop_event.is_set()
                         ):
                             step_idx += 1
-                            step_timeout = (
-                                first_step_timeout_sec
-                                if is_first_step
-                                else calibrated_timeout
-                            )
+                            act_ms = 0.0
+                            if use_ref:
+                                step_timeout = (
+                                    first_hard_cap if is_first_step else act_hard_cap
+                                )
+                            else:
+                                step_timeout = (
+                                    first_step_timeout_sec
+                                    if is_first_step
+                                    else calibrated_timeout
+                                )
 
                             observation = self._serialize_observation(
                                 agent_capnp, obs
@@ -432,15 +491,40 @@ def _run_multi_seed_rpc_sync(
                             )
 
                             try:
-                                t_act_start = time.time()
+                                t_act_start = time.perf_counter()
                                 action_response = await asyncio.wait_for(
                                     agent.act(observation), timeout=step_timeout
                                 )
-                                act_ms = (time.time() - t_act_start) * 1000.0
+                                act_ms = (time.perf_counter() - t_act_start) * 1000.0
                                 action = np.frombuffer(
                                     action_response.action.data,
                                     dtype=np.dtype(action_response.action.dtype),
                                 ).reshape(tuple(action_response.action.shape))
+                                if use_ref:
+                                    budget = (
+                                        FIRST_STEP_BUDGET_REF_SEC
+                                        if is_first_step
+                                        else MINER_COMPUTE_BUDGET_SEC
+                                    )
+                                    if judge_act(
+                                        act_ms / 1000.0,
+                                        overhead_sec=rpc_overhead_sec,
+                                        speed_factor=speed_factor,
+                                        budget_sec=budget,
+                                        hard_cap_sec=step_timeout,
+                                    ).strike:
+                                        strikes += 1
+                                        action = np.zeros(5, dtype=np.float32)
+                                        _trace(
+                                            f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
+                                            f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) "
+                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                        )
+                                        if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                            bt.logging.warning(
+                                                f"UID {uid} seed {task_idx}: {strikes} slow-act strikes, failing seed"
+                                            )
+                                            break
                                 if trace_rpc and (
                                     step_idx == 1 or step_idx % trace_every == 0
                                 ):
@@ -449,9 +533,11 @@ def _run_multi_seed_rpc_sync(
                                         f"act_ok={act_ms:.1f}ms timeout={step_timeout*1000:.0f}ms"
                                     )
                             except asyncio.TimeoutError:
-                                act_ms = (time.time() - t_act_start) * 1000
+                                act_ms = (time.perf_counter() - t_act_start) * 1000
                                 strikes += 1
                                 action = np.zeros(5, dtype=np.float32)
+                                if use_ref:
+                                    hard_cap_hits += 1
                                 _trace(
                                     f"{task_label} step={step_idx} act timeout {act_ms:.1f}ms "
                                     f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
@@ -467,6 +553,13 @@ def _run_multi_seed_rpc_sync(
                                         f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
                                         f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                     )
+                                if use_ref and hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
+                                    rpc_disconnected = True
+                                    bt.logging.warning(
+                                        f"UID {uid} seed {task_idx}: {hard_cap_hits} hard-cap timeouts, "
+                                        f"aborting seed and recycling container"
+                                    )
+                                    break
                                 if strikes >= RPC_MAX_STRIKES_PER_SEED:
                                     bt.logging.warning(
                                         f"UID {uid} seed {task_idx}: {strikes} RPC timeouts, failing seed"
@@ -542,6 +635,7 @@ def _run_multi_seed_rpc_sync(
                                 truncated=bool(truncated),
                                 info=dict(info),
                                 action=act.tolist(),
+                                act_ms=float(act_ms),
                             )
                             if terminated or truncated:
                                 success = info.get("success", False)
@@ -724,6 +818,24 @@ def _run_multi_seed_rpc_sync(
         if watchdog_thread is not None:
             watchdog_thread.join(timeout=2.0)
         loop.close()
+
+async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: float) -> float:
+    """Pure RPC round-trip overhead from no-op pings (no miner-side compute)."""
+    facade = _docker_evaluator_facade()
+    samples = []
+    for _ in range(facade.CALIBRATION_ROUNDS):
+        try:
+            t0 = time.perf_counter()
+            await asyncio.wait_for(agent.ping("cal"), timeout=ping_timeout_sec)
+            samples.append(time.perf_counter() - t0)
+        except Exception:
+            continue
+    if len(samples) < 3:
+        return max(facade.RPC_STEP_TIMEOUT_SEC - facade.MINER_COMPUTE_BUDGET_SEC, 0.010)
+    samples.sort()
+    trimmed = samples[1:-1] if len(samples) > 4 else samples
+    return min(statistics.median(trimmed), facade.CALIBRATION_OVERHEAD_CAP_SEC)
+
 
 async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
     """Measure RPC pipeline overhead and CPU speed factor.
