@@ -13,7 +13,6 @@ from .runtime import (
     env_float,
     env_int,
     env_str,
-    use_reference_calibration,
 )
 
 __all__ = [
@@ -29,5 +28,4 @@ __all__ = [
     "env_float",
     "env_int",
     "env_str",
-    "use_reference_calibration",
 ]

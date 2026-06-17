@@ -39,7 +39,7 @@ from ._shared import (
     _runtime_profile_from_payload,
     _submission_template_dir,
 )
-from swarm.config import RpcTraceSettings, use_reference_calibration
+from swarm.config import RpcTraceSettings
 
 
 def _run_multi_seed_rpc_sync(
@@ -65,8 +65,7 @@ def _run_multi_seed_rpc_sync(
     act() is judged in baseline-equivalent time (hardware-fair scoring); otherwise
     the legacy per-step calibrated timeout is used.
     """
-    reference_enabled = use_reference_calibration()
-    use_ref = speed_factor is not None and reference_enabled
+    use_ref = speed_factor is not None
     schema_file = _submission_template_dir() / "agent.capnp"
     agent_capnp = capnp.load(str(schema_file))
     trace_settings = RpcTraceSettings.from_env()
@@ -219,12 +218,8 @@ def _run_multi_seed_rpc_sync(
         async with capnp.kj_loop():
             stream = None
             agent = None
-            # Reference mode: retries sized to the connect budget (each attempt ~ ping_timeout + 2s backoff).
-            max_ping_attempts = (
-                max(6, int(RPC_CONNECT_MAX_WAIT_SEC / (ping_timeout_sec + 2.0)))
-                if reference_enabled
-                else 6
-            )
+            # Retries sized to the connect budget (each attempt ~ ping_timeout + 2s backoff).
+            max_ping_attempts = max(6, int(RPC_CONNECT_MAX_WAIT_SEC / (ping_timeout_sec + 2.0)))
 
             for attempt in range(1, max_ping_attempts + 1):
                 if stop_event is not None and stop_event.is_set():

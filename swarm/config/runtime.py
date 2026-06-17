@@ -56,11 +56,6 @@ def env_float(name: str, default: float, *, minimum: Optional[float] = None) -> 
     return value
 
 
-def use_reference_calibration() -> bool:
-    """Whether scoring normalizes per-act time against the baseline reference model."""
-    return env_bool("SWARM_USE_REFERENCE_CALIBRATION", False)
-
-
 @dataclass(frozen=True)
 class RpcTraceSettings:
     enabled: bool

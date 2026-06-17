@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 
 import bittensor as bt
 
-from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings, use_reference_calibration
+from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
 from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC, SIM_DT
 from swarm.core.model_verify import add_to_blacklist
 from swarm.core.submission_policy import REQUIRED_ROOT_FILES
@@ -1307,7 +1307,7 @@ async def evaluate_seeds_batch(
     if early is not None:
         return early
 
-    if not is_calibration_run and use_reference_calibration():
+    if not is_calibration_run:
         ctx.speed_factor = await _ensure_worker_speed_factor(self, worker_id)
 
     _setup_pretry_state(ctx)
