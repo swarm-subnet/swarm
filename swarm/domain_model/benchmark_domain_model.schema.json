@@ -332,6 +332,20 @@
           }
         }
       },
+      "observation_assembly": {
+        "depth": [
+          "depth_camera"
+        ],
+        "state": [
+          "position",
+          "orientation",
+          "linear_velocity",
+          "angular_velocity",
+          "action_history",
+          "altitude_norm",
+          "goal_offset"
+        ]
+      },
       "action_space": {
         "type": "tensor",
         "dtype": "float32",
@@ -371,7 +385,7 @@
         },
         "state": {
           "shape": [
-            115
+            141
           ],
           "fill": 0.0
         }
@@ -426,6 +440,20 @@
           }
         }
       },
+      "observation_assembly": {
+        "depth": [
+          "depth_camera"
+        ],
+        "state": [
+          "position",
+          "orientation",
+          "linear_velocity",
+          "angular_velocity",
+          "action_history",
+          "altitude_norm",
+          "search_clue_offset"
+        ]
+      },
       "action_space": {
         "type": "tensor",
         "dtype": "float32",
@@ -465,7 +493,7 @@
         },
         "state": {
           "shape": [
-            115
+            140
           ],
           "fill": 0.0
         }

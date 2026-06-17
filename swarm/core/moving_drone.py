@@ -5,7 +5,6 @@ import functools
 import math
 import os
 import numpy as np
-import gymnasium.spaces as spaces
 import pybullet as p
 from PIL import Image
 
@@ -15,6 +14,7 @@ from gym_pybullet_drones.utils.enums import (
 )
 
 from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
+from swarm.core.observation import assemble, observation_space, observation_vector_dim
 from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
@@ -175,27 +175,10 @@ class MovingDroneAviary(BaseRLAviary):
         self.IMG_RES = np.array([enhanced_width, enhanced_height])
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
 
-        action_dim = self.action_space.shape[-1]
-        clue_dim = int(self.family_runtime.state_clue_dim(task))
-        state_dim = 12 + self.ACTION_BUFFER_SIZE * action_dim + 1 + clue_dim
-        self._state_dim = state_dim
-        self._clue_dim = clue_dim
-
-        depth_shape = (enhanced_height, enhanced_width, 1)
-        self.observation_space = spaces.Dict({
-            "depth": spaces.Box(
-                low=0.0,
-                high=1.0,
-                shape=depth_shape,
-                dtype=np.float32
-            ),
-            "state": spaces.Box(
-                low=-np.inf,
-                high=np.inf,
-                shape=(state_dim,),
-                dtype=np.float32
-            ),
-        })
+        self._clue_dim = int(self.family_runtime.state_clue_dim(task))
+        self._obs_layout = self.family_runtime.observation_assembly(task)
+        self.observation_space = observation_space(self._obs_layout, self)
+        self._state_dim = observation_vector_dim(self._obs_layout, self) or 0
 
         self._cull_targets = []
         self._cull_vis_hidden = set()
@@ -864,20 +847,9 @@ class MovingDroneAviary(BaseRLAviary):
             physicsClientId=cli,
         )
 
+        self.observation_space = observation_space(self._obs_layout, self)
+        self._state_dim = observation_vector_dim(self._obs_layout, self) or 0
         obs_after = self._computeObs()
-        if obs_after is not None and "state" in obs_after:
-            actual_state_dim = obs_after["state"].shape[0]
-            if actual_state_dim != self._state_dim:
-                self._state_dim = actual_state_dim
-                self.observation_space = spaces.Dict({
-                    "depth": self.observation_space["depth"],
-                    "state": spaces.Box(
-                        low=-np.inf,
-                        high=np.inf,
-                        shape=(actual_state_dim,),
-                        dtype=np.float32
-                    ),
-                })
         info_after = self._computeInfo()
         return obs_after, info_after
 
@@ -1097,50 +1069,17 @@ class MovingDroneAviary(BaseRLAviary):
 
     # -------- observation extension -------------------------------------- #
     def _computeObs(self):
-        """
-        Build depth + state observation for the single-drone task.
-        Optimized: calls _getDroneImages directly, skips parent class overhead.
-        """
-        # Get depth directly (skip parent class which would also store rgb/seg)
+        """Build the observation declared by this challenge's input contract."""
         _, depth_raw, _ = self._getDroneImages(0)
 
         if depth_raw is None:
-            h, w = (self.IMG_RES[1], self.IMG_RES[0]) if self.IMG_RES is not None else (128, 128)
-            state_dim = getattr(self, "_state_dim", 115)
             return {
-                "depth": np.zeros((h, w, 1), dtype=np.float32),
-                "state": np.zeros((state_dim,), dtype=np.float32),
+                key: np.zeros(space.shape, dtype=np.float32)
+                for key, space in self.observation_space.spaces.items()
             }
 
-        # Store in self.dep for compatibility
         self.dep[0] = depth_raw
         depth = self._process_depth(depth_raw)
-
         state_vec = self._getDroneStateVector(0)
 
-        action_dim = self.action_buffer[0].shape[1] if self.ACTION_BUFFER_SIZE > 0 else 0
-        base_len = 12 + self.ACTION_BUFFER_SIZE * action_dim
-        clue_dim = getattr(self, "_clue_dim", 3)
-        state_full = np.empty(base_len + 1 + clue_dim, dtype=np.float32)
-
-        state_full[0:3] = state_vec[0:3]
-        state_full[3:6] = state_vec[7:10]
-        state_full[6:9] = state_vec[10:13]
-        state_full[9:12] = state_vec[13:16]
-
-        offset = 12
-        for i in range(self.ACTION_BUFFER_SIZE):
-            state_full[offset:offset + action_dim] = self.action_buffer[i][0, :]
-            offset += action_dim
-
-        state_full[base_len] = self._get_altitude_distance() / MAX_RAY_DISTANCE
-        clue_offset = np.asarray(
-            self.family_runtime.clue_offset(self, state_vec),
-            dtype=np.float32,
-        )
-        state_full[base_len + 1:base_len + 1 + clue_dim] = clue_offset[:clue_dim]
-
-        return {
-            "depth": depth,
-            "state": state_full,
-        }
+        return assemble(self._obs_layout, self, state_vec, {"depth": depth})

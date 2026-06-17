@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 from swarm.domain_model import (
     get_family_benchmark_admission_policy,
     get_family_screening_policy,
+    get_policy_interface_contract,
+    get_supported_interface_versions,
 )
 
 
@@ -117,6 +119,17 @@ class ChallengeFamilyRuntime:
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
         _ = task
         return {}
+
+    def observation_interface_version(self, task: Any) -> str:
+        _ = task
+        return get_supported_interface_versions(self.family_id)[0]
+
+    def observation_assembly(self, task: Any) -> dict[str, Any]:
+        contract = get_policy_interface_contract(
+            self.family_id,
+            self.observation_interface_version(task),
+        )
+        return contract["observation_assembly"]
 
     def state_clue_dim(self, task: Any) -> int:
         _ = task

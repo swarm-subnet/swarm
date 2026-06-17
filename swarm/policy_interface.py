@@ -11,6 +11,8 @@ from typing import Any
 
 import numpy as np
 
+from swarm.constants import SIM_DT
+from swarm.core.observation import smoke_observation
 from swarm.core.submission_policy import validate_submission_zip
 from swarm.domain_model import (
     CHALLENGE_FAMILY_IDS,
@@ -160,15 +162,18 @@ def build_smoke_test_observation(
     interface_version: str,
 ) -> dict[str, np.ndarray]:
     contract = get_policy_interface_contract(family_id, interface_version)
-    smoke_spec = contract["smoke_test_observation"]
-    observation: dict[str, np.ndarray] = {}
-    for key, field in smoke_spec.items():
-        observation[key] = np.full(
-            tuple(field["shape"]),
-            fill_value=float(field.get("fill", 0.0)),
-            dtype=np.float32,
-        )
-    return observation
+    action_dim = int(contract["action_space"]["shape"][-1])
+    ctrl_freq = int(round(1.0 / SIM_DT))
+    fills = {
+        key: float(spec.get("fill", 0.0))
+        for key, spec in contract.get("smoke_test_observation", {}).items()
+    }
+    return smoke_observation(
+        contract["observation_assembly"],
+        ctrl_freq=ctrl_freq,
+        action_dim=action_dim,
+        fills=fills,
+    )
 
 
 def validate_action_output(
