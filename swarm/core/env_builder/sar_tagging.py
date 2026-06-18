@@ -111,6 +111,7 @@ def build_and_tag_map(
     if goal is not None:
         safe_zones.append((float(goal[0]), float(goal[1])))
 
+    forest_assets = None
     if challenge_type == 1:
         build_city_map(cli, seed, safe_zones, safe_zone_radius)
     elif challenge_type == 2:
@@ -122,9 +123,15 @@ def build_and_tag_map(
     elif challenge_type == 5:
         build_warehouse_map(seed=seed, cli=cli, start=start, goal=goal)
     elif challenge_type == 6:
-        build_forest_map(cli, seed, safe_zones, max(safe_zone_radius, 8.0))
+        forest_assets = build_forest_map(cli, seed, safe_zones, max(safe_zone_radius, 8.0))
     else:
         raise ValueError(f"unknown challenge_type {challenge_type}")
+
+    if forest_assets:
+        for uid in forest_assets.get("trees", ()):
+            tagger.tag_existing(uid, BodyCategory.OBSTACLE_CANOPY)
+        for uid in forest_assets.get("props", ()):
+            tagger.tag_existing(uid, BodyCategory.OBSTACLE_CLUTTER)
 
     n_after = p.getNumBodies(physicsClientId=cli)
     new_uids = enumerate_bodies(cli)[n_before:n_after]

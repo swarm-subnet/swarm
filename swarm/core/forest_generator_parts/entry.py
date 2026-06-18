@@ -34,7 +34,7 @@ def build_forest(
     hills_enabled: bool = False,
     forced_mode: Optional[int] = None,
     forced_difficulty: Optional[int] = None,
-) -> None:
+) -> dict:
     """Build a Type 6 forest map on the given PyBullet client.
 
     Mode and difficulty are deterministic per seed via get_forest_subtype().
@@ -54,7 +54,7 @@ def build_forest(
     if hills_enabled:
         rgba = _ground_rgba_for_mode(mode_id)
         _spawn_hills(cli, rgba=rgba, apply_texture=(mode_id == 1))
-    _spawn_forest_assets(
+    return _spawn_forest_assets(
         cli,
         seed,
         mode_id=mode_id,

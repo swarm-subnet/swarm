@@ -385,7 +385,7 @@ def _spawn_forest_assets(
     difficulty_id: int = SCORING_DIFFICULTY_ID,
     safe_zones: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_radius: float = 0.0,
-) -> None:
+) -> dict:
     diff_cfg = DIFFICULTY_CONFIG[difficulty_id]
     flags = (
         p.VISUAL_SHAPE_DOUBLE_SIDED
@@ -558,12 +558,14 @@ def _spawn_forest_assets(
     )
 
     tree_yaw = 0.0
+    n_before_trees = p.getNumBodies(physicsClientId=cli)
     for x, y, category, obj_name, scale, _ in tree_instances:
         _spawn_asset_instance(
             cli, category=category, obj_name=obj_name,
             x=x, y=y, yaw_deg=tree_yaw, scale=scale,
             flags=flags, enable_collision=True,
         )
+    n_after_trees = p.getNumBodies(physicsClientId=cli)
     for cls, inst_list in [
         ("bushes", bush_instances),
         ("rocks", rock_instances),
@@ -576,6 +578,16 @@ def _spawn_forest_assets(
             cli, instances=inst_list, rng=rng, flags=flags,
             class_name=cls, enable_collision=True,
         )
+    n_after_props = p.getNumBodies(physicsClientId=cli)
+    tree_uids = [
+        int(p.getBodyUniqueId(i, physicsClientId=cli))
+        for i in range(n_before_trees, n_after_trees)
+    ]
+    prop_uids = [
+        int(p.getBodyUniqueId(i, physicsClientId=cli))
+        for i in range(n_after_trees, n_after_props)
+    ]
+    return {"trees": tree_uids, "props": prop_uids}
 
 
 
