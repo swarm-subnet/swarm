@@ -14,7 +14,7 @@ from gym_pybullet_drones.utils.enums import (
 )
 
 from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
-from swarm.core.observation import assemble, observation_space, observation_vector_dim
+from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
 from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
@@ -85,6 +85,7 @@ class MovingDroneAviary(BaseRLAviary):
         obs         : ObservationType = ObservationType.RGB,
         act         : ActionType      = ActionType.RPM,
         sar_mode    : bool          = False,
+        num_drones  : int           = 1,
     ):
         """
         Parameters
@@ -96,9 +97,21 @@ class MovingDroneAviary(BaseRLAviary):
             family may normalize or ignore it.
         """
         self.task       = task
+        n_drones = max(1, int(getattr(task, "num_drones", 0) or num_drones))
         self._original_start = tuple(task.start)
         self._original_goal = tuple(task.goal)
-        self.GOAL_POS   = np.asarray(task.goal, dtype=float)
+        if n_drones > 1:
+            starts = np.asarray(task.starts, dtype=float)
+            goals = np.asarray(task.goals, dtype=float)
+            if starts.shape != (n_drones, 3) or goals.shape != (n_drones, 3):
+                raise ValueError(
+                    f"num_drones={n_drones} requires task.starts/goals of shape "
+                    f"({n_drones}, 3); got {starts.shape} / {goals.shape}"
+                )
+            self.GOAL_POSES = goals
+            self.GOAL_POS   = self.GOAL_POSES[0]
+        else:
+            self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
         self.family_runtime = runtime_family_for_task(task)
         self.sar_mode = bool(sar_mode)
@@ -113,6 +126,16 @@ class MovingDroneAviary(BaseRLAviary):
 
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
+
+        n = n_drones
+        self._frozen = np.zeros(n, dtype=bool)
+        self._d_success = np.zeros(n, dtype=bool)
+        self._d_collision = np.zeros(n, dtype=bool)
+        self._d_t_to_goal = [None] * n
+        self._d_min_clearance = np.full(n, SAFETY_DISTANCE_SAFE, dtype=float)
+        self._d_failure_reason = [FailureReason.NONE.value] * n
+        self._d_landing_stable_time = np.zeros(n, dtype=float)
+        self._d_touch_platform = [None] * n
 
         seed = getattr(task, 'map_seed', 0)
 
@@ -156,8 +179,12 @@ class MovingDroneAviary(BaseRLAviary):
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
             drone_model  = drone_model,
-            num_drones   = 1,
-            initial_xyzs = np.asarray([task.start]),
+            num_drones   = n_drones,
+            initial_xyzs = (
+                np.asarray([task.start])
+                if n_drones == 1
+                else np.asarray(task.starts)
+            ),
             initial_rpys = None,
             physics      = physics,
             pyb_freq     = pyb_freq,
@@ -420,8 +447,11 @@ class MovingDroneAviary(BaseRLAviary):
                 physicsClientId=cli
             )
 
-    def _update_landing_state(self, platform_contact: bool) -> None:
+    def _update_landing_state(self, platform_contact: bool, nth_drone: int = 0) -> None:
         """Update landing state machine based on contact and drone state."""
+        if self.NUM_DRONES > 1:
+            self._update_landing_state_multi(platform_contact, nth_drone)
+            return
         if self._success or self._collision:
             return
 
@@ -454,7 +484,7 @@ class MovingDroneAviary(BaseRLAviary):
         else:
             self._landing_stable_time = 0.0
 
-    def _is_landing_floor_body(self, body_uid: int, drone_pos) -> bool:
+    def _is_landing_floor_body(self, body_uid: int, drone_pos, platform_pos=None) -> bool:
         """Whether ``body_uid`` is the supporting floor under the landing platform
         and should be ignored by safety scoring during the final descent."""
         if getattr(self, "sar_mode", False):
@@ -464,7 +494,8 @@ class MovingDroneAviary(BaseRLAviary):
             return False
 
         safe = SAFETY_DISTANCE_SAFE_BY_TYPE.get(challenge_type, SAFETY_DISTANCE_SAFE)
-        platform_pos = self._current_platform_pos
+        if platform_pos is None:
+            platform_pos = self._current_platform_pos
         if platform_pos is None:
             platform_pos = self.GOAL_POS
         if platform_pos is None:
@@ -562,10 +593,10 @@ class MovingDroneAviary(BaseRLAviary):
         dep = np.reshape(dep, (h, w))
         return None, dep, None
 
-    def _get_altitude_distance(self) -> float:
+    def _get_altitude_distance(self, nth_drone: int = 0) -> float:
         """Cast single ray downward for ground/altitude detection."""
         cli = getattr(self, "CLIENT", 0)
-        pos = self.pos[0]
+        pos = self.pos[nth_drone]
 
         ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
         start = [pos[0], pos[1], pos[2] - ray_origin_offset]
@@ -591,7 +622,7 @@ class MovingDroneAviary(BaseRLAviary):
         depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
         return depth_normalized.astype(np.float32)[..., np.newaxis]
 
-    def _check_collision(self) -> tuple:
+    def _check_collision(self, nth_drone: int = 0) -> tuple:
         """Inspect contact points; sets ``_collision`` on any non-platform impact.
 
         Returns a ``(platform_hit, obstacle_hit)`` tuple. ``platform_hit`` is True when
@@ -599,7 +630,9 @@ class MovingDroneAviary(BaseRLAviary):
         part (victim) is treated as an obstacle hit — the no-touch sphere governs the
         CONFIRMED predicate, not contact handling.
         """
-        drone_id = self.DRONE_IDS[0]
+        drone_id = self.DRONE_IDS[nth_drone]
+        if self.NUM_DRONES > 1:
+            self._d_touch_platform[nth_drone] = None
         contact_points = p.getContactPoints(
             bodyA=drone_id,
             physicsClientId=getattr(self, "CLIENT", 0)
@@ -609,12 +642,25 @@ class MovingDroneAviary(BaseRLAviary):
             return False, False
 
         # Pads are landing targets, not obstacles; SAR also exempts the ground plane.
-        end_platform_uids = getattr(self, '_end_platform_uids', ())
+        # For the swarm, a drone may land on any UNCLAIMED logical platform (a platform
+        # is a group of body uids); claimed platforms drop to the obstacle-exempt path.
+        uid_to_group: dict = {}
+        if self.NUM_DRONES > 1:
+            groups = getattr(self, "_swarm_platform_groups", ())
+            claimed = getattr(self, "_swarm_claimed", frozenset())
+            uid_to_group = getattr(self, "_swarm_uid_to_group", {})
+            end_platform_uids = set()
+            for gi, grp in enumerate(groups):
+                if gi not in claimed:
+                    end_platform_uids |= set(grp)
+        else:
+            end_platform_uids = getattr(self, '_end_platform_uids', ())
         exempt = {drone_id} | getattr(self, "_platform_uids", frozenset())
         if getattr(self, "sar_mode", False):
             exempt = exempt | {getattr(self, "PLANE_ID", 0)}
         platform_hit = False
         obstacle_hit = False
+        touched_platform = None
 
         for contact in contact_points:
             body_b = contact[2]
@@ -627,6 +673,8 @@ class MovingDroneAviary(BaseRLAviary):
 
             if body_b in end_platform_uids:
                 platform_hit = True
+                if self.NUM_DRONES > 1:
+                    touched_platform = uid_to_group.get(body_b)
                 continue
             if body_b in exempt:
                 continue
@@ -634,7 +682,11 @@ class MovingDroneAviary(BaseRLAviary):
             obstacle_hit = True
             break
 
-        if obstacle_hit:
+        if self.NUM_DRONES > 1:
+            self._d_touch_platform[nth_drone] = touched_platform
+            if obstacle_hit:
+                self._d_collision[nth_drone] = True
+        elif obstacle_hit:
             self._collision = True
 
         return platform_hit, obstacle_hit
@@ -690,7 +742,11 @@ class MovingDroneAviary(BaseRLAviary):
         self._cull_vis_hidden = set()
         self._cull_phys_disabled = set()
         self._cull_step_counter = 0
-        self._cull_enabled = (not getattr(self, "GUI", False)) and total_faces >= CULL_MIN_TOTAL_FACES
+        self._cull_enabled = (
+            (not getattr(self, "GUI", False))
+            and total_faces >= CULL_MIN_TOTAL_FACES
+            and self.NUM_DRONES == 1
+        )
 
     def _apply_distance_cull(self) -> None:
         """Toggle visual/physics state for bodies beyond camera range."""
@@ -744,6 +800,9 @@ class MovingDroneAviary(BaseRLAviary):
 
     def _update_min_clearance(self) -> None:
         """Update minimum obstacle clearance for the episode."""
+        if self.NUM_DRONES > 1:
+            self._update_min_clearance_multi()
+            return
         if self._collision:
             self._min_clearance_episode = 0.0
             return
@@ -795,6 +854,127 @@ class MovingDroneAviary(BaseRLAviary):
             self._min_clearance_episode = min_dist
 
     # --------------------------------------------------------------------- #
+    # 2b. multi-drone (swarm) bookkeeping — only active when num_drones > 1
+    # --------------------------------------------------------------------- #
+    def _freeze_drone(self, nth_drone: int) -> None:
+        """Park a resolved drone in place; it stays a static collision obstacle."""
+        cli = getattr(self, "CLIENT", 0)
+        uid = int(self.DRONE_IDS[nth_drone])
+        p.resetBaseVelocity(uid, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], physicsClientId=cli)
+        p.changeDynamics(uid, -1, mass=0.0, physicsClientId=cli)
+        self._frozen[nth_drone] = True
+
+    def _update_landing_state_multi(self, platform_contact: bool, nth_drone: int) -> None:
+        from swarm.protocol import FailureReason
+
+        if self._d_success[nth_drone] or self._d_collision[nth_drone]:
+            return
+        if not platform_contact:
+            self._d_landing_stable_time[nth_drone] = 0.0
+            return
+
+        state = self._getDroneStateVector(nth_drone)
+        roll, pitch = state[7], state[8]
+        vel = state[10:13]
+        vz = abs(vel[2])
+        rel_vxy = float(np.linalg.norm(vel[0:2]))
+        velocity_ok = vz <= LANDING_MAX_VZ and rel_vxy <= LANDING_MAX_VXY_REL
+        upright_ok = abs(roll) <= LANDING_MAX_TILT_RAD and abs(pitch) <= LANDING_MAX_TILT_RAD
+
+        if velocity_ok and upright_ok:
+            self._d_landing_stable_time[nth_drone] += self._sim_dt
+            if self._d_landing_stable_time[nth_drone] >= LANDING_STABLE_SEC:
+                self._d_success[nth_drone] = True
+                self._d_t_to_goal[nth_drone] = self._time_alive
+                self._d_failure_reason[nth_drone] = FailureReason.NONE.value
+                claimed_uid = self._d_touch_platform[nth_drone]
+                claimed_set = getattr(self, "_swarm_claimed", None)
+                if claimed_uid is not None and claimed_set is not None:
+                    claimed_set.add(int(claimed_uid))
+        else:
+            self._d_landing_stable_time[nth_drone] = 0.0
+
+    def _update_min_clearance_multi(self) -> None:
+        """Per-drone obstacle clearance; teammates are excluded so swarm
+        proximity never lowers the safety term (only real impacts do)."""
+        cli = getattr(self, "CLIENT", 0)
+        ground_id = getattr(self, "PLANE_ID", 0)
+        live_teammates = {
+            int(self.DRONE_IDS[j])
+            for j in range(self.NUM_DRONES)
+            if not self._frozen[j]
+        }
+        base_excluded = {-1, ground_id} | live_teammates | set(
+            self.family_runtime.protected_body_uids(self)
+        )
+        safety_patch = self.family_runtime.safety_patch(self)
+        for i in range(self.NUM_DRONES):
+            if self._frozen[i]:
+                continue
+            if self._d_collision[i]:
+                self._d_min_clearance[i] = 0.0
+                continue
+            drone_id = self.DRONE_IDS[i]
+            drone_pos = self.pos[i, :]
+            goal_i = self.GOAL_POSES[i]
+            min_dist = SAFETY_DISTANCE_SAFE
+            d_min, d_max = p.getAABB(drone_id, physicsClientId=cli)
+            search_min = [d_min[k] - SAFETY_DISTANCE_SAFE for k in range(3)]
+            search_max = [d_max[k] + SAFETY_DISTANCE_SAFE for k in range(3)]
+            overlapping = p.getOverlappingObjects(search_min, search_max, physicsClientId=cli)
+            if overlapping:
+                checked = set()
+                for body_uid, _link_idx in overlapping:
+                    if body_uid in base_excluded or body_uid in checked:
+                        continue
+                    checked.add(body_uid)
+                    if self._is_landing_floor_body(body_uid, drone_pos, platform_pos=goal_i):
+                        continue
+                    closest = p.getClosestPoints(
+                        bodyA=drone_id, bodyB=body_uid,
+                        distance=SAFETY_DISTANCE_SAFE, physicsClientId=cli,
+                    )
+                    for point in closest:
+                        if (
+                            safety_patch is not None
+                            and body_uid == safety_patch.support_uid
+                            and _inside_safety_patch(point[6], safety_patch)
+                        ):
+                            continue
+                        dist = point[8]
+                        if dist < min_dist:
+                            min_dist = dist
+            if min_dist < self._d_min_clearance[i]:
+                self._d_min_clearance[i] = min_dist
+
+    def _process_step_updates_multi(self) -> None:
+        from swarm.protocol import FailureReason
+
+        froze_any = False
+        for i in range(self.NUM_DRONES):
+            if self._frozen[i]:
+                continue
+            platform_hit, _obstacle = self._check_collision(i)
+            state = self._getDroneStateVector(i)
+            if not self._d_success[i] and (
+                abs(state[7]) > self.MAX_TILT_RAD or abs(state[8]) > self.MAX_TILT_RAD
+            ):
+                self._d_collision[i] = True
+                if self._d_failure_reason[i] == FailureReason.NONE.value:
+                    self._d_failure_reason[i] = FailureReason.TILT.value
+            self._update_landing_state_multi(platform_hit, i)
+            if self._d_collision[i] and not self._d_success[i]:
+                if self._d_failure_reason[i] == FailureReason.NONE.value:
+                    self._d_failure_reason[i] = FailureReason.OBSTACLE_COLLISION.value
+            if self._d_success[i] or self._d_collision[i]:
+                self._freeze_drone(i)
+                froze_any = True
+        self._update_min_clearance_multi()
+        self._apply_distance_cull()
+        if froze_any:
+            self._updateAndStoreKinematicInformation()
+
+    # --------------------------------------------------------------------- #
     # 3. OpenAI‑Gym API overrides
     # --------------------------------------------------------------------- #
     def reset(self, **kwargs):
@@ -820,22 +1000,35 @@ class MovingDroneAviary(BaseRLAviary):
         self._platform_offsets = []
         self._platform_hit = False
 
+        n = self.NUM_DRONES
+        self._frozen = np.zeros(n, dtype=bool)
+        self._d_success = np.zeros(n, dtype=bool)
+        self._d_collision = np.zeros(n, dtype=bool)
+        self._d_t_to_goal = [None] * n
+        self._d_min_clearance = np.full(n, SAFETY_DISTANCE_SAFE, dtype=float)
+        self._d_landing_stable_time = np.zeros(n, dtype=float)
+        self._d_touch_platform = [None] * n
+
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
+        self._d_failure_reason = [FailureReason.NONE.value] * n
         self.family_runtime.reset_env_state(self)
 
         self._reset_action_buffer()
 
-        self._prev_score = evaluate_rollout(
-            task=self.task,
-            success=False,
-            t=0.0,
-            horizon=self.EP_LEN_SEC,
-            min_clearance=self._min_clearance_episode,
-            collision=self._collision,
-            legitimate_model=True,
-            failure_reason=self._failure_reason,
-        ).score
+        if self.NUM_DRONES > 1:
+            self._prev_score = 0.0
+        else:
+            self._prev_score = evaluate_rollout(
+                task=self.task,
+                success=False,
+                t=0.0,
+                horizon=self.EP_LEN_SEC,
+                min_clearance=self._min_clearance_episode,
+                collision=self._collision,
+                legitimate_model=True,
+                failure_reason=self._failure_reason,
+            ).score
 
         self.family_runtime.spawn_task_world(self)
         self._updateAndStoreKinematicInformation()
@@ -928,6 +1121,8 @@ class MovingDroneAviary(BaseRLAviary):
             ):
                 self._updateAndStoreKinematicInformation()
             for i in range(self.NUM_DRONES):
+                if self.NUM_DRONES > 1 and self._frozen[i]:
+                    continue
                 if self.PHYSICS == Physics.PYB:
                     self._physics(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.DYN:
@@ -965,6 +1160,9 @@ class MovingDroneAviary(BaseRLAviary):
             return
         self._step_processed = True
         self._time_alive += self._sim_dt
+        if self.NUM_DRONES > 1:
+            self._process_step_updates_multi()
+            return
         platform_hit, _ = self._check_collision()
         self._platform_hit = platform_hit
         self._family_post_step_update()
@@ -1002,6 +1200,14 @@ class MovingDroneAviary(BaseRLAviary):
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """Compute incremental reward based on current state."""
+        if self.NUM_DRONES > 1:
+            scorer = getattr(self.family_runtime, "score_swarm", None)
+            if scorer is None:
+                return 0.0
+            score = float(scorer(self.task, self._computeInfo())["final_score"])
+            reward = score - float(self._prev_score)
+            self._prev_score = score
+            return reward
         evaluation = evaluate_rollout(
             task=self.task,
             success=self._success,
@@ -1026,12 +1232,22 @@ class MovingDroneAviary(BaseRLAviary):
         """Return True if episode ended via collision or goal reached."""
         if self.family_runtime.compute_terminated(self):
             return True
+        if self.NUM_DRONES > 1:
+            return bool(np.all(self._frozen))
         return self._collision or self._success
 
     # -------- truncation (timeout / safety) ------------------------------ #
     def _computeTruncated(self) -> bool:
         """Early termination through the active family runtime."""
         from swarm.protocol import FailureReason
+
+        if self.NUM_DRONES > 1:
+            if self._time_alive >= self.EP_LEN_SEC:
+                for i in range(self.NUM_DRONES):
+                    if not self._frozen[i] and self._d_failure_reason[i] == FailureReason.NONE.value:
+                        self._d_failure_reason[i] = FailureReason.TIMEOUT.value
+                return True
+            return False
 
         terminal_already = (
             self._collision
@@ -1053,6 +1269,19 @@ class MovingDroneAviary(BaseRLAviary):
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):
+        if self.NUM_DRONES > 1:
+            info = {
+                "num_drones": int(self.NUM_DRONES),
+                "score": self._prev_score,
+                "success": bool(np.all(self._d_success)),
+                "per_drone_success": [bool(x) for x in self._d_success],
+                "per_drone_collision": [bool(x) for x in self._d_collision],
+                "per_drone_t_to_goal": list(self._d_t_to_goal),
+                "per_drone_min_clearance": [float(x) for x in self._d_min_clearance],
+                "per_drone_failure_reason": list(self._d_failure_reason),
+            }
+            info.update(self.family_runtime.build_info(self))
+            return info
         state = self._getDroneStateVector(0)
         dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
         info = {
@@ -1068,8 +1297,27 @@ class MovingDroneAviary(BaseRLAviary):
         return info
 
     # -------- observation extension -------------------------------------- #
+    def _compute_obs_multi(self):
+        """Batched per-drone observation for a swarm (depth + state stacked on axis 0)."""
+        depths = []
+        state_vecs = []
+        for i in range(self.NUM_DRONES):
+            _, depth_raw, _ = self._getDroneImages(i)
+            if depth_raw is None:
+                depth_raw = np.ones((int(self.IMG_RES[1]), int(self.IMG_RES[0])), dtype=np.float32)
+            self.dep[i] = depth_raw
+            depths.append(self._process_depth(depth_raw))
+            state_vecs.append(self._getDroneStateVector(i))
+        team_states = np.concatenate(
+            [np.asarray(self.pos, dtype=np.float32), np.asarray(self.vel, dtype=np.float32)],
+            axis=1,
+        )
+        return assemble_batch(self._obs_layout, self, state_vecs, depths, team_states)
+
     def _computeObs(self):
         """Build the observation declared by this challenge's input contract."""
+        if self.NUM_DRONES > 1:
+            return self._compute_obs_multi()
         _, depth_raw, _ = self._getDroneImages(0)
 
         if depth_raw is None:

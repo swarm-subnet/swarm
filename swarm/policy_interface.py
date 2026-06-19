@@ -160,6 +160,7 @@ def verify_policy_package_contract(
 def build_smoke_test_observation(
     family_id: str,
     interface_version: str,
+    num_drones: int | None = None,
 ) -> dict[str, np.ndarray]:
     contract = get_policy_interface_contract(family_id, interface_version)
     action_dim = int(contract["action_space"]["shape"][-1])
@@ -168,21 +169,33 @@ def build_smoke_test_observation(
         key: float(spec.get("fill", 0.0))
         for key, spec in contract.get("smoke_test_observation", {}).items()
     }
-    return smoke_observation(
+    obs = smoke_observation(
         contract["observation_assembly"],
         ctrl_freq=ctrl_freq,
         action_dim=action_dim,
         fills=fills,
     )
+    if num_drones is not None:
+        obs = {key: np.stack([value] * int(num_drones), axis=0) for key, value in obs.items()}
+    return obs
 
 
 def validate_action_output(
     action: Any,
     action_space: dict[str, Any],
+    num_drones: int | None = None,
 ) -> np.ndarray:
     action_array = np.asarray(action, dtype=np.float32)
     expected_shape = tuple(action_space["shape"])
-    if action_array.shape != expected_shape:
+    if num_drones is not None:
+        expected_shape = tuple(
+            int(num_drones) if dim == "dynamic" else dim for dim in expected_shape
+        )
+    shape_ok = len(action_array.shape) == len(expected_shape) and all(
+        dim == "dynamic" or int(dim) == actual
+        for dim, actual in zip(expected_shape, action_array.shape)
+    )
+    if not shape_ok:
         raise PolicyInterfaceError(
             f"invalid_action_shape:{list(action_array.shape)}!=:{list(expected_shape)}"
         )
@@ -207,7 +220,9 @@ def smoke_test_policy_package(
 
     family_id = str(contract["family_id"])
     interface_version = str(contract["interface_version"])
-    observation = build_smoke_test_observation(family_id, interface_version)
+    canonical = get_policy_interface_contract(family_id, interface_version)
+    num_range = canonical.get("num_drones_range")
+    smoke_counts = sorted({int(num_range[0]), int(num_range[-1])}) if num_range else [None]
 
     with tempfile.TemporaryDirectory(prefix="swarm_policy_smoke_") as tmpdir:
         extract_dir = Path(tmpdir)
@@ -259,9 +274,13 @@ def smoke_test_policy_package(
             return False, f"missing_act_method:{act_method_name}"
 
         try:
-            reset_method()
-            action = act_method(observation)
-            validate_action_output(action, contract["action_space"])
+            for n_drones in smoke_counts:
+                reset_method()
+                observation = build_smoke_test_observation(
+                    family_id, interface_version, num_drones=n_drones,
+                )
+                action = act_method(observation)
+                validate_action_output(action, contract["action_space"], num_drones=n_drones)
         except PolicyInterfaceError as exc:
             return False, str(exc)
         except Exception as exc:

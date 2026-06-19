@@ -46,6 +46,8 @@ DEPTH_MIN_M = 0.5                       # Minimum useful depth range (meters)
 DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
 # Search area parameters
 SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
+SEARCH_RADIUS_MIN = 0.0                 # m — min per-seed autopilot search radius (GPS-style clue)
+SEARCH_RADIUS_MAX = 10.0                # m — max per-seed autopilot search radius
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
 # Propulsion efficiency
@@ -433,6 +435,19 @@ MOVING_PLATFORM_PROB = {
     6: 0.00,
 }
 MOVING_PLATFORM_SEED_OFFSET = 555555
+
+# Swarm autopilot (cf_swarm_autopilot): N drones flown by one centralized policy.
+SWARM_NUM_DRONES = 5                      # reference / smoke default
+SWARM_MIN_DRONES = 2                      # per-seed drone count is random in [MIN, MAX]
+SWARM_MAX_DRONES = 8
+SWARM_NEIGHBOR_K = SWARM_MAX_DRONES - 1   # fixed neighbour slots so the obs row is constant
+SWARM_COUNT_SEED_OFFSET = 246810          # distinct from layout / moving-platform offsets
+SWARM_LAYOUT_SEED_OFFSET = 313131         # distinct from MOVING_PLATFORM_SEED_OFFSET
+SWARM_PAD_MIN_SPACING = 4.0               # min XY metres between any two start (or goal) pads
+SWARM_PAD_MAX_ATTEMPTS = 100              # deterministic rejection-sampling cap per pad
+SWARM_CONGESTION_RADIUS_M = 2.0           # a teammate goal within this of mine counts as congested
+SWARM_CONGESTION_PER_NEIGHBOR_SEC = 1.0   # time-target slack per congested neighbour
+SWARM_SEARCH_RADIUS = 30.0                # m — shared search-clue radius (bigger than autopilot's 10)
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

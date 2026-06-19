@@ -37,6 +37,7 @@ from swarm.constants import (
     SAR_SWEEP_WIDTH,
     SAR_TIME_TERM_BUFFER,
     SPEED_LIMIT,
+    SWARM_CONGESTION_PER_NEIGHBOR_SEC,
 )
 
 __all__ = [
@@ -44,8 +45,10 @@ __all__ = [
     "PARTICIPATION_REWARD",
     "_calculate_safety_term",
     "_calculate_sar_target_time",
+    "_calculate_swarm_target_time",
     "_calculate_target_time",
     "_clamp",
+    "_score_single_drone",
     "calculate_time_term",
     "flight_reward",
 ]
@@ -120,6 +123,46 @@ def calculate_time_term(
     if horizon <= target_time:
         return 0.0
     return _clamp(1.0 - (t - target_time) / (horizon - target_time))
+
+
+def _calculate_swarm_target_time(start, goal, n_congested: int) -> float:
+    """Straight-line autopilot target time plus a per-neighbour congestion slack
+    so a drone that detours to deconflict is not punished as merely slow."""
+    distance = float(np.linalg.norm(np.asarray(goal, dtype=float) - np.asarray(start, dtype=float)))
+    base = (distance / SPEED_LIMIT) + HOVER_SEC
+    return base * 1.06 + SWARM_CONGESTION_PER_NEIGHBOR_SEC * int(n_congested)
+
+
+def _score_single_drone(
+    *,
+    success: bool,
+    t: float,
+    horizon: float,
+    target_time: Optional[float],
+    min_clearance: Optional[float],
+    collision: bool,
+    challenge_type: int,
+    legitimate_model: bool,
+    failure_reason: str,
+) -> float:
+    """Per-drone autopilot score (0.45 success + 0.45 time + 0.10 safety).
+
+    Numerically identical to AutopilotChallengeFamily.normalize_rollout_metrics
+    for one drone; the swarm family averages this over its drones.
+    """
+    if not legitimate_model or failure_reason == "EVAL_ERROR":
+        return 0.0
+    if not success:
+        return PARTICIPATION_REWARD if t > 0.0 else 0.0
+    if collision:
+        return PARTICIPATION_REWARD if t > 0.0 else 0.0
+
+    time_term = calculate_time_term(t=t, horizon=horizon, target_time=target_time)
+    if min_clearance is not None:
+        safety_term = _calculate_safety_term(float(min_clearance), collision=False, challenge_type=challenge_type)
+    else:
+        safety_term = 1.0
+    return _clamp((0.45 * 1.0) + (0.45 * time_term) + (0.10 * safety_term))
 
 
 def flight_reward(

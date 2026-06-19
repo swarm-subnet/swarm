@@ -9,6 +9,13 @@ from swarm.constants import (
     CHALLENGE_TYPE_DISTRIBUTION,
     MOVING_PLATFORM_PROB,
     MOVING_PLATFORM_SEED_OFFSET,
+    SWARM_COUNT_SEED_OFFSET,
+    SWARM_LAYOUT_SEED_OFFSET,
+    SWARM_MAX_DRONES,
+    SWARM_MIN_DRONES,
+    SWARM_NUM_DRONES,
+    SWARM_PAD_MAX_ATTEMPTS,
+    SWARM_PAD_MIN_SPACING,
     RANDOM_START,
     START_PLATFORM,
     START_PLATFORM_MAX_Z,
@@ -119,6 +126,62 @@ def _resolve_params(seed: int, challenge_type: int) -> dict:
     return dict(get_type_params(challenge_type))
 
 
+def _swarm_pads(
+    params: dict,
+    *,
+    challenge_type: int,
+    seed: int,
+    family_id: str = "cf_swarm_autopilot",
+    n: int = SWARM_NUM_DRONES,
+) -> Tuple[Tuple, Tuple]:
+    """Deterministically place n start + n goal pads, spaced apart.
+
+    Uses a dedicated RNG keyed only on map_seed so it never perturbs the
+    single-drone draw stream. Reuses the per-type start/goal geometry and
+    rejection-samples for a minimum pairwise spacing with a bounded fallback.
+    """
+    rng = random.Random((seed + SWARM_LAYOUT_SEED_OFFSET) & 0xFFFFFFFF)
+
+    def _min_gap(pt, placed) -> float:
+        if not placed:
+            return float("inf")
+        return min(math.hypot(pt[0] - q[0], pt[1] - q[1]) for q in placed)
+
+    placed: list = []
+    starts: list = []
+    goals: list = []
+    for _ in range(n):
+        best, best_gap = None, -1.0
+        for _attempt in range(SWARM_PAD_MAX_ATTEMPTS):
+            cand = _random_start(
+                rng, params, challenge_type=challenge_type, seed=seed, family_id=family_id,
+            )
+            gap = _min_gap(cand, placed)
+            if gap >= SWARM_PAD_MIN_SPACING:
+                best = cand
+                break
+            if gap > best_gap:
+                best_gap, best = gap, cand
+        starts.append(best)
+        placed.append(best)
+
+        best, best_gap = None, -1.0
+        for _attempt in range(SWARM_PAD_MAX_ATTEMPTS):
+            goal = _goal_from_start(
+                rng, starts[-1], params, challenge_type=challenge_type, seed=seed,
+            )
+            gap = _min_gap(goal, placed)
+            if gap >= SWARM_PAD_MIN_SPACING:
+                best = goal
+                break
+            if gap > best_gap:
+                best_gap, best = gap, goal
+        goals.append(best)
+        placed.append(best)
+
+    return tuple(starts), tuple(goals)
+
+
 def _build_task_with_params(
     sim_dt: float,
     seed: int,
@@ -128,6 +191,17 @@ def _build_task_with_params(
     family_id: str = "cf_search_and_rescue",
     moving_platform: bool = False,
 ) -> MapTask:
+    if family_id == "cf_swarm_autopilot":
+        count_rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
+        n_drones = count_rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
+        starts, goals = _swarm_pads(params, challenge_type=challenge_type, seed=seed, n=n_drones)
+        return MapTask(
+            map_seed=seed, start=starts[0], goal=goals[0], sim_dt=sim_dt,
+            horizon=params['horizon'], challenge_type=challenge_type,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+            num_drones=n_drones, starts=starts, goals=goals,
+        )
+
     rng = random.Random(seed)
 
     if RANDOM_START:
@@ -218,7 +292,7 @@ def _random_start(seed_rng: random.Random, params: dict,
         z = terrain_z + START_PLATFORM_TAKEOFF_BUFFER
     elif challenge_type == 4:
         z = START_PLATFORM_TAKEOFF_BUFFER
-    elif family_id == "cf_autopilot" and START_PLATFORM:
+    elif family_id in ("cf_autopilot", "cf_swarm_autopilot") and START_PLATFORM:
         if START_PLATFORM_RANDOMIZE:
             platform_z = seed_rng.uniform(START_PLATFORM_MIN_Z, START_PLATFORM_MAX_Z)
         else:

@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 
-from swarm.constants import MAX_RAY_DISTANCE
+from swarm.constants import MAX_RAY_DISTANCE, SWARM_NEIGHBOR_K
 
 
 def action_buffer_size(ctrl_freq: int) -> int:
@@ -47,17 +47,55 @@ def _action_history(env, sv, ctx):
     n = int(getattr(env, "ACTION_BUFFER_SIZE", 0))
     if n <= 0:
         return np.zeros((0,), dtype=np.float32)
+    d = int(ctx.get("self_index", 0))
     return np.concatenate(
-        [np.asarray(env.action_buffer[i][0, :], dtype=np.float32) for i in range(n)]
+        [np.asarray(env.action_buffer[i][d, :], dtype=np.float32) for i in range(n)]
     )
 
 
 def _altitude_norm(env, sv, ctx):
-    return np.asarray([env._get_altitude_distance() / MAX_RAY_DISTANCE], dtype=np.float32)
+    d = int(ctx.get("self_index", 0))
+    return np.asarray([env._get_altitude_distance(d) / MAX_RAY_DISTANCE], dtype=np.float32)
 
 
 def _goal_offset(env, sv, ctx):
-    return np.asarray(env.GOAL_POS - sv[0:3], dtype=np.float32)
+    goal = getattr(env, "_search_area_center", None)
+    if goal is None:
+        goal = env.GOAL_POS
+    return np.asarray(goal - sv[0:3], dtype=np.float32)
+
+
+def _teammate_state(env, sv, ctx):
+    """The K nearest teammates, each [rel_pos(3), rel_vel(3), present(1)].
+
+    Fixed width (K*7) regardless of how many drones exist this episode: nearest
+    first (ties broken by drone index for determinism), empty slots zero-padded
+    with present=0 so a policy can tell a real neighbour from padding.
+    """
+    width = SWARM_NEIGHBOR_K * 7
+    team = ctx.get("team_states")
+    if team is None:
+        return np.zeros((width,), dtype=np.float32)
+    i = int(ctx.get("self_index", 0))
+    me = np.asarray(team[i], dtype=np.float64)
+    neighbours = []
+    for j in range(len(team)):
+        if j == i:
+            continue
+        other = np.asarray(team[j], dtype=np.float64)
+        rel_pos = other[0:3] - me[0:3]
+        rel_vel = other[3:6] - me[3:6]
+        d2 = float(rel_pos[0] ** 2 + rel_pos[1] ** 2 + rel_pos[2] ** 2)
+        neighbours.append((d2, j, rel_pos, rel_vel))
+    neighbours.sort(key=lambda nb: (nb[0], nb[1]))
+    slots = []
+    for k in range(SWARM_NEIGHBOR_K):
+        if k < len(neighbours):
+            _, _, rel_pos, rel_vel = neighbours[k]
+            slots.append(np.concatenate([rel_pos, rel_vel, [1.0]]))
+        else:
+            slots.append(np.zeros(7, dtype=np.float64))
+    return np.concatenate(slots).astype(np.float32)
 
 
 def _search_clue_offset(env, sv, ctx):
@@ -101,6 +139,11 @@ OBSERVATION_CHANNELS = {
     "goal_offset": SensorChannel(
         "goal_offset", "goal_offset_xyz", "vector", _goal_offset,
         env_dim=lambda e: 3, param_dim=lambda cf, ad: 3,
+    ),
+    "teammate_state": SensorChannel(
+        "teammate_state", "teammate_rel_state", "vector", _teammate_state,
+        env_dim=lambda e: SWARM_NEIGHBOR_K * 7,
+        param_dim=lambda cf, ad: SWARM_NEIGHBOR_K * 7,
     ),
     "search_clue_offset": SensorChannel(
         "search_clue_offset", "search_clue_offset_xy", "vector", _search_clue_offset,

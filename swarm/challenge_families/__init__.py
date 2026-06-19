@@ -13,6 +13,7 @@ from .base import (
     ChallengeFamilyRuntimeError,
 )
 from .search_and_rescue import SearchAndRescueChallengeFamily
+from .swarm_autopilot import SwarmAutopilotChallengeFamily
 
 
 DEFAULT_RUNTIME_FAMILY_ID = "cf_search_and_rescue"
@@ -21,6 +22,7 @@ DEFAULT_RUNTIME_FAMILY_ID = "cf_search_and_rescue"
 _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_search_and_rescue": SearchAndRescueChallengeFamily(),
     "cf_autopilot": AutopilotChallengeFamily(),
+    "cf_swarm_autopilot": SwarmAutopilotChallengeFamily(),
 }
 
 
@@ -144,6 +146,7 @@ __all__ = [
     "ChallengeFamilyRuntimeError",
     "DEFAULT_RUNTIME_FAMILY_ID",
     "SearchAndRescueChallengeFamily",
+    "SwarmAutopilotChallengeFamily",
     "build_random_task",
     "benchmark_admission_policy_for_family",
     "build_screening_tasks",

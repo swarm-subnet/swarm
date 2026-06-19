@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import inspect
+import random
 from typing import Any, Optional
 
 import numpy as np
 import pybullet as p
 
-from swarm.constants import START_PLATFORM_TAKEOFF_BUFFER
+from swarm.constants import (
+    SEARCH_AREA_NOISE_Z,
+    SEARCH_RADIUS_MAX,
+    SEARCH_RADIUS_MIN,
+    START_PLATFORM_TAKEOFF_BUFFER,
+)
 from swarm.core.env_builder.platform_placement import build_autopilot_world
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
@@ -334,6 +340,17 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
             )
 
         env._build_cull_targets()
+
+        seed = int(env.task.map_seed)
+        search_radius = random.Random(seed + 888888).uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
+        noise_rng = np.random.RandomState(seed)
+        noise_xy = noise_rng.uniform(-search_radius, search_radius, size=2)
+        noise_z = noise_rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
+        center = env.GOAL_POS.copy()
+        center[0] += noise_xy[0]
+        center[1] += noise_xy[1]
+        center[2] = max(0.0, center[2] + noise_z)
+        env._search_area_center = center
 
     def protected_body_uids(self, env: Any) -> set[int]:
         return set(getattr(env, "_platform_uids", frozenset()))

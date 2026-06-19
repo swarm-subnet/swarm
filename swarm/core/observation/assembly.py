@@ -52,6 +52,29 @@ def assemble(layout: ObservationLayout, env: Any, state_vec: np.ndarray, ctx: di
     return obs
 
 
+def assemble_batch(
+    layout: ObservationLayout,
+    env: Any,
+    state_vecs: Sequence[np.ndarray],
+    depths: Sequence[np.ndarray],
+    team_states: np.ndarray,
+) -> dict:
+    """Stack per-drone observations into a leading drone axis for a swarm.
+
+    Each drone's row is built with the same single-drone ``assemble`` so its
+    values are identical to the single-drone path, plus a teammate-relative
+    block injected via ``ctx`` (team_states + self_index).
+    """
+    per_drone = []
+    for i, state_vec in enumerate(state_vecs):
+        ctx = {"depth": depths[i], "self_index": i, "team_states": team_states}
+        per_drone.append(assemble(layout, env, state_vec, ctx))
+    return {
+        key: np.stack([row[key] for row in per_drone], axis=0)
+        for key in per_drone[0]
+    }
+
+
 def observation_space(layout: ObservationLayout, env: Any) -> spaces.Dict:
     """Build the gym observation space for a layout using live env parameters."""
     fields: dict = {}

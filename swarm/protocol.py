@@ -69,6 +69,9 @@ class MapTask:
     version: str = SCHEMA_VERSION
     search_centre: Tuple[float, float] = (0.0, 0.0)
     moving_platform: bool = False
+    num_drones: int = 1
+    starts: Tuple[Tuple[float, float, float], ...] = ()
+    goals: Tuple[Tuple[float, float, float], ...] = ()
 
     def pack(self) -> bytes:
         return msgpack.packb(asdict(self), use_bin_type=True)
@@ -85,6 +88,10 @@ class MapTask:
         sc = data.get("search_centre")
         if isinstance(sc, (list, tuple)):
             data["search_centre"] = tuple(sc)
+        for key in ("starts", "goals"):
+            pads = data.get(key)
+            if isinstance(pads, (list, tuple)):
+                data[key] = tuple(tuple(float(c) for c in pad) for pad in pads)
         return MapTask(**data)
 
 

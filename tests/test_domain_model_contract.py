@@ -28,6 +28,7 @@ def test_domain_model_schema_snapshot():
         "challenge_family_ids": [
             "cf_autopilot",
             "cf_search_and_rescue",
+            "cf_swarm_autopilot",
         ],
         "challenge_instance_key_fields": [
             "challenge_family",
@@ -143,6 +144,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
     assert CHALLENGE_FAMILY_TO_INTERFACE_VERSIONS == {
         "cf_autopilot": ("submission_zip.v1",),
         "cf_search_and_rescue": ("submission_zip.v1",),
+        "cf_swarm_autopilot": ("submission_zip.v1",),
     }
 
 

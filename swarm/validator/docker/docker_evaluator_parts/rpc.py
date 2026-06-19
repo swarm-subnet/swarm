@@ -9,7 +9,7 @@ import capnp
 import numpy as np
 from gym_pybullet_drones.utils.enums import ActionType
 
-from swarm.challenge_families import evaluate_rollout
+from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
@@ -454,10 +454,14 @@ def _run_multi_seed_rpc_sync(
                         step_idx = 0
                         rpc_disconnected = False
 
-                        lo, hi = (
-                            env.action_space.low.flatten(),
-                            env.action_space.high.flatten(),
-                        )
+                        n_drones = int(getattr(env, "NUM_DRONES", 1))
+                        if n_drones > 1:
+                            lo, hi = env.action_space.low, env.action_space.high
+                        else:
+                            lo, hi = (
+                                env.action_space.low.flatten(),
+                                env.action_space.high.flatten(),
+                            )
 
                         while t_sim < task.horizon and not (
                             stop_event is not None and stop_event.is_set()
@@ -587,35 +591,61 @@ def _run_multi_seed_rpc_sync(
 
                             is_first_step = False
 
-                            raw_act = np.nan_to_num(
-                                np.asarray(action, dtype=np.float32).reshape(-1),
-                                nan=0.0, posinf=0.0, neginf=0.0,
-                            )
-                            if raw_act.size != 5:
-                                raw_act = np.zeros(5, dtype=np.float32)
-                            act = np.clip(raw_act, lo, hi)
-
-                            if hasattr(env, "ACT_TYPE") and hasattr(
-                                env, "SPEED_LIMIT"
-                            ):
+                            if n_drones > 1:
+                                raw_act = np.nan_to_num(
+                                    np.asarray(action, dtype=np.float32).reshape(-1),
+                                    nan=0.0, posinf=0.0, neginf=0.0,
+                                )
+                                if raw_act.size != 5 * n_drones:
+                                    raw_act = np.zeros(5 * n_drones, dtype=np.float32)
+                                act = np.clip(raw_act.reshape(n_drones, 5), lo, hi)
                                 if (
-                                    env.ACT_TYPE == ActionType.VEL
+                                    hasattr(env, "ACT_TYPE")
+                                    and hasattr(env, "SPEED_LIMIT")
+                                    and env.ACT_TYPE == ActionType.VEL
                                     and env.SPEED_LIMIT
                                 ):
-                                    n = max(np.linalg.norm(act[:3]), 1e-6)
-                                    scale = min(1.0, SPEED_LIMIT / n)
-                                    act[:3] *= scale
+                                    for _row in range(n_drones):
+                                        nrm = max(np.linalg.norm(act[_row, :3]), 1e-6)
+                                        act[_row, :3] *= min(1.0, SPEED_LIMIT / nrm)
                                     act = np.clip(act, lo, hi)
+                                _set_phase(
+                                    "env_step",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
+                                obs, _r, terminated, truncated, info = env.step(act)
+                            else:
+                                raw_act = np.nan_to_num(
+                                    np.asarray(action, dtype=np.float32).reshape(-1),
+                                    nan=0.0, posinf=0.0, neginf=0.0,
+                                )
+                                if raw_act.size != 5:
+                                    raw_act = np.zeros(5, dtype=np.float32)
+                                act = np.clip(raw_act, lo, hi)
 
-                            _set_phase(
-                                "env_step",
-                                task=task_label,
-                                step=step_idx,
-                                sim_t=t_sim,
-                            )
-                            obs, _r, terminated, truncated, info = env.step(
-                                act[None, :]
-                            )
+                                if hasattr(env, "ACT_TYPE") and hasattr(
+                                    env, "SPEED_LIMIT"
+                                ):
+                                    if (
+                                        env.ACT_TYPE == ActionType.VEL
+                                        and env.SPEED_LIMIT
+                                    ):
+                                        n = max(np.linalg.norm(act[:3]), 1e-6)
+                                        scale = min(1.0, SPEED_LIMIT / n)
+                                        act[:3] *= scale
+                                        act = np.clip(act, lo, hi)
+
+                                _set_phase(
+                                    "env_step",
+                                    task=task_label,
+                                    step=step_idx,
+                                    sim_t=t_sim,
+                                )
+                                obs, _r, terminated, truncated, info = env.step(
+                                    act[None, :]
+                                )
 
                             t_sim += SIM_DT
                             _emit_rollout_event(
@@ -708,20 +738,37 @@ def _run_multi_seed_rpc_sync(
                                 calibrated_timeout_sec=calibrated_timeout,
                             )
                         else:
-                            min_clearance = info.get("min_clearance", None)
-                            collision = info.get("collision", False)
-                            failure_reason = info.get("failure_reason", "NONE")
-                            evaluation = evaluate_rollout(
-                                task=task,
-                                success=success,
-                                t=t_sim,
-                                horizon=task.horizon,
-                                min_clearance=min_clearance,
-                                collision=collision,
-                                legitimate_model=True,
-                                failure_reason=failure_reason,
-                            )
-                            score = evaluation.score
+                            if n_drones > 1:
+                                family = runtime_family_for_task(task)
+                                swarm = family.score_swarm(task, info)
+                                score = float(swarm["final_score"])
+                                per_succ = info.get("per_drone_success", [])
+                                success = bool(per_succ) and all(per_succ)
+                                per_fr = info.get("per_drone_failure_reason", [])
+                                failure_reason = "NONE" if success else next(
+                                    (r for r in per_fr if r != "NONE"), "NONE"
+                                )
+                                result_metrics = {
+                                    "per_drone_final_score": swarm["per_drone_final_score"],
+                                    "per_drone_success": list(per_succ),
+                                    "per_drone_failure_reason": list(per_fr),
+                                }
+                            else:
+                                min_clearance = info.get("min_clearance", None)
+                                collision = info.get("collision", False)
+                                failure_reason = info.get("failure_reason", "NONE")
+                                evaluation = evaluate_rollout(
+                                    task=task,
+                                    success=success,
+                                    t=t_sim,
+                                    horizon=task.horizon,
+                                    min_clearance=min_clearance,
+                                    collision=collision,
+                                    legitimate_model=True,
+                                    failure_reason=failure_reason,
+                                )
+                                score = evaluation.score
+                                result_metrics = dict(evaluation.metrics)
                             _trace(
                                 f"{task_label} result success={success} "
                                 f"score={score:.4f} t_sim={t_sim:.2f}s"
@@ -748,7 +795,7 @@ def _run_multi_seed_rpc_sync(
                                 ValidationResult(
                                     uid, success, t_sim, score,
                                     failure_reason=failure_reason,
-                                    metrics=dict(evaluation.metrics),
+                                    metrics=result_metrics,
                                 )
                             )
                             _emit_seed_complete(

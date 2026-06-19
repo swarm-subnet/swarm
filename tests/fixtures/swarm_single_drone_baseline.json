@@ -1,0 +1,558 @@
+{
+  "scoring": {
+    "eval_error": {
+      "normalized": {
+        "final_score": 0.0,
+        "participation_term": 0.0,
+        "safety_term": 0.0,
+        "success_term": 0.0,
+        "time_term": 0.0
+      },
+      "score": 0.0
+    },
+    "fail_participation": {
+      "normalized": {
+        "final_score": 0.01,
+        "participation_term": 0.01,
+        "safety_term": 0.0,
+        "success_term": 0.0,
+        "time_term": 0.0
+      },
+      "score": 0.01
+    },
+    "fail_t0": {
+      "normalized": {
+        "final_score": 0.0,
+        "participation_term": 0.0,
+        "safety_term": 0.0,
+        "success_term": 0.0,
+        "time_term": 0.0
+      },
+      "score": 0.0
+    },
+    "illegit": {
+      "normalized": {
+        "final_score": 0.0,
+        "participation_term": 0.0,
+        "safety_term": 0.0,
+        "success_term": 0.0,
+        "time_term": 0.0
+      },
+      "score": 0.0
+    },
+    "success_fast_safe": {
+      "normalized": {
+        "final_score": 1.0,
+        "participation_term": 0.0,
+        "safety_term": 1.0,
+        "success_term": 1.0,
+        "time_term": 1.0
+      },
+      "score": 1.0
+    },
+    "success_mid_clearance": {
+      "normalized": {
+        "final_score": 0.9500000000000001,
+        "participation_term": 0.0,
+        "safety_term": 0.49999999999999994,
+        "success_term": 1.0,
+        "time_term": 1.0
+      },
+      "score": 0.9500000000000001
+    },
+    "success_no_clearance": {
+      "normalized": {
+        "final_score": 1.0,
+        "participation_term": 0.0,
+        "safety_term": 1.0,
+        "success_term": 1.0,
+        "time_term": 1.0
+      },
+      "score": 1.0
+    },
+    "success_slow_time": {
+      "normalized": {
+        "final_score": 0.7321862348178138,
+        "participation_term": 0.0,
+        "safety_term": 1.0,
+        "success_term": 1.0,
+        "time_term": 0.40485829959514175
+      },
+      "score": 0.7321862348178138
+    },
+    "success_with_collision": {
+      "normalized": {
+        "final_score": 0.01,
+        "participation_term": 0.01,
+        "safety_term": 0.0,
+        "success_term": 0.0,
+        "time_term": 0.0
+      },
+      "score": 0.01
+    }
+  },
+  "taskgen": [
+    {
+      "challenge_type": 1,
+      "family_id": "cf_autopilot",
+      "goal": [
+        33.18853505453289,
+        -56.66568135396068,
+        0.7307765156240484
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        12.172819875684695,
+        -45.78682566987949,
+        9.78046084919889
+      ]
+    },
+    {
+      "challenge_type": 1,
+      "family_id": "cf_autopilot",
+      "goal": [
+        11.757340543734134,
+        20.330538700236993,
+        0.7732915148653141
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -4.486392235339409,
+        34.23964371348114,
+        3.2977633122353036
+      ]
+    },
+    {
+      "challenge_type": 2,
+      "family_id": "cf_autopilot",
+      "goal": [
+        15.001210676149116,
+        -18.294900387664534,
+        7.644294511710424
+      ],
+      "horizon": 60,
+      "moving_platform": true,
+      "seed": 101,
+      "start": [
+        3.2460853001825853,
+        -12.209820178634532,
+        9.78046084919889
+      ]
+    },
+    {
+      "challenge_type": 2,
+      "family_id": "cf_autopilot",
+      "goal": [
+        11.0641027637658,
+        -1.3677677990588961,
+        8.016300755071498
+      ],
+      "horizon": 60,
+      "moving_platform": true,
+      "seed": 2024,
+      "start": [
+        -1.1963712627571752,
+        9.130571656928304,
+        3.2977633122353036
+      ]
+    },
+    {
+      "challenge_type": 3,
+      "family_id": "cf_autopilot",
+      "goal": [
+        58.738607934204225,
+        -80.93015480320094,
+        0.4536191109807294
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        15.575797604708256,
+        -58.58678078533461,
+        0.13959389614732118
+      ]
+    },
+    {
+      "challenge_type": 3,
+      "family_id": "cf_autopilot",
+      "goal": [
+        33.226548409570555,
+        17.98643470602086,
+        0.8365388667313247
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -6.853623898570859,
+        52.306090979919176,
+        -1.4066506107023986
+      ]
+    },
+    {
+      "challenge_type": 4,
+      "family_id": "cf_autopilot",
+      "goal": [
+        38.906029334362714,
+        -31.611318830908807,
+        0.0
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        6.492170600365171,
+        -24.419640357269063,
+        0.121
+      ]
+    },
+    {
+      "challenge_type": 4,
+      "family_id": "cf_autopilot",
+      "goal": [
+        -9.906780689309901,
+        39.657407079278165,
+        0.0
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -2.3927425255143504,
+        18.261143313856607,
+        0.121
+      ]
+    },
+    {
+      "challenge_type": 5,
+      "family_id": "cf_autopilot",
+      "goal": [
+        16.610044153564296,
+        -19.44687919668179,
+        6.702012316394594
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        6.167562070346911,
+        -14.041293205429712,
+        9.78046084919889
+      ]
+    },
+    {
+      "challenge_type": 5,
+      "family_id": "cf_autopilot",
+      "goal": [
+        10.858782528815818,
+        -0.7443521353918179,
+        7.2228210571000995
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -2.2731053992386308,
+        10.500157405467547,
+        3.2977633122353036
+      ]
+    },
+    {
+      "challenge_type": 6,
+      "family_id": "cf_autopilot",
+      "goal": [
+        26.297152713669238,
+        -35.72470331556373,
+        2.0577178046841693
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        6.816779130383431,
+        -25.640622375132516,
+        9.78046084919889
+      ]
+    },
+    {
+      "challenge_type": 6,
+      "family_id": "cf_autopilot",
+      "goal": [
+        15.971784076771097,
+        3.3466700787926733,
+        2.2065203020285997
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -2.512379651790063,
+        19.17420047954944,
+        3.2977633122353036
+      ]
+    },
+    {
+      "challenge_type": 1,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        33.18853505453289,
+        -56.66568135396068,
+        0.7307765156240484
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        12.172819875684695,
+        -45.78682566987949,
+        4.833205313893334
+      ]
+    },
+    {
+      "challenge_type": 1,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        11.757340543734134,
+        20.330538700236993,
+        0.7732915148653141
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -4.486392235339409,
+        34.23964371348114,
+        1.6580065202785157
+      ]
+    },
+    {
+      "challenge_type": 2,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        15.001210676149116,
+        -18.294900387664534,
+        7.644294511710424
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        3.2460853001825853,
+        -12.209820178634532,
+        9.654248515258056
+      ]
+    },
+    {
+      "challenge_type": 2,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        11.0641027637658,
+        -1.3677677990588961,
+        8.016300755071498
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -1.1963712627571752,
+        9.130571656928304,
+        3.0723260159940065
+      ]
+    },
+    {
+      "challenge_type": 3,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        58.738607934204225,
+        -80.93015480320094,
+        0.4536191109807294
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        15.575797604708256,
+        -58.58678078533461,
+        0.13959389614732118
+      ]
+    },
+    {
+      "challenge_type": 3,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        33.226548409570555,
+        17.98643470602086,
+        0.8365388667313247
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -6.853623898570859,
+        52.306090979919176,
+        -1.4066506107023986
+      ]
+    },
+    {
+      "challenge_type": 4,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        38.906029334362714,
+        -31.611318830908807,
+        0.0
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        6.492170600365171,
+        -24.419640357269063,
+        0.121
+      ]
+    },
+    {
+      "challenge_type": 4,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        -9.906780689309901,
+        39.657407079278165,
+        0.0
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -2.3927425255143504,
+        18.261143313856607,
+        0.121
+      ]
+    },
+    {
+      "challenge_type": 5,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        16.610044153564296,
+        -19.44687919668179,
+        6.702012316394594
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        6.167562070346911,
+        -14.041293205429712,
+        9.78046084919889
+      ]
+    },
+    {
+      "challenge_type": 5,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        10.858782528815818,
+        -0.7443521353918179,
+        7.2228210571000995
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -2.2731053992386308,
+        10.500157405467547,
+        3.2977633122353036
+      ]
+    },
+    {
+      "challenge_type": 6,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        26.297152713669238,
+        -35.72470331556373,
+        2.0577178046841693
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 101,
+      "start": [
+        6.816779130383431,
+        -25.640622375132516,
+        2.902703099771111
+      ]
+    },
+    {
+      "challenge_type": 6,
+      "family_id": "cf_search_and_rescue",
+      "goal": [
+        15.971784076771097,
+        3.3466700787926733,
+        2.2065203020285997
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 2024,
+      "start": [
+        -2.512379651790063,
+        19.17420047954944,
+        1.050503803495801
+      ]
+    },
+    {
+      "challenge_type": 5,
+      "family_id": "cf_autopilot",
+      "goal": [
+        -11.162809855157048,
+        -7.235988207336263,
+        2.097881220641728
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 12345,
+      "start": [
+        -6.336889686554073,
+        -22.532218204974857,
+        8.408023790686684
+      ],
+      "via": "random_task"
+    },
+    {
+      "challenge_type": 3,
+      "family_id": "cf_autopilot",
+      "goal": [
+        -58.551231477652216,
+        35.89641610561881,
+        0.703227570979797
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 777,
+      "start": [
+        -52.726552315358234,
+        -10.598032855288707,
+        1.8694929454273517
+      ],
+      "via": "random_task"
+    },
+    {
+      "challenge_type": 5,
+      "family_id": "cf_autopilot",
+      "goal": [
+        -16.870984947659167,
+        -0.05458494447471374,
+        8.542339506419488
+      ],
+      "horizon": 60,
+      "moving_platform": false,
+      "seed": 999999,
+      "start": [
+        -22.02591900090618,
+        10.007961785302328,
+        6.491537012538151
+      ],
+      "via": "random_task"
+    }
+  ]
+}

@@ -53,7 +53,7 @@ def _expected_v1_state(env, family_id):
         parts.append(env.action_buffer[i][0, :])
     parts.append([env._get_altitude_distance() / MAX_RAY_DISTANCE])
     if family_id == "cf_autopilot":
-        parts.append(env.GOAL_POS - sv[0:3])
+        parts.append(env._search_area_center - sv[0:3])
     else:
         parts.append((env._search_area_center - sv[0:3])[:2])
     return np.concatenate([np.asarray(p, dtype=np.float32).reshape(-1) for p in parts])
@@ -150,7 +150,7 @@ class _FakeEnv:
         self.action_space = type("Space", (), {"shape": (5,)})()
         self.IMG_RES = np.array([128, 128])
 
-    def _get_altitude_distance(self):
+    def _get_altitude_distance(self, nth_drone=0):
         return 5.0
 
 

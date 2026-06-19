@@ -6,10 +6,46 @@ import numpy as np
 import pybullet as p
 import pytest
 
-from swarm.constants import SIM_DT
+from swarm.constants import SEARCH_RADIUS_MAX, SIM_DT
 from swarm.protocol import MapTask
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import task_for_seed_and_type
+
+
+def _autopilot_center_and_goal(seed):
+    task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=2, family_id="cf_autopilot")
+    env = make_env(task, gui=False)
+    try:
+        obs, _ = env.reset(seed=task.map_seed)
+        sv = env._getDroneStateVector(0)
+        return (
+            np.array(env._search_area_center, dtype=float),
+            np.array(env.GOAL_POS, dtype=float),
+            np.array(obs["state"][-3:], dtype=np.float32),
+            np.array(sv[0:3], dtype=np.float32),
+        )
+    finally:
+        env.close()
+
+
+def test_autopilot_observation_is_noisy_search_clue_not_exact_goal():
+    center, _goal, state_tail, pos = _autopilot_center_and_goal(4242)
+    # the last 3 state numbers are the offset to the (noisy) search centre, exactly like main
+    np.testing.assert_allclose(state_tail, (center - pos).astype(np.float32), atol=1e-5)
+
+
+def test_autopilot_search_clue_is_deterministic_and_within_radius():
+    c1, g1, _t1, _p1 = _autopilot_center_and_goal(7)
+    c2, _g2, _t2, _p2 = _autopilot_center_and_goal(7)
+    np.testing.assert_array_equal(c1, c2)
+
+    offsets = [float(np.hypot(c1[0] - g1[0], c1[1] - g1[1]))]
+    for seed in (1, 2, 3):
+        c, g, _t, _p = _autopilot_center_and_goal(seed)
+        off = float(np.hypot(c[0] - g[0], c[1] - g[1]))
+        offsets.append(off)
+        assert off <= SEARCH_RADIUS_MAX * 1.5
+    assert max(offsets) > 0.5, "autopilot clue is never noticeably offset from the goal"
 
 
 def _manual_open_world_task() -> MapTask:
