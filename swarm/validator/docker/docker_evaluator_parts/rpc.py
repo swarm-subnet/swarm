@@ -743,10 +743,13 @@ def _run_multi_seed_rpc_sync(
                                 swarm = family.score_swarm(task, info)
                                 score = float(swarm["final_score"])
                                 per_succ = info.get("per_drone_success", [])
-                                success = bool(per_succ) and all(per_succ)
+                                success = bool(swarm.get("success", bool(per_succ) and all(per_succ)))
                                 per_fr = info.get("per_drone_failure_reason", [])
-                                failure_reason = "NONE" if success else next(
-                                    (r for r in per_fr if r != "NONE"), "NONE"
+                                failure_reason = str(
+                                    swarm.get("failure_reason")
+                                    or ("NONE" if success else next(
+                                        (r for r in per_fr if r != "NONE"), "NONE"
+                                    ))
                                 )
                                 result_metrics = {
                                     "per_drone_final_score": swarm["per_drone_final_score"],

@@ -962,7 +962,10 @@ class MovingDroneAviary(BaseRLAviary):
                 self._d_collision[i] = True
                 if self._d_failure_reason[i] == FailureReason.NONE.value:
                     self._d_failure_reason[i] = FailureReason.TILT.value
-            self._update_landing_state_multi(platform_hit, i)
+            if getattr(self, "sar_mode", False):
+                self.family_runtime.update_sar_dwell_multi(self, i)
+            else:
+                self._update_landing_state_multi(platform_hit, i)
             if self._d_collision[i] and not self._d_success[i]:
                 if self._d_failure_reason[i] == FailureReason.NONE.value:
                     self._d_failure_reason[i] = FailureReason.OBSTACLE_COLLISION.value

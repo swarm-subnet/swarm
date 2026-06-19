@@ -191,10 +191,12 @@ def _build_task_with_params(
     family_id: str = "cf_search_and_rescue",
     moving_platform: bool = False,
 ) -> MapTask:
-    if family_id == "cf_swarm_autopilot":
+    if family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
         count_rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
         n_drones = count_rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
-        starts, goals = _swarm_pads(params, challenge_type=challenge_type, seed=seed, n=n_drones)
+        starts, goals = _swarm_pads(
+            params, challenge_type=challenge_type, seed=seed, family_id=family_id, n=n_drones,
+        )
         return MapTask(
             map_seed=seed, start=starts[0], goal=goals[0], sim_dt=sim_dt,
             horizon=params['horizon'], challenge_type=challenge_type,

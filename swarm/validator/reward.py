@@ -45,6 +45,7 @@ __all__ = [
     "PARTICIPATION_REWARD",
     "_calculate_safety_term",
     "_calculate_sar_target_time",
+    "_calculate_swarm_sar_target_time",
     "_calculate_swarm_target_time",
     "_calculate_target_time",
     "_clamp",
@@ -123,6 +124,21 @@ def calculate_time_term(
     if horizon <= target_time:
         return 0.0
     return _clamp(1.0 - (t - target_time) / (horizon - target_time))
+
+
+def _calculate_swarm_sar_target_time(starts, search_centre, n_drones: int, search_radius: float) -> float:
+    """Team SAR target time: travel from the start cluster to the clue, plus the
+    area sweep divided across the swarm, plus the dwell. Dividing the sweep by the
+    drone count means more drones are expected to find the victim faster."""
+    pts = [np.asarray(s, dtype=float) for s in starts] or [np.zeros(2)]
+    cx = float(np.mean([p[0] for p in pts]))
+    cy = float(np.mean([p[1] for p in pts]))
+    sc = search_centre if search_centre is not None else (0.0, 0.0)
+    d = math.hypot(cx - float(sc[0]), cy - float(sc[1]))
+    sweep = 0.70 * math.pi * (float(search_radius) ** 2) / max(SAR_SWEEP_WIDTH * SPEED_LIMIT, 1e-6)
+    return SAR_TIME_TERM_BUFFER * (
+        d / max(SPEED_LIMIT, 1e-6) + sweep / max(int(n_drones), 1) + SAR_DWELL_SEC
+    )
 
 
 def _calculate_swarm_target_time(start, goal, n_congested: int) -> float:

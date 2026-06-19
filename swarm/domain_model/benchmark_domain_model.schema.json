@@ -7,7 +7,8 @@
       "ids": [
         "cf_autopilot",
         "cf_search_and_rescue",
-        "cf_swarm_autopilot"
+        "cf_swarm_autopilot",
+        "cf_swarm_sar"
       ]
     },
     "challenge_instance": {
@@ -328,6 +329,54 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0
+    },
+    "cf_swarm_sar": {
+      "family_id": "cf_swarm_sar",
+      "name": "Swarm Search and Rescue",
+      "description": "A swarm of 2-8 drones flown by one centralized policy, all searching for one shared victim over a much bigger search area.",
+      "display": {
+        "label": "Swarm Search and Rescue",
+        "short_label": "Swarm SAR",
+        "slug": "swarm-search-and-rescue"
+      },
+      "family_state": "incubating",
+      "emissions_state": "incubating",
+      "skill_ids": [
+        "sk_autonomous_navigation",
+        "sk_search_and_rescue"
+      ],
+      "market_vertical_ids": [
+        "mv_public_safety"
+      ],
+      "environment_types": [
+        "city",
+        "open",
+        "mountain",
+        "village",
+        "warehouse",
+        "forest"
+      ],
+      "score_schema_id": "ss_search_and_rescue_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.02,
+        "min_improvement": 0.02,
+        "early_fail_checkpoints": {
+          "50": 0.45,
+          "100": 0.65,
+          "150": 0.8
+        },
+        "min_improvement_floor": 0.007,
+        "improvement_plateau_end": 0.5
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.02,
+        "champion_min_improvement_floor": 0.007,
+        "improvement_plateau_end": 0.5
+      },
+      "emission_allocation": 0.0
     }
   },
   "policy_interfaces": {
@@ -628,6 +677,91 @@
           "shape": [
             140
           ],
+          "fill": 0.0
+        }
+      }
+    },
+    "cf_swarm_sar:submission_zip.v1": {
+      "family_id": "cf_swarm_sar",
+      "interface_version": "submission_zip.v1",
+      "num_drones_range": [2, 8],
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "depth",
+          "state"
+        ],
+        "fields": {
+          "depth": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": ["dynamic", 128, 128, 1],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": ["dynamic", 189],
+            "rank": 2,
+            "minimum_length": 16,
+            "semantic_channels": [
+              "position_xyz",
+              "orientation_rpy",
+              "linear_velocity_xyz",
+              "angular_velocity_xyz",
+              "action_history",
+              "altitude_norm",
+              "search_clue_offset_xy",
+              "teammate_rel_state"
+            ]
+          }
+        }
+      },
+      "observation_assembly": {
+        "depth": [
+          "depth_camera"
+        ],
+        "state": [
+          "position",
+          "orientation",
+          "linear_velocity",
+          "angular_velocity",
+          "action_history",
+          "altitude_norm",
+          "search_clue_offset",
+          "teammate_state"
+        ]
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": ["dynamic", 5],
+        "component_names": [
+          "dir_x",
+          "dir_y",
+          "dir_z",
+          "speed",
+          "yaw"
+        ],
+        "lower_bound": [-1.0, -1.0, -1.0, 0.0, -1.0],
+        "upper_bound": [1.0, 1.0, 1.0, 1.0, 1.0]
+      },
+      "smoke_test_observation": {
+        "depth": {
+          "shape": [128, 128, 1],
+          "fill": 0.25
+        },
+        "state": {
+          "shape": [189],
           "fill": 0.0
         }
       }

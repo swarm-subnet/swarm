@@ -448,6 +448,7 @@ SWARM_PAD_MAX_ATTEMPTS = 100              # deterministic rejection-sampling cap
 SWARM_CONGESTION_RADIUS_M = 2.0           # a teammate goal within this of mine counts as congested
 SWARM_CONGESTION_PER_NEIGHBOR_SEC = 1.0   # time-target slack per congested neighbour
 SWARM_SEARCH_RADIUS = 30.0                # m — shared search-clue radius (bigger than autopilot's 10)
+SWARM_SAR_SEARCH_RADIUS = 80.0            # m — shared SAR search-clue radius for the swarm (vs single-drone 30)
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2
