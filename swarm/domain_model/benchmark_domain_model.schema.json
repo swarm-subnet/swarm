@@ -285,7 +285,7 @@
     "cf_swarm_autopilot": {
       "family_id": "cf_swarm_autopilot",
       "name": "Swarm Autopilot",
-      "description": "Five-drone cooperative navigation: one centralized policy flies a swarm to per-drone goals while avoiding each other.",
+      "description": "A swarm of 2-8 drones flown by one centralized policy that land on a shared pool of platforms while avoiding each other.",
       "display": {
         "label": "Swarm Autopilot",
         "short_label": "Swarm",
