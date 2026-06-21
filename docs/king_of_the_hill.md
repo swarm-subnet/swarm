@@ -29,7 +29,7 @@ This document describes how the King of the Hill (KotH) emissions mechanism work
 Swarm runs **one King of the Hill per challenge family** (e.g. Autopilot, Search-and-Rescue). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**, with each one's slice proportional to how much they improved the family's best score when they took the throne.
 
 - The **current champion** of a family is always at the top of that family's lineage.
-- The **four most recent past champions** of the family continue earning until they age out of the window after subsequent dethronings.
+- The **four most recent past champions** of the family keep earning until they age out of the window — but each seat is paid for at most **7 days from when it was crowned** (see [Emission decay](#emission-decay--the-7-day-timer)).
 - Each king's share is computed once at crowning time and never recomputed.
 
 How the family slices add up is covered in [Per-family emissions](#per-family-emissions). The within-a-family split below is identical to the original single-competition design.
@@ -44,7 +44,7 @@ Winner-take-all has two failure modes that KotH addresses:
 
 1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add `0.015` of noise to pass the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, that miner's tiny jump translates to a tiny share — most of the emissions stay with the past kings whose jumps were larger.
 
-2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying for the next four dethronings — proportional to the real contribution.
+2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying — proportional to the real contribution — for up to four more dethronings, capped at 7 days per seat.
 
 KotH rewards **the act of moving the frontier**, not just the act of sitting on it.
 
@@ -69,7 +69,23 @@ Rank        Slot                          Earning
 
 After the next crowning, the king at slot `−4` leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
 
-A past king's hotkey **does not need to do anything** to keep earning — they simply stay in the lineage. Past kings are never re-evaluated; their model file may even be deleted from GitHub without affecting their share.
+A king keeps earning while three things hold: they are still in the window, their **7-day emission timer** has not run out (see below), and their submission repo is still reachable. Past kings are never re-evaluated — the share is locked at crowning — but the timer or a dead repo can switch the share off before they age out.
+
+<p align="right">(<a href="#koth-top">back to top</a>)</p>
+
+---
+
+## Emission decay — the 7-day timer
+
+A king is not paid forever for a model nobody beats. Each seat carries a **7-day timer that starts the moment it is crowned**:
+
+- While the timer is running, the seat earns its share as normal.
+- Once **7 days** pass since it was crowned — whatever its rank — the seat's slice **stops and burns**, routed to the burn UID exactly like a dropped seat. The other kings do **not** absorb it, so the subnet simply emits less. The clock is per seat: being dethroned does not pause or extend it.
+- The seat keeps its place in the window (shown at 0%) and leaves only when later crownings push it past the 5-king window.
+
+The only way to get a fresh 7 days is a **genuine improvement** that earns you a new crowning — a brand-new seat with its own clock. Surviving a weekly re-evaluation, or re-submitting the same model, does **not** reset it; the mechanism pays for progress, not for tenure.
+
+If every seat in a family has timed out, that family's entire slice burns until someone crowns a new king.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -195,11 +211,15 @@ When the validator cannot reach the backend, it falls back to the **last per-fam
 
 ### How often is my share recalculated?
 
-Never, once you have been crowned. Your `delta` and `adjusted` values are computed at the moment of crowning and locked. The only thing that changes about your share over time is the denominator (the sum of all 5 kings' `adjusted` values) — that changes only when a new king joins the window or you age out of it.
+Your `delta` and `adjusted` values are computed at the moment of crowning and locked. The denominator (the sum of all 5 kings' `adjusted` values) changes when a new king joins the window or you age out of it. Your share also drops to **zero** when your 7-day emission timer runs out (see [Emission decay](#emission-decay--the-7-day-timer)) or your repo becomes unreachable.
+
+### Do I keep earning forever if nobody beats me?
+
+No. Each seat has a **7-day timer** from crowning. If nobody beats you and you do not ship a stronger model within 7 days, your slice stops and burns until the frontier moves again. The only way to refresh it is a new crowning — see [Emission decay](#emission-decay--the-7-day-timer).
 
 ### What if I get dethroned?
 
-You stay in the window at rank `−1`. You keep earning a share for the next four dethronings, after which you age out at rank `−4`.
+You stay in the window at rank `−1` and keep earning — but only until your **7-day emission timer** runs out or you age out at rank `−4` after four more dethronings, whichever comes first.
 
 ### Can I become king twice?
 
@@ -207,7 +227,7 @@ No. The subnet enforces **one model per hotkey, lifetime**. A hotkey that has be
 
 ### What happens to a king who deletes their GitHub repo?
 
-Their share continues to flow to their hotkey. Past kings are never re-evaluated; the share is locked in at crowning. The on-chain emission goes to the original hotkey regardless of whether the public repo is still available.
+Their slice stops and burns. A king's repo is health-checked; if it is deleted or becomes unreachable the seat is treated like a dropped seat — it keeps its window slot but pays nobody, so its share burns rather than flowing to a model that can no longer be verified.
 
 ### Why is there a minimum jump (0.015) to take the throne?
 

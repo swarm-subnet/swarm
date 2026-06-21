@@ -403,7 +403,7 @@ Subnet emissions are **not** winner-take-all. They are split among the **last 5 
 
 The harder the jump, the larger the share. A late-stage jump from 0.92 → 0.95 earns more than the same absolute jump earlier in the curve, because there is less remaining headroom near a perfect score. A copycat model that barely clears the +0.015 floor earns almost nothing; a real innovation that closes a big chunk of the remaining headroom earns a dominant share for the next four dethronings.
 
-Past kings keep earning automatically. There is nothing to claim or maintain — once you have been crowned, your share is locked in and flows to your hotkey until you age out of the 5-king window. The formula and edge cases are in [docs/king_of_the_hill.md](king_of_the_hill.md).
+Past kings keep earning while they stay in the window — but a seat is paid for at most **7 days** from crowning. If nobody beats you and you do not ship a stronger model within 7 days, your slice stops and burns; the only way to refresh it is a new crowning. The share is locked at crowning (never re-evaluated upward), and it also stops if your repo becomes unreachable. The formula and edge cases are in [docs/king_of_the_hill.md](king_of_the_hill.md).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
