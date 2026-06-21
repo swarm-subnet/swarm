@@ -94,6 +94,7 @@ def build_and_tag_map(
     goal=None,
     safe_zone_radius: float = 5.0,
     sar_mode: bool = False,
+    terrain_size=None,
 ) -> BodyTagger:
     from swarm.core.maps.city import build_city as build_city_map
     from swarm.core.maps.forest import build_forest_map
@@ -115,7 +116,8 @@ def build_and_tag_map(
     if challenge_type == 1:
         build_city_map(cli, seed, safe_zones, safe_zone_radius)
     elif challenge_type == 2:
-        build_open_world(cli, seed, start=start, goal=goal, sar_mode=sar_mode)
+        _open_kw = {} if terrain_size is None else {"terrain_size": terrain_size}
+        build_open_world(cli, seed, start=start, goal=goal, sar_mode=sar_mode, **_open_kw)
     elif challenge_type == 3:
         build_mountain_map(cli, seed, safe_zones, safe_zone_radius)
     elif challenge_type == 4:

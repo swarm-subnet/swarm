@@ -6,6 +6,7 @@
       "id_prefix": "cf_",
       "ids": [
         "cf_autopilot",
+        "cf_interceptor",
         "cf_search_and_rescue",
         "cf_swarm_autopilot",
         "cf_swarm_sar"
@@ -374,6 +375,48 @@
       "benchmark_admission_policy": {
         "champion_min_improvement": 0.02,
         "champion_min_improvement_floor": 0.007,
+        "improvement_plateau_end": 0.5
+      },
+      "emission_allocation": 0.0
+    },
+    "cf_interceptor": {
+      "family_id": "cf_interceptor",
+      "name": "Interceptor",
+      "description": "Air-to-air pursuit: the miner's drone takes off, flies to a search area, finds a validator-flown target drone with its depth camera, and intercepts it. Open map only; a 36 cm drone is used so the target is visible.",
+      "display": {
+        "label": "Interceptor",
+        "short_label": "Interceptor",
+        "slug": "interceptor"
+      },
+      "family_state": "incubating",
+      "emissions_state": "incubating",
+      "skill_ids": [
+        "sk_autonomous_navigation"
+      ],
+      "market_vertical_ids": [
+        "mv_general_autonomy"
+      ],
+      "environment_types": [
+        "open"
+      ],
+      "score_schema_id": "ss_navigation_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
+        "early_fail_checkpoints": {
+          "50": 0.5,
+          "100": 0.7,
+          "150": 0.85
+        },
+        "min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.015,
+        "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0
@@ -762,6 +805,114 @@
         },
         "state": {
           "shape": [189],
+          "fill": 0.0
+        }
+      }
+    },
+    "cf_interceptor:submission_zip.v1": {
+      "family_id": "cf_interceptor",
+      "interface_version": "submission_zip.v1",
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "depth",
+          "state"
+        ],
+        "fields": {
+          "depth": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              1024,
+              1024,
+              1
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              "dynamic"
+            ],
+            "rank": 1,
+            "minimum_length": 16,
+            "semantic_channels": [
+              "position_xyz",
+              "orientation_rpy",
+              "linear_velocity_xyz",
+              "angular_velocity_xyz",
+              "action_history",
+              "altitude_norm",
+              "search_clue_offset_xy"
+            ]
+          }
+        }
+      },
+      "observation_assembly": {
+        "depth": [
+          "depth_camera_hd"
+        ],
+        "state": [
+          "position",
+          "orientation",
+          "linear_velocity",
+          "angular_velocity",
+          "action_history",
+          "altitude_norm",
+          "search_clue_offset"
+        ]
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": [
+          5
+        ],
+        "component_names": [
+          "dir_x",
+          "dir_y",
+          "dir_z",
+          "speed",
+          "yaw"
+        ],
+        "lower_bound": [
+          -1.0,
+          -1.0,
+          -1.0,
+          0.0,
+          -1.0
+        ],
+        "upper_bound": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "smoke_test_observation": {
+        "depth": {
+          "shape": [
+            1024,
+            1024,
+            1
+          ],
+          "fill": 0.25
+        },
+        "state": {
+          "shape": [
+            140
+          ],
           "fill": 0.0
         }
       }

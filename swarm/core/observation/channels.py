@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 
-from swarm.constants import MAX_RAY_DISTANCE, SWARM_NEIGHBOR_K
+from swarm.constants import INTERCEPTOR_DEPTH_RES, MAX_RAY_DISTANCE, SWARM_NEIGHBOR_K
 
 
 def action_buffer_size(ctrl_freq: int) -> int:
@@ -153,5 +153,12 @@ OBSERVATION_CHANNELS = {
         "depth_camera", "depth_camera", "image", _depth_camera,
         image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 1),
         param_image_shape=(128, 128, 1),
+    ),
+    # higher-resolution depth for cf_interceptor (a 36 cm target must be visible at range);
+    # live shape still follows env.IMG_RES, only the contract/smoke shape differs.
+    "depth_camera_hd": SensorChannel(
+        "depth_camera_hd", "depth_camera", "image", _depth_camera,
+        image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 1),
+        param_image_shape=(INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_RES, 1),
     ),
 }

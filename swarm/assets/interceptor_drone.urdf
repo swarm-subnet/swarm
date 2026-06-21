@@ -1,0 +1,57 @@
+<?xml version="1.0" ?>
+<!-- 36 cm interceptor drone: cf2x scaled x3 (mass ~s^3, inertia ~s^5, kf ~s^3) so it
+     is visible to the depth camera while flying with the same controller family. Used
+     only by cf_interceptor; all other challenge families keep the 12 cm cf2x. -->
+<robot name="interceptor_drone">
+
+  <properties arm="0.1191" kf="8.532e-9" km="6.4314e-10" thrust2weight="2.25" max_speed_kmh="60" gnd_eff_coeff="11.36859" prop_radius="6.94044e-2" drag_coeff_xy="8.2607e-6" drag_coeff_z="9.2799e-6" dw_coeff_1="2267.18" dw_coeff_2=".16" dw_coeff_3="-.11" />
+
+  <link name="base_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.729"/>
+      <inertia ixx="3.402e-3" ixy="0.0" ixz="0.0" iyy="3.402e-3" iyz="0.0" izz="5.273e-3"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 55" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="./cf2.dae" scale="3 3 3"/>
+      </geometry>
+      <material name="grey">
+        <color rgba=".5 .5 .5 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius=".18" length=".075"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="prop0_link">
+    <inertial><origin rpy="0 0 0" xyz="0.084 -0.084 0"/><mass value="0"/><inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>
+  </link>
+  <joint name="prop0_joint" type="fixed"><parent link="base_link"/><child link="prop0_link"/></joint>
+
+  <link name="prop1_link">
+    <inertial><origin rpy="0 0 0" xyz="-0.084 -0.084 0"/><mass value="0"/><inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>
+  </link>
+  <joint name="prop1_joint" type="fixed"><parent link="base_link"/><child link="prop1_link"/></joint>
+
+  <link name="prop2_link">
+    <inertial><origin rpy="0 0 0" xyz="-0.084 0.084 0"/><mass value="0"/><inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>
+  </link>
+  <joint name="prop2_joint" type="fixed"><parent link="base_link"/><child link="prop2_link"/></joint>
+
+  <link name="prop3_link">
+    <inertial><origin rpy="0 0 0" xyz="0.084 0.084 0"/><mass value="0"/><inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>
+  </link>
+  <joint name="prop3_joint" type="fixed"><parent link="base_link"/><child link="prop3_link"/></joint>
+
+  <link name="center_of_mass_link">
+    <inertial><origin rpy="0 0 0" xyz="0 0 0"/><mass value="0"/><inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>
+  </link>
+  <joint name="center_of_mass_joint" type="fixed"><parent link="base_link"/><child link="center_of_mass_link"/></joint>
+
+</robot>

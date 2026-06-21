@@ -20,7 +20,7 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from swarm.challenge_families import runtime_profile_for_task
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.protocol                import MapTask
-from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE, SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE
+from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE, SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE, INTERCEPTOR_MINER_SPEED
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -101,7 +101,11 @@ def make_env_with_initial_obs(
             **common_kwargs,
         )
 
-    env.SPEED_LIMIT = SPEED_LIMIT
+    env.SPEED_LIMIT = (
+        INTERCEPTOR_MINER_SPEED
+        if getattr(task, "family_id", "") == "cf_interceptor"
+        else SPEED_LIMIT
+    )
     env.MAX_YAW_RATE = MAX_YAW_RATE
     env.ACT_TYPE = ActionType.VEL
 

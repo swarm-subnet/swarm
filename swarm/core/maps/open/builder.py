@@ -106,22 +106,23 @@ def _terrain_z(x: float, y: float, seed: int) -> float:
 # ---------------------------------------------------------------------------
 # Terrain mesh generation
 # ---------------------------------------------------------------------------
-def _terrain_obj_path(seed: int) -> str:
+def _terrain_obj_path(seed: int, size: float = _TERRAIN_SIZE) -> str:
     os.makedirs(_TERRAIN_CACHE_DIR, exist_ok=True)
-    return os.path.join(_TERRAIN_CACHE_DIR, f"open_terrain_v{_TERRAIN_MESH_VERSION}_s{seed}.obj")
+    suffix = "" if size == _TERRAIN_SIZE else f"_z{int(round(size))}"
+    return os.path.join(_TERRAIN_CACHE_DIR, f"open_terrain_v{_TERRAIN_MESH_VERSION}_s{seed}{suffix}.obj")
 
 
-def _generate_terrain_obj(seed: int) -> str:
-    path = _terrain_obj_path(seed)
+def _generate_terrain_obj(seed: int, size: float = _TERRAIN_SIZE) -> str:
+    path = _terrain_obj_path(seed, size)
     if os.path.exists(path):
         return path
 
-    step = _TERRAIN_SIZE / _TERRAIN_RES
+    step = size / _TERRAIN_RES
     with open(path, "w") as f:
         for i in range(_TERRAIN_RES + 1):
             for j in range(_TERRAIN_RES + 1):
-                x = -_TERRAIN_SIZE / 2 + j * step
-                y = -_TERRAIN_SIZE / 2 + i * step
+                x = -size / 2 + j * step
+                y = -size / 2 + i * step
                 z = _terrain_z(x, y, seed)
                 u = j / _TERRAIN_RES
                 v = i / _TERRAIN_RES
@@ -504,8 +505,8 @@ def _obj_material_parts(obj_path: str) -> tuple[dict, ...]:
 # ---------------------------------------------------------------------------
 # Terrain spawning
 # ---------------------------------------------------------------------------
-def _spawn_terrain(cli: int, seed: int) -> None:
-    obj_path = _generate_terrain_obj(seed)
+def _spawn_terrain(cli: int, seed: int, size: float = _TERRAIN_SIZE) -> None:
+    obj_path = _generate_terrain_obj(seed, size)
     kwargs = {}
     if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH"):
         kwargs["flags"] = p.GEOM_FORCE_CONCAVE_TRIMESH
@@ -566,8 +567,9 @@ def build_open_world(
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
     sar_mode: bool = True,
+    terrain_size: float = _TERRAIN_SIZE,
 ) -> None:
-    _spawn_terrain(cli, seed)
+    _spawn_terrain(cli, seed, terrain_size)
     rng = random.Random(seed)
     sx = sy = gx = gy = None
     if start is not None:

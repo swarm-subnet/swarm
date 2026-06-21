@@ -27,6 +27,7 @@ def test_domain_model_schema_snapshot():
     expected = {
         "challenge_family_ids": [
             "cf_autopilot",
+            "cf_interceptor",
             "cf_search_and_rescue",
             "cf_swarm_autopilot",
             "cf_swarm_sar",
@@ -144,6 +145,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
 
     assert CHALLENGE_FAMILY_TO_INTERFACE_VERSIONS == {
         "cf_autopilot": ("submission_zip.v1",),
+        "cf_interceptor": ("submission_zip.v1",),
         "cf_search_and_rescue": ("submission_zip.v1",),
         "cf_swarm_autopilot": ("submission_zip.v1",),
         "cf_swarm_sar": ("submission_zip.v1",),

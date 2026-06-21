@@ -450,6 +450,56 @@ SWARM_CONGESTION_PER_NEIGHBOR_SEC = 1.0   # time-target slack per congested neig
 SWARM_SEARCH_RADIUS = 30.0                # m — shared search-clue radius (bigger than autopilot's 10)
 SWARM_SAR_SEARCH_RADIUS = 80.0            # m — shared SAR search-clue radius for the swarm (vs single-drone 30)
 
+# =============================================================================
+# INTERCEPTOR (cf_interceptor) — air-to-air pursuit, this family only
+# =============================================================================
+INTERCEPTOR_DRONE_URDF = "interceptor_drone.urdf"  # 36 cm drone shipped in swarm/assets
+INTERCEPTOR_DRONE_SCALE = 3                  # cf2x x3 ~= 36 cm diagonal
+
+INTERCEPTOR_MINER_SPEED = 6.0               # m/s — chaser velocity cap (env-local; tune later)
+INTERCEPTOR_TARGET_FLEE_FRAC = 0.75         # target flee speed / chaser speed
+INTERCEPTOR_TARGET_CRUISE_FRAC = 0.45       # target speed when not threatened
+INTERCEPTOR_REACT_RANGE_M = 12.0            # chaser distance that makes the target flee
+INTERCEPTOR_KILL_RADIUS_M = 0.15            # deep-overlap anti-tunnel guard; the catch is a real physical hit
+
+INTERCEPTOR_MIN_START_DISTANCE_M = 60.0     # min chaser-start -> target distance
+INTERCEPTOR_MAX_START_DISTANCE_M = 100.0    # max (random in between)
+INTERCEPTOR_TERRAIN_SIZE_M = 180.0          # open-map terrain extent for this family (vs 80 default)
+INTERCEPTOR_CHASE_CENTER_JITTER_M = 10.0    # the chase midpoint sits within this of the map centre
+INTERCEPTOR_SEARCH_RADIUS_MIN_M = 10.0      # search-area radius (target within this of the hint)
+INTERCEPTOR_SEARCH_RADIUS_MAX_M = 40.0      # random per task, capped here
+INTERCEPTOR_SEARCH_REFRESH_SEC = 2.0        # how often the coarse hint re-samples (radar ping)
+
+INTERCEPTOR_ALT_MIN_M = 3.0                 # target altitude band above local surface
+INTERCEPTOR_ALT_MAX_M = 25.0
+INTERCEPTOR_JINK_GAIN = 0.6                 # lateral break strength when fleeing
+INTERCEPTOR_JINK_FREQ_MIN = 0.3            # Hz (seed-picked)
+INTERCEPTOR_JINK_FREQ_MAX = 1.0
+
+INTERCEPTOR_HULL_RADIUS = DRONE_HULL_RADIUS * INTERCEPTOR_DRONE_SCALE   # 0.36 m
+INTERCEPTOR_START_PAD_RADIUS = START_PLATFORM_RADIUS * INTERCEPTOR_DRONE_SCALE  # pad sized for 36 cm
+INTERCEPTOR_START_PAD_HEIGHT = START_PLATFORM_HEIGHT * INTERCEPTOR_DRONE_SCALE
+INTERCEPTOR_TAKEOFF_BUFFER = START_PLATFORM_TAKEOFF_BUFFER * INTERCEPTOR_DRONE_SCALE
+INTERCEPTOR_TARGET_SELFCRASH_FORCE = 3.0    # N — world-contact force that counts as a target crash
+
+INTERCEPTOR_DEPTH_RES = 1024                 # env-local depth resolution (GPU at deploy)
+INTERCEPTOR_DEPTH_FAR_M = 110.0             # env-local camera far plane (m)
+INTERCEPTOR_DEPTH_MAX_M = 100.0             # env-local depth normalization ceiling (m)
+
+INTERCEPTOR_HORIZON_SEC = 60.0             # episode horizon (matches the other maps; reference catch <= ~49 s)
+INTERCEPTOR_TIME_BUFFER = 1.1              # target-time slack multiplier
+INTERCEPTOR_ACQUIRE_SLACK_SEC = 10.0       # extra par time for visual acquisition
+INTERCEPTOR_W_SUCCESS = 0.5                # score = 0.5 caught + 0.5 time (no safety term)
+INTERCEPTOR_W_TIME = 0.5
+INTERCEPTOR_SEED_OFFSET = 0x1A7E2C70       # evader/clue RNG offset
+
+if not (0.0 <= INTERCEPTOR_TARGET_FLEE_FRAC < 1.0):
+    raise ValueError("INTERCEPTOR_TARGET_FLEE_FRAC must be in [0, 1)")
+if INTERCEPTOR_MINER_SPEED <= 0.0:
+    raise ValueError("INTERCEPTOR_MINER_SPEED must be positive")
+if not (0.0 < INTERCEPTOR_MIN_START_DISTANCE_M <= INTERCEPTOR_MAX_START_DISTANCE_M):
+    raise ValueError("INTERCEPTOR start-distance bounds invalid")
+
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2
 PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX = 2.0, 4.0

@@ -34,14 +34,16 @@ def surface_z_at(cli: int, x: float, y: float, top: float = 80.0, bottom: float 
 
 
 def build_start_platform(tagger: BodyTagger, cli: int, sx: float, sy: float,
-                         surface_z: float, challenge_type: int):
+                         surface_z: float, challenge_type: int,
+                         radius: float = None, height: float = None):
     """Spawn the solid red start platform seated on `surface_z`.
 
     Returns (uids, top_z) where top_z is the platform's top face (the drone takes off
-    START_PLATFORM_TAKEOFF_BUFFER above it).
+    START_PLATFORM_TAKEOFF_BUFFER above it). `radius`/`height` override the defaults for
+    families that fly a different-sized drone (e.g. interceptor); other callers keep them.
     """
-    r = C.START_PLATFORM_RADIUS
-    h = C.START_PLATFORM_HEIGHT
+    r = C.START_PLATFORM_RADIUS if radius is None else float(radius)
+    h = C.START_PLATFORM_HEIGHT if height is None else float(height)
     # village (type 4) sits the pad on top of the surface; other maps sink it slightly
     base_z = surface_z + h / 2 + 0.03 if challenge_type == 4 else surface_z - h / 2 + 0.05
     top_z = base_z + h / 2

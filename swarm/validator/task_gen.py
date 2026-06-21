@@ -7,6 +7,10 @@ from typing import Optional, Tuple
 
 from swarm.constants import (
     CHALLENGE_TYPE_DISTRIBUTION,
+    INTERCEPTOR_CHASE_CENTER_JITTER_M,
+    INTERCEPTOR_HORIZON_SEC,
+    INTERCEPTOR_MAX_START_DISTANCE_M,
+    INTERCEPTOR_MIN_START_DISTANCE_M,
     MOVING_PLATFORM_PROB,
     MOVING_PLATFORM_SEED_OFFSET,
     SWARM_COUNT_SEED_OFFSET,
@@ -191,6 +195,24 @@ def _build_task_with_params(
     family_id: str = "cf_search_and_rescue",
     moving_platform: bool = False,
 ) -> MapTask:
+    if family_id == "cf_interceptor":
+        # chaser and target on opposite sides of a near-centre midpoint, 60-100 m apart,
+        # so the chase fits inside the (larger) open terrain. z values are placeholders;
+        # spawn_task_world reseats the chaser on its pad and lifts the target airborne.
+        rng = random.Random(seed)
+        gap = rng.uniform(INTERCEPTOR_MIN_START_DISTANCE_M, INTERCEPTOR_MAX_START_DISTANCE_M)
+        ang = rng.uniform(0.0, 2.0 * math.pi)
+        cx = rng.uniform(-INTERCEPTOR_CHASE_CENTER_JITTER_M, INTERCEPTOR_CHASE_CENTER_JITTER_M)
+        cy = rng.uniform(-INTERCEPTOR_CHASE_CENTER_JITTER_M, INTERCEPTOR_CHASE_CENTER_JITTER_M)
+        hx, hy = 0.5 * gap * math.cos(ang), 0.5 * gap * math.sin(ang)
+        start = (cx - hx, cy - hy, rng.uniform(TYPE_2_START_H_MIN, TYPE_2_START_H_MAX))
+        goal = (cx + hx, cy + hy, rng.uniform(TYPE_2_H_MIN, TYPE_2_H_MAX))
+        return MapTask(
+            map_seed=seed, start=start, goal=goal, sim_dt=sim_dt,
+            horizon=INTERCEPTOR_HORIZON_SEC, challenge_type=challenge_type,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+        )
+
     if family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
         count_rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
         n_drones = count_rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
@@ -253,6 +275,8 @@ def _build_task_for_type(
     family_id: str = "cf_search_and_rescue",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
+    if family_id == "cf_interceptor":
+        challenge_type = 2
     params = _resolve_params(seed, challenge_type)
     resolved = _resolve_moving_platform(seed, challenge_type, family_id, moving_platform)
     return _build_task_with_params(

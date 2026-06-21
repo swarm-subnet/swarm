@@ -18,6 +18,7 @@ from swarm.core.observation import assemble, assemble_batch, observation_space, 
 from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
+    INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
     LIGHT_RANDOMIZATION_ENABLED,
     SAFETY_DISTANCE_SAFE,
@@ -198,7 +199,18 @@ class MovingDroneAviary(BaseRLAviary):
         if self.OBS_TYPE != ObservationType.RGB:
             raise ValueError("MovingDroneAviary only supports ObservationType.RGB observations.")
 
-        enhanced_width, enhanced_height = 128, 128
+        self._depth_far_m = DEPTH_FAR
+        self._depth_max_m = DEPTH_MAX_M
+        self._alt_ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
+        if getattr(self.family_runtime, "family_id", "") == "cf_interceptor":
+            from swarm.challenge_families.interceptor import make_interceptor_control
+            self.ctrl = [make_interceptor_control(self) for _ in range(self.NUM_DRONES)]
+            self._depth_far_m = float(INTERCEPTOR_DEPTH_FAR_M)
+            self._depth_max_m = float(INTERCEPTOR_DEPTH_MAX_M)
+            self._alt_ray_origin_offset = float(INTERCEPTOR_HULL_RADIUS - ALTITUDE_RAY_INSET)
+            enhanced_width = enhanced_height = int(INTERCEPTOR_DEPTH_RES)
+        else:
+            enhanced_width, enhanced_height = 128, 128
         self.IMG_RES = np.array([enhanced_width, enhanced_height])
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
 
@@ -222,6 +234,14 @@ class MovingDroneAviary(BaseRLAviary):
     def _sim_dt(self) -> float:
         """Physics step in seconds (1 / CTRL_FREQ)."""
         return 1.0 / self.CTRL_FREQ
+
+    def _parseURDFParameters(self):
+        """For cf_interceptor, point self.URDF at the 36 cm drone before BaseAviary parses
+        and loads it (both _parseURDFParameters and _housekeeping read self.URDF)."""
+        if getattr(self.family_runtime, "family_id", "") == "cf_interceptor":
+            from swarm.challenge_families.interceptor import ensure_interceptor_urdf_in_gym_assets
+            self.URDF = ensure_interceptor_urdf_in_gym_assets()
+        return super()._parseURDFParameters()
 
     def _get_movement_pattern_from_seed(self, seed: int) -> str:
         """Deterministically select movement pattern based on seed."""
@@ -569,7 +589,7 @@ class MovingDroneAviary(BaseRLAviary):
                 fov=self._fov,
                 aspect=aspect,
                 nearVal=0.05,
-                farVal=DEPTH_FAR,
+                farVal=getattr(self, "_depth_far_m", DEPTH_FAR),
                 physicsClientId=cli
             )
             self._cached_proj_matrix = DRONE_CAM_PRO
@@ -598,7 +618,7 @@ class MovingDroneAviary(BaseRLAviary):
         cli = getattr(self, "CLIENT", 0)
         pos = self.pos[nth_drone]
 
-        ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
+        ray_origin_offset = getattr(self, "_alt_ray_origin_offset", DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET)
         start = [pos[0], pos[1], pos[2] - ray_origin_offset]
         end = [pos[0], pos[1], pos[2] - MAX_RAY_DISTANCE]
 
@@ -611,15 +631,21 @@ class MovingDroneAviary(BaseRLAviary):
         return MAX_RAY_DISTANCE
 
     def _process_depth(self, depth_buffer: np.ndarray) -> np.ndarray:
-        """Convert PyBullet depth buffer to normalized depth map [0,1] for 0.5-20m range."""
+        """Convert PyBullet depth buffer to a normalized depth map in [0,1].
+
+        Range is env-local (``_depth_far_m`` / ``_depth_max_m``) so cf_interceptor can see
+        out to ~100 m; all other families keep the 0.5-20 m default.
+        """
+        far = getattr(self, "_depth_far_m", DEPTH_FAR)
+        dmax = getattr(self, "_depth_max_m", DEPTH_MAX_M)
         depth_buffer = np.clip(depth_buffer, 0.0, 1.0)
-        
-        denominator = DEPTH_FAR - (DEPTH_FAR - DEPTH_NEAR) * depth_buffer
+
+        denominator = far - (far - DEPTH_NEAR) * depth_buffer
         denominator = np.maximum(denominator, DEPTH_NEAR * 1e-6)
-        
-        depth_meters = DEPTH_FAR * DEPTH_NEAR / denominator
-        depth_clipped = np.clip(depth_meters, DEPTH_MIN_M, DEPTH_MAX_M)
-        depth_normalized = (depth_clipped - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)
+
+        depth_meters = far * DEPTH_NEAR / denominator
+        depth_clipped = np.clip(depth_meters, DEPTH_MIN_M, dmax)
+        depth_normalized = (depth_clipped - DEPTH_MIN_M) / (dmax - DEPTH_MIN_M)
         return depth_normalized.astype(np.float32)[..., np.newaxis]
 
     def _check_collision(self, nth_drone: int = 0) -> tuple:
@@ -656,6 +682,7 @@ class MovingDroneAviary(BaseRLAviary):
         else:
             end_platform_uids = getattr(self, '_end_platform_uids', ())
         exempt = {drone_id} | getattr(self, "_platform_uids", frozenset())
+        exempt = exempt | getattr(self, "_collision_exempt_uids", frozenset())
         if getattr(self, "sar_mode", False):
             exempt = exempt | {getattr(self, "PLANE_ID", 0)}
         platform_hit = False
@@ -1111,6 +1138,7 @@ class MovingDroneAviary(BaseRLAviary):
                 (self.NUM_DRONES, 4),
             )
         self._update_moving_platform()
+        self.family_runtime.advance_world(self)
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if (
                 self.PYB_STEPS_PER_CTRL > 1
@@ -1144,6 +1172,7 @@ class MovingDroneAviary(BaseRLAviary):
                     self._groundEffect(clipped_action[i, :], i)
                     self._drag(self.last_clipped_action[i, :], i)
                     self._downwash(i)
+            self.family_runtime.apply_world_physics(self)
             if self.PHYSICS != Physics.DYN:
                 p.stepSimulation(physicsClientId=self.CLIENT)
             self.last_clipped_action = clipped_action

@@ -147,6 +147,16 @@ class ChallengeFamilyRuntime:
     def post_step_update(self, env: Any) -> None:
         _ = env
 
+    def advance_world(self, env: Any) -> None:
+        """Per control step, before physics: advance family-owned world entities
+        (e.g. the interceptor target drone). No-op for families without one."""
+        _ = env
+
+    def apply_world_physics(self, env: Any) -> None:
+        """Per PyBullet substep, before stepSimulation: apply forces to family-owned
+        bodies (e.g. the interceptor target's rotors). No-op by default."""
+        _ = env
+
     def protected_body_uids(self, env: Any) -> set[int]:
         _ = env
         return set()

@@ -12,6 +12,7 @@ from .base import (
     ChallengeFamilyRuntime,
     ChallengeFamilyRuntimeError,
 )
+from .interceptor import InterceptorChallengeFamily
 from .search_and_rescue import SearchAndRescueChallengeFamily
 from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
@@ -25,6 +26,7 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_autopilot": AutopilotChallengeFamily(),
     "cf_swarm_autopilot": SwarmAutopilotChallengeFamily(),
     "cf_swarm_sar": SwarmSarChallengeFamily(),
+    "cf_interceptor": InterceptorChallengeFamily(),
 }
 
 
@@ -147,6 +149,7 @@ __all__ = [
     "ChallengeFamilyRuntime",
     "ChallengeFamilyRuntimeError",
     "DEFAULT_RUNTIME_FAMILY_ID",
+    "InterceptorChallengeFamily",
     "SearchAndRescueChallengeFamily",
     "SwarmAutopilotChallengeFamily",
     "SwarmSarChallengeFamily",

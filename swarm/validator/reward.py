@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 
 from swarm.constants import (
     HOVER_SEC,
+    INTERCEPTOR_ACQUIRE_SLACK_SEC,
+    INTERCEPTOR_MINER_SPEED,
+    INTERCEPTOR_TARGET_FLEE_FRAC,
+    INTERCEPTOR_TIME_BUFFER,
     REWARD_W_SAFETY,
     REWARD_W_SUCCESS,
     REWARD_W_TIME,
@@ -43,6 +47,7 @@ from swarm.constants import (
 __all__ = [
     "PARTICIPATION_REASONS",
     "PARTICIPATION_REWARD",
+    "_calculate_interceptor_target_time",
     "_calculate_safety_term",
     "_calculate_sar_target_time",
     "_calculate_swarm_sar_target_time",
@@ -139,6 +144,21 @@ def _calculate_swarm_sar_target_time(starts, search_centre, n_drones: int, searc
     return SAR_TIME_TERM_BUFFER * (
         d / max(SPEED_LIMIT, 1e-6) + sweep / max(int(n_drones), 1) + SAR_DWELL_SEC
     )
+
+
+def _calculate_interceptor_target_time(task: "MapTask") -> float:
+    """Par time to intercept: travel to close the live start->target gap at the chaser's
+    net closing speed, plus a fixed slack for visually acquiring the target."""
+    speed = float(INTERCEPTOR_MINER_SPEED)
+    flee = float(INTERCEPTOR_TARGET_FLEE_FRAC)
+    if speed <= 0.0:
+        raise ValueError("INTERCEPTOR_MINER_SPEED must be positive")
+    if not (0.0 <= flee < 1.0):
+        raise ValueError("INTERCEPTOR_TARGET_FLEE_FRAC must be in [0, 1)")
+    gap = float(np.linalg.norm(np.asarray(task.goal, dtype=float) - np.asarray(task.start, dtype=float)))
+    closing = speed * (1.0 - flee * 0.5)  # effective rate: the target cruises until the chaser closes
+    par = INTERCEPTOR_TIME_BUFFER * (gap / max(closing, 1e-6) + INTERCEPTOR_ACQUIRE_SLACK_SEC)
+    return min(par, float(task.horizon) * 0.95)
 
 
 def _calculate_swarm_target_time(start, goal, n_congested: int) -> float:
