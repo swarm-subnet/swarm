@@ -200,5 +200,6 @@ def test_policy_interface_contracts_are_registry_backed():
 
     assert contract["contract_filename"] == "swarm_policy_contract.json"
     assert contract["entry_point"]["class_name"] == "DroneFlightController"
-    assert contract["observation_space"]["fields"]["depth"]["shape"] == [128, 128, 1]
-    assert contract["action_space"]["shape"] == [5]
+    assert contract["observation_space"]["fields"]["depth"]["shape"] == [256, 256, 1]
+    assert contract["observation_space"]["fields"]["rgb"]["shape"] == [256, 256, 3]
+    assert contract["action_space"]["shape"] == [6]

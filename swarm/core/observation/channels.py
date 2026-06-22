@@ -5,7 +5,13 @@ from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 
-from swarm.constants import INTERCEPTOR_DEPTH_RES, MAX_RAY_DISTANCE, SWARM_NEIGHBOR_K
+from swarm.constants import (
+    INTERCEPTOR_DEPTH_RES,
+    MAX_RAY_DISTANCE,
+    SAR_DEPTH_RES,
+    SAR_RGB_RES,
+    SWARM_NEIGHBOR_K,
+)
 
 
 def action_buffer_size(ctrl_freq: int) -> int:
@@ -106,6 +112,13 @@ def _depth_camera(env, sv, ctx):
     return ctx["depth"]
 
 
+def _rgb_camera(env, sv, ctx):
+    """On-demand RGB for SAR: the drone's frame if it requested one this step (and is under
+    its budget), otherwise a zero frame. Populated by the env before the obs is assembled."""
+    d = int(ctx.get("self_index", 0))
+    return np.asarray(env._rgb_buffer[d], dtype=np.float32)
+
+
 def _action_dim(env) -> int:
     return int(env.action_space.shape[-1])
 
@@ -160,5 +173,18 @@ OBSERVATION_CHANNELS = {
         "depth_camera_hd", "depth_camera", "image", _depth_camera,
         image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 1),
         param_image_shape=(INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_RES, 1),
+    ),
+    # 256 px depth for the SAR families (a victim is a recognizable shape, not a blob);
+    # live shape still follows env.IMG_RES, only the contract/smoke shape differs.
+    "depth_camera_md": SensorChannel(
+        "depth_camera_md", "depth_camera", "image", _depth_camera,
+        image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 1),
+        param_image_shape=(SAR_DEPTH_RES, SAR_DEPTH_RES, 1),
+    ),
+    # On-demand colour frame for SAR; zeros unless the drone requested one this step.
+    "rgb_camera": SensorChannel(
+        "rgb_camera", "rgb_camera", "image", _rgb_camera,
+        image_shape=lambda e: (SAR_RGB_RES, SAR_RGB_RES, 3),
+        param_image_shape=(SAR_RGB_RES, SAR_RGB_RES, 3),
     ),
 }

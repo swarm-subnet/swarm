@@ -10,9 +10,12 @@ class DroneFlightController:
     locate a humanoid victim on the ground and hover over it.
 
     Observation Space:
-        Dictionary with two keys:
-        - "depth": numpy array (128, 128, 1) — normalized depth map [0,1] for the
-          0.5-20m range. Use this to find the victim with vision.
+        Dictionary with three keys:
+        - "depth": numpy array (256, 256, 1) — normalized depth map [0,1] for the
+          0.5-30m range. Use this to find the victim with vision.
+        - "rgb": numpy array (256, 256, 3) — colour frame in [0,1], on demand. All
+          zeros unless your previous action requested it (see Action Space); you may
+          request up to 40 colour frames per episode.
         - "state": numpy array (N,) — flight state vector. Index ranges:
             [0:3]   drone position (x, y, z) in meters
             [3:6]   orientation (roll, pitch, yaw)
@@ -33,10 +36,12 @@ class DroneFlightController:
           episode as a terminal failure.
 
     Action Space:
-        numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
+        numpy array (6,) containing [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
         - dir_x, dir_y, dir_z: direction components, range [-1, 1]
         - speed: thrust multiplier, range [0, 1]
         - yaw: target yaw normalized, range [-1, 1] maps to [-π, π]
+        - rgb_request: range [0, 1]. Set above 0.5 to ask for a colour frame in the
+          next observation's "rgb" key (max 40 per episode; ignored beyond that).
 
     Scoring:
         score = 0.45 × success + 0.45 × time + 0.10 × safety
@@ -68,13 +73,15 @@ class DroneFlightController:
         Compute flight action for current observation.
         
         Args:
-            observation: dict with "depth" (128,128,1) and "state" (N,) arrays
-        
+            observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and
+                "state" (N,) arrays
+
         Returns:
-            numpy array (5,) containing [dir_x, dir_y, dir_z, speed, yaw]
+            numpy array (6,) containing [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
         """
-        action = np.random.uniform(-1, 1, size=5)
+        action = np.random.uniform(-1, 1, size=6)
         action[3] = np.clip(action[3], 0, 1)
+        action[5] = 0.0  # rgb_request: 0 = do not ask for a colour frame
         return action
     
     def reset(self):

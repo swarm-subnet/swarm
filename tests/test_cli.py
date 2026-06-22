@@ -22,7 +22,10 @@ def _write_smoke_ready_agent(src, *, speed: float = 0.5):
                 "        return None",
                 "",
                 "    def act(self, observation):",
-                f"        return np.array([0.0, 0.0, 0.0, {speed}, 0.0], dtype=np.float32)",
+                "        n = 6 if isinstance(observation, dict) and 'rgb' in observation else 5",
+                "        a = np.zeros(n, dtype=np.float32)",
+                f"        a[3] = {speed}",
+                "        return a",
                 "",
             ]
         )
@@ -185,7 +188,7 @@ def test_model_verify_passes_for_valid_rpc_submission(tmp_path, capsys):
                     "        return None",
                     "",
                     "    def act(self, observation):",
-                    "        return np.array([0.0, 0.0, 0.0, 0.5, 0.0], dtype=np.float32)",
+                    "        return np.array([0.0, 0.0, 0.0, 0.5, 0.0, 0.0], dtype=np.float32)",
                     "",
                 ]
             ),

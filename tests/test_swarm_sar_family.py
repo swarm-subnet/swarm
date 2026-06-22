@@ -70,7 +70,9 @@ def _rollout(seed, steps=50):
         assert obs["state"].ndim == 2 and obs["state"].shape[0] == n
         state_width = int(obs["state"].shape[1])
         for _ in range(steps):
-            _o, _r, term, trunc, info = env.step(np.zeros((n, 5), dtype=np.float32))
+            _o, _r, term, trunc, info = env.step(
+                np.zeros((n, env.action_space.shape[-1]), dtype=np.float32)
+            )
             if term or trunc:
                 break
         return family.score_swarm(task, info), state_width, n
@@ -112,12 +114,13 @@ def test_swarm_sar_smoke_obs_batches_and_action_validates():
     action_space = contract["action_space"]
     for n in (SWARM_MIN_DRONES, SWARM_MAX_DRONES):
         obs = build_smoke_test_observation("cf_swarm_sar", "submission_zip.v1", num_drones=n)
-        assert obs["depth"].shape == (n, 128, 128, 1)
-        assert obs["state"].shape == (n, 189)
-        validate_action_output(np.zeros((n, 5), dtype=np.float32), action_space, num_drones=n)
+        assert obs["depth"].shape == (n, 256, 256, 1)
+        assert obs["rgb"].shape == (n, 256, 256, 3)
+        assert obs["state"].shape == (n, 214)
+        validate_action_output(np.zeros((n, 6), dtype=np.float32), action_space, num_drones=n)
 
     with pytest.raises(PolicyInterfaceError):
-        validate_action_output(np.zeros((3, 5), dtype=np.float32), action_space, num_drones=SWARM_MAX_DRONES)
+        validate_action_output(np.zeros((3, 6), dtype=np.float32), action_space, num_drones=SWARM_MAX_DRONES)
 
 
 def test_swarm_sar_shared_clue_and_single_victim():

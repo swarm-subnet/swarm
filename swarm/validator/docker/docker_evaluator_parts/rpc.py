@@ -455,6 +455,7 @@ def _run_multi_seed_rpc_sync(
                         rpc_disconnected = False
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
+                        act_dim = int(env.action_space.shape[-1])
                         if n_drones > 1:
                             lo, hi = env.action_space.low, env.action_space.high
                         else:
@@ -513,7 +514,7 @@ def _run_multi_seed_rpc_sync(
                                         hard_cap_sec=step_timeout,
                                     ).strike:
                                         strikes += 1
-                                        action = np.zeros(5, dtype=np.float32)
+                                        action = np.zeros(act_dim * n_drones, dtype=np.float32)
                                         _trace(
                                             f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
                                             f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) "
@@ -534,7 +535,7 @@ def _run_multi_seed_rpc_sync(
                             except asyncio.TimeoutError:
                                 act_ms = (time.perf_counter() - t_act_start) * 1000
                                 strikes += 1
-                                action = np.zeros(5, dtype=np.float32)
+                                action = np.zeros(act_dim * n_drones, dtype=np.float32)
                                 if use_ref:
                                     hard_cap_hits += 1
                                 _trace(
@@ -565,7 +566,7 @@ def _run_multi_seed_rpc_sync(
                                     )
                                     break
                             except Exception as e:
-                                action = np.zeros(5, dtype=np.float32)
+                                action = np.zeros(act_dim * n_drones, dtype=np.float32)
                                 err_txt = f"{type(e).__name__}: {e}"
                                 strikes += 1
                                 _trace(
@@ -596,9 +597,9 @@ def _run_multi_seed_rpc_sync(
                                     np.asarray(action, dtype=np.float32).reshape(-1),
                                     nan=0.0, posinf=0.0, neginf=0.0,
                                 )
-                                if raw_act.size != 5 * n_drones:
-                                    raw_act = np.zeros(5 * n_drones, dtype=np.float32)
-                                act = np.clip(raw_act.reshape(n_drones, 5), lo, hi)
+                                if raw_act.size != act_dim * n_drones:
+                                    raw_act = np.zeros(act_dim * n_drones, dtype=np.float32)
+                                act = np.clip(raw_act.reshape(n_drones, act_dim), lo, hi)
                                 if (
                                     hasattr(env, "ACT_TYPE")
                                     and hasattr(env, "SPEED_LIMIT")
@@ -621,8 +622,8 @@ def _run_multi_seed_rpc_sync(
                                     np.asarray(action, dtype=np.float32).reshape(-1),
                                     nan=0.0, posinf=0.0, neginf=0.0,
                                 )
-                                if raw_act.size != 5:
-                                    raw_act = np.zeros(5, dtype=np.float32)
+                                if raw_act.size != act_dim:
+                                    raw_act = np.zeros(act_dim, dtype=np.float32)
                                 act = np.clip(raw_act, lo, hi)
 
                                 if hasattr(env, "ACT_TYPE") and hasattr(

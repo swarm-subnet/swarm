@@ -44,6 +44,14 @@ DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
 DEPTH_FAR = 30.0                        # PyBullet camera far plane (meters)
 DEPTH_MIN_M = 0.5                       # Minimum useful depth range (meters)
 DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
+
+# SAR families (cf_search_and_rescue, cf_swarm_sar) — sharper, farther depth so a
+# victim is a recognizable shape, plus an on-demand RGB frame the policy can request.
+SAR_DEPTH_RES = 256                     # depth resolution for SAR (vs 128 default)
+SAR_DEPTH_MAX_M = 30.0                  # depth normalization ceiling for SAR (vs 20)
+SAR_RGB_RES = 256                       # on-demand RGB frame resolution
+SAR_RGB_REQUEST_CAP = 40               # per-drone RGB requests allowed per episode
+
 # Search area parameters
 SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
 SEARCH_RADIUS_MIN = 0.0                 # m — min per-seed autopilot search radius (GPS-style clue)

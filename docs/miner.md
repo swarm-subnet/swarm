@@ -99,8 +99,8 @@ class DroneFlightController:
         self.model = PPO.load("./my_model.zip")
 
     def act(self, observation):
-        # observation: dict with "depth" (128,128,1) and "state" (N,)
-        # Return action array [dir_x, dir_y, dir_z, speed, yaw]
+        # observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and "state" (N,)
+        # Return action array [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
         action, _ = self.model.predict(observation, deterministic=True)
         return action
 
@@ -129,7 +129,8 @@ Submissions must be ≤ **50 MiB** compressed.
 
 | Field | Shape | Description |
 |-------|-------|-------------|
-| `depth` | (128, 128, 1) | Normalized depth map (0.5m – 20m range) |
+| `depth` | (256, 256, 1) | Normalized depth map (0.5m – 30m range) |
+| `rgb` | (256, 256, 3) | On-demand colour frame in [0,1]; all zeros unless your previous action requested it (max 40 requests per episode) |
 | `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
 The search clue is a 2D (Δx, Δy) offset sampled uniformly inside a 30m circle around the victim's true XY (no Z component in V5). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
@@ -143,6 +144,7 @@ The search clue is a 2D (Δx, Δy) offset sampled uniformly inside a 30m circle 
 | 2 | dir_z | [-1, 1] | Direction Z component |
 | 3 | speed | [0, 1] | Thrust multiplier |
 | 4 | yaw | [-1, 1] | Target yaw angle (maps to [-π, π]) |
+| 5 | rgb_request | [0, 1] | Set above 0.5 to receive a colour frame in the next observation's `rgb` (max 40 per episode) |
 
 **Constraints:**
 - Max velocity: 3.0 m/s

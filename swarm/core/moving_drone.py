@@ -8,6 +8,7 @@ import numpy as np
 import pybullet as p
 from PIL import Image
 
+from gymnasium import spaces
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import (
     DroneModel, Physics, ActionType, ObservationType, ImageType,
@@ -19,6 +20,7 @@ from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
+    SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
     LIGHT_RANDOMIZATION_ENABLED,
     SAFETY_DISTANCE_SAFE,
@@ -35,6 +37,9 @@ from swarm.constants import (
     CULL_MIN_AABB_SPAN, CULL_MIN_FACES, CULL_MIN_TOTAL_FACES,
     SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE,
 )
+
+# Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
+_SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
 
 
 @functools.lru_cache(maxsize=4096)
@@ -202,17 +207,30 @@ class MovingDroneAviary(BaseRLAviary):
         self._depth_far_m = DEPTH_FAR
         self._depth_max_m = DEPTH_MAX_M
         self._alt_ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
-        if getattr(self.family_runtime, "family_id", "") == "cf_interceptor":
+        family_id = getattr(self.family_runtime, "family_id", "")
+        self._sar_rgb_enabled = family_id in _SAR_RGB_FAMILIES
+        if family_id == "cf_interceptor":
             from swarm.challenge_families.interceptor import make_interceptor_control
             self.ctrl = [make_interceptor_control(self) for _ in range(self.NUM_DRONES)]
             self._depth_far_m = float(INTERCEPTOR_DEPTH_FAR_M)
             self._depth_max_m = float(INTERCEPTOR_DEPTH_MAX_M)
             self._alt_ray_origin_offset = float(INTERCEPTOR_HULL_RADIUS - ALTITUDE_RAY_INSET)
             enhanced_width = enhanced_height = int(INTERCEPTOR_DEPTH_RES)
+        elif self._sar_rgb_enabled:
+            self._depth_far_m = float(SAR_DEPTH_MAX_M)
+            self._depth_max_m = float(SAR_DEPTH_MAX_M)
+            enhanced_width = enhanced_height = int(SAR_DEPTH_RES)
         else:
             enhanced_width, enhanced_height = 128, 128
         self.IMG_RES = np.array([enhanced_width, enhanced_height])
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
+
+        # on-demand RGB state (SAR only): per-drone request budget + the frame served this step
+        if self._sar_rgb_enabled:
+            self._rgb_request_count = np.zeros(self.NUM_DRONES, dtype=np.int32)
+            self._rgb_buffer = np.zeros(
+                (self.NUM_DRONES, SAR_RGB_RES, SAR_RGB_RES, 3), dtype=np.float32
+            )
 
         self._clue_dim = int(self.family_runtime.state_clue_dim(task))
         self._obs_layout = self.family_runtime.observation_assembly(task)
@@ -242,6 +260,39 @@ class MovingDroneAviary(BaseRLAviary):
             from swarm.challenge_families.interceptor import ensure_interceptor_urdf_in_gym_assets
             self.URDF = ensure_interceptor_urdf_in_gym_assets()
         return super()._parseURDFParameters()
+
+    def _actionSpace(self):
+        """SAR adds a 6th action value per drone: the RGB-on-demand request (0..1, fires above
+        0.5). Runs inside BaseRLAviary.__init__, so it gates on family_runtime (set before super)
+        and rebuilds the action buffer to the wider width that base seeded at 5."""
+        space = super()._actionSpace()
+        fam = getattr(getattr(self, "family_runtime", None), "family_id", "")
+        if fam not in _SAR_RGB_FAMILIES or self.ACT_TYPE != ActionType.VEL:
+            return space
+        low = np.concatenate(
+            [space.low, np.zeros((self.NUM_DRONES, 1), dtype=space.low.dtype)], axis=1
+        )
+        high = np.concatenate(
+            [space.high, np.ones((self.NUM_DRONES, 1), dtype=space.high.dtype)], axis=1
+        )
+        self.action_buffer.clear()
+        for _ in range(self.ACTION_BUFFER_SIZE):
+            self.action_buffer.append(np.zeros((self.NUM_DRONES, low.shape[1])))
+        return spaces.Box(low=low, high=high, dtype=np.float32)
+
+    def _preprocessAction(self, action):
+        """For SAR, coerce a wrong-width action to the env's action width before the base buffers
+        it, so a stray caller cannot corrupt the action-history buffer. Production always sends the
+        right width (rpc clips to action_space); other families pass straight through unchanged."""
+        if getattr(self, "_sar_rgb_enabled", False):
+            arr = np.asarray(action)
+            expected = int(self.action_space.shape[-1])
+            if arr.ndim == 2 and arr.shape[1] != expected:
+                fixed = np.zeros((arr.shape[0], expected), dtype=np.float32)
+                w = min(expected, arr.shape[1])
+                fixed[:, :w] = arr[:, :w]
+                return super()._preprocessAction(fixed)
+        return super()._preprocessAction(action)
 
     def _get_movement_pattern_from_seed(self, seed: int) -> str:
         """Deterministically select movement pattern based on seed."""
@@ -633,8 +684,8 @@ class MovingDroneAviary(BaseRLAviary):
     def _process_depth(self, depth_buffer: np.ndarray) -> np.ndarray:
         """Convert PyBullet depth buffer to a normalized depth map in [0,1].
 
-        Range is env-local (``_depth_far_m`` / ``_depth_max_m``) so cf_interceptor can see
-        out to ~100 m; all other families keep the 0.5-20 m default.
+        Range is env-local (``_depth_far_m`` / ``_depth_max_m``): cf_interceptor sees out to
+        ~100 m, the SAR families to 30 m, and the rest keep the 0.5-20 m default.
         """
         far = getattr(self, "_depth_far_m", DEPTH_FAR)
         dmax = getattr(self, "_depth_max_m", DEPTH_MAX_M)
@@ -1044,6 +1095,10 @@ class MovingDroneAviary(BaseRLAviary):
         self._d_failure_reason = [FailureReason.NONE.value] * n
         self.family_runtime.reset_env_state(self)
 
+        if getattr(self, "_sar_rgb_enabled", False):
+            self._rgb_request_count[:] = 0
+            self._rgb_buffer.fill(0.0)
+
         self._reset_action_buffer()
 
         if self.NUM_DRONES > 1:
@@ -1178,6 +1233,7 @@ class MovingDroneAviary(BaseRLAviary):
             self.last_clipped_action = clipped_action
         self._updateAndStoreKinematicInformation()
         self._process_step_updates()
+        self._update_rgb_requests(action)
         obs = self._computeObs()
         reward = self._computeReward()
         terminated = self._computeTerminated()
@@ -1363,3 +1419,52 @@ class MovingDroneAviary(BaseRLAviary):
         state_vec = self._getDroneStateVector(0)
 
         return assemble(self._obs_layout, self, state_vec, {"depth": depth})
+
+    # -------- on-demand RGB (SAR families) ------------------------------- #
+    def _render_onboard_rgb(self, nth_drone: int) -> np.ndarray:
+        """Render the drone's forward RGB frame from the same camera as the depth obs,
+        normalized to [0, 1]. Deterministic: TINY_RENDERER + the env's seeded light."""
+        cli = getattr(self, "CLIENT", 0)
+        res = int(SAR_RGB_RES)
+        drone_pos = self.pos[nth_drone, :]
+        rot_mat = np.array(p.getMatrixFromQuaternion(self.quat[nth_drone, :])).reshape(3, 3)
+        forward = rot_mat @ np.array([1.0, 0.0, 0.0])
+        forward = forward / np.linalg.norm(forward)
+        up = rot_mat @ np.array([0.0, 0.0, 1.0])
+        camera_pos = drone_pos + forward * 0.13 + up * 0.05
+        target = camera_pos + forward * 20.0
+        view = p.computeViewMatrix(
+            cameraEyePosition=camera_pos,
+            cameraTargetPosition=target,
+            cameraUpVector=up.tolist(),
+            physicsClientId=cli,
+        )
+        proj = p.computeProjectionMatrixFOV(
+            fov=self._fov, aspect=1.0, nearVal=0.05,
+            farVal=getattr(self, "_depth_far_m", DEPTH_FAR), physicsClientId=cli,
+        )
+        _w, _h, rgb, _dep, _seg = p.getCameraImage(
+            width=res, height=res, shadow=0, renderer=p.ER_TINY_RENDERER,
+            viewMatrix=view, projectionMatrix=proj, lightDirection=self._light_direction,
+            flags=p.ER_NO_SEGMENTATION_MASK, physicsClientId=cli,
+        )
+        return np.reshape(rgb, (res, res, 4))[:, :, :3].astype(np.float32) / 255.0
+
+    def _update_rgb_requests(self, action) -> None:
+        """Serve the on-demand RGB for this step: zero every drone's slot, then render a frame
+        only for drones whose 6th action value asked (> 0.5) and that are under their per-episode
+        budget. Leaves obs["rgb"] zero-filled otherwise so the slot is always present."""
+        if not getattr(self, "_sar_rgb_enabled", False):
+            return
+        self._rgb_buffer.fill(0.0)
+        act = np.asarray(action, dtype=np.float32)
+        if act.ndim == 1:
+            act = act[None, :]
+        if act.shape[-1] <= 5:
+            return
+        for i in range(self.NUM_DRONES):
+            if self.NUM_DRONES > 1 and self._frozen[i]:
+                continue
+            if float(act[i, 5]) > 0.5 and int(self._rgb_request_count[i]) < SAR_RGB_REQUEST_CAP:
+                self._rgb_request_count[i] += 1
+                self._rgb_buffer[i] = self._render_onboard_rgb(i)

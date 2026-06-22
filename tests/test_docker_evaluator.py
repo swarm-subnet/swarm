@@ -713,6 +713,7 @@ def test_run_multi_seed_rpc_sync_uses_initial_obs_without_extra_reset(monkeypatc
             self.action_space = SimpleNamespace(
                 low=np.full(5, -1.0, dtype=np.float32),
                 high=np.full(5, 1.0, dtype=np.float32),
+                shape=(5,),
             )
             self.ACT_TYPE = None
             self.SPEED_LIMIT = None

@@ -28,7 +28,7 @@ def test_mountain_env_renders_depth_without_er_depth_only() -> None:
         assert np.isfinite(obs["depth"]).all()
 
         obs, reward, terminated, truncated, info = env.step(
-            np.zeros((1, 5), dtype=np.float32)
+            np.zeros((1, env.action_space.shape[-1]), dtype=np.float32)
         )
         assert obs["depth"].size > 0
         assert np.isfinite(obs["depth"]).all()

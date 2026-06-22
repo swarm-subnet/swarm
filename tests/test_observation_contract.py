@@ -59,7 +59,8 @@ def _expected_v1_state(env, family_id):
     return np.concatenate([np.asarray(p, dtype=np.float32).reshape(-1) for p in parts])
 
 
-def test_artifact_contract_unchanged_for_v1():
+def test_artifact_contract_shape_for_v1():
+    expected_depth = {"cf_autopilot": [128, 128, 1], "cf_search_and_rescue": [256, 256, 1]}
     for family_id in ("cf_autopilot", "cf_search_and_rescue"):
         art = build_artifact_policy_contract(family_id, "submission_zip.v1")
         assert set(art) == {
@@ -71,7 +72,7 @@ def test_artifact_contract_unchanged_for_v1():
             "action_space",
         }
         assert "observation_assembly" not in art
-        assert art["observation_space"]["fields"]["depth"]["shape"] == [128, 128, 1]
+        assert art["observation_space"]["fields"]["depth"]["shape"] == expected_depth[family_id]
         assert art["observation_space"]["fields"]["state"]["shape"] == ["dynamic"]
 
 
@@ -79,10 +80,11 @@ def test_smoke_observation_lengths_match_production_runtime():
     autopilot = build_smoke_test_observation("cf_autopilot", "submission_zip.v1")
     sar = build_smoke_test_observation("cf_search_and_rescue", "submission_zip.v1")
     assert autopilot["depth"].shape == (128, 128, 1)
-    assert sar["depth"].shape == (128, 128, 1)
-    # 50 Hz: 12 + 25*5 action history + 1 altitude + clue (3 autopilot / 2 SAR)
-    assert autopilot["state"].shape == (141,)
-    assert sar["state"].shape == (140,)
+    assert sar["depth"].shape == (256, 256, 1)
+    assert sar["rgb"].shape == (256, 256, 3)
+    # 50 Hz: 12 + 25*action_dim action history + 1 altitude + clue (3 autopilot / 2 SAR)
+    assert autopilot["state"].shape == (141,)   # action_dim 5
+    assert sar["state"].shape == (165,)          # action_dim 6 (RGB request value)
 
 
 @pytest.mark.timeout(180)
@@ -93,8 +95,13 @@ def test_v1_observation_matches_documented_layout(family_id, sar_mode):
     env = _build_env(family_id, sar_mode)
     try:
         obs = env._computeObs()
-        assert set(obs) == {"depth", "state"}
-        assert obs["depth"].shape == (128, 128, 1)
+        if family_id == "cf_search_and_rescue":
+            assert set(obs) == {"depth", "rgb", "state"}
+            assert obs["depth"].shape == (256, 256, 1)
+            assert obs["rgb"].shape == (256, 256, 3)
+        else:
+            assert set(obs) == {"depth", "state"}
+            assert obs["depth"].shape == (128, 128, 1)
         expected = _expected_v1_state(env, family_id)
         assert obs["state"].shape == expected.shape
         assert np.allclose(obs["state"], expected, atol=1e-6)

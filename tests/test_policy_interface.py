@@ -132,7 +132,7 @@ def test_smoke_test_policy_package_accepts_valid_controller(tmp_path):
         zip_path,
         {
             "drone_agent.py": _base_controller_source(
-                "return np.array([0.0, 0.0, 0.0, 0.5, 0.0], dtype=np.float32)"
+                "return np.array([0.0, 0.0, 0.0, 0.5, 0.0, 0.0], dtype=np.float32)"
             ),
             POLICY_CONTRACT_FILENAME: render_artifact_policy_contract(
                 "cf_search_and_rescue",
@@ -162,4 +162,4 @@ def test_smoke_test_policy_package_rejects_invalid_action_shape(tmp_path):
     ok, reason = smoke_test_policy_package(zip_path)
 
     assert ok is False
-    assert reason == "invalid_action_shape:[4]!=:[5]"
+    assert reason == "invalid_action_shape:[4]!=:[6]"
