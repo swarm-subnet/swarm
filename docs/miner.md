@@ -130,7 +130,7 @@ Submissions must be ≤ **50 MiB** compressed.
 | `depth` | (128, 128, 1) | Normalized depth map (0.5m – 20m range) |
 | `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
-The search area provides a direction toward the goal with up to ±10m noise. The drone must use its depth sensor to find the actual landing platform.
+The search area provides a direction toward an *approximate* goal — up to ±5–20m of horizontal noise (and ±3m vertical). The drone must use its depth sensor to search that area and find the actual landing platform. The time score budgets this search (see [Scoring](#scoring)), so a wider search area does not make a perfect score impossible — it just demands an efficient search.
 
 ### Action Space
 
@@ -239,7 +239,7 @@ git push
 
 ### 4. Submit
 
-> **One-shot.** Each hotkey can commit one model, lifetime. The chain scanner ignores any later commitment from the same hotkey, and the database enforces a one-model-per-hotkey constraint. Benchmark locally and only commit when the model consistently beats **champion + 0.015**. To try a different model, a new hotkey and subnet registration are required.
+> **One-shot.** Each hotkey can commit one model, lifetime. The chain scanner ignores any later commitment from the same hotkey, and the database enforces a one-model-per-hotkey constraint. Benchmark locally and only commit when the model consistently beats the champion (by the dynamic floor, ~0.005–0.015). To try a different model, a new hotkey and subnet registration are required.
 
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
@@ -306,6 +306,8 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 
 Collision with any obstacle sets the score to **0.01** (grace for legitimate models).
 
+The **target time** is search-aware: it budgets travel to the goal **plus** the time to sweep the GPS search disk and land. A model that searches efficiently still reaches a full time term; a slow or wandering search loses it. Each seed's target is computed from that seed's own distance and search radius, so every seed is individually fair.
+
 ### Landing Requirements
 
 **Static platforms** — hold stable for 0.5 seconds:
@@ -330,10 +332,10 @@ Collision with any obstacle sets the score to **0.01** (grace for legitimate mod
 2. **Backend** detects the commit. The chain scanner polls every ~3 minutes, so registration completes within **3–5 minutes** of chain-commit finalization. The backend downloads `submission.zip`, verifies the SHA-256 and README hashes, and adds the model to the pending queue
 3. **Validators** sync the pending queue, download the model directly from the miner's GitHub repo, and verify the hash against the backend record
 4. Each validator runs the agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear **champion + 0.015** (or >= 0.01 if no champion)
+   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear the **dynamic crowning floor** (champion + 0.005–0.015, easing as the champion nears 1.0; or >= 0.01 if no champion)
    - **Full benchmark** (800 seeds) — remaining seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
 5. Final score and pass/fail are determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
-6. **Winner-take-all** — the highest-scoring model receives emissions
+6. **King of the Hill** — the last 10 champions share emissions, each by how much it improved the frontier when crowned (see [King of the Hill](king_of_the_hill.md))
 
 ### Epoch Rotation
 
@@ -348,7 +350,7 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 | Total seeds per epoch | 1,000 |
 | Screening seeds | 200 |
 | Full benchmark seeds | 800 |
-| Screening threshold | >= champion score + 0.015 (or >= 0.01 bootstrap) |
+| Screening threshold | >= champion score + dynamic floor (0.005–0.015; >= 0.01 bootstrap) |
 | Max submission size | 50 MiB (compressed) |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -391,7 +393,7 @@ The leaderboard reshuffles once stake-weighted consensus settles across validato
 
 The hotkey is done. Each hotkey can commit **one model, lifetime** — any later commitment from the same hotkey is ignored. A failed model stays recorded against that hotkey; to compete again, register a new hotkey and submit from it.
 
-Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats **champion + 0.015** across all environment types.
+Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats the champion (by the dynamic floor, ~0.005–0.015) across all environment types.
 
 ### Can I update my submission after committing?
 

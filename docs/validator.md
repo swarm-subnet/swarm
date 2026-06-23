@@ -289,7 +289,7 @@ pm2 start --name auto_update_validator \
    Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
 
 3. **Screening (200 seeds)**
-   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears **champion + 0.015** (or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
+   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears the **dynamic crowning floor** (champion + 0.005–0.015; or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
 
 4. **Full benchmark (800 seeds)**
    Models that advance are evaluated on the remaining 800 seeds across all six environment types, in parallel Docker containers.
@@ -301,7 +301,7 @@ pm2 start --name auto_update_validator \
    Reports from all active validators are combined by stake (>= 51%) to determine the network's per-model result.
 
 7. **Apply weights**
-   Validators pull the resulting weight map and set it on-chain each forward cycle.
+   Validators pull the resulting weight map — the King of the Hill split across the last 10 champions (see [King of the Hill](king_of_the_hill.md)) — and set it on-chain each forward cycle.
 
 8. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is never re-evaluated within the same epoch.
