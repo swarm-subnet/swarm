@@ -142,6 +142,18 @@ GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker tim
 
 # Hardware-fair calibrated timing
 MINER_COMPUTE_BUDGET_SEC = 0.500        # Guaranteed pure-compute budget per step (seconds)
+# Reference-time scoring: the validator measures itself on a committed baseline model
+# and judges each act() in baseline-equivalent time (speed_factor = local_p90 / owner_p90).
+SPEED_FACTOR_MIN = 0.25                  # Lower guard against an invalid calibration measurement
+SPEED_FACTOR_MAX_ELIGIBLE = 3.0          # Beyond this the host is too slow to score fairly; it self-excludes
+RPC_CONNECT_MAX_WAIT_SEC = 60.0          # Total budget to reach a serving RPC agent (covers slow cold model loads)
+HARD_CAP_REF_SEC = 1.25                  # Per-act liveness ceiling in baseline-equivalent seconds
+HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the per-act hard cap (seconds)
+HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before failing the seed
+FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
+FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in baseline-equivalent seconds
+# Kill switch for reference-time scoring (default on); set SWARM_USE_REFERENCE_TIMING=0 to force legacy timing.
+USE_REFERENCE_TIMING = os.getenv("SWARM_USE_REFERENCE_TIMING", "1").strip().lower() not in ("0", "false", "no")
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
@@ -221,7 +233,7 @@ assert abs(sum(CITY_VARIANT_DISTRIBUTION.values()) - 1.0) < 0.001, "City variant
 # Miner sampling and evaluation
 SAMPLE_K = 256                          # Number of miners sampled per forward pass
 # Emission burning mechanism
-BURN_EMISSIONS = True                   # Enable emission burning to UID 0
+BURN_EMISSIONS = False                  # Off: King of the Hill pays the kings in full (no burn to UID 0)
 BURN_FRACTION = 0.95                    # Fraction of emissions to burn
 KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute
 UID_ZERO = 0                            # Special UID for burning emissions
@@ -263,6 +275,13 @@ SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this marg
 # Early screening termination — abort screening when outcome is statistically certain
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
+# Statistical fair early-stop (z-test) + champion-copy detection during screening.
+SCREENING_EARLY_STOP_Z = {50: 4.2, 100: 3.9, 150: 3.4}
+SCREENING_EARLY_STOP_SIGMA_FLOOR = 0.22    # Lower bound on the per-seed score SD
+COPY_MIN_SEEDS = 100                       # Minimum seeds before the copy check can fire
+COPY_CORR_MIN = 0.995                      # Min per-seed correlation with the champion to flag a clone
+COPY_SD_MAX = 0.03                         # Max SD of the per-seed score gap
+COPY_MEAN_MAX = 0.002                      # Max mean per-seed gap (well below the crowning floor)
 
 # Unified streaming chunk size used by screening, benchmark, and reeval phases.
 # Smaller chunks give fresher UI updates at the cost of more seed-score uploads.

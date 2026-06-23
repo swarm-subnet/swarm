@@ -12,6 +12,11 @@ from gym_pybullet_drones.utils.enums import ActionType
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_RECAL_INTERVAL,
+    FIRST_STEP_BUDGET_REF_SEC,
+    FIRST_STEP_HARD_CAP_REF_SEC,
+    HARD_CAP_MARGIN_SEC,
+    HARD_CAP_REF_SEC,
+    HARD_CAP_STRIKES_PER_SEED,
     MINER_COMPUTE_BUDGET_SEC,
     RPC_FIRST_STEP_TIMEOUT_SEC,
     RPC_MAX_STRIKES_PER_SEED,
@@ -23,6 +28,7 @@ from swarm.constants import (
 )
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
+from swarm.validator.calibration import act_hard_cap_sec, judge_act
 from swarm.validator.reward import flight_reward
 
 from ._shared import (
@@ -44,12 +50,18 @@ def _run_multi_seed_rpc_sync(
     progress_state: Optional[dict] = None,
     task_offset: int = 0,
     task_total: Optional[int] = None,
+    speed_factor: Optional[float] = None,
 ) -> list:
     """Run multiple seeds through the same RPC connection.
 
     This reuses the container for all seeds, calling agent.reset() between each.
     Much faster than creating a new container per seed.
+
+    When ``speed_factor`` is provided (reference calibration succeeded), each act()
+    is judged in baseline-equivalent time so the score does not depend on this
+    host's speed; otherwise the legacy per-step calibrated timeout is used.
     """
+    use_ref = speed_factor is not None
     schema_file = _submission_template_dir() / "agent.capnp"
     agent_capnp = capnp.load(str(schema_file))
     trace_settings = RpcTraceSettings.from_env()
@@ -278,6 +290,18 @@ def _run_multi_seed_rpc_sync(
             )
             cpu_factor = 1.0
             calibrated = False
+            if use_ref:
+                act_hard_cap = act_hard_cap_sec(
+                    speed_factor, rpc_overhead_sec,
+                    ref_sec=HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
+                )
+                first_hard_cap = act_hard_cap_sec(
+                    speed_factor, rpc_overhead_sec,
+                    ref_sec=FIRST_STEP_HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
+                )
+            else:
+                act_hard_cap = calibrated_timeout
+                first_hard_cap = RPC_FIRST_STEP_TIMEOUT_SEC
             for task_idx, task in enumerate(tasks):
                 if stop_event is not None and stop_event.is_set():
                     remaining = len(tasks) - task_idx
@@ -362,6 +386,15 @@ def _run_multi_seed_rpc_sync(
                                 + CALIBRATION_MARGIN_SEC
                             )
                             calibrated = True
+                            if use_ref:
+                                act_hard_cap = act_hard_cap_sec(
+                                    speed_factor, rpc_overhead_sec,
+                                    ref_sec=HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
+                                )
+                                first_hard_cap = act_hard_cap_sec(
+                                    speed_factor, rpc_overhead_sec,
+                                    ref_sec=FIRST_STEP_HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
+                                )
                             _trace(
                                 f"{phase_label} step timeout={calibrated_timeout*1000:.1f}ms "
                                 f"(overhead={rpc_overhead_sec*1000:.1f}ms cpu_factor={cpu_factor:.2f}x)"
@@ -381,6 +414,7 @@ def _run_multi_seed_rpc_sync(
                         success = False
                         info = {}
                         strikes = 0
+                        hard_cap_hits = 0
                         is_first_step = True
                         step_idx = 0
                         rpc_disconnected = False
@@ -394,11 +428,17 @@ def _run_multi_seed_rpc_sync(
                             stop_event is not None and stop_event.is_set()
                         ):
                             step_idx += 1
-                            step_timeout = (
-                                RPC_FIRST_STEP_TIMEOUT_SEC
-                                if is_first_step
-                                else calibrated_timeout
-                            )
+                            act_ms = 0.0
+                            if use_ref:
+                                step_timeout = (
+                                    first_hard_cap if is_first_step else act_hard_cap
+                                )
+                            else:
+                                step_timeout = (
+                                    RPC_FIRST_STEP_TIMEOUT_SEC
+                                    if is_first_step
+                                    else calibrated_timeout
+                                )
 
                             observation = self._serialize_observation(
                                 agent_capnp, obs
@@ -427,28 +467,52 @@ def _run_multi_seed_rpc_sync(
                                         f"{task_label} step={step_idx} t_sim={t_sim:.2f}s "
                                         f"act_ok={act_ms:.1f}ms timeout={step_timeout*1000:.0f}ms"
                                     )
+                                if use_ref:
+                                    budget = (
+                                        FIRST_STEP_BUDGET_REF_SEC
+                                        if is_first_step
+                                        else MINER_COMPUTE_BUDGET_SEC
+                                    )
+                                    verdict = judge_act(
+                                        act_ms / 1000.0,
+                                        overhead_sec=rpc_overhead_sec,
+                                        speed_factor=speed_factor,
+                                        budget_sec=budget,
+                                        hard_cap_sec=step_timeout,
+                                    )
+                                    if verdict.strike:
+                                        strikes += 1
+                                        action = np.zeros(5, dtype=np.float32)
+                                        _trace(
+                                            f"{task_label} step={step_idx} too slow "
+                                            f"norm={verdict.normalized_sec*1000:.0f}ms > "
+                                            f"budget={budget*1000:.0f}ms "
+                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                        )
+                                        if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                            break
                             except asyncio.TimeoutError:
                                 act_ms = (time.time() - t_act_start) * 1000
-                                strikes += 1
                                 action = np.zeros(5, dtype=np.float32)
+                                # A liveness-cap timeout is its own (tighter) budget in
+                                # reference mode; legacy uses the single strike counter.
+                                if use_ref:
+                                    hard_cap_hits += 1
+                                    hit, cap, label = hard_cap_hits, HARD_CAP_STRIKES_PER_SEED, "hard-cap"
+                                else:
+                                    strikes += 1
+                                    hit, cap, label = strikes, RPC_MAX_STRIKES_PER_SEED, "strike"
                                 _trace(
                                     f"{task_label} step={step_idx} act timeout {act_ms:.1f}ms "
-                                    f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                    f"{label} {hit}/{cap}"
                                 )
-                                if is_first_step:
+                                bt.logging.warning(
+                                    f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
+                                    f"{label} {hit}/{cap}"
+                                )
+                                if hit >= cap:
                                     bt.logging.warning(
-                                        f"UID {uid}: first-step act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
-                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                    )
-                                else:
-                                    bt.logging.warning(
-                                        f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
-                                        f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
-                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                    )
-                                if strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                    bt.logging.warning(
-                                        f"UID {uid} seed {task_idx}: {strikes} RPC timeouts, failing seed"
+                                        f"UID {uid} seed {task_idx}: {hit} {label} timeout(s), failing seed"
                                     )
                                     break
                             except Exception as e:
@@ -521,6 +585,7 @@ def _run_multi_seed_rpc_sync(
                                 truncated=bool(truncated),
                                 info=dict(info),
                                 action=act.tolist(),
+                                act_ms=float(act_ms),
                             )
                             if terminated or truncated:
                                 success = info.get("success", False)
@@ -575,7 +640,7 @@ def _run_multi_seed_rpc_sync(
                                 calibration_cpu_factor=cpu_factor,
                                 calibrated_timeout_sec=calibrated_timeout,
                             )
-                        elif strikes >= RPC_MAX_STRIKES_PER_SEED:
+                        elif strikes >= RPC_MAX_STRIKES_PER_SEED or hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
                             _set_phase(
                                 "seed_failed_timeout_strikes",
                                 task=task_label,
