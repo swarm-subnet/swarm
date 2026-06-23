@@ -45,9 +45,16 @@ DEPTH_FAR = 30.0                        # PyBullet camera far plane (meters)
 DEPTH_MIN_M = 0.5                       # Minimum useful depth range (meters)
 DEPTH_MAX_M = 20.0                      # Maximum useful depth range (meters)
 # Search area parameters
-SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
-SEARCH_RADIUS_MIN = 0.0                 # Minimum per-seed search radius (meters)
-SEARCH_RADIUS_MAX = 10.0                # Maximum per-seed search radius (meters)
+SEARCH_AREA_NOISE_Z = 5.0               # ±5m vertical noise — forces real altitude search
+SEARCH_RADIUS_MIN = 5.0                 # Minimum per-seed search radius (meters)
+SEARCH_RADIUS_MAX = 20.0                # Maximum per-seed search radius (meters), clamped per-seed to what fits the horizon
+# Search-aware time scoring — budget the time to sweep the search disk so a good
+# searcher can still reach a perfect time term. See swarm/validator/reward.py.
+SEARCH_SWEEP_ALPHA = 0.75               # Coverage-overhead factor (~70-80th percentile area search)
+SEARCH_DETECT_WIDTH = 5.1               # Effective downward detection swath (meters): cruise footprint 2*SAFE_Z*tan(FOV/2)=6.0 x 0.85 overlap loss
+SEARCH_LAND_SEC = 2.0                   # Time budgeted to settle/land once the pad is found (seconds)
+SEARCH_TIME_BUFFER = 1.06               # Slack multiplier on the search-aware target time
+SEARCH_FEASIBILITY_MARGIN_SEC = 1.0     # Keep target time this far under the horizon when clamping radius
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
 # Propulsion efficiency
@@ -135,6 +142,21 @@ GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker tim
 
 # Hardware-fair calibrated timing
 MINER_COMPUTE_BUDGET_SEC = 0.500        # Guaranteed pure-compute budget per step (seconds)
+# Reference-time scoring: the validator measures itself on a committed baseline model
+# and judges each act() in baseline-equivalent time (speed_factor = local_p90 / owner_p90).
+SPEED_FACTOR_MIN = 0.25                  # Lower guard against an invalid calibration measurement
+SPEED_FACTOR_MAX_ELIGIBLE = 3.0          # Beyond this the host is too slow to score fairly; it self-excludes
+RPC_CONNECT_MAX_WAIT_SEC = 60.0          # Total budget to reach a serving RPC agent (covers slow cold model loads)
+HARD_CAP_REF_SEC = 1.25                  # Per-act liveness ceiling in baseline-equivalent seconds
+HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the per-act hard cap (seconds)
+HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before failing the seed
+FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
+FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in baseline-equivalent seconds
+# Reference-time scoring is OFF by default: the light baseline model mis-predicts
+# heavy models' speed, over-correcting their act() time and falsely striking them.
+# Legacy per-step timing is used until a representative baseline is calibrated.
+# Set SWARM_USE_REFERENCE_TIMING=1 to opt back in.
+USE_REFERENCE_TIMING = os.getenv("SWARM_USE_REFERENCE_TIMING", "0").strip().lower() not in ("0", "false", "no")
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
@@ -214,8 +236,8 @@ assert abs(sum(CITY_VARIANT_DISTRIBUTION.values()) - 1.0) < 0.001, "City variant
 # Miner sampling and evaluation
 SAMPLE_K = 256                          # Number of miners sampled per forward pass
 # Emission burning mechanism
-BURN_EMISSIONS = True                   # Enable emission burning to UID 0
-BURN_FRACTION = 0.95                    # Fraction of emissions to burn
+BURN_EMISSIONS = True                   # Burn a fraction to UID 0; the rest is split among the kings
+BURN_FRACTION = 0.75                    # Fraction of emissions to burn
 KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute
 UID_ZERO = 0                            # Special UID for burning emissions
 
@@ -256,6 +278,13 @@ SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this marg
 # Early screening termination — abort screening when outcome is statistically certain
 SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
 SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
+# Statistical fair early-stop (z-test) + champion-copy detection during screening.
+SCREENING_EARLY_STOP_Z = {50: 4.2, 100: 3.9, 150: 3.4}
+SCREENING_EARLY_STOP_SIGMA_FLOOR = 0.22    # Lower bound on the per-seed score SD
+COPY_MIN_SEEDS = 100                       # Minimum seeds before the copy check can fire
+COPY_CORR_MIN = 0.995                      # Min per-seed correlation with the champion to flag a clone
+COPY_SD_MAX = 0.03                         # Max SD of the per-seed score gap
+COPY_MEAN_MAX = 0.002                      # Max mean per-seed gap (well below the crowning floor)
 
 # Unified streaming chunk size used by screening, benchmark, and reeval phases.
 # Smaller chunks give fresher UI updates at the cost of more seed-score uploads.
@@ -266,16 +295,16 @@ MAX_INFLIGHT_SEED_UPLOADS = 3
 def _build_screening_template() -> list[dict]:
     slots: list[dict] = []
 
-    city_static      = dict(challenge_type=1, distance_range=(15, 25), goal_height_range=(0.3, 0.8), moving_platform=False)
-    city_moving      = dict(challenge_type=1, distance_range=(15, 25), goal_height_range=(0.3, 0.8), moving_platform=True)
-    open_static      = dict(challenge_type=2, distance_range=(14, 20), goal_height_range=(4.0, 7.0), moving_platform=False)
-    open_moving      = dict(challenge_type=2, distance_range=(14, 20), goal_height_range=(4.0, 7.0), moving_platform=True)
-    mountain_static  = dict(challenge_type=3, distance_range=(30, 55), goal_height_range=None, moving_platform=False)
-    mountain_moving  = dict(challenge_type=3, distance_range=(30, 55), goal_height_range=None, moving_platform=True)
-    village_static   = dict(challenge_type=4, distance_range=(25, 45), goal_height_range=None, moving_platform=False)
-    village_moving   = dict(challenge_type=4, distance_range=(25, 45), goal_height_range=None, moving_platform=True)
-    warehouse_static = dict(challenge_type=5, distance_range=(10, 22), goal_height_range=(1.0, 6.0), moving_platform=False)
-    forest_static    = dict(challenge_type=6, distance_range=(15, 28), goal_height_range=(0.5, 2.0), moving_platform=False)
+    city_static      = dict(challenge_type=1, distance_range=(22, 40), goal_height_range=(0.3, 0.8), moving_platform=False)
+    city_moving      = dict(challenge_type=1, distance_range=(22, 40), goal_height_range=(0.3, 0.8), moving_platform=True)
+    open_static      = dict(challenge_type=2, distance_range=(28, 65), goal_height_range=(5.0, 12.0), moving_platform=False)
+    open_moving      = dict(challenge_type=2, distance_range=(28, 65), goal_height_range=(5.0, 12.0), moving_platform=True)
+    mountain_static  = dict(challenge_type=3, distance_range=(65, 95), goal_height_range=None, moving_platform=False)
+    mountain_moving  = dict(challenge_type=3, distance_range=(65, 95), goal_height_range=None, moving_platform=True)
+    village_static   = dict(challenge_type=4, distance_range=(28, 50), goal_height_range=None, moving_platform=False)
+    village_moving   = dict(challenge_type=4, distance_range=(28, 50), goal_height_range=None, moving_platform=True)
+    warehouse_static = dict(challenge_type=5, distance_range=(18, 30), goal_height_range=(1.0, 6.0), moving_platform=False)
+    forest_static    = dict(challenge_type=6, distance_range=(22, 40), goal_height_range=(0.5, 2.0), moving_platform=False)
 
     pools = [
         [city_static]*6      + [city_moving]*2,
@@ -319,24 +348,24 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 # Type 1: City Navigation
 TYPE_1_WORLD_RANGE = 75
 TYPE_1_SAFE_ZONE = 1.0
-TYPE_1_R_MIN, TYPE_1_R_MAX = 5, 45
+TYPE_1_R_MIN, TYPE_1_R_MAX = 22, 45
 TYPE_1_H_MIN, TYPE_1_H_MAX = 0.2, 1
 TYPE_1_START_H_MIN, TYPE_1_START_H_MAX = 0.2, 5
 TYPE_1_HORIZON = HORIZON_SEC
 
 # Type 2: Open Flight (No Obstacles)
-TYPE_2_WORLD_RANGE = 20
+TYPE_2_WORLD_RANGE = 60
 TYPE_2_N_OBSTACLES = 0
 TYPE_2_HEIGHT_SCALE = 1.0
 TYPE_2_SAFE_ZONE = 0.0
-TYPE_2_R_MIN, TYPE_2_R_MAX = 10, 25
-TYPE_2_H_MIN, TYPE_2_H_MAX = 3, 10
+TYPE_2_R_MIN, TYPE_2_R_MAX = 28, 72
+TYPE_2_H_MIN, TYPE_2_H_MAX = 4, 14
 TYPE_2_START_H_MIN, TYPE_2_START_H_MAX = 0.05, 10
 TYPE_2_HORIZON = HORIZON_SEC
 
 # Type 3: Mountain Navigation
 TYPE_3_SAFE_ZONE = 1.0
-TYPE_3_R_MIN, TYPE_3_R_MAX = 20, 100
+TYPE_3_R_MIN, TYPE_3_R_MAX = 65, 100
 TYPE_3_H_MIN, TYPE_3_H_MAX = 0, 0
 TYPE_3_START_H_MIN, TYPE_3_START_H_MAX = 0, 0
 TYPE_3_HORIZON = HORIZON_SEC
@@ -345,6 +374,9 @@ TYPE_3_SCALE_MAX = 0.8
 TYPE_3_SCALE_SEED_OFFSET = 777777
 TYPE_3_WORLD_RANGE_RATIO = 0.60
 TYPE_3_VILLAGE_RANGE = 40.0
+# Village (challenge_type 4) keeps its own far-goal band — its ±40m world box
+# caps reachable distance near 56m, so it must NOT inherit the mountain 50-100 band.
+VILLAGE_R_MIN, VILLAGE_R_MAX = 28, 56
 
 # Legacy split kept for compatibility utilities. Internal task schema now uses:
 # type=3 mountain, type=4 village.
@@ -357,7 +389,7 @@ MOUNTAIN_SUBTYPE_DISTRIBUTION = {
 # Constants retain the TYPE_4_* prefix for backward import compatibility.
 TYPE_4_WORLD_RANGE_X = 38                           # ±38m X (floor_spawn_half_x=40.1m, 2m wall margin)
 TYPE_4_WORLD_RANGE_Y = 23                           # ±23m Y (floor_spawn_half_y=25.3m, 2m wall margin)
-TYPE_4_R_MIN, TYPE_4_R_MAX = 5, 35
+TYPE_4_R_MIN, TYPE_4_R_MAX = 18, 35
 TYPE_4_H_MIN, TYPE_4_H_MAX = 0.2, 10.0             # Floor to roof(12m) minus 2m ceiling clearance
 TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.2, 10.0
 TYPE_4_HORIZON = HORIZON_SEC
@@ -367,7 +399,7 @@ TYPE_4_MIN_PLATFORM_DISTANCE = 10.0                 # Minimum 3D distance betwee
 
 # Type 6: Forest Navigation (100×100m ground, 96×96m playable with 2m edge margin)
 TYPE_6_WORLD_RANGE = 42                             # ±42m playable XY (96m total with margin)
-TYPE_6_R_MIN, TYPE_6_R_MAX = 10, 45
+TYPE_6_R_MIN, TYPE_6_R_MAX = 22, 45
 TYPE_6_H_MIN, TYPE_6_H_MAX = 0.2, 3.0
 TYPE_6_START_H_MIN, TYPE_6_START_H_MAX = 0.2, 3.0
 TYPE_6_HORIZON = HORIZON_SEC

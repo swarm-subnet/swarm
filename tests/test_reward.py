@@ -8,6 +8,10 @@ from swarm.constants import (
     HOVER_SEC,
     SAFETY_DISTANCE_DANGER,
     SAFETY_DISTANCE_SAFE,
+    SEARCH_DETECT_WIDTH,
+    SEARCH_LAND_SEC,
+    SEARCH_SWEEP_ALPHA,
+    SEARCH_TIME_BUFFER,
     SPEED_LIMIT,
 )
 from swarm.protocol import MapTask
@@ -38,8 +42,10 @@ def test_clamp_bounds():
 
 def test_calculate_target_time_matches_formula():
     task = _sample_task()
-    expected_min = (5.0 / SPEED_LIMIT) + HOVER_SEC
-    expected = expected_min * 1.06
+    r = task.search_radius
+    sweep = SEARCH_SWEEP_ALPHA * math.pi * r * r / (SEARCH_DETECT_WIDTH * SPEED_LIMIT)
+    travel = (5.0 / SPEED_LIMIT) + HOVER_SEC
+    expected = SEARCH_TIME_BUFFER * (travel + sweep + SEARCH_LAND_SEC)
     assert math.isclose(_calculate_target_time(task), expected, rel_tol=1e-9)
 
 

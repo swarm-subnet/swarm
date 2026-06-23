@@ -231,7 +231,7 @@ There are no waypoints, no GPS, no obstacle coordinates. The model must learn to
 score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-Ranking is by **average score across 1,000 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + 0.015) before running the full benchmark.
+Ranking is by **average score across 1,000 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + the dynamic floor, 0.005–0.015) before running the full benchmark. Emissions are split across the last 10 champions by **King of the Hill** — each earns in proportion to how much it pushed the record (see [docs/king_of_the_hill.md](docs/king_of_the_hill.md)).
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its own 1,000 seeds per epoch. All seeds are published on [swarm124.com](https://swarm124.com) for transparency.
 
@@ -242,7 +242,7 @@ Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its o
 <!-- GETTING STARTED -->
 ## Getting Started
 
-> **One shot per hotkey.** Each hotkey commits a single model, lifetime. Train and benchmark locally until the model consistently beats **champion + 0.015**, then submit.
+> **One shot per hotkey.** Each hotkey commits a single model, lifetime. Train and benchmark locally until the model consistently beats the current champion (by the dynamic floor, ~0.005–0.015), then submit.
 
 <table>
 <tr>
