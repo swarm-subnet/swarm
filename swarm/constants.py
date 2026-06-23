@@ -152,8 +152,11 @@ HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the 
 HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before failing the seed
 FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
 FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in baseline-equivalent seconds
-# Kill switch for reference-time scoring (default on); set SWARM_USE_REFERENCE_TIMING=0 to force legacy timing.
-USE_REFERENCE_TIMING = os.getenv("SWARM_USE_REFERENCE_TIMING", "1").strip().lower() not in ("0", "false", "no")
+# Reference-time scoring is OFF by default: the light baseline model mis-predicts
+# heavy models' speed, over-correcting their act() time and falsely striking them.
+# Legacy per-step timing is used until a representative baseline is calibrated.
+# Set SWARM_USE_REFERENCE_TIMING=1 to opt back in.
+USE_REFERENCE_TIMING = os.getenv("SWARM_USE_REFERENCE_TIMING", "0").strip().lower() not in ("0", "false", "no")
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
