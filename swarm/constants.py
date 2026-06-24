@@ -236,8 +236,8 @@ assert abs(sum(CITY_VARIANT_DISTRIBUTION.values()) - 1.0) < 0.001, "City variant
 # Miner sampling and evaluation
 SAMPLE_K = 256                          # Number of miners sampled per forward pass
 # Emission burning mechanism
-BURN_EMISSIONS = True                   # Burn a fraction to UID 0; the rest is split among the kings
-BURN_FRACTION = 0.75                    # Fraction of emissions to burn
+BURN_EMISSIONS = False                   # Burn a fraction to UID 0; the rest is split among the kings
+BURN_FRACTION = 0.0                    # Fraction of emissions to burn
 KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction of emissions to distribute
 UID_ZERO = 0                            # Special UID for burning emissions
 
