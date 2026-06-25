@@ -19,12 +19,11 @@ from typing import Any, Dict, Optional
 import bittensor as bt
 import numpy as np
 
-from swarm.constants import BENCHMARK_VERSION, MODEL_DIR
+from swarm.constants import MODEL_DIR
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
 from .model_fetch import _ensure_models_from_backend
-from .screening_gate import cache_screening_seed_scores
 
 
 async def run_task(
@@ -38,7 +37,9 @@ async def run_task(
     phase = str(task.get("phase", ""))
     task_id = task.get("task_id")
     seeds_from = int(task.get("seeds_from", 0))
-    seeds_to = int(task.get("seeds_to", 0))
+    seeds_to = task.get("seeds_to")
+    seeds_to = int(seeds_to) if seeds_to else None
+    batch_id = task.get("batch_id")
     epoch = int(
         task.get("epoch_number")
         or self.seed_manager.epoch_number
@@ -74,26 +75,12 @@ async def run_task(
             seeds_from=seeds_from,
             seeds_to=seeds_to,
             cancel_flag=cancel_flag,
-            early_fail_rules=task.get("early_fail_rules"),
+            batch_id=batch_id,
         )
         avg, all_scores, per_type_raw, cancel_reason, early_failed = result
         per_type_avgs = _per_type_means(per_type_raw)
         seeds_evaluated = seeds_from + len(all_scores)
         sanity_score = float(avg) if all_scores else 0.0
-        if all_scores:
-            try:
-                screening_seeds = self.seed_manager.get_screening_seeds()[
-                    seeds_from:seeds_from + len(all_scores)
-                ]
-                cache_screening_seed_scores(
-                    model_hash=model_hash,
-                    epoch=int(epoch),
-                    benchmark_version=BENCHMARK_VERSION,
-                    seeds=screening_seeds,
-                    scores=all_scores,
-                )
-            except Exception as exc:
-                bt.logging.warning(f"run_task: skipped screening-score cache: {exc}")
     elif phase in ("BENCHMARK", "REEVAL"):
         result = await _run_full_benchmark(
             self,
@@ -103,6 +90,8 @@ async def run_task(
             task_id=task_id,
             cancel_flag=cancel_flag,
             seeds_from=seeds_from,
+            seeds_to=seeds_to,
+            batch_id=batch_id,
         )
         avg, per_type_avgs, all_scores, _per_type_raw, cancel_reason = result
         seeds_evaluated = seeds_from + len(all_scores)

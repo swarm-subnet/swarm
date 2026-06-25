@@ -288,17 +288,17 @@ pm2 start --name auto_update_validator \
 2. **Download from GitHub**
    Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
 
-3. **Screening (200 seeds)**
-   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears the **dynamic crowning floor** (champion + 0.005–0.015; or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
+3. **Screening (200 seeds, batched)**
+   New models are screened first. The 200 screening seeds are split into batches of 50; a free validator leases one batch via `GET /validators/next-task`, runs it, and streams the scores. The full benchmark unlocks once every screening seed is covered and the stitched score clears the **dynamic crowning floor** (champion + 0.005–0.015; or >= 0.01 if no champion exists).
 
-4. **Full benchmark (800 seeds)**
-   Models that advance are evaluated on the remaining 800 seeds across all six environment types, in parallel Docker containers.
+4. **Full benchmark (800 seeds, batched)**
+   Models that advance are evaluated on the remaining 800 seeds across all six environment types, again as batches of 50 leased one at a time and run in parallel Docker containers.
 
 5. **Report scores**
-   Per-seed and aggregate scores are submitted to the backend as they are computed.
+   Per-seed scores are streamed to the backend per batch; the batch is submitted once its window is fully covered.
 
-6. **Consensus**
-   Reports from all active validators are combined by stake (>= 51%) to determine the network's per-model result.
+6. **Coverage and stitching**
+   The backend stitches the per-seed scores into one result once every seed in the phase range is covered — no single validator runs the whole model. A batch whose owner goes silent is reclaimed and re-leased to another validator.
 
 7. **Apply weights**
    Validators pull the resulting weight map — the King of the Hill split across the last 10 champions (see [King of the Hill](king_of_the_hill.md)) — and set it on-chain each forward cycle.
@@ -308,7 +308,7 @@ pm2 start --name auto_update_validator \
 
 ### Per-Validator Seeds
 
-Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. With 1,000 seeds per validator and stake-weighted consensus, statistical variance across validators is negligible.
+Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. The backend assigns each validator a seed-index *range* (a batch), never the seed values; difficulty per index is fixed by the screening template and challenge distribution, so stitching different validators' batches stays fair.
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 
