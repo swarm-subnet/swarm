@@ -17,10 +17,15 @@ def _format_stop_reason(conflicts: list) -> str:
     return "; ".join(parts) if parts else "stop_required"
 
 
+_TIMER_INTERVAL_SECONDS = 15
+
+
 class HeartbeatManager:
     """Thread-safe heartbeat progress manager for evaluation tracking.
 
-    Sends throttled heartbeat updates to the backend during seed evaluation.
+    Sends throttled heartbeat updates to the backend during seed evaluation,
+    plus a timer-driven ping every ``_TIMER_INTERVAL_SECONDS`` so a validator
+    stuck on a slow seed still proves liveness and renews its batch lease.
     Designed to be called from worker threads while safely dispatching async
     heartbeat calls to the main event loop.
     """
@@ -42,6 +47,8 @@ class HeartbeatManager:
         self._backend_decision_version: Optional[int] = None
         self._stop_required = False
         self._stop_reason: Optional[str] = None
+        self._timer_thread: Optional[threading.Thread] = None
+        self._timer_stop = threading.Event()
 
     def set_queue(self, queue: list) -> None:
         with self._lock:
@@ -57,6 +64,10 @@ class HeartbeatManager:
         backend_decision_version: Optional[int] = None,
         progress_offset: int = 0,
     ) -> None:
+        self._timer_stop.set()
+        if self._timer_thread is not None:
+            self._timer_thread.join(timeout=1.0)
+            self._timer_thread = None
         with self._lock:
             self._session_id += 1
             self._status = status
@@ -89,6 +100,24 @@ class HeartbeatManager:
             self.main_loop
         )
 
+        self._timer_stop = threading.Event()
+        self._timer_thread = threading.Thread(
+            target=self._timer_loop, args=(self._session_id,), daemon=True
+        )
+        self._timer_thread.start()
+
+    def _timer_loop(self, session_id: int) -> None:
+        while not self._timer_stop.wait(_TIMER_INTERVAL_SECONDS):
+            with self._lock:
+                if session_id != self._session_id or not self._active:
+                    return
+                progress = self._progress
+            self.main_loop.call_soon_threadsafe(
+                lambda p=progress, s=session_id: asyncio.create_task(
+                    self._safe_heartbeat(p, s)
+                )
+            )
+
     def on_seed_complete(self) -> None:
         """Called from worker thread after each seed completes (throttled)."""
         with self._lock:
@@ -111,6 +140,10 @@ class HeartbeatManager:
                 self._queue[:] = [q for q in self._queue if q.get("uid") != uid]
 
     def finish(self) -> None:
+        self._timer_stop.set()
+        if self._timer_thread is not None:
+            self._timer_thread.join(timeout=1.0)
+            self._timer_thread = None
         with self._lock:
             final_progress = self._progress
             session_id = self._session_id
