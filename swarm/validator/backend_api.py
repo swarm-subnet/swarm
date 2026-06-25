@@ -494,6 +494,7 @@ class BackendApiClient:
                 self._runtime_state["last_kings_by_family"] = data.get("kings_by_family", {})
                 self._runtime_state["last_family_shares"] = data.get("family_shares", {})
                 self._runtime_state["last_burn_extra"] = data.get("burn_extra", 0.0)
+                self._runtime_state["last_dropped_share"] = data.get("dropped_share", 0.0)
                 self._runtime_state["reeval_queue"] = reeval_queue
                 self._runtime_state["last_sync"] = time.time()
                 self._runtime_state["current_top"] = current_top
@@ -532,13 +533,14 @@ class BackendApiClient:
                     "kings_by_family": data.get("kings_by_family", {}),
                     "family_shares": data.get("family_shares", {}),
                     "burn_extra": data.get("burn_extra", 0.0),
+                    "dropped_share": data.get("dropped_share", 0.0),
                 }
 
             raise Exception(data.get("error", "Unknown error"))
 
         except Exception as e:
             bt.logging.warning(
-                f"Backend API error (sync): {_scrub_url(e)} — fallback active, using cached kings (burn if empty)"
+                f"Backend API error (sync): {_scrub_url(e)} — fallback active, using cached kings (holds last weights if empty)"
             )
 
             return {
@@ -548,6 +550,7 @@ class BackendApiClient:
                 "kings_by_family": self._runtime_state.get("last_kings_by_family", {}),
                 "family_shares": self._runtime_state.get("last_family_shares", {}),
                 "burn_extra": self._runtime_state.get("last_burn_extra", 0.0),
+                "dropped_share": self._runtime_state.get("last_dropped_share", 0.0),
                 "reeval_queue": self._runtime_state.get("reeval_queue", []),
                 "leaderboard_version": 0,
                 "pending_models": [],

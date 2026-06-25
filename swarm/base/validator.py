@@ -391,6 +391,18 @@ class BaseValidatorNeuron(BaseNeuron):
         """
 
         tracker_call(self, "mark_weights_attempt")
+        if not getattr(self, "_weight_floor_checked", False):
+            try:
+                maw = self.subtensor.min_allowed_weights(netuid=self.config.netuid)
+                mwl = self.subtensor.max_weight_limit(netuid=self.config.netuid)
+                self._weight_floor_checked = True
+                if (maw is not None and maw > 1) or (mwl is not None and mwl < 1.0):
+                    bt.logging.warning(
+                        f"Weight hyperparams may dilute champion payouts onto UID 0: "
+                        f"min_allowed_weights={maw} max_weight_limit={mwl}"
+                    )
+            except Exception as exc:
+                bt.logging.debug(f"weight hyperparam check skipped: {exc}")
         with self._subtensor_lock:
             try:
                 scores_lock = getattr(self, "_scores_lock", None)

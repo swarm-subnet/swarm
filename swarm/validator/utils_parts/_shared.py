@@ -14,6 +14,8 @@ import numpy as np
 from swarm.constants import (
     BENCHMARK_VERSION,
     BURN_EMISSIONS,
+    BURN_FRACTION,
+    KEEP_FRACTION,
     MAX_MODEL_BYTES,
     MODEL_DIR,
     SIM_DT,

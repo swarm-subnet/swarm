@@ -1,4 +1,4 @@
-"""Validator-side KotH compute path."""
+"""Validator-side KotH compute path (per-family payload)."""
 from __future__ import annotations
 
 import json
@@ -25,7 +25,8 @@ def _reset_warn_state():
 
 
 def _king_dict(uid, *, hotkey=None, score, prev_score, crowned_at_epoch=1,
-               lineage_id=None, weight=0.0, manual_override_drop=False, rank=0):
+               lineage_id=None, weight=0.0, manual_override_drop=False, rank=0,
+               family_id="cf_autopilot"):
     return {
         "lineage_id": lineage_id if lineage_id is not None else uid + 1000,
         "rank": rank,
@@ -36,111 +37,112 @@ def _king_dict(uid, *, hotkey=None, score, prev_score, crowned_at_epoch=1,
         "weight": weight,
         "crowned_at_epoch": crowned_at_epoch,
         "manual_override_drop": manual_override_drop,
+        "family_id": family_id,
+    }
+
+
+def _family_sync(kings_by_family, family_shares, *, weights=None, fallback=False):
+    return {
+        "fallback": fallback,
+        "weights": weights or {},
+        "family_shares": family_shares,
+        "kings_by_family": kings_by_family,
     }
 
 
 def test_compute_returns_weight_map_summing_to_one():
-    sync = {
-        "fallback": False,
-        "weights": {},
-        "kings": [
-            _king_dict(7, score=0.85, prev_score=0.80),
-            _king_dict(5, score=0.50, prev_score=0.20),
-        ],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.85, prev_score=0.80),
+                          _king_dict(5, score=0.50, prev_score=0.20)]},
+        {"cf_autopilot": 1.0},
+    )
     w = compute_koth_weights_from_sync(sync)
     assert pytest.approx(sum(w.values()), abs=1e-9) == 1.0
     assert w[5] > w[7]
 
 
 def test_compute_ignores_advisory_weights_on_apply_path():
-    sync = {
-        "fallback": False,
-        "weights": {"999": 1.0},
-        "kings": [_king_dict(7, score=0.50, prev_score=0.0)],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
+        {"cf_autopilot": 1.0},
+        weights={"999": 1.0},
+    )
     w = compute_koth_weights_from_sync(sync)
     assert w == {7: 1.0}
     assert 999 not in w
 
 
 def test_compute_drops_malformed_rows_individually():
-    sync = {
-        "fallback": False,
-        "weights": {},
-        "kings": [
-            _king_dict(7, score=0.50, prev_score=0.0),
-            {"uid": 8, "hotkey": "hk8"},
-            _king_dict(9, score=0.30, prev_score=0.10),
-        ],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0),
+                          {"uid": 8, "hotkey": "hk8"},
+                          _king_dict(9, score=0.30, prev_score=0.10)]},
+        {"cf_autopilot": 1.0},
+    )
     w = compute_koth_weights_from_sync(sync)
     assert 7 in w
     assert 9 in w
     assert 8 not in w
 
 
-def test_compute_returns_empty_when_all_rows_malformed():
-    sync = {
-        "fallback": False,
-        "weights": {},
-        "kings": [
-            {"uid": "junk", "hotkey": "x"},
-            "not-a-dict",
-            None,
-        ],
-    }
-    w = compute_koth_weights_from_sync(sync)
-    assert w == {}
-
-
-def test_compute_empty_kings_returns_empty_map():
-    assert compute_koth_weights_from_sync({"kings": [], "weights": {}}) == {}
+def test_compute_empty_family_returns_empty_map():
+    sync = _family_sync({"cf_autopilot": []}, {"cf_autopilot": 1.0})
+    assert compute_koth_weights_from_sync(sync) == {}
 
 
 def test_compute_duplicate_uid_aggregates_weight():
-    sync = {
-        "fallback": False,
-        "weights": {},
-        "kings": [
-            _king_dict(42, hotkey="hk-old", score=0.30, prev_score=0.0),
-            _king_dict(99, hotkey="hk99",   score=0.40, prev_score=0.30),
-            _king_dict(42, hotkey="hk-new", score=0.55, prev_score=0.40),
-        ],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(42, hotkey="hk-old", score=0.30, prev_score=0.0),
+                          _king_dict(99, hotkey="hk99", score=0.40, prev_score=0.30),
+                          _king_dict(42, hotkey="hk-new", score=0.55, prev_score=0.40)]},
+        {"cf_autopilot": 1.0},
+    )
     w = compute_koth_weights_from_sync(sync)
     assert 42 in w
     assert 99 in w
     assert pytest.approx(sum(w.values()), abs=1e-9) == 1.0
 
 
-def test_compute_uid_zero_king_preserved():
+def test_compute_uid_zero_king_dropped():
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(0, score=0.40, prev_score=0.30)]},
+        {"cf_autopilot": 1.0},
+    )
+    # The reserved burn UID is rejected, not paid; its slice is dropped.
+    assert compute_koth_weights_from_sync(sync) == {}
+
+
+def test_legacy_flat_payload_refused():
     sync = {
         "fallback": False,
         "weights": {},
-        "kings": [_king_dict(0, score=0.40, prev_score=0.30)],
+        "kings": [_king_dict(7, score=0.50, prev_score=0.0)],
     }
-    w = compute_koth_weights_from_sync(sync)
-    assert w == {0: 1.0}
+    with patch("bittensor.logging.warning") as warn_mock:
+        w = compute_koth_weights_from_sync(sync)
+    assert w == {}
+    assert warn_mock.call_count == 1
+    assert "legacy" in warn_mock.call_args[0][0].lower()
 
 
 def test_advisory_divergence_skipped_on_fallback():
-    sync = {
-        "fallback": True,
-        "weights": {"99": 1.0},
-        "kings": [_king_dict(7, score=0.50, prev_score=0.0)],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
+        {"cf_autopilot": 1.0},
+        weights={"99": 1.0},
+        fallback=True,
+    )
     with patch("bittensor.logging.warning") as warn_mock:
         compute_koth_weights_from_sync(sync)
     assert warn_mock.call_count == 0
 
 
 def test_advisory_divergence_warns_when_live_and_diverged():
-    sync = {
-        "fallback": False,
-        "weights": {"99": 1.0},
-        "kings": [_king_dict(7, score=0.50, prev_score=0.0)],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
+        {"cf_autopilot": 1.0},
+        weights={"99": 1.0},
+    )
     with patch("bittensor.logging.warning") as warn_mock:
         compute_koth_weights_from_sync(sync)
     assert warn_mock.call_count == 1
@@ -149,22 +151,22 @@ def test_advisory_divergence_warns_when_live_and_diverged():
 
 
 def test_advisory_divergence_warns_when_local_empty_and_backend_nonempty():
-    sync = {
-        "fallback": False,
-        "weights": {"99": 1.0},
-        "kings": [],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": []},
+        {"cf_autopilot": 1.0},
+        weights={"99": 1.0},
+    )
     with patch("bittensor.logging.warning") as warn_mock:
         compute_koth_weights_from_sync(sync)
     assert warn_mock.call_count == 1
 
 
 def test_advisory_divergence_silent_when_live_and_matches():
-    sync = {
-        "fallback": False,
-        "weights": {"7": 1.0},
-        "kings": [_king_dict(7, score=0.50, prev_score=0.0)],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
+        {"cf_autopilot": 1.0},
+        weights={"7": 1.0},
+    )
     with patch("bittensor.logging.warning") as warn_mock:
         compute_koth_weights_from_sync(sync)
     assert warn_mock.call_count == 0
@@ -226,26 +228,27 @@ def _make_validator_self(metagraph_n=256):
 
 
 def test_compute_then_apply_routes_share_correctly():
-    sync = {
-        "fallback": False,
-        "weights": {},
-        "kings": [_king_dict(50, score=0.60, prev_score=0.0)],
-    }
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(50, score=0.60, prev_score=0.0)]},
+        {"cf_autopilot": 1.0},
+    )
     w = compute_koth_weights_from_sync(sync)
     obj = _make_validator_self()
     _apply_backend_weights_to_scores(obj, w)
     assert obj.scores[50] > 0
 
 
-def test_empty_computed_map_burns_via_uid_zero():
-    from swarm.constants import BURN_EMISSIONS, UID_ZERO
+def test_empty_computed_map_leaves_zero():
+    from swarm.constants import UID_ZERO
 
-    sync = {"fallback": False, "weights": {}, "kings": []}
+    sync = _family_sync({"cf_autopilot": []}, {"cf_autopilot": 1.0})
     w = compute_koth_weights_from_sync(sync)
     obj = _make_validator_self()
     _apply_backend_weights_to_scores(obj, w)
-    if BURN_EMISSIONS:
-        assert obj.scores[UID_ZERO] == pytest.approx(1.0)
+    # Burning off by default: nothing on UID0 (set_weights then holds last weights).
+    assert obj.scores[UID_ZERO] == pytest.approx(0.0)
+    assert float(obj.scores.sum()) == pytest.approx(0.0)
+
 
 def test_backend_api_runtime_state_seed_includes_last_kings(tmp_path, monkeypatch):
     fake_state = tmp_path / "runtime_state.json"

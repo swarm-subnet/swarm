@@ -52,16 +52,16 @@ def compute_koth_weights_from_sync(
     """Local {uid: weight} from the sync payload; advisory backend weights ignored.
 
     Per-family when the payload carries ``kings_by_family`` + ``family_shares``
-    (weight = Σ family_share · koth_share); otherwise falls back to the flat
-    single-family ``kings`` list.
+    (weight = Σ family_share · koth_share). A legacy payload without
+    ``kings_by_family`` is refused (returns empty) so V5 never pays one family
+    100%.
     """
     family_shares = sync_data.get("family_shares") or {}
     kings_by_family_raw = sync_data.get("kings_by_family") or {}
 
     # A modern payload always carries kings_by_family; use the per-family path
-    # even when family_shares is empty (every family score-gated to zero -> full
-    # burn), so we converge with the backend instead of falling back to the flat
-    # window. Only a legacy payload (no kings_by_family) takes the flat path.
+    # even when family_shares is empty (no family has a payable king), so we
+    # converge with the backend. A legacy payload (no kings_by_family) is refused.
     if kings_by_family_raw:
         kings_by_family = {
             str(fid): _parse_king_entries(rows)
@@ -73,7 +73,13 @@ def compute_koth_weights_from_sync(
         )
         local_weights = combined.miner_raw
     else:
-        local_weights = _koth.compute_weights(_parse_king_entries(sync_data.get("kings")))
+        is_legacy = "kings_by_family" not in sync_data and "family_shares" not in sync_data
+        if is_legacy and sync_data.get("kings"):
+            bt.logging.warning(
+                "KotH: legacy flat payload without kings_by_family; refusing "
+                "(V5 requires the per-family payload)."
+            )
+        return {}
 
     if not sync_data.get("fallback"):
         advisory = sync_data.get("weights") or {}
@@ -177,15 +183,15 @@ def _apply_backend_weights_to_scores(self, backend_weights: Dict[Any, Any]) -> N
 
 
 def _apply_backend_weights_to_scores_unlocked(self, backend_weights: Dict[Any, Any]) -> None:
-    """Apply the per-family KotH miner map with explicit burn.
+    """Apply the per-family KotH miner map to the score vector.
 
     Each weight is already an ABSOLUTE fraction of total emissions
-    (family_allocation × koth_share), so miner[uid] = raw[uid] directly and
-    UID0 = 1 - Σ miner. No keep-fraction scaling and no proportional rescale:
-    an unallocated family slice, a warming-up family's throttled remainder, an
-    empty family (absent from backend_weights), and any invalid row (burn UID /
-    out-of-range / non-finite) all genuinely burn rather than being
-    redistributed onto the surviving miners.
+    (family_allocation × koth_share). With burning off (the default) the scores
+    stay as the raw miner shares and ``set_weights`` renormalizes them to 1.0,
+    so any slice the backend did not assign to a live miner is spread across the
+    paid miners instead of going to UID 0. The parked ``BURN_FRACTION`` lever,
+    when enabled, scales miners down to ``KEEP_FRACTION`` and routes
+    ``BURN_FRACTION`` to UID 0.
     """
     self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
@@ -208,4 +214,6 @@ def _apply_backend_weights_to_scores_unlocked(self, backend_weights: Dict[Any, A
         distributed = 1.0
 
     if BURN_EMISSIONS and 0 <= UID_ZERO < self.metagraph.n:
-        self.scores[UID_ZERO] = max(0.0, 1.0 - float(distributed))
+        if distributed > 0.0:
+            self.scores *= KEEP_FRACTION / distributed
+        self.scores[UID_ZERO] = BURN_FRACTION
