@@ -53,9 +53,16 @@ SAR_RGB_RES = 256                       # on-demand RGB frame resolution
 SAR_RGB_REQUEST_CAP = 40               # per-drone RGB requests allowed per episode
 
 # Search area parameters
-SEARCH_AREA_NOISE_Z = 2.0               # ±2m vertical noise
-SEARCH_RADIUS_MIN = 0.0                 # m — min per-seed autopilot search radius (GPS-style clue)
-SEARCH_RADIUS_MAX = 10.0                # m — max per-seed autopilot search radius
+SEARCH_AREA_NOISE_Z = 5.0               # ±5m vertical noise — forces real altitude search
+SEARCH_RADIUS_MIN = 5.0                 # Minimum per-seed search radius (meters)
+SEARCH_RADIUS_MAX = 20.0                # Maximum per-seed search radius (meters), clamped per-seed to what fits the horizon
+# Search-aware time scoring — budget the time to sweep the search disk so a good
+# searcher can still reach a perfect time term. See swarm/validator/reward.py.
+SEARCH_SWEEP_ALPHA = 0.75               # Coverage-overhead factor (~70-80th percentile area search)
+SEARCH_DETECT_WIDTH = 5.1               # Effective downward detection swath (meters): cruise footprint 2*SAFE_Z*tan(FOV/2)=6.0 x 0.85 overlap loss
+SEARCH_LAND_SEC = 2.0                   # Time budgeted to settle/land once the pad is found (seconds)
+SEARCH_TIME_BUFFER = 1.06               # Slack multiplier on the search-aware target time
+SEARCH_FEASIBILITY_MARGIN_SEC = 1.0     # Keep target time this far under the horizon when clamping radius
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
 # Propulsion efficiency
@@ -358,24 +365,24 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 # Type 1: City Navigation
 TYPE_1_WORLD_RANGE = 75
 TYPE_1_SAFE_ZONE = 1.0
-TYPE_1_R_MIN, TYPE_1_R_MAX = 5, 45
+TYPE_1_R_MIN, TYPE_1_R_MAX = 22, 45
 TYPE_1_H_MIN, TYPE_1_H_MAX = 0.2, 1
 TYPE_1_START_H_MIN, TYPE_1_START_H_MAX = 0.2, 5
 TYPE_1_HORIZON = HORIZON_SEC
 
 # Type 2: Open Flight (No Obstacles)
-TYPE_2_WORLD_RANGE = 20
+TYPE_2_WORLD_RANGE = 60
 TYPE_2_N_OBSTACLES = 0
 TYPE_2_HEIGHT_SCALE = 1.0
 TYPE_2_SAFE_ZONE = 0.0
-TYPE_2_R_MIN, TYPE_2_R_MAX = 10, 25
-TYPE_2_H_MIN, TYPE_2_H_MAX = 3, 10
+TYPE_2_R_MIN, TYPE_2_R_MAX = 28, 72
+TYPE_2_H_MIN, TYPE_2_H_MAX = 4, 14
 TYPE_2_START_H_MIN, TYPE_2_START_H_MAX = 0.05, 10
 TYPE_2_HORIZON = HORIZON_SEC
 
 # Type 3: Mountain Navigation
 TYPE_3_SAFE_ZONE = 1.0
-TYPE_3_R_MIN, TYPE_3_R_MAX = 20, 100
+TYPE_3_R_MIN, TYPE_3_R_MAX = 65, 100
 TYPE_3_H_MIN, TYPE_3_H_MAX = 0, 0
 TYPE_3_START_H_MIN, TYPE_3_START_H_MAX = 0, 0
 TYPE_3_HORIZON = HORIZON_SEC
@@ -384,6 +391,9 @@ TYPE_3_SCALE_MAX = 0.8
 TYPE_3_SCALE_SEED_OFFSET = 777777
 TYPE_3_WORLD_RANGE_RATIO = 0.60
 TYPE_3_VILLAGE_RANGE = 40.0
+# Village (challenge_type 4) keeps its own far-goal band — its ±40m world box
+# caps reachable distance near 56m, so it must NOT inherit the mountain 50-100 band.
+VILLAGE_R_MIN, VILLAGE_R_MAX = 28, 56
 
 # Legacy split kept for compatibility utilities. Internal task schema now uses:
 # type=3 mountain, type=4 village.
@@ -396,7 +406,7 @@ MOUNTAIN_SUBTYPE_DISTRIBUTION = {
 # Constants retain the TYPE_4_* prefix for backward import compatibility.
 TYPE_4_WORLD_RANGE_X = 38                           # ±38m X (floor_spawn_half_x=40.1m, 2m wall margin)
 TYPE_4_WORLD_RANGE_Y = 23                           # ±23m Y (floor_spawn_half_y=25.3m, 2m wall margin)
-TYPE_4_R_MIN, TYPE_4_R_MAX = 5, 35
+TYPE_4_R_MIN, TYPE_4_R_MAX = 18, 35
 TYPE_4_H_MIN, TYPE_4_H_MAX = 0.2, 10.0             # Floor to roof(12m) minus 2m ceiling clearance
 TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.2, 10.0
 TYPE_4_HORIZON = HORIZON_SEC
@@ -406,7 +416,7 @@ TYPE_4_MIN_PLATFORM_DISTANCE = 10.0                 # Minimum 3D distance betwee
 
 # Type 6: Forest Navigation (100×100m ground, 96×96m playable with 2m edge margin)
 TYPE_6_WORLD_RANGE = 42                             # ±42m playable XY (96m total with margin)
-TYPE_6_R_MIN, TYPE_6_R_MAX = 10, 45
+TYPE_6_R_MIN, TYPE_6_R_MAX = 22, 45
 TYPE_6_H_MIN, TYPE_6_H_MAX = 0.2, 3.0
 TYPE_6_START_H_MIN, TYPE_6_START_H_MAX = 0.2, 3.0
 TYPE_6_HORIZON = HORIZON_SEC

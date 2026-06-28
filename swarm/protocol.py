@@ -68,6 +68,7 @@ class MapTask:
     family_id: str = "cf_search_and_rescue"
     version: str = SCHEMA_VERSION
     search_centre: Tuple[float, float] = (0.0, 0.0)
+    search_radius: float = 10.0
     moving_platform: bool = False
     num_drones: int = 1
     starts: Tuple[Tuple[float, float, float], ...] = ()
@@ -79,7 +80,6 @@ class MapTask:
     @staticmethod
     def unpack(blob: bytes) -> "MapTask":
         data = msgpack.unpackb(blob, raw=False)
-        data.pop("search_radius", None)
         if not data.get("family_id"):
             version = normalize_version(data.get("version", ""))
             data["family_id"] = (

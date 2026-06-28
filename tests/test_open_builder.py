@@ -75,7 +75,7 @@ def test_terrain_obj_path_uses_state_cache_dir() -> None:
     assert terrain_path == (
         Path(open_builder._STATE_DIR)
         / "open_terrain"
-        / "open_terrain_v2_s123.obj"
+        / "open_terrain_v3_s123.obj"
     )
 
 

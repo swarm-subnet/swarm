@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import random
 from typing import Any, Optional
 
 import numpy as np
@@ -9,8 +8,6 @@ import pybullet as p
 
 from swarm.constants import (
     SEARCH_AREA_NOISE_Z,
-    SEARCH_RADIUS_MAX,
-    SEARCH_RADIUS_MIN,
     START_PLATFORM_TAKEOFF_BUFFER,
 )
 from swarm.core.env_builder.platform_placement import build_autopilot_world
@@ -32,23 +29,33 @@ AUTOPILOT_GOAL_REACH_RADIUS_M = 1.0
 
 
 def _build_autopilot_screening_template() -> tuple[dict[str, Any], ...]:
-    def slot(challenge_type: int, distance_range: tuple[float, float], moving: bool) -> dict[str, Any]:
-        return {"challenge_type": challenge_type, "distance_range": distance_range, "moving_platform": moving}
+    def slot(
+        challenge_type: int,
+        distance_range: tuple[float, float],
+        goal_height_range: Optional[tuple[float, float]],
+        moving: bool,
+    ) -> dict[str, Any]:
+        return {
+            "challenge_type": challenge_type,
+            "distance_range": distance_range,
+            "goal_height_range": goal_height_range,
+            "moving_platform": moving,
+        }
 
-    city = ((16.0, 26.0))
-    open_ = ((16.0, 24.0))
-    mountain = ((28.0, 52.0))
-    village = ((24.0, 42.0))
-    warehouse = ((10.0, 20.0))
-    forest = ((16.0, 28.0))
+    city = (22.0, 40.0)
+    open_ = (28.0, 65.0)
+    mountain = (65.0, 95.0)
+    village = (28.0, 50.0)
+    warehouse = (18.0, 30.0)
+    forest = (22.0, 40.0)
 
     pools = [
-        [slot(1, city, False)] * 6 + [slot(1, city, True)] * 2,
-        [slot(2, open_, False)] * 2 + [slot(2, open_, True)] * 6,
-        [slot(3, mountain, False)] * 6 + [slot(3, mountain, True)] * 2,
-        [slot(4, village, False)] * 7 + [slot(4, village, True)] * 2,
-        [slot(5, warehouse, False)] * 9,
-        [slot(6, forest, False)] * 8,
+        [slot(1, city, (0.3, 0.8), False)] * 6 + [slot(1, city, (0.3, 0.8), True)] * 2,
+        [slot(2, open_, (5.0, 12.0), False)] * 2 + [slot(2, open_, (5.0, 12.0), True)] * 6,
+        [slot(3, mountain, None, False)] * 6 + [slot(3, mountain, None, True)] * 2,
+        [slot(4, village, None, False)] * 7 + [slot(4, village, None, True)] * 2,
+        [slot(5, warehouse, (1.0, 6.0), False)] * 9,
+        [slot(6, forest, (0.5, 2.0), False)] * 8,
     ]
     template: list[dict[str, Any]] = []
     for i in range(max(len(pool) for pool in pools)):
@@ -245,6 +252,10 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
             }
             if _supports_keyword_arg(legacy_task_gen.screening_task, "family_id"):
                 kwargs["family_id"] = self.family_id
+            if slot.get("goal_height_range") is not None and _supports_keyword_arg(
+                legacy_task_gen.screening_task, "goal_height_range"
+            ):
+                kwargs["goal_height_range"] = slot["goal_height_range"]
             if "moving_platform" in slot and _supports_keyword_arg(
                 legacy_task_gen.screening_task, "moving_platform"
             ):
@@ -342,7 +353,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         env._build_cull_targets()
 
         seed = int(env.task.map_seed)
-        search_radius = random.Random(seed + 888888).uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX)
+        search_radius = float(getattr(env.task, "search_radius", 10.0))
         noise_rng = np.random.RandomState(seed)
         noise_xy = noise_rng.uniform(-search_radius, search_radius, size=2)
         noise_z = noise_rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)

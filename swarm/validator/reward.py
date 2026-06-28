@@ -40,6 +40,10 @@ from swarm.constants import (
     SAR_SEARCH_RADIUS,
     SAR_SWEEP_WIDTH,
     SAR_TIME_TERM_BUFFER,
+    SEARCH_DETECT_WIDTH,
+    SEARCH_LAND_SEC,
+    SEARCH_SWEEP_ALPHA,
+    SEARCH_TIME_BUFFER,
     SPEED_LIMIT,
     SWARM_CONGESTION_PER_NEIGHBOR_SEC,
 )
@@ -76,14 +80,26 @@ def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
 
 
+def _search_sweep_time(search_radius: float) -> float:
+    """Time to sweep a disk of ``search_radius`` to locate the pad (area / coverage rate)."""
+    r = max(0.0, float(search_radius))
+    return SEARCH_SWEEP_ALPHA * math.pi * r * r / max(SEARCH_DETECT_WIDTH * SPEED_LIMIT, 1e-6)
+
+
 def _calculate_target_time(task: "MapTask") -> float:
-    """Calculate target time based on distance and 6% buffer."""
+    """Target time = travel to the goal + sweeping the GPS search disk + a moment to land.
+
+    The drone is told only a noisy search centre (goal +/- ``search_radius``) and must
+    search to find the pad, so the time budget includes the expected sweep. Without it a
+    wider search area would make a perfect time term impossible.
+    """
     start_pos = np.array(task.start)
     goal_pos = np.array(task.goal)
-    distance = np.linalg.norm(goal_pos - start_pos)
+    distance = float(np.linalg.norm(goal_pos - start_pos))
+    search_radius = float(getattr(task, "search_radius", 0.0) or 0.0)
 
-    min_time = (distance / SPEED_LIMIT) + HOVER_SEC
-    return min_time * 1.06
+    travel = (distance / SPEED_LIMIT) + HOVER_SEC
+    return SEARCH_TIME_BUFFER * (travel + _search_sweep_time(search_radius) + SEARCH_LAND_SEC)
 
 
 def _calculate_sar_target_time(task: "MapTask") -> float:

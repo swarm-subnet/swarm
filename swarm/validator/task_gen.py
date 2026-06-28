@@ -20,6 +20,16 @@ from swarm.constants import (
     SWARM_NUM_DRONES,
     SWARM_PAD_MAX_ATTEMPTS,
     SWARM_PAD_MIN_SPACING,
+    SEARCH_DETECT_WIDTH,
+    SEARCH_FEASIBILITY_MARGIN_SEC,
+    SEARCH_LAND_SEC,
+    SEARCH_RADIUS_MAX,
+    SEARCH_RADIUS_MIN,
+    SEARCH_SWEEP_ALPHA,
+    SEARCH_TIME_BUFFER,
+    SPEED_LIMIT,
+    VILLAGE_R_MAX,
+    VILLAGE_R_MIN,
     RANDOM_START,
     START_PLATFORM,
     START_PLATFORM_MAX_Z,
@@ -122,7 +132,7 @@ def _resolve_params(seed: int, challenge_type: int) -> dict:
     if challenge_type == 4:
         return {
             'world_range': TYPE_3_VILLAGE_RANGE,
-            'r_min': TYPE_3_R_MIN, 'r_max': TYPE_3_R_MAX,
+            'r_min': VILLAGE_R_MIN, 'r_max': VILLAGE_R_MAX,
             'h_min': TYPE_3_H_MIN, 'h_max': TYPE_3_H_MAX,
             'start_h_min': TYPE_3_START_H_MIN, 'start_h_max': TYPE_3_START_H_MAX,
             'horizon': TYPE_3_HORIZON,
@@ -186,6 +196,23 @@ def _swarm_pads(
     return tuple(starts), tuple(goals)
 
 
+def _max_search_radius(distance: float, horizon: float) -> float:
+    """Largest search radius whose sweep still fits the horizon at this distance.
+
+    Mirrors the search-aware target in swarm/validator/reward.py
+    (target = buffer*(dist/V + alpha*pi*R^2/(W*V) + land)); solving target <=
+    horizon - margin for R keeps every seed completable.
+    """
+    budget = (
+        (horizon - SEARCH_FEASIBILITY_MARGIN_SEC) / SEARCH_TIME_BUFFER
+        - distance / SPEED_LIMIT
+        - SEARCH_LAND_SEC
+    )
+    if budget <= 0.0:
+        return 0.0
+    return math.sqrt(budget * SEARCH_DETECT_WIDTH * SPEED_LIMIT / (SEARCH_SWEEP_ALPHA * math.pi))
+
+
 def _build_task_with_params(
     sim_dt: float,
     seed: int,
@@ -243,6 +270,12 @@ def _build_task_with_params(
         start = (0.0, 0.0, 1.5)
         goal = _goal_from_origin(rng, params)
 
+    distance = math.dist(tuple(start), tuple(goal))
+    search_radius = min(
+        random.Random(seed + 888888).uniform(SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX),
+        _max_search_radius(distance, params['horizon']),
+    )
+
     return MapTask(
         map_seed=seed,
         start=start,
@@ -252,6 +285,7 @@ def _build_task_with_params(
         challenge_type=challenge_type,
         family_id=family_id,
         version=SCHEMA_VERSION,
+        search_radius=search_radius,
         moving_platform=moving_platform,
     )
 
@@ -584,6 +618,7 @@ def screening_task(
     *,
     challenge_type: int,
     distance_range: Tuple[float, float],
+    goal_height_range: Optional[Tuple[float, float]] = None,
     family_id: str = "cf_search_and_rescue",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
@@ -593,6 +628,8 @@ def screening_task(
 
     params = _resolve_params(seed, challenge_type)
     params['r_min'], params['r_max'] = distance_range
+    if goal_height_range is not None:
+        params['h_min'], params['h_max'] = goal_height_range
     resolved = _resolve_moving_platform(seed, challenge_type, family_id, moving_platform)
     return _build_task_with_params(
         sim_dt, seed,
