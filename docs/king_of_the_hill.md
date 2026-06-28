@@ -2,9 +2,10 @@
 
 How emissions are split on Swarm Subnet 124.
 
-Instead of paying only the single best model, Swarm pays the **last 10 champions** — each in
-proportion to how much it moved the frontier when it was crowned. This rewards the *act of
-improving*, not just sitting on top, and spreads emissions across many independent miners.
+Instead of paying only the single best model, Swarm pays the **last 10 champions** — each by how
+much it moved the frontier when it was crowned, weighted toward the more recent champions. This
+rewards the *act of improving*, not just sitting on top, and spreads emissions across many
+independent miners.
 
 ---
 
@@ -32,28 +33,55 @@ intact: champions persist week to week, only their scores refresh.
 
 ## How each king's share is decided
 
-Each king's slice depends on **how much it improved the score** and **how hard that improvement
-was**. The same raw gain is worth more near the top, where there is little headroom left.
+Each king's slice depends on **how much it improved the score** and **how recent it is**. The
+improvement is measured as log-headroom — worth more near the top, where there is little headroom
+left — and is then tapered by the king's **rank** in the lineage so newer kings earn more.
 
-For a king crowned at `score`, having beaten a previous best of `prev`:
+For a king crowned at `score`, having beaten a previous best of `prev`, sitting at `rank` in the
+window (`rank = 0` is the reigning champion):
 
 ```
-gain  = log( max(1 − prev, 0.01) / max(1 − score, 0.01) )      # ≥ 0
-share = gain / (sum of gain over the 10 kings in the window)
+gain   = log( max(1 − prev, 0.01) / max(1 − score, 0.01) )   # ≥ 0
+weight = (10 − rank) / 10                                     # champion 1.0, each step down −0.1
+share  = gain × weight / (sum of gain × weight over the window)
 ```
 
 In words:
 
 - Measure improvement in **log-headroom** — how much of the remaining distance-to-perfect the
   king closed.
-- Normalise across the window so the 10 shares sum to 100%.
+- Taper it by **rank**: the champion keeps full weight, the king below it 90%, the next 80%, and so
+  on — see *Rank weighting* below.
+- Normalise across the window so the shares sum to 100%.
 
-The log form is deliberate: it is **staging-proof**. Splitting one improvement into several small
-crownings (e.g. across multiple hotkeys) yields exactly the same total credit as making it in one
-jump — there is no bonus for gaming the split. The `0.01` floor caps the effect so improvements
-above `0.99` do not blow up.
+The `0.01` floor caps the headroom so improvements above `0.99` do not blow up.
 
-The first king of a version has `prev = 0`, so it takes 100% of the window until it is dethroned.
+The first king of a version starts from `prev = 0` and takes the full window while it stands alone.
+As newer kings arrive, it slides down the ranks and its weight drops, shifting emissions toward the
+more recent champions.
+
+---
+
+## Rank weighting
+
+A king's gain is tapered by where it sits in the lineage. The reigning champion (rank 0) keeps its
+full gain; every step further back loses **10%**:
+
+```
+weight = (10 − rank) / 10
+   rank 0 (champion) → 1.0      rank 5 → 0.5      rank 9 (oldest) → 0.1
+```
+
+So the freshest champions earn the most, and a king fades **as new champions are crowned and push it
+down the window** — not by any clock, and with no hard age cutoff. Every king in the top-10 always
+keeps a share (down to 10% weight at the bottom); a king only stops earning once an 11th crowning
+pushes it out of the window entirely.
+
+Splitting one improvement across several crownings now earns *less* — each earlier piece sits at a
+lower rank and is weighted down — so there is no advantage to gaming the split.
+
+Rank weighting is separate from the crowning floor below: the crowning floor decides who *takes* the
+throne, while rank weighting shapes how the throne's *earnings* are split.
 
 ---
 
@@ -91,7 +119,7 @@ verdict.
 
 The backend serves the king window (each king's `score`, the `prev` it beat, and its UID). The
 share map is recomputed from those numbers and sent to validators, which apply it on-chain each
-forward cycle. The live window and a diagnostics snapshot (version, champion score, the current
+forward cycle. The live window and a diagnostics snapshot (version, champion score, the crowning
 floor, last crowning) are public at `/kings/active` and `/kings/diagnostics`.
 
 ---
@@ -103,6 +131,7 @@ floor, last crowning) are public at `/kings/active` and `/kings/diagnostics`.
 | **King** | A model that took the throne by passing screening + benchmark and clearing the dynamic floor. |
 | **Window** | The 10 most recent kings of the current version whose shares are summed. |
 | **Headroom** | The distance from a score to a perfect 1.0 — the room left to grow. |
-| **Log-headroom gain** | `log((1 − prev) / (1 − score))`, floored at 0.01 — staging-proof improvement credit. |
-| **Dynamic floor** | The minimum improvement to dethrone the champion: 0.015 while ≤ 0.35, decaying to 0.005 at 1.0. |
+| **Log-headroom gain** | `log((1 − prev) / (1 − score))`, floored at 0.01 — how much of the remaining distance-to-perfect a king closed when crowned. |
+| **Rank weighting** | `(10 − rank) / 10`. The champion (rank 0) keeps full gain; each older king loses 10%, down to 10% at the bottom of the window. |
+| **Dynamic (crowning) floor** | The minimum improvement to dethrone the champion: 0.015 while ≤ 0.35, decaying to 0.005 at 1.0. |
 | **Burn** | Weight routed to UID 0 (paid to no miner) when there is no payable king. |
