@@ -209,8 +209,8 @@ async def test_run_task_benchmark_happy_path(monkeypatch, fake_model_path):
             "task_id": 200,
             "uid": 42,
             "phase": "BENCHMARK",
-            "seeds_from": 200,
-            "seeds_to": 1000,
+            "seeds_from": 300,
+            "seeds_to": 1100,
             "model_hash": target_hash,
             "github_url": "https://github.com/x/y",
             "epoch_number": 5,
@@ -222,14 +222,14 @@ async def test_run_task_benchmark_happy_path(monkeypatch, fake_model_path):
     s = backend.submissions[0]
     assert s["task_id"] == 200
     assert s["score"] == pytest.approx(0.7)
-    assert s["seeds_evaluated"] == 1000
+    assert s["seeds_evaluated"] == 1100
 
 
 @pytest.mark.asyncio
-async def test_run_task_reeval_evaluates_full_1000_seeds(
+async def test_run_task_reeval_evaluates_full_1100_seeds(
     monkeypatch, fake_model_path,
 ):
-    """Plan §2.10: REEVAL covers all 1000 seeds (0..999), not just the
+    """Plan §2.10: REEVAL covers all 1100 seeds (0..1099), not just the
     benchmark 800. Validators receive a REEVAL task with seeds_from=0
     and the streaming evaluator must iterate the full epoch seed list."""
     target_hash = ("abc" * 22)[:64]
@@ -242,8 +242,8 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
         return (
             0.6,
             {"city": 0.6},
-            [0.6] * 1000,
-            {"city": [0.6] * 1000},
+            [0.6] * 1100,
+            {"city": [0.6] * 1100},
             None,
         )
 
@@ -260,7 +260,7 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
             "uid": 42,
             "phase": "REEVAL",
             "seeds_from": 0,
-            "seeds_to": 1000,
+            "seeds_to": 1100,
             "model_hash": target_hash,
             "github_url": "https://github.com/x/y",
             "epoch_number": 5,
@@ -271,7 +271,7 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
 
     assert captured["seeds_from"] == 0
     s = backend.submissions[0]
-    assert s["seeds_evaluated"] == 1000
+    assert s["seeds_evaluated"] == 1100
     assert s["early_failed"] is False
 
 

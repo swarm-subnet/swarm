@@ -667,7 +667,7 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
     asyncio.run(_run())
 
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 210))
+    assert all_indices == list(range(300, 310))
 
 
 def test_run_screening_streams_with_unified_chunks(monkeypatch):
@@ -757,7 +757,7 @@ def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
     assert avg == pytest.approx(0.81)
     assert [len(b) for b in uploads] == [10, 10, 5]
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 225))
+    assert all_indices == list(range(300, 325))
     type_totals = sum(len(v) for v in per_type_raw.values())
     assert type_totals == 25
 
@@ -916,7 +916,7 @@ def test_queue_worker_real_flow_streams_and_cancels_on_auth(tmp_path):
     assert len(uploads) == 2
     assert [len(b) for b in uploads] == [10, 10]
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 220))
+    assert all_indices == list(range(300, 320))
     assert item["benchmark_partial_scores"] == [0.5] * 20
 
 
@@ -1019,7 +1019,7 @@ def test_queue_worker_real_flow_streams_full_run(tmp_path):
     assert item["score_recorded"] is True
     assert [len(b) for b in uploads] == [10, 10, 10]
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 230))
+    assert all_indices == list(range(300, 330))
     assert item["seeds_evaluated"] == 31  # 1 screening + 30 benchmark
     assert item["total_score"] == pytest.approx((0.85 + 0.9 * 30) / 31)
 
@@ -1793,9 +1793,9 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
 
 
 def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
-    """When resuming benchmark with seeds_from > 200, the heartbeat must
+    """When resuming benchmark with seeds_from > 300, the heartbeat must
     report the FULL benchmark range (800) as total and the offset
-    (seeds_from - 200) as already-done. Otherwise the dashboard shows
+    (seeds_from - 300) as already-done. Otherwise the dashboard shows
     a misleading 0/(remaining) right after a validator restart."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
@@ -1808,7 +1808,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     async def _run():
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=Path("/tmp/fake.zip"),
-            task_id=8888, seeds_from=300,
+            task_id=8888, seeds_from=400,
         )
 
     asyncio.run(_run())
@@ -1817,7 +1817,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     assert sent
     initial = sent[0]
     assert initial["total_seeds"] == 800
-    assert initial["progress"] == 100  # 300 - 200 already done
+    assert initial["progress"] == 100  # 400 - 300 already done
 
 
 def test_run_screening_resume_reports_cumulative_progress(monkeypatch):

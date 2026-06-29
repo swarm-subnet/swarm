@@ -8,9 +8,10 @@ from types import SimpleNamespace
 def test_screening_count_matches_validator_ratio(reload_module):
     mod = reload_module("scripts.stress_benchmark_compare")
 
-    assert mod._screening_count_for_total(1000) == 200
-    assert mod._screening_count_for_total(100) == 20
-    assert mod._screening_count_for_total(6) == 1
+    assert mod._screening_count_for_total(1100) == 300
+    assert mod._screening_count_for_total(1000) == 273
+    assert mod._screening_count_for_total(100) == 27
+    assert mod._screening_count_for_total(6) == 2
 
 
 def test_classify_raw_seeds_preserves_order_and_phase(reload_module, monkeypatch):

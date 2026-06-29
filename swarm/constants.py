@@ -264,8 +264,8 @@ LANDING_ALTITUDE_BUFFER = 0.10          # Vertical slack above safe distance (me
 
 from swarm import version_split as _vs
 BENCHMARK_VERSION = ".".join(_vs[:3])
-BENCHMARK_TOTAL_SEED_COUNT = 1000       # Total seeds per epoch
-BENCHMARK_SCREENING_SEED_COUNT = 200    # Seeds used for screening phase
+BENCHMARK_TOTAL_SEED_COUNT = 1100       # Total seeds per epoch
+BENCHMARK_SCREENING_SEED_COUNT = 300    # Seeds used for screening phase
 BENCHMARK_FULL_SEED_COUNT = 800         # Seeds used for full benchmark phase
 SCREENING_BOOTSTRAP_THRESHOLD = 0.01    # Minimum score threshold during bootstrap
 SEED_SCORE_BATCH_MAX = 300              # Backend max per POST /validators/seed-scores
@@ -284,40 +284,68 @@ SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
 UNIFIED_CHUNK_SIZE = 10
 MAX_INFLIGHT_SEED_UPLOADS = 3
 
-# Screening template — 50 standardised entries, cycled 4× for 200 screening seeds
-def _build_screening_template() -> list[dict]:
+# Stratified templates: every model is graded on the same challenge composition, not random seeds.
+def _banded_pool(
+    challenge_type: int,
+    distance: tuple[float, float],
+    *,
+    n_slots: int,
+    n_bands: int,
+    moving_prob: float,
+    goal_height_range=None,
+) -> list[dict]:
+    lo, hi = distance
+    width = (hi - lo) / n_bands
+    n_moving = round(n_slots * moving_prob)
+    pool: list[dict] = []
+    for i in range(n_slots):
+        band = i % n_bands
+        pool.append(dict(
+            challenge_type=challenge_type,
+            distance_range=(round(lo + band * width, 1), round(lo + (band + 1) * width, 1)),
+            goal_height_range=goal_height_range,
+            moving_platform=(i < n_moving),
+        ))
+    return pool
+
+
+def _interleave(pools: list[list[dict]], expected: int) -> list[dict]:
     slots: list[dict] = []
-
-    city_static      = dict(challenge_type=1, distance_range=(22, 40), goal_height_range=(0.3, 0.8), moving_platform=False)
-    city_moving      = dict(challenge_type=1, distance_range=(22, 40), goal_height_range=(0.3, 0.8), moving_platform=True)
-    open_static      = dict(challenge_type=2, distance_range=(28, 65), goal_height_range=(5.0, 12.0), moving_platform=False)
-    open_moving      = dict(challenge_type=2, distance_range=(28, 65), goal_height_range=(5.0, 12.0), moving_platform=True)
-    mountain_static  = dict(challenge_type=3, distance_range=(65, 95), goal_height_range=None, moving_platform=False)
-    mountain_moving  = dict(challenge_type=3, distance_range=(65, 95), goal_height_range=None, moving_platform=True)
-    village_static   = dict(challenge_type=4, distance_range=(28, 50), goal_height_range=None, moving_platform=False)
-    village_moving   = dict(challenge_type=4, distance_range=(28, 50), goal_height_range=None, moving_platform=True)
-    warehouse_static = dict(challenge_type=5, distance_range=(18, 30), goal_height_range=(1.0, 6.0), moving_platform=False)
-    forest_static    = dict(challenge_type=6, distance_range=(22, 40), goal_height_range=(0.5, 2.0), moving_platform=False)
-
-    pools = [
-        [city_static]*6      + [city_moving]*2,
-        [open_static]*2      + [open_moving]*6,
-        [mountain_static]*6  + [mountain_moving]*2,
-        [village_static]*7   + [village_moving]*2,
-        [warehouse_static]*9,
-        [forest_static]*8,
-    ]
     for i in range(max(len(p) for p in pools)):
         for pool in pools:
             if i < len(pool):
                 slots.append(pool[i])
-
-    if len(slots) != 50:
-        raise RuntimeError(f"Screening template must have 50 entries, got {len(slots)}")
+    if len(slots) != expected:
+        raise RuntimeError(f"Template must have {expected} entries, got {len(slots)}")
     return slots
 
 
+# Screening template — 50 entries, cycled 6× for 300 screening seeds (two distance bands per type).
+def _build_screening_template() -> list[dict]:
+    return _interleave([
+        _banded_pool(1, (22, 40), n_slots=8, n_bands=2, moving_prob=0.25, goal_height_range=(0.3, 0.8)),
+        _banded_pool(2, (28, 65), n_slots=8, n_bands=2, moving_prob=0.75, goal_height_range=(5.0, 12.0)),
+        _banded_pool(3, (65, 95), n_slots=8, n_bands=2, moving_prob=0.25),
+        _banded_pool(4, (28, 50), n_slots=9, n_bands=2, moving_prob=0.25),
+        _banded_pool(5, (18, 30), n_slots=9, n_bands=2, moving_prob=0.0, goal_height_range=(1.0, 6.0)),
+        _banded_pool(6, (22, 40), n_slots=8, n_bands=2, moving_prob=0.0, goal_height_range=(0.5, 2.0)),
+    ], expected=50)
+
+
+# Benchmark template — 100 entries, cycled 8× for 800 benchmark seeds (three distance bands per type).
+def _build_benchmark_template() -> list[dict]:
+    return _interleave([
+        _banded_pool(1, (22, 45),  n_slots=17, n_bands=3, moving_prob=0.25, goal_height_range=(0.2, 1.0)),
+        _banded_pool(2, (28, 72),  n_slots=17, n_bands=3, moving_prob=0.80, goal_height_range=(4.0, 14.0)),
+        _banded_pool(3, (65, 100), n_slots=17, n_bands=3, moving_prob=0.25),
+        _banded_pool(4, (28, 56),  n_slots=17, n_bands=3, moving_prob=0.25),
+        _banded_pool(5, (18, 35),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 10.0)),
+        _banded_pool(6, (22, 45),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 3.0)),
+    ], expected=100)
+
+
 SCREENING_TEMPLATE: list[dict] = _build_screening_template()
+BENCHMARK_TEMPLATE: list[dict] = _build_benchmark_template()
 
 # =============================================================================
 # CHALLENGE TYPE DISTRIBUTION

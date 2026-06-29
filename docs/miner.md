@@ -2,7 +2,7 @@
 
 # Swarm Miner Guide
 
-Train an autonomous drone pilot, benchmark it against 1,000 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
+Train an autonomous drone pilot, benchmark it against 1,100 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
 
 ---
 
@@ -198,7 +198,7 @@ swarm benchmark --model Submission/submission.zip --workers 4
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 ```
 
-The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds total (200 screening + 800 full).
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,100 seeds total (300 screening + 800 full).
 
 ### View Results
 
@@ -332,14 +332,14 @@ The **target time** is search-aware: it budgets travel to the goal **plus** the 
 2. **Backend** detects the commit. The chain scanner polls every ~3 minutes, so registration completes within **3–5 minutes** of chain-commit finalization. The backend downloads `submission.zip`, verifies the SHA-256 and README hashes, and adds the model to the pending queue
 3. **Validators** sync the pending queue, download the model directly from the miner's GitHub repo, and verify the hash against the backend record
 4. Each validator runs the agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear the **dynamic crowning floor** (champion + 0.005–0.015, easing as the champion nears 1.0; or >= 0.01 if no champion)
+   - **Screening** (300 seeds) — the model advances to full benchmark only once validator scores clear the **dynamic crowning floor** (champion + 0.005–0.015, easing as the champion nears 1.0; or >= 0.01 if no champion)
    - **Full benchmark** (800 seeds) — remaining seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
 5. Final score and pass/fail are determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
 6. **King of the Hill** — the last 10 champions share emissions, each by how much it improved the frontier when crowned (see [King of the Hill](king_of_the_hill.md))
 
 ### Epoch Rotation
 
-Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates 1,000 cryptographically random seeds per epoch using `random.SystemRandom()` — there is no shared secret.
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates 1,100 cryptographically random seeds per epoch using `random.SystemRandom()` — there is no shared secret.
 
 Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 
@@ -347,8 +347,8 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 
 | Parameter | Value |
 |-----------|-------|
-| Total seeds per epoch | 1,000 |
-| Screening seeds | 200 |
+| Total seeds per epoch | 1,100 |
+| Screening seeds | 300 |
 | Full benchmark seeds | 800 |
 | Screening threshold | >= champion score + dynamic floor (0.005–0.015; >= 0.01 bootstrap) |
 | Max submission size | 50 MiB (compressed) |

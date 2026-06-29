@@ -58,7 +58,7 @@
 
 Delivery, inspection, search and rescue — autonomous drones are being deployed everywhere, but the AI behind them is still developed behind closed doors. There's no standard way to measure if one flight policy is better than another.
 
-**Swarm changes that.** It's an open benchmark that puts every model on equal footing: 1,000 procedurally generated worlds, containerized evaluation, and a public [leaderboard](https://swarm124.com/benchmark). No data leaks, no memorization — just raw skill.
+**Swarm changes that.** It's an open benchmark that puts every model on equal footing: 1,100 procedurally generated worlds, containerized evaluation, and a public [leaderboard](https://swarm124.com/benchmark). No data leaks, no memorization — just raw skill.
 
 The rules are simple:
 - Your model gets a **128×128 depth image** and a **state vector**
@@ -152,7 +152,7 @@ Every benchmark run generates unique worlds. Six environment types test complete
 </table>
 
 <p align="center">
-  <sub>1,000 unique seeds per epoch — 6 environment types, each procedurally generated with unique layouts every run.</sub>
+  <sub>1,100 unique seeds per epoch — 6 environment types, each procedurally generated with unique layouts every run.</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -231,9 +231,9 @@ There are no waypoints, no GPS, no obstacle coordinates. The model must learn to
 score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-Ranking is by **average score across 1,000 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + the dynamic floor, 0.005–0.015) before running the full benchmark. Emissions are split across the last 10 champions by **King of the Hill** — each earns in proportion to how much it pushed the record (see [docs/king_of_the_hill.md](docs/king_of_the_hill.md)).
+Ranking is by **average score across 1,100 seeds**. No lucky runs — you need consistency. New models must pass a screening gate (champion score + the dynamic floor, 0.005–0.015) before running the full benchmark. Emissions are split across the last 10 champions by **King of the Hill** — each earns in proportion to how much it pushed the record (see [docs/king_of_the_hill.md](docs/king_of_the_hill.md)).
 
-Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its own 1,000 seeds per epoch. All seeds are published on [swarm124.com](https://swarm124.com) for transparency.
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator generates its own 1,100 seeds per epoch. All seeds are published on [swarm124.com](https://swarm124.com) for transparency.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
