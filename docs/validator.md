@@ -288,8 +288,8 @@ pm2 start --name auto_update_validator \
 2. **Download from GitHub**
    Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
 
-3. **Screening (200 seeds, batched)**
-   New models are screened first. The 200 screening seeds are split into batches of 50; a free validator leases one batch via `GET /validators/next-task`, runs it, and streams the scores. The full benchmark unlocks once every screening seed is covered and the stitched score clears the **dynamic crowning floor** (champion + 0.005–0.015; or >= 0.01 if no champion exists).
+3. **Screening (300 seeds, batched)**
+   New models are screened first. The 300 screening seeds are split into batches of 50; a free validator leases one batch via `GET /validators/next-task`, runs it, and streams the scores. The full benchmark unlocks once every screening seed is covered and the stitched score clears the **dynamic crowning floor** (champion + 0.005–0.015; or >= 0.01 if no champion exists).
 
 4. **Full benchmark (800 seeds, batched)**
    Models that advance are evaluated on the remaining 800 seeds across all six environment types, again as batches of 50 leased one at a time and run in parallel Docker containers.
@@ -308,7 +308,7 @@ pm2 start --name auto_update_validator \
 
 ### Per-Validator Seeds
 
-Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. The backend assigns each validator a seed-index *range* (a batch), never the seed values; difficulty per index is fixed by the screening template and challenge distribution, so stitching different validators' batches stays fair.
+Each validator independently generates its own 1,100 random seeds per epoch using `random.SystemRandom()`. The backend assigns each validator a seed-index *range* (a batch), never the seed values; difficulty per index is fixed by the screening and benchmark templates and challenge distribution, so stitching different validators' batches stays fair.
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 

@@ -96,7 +96,7 @@ champion → 1.00     floor → 0.005     (smaller, since every point near the t
 ```
 
 So a frozen top of the board becomes easier to dethrone, and champions cycle through the window
-faster. The same gate is applied at screening (200 seeds) and at final crowning (full benchmark).
+faster. The same gate is applied at screening (300 seeds) and at final crowning (full benchmark).
 Pass/fail is always a stake-weighted consensus decision across validators, never one validator's
 verdict.
 

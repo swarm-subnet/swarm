@@ -7,8 +7,8 @@ This creates HTTP client to talk to backend.
 
 Endpoints (all under /validators prefix):
 - POST /validators/models/new           - Tell backend "I found a new model"
-- POST /validators/models/{uid}/screening - Submit screening result (200 private seeds)
-- POST /validators/models/{uid}/score   - Submit full benchmark score (1000 seeds)
+- POST /validators/models/{uid}/screening - Submit screening result (300 private seeds)
+- POST /validators/models/{uid}/score   - Submit full benchmark score (1100 seeds)
 - GET  /validators/sync                 - Get current weights + re-eval queue + authoritative benchmark epoch
 
 Freeze-last behavior:
@@ -38,6 +38,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Tupl
 import bittensor as bt
 import httpx
 
+from swarm import __version__ as CODE_VERSION
 from swarm.config import BackendApiSettings
 from swarm.constants import BENCHMARK_VERSION
 
@@ -254,6 +255,7 @@ class BackendApiClient:
             "X-Validator-Signature": signature,
             "X-Validator-Nonce": nonce,
             "X-Validator-Timestamp": timestamp,
+            "X-Code-Version": CODE_VERSION,
         }
 
     async def _post_signed(self, endpoint: str, data: dict) -> Dict[str, Any]:

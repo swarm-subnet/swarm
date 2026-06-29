@@ -80,14 +80,14 @@ def test_template_interleaved_ordering():
     assert len(set(first_6)) == 6, "First 6 slots should cover all 6 types (interleaved)"
 
 
-def test_template_cycles_to_200():
+def test_template_cycles_to_screening_count():
     total = BENCHMARK_SCREENING_SEED_COUNT
     cycle = (SCREENING_TEMPLATE * ((total // len(SCREENING_TEMPLATE)) + 1))[:total]
-    assert len(cycle) == 200
+    assert len(cycle) == 300
 
     counts = Counter(slot["challenge_type"] for slot in cycle)
     for ct in VALID_TYPES:
-        assert counts[ct] >= 30, f"Type {ct} should appear >=30 times in 200 seeds"
+        assert counts[ct] >= 45, f"Type {ct} should appear >=45 times in 300 seeds"
 
 
 def test_early_fail_factors_are_more_lenient():

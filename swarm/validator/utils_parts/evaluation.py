@@ -7,6 +7,7 @@ import numpy as np
 
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
+    BENCHMARK_TEMPLATE,
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
     SCREENING_TEMPLATE,
@@ -33,6 +34,26 @@ def _utils_facade():
 
 def _empty_per_type() -> Dict[str, List[float]]:
     return {name: [] for name in _EMPTY_PER_TYPE}
+
+
+def _task_for_seed_index(abs_idx: int, seed: int):
+    """Task for an absolute seed index: screening range uses SCREENING_TEMPLATE, benchmark range BENCHMARK_TEMPLATE."""
+    if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
+        slot = SCREENING_TEMPLATE[abs_idx % len(SCREENING_TEMPLATE)]
+    else:
+        bench_idx = abs_idx - BENCHMARK_SCREENING_SEED_COUNT
+        slot = BENCHMARK_TEMPLATE[bench_idx % len(BENCHMARK_TEMPLATE)]
+    try:
+        return screening_task(
+            sim_dt=SIM_DT, seed=seed,
+            challenge_type=slot["challenge_type"],
+            distance_range=slot["distance_range"],
+            goal_height_range=slot.get("goal_height_range"),
+            moving_platform=slot["moving_platform"],
+        )
+    except Exception as e:
+        bt.logging.warning(f"Failed to build templated task for seed {seed} (idx {abs_idx}): {e}")
+        return None
 
 
 async def _evaluate_seeds(
@@ -163,6 +184,12 @@ async def _run_streaming_phase(
     total_for_evaluator = (
         evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
     )
+
+    if pre_built_tasks is None:
+        # Build stratified-template tasks for this window from each seed's absolute index.
+        pre_built_tasks = [
+            _task_for_seed_index(seed_offset + i, seed) for i, seed in enumerate(seeds)
+        ]
 
     async def _safe_upload(batch: List[dict]) -> None:
         try:
@@ -310,29 +337,11 @@ async def _run_screening(
     total_seeds = len(screening_seeds)
     # Cumulative-progress framing for the heartbeat: report the full
     # screening range as total and the resume offset as already-done so
-    # the dashboard renders honest progress (e.g. 130/200) instead of
+    # the dashboard renders honest progress (e.g. 130/300) instead of
     # 0/(remaining-slice) on resume.
     heartbeat_total = upper
     progress_offset = seeds_from
     epoch = self.seed_manager.epoch_number
-
-    full_template = (
-        SCREENING_TEMPLATE * ((len(full_seeds) // len(SCREENING_TEMPLATE)) + 1)
-    )[: len(full_seeds)]
-    template_cycle = full_template[seeds_from:upper]
-    screening_tasks: List = []
-    for seed, slot in zip(screening_seeds, template_cycle):
-        try:
-            screening_tasks.append(screening_task(
-                sim_dt=SIM_DT, seed=seed,
-                challenge_type=slot["challenge_type"],
-                distance_range=slot["distance_range"],
-                goal_height_range=slot.get("goal_height_range"),
-                moving_platform=slot["moving_platform"],
-            ))
-        except Exception as e:
-            bt.logging.warning(f"Failed to create screening task for seed {seed}: {e}")
-            screening_tasks.append(None)
 
     tracker_call(
         self,
@@ -393,7 +402,6 @@ async def _run_screening(
             epoch_number=epoch,
             hb=hb,
             task_id=task_id,
-            pre_built_tasks=screening_tasks,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
         )
@@ -441,8 +449,8 @@ async def _run_full_benchmark(
     wrong-model edge cases).
     """
     if seeds is None:
-        # REEVAL covers all 1000 seeds; benchmark covers only 200..999.
-        # Caller signals REEVAL by passing seeds_from < 200.
+        # REEVAL covers all 1100 seeds; benchmark covers only 300..1099.
+        # Caller signals REEVAL by passing seeds_from < 300.
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
             benchmark_seeds = self.seed_manager.seeds[seeds_from:]
             seed_offset = seeds_from
@@ -472,42 +480,17 @@ async def _run_full_benchmark(
         heartbeat_total = len(benchmark_seeds)
         progress_offset = 0
 
-    # REEVAL of the champion crosses the screening range. Use the same
-    # template there as a new submission's screening pass so both models
-    # are graded on identical slots; fall through to random_task for the
-    # benchmark range and for non-REEVAL callers.
+    # Full benchmark and REEVAL (seeds is None) build stratified-template tasks from each
+    # seed's absolute index inside _run_streaming_phase. Custom-seed runs stay random.
     pre_built_tasks: Optional[List] = None
-    if (
-        reeval
-        and seeds is None
-        and seeds_from is not None
-        and seeds_from < BENCHMARK_SCREENING_SEED_COUNT
-    ):
-        full_screening_seeds = self.seed_manager.get_screening_seeds()
-        full_template = (
-            SCREENING_TEMPLATE * ((len(full_screening_seeds) // len(SCREENING_TEMPLATE)) + 1)
-        )[: len(full_screening_seeds)]
+    if seeds is not None:
         pre_built_tasks = []
-        for i, seed in enumerate(benchmark_seeds):
-            abs_idx = seeds_from + i
+        for seed in benchmark_seeds:
             try:
-                if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
-                    slot = full_template[abs_idx]
-                    task = screening_task(
-                        sim_dt=SIM_DT, seed=seed,
-                        challenge_type=slot["challenge_type"],
-                        distance_range=slot["distance_range"],
-                        goal_height_range=slot.get("goal_height_range"),
-                        moving_platform=slot["moving_platform"],
-                    )
-                else:
-                    task = random_task(sim_dt=SIM_DT, seed=seed)
+                pre_built_tasks.append(random_task(sim_dt=SIM_DT, seed=seed))
             except Exception as e:
-                bt.logging.warning(
-                    f"Failed to create REEVAL task for seed {seed} idx {abs_idx}: {e}"
-                )
-                task = None
-            pre_built_tasks.append(task)
+                bt.logging.warning(f"Failed to create task for seed {seed}: {e}")
+                pre_built_tasks.append(None)
 
     total_seeds = len(benchmark_seeds)
     note = "full benchmark" if seeds is None else "custom seeds"
