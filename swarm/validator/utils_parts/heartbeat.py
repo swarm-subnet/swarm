@@ -17,6 +17,9 @@ def _format_stop_reason(conflicts: list) -> str:
     return "; ".join(parts) if parts else "stop_required"
 
 
+_TIMER_INTERVAL_SECONDS = 15
+
+
 class HeartbeatManager:
     """Thread-safe heartbeat progress manager for evaluation tracking.
 
@@ -42,6 +45,8 @@ class HeartbeatManager:
         self._backend_decision_version: Optional[int] = None
         self._stop_required = False
         self._stop_reason: Optional[str] = None
+        self._timer_stop = threading.Event()
+        self._timer_thread: Optional[threading.Thread] = None
 
     def set_queue(self, queue: list) -> None:
         with self._lock:
@@ -89,6 +94,34 @@ class HeartbeatManager:
             self.main_loop
         )
 
+        self._stop_timer()
+        self._timer_stop = threading.Event()
+        self._timer_thread = threading.Thread(
+            target=self._timer_loop, args=(self._session_id,), daemon=True
+        )
+        self._timer_thread.start()
+
+    def _timer_loop(self, session_id: int) -> None:
+        """Fire a heartbeat every _TIMER_INTERVAL_SECONDS regardless of seed
+        progress, so a validator on a slow seed still renews its batch lease."""
+        while not self._timer_stop.wait(_TIMER_INTERVAL_SECONDS):
+            with self._lock:
+                if session_id != self._session_id or not self._active:
+                    return
+                progress = self._progress
+            self.main_loop.call_soon_threadsafe(
+                lambda p=progress, s=session_id: asyncio.create_task(
+                    self._safe_heartbeat(p, s)
+                )
+            )
+
+    def _stop_timer(self) -> None:
+        self._timer_stop.set()
+        thread = self._timer_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        self._timer_thread = None
+
     def on_seed_complete(self) -> None:
         """Called from worker thread after each seed completes (throttled)."""
         with self._lock:
@@ -111,6 +144,7 @@ class HeartbeatManager:
                 self._queue[:] = [q for q in self._queue if q.get("uid") != uid]
 
     def finish(self) -> None:
+        self._stop_timer()
         with self._lock:
             final_progress = self._progress
             session_id = self._session_id

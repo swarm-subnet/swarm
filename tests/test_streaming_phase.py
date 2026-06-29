@@ -1945,40 +1945,6 @@ def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
     assert captured_tasks == [(list(range(150, 160)), "cf_autopilot")]
 
 
-def test_run_screening_ignores_mismatched_family_early_fail_rules(monkeypatch):
-    validator = _make_validator()
-    validator.seed_manager = SimpleNamespace(
-        epoch_number=12,
-        get_screening_seeds=lambda family_id="cf_search_and_rescue": list(range(60)),
-    )
-    monkeypatch.setattr(
-        validator_utils,
-        "_evaluate_seeds",
-        _make_evaluate_stub(score_per_seed=0.10),
-    )
-
-    async def _run():
-        return await validator_evaluation._run_screening(
-            validator,
-            uid=315,
-            model_path=Path("/tmp/fake.zip"),
-            family_id="cf_autopilot",
-            task_id=4243,
-            early_fail_rules={
-                "family_id": "cf_search_and_rescue",
-                "threshold": 1.0,
-                "checkpoints": {"50": 1.0},
-            },
-        )
-
-    avg_score, all_scores, _per_type, cancel_reason, early_failed = asyncio.run(_run())
-
-    assert avg_score == pytest.approx(0.10)
-    assert len(all_scores) == 60
-    assert cancel_reason is None
-    assert early_failed is False
-
-
 def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
