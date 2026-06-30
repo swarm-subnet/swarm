@@ -194,6 +194,9 @@ class ChallengeFamilyRuntime:
     def screening_template(self) -> tuple[dict[str, Any], ...]:
         return ()
 
+    def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        return ()
+
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
         raise NotImplementedError
 
@@ -206,6 +209,17 @@ class ChallengeFamilyRuntime:
         total_seed_count: Optional[int] = None,
     ) -> list[Any]:
         raise NotImplementedError
+
+    def build_benchmark_tasks(
+        self,
+        *,
+        sim_dt: float,
+        seeds: list[int],
+        offset: int = 0,
+        total_seed_count: Optional[int] = None,
+    ) -> list[Any]:
+        """Families without a benchmark template fall back to random per-seed tasks."""
+        return [self.build_random_task(sim_dt=sim_dt, seed=seed) for seed in seeds]
 
     def evaluate_rollout(
         self,

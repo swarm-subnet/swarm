@@ -8,7 +8,6 @@ from swarm.validator.utils_parts import (
     evaluation,
     heartbeat,
     model_fetch,
-    queue_worker,
     state,
     weights,
 )
@@ -26,7 +25,6 @@ for _module in (
     evaluation,
     detection,
     backend_submission,
-    queue_worker,
     weights,
 ):
     for _name in dir(_module):
@@ -50,7 +48,6 @@ for _module in (
     evaluation,
     detection,
     backend_submission,
-    queue_worker,
     weights,
 ):
     for _name in dir(_module):

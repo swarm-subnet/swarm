@@ -719,7 +719,7 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
     asyncio.run(_run())
 
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 210))
+    assert all_indices == list(range(300, 310))
 
 
 def test_run_screening_streams_with_unified_chunks(monkeypatch):
@@ -809,7 +809,7 @@ def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
     assert avg == pytest.approx(0.81)
     assert [len(b) for b in uploads] == [10, 10, 5]
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 225))
+    assert all_indices == list(range(300, 325))
     type_totals = sum(len(v) for v in per_type_raw.values())
     assert type_totals == 25
 
@@ -852,241 +852,6 @@ def test_run_screening_real_flow_streams_chunks(tmp_path):
     assert [len(b) for b in uploads] == [10, 5]
     all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
     assert all_indices == list(range(15))
-
-
-def test_queue_worker_real_flow_streams_and_cancels_on_auth(tmp_path):
-    """End-to-end: real _process_normal_queue_item → real helper → real
-    _evaluate_seeds → mocked docker evaluator + HTTP. Verifies auth cancel
-    stops the run between chunks and preserves partial uploads.
-    """
-    model_path = tmp_path / "UID_77.zip"
-    model_path.write_bytes(b"fake-model")
-
-    uploads: list[list[dict]] = []
-    auth_calls: list[str] = []
-
-    async def _capture_upload(**kwargs):
-        uploads.append(list(kwargs["scores"]))
-        return {"recorded": True}
-
-    async def _post_heartbeat(**kwargs):
-        return {"ok": True}
-
-    async def _authorize_task(uid, phase, **kwargs):
-        auth_calls.append(str(phase))
-        # Outer auth + helper chunk_0 auth + helper chunk_1 auth = 3 calls
-        # The 4th BENCHMARK auth (before chunk_2) returns unauthorized.
-        if phase == "BENCHMARK" and len(
-            [p for p in auth_calls if p == "BENCHMARK"]
-        ) > 3:
-            return {"authorized": False, "reason": "epoch rotated",
-                    "decision_version": 1, "task_id": 1}
-        return {"authorized": True, "reason": "ok",
-                "decision_version": 1, "task_id": 1}
-
-    validator = SimpleNamespace(
-        docker_evaluator=_make_docker_evaluator(score=0.5),
-        backend_api=SimpleNamespace(
-            post_heartbeat=_post_heartbeat,
-            post_seed_scores_batch=_capture_upload,
-            authorize_task=_authorize_task,
-        ),
-        seed_manager=SimpleNamespace(
-            epoch_number=5,
-            get_benchmark_seeds=lambda: list(range(500001, 500051)),
-        ),
-        metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
-    )
-
-    key = "1:hash1"
-    item = {
-        "uid": 1,
-        "model_hash": "hash1",
-        "model_path": str(model_path),
-        "status": "pending",
-        "registered": False,
-        "screening_recorded": False,
-        "score_recorded": False,
-        "retry_attempts": 0,
-        "next_retry_at": 0,
-        "last_error": "",
-        "created_at": 0,
-        "updated_at": 0,
-    }
-    queue = {"items": {key: item}}
-
-    # Stub out everything NOT under test so the benchmark streaming path
-    # is the only thing exercised.
-    from swarm.validator import utils as validator_utils
-
-    async def _register(*args, **kwargs):
-        return True, False, ""
-
-    async def _submit_screening(*args, **kwargs):
-        return True, False, ""
-
-    async def _submit_score(*args, **kwargs):
-        return True, False, ""
-
-    async def _run_screening(*args, **kwargs):
-        return 0.85, [0.85], {"city": [0.85]}, None, False
-
-    save_calls: list[bool] = []
-
-    def _save_queue(_q):
-        save_calls.append(True)
-
-    import pytest as _pytest
-    monkey = _pytest.MonkeyPatch()
-    try:
-        monkey.setattr(validator_utils, "sha256sum", lambda _p: "hash1")
-        monkey.setattr(validator_utils, "has_cached_score", lambda *_: False)
-        monkey.setattr(validator_utils, "set_cached_score",
-                       lambda *args, **kwargs: None)
-        monkey.setattr(validator_utils, "mark_model_hash_processed",
-                       lambda *args, **kwargs: None)
-        monkey.setattr(validator_utils, "save_normal_model_queue", _save_queue)
-        monkey.setattr(validator_utils, "_register_new_model_with_ack", _register)
-        monkey.setattr(validator_utils, "_run_screening", _run_screening)
-        monkey.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
-        monkey.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
-
-        asyncio.run(validator_utils._process_normal_queue_item(
-            validator,
-            queue=queue,
-            key=key,
-            validator_hotkey="validator_hotkey",
-            validator_stake=123.0,
-        ))
-    finally:
-        monkey.undo()
-
-    # Helper should have streamed 2 full chunks (20 seeds) then hit the
-    # third BENCHMARK auth check which returns unauthorized.
-    assert item["status"] == "cancelled"
-    assert "epoch rotated" in item["last_error"]
-    assert len(uploads) == 2
-    assert [len(b) for b in uploads] == [10, 10]
-    all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 220))
-    assert item["benchmark_partial_scores"] == [0.5] * 20
-
-
-def test_queue_worker_real_flow_streams_full_run(tmp_path):
-    """End-to-end: normal queue item completes 30 benchmark seeds with
-    streaming uploads in 10-seed chunks. Verifies uploads land during the
-    run (not post-facto) and item state ends at completed.
-    """
-    model_path = tmp_path / "UID_88.zip"
-    model_path.write_bytes(b"fake-model")
-
-    uploads: list[list[dict]] = []
-    heartbeats: list[dict] = []
-
-    async def _capture_upload(**kwargs):
-        uploads.append(list(kwargs["scores"]))
-        return {"recorded": True}
-
-    async def _post_heartbeat(**kwargs):
-        heartbeats.append(kwargs)
-        return {"ok": True}
-
-    async def _authorize_task(uid, phase, **kwargs):
-        return {"authorized": True, "reason": "ok",
-                "decision_version": 1, "task_id": 1}
-
-    validator = SimpleNamespace(
-        docker_evaluator=_make_docker_evaluator(score=0.9),
-        backend_api=SimpleNamespace(
-            post_heartbeat=_post_heartbeat,
-            post_seed_scores_batch=_capture_upload,
-            authorize_task=_authorize_task,
-        ),
-        seed_manager=SimpleNamespace(
-            epoch_number=5,
-            get_benchmark_seeds=lambda: list(range(600001, 600031)),
-        ),
-        metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
-        _heartbeat_queue=[
-            {"uid": 1, "family_id": "cf_search_and_rescue", "backend_decision_version": 0},
-            {"uid": 1, "family_id": "cf_autopilot", "backend_decision_version": 0},
-        ],
-    )
-
-    key = "1:hash1"
-    item = {
-        "uid": 1,
-        "family_id": "cf_autopilot",
-        "model_hash": "hash1",
-        "model_path": str(model_path),
-        "status": "pending",
-        "registered": False,
-        "screening_recorded": False,
-        "score_recorded": False,
-        "retry_attempts": 0,
-        "next_retry_at": 0,
-        "last_error": "",
-        "created_at": 0,
-        "updated_at": 0,
-    }
-    queue = {"items": {key: item}}
-
-    from swarm.validator import utils as validator_utils
-
-    async def _register(*args, **kwargs):
-        return True, False, ""
-
-    async def _submit_screening(*args, **kwargs):
-        return True, False, ""
-
-    async def _submit_score(*args, **kwargs):
-        return True, False, ""
-
-    async def _run_screening(*args, **kwargs):
-        return 0.85, [0.85], {"city": [0.85]}, None, False
-
-    import pytest as _pytest
-    monkey = _pytest.MonkeyPatch()
-    try:
-        monkey.setattr(validator_utils, "sha256sum", lambda _p: "hash1")
-        monkey.setattr(validator_utils, "has_cached_score", lambda *_: False)
-        monkey.setattr(validator_utils, "set_cached_score",
-                       lambda *args, **kwargs: None)
-        monkey.setattr(validator_utils, "mark_model_hash_processed",
-                       lambda *args, **kwargs: None)
-        monkey.setattr(validator_utils, "save_normal_model_queue",
-                       lambda _q: None)
-        monkey.setattr(validator_utils, "_register_new_model_with_ack", _register)
-        monkey.setattr(validator_utils, "_run_screening", _run_screening)
-        monkey.setattr(validator_utils, "_submit_screening_with_ack", _submit_screening)
-        monkey.setattr(validator_utils, "_submit_score_with_ack", _submit_score)
-
-        asyncio.run(validator_utils._process_normal_queue_item(
-            validator,
-            queue=queue,
-            key=key,
-            validator_hotkey="validator_hotkey",
-            validator_stake=123.0,
-        ))
-    finally:
-        monkey.undo()
-
-    assert item["status"] == "completed"
-    assert item["screening_recorded"] is True
-    assert item["score_recorded"] is True
-    assert [len(b) for b in uploads] == [10, 10, 10]
-    all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
-    assert all_indices == list(range(200, 230))
-    assert item["seeds_evaluated"] == 31  # 1 screening + 30 benchmark
-    assert item["total_score"] == pytest.approx((0.85 + 0.9 * 30) / 31)
-    matching = next(entry for entry in validator._heartbeat_queue if entry["family_id"] == "cf_autopilot")
-    untouched = next(entry for entry in validator._heartbeat_queue if entry["family_id"] == "cf_search_and_rescue")
-    assert matching["assignment_id"] == 1
-    assert matching["backend_decision_version"] == 1
-    assert "assignment_id" not in untouched
-    sent_with_active = [call for call in heartbeats if call.get("active_task")]
-    assert sent_with_active
-    assert sent_with_active[0]["active_task"]["family_id"] == "cf_autopilot"
 
 
 # ── Re-eval kill-switch tests ────────────────────────────────────────────
@@ -1861,9 +1626,9 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
 
 
 def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
-    """When resuming benchmark with seeds_from > 200, the heartbeat must
+    """When resuming benchmark with seeds_from > 300, the heartbeat must
     report the FULL benchmark range (800) as total and the offset
-    (seeds_from - 200) as already-done. Otherwise the dashboard shows
+    (seeds_from - 300) as already-done. Otherwise the dashboard shows
     a misleading 0/(remaining) right after a validator restart."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
@@ -1876,7 +1641,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     async def _run():
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=Path("/tmp/fake.zip"),
-            task_id=8888, seeds_from=300,
+            task_id=8888, seeds_from=400,
         )
 
     asyncio.run(_run())
@@ -1885,7 +1650,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     assert sent
     initial = sent[0]
     assert initial["total_seeds"] == 800
-    assert initial["progress"] == 100  # 300 - 200 already done
+    assert initial["progress"] == 100  # 400 - 300 already done
 
 
 def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
@@ -1962,7 +1727,7 @@ def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
             model_path=Path("/tmp/fake.zip"),
             family_id="cf_autopilot",
             task_id=8888,
-            seeds_from=205,
+            seeds_from=305,
         )
 
     avg, _per_type, scores, _raw, _cancel = asyncio.run(_run())

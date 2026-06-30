@@ -88,6 +88,22 @@ def build_screening_tasks(
     )
 
 
+def build_benchmark_tasks(
+    *,
+    sim_dt: float,
+    seeds: list[int],
+    family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+    offset: int = 0,
+    total_seed_count: Optional[int] = None,
+) -> list[Any]:
+    return require_runtime_family(family_id).build_benchmark_tasks(
+        sim_dt=sim_dt,
+        seeds=seeds,
+        offset=offset,
+        total_seed_count=total_seed_count,
+    )
+
+
 def screening_policy_for_family(family_id: str) -> dict[str, Any]:
     return require_runtime_family(family_id).screening_policy()
 
@@ -155,6 +171,7 @@ __all__ = [
     "SwarmSarChallengeFamily",
     "build_random_task",
     "benchmark_admission_policy_for_family",
+    "build_benchmark_tasks",
     "build_screening_tasks",
     "env_kwargs_for_task",
     "evaluate_rollout",

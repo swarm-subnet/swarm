@@ -38,6 +38,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Tupl
 import bittensor as bt
 import httpx
 
+from swarm import __version__ as CODE_VERSION
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.config import BackendApiSettings
 from swarm.constants import BENCHMARK_VERSION
@@ -277,6 +278,7 @@ class BackendApiClient:
             "X-Validator-Nonce": nonce,
             "X-Validator-Timestamp": timestamp,
             "X-Swarm-Validator-Contract": VALIDATOR_CONTRACT_VERSION,
+            "X-Code-Version": CODE_VERSION,
         }
 
     async def _post_signed(self, endpoint: str, data: dict) -> Dict[str, Any]:

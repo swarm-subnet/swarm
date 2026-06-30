@@ -7,6 +7,7 @@ import numpy as np
 import pybullet as p
 
 from swarm.constants import (
+    BENCHMARK_FULL_SEED_COUNT,
     SEARCH_AREA_NOISE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
 )
@@ -66,6 +67,55 @@ def _build_autopilot_screening_template() -> tuple[dict[str, Any], ...]:
 
 
 _AUTOPILOT_SCREENING_TEMPLATE: tuple[dict[str, Any], ...] = _build_autopilot_screening_template()
+
+
+def _banded_pool(
+    challenge_type: int,
+    distance: tuple[float, float],
+    *,
+    n_slots: int,
+    n_bands: int,
+    moving_prob: float,
+    goal_height_range: Optional[tuple[float, float]] = None,
+) -> list[dict[str, Any]]:
+    lo, hi = distance
+    width = (hi - lo) / n_bands
+    n_moving = round(n_slots * moving_prob)
+    pool: list[dict[str, Any]] = []
+    for i in range(n_slots):
+        band = i % n_bands
+        pool.append(dict(
+            challenge_type=challenge_type,
+            distance_range=(round(lo + band * width, 1), round(lo + (band + 1) * width, 1)),
+            goal_height_range=goal_height_range,
+            moving_platform=(i < n_moving),
+        ))
+    return pool
+
+
+def _interleave(pools: list[list[dict[str, Any]]], expected: int) -> tuple[dict[str, Any], ...]:
+    slots: list[dict[str, Any]] = []
+    for i in range(max(len(p) for p in pools)):
+        for pool in pools:
+            if i < len(pool):
+                slots.append(pool[i])
+    if len(slots) != expected:
+        raise RuntimeError(f"Autopilot benchmark template must have {expected} entries, got {len(slots)}")
+    return tuple(slots)
+
+
+def _build_autopilot_benchmark_template() -> tuple[dict[str, Any], ...]:
+    return _interleave([
+        _banded_pool(1, (22, 45),  n_slots=17, n_bands=3, moving_prob=0.25, goal_height_range=(0.2, 1.0)),
+        _banded_pool(2, (28, 72),  n_slots=17, n_bands=3, moving_prob=0.80, goal_height_range=(4.0, 14.0)),
+        _banded_pool(3, (65, 100), n_slots=17, n_bands=3, moving_prob=0.25),
+        _banded_pool(4, (28, 56),  n_slots=17, n_bands=3, moving_prob=0.25),
+        _banded_pool(5, (18, 35),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 10.0)),
+        _banded_pool(6, (22, 45),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 3.0)),
+    ], expected=100)
+
+
+_AUTOPILOT_BENCHMARK_TEMPLATE: tuple[dict[str, Any], ...] = _build_autopilot_benchmark_template()
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -219,6 +269,9 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
     def screening_template(self) -> tuple[dict[str, Any], ...]:
         return _AUTOPILOT_SCREENING_TEMPLATE
 
+    def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        return _AUTOPILOT_BENCHMARK_TEMPLATE
+
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
         from swarm.validator import task_gen as legacy_task_gen
 
@@ -227,17 +280,17 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
             kwargs["family_id"] = self.family_id
         return legacy_task_gen.random_task(**kwargs)
 
-    def build_screening_tasks(
+    def _build_template_tasks(
         self,
+        template: list[dict[str, Any]],
         *,
         sim_dt: float,
         seeds: list[int],
-        offset: int = 0,
-        total_seed_count: Optional[int] = None,
+        offset: int,
+        total_seed_count: Optional[int],
     ) -> list[Any]:
         from swarm.validator import task_gen as legacy_task_gen
 
-        template = list(self.screening_template())
         template_length = total_seed_count if total_seed_count is not None else len(seeds)
         full_template = (template * ((template_length // len(template)) + 1))[:template_length]
         template_slice = full_template[offset:offset + len(seeds)]
@@ -262,6 +315,33 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
                 kwargs["moving_platform"] = slot["moving_platform"]
             tasks.append(legacy_task_gen.screening_task(**kwargs))
         return tasks
+
+    def build_screening_tasks(
+        self,
+        *,
+        sim_dt: float,
+        seeds: list[int],
+        offset: int = 0,
+        total_seed_count: Optional[int] = None,
+    ) -> list[Any]:
+        return self._build_template_tasks(
+            list(self.screening_template()),
+            sim_dt=sim_dt, seeds=seeds, offset=offset, total_seed_count=total_seed_count,
+        )
+
+    def build_benchmark_tasks(
+        self,
+        *,
+        sim_dt: float,
+        seeds: list[int],
+        offset: int = 0,
+        total_seed_count: Optional[int] = None,
+    ) -> list[Any]:
+        return self._build_template_tasks(
+            list(self.benchmark_template()),
+            sim_dt=sim_dt, seeds=seeds, offset=offset,
+            total_seed_count=total_seed_count if total_seed_count is not None else BENCHMARK_FULL_SEED_COUNT,
+        )
 
     def spawn_task_world(self, env: Any) -> None:
         env.task.start = env._original_start

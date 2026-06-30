@@ -7,10 +7,12 @@ import numpy as np
 
 from swarm.challenge_families import (
     DEFAULT_RUNTIME_FAMILY_ID,
+    build_benchmark_tasks,
     build_random_task,
     build_screening_tasks,
 )
 from swarm.constants import (
+    BENCHMARK_FULL_SEED_COUNT,
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
@@ -497,8 +499,7 @@ async def _run_full_benchmark(
     wrong-model edge cases).
     """
     if seeds is None:
-        # REEVAL covers all 1000 seeds; benchmark covers only 200..999.
-        # Caller signals REEVAL by passing seeds_from < 200.
+        # REEVAL (seeds_from < BENCHMARK_SCREENING_SEED_COUNT) covers all 1100 seeds; benchmark covers only 300..1099.
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
             all_family_seeds = _seed_manager_call(
                 self.seed_manager, "get_all_seeds", family_id
@@ -535,41 +536,32 @@ async def _run_full_benchmark(
         heartbeat_total = len(benchmark_seeds)
         progress_offset = 0
 
-    # REEVAL of the champion crosses the screening range. Use the same
-    # template there as a new submission's screening pass so both models
-    # are graded on identical slots; fall through to random_task for the
-    # benchmark range and for non-REEVAL callers.
+    # Template each seed by absolute index (screening below the boundary, benchmark above); custom-seed runs keep random.
     pre_built_tasks: Optional[List] = None
-    if (
-        reeval
-        and seeds is None
-        and seeds_from is not None
-        and seeds_from < BENCHMARK_SCREENING_SEED_COUNT
-    ):
-        full_screening_seeds = _seed_manager_call(
-            self.seed_manager, "get_screening_seeds", family_id
-        )
+    if seeds is None:
+        full_screening_seeds = None
         pre_built_tasks = []
         for i, seed in enumerate(benchmark_seeds):
-            abs_idx = seeds_from + i
+            abs_idx = seed_offset + i
             try:
                 if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
+                    if full_screening_seeds is None:
+                        full_screening_seeds = _seed_manager_call(
+                            self.seed_manager, "get_screening_seeds", family_id
+                        )
                     task = build_screening_tasks(
-                        sim_dt=SIM_DT,
-                        seeds=[seed],
-                        family_id=family_id,
-                        offset=abs_idx,
-                        total_seed_count=len(full_screening_seeds),
+                        sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
+                        offset=abs_idx, total_seed_count=len(full_screening_seeds),
                     )[0]
                 else:
-                    task = build_random_task(
-                        sim_dt=SIM_DT,
-                        seed=seed,
-                        family_id=family_id,
-                    )
+                    task = build_benchmark_tasks(
+                        sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
+                        offset=abs_idx - BENCHMARK_SCREENING_SEED_COUNT,
+                        total_seed_count=BENCHMARK_FULL_SEED_COUNT,
+                    )[0]
             except Exception as e:
                 bt.logging.warning(
-                    f"Failed to create REEVAL task for seed {seed} idx {abs_idx}: {e}"
+                    f"Failed to create benchmark task for seed {seed} idx {abs_idx}: {e}"
                 )
                 task = None
             pre_built_tasks.append(task)
