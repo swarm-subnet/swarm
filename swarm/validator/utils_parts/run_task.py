@@ -48,7 +48,8 @@ async def run_task(
         or 0
     )
     model_hash = str(task.get("model_hash", ""))
-    github_url = str(task.get("github_url", ""))
+    github_url = str(task.get("github_url") or "")
+    is_private = bool(task.get("is_private"))
 
     if uid < 0 or not phase or task_id is None:
         bt.logging.warning(f"run_task: malformed task payload {task}")
@@ -56,7 +57,10 @@ async def run_task(
 
     paths = await _ensure_models_from_backend(
         self,
-        [{"uid": uid, "model_hash": model_hash, "github_url": github_url}],
+        [{
+            "uid": uid, "model_hash": model_hash,
+            "github_url": github_url, "is_private": is_private,
+        }],
     )
     entry = paths.get(uid)
     if entry is None:

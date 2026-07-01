@@ -53,6 +53,10 @@
       "archived",
       "regression"
     ],
+    "visibility": [
+      "public",
+      "private"
+    ],
     "environment_type": [
       "city",
       "open",
@@ -200,6 +204,7 @@
       },
       "family_state": "active",
       "emissions_state": "active",
+      "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"
       ],
@@ -247,6 +252,7 @@
       },
       "family_state": "incubating",
       "emissions_state": "incubating",
+      "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation",
         "sk_search_and_rescue"
@@ -295,6 +301,7 @@
       },
       "family_state": "incubating",
       "emissions_state": "incubating",
+      "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"
       ],
@@ -342,6 +349,7 @@
       },
       "family_state": "incubating",
       "emissions_state": "incubating",
+      "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation",
         "sk_search_and_rescue"
@@ -390,6 +398,7 @@
       },
       "family_state": "incubating",
       "emissions_state": "incubating",
+      "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"
       ],

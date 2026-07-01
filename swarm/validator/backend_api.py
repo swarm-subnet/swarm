@@ -41,7 +41,7 @@ import httpx
 from swarm import __version__ as CODE_VERSION
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.config import BackendApiSettings
-from swarm.constants import BENCHMARK_VERSION
+from swarm.constants import BENCHMARK_VERSION, MAX_MODEL_BYTES
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"
@@ -228,6 +228,7 @@ class BackendApiClient:
         self.timeout = timeout
         self.wallet = wallet
         self.client = httpx.AsyncClient(timeout=timeout)
+        self._whitelist_warned = False
 
         self._runtime_state = _load_runtime_state()
         bt.logging.info("BackendApiClient initialized")
@@ -776,15 +777,60 @@ class BackendApiClient:
             raise BackendTransportError(
                 f"backend {resp.status_code} on {endpoint}"
             )
+        if resp.status_code == 403:
+            if not self._whitelist_warned:
+                bt.logging.warning(
+                    "Not on the trusted validator whitelist — evaluation is "
+                    "disabled. Contact the team to be added. Weights are still "
+                    "mirrored via /sync."
+                )
+                self._whitelist_warned = True
+            return None
         if resp.status_code >= 400:
             bt.logging.warning(f"Backend rejected {endpoint}: {resp.status_code}")
             return None
 
+        self._whitelist_warned = False
         try:
             payload = resp.json()
         except (ValueError, RuntimeError):
             return None
         return payload.get("task") if isinstance(payload, dict) else None
+
+    async def fetch_private_artifact(self, model_hash: str, dest: Path) -> bool:
+        """Stream a private model artifact from the operator vault (trusted-only)."""
+        endpoint = f"/validators/models/{model_hash}/private-artifact"
+        headers = self._sign_request("GET", endpoint, b"")
+        try:
+            async with self.client.stream(
+                "GET", f"{self.base_url}{endpoint}", headers=headers,
+            ) as resp:
+                if resp.status_code != 200:
+                    bt.logging.warning(
+                        f"private-artifact fetch rejected: {resp.status_code}"
+                    )
+                    return False
+                total = 0
+                over = False
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as handle:
+                    async for chunk in resp.aiter_bytes():
+                        total += len(chunk)
+                        if total > MAX_MODEL_BYTES:
+                            over = True
+                            break
+                        handle.write(chunk)
+                if over:
+                    dest.unlink(missing_ok=True)
+                    bt.logging.error(
+                        f"private-artifact exceeds {MAX_MODEL_BYTES}-byte cap; discarded"
+                    )
+                    return False
+            return True
+        except _TRANSPORT_EXCEPTIONS as exc:
+            bt.logging.warning(f"private-artifact transport error: {_scrub_url(exc)}")
+            dest.unlink(missing_ok=True)
+            return False
 
     async def submit_task_result(
         self,

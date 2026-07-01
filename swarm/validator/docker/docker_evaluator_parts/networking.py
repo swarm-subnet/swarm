@@ -135,6 +135,20 @@ def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool
                     f"Failed to apply iptables rule: {' '.join(rule)}"
                 )
                 return False
+
+        ipv6_rules = [
+            ["nsenter", "-t", str(container_pid), "-n", "ip6tables",
+             "-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"],
+            ["nsenter", "-t", str(container_pid), "-n", "ip6tables",
+             "-A", "OUTPUT", "-j", "DROP"],
+        ]
+        for rule in ipv6_rules:
+            result = subprocess.run(rule, capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                bt.logging.warning(
+                    f"Failed to apply ip6tables rule: {' '.join(rule)}"
+                )
+                return False
         return True
     except Exception as e:
         bt.logging.warning(f"Network lockdown failed: {e}")

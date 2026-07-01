@@ -12,8 +12,8 @@ def main() -> None:
     rendered = json.dumps(payload, indent=2) + "\n"
 
     target_paths = (
-        workspace_root / "swarm_backend" / "swarm-backend" / "app" / "family_registry.json",
-        workspace_root / "swarm_website" / "Swarm-Website" / "src" / "family_registry.json",
+        workspace_root / "swarm-backend" / "app" / "family_registry.json",
+        workspace_root / "Swarm-Website" / "src" / "family_registry.json",
     )
     for target_path in target_paths:
         target_path.write_text(rendered, encoding="utf-8")

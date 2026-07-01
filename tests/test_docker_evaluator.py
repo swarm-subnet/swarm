@@ -423,7 +423,7 @@ def test_apply_network_lockdown_success(monkeypatch):
 
     monkeypatch.setattr(de.subprocess, "run", _run)
     assert ev._apply_network_lockdown(9999, "10.0.0.1") is True
-    assert calls["count"] == 4
+    assert calls["count"] == 6  # 4 IPv4 iptables rules + 2 IPv6 ip6tables rules
 
 
 def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
@@ -435,6 +435,21 @@ def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
         calls["count"] += 1
         if calls["count"] == 2:
             return _ProcResult(returncode=1, stderr="iptables failed")
+        return _ProcResult(returncode=0)
+
+    monkeypatch.setattr(de.subprocess, "run", _run)
+    assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+
+
+def test_apply_network_lockdown_fails_closed_on_ipv6_rule_failure(monkeypatch):
+    ev = _new_evaluator()
+    calls = {"count": 0}
+
+    def _run(*args, **kwargs):
+        _ = args, kwargs
+        calls["count"] += 1
+        if calls["count"] == 6:  # last IPv6 ip6tables DROP rule
+            return _ProcResult(returncode=1, stderr="ip6tables failed")
         return _ProcResult(returncode=0)
 
     monkeypatch.setattr(de.subprocess, "run", _run)

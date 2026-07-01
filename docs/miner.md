@@ -17,6 +17,7 @@ Train an autonomous drone pilot, benchmark it against 1,000 procedurally generat
     <li><a href="#cli">CLI</a></li>
     <li><a href="#github-repo-setup">GitHub Repo Setup</a></li>
     <li><a href="#running-the-miner">Running the Miner</a></li>
+    <li><a href="#private-track">Private Track</a></li>
     <li><a href="#scoring">Scoring</a></li>
     <li><a href="#benchmark-system">Benchmark System</a></li>
     <li><a href="#docker-whitelist">Docker Whitelist</a></li>
@@ -367,6 +368,50 @@ python neurons/miner.py \
 ```
 
 The miner submits your model and exits. You do **not** need to stay online — validators discover your model automatically.
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Private Track
+
+Some challenge families are marked **private** in the family registry. On a private family your model is never published: there is no GitHub repo, no template README, and no manifest. Only the artifact's SHA-256 is committed on-chain; the zip itself is uploaded to the operator's private vault, and only whitelisted trusted validators can download it for evaluation.
+
+**Stays public:** your UID, scores, ranking, and the model hash.
+**Stays hidden:** your code, weights, and any source URL.
+
+### Submit a Private Model
+
+```bash
+source miner_env/bin/activate
+
+python neurons/miner.py \
+     --netuid 124 \
+     --subtensor.network finney \
+     --wallet.name my_cold \
+     --wallet.hotkey my_hot \
+     --family_id cf_search_and_rescue \
+     --artifact ./Submission/submission.zip \
+     --backend_url https://api.swarm124.com
+```
+
+The miner commits the artifact's SHA-256 on-chain, waits for the backend to register the commitment, then uploads the zip signed by your hotkey. The upload must hash to the committed digest — a different file is rejected.
+
+| Flag | Description |
+|------|-------------|
+| `--family_id` | The private family this submission targets |
+| `--artifact` | Path to the `submission.zip` to upload privately |
+| `--backend_url` | Backend base URL for the private upload |
+| `--upload_only` | Skip the chain commit and only (re)upload the artifact |
+
+If the chain commit succeeded but the upload failed (network drop, backend restart), re-run the same command with `--upload_only` — the commitment is already on-chain and is never re-sent.
+
+### Private Track Rules
+
+- The **one-shot per hotkey** rule applies exactly as on the public track.
+- Package and verify the artifact the same way (`swarm model package`, `swarm model verify`) — the policy contract and the **50 MiB** compressed limit still apply.
+- The zip must be **fully self-contained**: `requirements.txt` is **not** installed for private submissions, because private models are evaluated with networking locked down end to end. Vendor every dependency inside the zip.
+- The GitHub repo setup and template README steps do **not** apply to private submissions.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 

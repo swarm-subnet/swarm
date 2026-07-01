@@ -130,6 +130,15 @@ def get_family_benchmark_admission_policy(
     return _deepcopy_mapping(family_definition.get("benchmark_admission_policy", {}))
 
 
+def get_family_visibility(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> str:
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return str(family_definition.get("visibility", "public"))
+
+
 def policy_interface_key(family_id: str, interface_version: str) -> str:
     return f"{family_id}:{interface_version}"
 
@@ -161,6 +170,7 @@ SKILL_IDS = tuple(_REGISTRY["entity_types"]["skill"]["ids"])
 MARKET_VERTICAL_IDS = tuple(_REGISTRY["entity_types"]["market_vertical"]["ids"])
 FAMILY_STATES = tuple(_REGISTRY["enum_types"]["family_state"])
 EMISSIONS_STATES = tuple(_REGISTRY["enum_types"]["emissions_state"])
+VISIBILITIES = tuple(_REGISTRY["enum_types"].get("visibility", ("public", "private")))
 ENVIRONMENT_TYPES = tuple(_REGISTRY["enum_types"]["environment_type"])
 
 CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE = {
@@ -232,6 +242,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "SCORE_SCHEMA_IDS",
     "SKILL_IDS",
+    "VISIBILITIES",
     "UnknownChallengeFamilyError",
     "UnknownPolicyInterfaceError",
     "UnknownScoreSchemaError",
@@ -241,6 +252,7 @@ __all__ = [
     "get_family_benchmark_admission_policy",
     "get_challenge_family_definition",
     "get_family_screening_policy",
+    "get_family_visibility",
     "get_policy_interface_contract",
     "get_score_schema",
     "get_supported_interface_versions",

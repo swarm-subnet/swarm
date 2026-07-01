@@ -115,6 +115,13 @@ def prepare_model_image(
         if not miner_requirements.exists():
             return None
 
+        if model_path.with_suffix(".private").exists():
+            bt.logging.warning(
+                f"UID {uid}: private model with requirements.txt rejected "
+                "(no pre-lockdown dependency install for private submissions)"
+            )
+            return None
+
         if not self._validate_requirements(miner_requirements, uid):
             bt.logging.warning(f"UID {uid}: requirements.txt rejected during image build")
             return None
@@ -545,6 +552,14 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
 
     miner_requirements = submission_dir / "requirements.txt"
     has_requirements = miner_requirements.exists() and model_image is None
+
+    if has_requirements and model_path.with_suffix(".private").exists():
+        bt.logging.warning(
+            f"[Worker {worker_id}] UID {uid}: private model with requirements.txt "
+            "rejected (no pre-lockdown dependency install for private submissions)"
+        )
+        _notify_all_failed(status="private_requirements_rejected")
+        return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
 
     if has_requirements and not self._validate_requirements(
         miner_requirements, uid
