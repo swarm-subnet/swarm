@@ -13,7 +13,7 @@ from typing import Any, Callable, Optional
 import bittensor as bt
 
 from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
-from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC, SIM_DT
+from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC, MODEL_DIR, SIM_DT
 from swarm.core.model_verify import add_to_blacklist
 from swarm.core.submission_policy import REQUIRED_ROOT_FILES
 from swarm.protocol import (
@@ -51,6 +51,21 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
         pass
 
 
+def model_image_tag(model_hash: str) -> str:
+    return f"swarm_eval_model_{model_hash[:12]}:latest"
+
+
+def _image_exists(image_tag: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image_tag],
+            capture_output=True, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def prepare_model_image(
     self,
     uid: int,
@@ -60,10 +75,13 @@ def prepare_model_image(
     """Build a per-model Docker image with pip dependencies pre-installed.
 
     Returns the image tag if requirements.txt exists and pip succeeds, None otherwise.
-    The caller must call remove_model_image() when done.
+    Images are cached by content hash; cleanup() reaps them once the model zip is gone.
     """
     if not model_path.is_file():
         return None
+    image_tag = model_image_tag(sha256sum(model_path))
+    if not model_path.with_suffix(".private").exists() and _image_exists(image_tag):
+        return image_tag
 
     tmpdir = None
     container_name = f"swarm_pip_{uid}_{int(time.time() * 1000)}"
@@ -187,12 +205,10 @@ def prepare_model_image(
             return None
 
         elapsed = time.time() - pip_start
-        model_hash = sha256sum(model_path)[:12]
-        image_tag = f"swarm_eval_model_{model_hash}:latest"
 
         commit_result = subprocess.run(
             ["docker", "commit", container_name, image_tag],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=120,
         )
         _docker_cmd_quiet(["docker", "kill", container_name])
         _docker_cmd_quiet(["docker", "rm", "-f", container_name])
@@ -221,6 +237,21 @@ def remove_model_image(image_tag: str) -> None:
     """Remove a per-model Docker image after evaluation completes."""
     try:
         subprocess.run(["docker", "rmi", image_tag], capture_output=True, timeout=15)
+    except Exception:
+        pass
+
+
+def remove_all_model_images() -> None:
+    """Drop every cached per-model image; stale bases must not survive a base rebuild."""
+    try:
+        result = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=swarm_eval_model_*"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout:
+            for img in result.stdout.strip().split("\n"):
+                if img:
+                    remove_model_image(img)
     except Exception:
         pass
 
@@ -1438,9 +1469,15 @@ def cleanup(self):
             capture_output=True, text=True,
         )
         if result_images.returncode == 0 and result_images.stdout:
+            live_tags = set()
+            for zip_fp in MODEL_DIR.glob("*.zip"):
+                try:
+                    live_tags.add(model_image_tag(sha256sum(zip_fp)))
+                except Exception:
+                    continue
             for img in result_images.stdout.strip().split("\n"):
-                if img:
-                    subprocess.run(["docker", "rmi", img], capture_output=True, timeout=15)
+                if img and img not in live_tags:
+                    remove_model_image(img)
 
         subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
         subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)

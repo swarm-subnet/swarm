@@ -817,7 +817,7 @@ async def evaluate_seeds_parallel(
             runtime_profile_payload=runtime_profile.as_dict(),
         )
 
-    from .batch import check_task_versions, prepare_model_image, remove_model_image
+    from .batch import check_task_versions, prepare_model_image
 
     schema_reject = check_task_versions(uid, 0, tasks)
     if schema_reject is not None:
@@ -830,7 +830,8 @@ async def evaluate_seeds_parallel(
         )
         return schema_reject
 
-    model_image = prepare_model_image(
+    model_image = await asyncio.to_thread(
+        prepare_model_image,
         self,
         uid,
         model_path,
@@ -848,27 +849,23 @@ async def evaluate_seeds_parallel(
     ]
     batch_plan = _benchmark_engine()._batch_indices(len(tasks))
 
-    try:
-        return await _run_process_parallel(
-            all_tasks=list(tasks),
-            task_meta=task_meta,
-            batch_plan=batch_plan,
-            uid=uid,
-            model_path=model_path,
-            effective_workers=effective_workers,
-            runtime_tracker=runtime_tracker,
-            on_seed_complete=on_seed_complete,
-            heartbeat_sec=30.0,
-            phase_label=phase_label,
-            prior_seeds_done=prior_seeds_done,
-            prior_total_seeds=prior_total_seeds,
-            prior_avg=prior_avg,
-            model_image=model_image,
-            runtime_profile=runtime_profile.as_dict(),
-        )
-    finally:
-        if model_image:
-            remove_model_image(model_image)
+    return await _run_process_parallel(
+        all_tasks=list(tasks),
+        task_meta=task_meta,
+        batch_plan=batch_plan,
+        uid=uid,
+        model_path=model_path,
+        effective_workers=effective_workers,
+        runtime_tracker=runtime_tracker,
+        on_seed_complete=on_seed_complete,
+        heartbeat_sec=30.0,
+        phase_label=phase_label,
+        prior_seeds_done=prior_seeds_done,
+        prior_total_seeds=prior_total_seeds,
+        prior_avg=prior_avg,
+        model_image=model_image,
+        runtime_profile=runtime_profile.as_dict(),
+    )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

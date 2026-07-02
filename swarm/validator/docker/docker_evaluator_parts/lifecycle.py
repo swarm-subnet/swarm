@@ -11,6 +11,7 @@ from swarm.config import DockerRuntimeSettings, env_bool
 from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
 
 from ._shared import _THREAD_CAP_ENV_VARS
+from .batch import remove_all_model_images
 
 
 def __new__(cls):
@@ -243,6 +244,7 @@ def _setup_base_container(self):
                 shell=True,
                 capture_output=True,
             )
+            remove_all_model_images()
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
             subprocess.run(
