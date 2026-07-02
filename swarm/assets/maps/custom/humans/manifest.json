@@ -1,0 +1,108 @@
+{
+  "selection": "seeded_random",
+  "models": {
+    "lost_person_01_casual_male": {
+      "path": "lost_person_01_casual_male/model.obj",
+      "material": "lost_person_01_casual_male/model.mtl",
+      "display_name": "Casual Male",
+      "height_m": 1.89,
+      "mesh_up_axis": "y",
+      "scale": 1.0362,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_02_adventurer_male": {
+      "path": "lost_person_02_adventurer_male/model.obj",
+      "material": "lost_person_02_adventurer_male/model.mtl",
+      "display_name": "Adventurer Male",
+      "source": {
+        "asset": "Adventurer",
+        "creator": "Quaternius",
+        "site": "Poly Pizza"
+      },
+      "height_m": 1.89,
+      "mesh_up_axis": "y",
+      "scale": 1.0400,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_03_adventurer_female": {
+      "path": "lost_person_03_adventurer_female/model.obj",
+      "material": "lost_person_03_adventurer_female/model.mtl",
+      "display_name": "Adventurer Female",
+      "source": {
+        "asset": "Adventurer",
+        "creator": "Quaternius",
+        "site": "Poly Pizza"
+      },
+      "height_m": 1.785,
+      "mesh_up_axis": "y",
+      "scale": 1.0009,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_04_casual_female": {
+      "path": "lost_person_04_casual_female/model.obj",
+      "material": "lost_person_04_casual_female/model.mtl",
+      "display_name": "Casual Female",
+      "source": {
+        "asset": "Animated Woman",
+        "creator": "Quaternius",
+        "site": "Poly Pizza"
+      },
+      "height_m": 1.785,
+      "mesh_up_axis": "y",
+      "scale": 0.9882,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_05_child_female": {
+      "path": "lost_person_05_child_female/model.obj",
+      "material": "lost_person_05_child_female/model.mtl",
+      "display_name": "Child Female",
+      "height_m": 1.365,
+      "mesh_up_axis": "y",
+      "scale": 0.7968,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_06_child_male": {
+      "path": "lost_person_06_child_male/model.obj",
+      "material": "lost_person_06_child_male/model.mtl",
+      "display_name": "Child Male",
+      "height_m": 1.365,
+      "mesh_up_axis": "y",
+      "scale": 0.7863,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_07_child_male_bicycle": {
+      "path": "lost_person_07_child_male_bicycle/model.obj",
+      "material": "lost_person_07_child_male_bicycle/model.mtl",
+      "display_name": "Child Male Bicycle",
+      "height_m": 1.365,
+      "mesh_up_axis": "y",
+      "scale": 0.7837,
+      "collision": {
+        "type": "mesh"
+      }
+    },
+    "lost_person_08_child_female_umbrella": {
+      "path": "lost_person_08_child_female_umbrella/model.obj",
+      "material": "lost_person_08_child_female_umbrella/model.mtl",
+      "display_name": "Child Female Umbrella",
+      "height_m": 1.51,
+      "mesh_up_axis": "y",
+      "scale": 0.7968,
+      "collision": {
+        "type": "mesh"
+      }
+    }
+  }
+}

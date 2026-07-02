@@ -1,0 +1,4 @@
+Asset: child male bicycle
+Source: user-provided GLB export, saved as model.glb
+Runtime asset: converted OBJ/MTL plus local texture_diffuse.png for PyBullet.
+Imported for Swarm lost-person target variants.

@@ -183,6 +183,10 @@ class MovingDroneAviary(BaseRLAviary):
 
         self._cached_proj_matrix = None
 
+    def _addObstacles(self):
+        """Disable gym_pybullet_drones' default RGB demo obstacles."""
+        return
+
     # --------------------------------------------------------------------- #
     # 2. low‑level helpers
     # --------------------------------------------------------------------- #

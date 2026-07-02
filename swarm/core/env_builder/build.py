@@ -38,6 +38,210 @@ def _distance_between_points(
     return shared.math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
+def _human_assets_root() -> shared.Path:
+    return (
+        shared.Path(__file__).resolve().parent.parent.parent
+        / "assets"
+        / "maps"
+        / "custom"
+        / "humans"
+    )
+
+
+def _load_human_target_spec(rng: shared.random.Random) -> dict:
+    root = _human_assets_root()
+    manifest_path = root / "manifest.json"
+    with manifest_path.open("r", encoding="utf-8") as f:
+        manifest = shared.json.load(f)
+    models = manifest["models"]
+    model_keys = sorted(models)
+    model_key = rng.choice(model_keys)
+    spec = dict(models[model_key])
+    spec["name"] = model_key
+    spec["root"] = root
+    spec["obj_path"] = root / spec["path"]
+    spec["mtl_path"] = root / spec.get("material", spec["path"].replace(".obj", ".mtl"))
+    return spec
+
+
+def _read_mtl_materials(mtl_path: shared.Path) -> dict[str, dict]:
+    def _linear_to_srgb(value: float) -> float:
+        return max(0.0, min(1.0, float(value))) ** (1.0 / 2.2)
+
+    def _finish_material(
+        materials: dict[str, dict],
+        name: str,
+        diffuse: list[float],
+        alpha: float,
+        texture_path: shared.Optional[shared.Path],
+    ) -> None:
+        materials[name] = {
+            "rgba": [
+                _linear_to_srgb(diffuse[0]),
+                _linear_to_srgb(diffuse[1]),
+                _linear_to_srgb(diffuse[2]),
+                max(0.05, alpha),
+            ],
+            "texture_path": texture_path,
+        }
+
+    materials: dict[str, dict] = {}
+    current = None
+    alpha = 1.0
+    diffuse = [1.0, 1.0, 1.0]
+    texture_path: shared.Optional[shared.Path] = None
+    for raw in mtl_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if parts[0] == "newmtl":
+            if current is not None:
+                _finish_material(materials, current, diffuse, alpha, texture_path)
+            current = parts[1]
+            alpha = 1.0
+            diffuse = [1.0, 1.0, 1.0]
+            texture_path = None
+        elif parts[0] == "Kd" and len(parts) >= 4:
+            diffuse = [float(parts[1]), float(parts[2]), float(parts[3])]
+        elif parts[0] == "d" and len(parts) >= 2:
+            alpha = float(parts[1])
+        elif parts[0] == "map_Kd" and len(parts) >= 2:
+            candidate = shared.Path(parts[-1])
+            if not candidate.exists():
+                candidate = mtl_path.parent / candidate.name
+            texture_path = candidate if candidate.exists() else None
+    if current is not None:
+        _finish_material(materials, current, diffuse, alpha, texture_path)
+    return materials
+
+
+def _human_material_parts(
+    obj_path: shared.Path,
+    mtl_path: shared.Path,
+) -> list[tuple[shared.Path, list[float], shared.Optional[shared.Path]]]:
+    materials = _read_mtl_materials(mtl_path)
+    cache_dir = shared.STATE_DIR / "humans" / obj_path.parent.name / "material_parts"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    geometry: list[str] = []
+    faces_by_material: dict[str, list[str]] = {}
+    current_material = "default"
+    for raw in obj_path.read_text(encoding="utf-8").splitlines():
+        if raw.startswith(("v ", "vt ", "vn ", "vp ")):
+            geometry.append(raw)
+        elif raw.startswith("usemtl "):
+            current_material = raw.split(maxsplit=1)[1].strip()
+            faces_by_material.setdefault(current_material, [])
+        elif raw.startswith("f "):
+            faces_by_material.setdefault(current_material, []).append(raw)
+
+    parts: list[tuple[shared.Path, list[float], shared.Optional[shared.Path]]] = []
+    for material, faces in faces_by_material.items():
+        if not faces:
+            continue
+        safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in material)
+        part_path = cache_dir / f"{safe_name}.obj"
+        with part_path.open("w", encoding="utf-8", newline="\n") as f:
+            f.write("# Auto-generated material split for PyBullet visual colors\n")
+            f.write(f"o {obj_path.parent.name}_{safe_name}\n")
+            for line in geometry:
+                f.write(line + "\n")
+            f.write(f"usemtl {material}\n")
+            f.write("s 1\n")
+            for face in faces:
+                f.write(face + "\n")
+        material_info = materials.get(material, {})
+        parts.append((
+            part_path,
+            material_info.get("rgba", [1.0, 1.0, 1.0, 1.0]),
+            material_info.get("texture_path"),
+        ))
+    return parts
+
+
+def _spawn_human_goal_target(
+    *,
+    cli: int,
+    x: float,
+    y: float,
+    surface_z: float,
+    rng: shared.random.Random,
+) -> tuple[shared.List[int], float]:
+    spec = _load_human_target_spec(rng)
+    height = float(spec.get("height_m", 1.8))
+    scale = float(spec.get("scale", 1.0))
+    center_z = float(surface_z) + height * 0.5
+
+    uids: shared.List[int] = []
+    yaw = rng.uniform(-shared.math.pi, shared.math.pi)
+    body_orientation = shared.p.getQuaternionFromEuler([0.0, 0.0, yaw])
+    mesh_orientation = shared.p.getQuaternionFromEuler([shared.math.pi * 0.5, 0.0, 0.0])
+    mesh_base_z = float(surface_z) + 0.006
+    for part_path, rgba, texture_path in _human_material_parts(spec["obj_path"], spec["mtl_path"]):
+        visual_id = shared.p.createVisualShape(
+            shapeType=shared.p.GEOM_MESH,
+            fileName=str(part_path),
+            meshScale=[scale, scale, scale],
+            rgbaColor=rgba,
+            visualFrameOrientation=mesh_orientation,
+            physicsClientId=cli,
+        )
+        collision_id = shared.p.createCollisionShape(
+            shapeType=shared.p.GEOM_MESH,
+            fileName=str(part_path),
+            meshScale=[scale, scale, scale],
+            collisionFrameOrientation=mesh_orientation,
+            physicsClientId=cli,
+        )
+        uid = shared.p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=collision_id,
+            baseVisualShapeIndex=visual_id,
+            basePosition=[float(x), float(y), mesh_base_z],
+            baseOrientation=body_orientation,
+            physicsClientId=cli,
+        )
+        shared.p.changeDynamics(
+            bodyUniqueId=uid,
+            linkIndex=-1,
+            restitution=0.0,
+            lateralFriction=2.0,
+            spinningFriction=1.0,
+            rollingFriction=0.5,
+            physicsClientId=cli,
+        )
+        visual_kwargs = {
+            "rgbaColor": rgba,
+            "flags": shared.p.VISUAL_SHAPE_DOUBLE_SIDED,
+            "physicsClientId": cli,
+        }
+        if texture_path is not None:
+            visual_kwargs["textureUniqueId"] = shared.p.loadTexture(
+                str(texture_path),
+                physicsClientId=cli,
+            )
+        shared.p.changeVisualShape(uid, -1, **visual_kwargs)
+        uids.append(uid)
+    return uids, center_z
+
+
+def _person_ground_surface_z(
+    cli: int,
+    x: float,
+    y: float,
+    fallback_surface_z: float,
+    challenge_type: int,
+) -> float:
+    if challenge_type in (5, 6):
+        return 0.0
+    if challenge_type in (1, 2, 4, 6):
+        ray_z = float(_raycast_surface_z(cli, x, y))
+        if shared.math.isfinite(ray_z):
+            return ray_z
+    return float(fallback_surface_z)
+
+
 def build_world(
     seed: int,
     cli: int,
@@ -306,179 +510,23 @@ def build_world(
         goal_platform_surface_z = surface_z
 
         if shared.PLATFORM:
-            goal_color = rng.choice(shared.GOAL_COLOR_PALETTE)
-            platform_radius = shared.LANDING_PLATFORM_RADIUS
-            platform_height = 0.2
-            platform_collision = shared.p.createCollisionShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=platform_radius,
-                height=platform_height,
-                physicsClientId=cli,
+            surface_z = _person_ground_surface_z(
+                cli,
+                gx,
+                gy,
+                surface_z,
+                challenge_type,
             )
-            platform_visual = shared.p.createVisualShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=platform_radius,
-                length=platform_height,
-                rgbaColor=goal_color,
-                specularColor=[
-                    goal_color[0] * 0.6 + 0.4,
-                    goal_color[1] * 0.6 + 0.4,
-                    goal_color[2] * 0.6 + 0.4,
-                ],
-                physicsClientId=cli,
+            human_uids, human_goal_z = _spawn_human_goal_target(
+                cli=cli,
+                x=gx,
+                y=gy,
+                surface_z=surface_z,
+                rng=rng,
             )
-            if challenge_type == 4:
-                goal_platform_z = surface_z + platform_height / 2 + 0.03
-            else:
-                goal_platform_z = surface_z - platform_height / 2 + 0.05
-            platform_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=platform_collision,
-                baseVisualShapeIndex=platform_visual,
-                basePosition=[gx, gy, goal_platform_z],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(platform_uid)
-            shared.p.changeDynamics(
-                bodyUniqueId=platform_uid,
-                linkIndex=-1,
-                restitution=0.0,
-                lateralFriction=2.0,
-                spinningFriction=1.0,
-                rollingFriction=0.5,
-                physicsClientId=cli,
-            )
-
-            goal_plat_top_z = goal_platform_z + platform_height / 2
-            goal_platform_surface_z = goal_plat_top_z
-            surface_radius = platform_radius * 0.8
-            surface_height = 0.008
-            bright_goal_color = [
-                min(1.0, goal_color[0] * 1.25),
-                min(1.0, goal_color[1] * 1.25),
-                min(1.0, goal_color[2] * 1.25),
-                1.0,
-            ]
-            surface_visual = shared.p.createVisualShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=surface_radius,
-                length=surface_height,
-                rgbaColor=bright_goal_color,
-                specularColor=[
-                    bright_goal_color[0] * 0.8,
-                    bright_goal_color[1] * 0.8,
-                    bright_goal_color[2] * 0.8,
-                ],
-                physicsClientId=cli,
-            )
-            surface_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=-1,
-                baseVisualShapeIndex=surface_visual,
-                basePosition=[gx, gy, goal_plat_top_z + surface_height / 2 + 0.001],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(surface_uid)
-
-            flat_landing_collision = shared.p.createCollisionShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=surface_radius,
-                height=0.001,
-                physicsClientId=cli,
-            )
-            flat_landing_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=flat_landing_collision,
-                baseVisualShapeIndex=-1,
-                basePosition=[gx, gy, goal_plat_top_z + surface_height + 0.002],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(flat_landing_uid)
-            shared.p.changeDynamics(
-                bodyUniqueId=flat_landing_uid,
-                linkIndex=-1,
-                restitution=0.0,
-                lateralFriction=3.0,
-                spinningFriction=2.0,
-                rollingFriction=1.0,
-                physicsClientId=cli,
-            )
-
-            tao_logo_radius = surface_radius * 1.06
-            badge_height = 0.005
-            tao_background_visual = shared.p.createVisualShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=tao_logo_radius,
-                length=badge_height,
-                rgbaColor=bright_goal_color,
-                physicsClientId=cli,
-            )
-            tao_background_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=-1,
-                baseVisualShapeIndex=tao_background_visual,
-                basePosition=[gx, gy, goal_plat_top_z + surface_height + badge_height + 0.008],
-                baseOrientation=[0, 0, 0, 1],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(tao_background_uid)
-            tao_logo_visual = shared.p.createVisualShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=tao_logo_radius * 0.95,
-                length=badge_height * 0.5,
-                rgbaColor=bright_goal_color,
-                physicsClientId=cli,
-            )
-            tao_logo_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=-1,
-                baseVisualShapeIndex=tao_logo_visual,
-                basePosition=[gx, gy, goal_plat_top_z + surface_height + badge_height + 0.011],
-                baseOrientation=[0, 0, 0, 1],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(tao_logo_uid)
-            shared.p.changeVisualShape(
-                tao_logo_uid,
-                -1,
-                textureUniqueId=_get_tao_tex(cli),
-                flags=shared.p.VISUAL_SHAPE_DOUBLE_SIDED,
-                physicsClientId=cli,
-            )
-
-            pole_h = 0.5
-            pole_radius = 0.012
-            pole_visual = shared.p.createVisualShape(
-                shapeType=shared.p.GEOM_CYLINDER,
-                radius=pole_radius,
-                length=pole_h,
-                rgbaColor=[1.0, 0.2, 0.1, 0.9],
-                specularColor=[1.0, 0.8, 0.2],
-                physicsClientId=cli,
-            )
-            cap_visual = shared.p.createVisualShape(
-                shapeType=shared.p.GEOM_SPHERE,
-                radius=pole_radius * 2,
-                rgbaColor=[1.0, 0.3, 0.0, 1.0],
-                specularColor=[1.0, 1.0, 0.4],
-                physicsClientId=cli,
-            )
-            pole_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=-1,
-                baseVisualShapeIndex=pole_visual,
-                basePosition=[gx, gy, goal_plat_top_z + pole_h / 2 + 0.008],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(pole_uid)
-            cap_uid = shared.p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=-1,
-                baseVisualShapeIndex=cap_visual,
-                basePosition=[gx, gy, goal_plat_top_z + pole_h + 0.015],
-                physicsClientId=cli,
-            )
-            end_platform_uids.append(cap_uid)
+            end_platform_uids.extend(human_uids)
+            goal_platform_surface_z = human_goal_z
+            adjusted_goal = (gx, gy, human_goal_z)
 
     if challenge_type == 4:
         all_plat = set(start_platform_uids) | set(end_platform_uids)
