@@ -250,8 +250,8 @@
         "short_label": "SAR",
         "slug": "search-and-rescue"
       },
-      "family_state": "incubating",
-      "emissions_state": "incubating",
+      "family_state": "active",
+      "emissions_state": "active",
       "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation",
@@ -299,8 +299,8 @@
         "short_label": "Swarm",
         "slug": "swarm-autopilot"
       },
-      "family_state": "incubating",
-      "emissions_state": "incubating",
+      "family_state": "active",
+      "emissions_state": "active",
       "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"
@@ -347,8 +347,8 @@
         "short_label": "Swarm SAR",
         "slug": "swarm-search-and-rescue"
       },
-      "family_state": "incubating",
-      "emissions_state": "incubating",
+      "family_state": "active",
+      "emissions_state": "active",
       "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation",
@@ -396,8 +396,8 @@
         "short_label": "Interceptor",
         "slug": "interceptor"
       },
-      "family_state": "incubating",
-      "emissions_state": "incubating",
+      "family_state": "active",
+      "emissions_state": "active",
       "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"

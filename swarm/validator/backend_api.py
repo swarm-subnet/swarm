@@ -770,8 +770,8 @@ class BackendApiClient:
 
         if resp.status_code in (404, 405):
             raise BackendProtocolMismatchError(
-                f"Backend does not implement {endpoint}; upgrade backend "
-                "to 4.0.2.9 before running this validator"
+                f"Backend does not implement {endpoint}; upgrade the backend "
+                "before running this validator"
             )
         if resp.status_code >= 500:
             raise BackendTransportError(
@@ -873,8 +873,8 @@ class BackendApiClient:
             ) as resp:
                 if resp.status_code in (404, 405):
                     raise BackendProtocolMismatchError(
-                        f"Backend does not implement {endpoint}; upgrade "
-                        "backend to 4.0.2.9 before running this validator"
+                        f"Backend does not implement {endpoint}; upgrade the "
+                        "backend before running this validator"
                     )
                 if resp.status_code >= 400:
                     raise BackendTransportError(

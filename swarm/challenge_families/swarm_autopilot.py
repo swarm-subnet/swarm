@@ -23,11 +23,11 @@ from .base import ChallengeFamilyRuntimeProfile
 
 
 class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
-    """Five drones flown by one centralized policy to per-drone goal pads.
+    """A swarm of 2-8 drones flown by one centralized policy to per-drone goal pads.
 
     Reuses the single-drone autopilot scoring per drone and reports the
     arithmetic mean. The simulator owns the per-drone resolve/freeze/termination
-    mechanics; this family places the 5 pads and aggregates the score.
+    mechanics; this family places one pad per drone and aggregates the score.
     """
 
     family_id = "cf_swarm_autopilot"

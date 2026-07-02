@@ -137,7 +137,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
     ]
 
     assert sar["display"]["short_label"] == "SAR"
-    assert sar["family_state"] == "incubating"
+    assert sar["family_state"] == "active"
     assert sar["market_vertical_ids"] == ["mv_public_safety"]
     assert registry["score_schemas"]["ss_search_and_rescue_v1"]["primary_metric"] == (
         "mission_score"
@@ -175,21 +175,37 @@ def test_filter_challenge_family_definitions_handles_incubating_and_archived():
         "emissions_state": "archived",
     }
 
+    registry["challenge_families"]["cf_incubating_fixture"] = {
+        **registry["challenge_families"]["cf_autopilot"],
+        "family_id": "cf_incubating_fixture",
+        "display": {
+            "label": "Incubating Fixture",
+            "short_label": "Incubating",
+            "slug": "incubating-fixture",
+        },
+        "family_state": "incubating",
+        "emissions_state": "incubating",
+    }
+    active_ids = sorted(
+        family_id
+        for family_id, definition in registry["challenge_families"].items()
+        if definition["family_state"] == "active"
+    )
+
     filtered_without_incubating = filter_challenge_family_definitions(
         registry["challenge_families"],
         include_incubating=False,
     )
-    assert sorted(filtered_without_incubating) == [
-        "cf_archived_fixture",
-        "cf_autopilot",
-    ]
+    assert sorted(filtered_without_incubating) == sorted(
+        ["cf_archived_fixture", *active_ids]
+    )
 
     filtered_active_only = filter_challenge_family_definitions(
         registry["challenge_families"],
         include_incubating=False,
         include_archived=False,
     )
-    assert sorted(filtered_active_only) == ["cf_autopilot"]
+    assert sorted(filtered_active_only) == active_ids
 
 
 def test_policy_interface_contracts_are_registry_backed():
