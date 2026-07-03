@@ -231,6 +231,7 @@ class MovingDroneAviary(BaseRLAviary):
             self._rgb_buffer = np.zeros(
                 (self.NUM_DRONES, SAR_RGB_RES, SAR_RGB_RES, 3), dtype=np.float32
             )
+            self._rgb_dirty = False
 
         self._clue_dim = int(self.family_runtime.state_clue_dim(task))
         self._obs_layout = self.family_runtime.observation_assembly(task)
@@ -689,15 +690,15 @@ class MovingDroneAviary(BaseRLAviary):
         """
         far = getattr(self, "_depth_far_m", DEPTH_FAR)
         dmax = getattr(self, "_depth_max_m", DEPTH_MAX_M)
-        depth_buffer = np.clip(depth_buffer, 0.0, 1.0)
-
-        denominator = far - (far - DEPTH_NEAR) * depth_buffer
-        denominator = np.maximum(denominator, DEPTH_NEAR * 1e-6)
-
-        depth_meters = far * DEPTH_NEAR / denominator
-        depth_clipped = np.clip(depth_meters, DEPTH_MIN_M, dmax)
-        depth_normalized = (depth_clipped - DEPTH_MIN_M) / (dmax - DEPTH_MIN_M)
-        return depth_normalized.astype(np.float32)[..., np.newaxis]
+        out = np.clip(depth_buffer, 0.0, 1.0)
+        out *= far - DEPTH_NEAR
+        np.subtract(far, out, out=out)
+        np.maximum(out, DEPTH_NEAR * 1e-6, out=out)
+        np.divide(far * DEPTH_NEAR, out, out=out)
+        np.clip(out, DEPTH_MIN_M, dmax, out=out)
+        out -= DEPTH_MIN_M
+        out /= dmax - DEPTH_MIN_M
+        return out.astype(np.float32, copy=False)[..., np.newaxis]
 
     def _check_collision(self, nth_drone: int = 0) -> tuple:
         """Inspect contact points; sets ``_collision`` on any non-platform impact.
@@ -1098,6 +1099,7 @@ class MovingDroneAviary(BaseRLAviary):
         if getattr(self, "_sar_rgb_enabled", False):
             self._rgb_request_count[:] = 0
             self._rgb_buffer.fill(0.0)
+            self._rgb_dirty = False
 
         self._reset_action_buffer()
 
@@ -1393,7 +1395,8 @@ class MovingDroneAviary(BaseRLAviary):
             _, depth_raw, _ = self._getDroneImages(i)
             if depth_raw is None:
                 depth_raw = np.ones((int(self.IMG_RES[1]), int(self.IMG_RES[0])), dtype=np.float32)
-            self.dep[i] = depth_raw
+            if self.RECORD or self.GUI:
+                self.dep[i] = depth_raw
             depths.append(self._process_depth(depth_raw))
             state_vecs.append(self._getDroneStateVector(i))
         team_states = np.concatenate(
@@ -1414,7 +1417,8 @@ class MovingDroneAviary(BaseRLAviary):
                 for key, space in self.observation_space.spaces.items()
             }
 
-        self.dep[0] = depth_raw
+        if self.RECORD or self.GUI:
+            self.dep[0] = depth_raw
         depth = self._process_depth(depth_raw)
         state_vec = self._getDroneStateVector(0)
 
@@ -1456,7 +1460,9 @@ class MovingDroneAviary(BaseRLAviary):
         budget. Leaves obs["rgb"] zero-filled otherwise so the slot is always present."""
         if not getattr(self, "_sar_rgb_enabled", False):
             return
-        self._rgb_buffer.fill(0.0)
+        if self._rgb_dirty:
+            self._rgb_buffer.fill(0.0)
+            self._rgb_dirty = False
         act = np.asarray(action, dtype=np.float32)
         if act.ndim == 1:
             act = act[None, :]
@@ -1468,3 +1474,4 @@ class MovingDroneAviary(BaseRLAviary):
             if float(act[i, 5]) > 0.5 and int(self._rgb_request_count[i]) < SAR_RGB_REQUEST_CAP:
                 self._rgb_request_count[i] += 1
                 self._rgb_buffer[i] = self._render_onboard_rgb(i)
+                self._rgb_dirty = True

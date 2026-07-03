@@ -48,7 +48,7 @@ def assemble(layout: ObservationLayout, env: Any, state_vec: np.ndarray, ctx: di
                 for channel in channels
             ]
             joined = np.concatenate(parts) if parts else np.zeros((0,), dtype=np.float32)
-            obs[key] = joined.astype(np.float32)
+            obs[key] = joined.astype(np.float32, copy=False)
     return obs
 
 
