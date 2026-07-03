@@ -120,6 +120,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", default="docker_e2e.json")
     ap.add_argument("--workdir", default="/tmp/walltime_e2e")
+    ap.add_argument("--families", default="", help="comma-separated family filter")
+    ap.add_argument("--seeds-per-family", type=int, default=0, help="limit seeds per family")
     args = ap.parse_args()
 
     _relax_timeouts()
@@ -136,7 +138,14 @@ def main():
     evaluator = DockerSecureEvaluator()
     summary = []
 
-    for family, ctype, seeds in build_configs():
+    configs = build_configs()
+    if args.families:
+        wanted = {f.strip() for f in args.families.split(",") if f.strip()}
+        configs = [c for c in configs if c[0] in wanted]
+    if args.seeds_per_family > 0:
+        configs = [(f, c, seeds[: args.seeds_per_family]) for f, c, seeds in configs]
+
+    for family, ctype, seeds in configs:
         tasks = [
             task_for_seed_and_type(SIM_DT, seed=s, challenge_type=ctype, family_id=family)
             for s in seeds

@@ -1,4 +1,6 @@
 import asyncio
+import mmap
+import os
 import statistics
 import threading
 import time
@@ -39,6 +41,7 @@ from ._shared import (
     _runtime_profile_from_payload,
     _submission_template_dir,
 )
+from .submission import _serialize_observation_shm
 from swarm.config import RpcTraceSettings
 
 
@@ -68,6 +71,24 @@ def _run_multi_seed_rpc_sync(
     use_ref = speed_factor is not None
     schema_file = _submission_template_dir() / "agent.capnp"
     agent_capnp = capnp.load(str(schema_file))
+
+    shm_file = None
+    shm_buf = None
+    shm_path = f"/dev/shm/swarm_obs_{rpc_port}.bin"
+    if os.path.exists(shm_path):
+        try:
+            shm_file = open(shm_path, "r+b")
+            shm_buf = mmap.mmap(shm_file.fileno(), 0)
+        except OSError:
+            shm_buf = None
+
+    def _build_observation(obs):
+        if shm_buf is not None:
+            try:
+                return _serialize_observation_shm(agent_capnp, obs, shm_buf)
+            except BufferError:
+                pass
+        return self._serialize_observation(agent_capnp, obs)
     trace_settings = RpcTraceSettings.from_env()
     trace_rpc = trace_settings.enabled
     trace_every = trace_settings.trace_every
@@ -480,9 +501,7 @@ def _run_multi_seed_rpc_sync(
                                     else calibrated_timeout
                                 )
 
-                            observation = self._serialize_observation(
-                                agent_capnp, obs
-                            )
+                            observation = _build_observation(obs)
                             _set_phase(
                                 "rpc_act",
                                 task=task_label,
@@ -864,6 +883,10 @@ def _run_multi_seed_rpc_sync(
         if watchdog_thread is not None:
             watchdog_thread.join(timeout=2.0)
         loop.close()
+        if shm_buf is not None:
+            shm_buf.close()
+        if shm_file is not None:
+            shm_file.close()
 
 async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: float) -> float:
     """Pure RPC round-trip overhead from no-op pings (no miner-side compute)."""

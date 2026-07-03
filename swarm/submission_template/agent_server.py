@@ -1,4 +1,7 @@
 import asyncio
+import json
+import mmap
+import os
 import sys
 import time
 from pathlib import Path
@@ -15,6 +18,15 @@ except ImportError:
 schema_file = Path(__file__).parent / "agent.capnp"
 agent_capnp = capnp.load(str(schema_file))
 
+_obs_shm = None
+_obs_shm_path = os.environ.get("SWARM_OBS_SHM")
+if _obs_shm_path and os.path.exists(_obs_shm_path):
+    try:
+        _obs_shm_file = open(_obs_shm_path, "rb")
+        _obs_shm = mmap.mmap(_obs_shm_file.fileno(), 0, access=mmap.ACCESS_READ)
+    except OSError:
+        _obs_shm = None
+
 
 def tensor_to_array(tensor):
     """Empty data means an all-zero tensor sent compactly; rebuild it locally."""
@@ -27,6 +39,39 @@ def tensor_to_array(tensor):
     return np.frombuffer(tensor.data, dtype=dtype).reshape(shape)
 
 
+def decode_observation(entries):
+    """Rebuild the observation dict; tensors may arrive inline, as compact zeros,
+    or via the read-only shared-memory file the validator writes each step."""
+    manifest = {}
+    tensor_entries = []
+    for entry in entries:
+        if entry.key == "__shm__":
+            for key, offset, nbytes in json.loads(bytes(entry.tensor.data).decode()):
+                manifest[key] = (int(offset), int(nbytes))
+        else:
+            tensor_entries.append(entry)
+
+    obs = {}
+    for entry in tensor_entries:
+        key = entry.key
+        if key in manifest:
+            if _obs_shm is None:
+                raise RuntimeError("observation shm referenced but not mounted")
+            offset, nbytes = manifest[key]
+            dtype = np.dtype(entry.tensor.dtype)
+            arr = np.frombuffer(
+                _obs_shm, dtype=dtype, count=nbytes // dtype.itemsize, offset=offset
+            ).reshape(tuple(entry.tensor.shape)).copy()
+            arr.flags.writeable = False
+            obs[key] = arr
+        else:
+            obs[key] = tensor_to_array(entry.tensor)
+
+    if len(obs) == 1 and "__value__" in obs:
+        return obs["__value__"]
+    return obs
+
+
 class AgentServer(agent_capnp.Agent.Server):
     def __init__(self, agent):
         self.agent = agent
@@ -35,13 +80,7 @@ class AgentServer(agent_capnp.Agent.Server):
         return "pong"
 
     async def act(self, obs, **kwargs):
-        entries = list(obs.entries)
-
-        if len(entries) == 1 and entries[0].key == "__value__":
-            obs_array = tensor_to_array(entries[0].tensor)
-        else:
-            obs_dict = {entry.key: tensor_to_array(entry.tensor) for entry in entries}
-            obs_array = obs_dict
+        obs_array = decode_observation(list(obs.entries))
 
         action = self.agent.act(obs_array)
 
@@ -54,9 +93,7 @@ class AgentServer(agent_capnp.Agent.Server):
         return response
 
     async def calibrate(self, obs, **kwargs):
-        entries = list(obs.entries)
-        for entry in entries:
-            _ = tensor_to_array(entry.tensor)
+        _ = decode_observation(list(obs.entries))
 
         a = np.random.randn(512, 512).astype(np.float32)
         b = np.random.randn(512, 512).astype(np.float32)

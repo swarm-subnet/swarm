@@ -270,6 +270,55 @@ def test_serialize_observation_zero_tensor_roundtrips_compact():
             assert rebuilt.tobytes() == obs[entry.key].tobytes()
 
 
+def test_serialize_observation_shm_roundtrips_via_buffer():
+    import json as _json
+
+    capnp = pytest.importorskip("capnp")
+    from swarm.validator.docker.docker_evaluator_parts._shared import (
+        _submission_template_dir,
+    )
+    from swarm.validator.docker.docker_evaluator_parts.submission import (
+        _serialize_observation_shm,
+    )
+
+    schema = capnp.load(str(_submission_template_dir() / "agent.capnp"))
+    obs = {
+        "depth": np.random.rand(8, 8, 1).astype(np.float32),
+        "rgb": np.zeros((8, 8, 3), dtype=np.float32),
+        "state": np.array([1.0, -2.0, 0.5], dtype=np.float32),
+    }
+    shm_buf = bytearray(4096)
+    msg = _serialize_observation_shm(schema, obs, shm_buf)
+
+    with schema.Observation.from_bytes(msg.to_bytes()) as parsed:
+        manifest = {}
+        tensor_entries = []
+        for entry in parsed.entries:
+            if entry.key == "__shm__":
+                for key, off, nbytes in _json.loads(bytes(entry.tensor.data).decode()):
+                    manifest[key] = (off, nbytes)
+            else:
+                assert len(entry.tensor.data) == 0
+                tensor_entries.append(entry)
+
+        assert set(manifest) == {"depth", "state"}
+        for entry in tensor_entries:
+            shape = tuple(entry.tensor.shape)
+            dtype = np.dtype(entry.tensor.dtype)
+            if entry.key in manifest:
+                off, nbytes = manifest[entry.key]
+                rebuilt = np.frombuffer(
+                    bytes(shm_buf[off:off + nbytes]), dtype=dtype
+                ).reshape(shape)
+            else:
+                rebuilt = np.zeros(shape, dtype=dtype)
+            assert rebuilt.tobytes() == obs[entry.key].tobytes()
+
+    tiny = bytearray(8)
+    with pytest.raises(BufferError):
+        _serialize_observation_shm(schema, obs, tiny)
+
+
 def test_check_docker_available_true(monkeypatch):
     ev = _new_evaluator()
     monkeypatch.setattr(

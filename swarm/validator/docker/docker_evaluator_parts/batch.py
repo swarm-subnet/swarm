@@ -643,6 +643,24 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     return None
 
 
+OBS_SHM_BYTES = 32 * 1024 * 1024
+
+
+def _obs_shm_host_path(host_port: int) -> str:
+    return f"/dev/shm/swarm_obs_{host_port}.bin"
+
+
+def _create_obs_shm(host_port: int) -> Optional[str]:
+    path = _obs_shm_host_path(host_port)
+    try:
+        with open(path, "wb") as f:
+            f.truncate(OBS_SHM_BYTES)
+        os.chmod(path, 0o644)
+        return path
+    except OSError:
+        return None
+
+
 def _launch_container(ctx: _BatchContext) -> Optional[list]:
     uid = ctx.uid
     worker_id = ctx.worker_id
@@ -658,6 +676,8 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
     docker_envs = ctx.docker_envs
     _phase = ctx.helpers.phase
     _notify_all_failed = ctx.helpers.notify_all_failed
+
+    obs_shm_path = _create_obs_shm(host_port)
 
     if has_requirements:
         cmd = [
@@ -691,6 +711,9 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
             cmd.extend(["--cpuset-cpus", str(worker_limits["cpuset_cpus"])])
         for key, value in docker_envs.items():
             cmd.extend(["-e", f"{key}={value}"])
+        if obs_shm_path:
+            cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
+            cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
         cmd.extend(
             [
                 run_image,
@@ -730,6 +753,9 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
             cmd.extend(["--cpuset-cpus", str(worker_limits["cpuset_cpus"])])
         for key, value in docker_envs.items():
             cmd.extend(["-e", f"{key}={value}"])
+        if obs_shm_path:
+            cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
+            cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
         cmd.extend(
             [
                 run_image,
@@ -1391,12 +1417,22 @@ async def evaluate_seeds_batch(
             pass
     finally:
         ctx.helpers.cleanup_tmpdir_quiet(ctx.tmpdir)
+        if getattr(ctx, "host_port", None):
+            try:
+                os.unlink(_obs_shm_host_path(ctx.host_port))
+            except OSError:
+                pass
 
     return [ValidationResult(uid, False, 0.0, 0.0) for _ in ctx.tasks]
 
 
 def cleanup(self):
     """Clean up any orphaned containers and prune unused images/cache"""
+    for stale in Path("/dev/shm").glob("swarm_obs_*.bin"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     try:
         # List all swarm evaluation containers
         result = subprocess.run(
