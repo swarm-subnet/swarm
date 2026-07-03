@@ -58,21 +58,28 @@ def assemble_batch(
     state_vecs: Sequence[np.ndarray],
     depths: Sequence[np.ndarray],
     team_states: np.ndarray,
+    stacked_overrides: Optional[dict] = None,
 ) -> dict:
     """Stack per-drone observations into a leading drone axis for a swarm.
 
     Each drone's row is built with the same single-drone ``assemble`` so its
     values are identical to the single-drone path, plus a teammate-relative
-    block injected via ``ctx`` (team_states + self_index).
+    block injected via ``ctx`` (team_states + self_index). Keys present in
+    ``stacked_overrides`` arrive already stacked and skip the per-drone pass.
     """
+    stacked_overrides = stacked_overrides or {}
+    row_layout = {k: v for k, v in layout.items() if k not in stacked_overrides}
     per_drone = []
     for i, state_vec in enumerate(state_vecs):
         ctx = {"depth": depths[i], "self_index": i, "team_states": team_states}
-        per_drone.append(assemble(layout, env, state_vec, ctx))
-    return {
-        key: np.stack([row[key] for row in per_drone], axis=0)
-        for key in per_drone[0]
-    }
+        per_drone.append(assemble(row_layout, env, state_vec, ctx))
+    obs: dict = {}
+    for key in layout:
+        if key in stacked_overrides:
+            obs[key] = stacked_overrides[key]
+        else:
+            obs[key] = np.stack([row[key] for row in per_drone], axis=0)
+    return obs
 
 
 def observation_space(layout: ObservationLayout, env: Any) -> spaces.Dict:

@@ -692,15 +692,24 @@ class MovingDroneAviary(BaseRLAviary):
             return min(MAX_RAY_DISTANCE, ray_origin_offset + hit_frac * seg_len)
         return MAX_RAY_DISTANCE
 
-    def _process_depth(self, depth_buffer: np.ndarray) -> np.ndarray:
+    def _process_depth(self, depth_buffer: np.ndarray, out: np.ndarray = None) -> np.ndarray:
         """Convert PyBullet depth buffer to a normalized depth map in [0,1].
 
         Range is env-local (``_depth_far_m`` / ``_depth_max_m``): cf_interceptor sees out to
         ~100 m, the SAR families to 30 m, and the rest keep the 0.5-20 m default.
+        ``out`` may supply a float32 destination of the buffer's shape to avoid
+        the intermediate allocation; the math is unchanged either way.
         """
         far = getattr(self, "_depth_far_m", DEPTH_FAR)
         dmax = getattr(self, "_depth_max_m", DEPTH_MAX_M)
-        out = np.clip(depth_buffer, 0.0, 1.0)
+        if (
+            out is not None
+            and depth_buffer.dtype == np.float32
+            and out.shape == depth_buffer.shape
+        ):
+            out = np.clip(depth_buffer, 0.0, 1.0, out=out)
+        else:
+            out = np.clip(depth_buffer, 0.0, 1.0)
         out *= far - DEPTH_NEAR
         np.subtract(far, out, out=out)
         np.maximum(out, DEPTH_NEAR * 1e-6, out=out)
@@ -1416,6 +1425,9 @@ class MovingDroneAviary(BaseRLAviary):
                 lightDirection=self._light_direction,
                 physicsClientId=getattr(self, "CLIENT", 0),
             )
+        depth_stack = np.empty(
+            (self.NUM_DRONES, int(self.IMG_RES[1]), int(self.IMG_RES[0]), 1), dtype=np.float32
+        )
         for i in range(self.NUM_DRONES):
             if batch_deps is not None:
                 depth_raw = batch_deps[i]
@@ -1425,13 +1437,17 @@ class MovingDroneAviary(BaseRLAviary):
                 depth_raw = np.ones((int(self.IMG_RES[1]), int(self.IMG_RES[0])), dtype=np.float32)
             if self.RECORD or self.GUI:
                 self.dep[i] = depth_raw
-            depths.append(self._process_depth(depth_raw))
+            self._process_depth(depth_raw, out=depth_stack[i, :, :, 0])
+            depths.append(depth_stack[i])
             state_vecs.append(self._getDroneStateVector(i))
         team_states = np.concatenate(
             [np.asarray(self.pos, dtype=np.float32), np.asarray(self.vel, dtype=np.float32)],
             axis=1,
         )
-        return assemble_batch(self._obs_layout, self, state_vecs, depths, team_states)
+        return assemble_batch(
+            self._obs_layout, self, state_vecs, depths, team_states,
+            stacked_overrides={"depth": depth_stack},
+        )
 
     def _computeObs(self):
         """Build the observation declared by this challenge's input contract."""
