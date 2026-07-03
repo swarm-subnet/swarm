@@ -368,11 +368,31 @@ def print_family_totals(results):
         print(f"{family:<22} {avg:>10.1f} {core_h:>13.1f} {core_h/6:>10.1f}h")
 
 
+def _next_seed_same_count(family, prev_seed):
+    if family in SWARM_FAMILIES:
+        rng = random.Random((prev_seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
+        n = rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
+        return seed_with_drone_count(n, start=prev_seed + 1)
+    return prev_seed + 17
+
+
+def _aggregate_seed_runs(runs):
+    agg = dict(runs[0])
+    numeric = [k for k, v in runs[0].items() if isinstance(v, (int, float)) and k != "seed"]
+    for k in numeric:
+        agg[k] = float(np.mean([r[k] for r in runs]))
+    agg["seeds_profiled"] = len(runs)
+    agg["step_ms_min"] = float(min(r["step_ms_mean"] for r in runs))
+    agg["step_ms_max"] = float(max(r["step_ms_mean"] for r in runs))
+    return agg
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--steps", type=int, default=60)
     ap.add_argument("--warmup", type=int, default=8)
+    ap.add_argument("--seeds", type=int, default=1, help="seeds per family/map config")
     ap.add_argument("--json", default="walltime_profile.json")
     args = ap.parse_args()
 
@@ -386,9 +406,14 @@ def main():
     results = []
     for family, ctype, seed in sweep:
         label = f"{family}/{MAP_LABELS[ctype]}/seed={seed}"
-        print(f"[{len(results)+1}/{len(sweep)}] {label} ...", flush=True)
+        print(f"[{len(results)+1}/{len(sweep)}] {label} x{args.seeds} seeds ...", flush=True)
         t0 = time.perf_counter()
-        r = profile_config(agent_capnp, family, ctype, seed, args.steps, args.warmup)
+        runs = []
+        s = seed
+        for k in range(args.seeds):
+            runs.append(profile_config(agent_capnp, family, ctype, s, args.steps, args.warmup))
+            s = _next_seed_same_count(family, s)
+        r = _aggregate_seed_runs(runs)
         r["config_wall_s"] = time.perf_counter() - t0
         results.append(r)
         print(
