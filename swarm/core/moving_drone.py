@@ -1444,9 +1444,12 @@ class MovingDroneAviary(BaseRLAviary):
             [np.asarray(self.pos, dtype=np.float32), np.asarray(self.vel, dtype=np.float32)],
             axis=1,
         )
+        stacked = {"depth": depth_stack}
+        if getattr(self, "_sar_rgb_enabled", False) and "rgb" in self._obs_layout:
+            stacked["rgb"] = self._rgb_buffer
         return assemble_batch(
             self._obs_layout, self, state_vecs, depths, team_states,
-            stacked_overrides={"depth": depth_stack},
+            stacked_overrides=stacked,
         )
 
     def _computeObs(self):
