@@ -29,12 +29,17 @@ class _DummyPyBullet:
     def setPhysicsEngineParameter(self, **_kwargs) -> None:
         return None
 
+    def getNumBodies(self, physicsClientId: int) -> int:
+        _ = physicsClientId
+        return 0
+
 
 class _DummyEnv:
     def __init__(self, task, **_kwargs) -> None:
         self.task = task
         self.kwargs = dict(_kwargs)
         self._state_dim = 4
+        self.DRONE_IDS = np.array([0])
         self.observation_space = {
             "depth": spaces.Box(low=0.0, high=1.0, shape=(4, 4, 1), dtype=np.float32),
             "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),

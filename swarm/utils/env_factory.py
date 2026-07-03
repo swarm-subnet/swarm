@@ -77,6 +77,26 @@ def make_env(
     return env
 
 
+def _isolate_static_collisions(env: MovingDroneAviary) -> None:
+    """Put every static body (and its links) in a collision group that meets the
+    drones but not other statics. Static-vs-static contact manifolds carry no
+    forces and nothing reads them, yet on dense maps the solver burns
+    milliseconds per step maintaining them."""
+    cli = env.getPyBulletClient()
+    drone_ids = {int(uid) for uid in env.DRONE_IDS}
+    target_uid = getattr(env, "_target_uid", None)
+    if target_uid is not None:
+        drone_ids.add(int(target_uid))
+    for i in range(p.getNumBodies(physicsClientId=cli)):
+        uid = p.getBodyUniqueId(i, physicsClientId=cli)
+        if uid in drone_ids:
+            continue
+        if p.getDynamicsInfo(uid, -1, physicsClientId=cli)[0] > 0:
+            continue
+        for link in range(-1, p.getNumJoints(uid, physicsClientId=cli)):
+            p.setCollisionFilterGroupMask(uid, link, 2, 1, physicsClientId=cli)
+
+
 def make_env_with_initial_obs(
     task: MapTask,
     *,
@@ -124,5 +144,7 @@ def make_env_with_initial_obs(
         minimumSolverIslandSize=SOLVER_MIN_ISLAND_SIZE,
         physicsClientId=cli,
     )
+
+    _isolate_static_collisions(env)
 
     return env, obs
