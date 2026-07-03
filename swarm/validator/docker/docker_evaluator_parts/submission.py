@@ -89,12 +89,14 @@ def _serialize_observation_shm(agent_capnp, obs, shm_buf):
         entries[i].tensor.shape = list(arr.shape)
         entries[i].tensor.dtype = str(arr.dtype)
         if arr.nbytes and not _all_zero_bits(arr):
-            payload = arr.tobytes()
-            end = offset + len(payload)
+            nbytes = arr.nbytes
+            end = offset + nbytes
             if end > len(shm_buf):
                 raise BufferError("observation exceeds shm buffer")
-            shm_buf[offset:end] = payload
-            manifest.append([key, offset, len(payload)])
+            dst = np.frombuffer(shm_buf, dtype=np.uint8, count=nbytes, offset=offset)
+            src = arr if arr.flags["C_CONTIGUOUS"] else np.ascontiguousarray(arr)
+            dst[:] = src.reshape(-1).view(np.uint8)
+            manifest.append([key, offset, nbytes])
             offset = (end + 63) & ~63
     tail = entries[len(items)]
     tail.key = "__shm__"
