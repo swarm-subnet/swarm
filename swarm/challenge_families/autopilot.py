@@ -150,6 +150,9 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
                 "SWARM_RUNTIME_IMAGE_KEY": "base",
                 "SWARM_RUNTIME_ENV_BOOTSTRAP": "sar_mode=false",
             },
+            global_eval_base_sec=600.0,
+            global_eval_per_seed_sec=240.0,
+            global_eval_cap_sec=3600.0,
         )
 
     def build_rollout_metrics(

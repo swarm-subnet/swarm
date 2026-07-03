@@ -49,6 +49,9 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
                 "SWARM_RUNTIME_ENV_BOOTSTRAP": "sar_mode=false",
             },
             batch_timeout_multiplier=1.3,
+            global_eval_base_sec=600.0,
+            global_eval_per_seed_sec=900.0,
+            global_eval_cap_sec=10800.0,
         )
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:

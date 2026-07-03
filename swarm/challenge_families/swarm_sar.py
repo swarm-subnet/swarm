@@ -61,6 +61,9 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
                 "SWARM_RUNTIME_ENV_BOOTSTRAP": "sar_mode=true",
             },
             batch_timeout_multiplier=1.3,
+            global_eval_base_sec=600.0,
+            global_eval_per_seed_sec=1500.0,
+            global_eval_cap_sec=18000.0,
         )
 
     def reset_env_state(self, env: Any) -> None:

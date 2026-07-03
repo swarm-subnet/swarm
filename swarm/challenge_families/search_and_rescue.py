@@ -70,6 +70,9 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
                 "SWARM_RUNTIME_ENV_BOOTSTRAP": "sar_mode=true",
             },
             batch_timeout_multiplier=1.1,
+            global_eval_base_sec=600.0,
+            global_eval_per_seed_sec=360.0,
+            global_eval_cap_sec=4800.0,
         )
 
     def build_rollout_metrics(
