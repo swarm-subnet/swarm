@@ -225,8 +225,10 @@ def build_sweep(quick):
     sweep = []
     if quick:
         sweep.append(("cf_autopilot", 2, 4))
+        sweep.append(("cf_autopilot", 6, 106))
         sweep.append(("cf_interceptor", 2, 7))
         sweep.append(("cf_swarm_sar", 2, seed_with_drone_count(5)))
+        sweep.append(("cf_swarm_sar", 6, seed_with_drone_count(5)))
         return sweep
 
     for family in SINGLE_FAMILIES:
