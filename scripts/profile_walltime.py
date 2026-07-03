@@ -47,7 +47,60 @@ MAP_LABELS = {1: "City", 2: "Open", 3: "Mountain", 4: "Village", 5: "Warehouse",
 SINGLE_FAMILIES = ("cf_autopilot", "cf_search_and_rescue")
 SWARM_FAMILIES = ("cf_swarm_autopilot", "cf_swarm_sar")
 
-_TIMED_CALLS = ("getCameraImage", "stepSimulation", "getClosestPoints", "rayTest")
+_TIMED_CALLS = (
+    "getCameraImage",
+    "getDepthImagesBatch",
+    "stepSimulation",
+    "getClosestPoints",
+    "rayTest",
+    "applyExternalForce",
+    "applyExternalTorque",
+    "getBasePositionAndOrientation",
+    "getBaseVelocity",
+    "getContactPoints",
+)
+
+_PY_PHASES = (
+    ("ctrl", "_preprocessAction"),
+    ("obs_total", "_computeObs"),
+    ("reward", "_computeReward"),
+    ("terminated", "_computeTerminated"),
+    ("truncated", "_computeTruncated"),
+    ("info", "_computeInfo"),
+    ("bookkeeping", "_process_step_updates"),
+    ("rgb_serve", "_update_rgb_requests"),
+)
+
+
+class PhaseTimer:
+    """Accumulates wall time of selected env methods via instance wrappers."""
+
+    def __init__(self, env):
+        self.ms = defaultdict(float)
+        self._env = env
+        self._orig = {}
+        for phase, name in _PY_PHASES:
+            fn = getattr(env, name, None)
+            if fn is None:
+                continue
+            self._orig[name] = fn
+            setattr(env, name, self._wrap(phase, fn))
+
+    def _wrap(self, phase, fn):
+        def timed(*args, **kwargs):
+            t0 = time.perf_counter()
+            out = fn(*args, **kwargs)
+            self.ms[phase] += (time.perf_counter() - t0) * 1000.0
+            return out
+
+        return timed
+
+    def snapshot(self):
+        return dict(self.ms)
+
+    def restore(self):
+        for name, fn in self._orig.items():
+            setattr(self._env, name, fn)
 
 
 class BulletTimer:
@@ -70,7 +123,9 @@ class BulletTimer:
 
     def __enter__(self):
         for name in _TIMED_CALLS:
-            fn = getattr(p, name)
+            fn = getattr(p, name, None)
+            if fn is None:
+                continue
             self._orig[name] = fn
             setattr(p, name, self._wrap(name, fn))
         return self
@@ -131,14 +186,18 @@ def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
         step_ms, ser_ms, parse_ms = [], [], []
         stage_ms = defaultdict(list)
         stage_calls = defaultdict(list)
+        phase_ms = defaultdict(list)
         obs_bytes = 0
+        phases = PhaseTimer(env)
 
         for i in range(warmup + steps):
             before_ms, before_calls = timer.snapshot()
+            before_phases = phases.snapshot()
             t0 = time.perf_counter()
             obs, _r, term, trunc, _info = env.step(action)
             step_i = (time.perf_counter() - t0) * 1000.0
             after_ms, after_calls = timer.snapshot()
+            after_phases = phases.snapshot()
 
             t0 = time.perf_counter()
             msg = _serialize_observation(agent_capnp, obs)
@@ -169,19 +228,36 @@ def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
                     stage_ms[name].append(val)
                 for name, val in _delta(after_calls, before_calls).items():
                     stage_calls[name].append(val)
+                for name, val in _delta(after_phases, before_phases).items():
+                    phase_ms[name].append(val)
 
             if term or trunc:
                 env.reset(seed=task.map_seed)
 
+        phases.restore()
         env.close()
 
+    def _avg(table, name):
+        return float(np.mean(table.get(name, [0.0])))
+
     step = float(np.mean(step_ms))
-    render = float(np.mean(stage_ms.get("getCameraImage", [0.0])))
-    physics = float(np.mean(stage_ms.get("stepSimulation", [0.0])))
-    clearance = float(
-        np.mean(stage_ms.get("getClosestPoints", [0.0]))
-        + np.mean(stage_ms.get("rayTest", [0.0]))
+    render = _avg(stage_ms, "getCameraImage") + _avg(stage_ms, "getDepthImagesBatch")
+    physics = _avg(stage_ms, "stepSimulation")
+    phys_apply = _avg(stage_ms, "applyExternalForce") + _avg(stage_ms, "applyExternalTorque")
+    kinematics = _avg(stage_ms, "getBasePositionAndOrientation") + _avg(stage_ms, "getBaseVelocity")
+    contacts = _avg(stage_ms, "getContactPoints")
+    clearance = _avg(stage_ms, "getClosestPoints") + _avg(stage_ms, "rayTest")
+    ctrl = _avg(phase_ms, "ctrl")
+    obs_total = _avg(phase_ms, "obs_total")
+    obs_build = max(0.0, obs_total - render)
+    scoring = (
+        _avg(phase_ms, "reward")
+        + _avg(phase_ms, "terminated")
+        + _avg(phase_ms, "truncated")
+        + _avg(phase_ms, "info")
     )
+    bookkeeping = _avg(phase_ms, "bookkeeping") + _avg(phase_ms, "rgb_serve")
+    leftover = step - ctrl - obs_total - scoring - bookkeeping - physics - phys_apply - kinematics
     ser = float(np.mean(ser_ms))
     parse = float(np.mean(parse_ms))
     per_step_total = step + ser + parse
@@ -192,12 +268,24 @@ def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
         step_ms_std=float(np.std(step_ms)),
         render_ms=render,
         physics_ms=physics,
+        phys_apply_ms=phys_apply,
+        kinematics_ms=kinematics,
+        contacts_ms=contacts,
         clearance_ms=clearance,
+        ctrl_ms=ctrl,
+        obs_build_ms=obs_build,
+        scoring_ms=scoring,
+        bookkeeping_ms=bookkeeping,
+        leftover_ms=leftover,
         other_ms=step - render - physics - clearance,
         serialize_ms=ser,
         parse_ms=parse,
         obs_kb=obs_bytes / 1024.0,
-        render_calls_per_step=float(np.mean(stage_calls.get("getCameraImage", [0.0]))),
+        render_calls_per_step=float(
+            np.mean(stage_calls.get("getCameraImage", [0.0]))
+            + np.mean(stage_calls.get("getDepthImagesBatch", [0.0]))
+        ),
+        batch_depth_active=bool(getattr(env, "_use_batch_depth", False)),
         clearance_calls_per_step=float(
             np.mean(stage_calls.get("getClosestPoints", [0.0]))
             + np.mean(stage_calls.get("rayTest", [0.0]))
@@ -248,19 +336,21 @@ def build_sweep(quick):
 
 def print_table(results):
     hdr = (
-        f"{'family':<22} {'map':<10} {'n':>2} {'res':>5} {'bodies':>6} "
-        f"{'build_s':>8} {'step_ms':>8} {'render':>7} {'physic':>7} {'clear':>7} "
-        f"{'other':>7} {'ser':>6} {'obs_kb':>7} {'seed_s':>7}"
+        f"{'family':<20} {'map':<9} {'n':>2} {'batch':>5} {'step':>7} {'render':>7} "
+        f"{'ctrl':>6} {'obsbld':>7} {'physic':>7} {'apply':>6} {'kin':>6} "
+        f"{'score':>6} {'book':>6} {'left':>6} {'ser':>5} {'seed_s':>7}"
     )
     print(hdr)
     print("-" * len(hdr))
     for r in results:
         print(
-            f"{r['family']:<22} {r['map']:<10} {r['n_drones']:>2} {r['img_res'][0]:>5} "
-            f"{r['bodies']:>6} {r['build_ms']/1000:>8.2f} {r['step_ms_mean']:>8.2f} "
-            f"{r['render_ms']:>7.2f} {r['physics_ms']:>7.2f} {r['clearance_ms']:>7.2f} "
-            f"{r['other_ms']:>7.2f} {r['serialize_ms']+r['parse_ms']:>6.2f} "
-            f"{r['obs_kb']:>7.0f} {r['per_seed_s']:>7.1f}"
+            f"{r['family'].replace('cf_', ''):<20} {r['map']:<9} {r['n_drones']:>2} "
+            f"{'Y' if r.get('batch_depth_active') else 'n':>5} "
+            f"{r['step_ms_mean']:>7.2f} {r['render_ms']:>7.2f} "
+            f"{r['ctrl_ms']:>6.2f} {r['obs_build_ms']:>7.2f} {r['physics_ms']:>7.2f} "
+            f"{r['phys_apply_ms']:>6.2f} {r['kinematics_ms']:>6.2f} "
+            f"{r['scoring_ms']:>6.2f} {r['bookkeeping_ms']:>6.2f} {r['leftover_ms']:>6.2f} "
+            f"{r['serialize_ms']+r['parse_ms']:>5.2f} {r['per_seed_s']:>7.1f}"
         )
 
 
@@ -302,9 +392,10 @@ def main():
         r["config_wall_s"] = time.perf_counter() - t0
         results.append(r)
         print(
-            f"    n={r['n_drones']} res={r['img_res']} step={r['step_ms_mean']:.2f}ms "
-            f"(render {r['render_ms']:.2f} / physics {r['physics_ms']:.2f} / "
-            f"clear {r['clearance_ms']:.2f}) ser={r['serialize_ms']+r['parse_ms']:.2f}ms "
+            f"    n={r['n_drones']} res={r['img_res']} batch={'Y' if r.get('batch_depth_active') else 'n'} "
+            f"step={r['step_ms_mean']:.2f}ms "
+            f"(render {r['render_ms']:.2f} / ctrl {r['ctrl_ms']:.2f} / obs {r['obs_build_ms']:.2f} / "
+            f"physics {r['physics_ms']:.2f}) ser={r['serialize_ms']+r['parse_ms']:.2f}ms "
             f"-> {r['per_seed_s']:.1f}s/seed",
             flush=True,
         )
