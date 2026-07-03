@@ -1145,12 +1145,33 @@ class MovingDroneAviary(BaseRLAviary):
             minimumSolverIslandSize=SOLVER_MIN_ISLAND_SIZE,
             physicsClientId=cli,
         )
+        self._isolate_static_collisions()
 
         self.observation_space = observation_space(self._obs_layout, self)
         self._state_dim = observation_vector_dim(self._obs_layout, self) or 0
         obs_after = self._computeObs()
         info_after = self._computeInfo()
         return obs_after, info_after
+
+    def _isolate_static_collisions(self) -> None:
+        """Put every static body (and its links) in a collision group that meets
+        the drones but not other statics. Static-vs-static contact manifolds
+        carry no forces and nothing reads them, yet on dense maps the solver
+        burns milliseconds per step maintaining them. Runs after every world
+        (re)build."""
+        cli = getattr(self, "CLIENT", 0)
+        skip = {int(uid) for uid in self.DRONE_IDS}
+        target_uid = getattr(self, "_target_uid", None)
+        if target_uid is not None:
+            skip.add(int(target_uid))
+        for i in range(p.getNumBodies(physicsClientId=cli)):
+            uid = p.getBodyUniqueId(i, physicsClientId=cli)
+            if uid in skip:
+                continue
+            if p.getDynamicsInfo(uid, -1, physicsClientId=cli)[0] > 0:
+                continue
+            for link in range(-1, p.getNumJoints(uid, physicsClientId=cli)):
+                p.setCollisionFilterGroupMask(uid, link, 2, 1, physicsClientId=cli)
 
     def step(self, action):
         """Execute one control step with post-physics bookkeeping."""
