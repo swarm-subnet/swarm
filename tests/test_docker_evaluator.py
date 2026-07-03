@@ -236,6 +236,40 @@ def test_serialize_observation_array_sets_value_key():
     assert msg.entries[0].tensor.shape == [2]
 
 
+def test_serialize_observation_zero_tensor_roundtrips_compact():
+    capnp = pytest.importorskip("capnp")
+    from swarm.validator.docker.docker_evaluator_parts._shared import (
+        _submission_template_dir,
+    )
+
+    schema = capnp.load(str(_submission_template_dir() / "agent.capnp"))
+    obs = {
+        "depth": np.random.rand(4, 4, 1).astype(np.float32),
+        "rgb": np.zeros((4, 4, 3), dtype=np.float32),
+        "state": np.array([1.0, 0.0, 2.5], dtype=np.float32),
+        "neg_zero": np.array([-0.0, 0.0], dtype=np.float32),
+    }
+    msg = de.DockerSecureEvaluator._serialize_observation(schema, obs)
+
+    by_key = {e.key: e for e in msg.entries}
+    assert len(by_key["rgb"].tensor.data) == 0
+    assert len(by_key["depth"].tensor.data) == obs["depth"].nbytes
+    assert len(by_key["state"].tensor.data) == obs["state"].nbytes
+    assert by_key["neg_zero"].tensor.data == obs["neg_zero"].tobytes()
+
+    with schema.Observation.from_bytes(msg.to_bytes()) as parsed:
+        for entry in parsed.entries:
+            shape = tuple(entry.tensor.shape)
+            dtype = np.dtype(entry.tensor.dtype)
+            if len(entry.tensor.data) == 0:
+                rebuilt = np.zeros(shape, dtype=dtype)
+            else:
+                rebuilt = np.frombuffer(entry.tensor.data, dtype=dtype).reshape(shape)
+            assert rebuilt.dtype == obs[entry.key].dtype
+            assert rebuilt.shape == obs[entry.key].shape
+            assert rebuilt.tobytes() == obs[entry.key].tobytes()
+
+
 def test_check_docker_available_true(monkeypatch):
     ev = _new_evaluator()
     monkeypatch.setattr(

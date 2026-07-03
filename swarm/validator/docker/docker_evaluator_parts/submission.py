@@ -65,23 +65,34 @@ def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
 
     return True
 
+def _all_zero_bits(arr):
+    if arr.flags["C_CONTIGUOUS"]:
+        return not arr.view(np.uint8).any()
+    return not arr.any() and not np.signbit(arr).any()
+
 @staticmethod
 def _serialize_observation(agent_capnp, obs):
-    """Serialize a numpy observation dict into a Cap'n Proto Observation message."""
+    """Serialize a numpy observation dict into a Cap'n Proto Observation message.
+
+    All-zero tensors (e.g. the on-demand RGB frame on steps where no drone
+    requested one) are sent with empty data; the receiver rebuilds the zero
+    array from shape+dtype, so the miner sees byte-identical observations.
+    The zero check is byte-exact, so -0.0 payloads still ship in full.
+    """
     message = agent_capnp.Observation.new_message()
     if isinstance(obs, dict):
         entries = message.init("entries", len(obs))
         for i, (key, value) in enumerate(obs.items()):
             arr = np.asarray(value, dtype=np.float32)
             entries[i].key = key
-            entries[i].tensor.data = arr.tobytes()
+            entries[i].tensor.data = b"" if _all_zero_bits(arr) else arr.tobytes()
             entries[i].tensor.shape = list(arr.shape)
             entries[i].tensor.dtype = str(arr.dtype)
     else:
         arr = np.asarray(obs, dtype=np.float32)
         entry = message.init("entries", 1)[0]
         entry.key = "__value__"
-        entry.tensor.data = arr.tobytes()
+        entry.tensor.data = b"" if _all_zero_bits(arr) else arr.tobytes()
         entry.tensor.shape = list(arr.shape)
         entry.tensor.dtype = str(arr.dtype)
     return message

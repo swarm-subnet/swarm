@@ -16,6 +16,17 @@ schema_file = Path(__file__).parent / "agent.capnp"
 agent_capnp = capnp.load(str(schema_file))
 
 
+def tensor_to_array(tensor):
+    """Empty data means an all-zero tensor sent compactly; rebuild it locally."""
+    shape = tuple(tensor.shape)
+    dtype = np.dtype(tensor.dtype)
+    if len(tensor.data) == 0:
+        arr = np.zeros(shape, dtype=dtype)
+        arr.flags.writeable = False
+        return arr
+    return np.frombuffer(tensor.data, dtype=dtype).reshape(shape)
+
+
 class AgentServer(agent_capnp.Agent.Server):
     def __init__(self, agent):
         self.agent = agent
@@ -27,16 +38,9 @@ class AgentServer(agent_capnp.Agent.Server):
         entries = list(obs.entries)
 
         if len(entries) == 1 and entries[0].key == "__value__":
-            obs_array = np.frombuffer(
-                entries[0].tensor.data, dtype=np.dtype(entries[0].tensor.dtype)
-            ).reshape(tuple(entries[0].tensor.shape))
+            obs_array = tensor_to_array(entries[0].tensor)
         else:
-            obs_dict = {
-                entry.key: np.frombuffer(
-                    entry.tensor.data, dtype=np.dtype(entry.tensor.dtype)
-                ).reshape(tuple(entry.tensor.shape))
-                for entry in entries
-            }
+            obs_dict = {entry.key: tensor_to_array(entry.tensor) for entry in entries}
             obs_array = obs_dict
 
         action = self.agent.act(obs_array)
@@ -52,9 +56,7 @@ class AgentServer(agent_capnp.Agent.Server):
     async def calibrate(self, obs, **kwargs):
         entries = list(obs.entries)
         for entry in entries:
-            _ = np.frombuffer(
-                entry.tensor.data, dtype=np.dtype(entry.tensor.dtype)
-            ).reshape(tuple(entry.tensor.shape))
+            _ = tensor_to_array(entry.tensor)
 
         a = np.random.randn(512, 512).astype(np.float32)
         b = np.random.randn(512, 512).astype(np.float32)
