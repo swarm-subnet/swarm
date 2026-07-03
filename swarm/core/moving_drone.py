@@ -224,6 +224,10 @@ class MovingDroneAviary(BaseRLAviary):
             enhanced_width, enhanced_height = 128, 128
         self.IMG_RES = np.array([enhanced_width, enhanced_height])
         self.dep = np.ones((self.NUM_DRONES, enhanced_height, enhanced_width), dtype=np.float32)
+        self._use_batch_depth = (
+            os.environ.get("SWARM_BATCH_DEPTH", "1") != "0"
+            and hasattr(p, "getDepthImagesBatch")
+        )
 
         # on-demand RGB state (SAR only): per-drone request budget + the frame served this step
         if self._sar_rgb_enabled:
@@ -605,46 +609,52 @@ class MovingDroneAviary(BaseRLAviary):
 
         return True
 
-    def _getDroneImages(self, nth_drone, segmentation: bool = False):
-        """Get camera images from drone. Returns (rgb, depth, seg) but we only use depth."""
-        if self.OBS_TYPE != ObservationType.RGB:
-            return super()._getDroneImages(nth_drone, segmentation)
-        
-        if self.IMG_RES is None:
-            print("[ERROR] in MovingDroneAviary._getDroneImages(), IMG_RES not set")
-            exit()
-        
+    def _drone_camera_view(self, nth_drone):
         cli = getattr(self, "CLIENT", 0)
         drone_pos = self.pos[nth_drone, :]
         rot_mat = np.array(p.getMatrixFromQuaternion(self.quat[nth_drone, :])).reshape(3, 3)
-        
+
         forward = rot_mat @ np.array([1.0, 0.0, 0.0])
         forward = forward / np.linalg.norm(forward)
         up = rot_mat @ np.array([0.0, 0.0, 1.0])
-        
+
         camera_offset = 0.13
         camera_pos = drone_pos + forward * camera_offset + up * 0.05
-        
+
         target = camera_pos + forward * 20.0
-        
-        DRONE_CAM_VIEW = p.computeViewMatrix(
+
+        return p.computeViewMatrix(
             cameraEyePosition=camera_pos,
             cameraTargetPosition=target,
             cameraUpVector=up.tolist(),
             physicsClientId=cli
         )
-        
-        DRONE_CAM_PRO = self._cached_proj_matrix
-        if DRONE_CAM_PRO is None:
+
+    def _drone_proj_matrix(self):
+        cli = getattr(self, "CLIENT", 0)
+        if self._cached_proj_matrix is None:
             aspect = self.IMG_RES[0] / self.IMG_RES[1]
-            DRONE_CAM_PRO = p.computeProjectionMatrixFOV(
+            self._cached_proj_matrix = p.computeProjectionMatrixFOV(
                 fov=self._fov,
                 aspect=aspect,
                 nearVal=0.05,
                 farVal=getattr(self, "_depth_far_m", DEPTH_FAR),
                 physicsClientId=cli
             )
-            self._cached_proj_matrix = DRONE_CAM_PRO
+        return self._cached_proj_matrix
+
+    def _getDroneImages(self, nth_drone, segmentation: bool = False):
+        """Get camera images from drone. Returns (rgb, depth, seg) but we only use depth."""
+        if self.OBS_TYPE != ObservationType.RGB:
+            return super()._getDroneImages(nth_drone, segmentation)
+
+        if self.IMG_RES is None:
+            print("[ERROR] in MovingDroneAviary._getDroneImages(), IMG_RES not set")
+            exit()
+
+        cli = getattr(self, "CLIENT", 0)
+        DRONE_CAM_VIEW = self._drone_camera_view(nth_drone)
+        DRONE_CAM_PRO = self._drone_proj_matrix()
 
         seg_flag = p.ER_NO_SEGMENTATION_MASK
         depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
@@ -1391,8 +1401,26 @@ class MovingDroneAviary(BaseRLAviary):
         """Batched per-drone observation for a swarm (depth + state stacked on axis 0)."""
         depths = []
         state_vecs = []
+        batch_deps = None
+        if (
+            self._use_batch_depth
+            and self.OBS_TYPE == ObservationType.RGB
+            and self.IMG_RES is not None
+        ):
+            views = [self._drone_camera_view(i) for i in range(self.NUM_DRONES)]
+            batch_deps = p.getDepthImagesBatch(
+                width=int(self.IMG_RES[0]),
+                height=int(self.IMG_RES[1]),
+                viewMatrices=views,
+                projectionMatrix=self._drone_proj_matrix(),
+                lightDirection=self._light_direction,
+                physicsClientId=getattr(self, "CLIENT", 0),
+            )
         for i in range(self.NUM_DRONES):
-            _, depth_raw, _ = self._getDroneImages(i)
+            if batch_deps is not None:
+                depth_raw = batch_deps[i]
+            else:
+                _, depth_raw, _ = self._getDroneImages(i)
             if depth_raw is None:
                 depth_raw = np.ones((int(self.IMG_RES[1]), int(self.IMG_RES[0])), dtype=np.float32)
             if self.RECORD or self.GUI:
