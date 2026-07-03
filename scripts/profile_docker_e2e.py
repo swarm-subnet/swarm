@@ -122,6 +122,7 @@ def main():
     ap.add_argument("--workdir", default="/tmp/walltime_e2e")
     ap.add_argument("--families", default="", help="comma-separated family filter")
     ap.add_argument("--seeds-per-family", type=int, default=0, help="limit seeds per family")
+    ap.add_argument("--worker-id", type=int, default=0, help="worker slot (port allocation)")
     args = ap.parse_args()
 
     _relax_timeouts()
@@ -163,7 +164,7 @@ def main():
         try:
             results = asyncio.run(
                 evaluator.evaluate_seeds_batch(
-                    tasks, 0, model_path, worker_id=0, on_seed_complete=on_seed_complete
+                    tasks, 0, model_path, worker_id=args.worker_id, on_seed_complete=on_seed_complete
                 )
             )
         finally:
