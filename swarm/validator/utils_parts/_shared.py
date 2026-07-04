@@ -38,7 +38,6 @@ from swarm.validator.backend_api import (
     BackendApiClient,
     BackendTransportError,
     authorize_with_retry,
-    classify_backend_failure,
 )
 
 STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"

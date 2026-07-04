@@ -1225,7 +1225,7 @@ def build_parser() -> argparse.ArgumentParser:
     model_package_parser.add_argument(
         "--family-id",
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        default="cf_search_and_rescue",
+        default="cf_autopilot",
         help="Challenge family implemented by this artifact.",
     )
     model_package_parser.add_argument(

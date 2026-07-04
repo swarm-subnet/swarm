@@ -64,77 +64,6 @@ class BackendProtocolMismatchError(RuntimeError):
     """Raised on 404/405 from /next-task or /events: backend is too old."""
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Backend Response Helpers
-# ──────────────────────────────────────────────────────────────────────────
-
-
-def extract_backend_reason(response: Dict[str, Any]) -> str:
-    """Extract a human-readable reason from a backend error response."""
-    for key in ("detail", "reason", "message", "error"):
-        value = response.get(key)
-        if value:
-            return str(value)
-    return str(response)
-
-
-def classify_backend_failure(response: Dict[str, Any], stage: str) -> Tuple[bool, str]:
-    """Classify whether a backend failure is terminal or transient.
-
-    Returns (is_terminal, reason).
-    """
-    reason = extract_backend_reason(response)
-    text = reason.lower()
-
-    if stage == "new_model":
-        terminal_patterns = (
-            "already submitted",
-            "can only submit once",
-            "already registered",
-            "already exists",
-            "duplicate",
-            "409",
-            "429",
-            "conflict",
-            "github_url is required",
-            "invalid github url",
-            "hotkey already submitted an active model",
-        )
-        if any(pattern in text for pattern in terminal_patterns):
-            return True, reason
-
-    if stage in ("screening", "score"):
-        terminal_patterns = (
-            "no model with uid",
-            "pending screening",
-            "pending benchmark",
-            "not found",
-            "404",
-            "benchmark epoch mismatch",
-            "not eligible for benchmark scoring",
-            "family_id is required",
-            "unknown_challenge_family",
-        )
-        if any(pattern in text for pattern in terminal_patterns):
-            return True, reason
-
-    transient_patterns = (
-        "timeout",
-        "timed out",
-        "connection",
-        "temporar",
-        "unreachable",
-        "503",
-        "502",
-        "500",
-        "network",
-    )
-    if any(pattern in text for pattern in transient_patterns):
-        return False, reason
-
-    return False, reason
-
-
 async def authorize_with_retry(
     auth_fn: Callable[[], Awaitable[Dict[str, Any]]],
     *,
@@ -229,6 +158,7 @@ class BackendApiClient:
         self.wallet = wallet
         self.client = httpx.AsyncClient(timeout=timeout)
         self._whitelist_warned = False
+        self._upgrade_warned = False
 
         self._runtime_state = _load_runtime_state()
         bt.logging.info("BackendApiClient initialized")
@@ -352,104 +282,6 @@ class BackendApiClient:
             return {"error": _scrub_url(str(e))}
 
     # ──────────────────────────────────────────────────────────────────────
-    # POST /validators/models/new
-    # ──────────────────────────────────────────────────────────────────────
-    async def post_new_model(
-        self,
-        uid: int,
-        model_hash: str,
-        coldkey: str,
-        validator_hotkey: str,
-        github_url: str = "",
-        miner_hotkey: str = "",
-    ) -> Dict[str, Any]:
-        """Notify backend of new model."""
-        if not miner_hotkey:
-            miner_hotkey = self._get_miner_hotkey(uid)
-        if not miner_hotkey:
-            bt.logging.warning(f"Cannot register UID {uid}: miner hotkey unavailable")
-            return {"accepted": False, "reason": "miner hotkey unavailable"}
-
-        payload = {
-            "uid": uid,
-            "model_hash": model_hash,
-            "coldkey": coldkey,
-            "hotkey": miner_hotkey,
-        }
-        payload["github_url"] = github_url
-
-        result = await self._post_signed("/validators/models/new", payload)
-
-        # Map backend response to expected format
-        if "model_id" in result:
-            return {"accepted": True, "model_id": result["model_id"]}
-        elif "error" in result or "detail" in result:
-            return {
-                "accepted": False,
-                "reason": result.get("detail", result.get("error", "unknown")),
-            }
-        return result
-
-    def _get_miner_hotkey(self, uid: int) -> str:
-        """Get miner hotkey from metagraph by UID."""
-        try:
-            subtensor = bt.Subtensor(network="finney")
-            metagraph = subtensor.metagraph(netuid=124)
-            if 0 <= uid < len(metagraph.hotkeys):
-                return metagraph.hotkeys[uid]
-        except Exception as e:
-            bt.logging.warning(f"Failed to get miner hotkey for UID {uid}: {e}")
-        return ""
-
-    # ──────────────────────────────────────────────────────────────────────
-    # POST /validators/models/{uid}/screening
-    # ──────────────────────────────────────────────────────────────────────
-    async def post_screening(
-        self,
-        uid: int,
-        validator_hotkey: str,
-        validator_stake: float,
-        screening_score: float,
-        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
-    ) -> Dict[str, Any]:
-        """Submit screening score; pass/fail is derived from stake-weighted consensus."""
-        return await self._post_signed(
-            f"/validators/models/{uid}/screening",
-            {
-                "score": screening_score,
-                "family_id": family_id,
-                "benchmark_version": BENCHMARK_VERSION,
-            },
-        )
-
-    # ──────────────────────────────────────────────────────────────────────
-    # POST /validators/models/{uid}/score
-    # ──────────────────────────────────────────────────────────────────────
-    async def post_score(
-        self,
-        uid: int,
-        validator_hotkey: str,
-        validator_stake: float,
-        model_hash: str,
-        total_score: float,
-        per_type_scores: Dict[str, float],
-        seeds_evaluated: int,
-        epoch_number: Optional[int] = None,
-        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
-    ) -> Dict[str, Any]:
-        data = {
-            "score": total_score,
-            "metric_breakdown": per_type_scores,
-            "per_type_scores": per_type_scores,
-            "seeds_evaluated": seeds_evaluated,
-            "family_id": family_id,
-            "benchmark_version": BENCHMARK_VERSION,
-        }
-        if epoch_number is not None:
-            data["epoch_number"] = epoch_number
-        return await self._post_signed(f"/validators/models/{uid}/score", data)
-
-    # ──────────────────────────────────────────────────────────────────────
     # GET /validators/sync
     # ──────────────────────────────────────────────────────────────────────
     async def sync(self) -> Dict[str, Any]:
@@ -567,87 +399,6 @@ class BackendApiClient:
                 "fallback": True,
                 "error": _scrub_url(str(e)),
             }
-
-    async def authorize_task(
-        self,
-        uid: int,
-        phase: str,
-        *,
-        assignment_id: Optional[int] = None,
-        epoch_number: Optional[int] = None,
-        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
-    ) -> Dict[str, Any]:
-        data: Dict[str, Any] = {
-            "uid": uid,
-            "phase": phase,
-            "family_id": family_id,
-            "benchmark_version": BENCHMARK_VERSION,
-        }
-        if assignment_id is not None:
-            data["assignment_id"] = assignment_id
-        if epoch_number is not None:
-            data["epoch_number"] = epoch_number
-        return await self._post_signed("/validators/tasks/authorize", data)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # POST /validators/models/{uid}/upload
-    # ──────────────────────────────────────────────────────────────────────
-    async def upload_model_file(self, uid: int, model_path: Path) -> Dict[str, Any]:
-        """Upload model .zip file to backend.
-
-        Args:
-            uid: Miner UID
-            model_path: Local path to the model .zip file
-
-        Returns:
-            {"stored": True, "released": bool, ...} or error dict
-        """
-        if not model_path.is_file():
-            return {"error": f"Model file not found: {model_path}"}
-
-        file_bytes = model_path.read_bytes()
-        model_hash = hashlib.sha256(file_bytes).hexdigest()
-
-        endpoint = f"/validators/models/{uid}/upload"
-        if not self.wallet:
-            bt.logging.warning("No wallet configured - upload will not be signed")
-            return {"error": "no wallet"}
-
-        nonce = str(uuid.uuid4())
-        timestamp = str(int(time.time()))
-        path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
-        message = f"{timestamp}:{nonce}:POST:{path}:{model_hash}"
-
-        signature = self.wallet.hotkey.sign(message.encode()).hex()
-
-        headers = {
-            "X-Validator-Hotkey": self.wallet.hotkey.ss58_address,
-            "X-Validator-Signature": signature,
-            "X-Validator-Nonce": nonce,
-            "X-Validator-Timestamp": timestamp,
-            "X-Model-Hash": model_hash,
-        }
-
-        try:
-            resp = await self.client.post(
-                f"{self.base_url}{endpoint}",
-                files={"file": (model_path.name, file_bytes, "application/zip")},
-                headers=headers,
-                timeout=120.0,
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            bt.logging.warning(
-                f"Backend rejected upload for UID {uid}: {e.response.status_code}"
-            )
-            try:
-                return e.response.json()
-            except (ValueError, RuntimeError):
-                return {"error": _scrub_url(str(e)), "status_code": e.response.status_code}
-        except Exception as e:
-            bt.logging.warning(f"Model upload failed for UID {uid}: {_scrub_url(e)}")
-            return {"error": _scrub_url(str(e))}
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/heartbeat
@@ -786,11 +537,21 @@ class BackendApiClient:
                 )
                 self._whitelist_warned = True
             return None
+        if resp.status_code == 426:
+            if not self._upgrade_warned:
+                bt.logging.warning(
+                    "Validator version is below the backend's minimum — "
+                    "evaluation is disabled until you upgrade. Update this "
+                    "validator to the required version to resume evaluation."
+                )
+                self._upgrade_warned = True
+            return None
         if resp.status_code >= 400:
             bt.logging.warning(f"Backend rejected {endpoint}: {resp.status_code}")
             return None
 
         self._whitelist_warned = False
+        self._upgrade_warned = False
         try:
             payload = resp.json()
         except (ValueError, RuntimeError):

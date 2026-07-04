@@ -20,6 +20,7 @@ def _task():
         sim_dt=1 / 30,
         horizon=HORIZON_SEC,
         challenge_type=2,
+        family_id="cf_search_and_rescue",
         version="5.0.0",
     )
 

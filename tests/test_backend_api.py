@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 
 import httpx
@@ -141,89 +140,6 @@ def test_post_signed_success(monkeypatch, tmp_path):
         _run(client.close())
 
 
-def test_authorize_task_posts_expected_payload(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    try:
-        captured = {}
-
-        async def _fake_post(endpoint, data):
-            captured["endpoint"] = endpoint
-            captured["data"] = data
-            return {"authorized": True, "task_id": 9}
-
-        monkeypatch.setattr(client, "_post_signed", _fake_post)
-        result = _run(client.authorize_task(114, "BENCHMARK", assignment_id=7, epoch_number=3))
-        assert result == {"authorized": True, "task_id": 9}
-        assert captured["endpoint"] == "/validators/tasks/authorize"
-        assert captured["data"]["uid"] == 114
-        assert captured["data"]["phase"] == "BENCHMARK"
-        assert captured["data"]["family_id"] == "cf_search_and_rescue"
-        assert captured["data"]["assignment_id"] == 7
-        assert captured["data"]["epoch_number"] == 3
-    finally:
-        _run(client.close())
-
-
-def test_post_screening_includes_family_id(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    try:
-        captured = {}
-
-        async def _fake_post(endpoint, data):
-            captured["endpoint"] = endpoint
-            captured["data"] = data
-            return {"recorded": True}
-
-        monkeypatch.setattr(client, "_post_signed", _fake_post)
-        result = _run(
-            client.post_screening(
-                uid=114,
-                validator_hotkey="validator-hotkey",
-                validator_stake=5000.0,
-                screening_score=0.61,
-                family_id="cf_autopilot",
-            )
-        )
-        assert result == {"recorded": True}
-        assert captured["endpoint"] == "/validators/models/114/screening"
-        assert captured["data"]["family_id"] == "cf_autopilot"
-    finally:
-        _run(client.close())
-
-
-def test_post_score_includes_family_id(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    try:
-        captured = {}
-
-        async def _fake_post(endpoint, data):
-            captured["endpoint"] = endpoint
-            captured["data"] = data
-            return {"recorded": True}
-
-        monkeypatch.setattr(client, "_post_signed", _fake_post)
-        result = _run(
-            client.post_score(
-                uid=115,
-                validator_hotkey="validator-hotkey",
-                validator_stake=5000.0,
-                model_hash="a" * 64,
-                total_score=0.77,
-                per_type_scores={"city": 0.77},
-                seeds_evaluated=800,
-                epoch_number=9,
-                family_id="cf_autopilot",
-            )
-        )
-        assert result == {"recorded": True}
-        assert captured["endpoint"] == "/validators/models/115/score"
-        assert captured["data"]["family_id"] == "cf_autopilot"
-        assert captured["data"]["metric_breakdown"] == {"city": 0.77}
-        assert captured["data"]["per_type_scores"] == {"city": 0.77}
-    finally:
-        _run(client.close())
-
-
 def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
@@ -273,58 +189,6 @@ def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
         assert data["detail"] == "bad"
         assert data["error"] == "HTTP 400"
         assert data["status_code"] == 400
-    finally:
-        _run(client.close())
-
-
-def test_post_new_model_maps_backend_response(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    try:
-        monkeypatch.setattr(client, "_get_miner_hotkey", lambda uid: "miner_hotkey")
-
-        async def _fake_post(endpoint, data):
-            assert endpoint == "/validators/models/new"
-            assert data["hotkey"] == "miner_hotkey"
-            return {"model_id": 55}
-
-        monkeypatch.setattr(client, "_post_signed", _fake_post)
-        result = _run(client.post_new_model(1, "hash", "coldkey", "validator"))
-        assert result == {"accepted": True, "model_id": 55}
-    finally:
-        _run(client.close())
-
-
-def test_post_new_model_forwards_github_url(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    try:
-        monkeypatch.setattr(client, "_get_miner_hotkey", lambda uid: "miner_hotkey")
-
-        async def _fake_post(endpoint, data):
-            assert endpoint == "/validators/models/new"
-            assert data["github_url"] == "https://github.com/example/model"
-            return {"model_id": 56}
-
-        monkeypatch.setattr(client, "_post_signed", _fake_post)
-        result = _run(
-            client.post_new_model(
-                1,
-                "hash",
-                "coldkey",
-                "validator",
-                github_url="https://github.com/example/model",
-            )
-        )
-        assert result == {"accepted": True, "model_id": 56}
-    finally:
-        _run(client.close())
-
-
-def test_post_new_model_handles_missing_hotkey(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    try:
-        monkeypatch.setattr(client, "_get_miner_hotkey", lambda uid: "")
-        result = _run(client.post_new_model(1, "hash", "coldkey", "validator"))
-        assert result["accepted"] is False
     finally:
         _run(client.close())
 
@@ -442,37 +306,6 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
         _run(client.close())
 
 
-def test_upload_model_file_requires_wallet(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=None)
-    model = tmp_path / "model.zip"
-    model.write_bytes(b"zip")
-    try:
-        result = _run(client.upload_model_file(1, model))
-        assert result == {"error": "no wallet"}
-    finally:
-        _run(client.close())
-
-
-def test_upload_model_file_posts_signed_request(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    fake_http.post_response = _FakeResponse({"stored": True})
-    client.client = fake_http
-
-    model = tmp_path / "model.zip"
-    payload = b"zip-contents"
-    model.write_bytes(payload)
-    expected_hash = hashlib.sha256(payload).hexdigest()
-    try:
-        result = _run(client.upload_model_file(4, model))
-        assert result == {"stored": True}
-        _, kwargs = fake_http.last_post
-        assert kwargs["headers"]["X-Model-Hash"] == expected_hash
-        assert kwargs["files"]["file"][0] == "model.zip"
-    finally:
-        _run(client.close())
-
-
 def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
@@ -503,22 +336,6 @@ def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
         assert result == {"accepted": True}
     finally:
         _run(client.close())
-
-
-def test_classify_backend_failure_marks_epoch_mismatch_and_missing_github_as_terminal():
-    is_terminal, reason = backend_api.classify_backend_failure(
-        {"detail": "Benchmark epoch mismatch. Current benchmark epoch is 7, got 6."},
-        "score",
-    )
-    assert is_terminal is True
-    assert "epoch mismatch" in reason.lower()
-
-    is_terminal, reason = backend_api.classify_backend_failure(
-        {"detail": "github_url is required and must be https://github.com/{owner}/{repo}"},
-        "new_model",
-    )
-    assert is_terminal is True
-    assert "github_url" in reason
 
 
 def test_post_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):

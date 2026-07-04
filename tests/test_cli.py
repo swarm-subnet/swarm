@@ -236,7 +236,7 @@ def test_model_package_creates_zip(tmp_path):
     assert "drone_agent.py" in names
     assert "policy.pt" in names
     assert POLICY_CONTRACT_FILENAME in names
-    assert contract["family_id"] == "cf_search_and_rescue"
+    assert contract["family_id"] == "cf_autopilot"
     assert contract["interface_version"] == "submission_zip.v1"
 
 

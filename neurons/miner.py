@@ -10,7 +10,7 @@ Public track (open competition):
 Private track (model stays secret; only trusted validators ever run it):
     python neurons/miner.py --netuid 124 \
         --wallet.name miner --wallet.hotkey default \
-        --family_id cf_search_and_rescue \
+        --family_id cf_autopilot \
         --artifact ./submission.zip \
         --backend_url https://your-backend
 

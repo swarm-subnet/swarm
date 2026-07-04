@@ -1569,7 +1569,7 @@ def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
     assert active.get("assignment_id") == 4242
     assert active.get("uid") == 314
     assert active.get("phase") == "SCREENING"
-    assert active.get("family_id") == "cf_search_and_rescue"
+    assert active.get("family_id") == "cf_autopilot"
     assert active.get("epoch_number") == 12
 
 
@@ -1596,7 +1596,7 @@ def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
     assert active.get("assignment_id") == 8888
     assert active.get("uid") == 271
     assert active.get("phase") == "BENCHMARK"
-    assert active.get("family_id") == "cf_search_and_rescue"
+    assert active.get("family_id") == "cf_autopilot"
     assert active.get("epoch_number") == 12
 
 
@@ -1622,7 +1622,7 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
     active = sent_with_active[0]["active_task"]
     assert active.get("phase") == "REEVAL"
     assert active.get("assignment_id") == 999
-    assert active.get("family_id") == "cf_search_and_rescue"
+    assert active.get("family_id") == "cf_autopilot"
 
 
 def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):

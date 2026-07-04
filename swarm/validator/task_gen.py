@@ -219,7 +219,7 @@ def _build_task_with_params(
     *,
     challenge_type: int,
     params: dict,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
     moving_platform: bool = False,
     n_drones: Optional[int] = None,
 ) -> MapTask:
@@ -308,7 +308,7 @@ def _build_task_for_type(
     seed: int,
     *,
     challenge_type: int,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
     if family_id == "cf_interceptor":
@@ -342,7 +342,7 @@ def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
 
 def _random_start(seed_rng: random.Random, params: dict,
                   challenge_type: int = 1, seed: int = 0,
-                  family_id: str = "cf_search_and_rescue") -> Tuple[float, float, float]:
+                  family_id: str = "cf_autopilot") -> Tuple[float, float, float]:
     if challenge_type == 5:
         x = seed_rng.uniform(-params['world_range_x'], params['world_range_x'])
         y = seed_rng.uniform(-params['world_range_y'], params['world_range_y'])
@@ -583,7 +583,7 @@ def random_task(
     sim_dt: float,
     seed: Optional[int] = None,
     *,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
 ) -> MapTask:
     if seed is None:
         seed = random.randrange(2**32)
@@ -605,7 +605,7 @@ def task_for_seed_and_type(
     *,
     seed: int,
     challenge_type: int,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
@@ -626,7 +626,7 @@ def screening_task(
     challenge_type: int,
     distance_range: Tuple[float, float],
     goal_height_range: Optional[Tuple[float, float]] = None,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
     moving_platform: Optional[bool] = None,
     n_drones: Optional[int] = None,
 ) -> MapTask:

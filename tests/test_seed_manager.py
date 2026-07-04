@@ -24,11 +24,11 @@ def _write_epoch_file(
     epoch: int,
     seeds: list[int],
     *,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
     published: bool = False,
 ) -> None:
     seeds_dir.mkdir(parents=True, exist_ok=True)
-    suffix = ".json" if family_id == "cf_search_and_rescue" else f"__{family_id}.json"
+    suffix = ".json" if family_id == "cf_autopilot" else f"__{family_id}.json"
     (seeds_dir / f"epoch_{epoch}{suffix}").write_text(json.dumps({
         "epoch_number": epoch,
         "family_id": family_id,
@@ -250,8 +250,8 @@ def test_mark_epoch_published_scopes_to_epoch_and_family(
     manager = m.BenchmarkSeedManager()
     manager.mark_epoch_published(10, family_id="cf_search_and_rescue")
 
-    sar_payload = json.loads((seeds_dir / "epoch_10.json").read_text())
-    auto_payload = json.loads((seeds_dir / "epoch_10__cf_autopilot.json").read_text())
+    sar_payload = json.loads((seeds_dir / "epoch_10__cf_search_and_rescue.json").read_text())
+    auto_payload = json.loads((seeds_dir / "epoch_10.json").read_text())
     assert sar_payload["published"] is True
     assert auto_payload["published"] is False
     assert manager.get_pending_publications("cf_search_and_rescue") == []

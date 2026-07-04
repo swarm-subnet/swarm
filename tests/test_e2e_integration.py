@@ -473,7 +473,6 @@ def test_e2e_forward_loop_with_local_backend(tmp_path: Path, monkeypatch):
         backend = BackendApiClient(
             wallet=validator.wallet, base_url=f"http://{host}:{port}", timeout=10.0
         )
-        monkeypatch.setattr(backend, "_get_miner_hotkey", lambda uid: "miner_hotkey")
         validator.backend_api = backend
         try:
             await forward_mod.forward(validator)

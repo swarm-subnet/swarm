@@ -65,7 +65,7 @@ class MapTask:
     sim_dt: float
     horizon: float
     challenge_type: int
-    family_id: str = "cf_search_and_rescue"
+    family_id: str = "cf_autopilot"
     version: str = SCHEMA_VERSION
     search_centre: Tuple[float, float] = (0.0, 0.0)
     search_radius: float = 10.0
@@ -81,10 +81,7 @@ class MapTask:
     def unpack(blob: bytes) -> "MapTask":
         data = msgpack.unpackb(blob, raw=False)
         if not data.get("family_id"):
-            version = normalize_version(data.get("version", ""))
-            data["family_id"] = (
-                "cf_search_and_rescue" if version.startswith("5.") else "cf_autopilot"
-            )
+            data["family_id"] = "cf_autopilot"
         sc = data.get("search_centre")
         if isinstance(sc, (list, tuple)):
             data["search_centre"] = tuple(sc)

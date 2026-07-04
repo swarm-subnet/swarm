@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from swarm.domain_model import CHALLENGE_FAMILY_IDS
-from swarm.protocol import normalize_version
 
 from .autopilot import AutopilotChallengeFamily
 from .base import (
@@ -18,7 +17,7 @@ from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
 
 
-DEFAULT_RUNTIME_FAMILY_ID = "cf_search_and_rescue"
+DEFAULT_RUNTIME_FAMILY_ID = "cf_autopilot"
 
 
 _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
@@ -52,11 +51,7 @@ def infer_task_family_id(task: Any) -> str:
     family_id = getattr(task, "family_id", None)
     if isinstance(family_id, str) and family_id:
         return family_id
-
-    version = normalize_version(getattr(task, "version", ""))
-    if version.startswith("5."):
-        return DEFAULT_RUNTIME_FAMILY_ID
-    return "cf_autopilot"
+    return DEFAULT_RUNTIME_FAMILY_ID
 
 
 def runtime_family_for_task(task: Any) -> ChallengeFamilyRuntime:

@@ -110,6 +110,19 @@ def test_next_task_raises_transport_on_network_error():
         asyncio.run(client.next_task())
 
 
+def test_next_task_warns_once_on_426_upgrade_required():
+    stub = _StubGetClient(_FakeResponse({}, status_code=426))
+    client = _client(stub)
+
+    assert asyncio.run(client.next_task()) is None
+    assert client._upgrade_warned is True
+    assert asyncio.run(client.next_task()) is None
+
+    stub._response = _FakeResponse({"task": {"task_id": 5, "uid": 1}})
+    assert asyncio.run(client.next_task()) == {"task_id": 5, "uid": 1}
+    assert client._upgrade_warned is False
+
+
 def test_submit_task_result_posts_signed_payload(monkeypatch):
     captured: dict = {}
 

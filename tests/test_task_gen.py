@@ -53,7 +53,7 @@ def test_random_task_is_deterministic_for_fixed_seed():
     t1 = task_gen.random_task(sim_dt=0.02, seed=12345)
     t2 = task_gen.random_task(sim_dt=0.02, seed=12345)
     assert t1 == t2
-    assert t1.family_id == "cf_search_and_rescue"
+    assert t1.family_id == "cf_autopilot"
 
 
 def test_task_for_seed_and_type_is_deterministic():

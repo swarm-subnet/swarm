@@ -50,7 +50,7 @@ def test_map_task_unpack_infers_family_id_for_legacy_payloads():
         use_bin_type=True,
     )
 
-    assert MapTask.unpack(sar_blob).family_id == "cf_search_and_rescue"
+    assert MapTask.unpack(sar_blob).family_id == "cf_autopilot"
     assert MapTask.unpack(autopilot_blob).family_id == "cf_autopilot"
 
 

@@ -23,11 +23,11 @@ def _write_epoch_file(
     epoch: int,
     seeds: list[int],
     *,
-    family_id: str = "cf_search_and_rescue",
+    family_id: str = "cf_autopilot",
     published: bool = False,
 ) -> None:
     seeds_dir.mkdir(parents=True, exist_ok=True)
-    suffix = ".json" if family_id == "cf_search_and_rescue" else f"__{family_id}.json"
+    suffix = ".json" if family_id == "cf_autopilot" else f"__{family_id}.json"
     (seeds_dir / f"epoch_{epoch}{suffix}").write_text(json.dumps({
         "epoch_number": epoch,
         "family_id": family_id,
@@ -67,9 +67,9 @@ def _make_validator(manager, response_or_exc, *, forward_count: int = 0):
 
 
 def _is_published_on_disk(
-    seeds_dir, epoch: int, *, family_id: str = "cf_search_and_rescue"
+    seeds_dir, epoch: int, *, family_id: str = "cf_autopilot"
 ) -> bool:
-    suffix = ".json" if family_id == "cf_search_and_rescue" else f"__{family_id}.json"
+    suffix = ".json" if family_id == "cf_autopilot" else f"__{family_id}.json"
     data = json.loads((seeds_dir / f"epoch_{epoch}{suffix}").read_text())
     return bool(data.get("published", False))
 
@@ -246,14 +246,14 @@ def test_successful_publish_clears_backoff_state(monkeypatch, tmp_path):
     validator, _ = _make_validator(manager, _responder, forward_count=1)
 
     _run(_publish_pending_epoch_seeds(validator))
-    assert validator._epoch_publish_failures.get((100, "cf_search_and_rescue")) == 1
+    assert validator._epoch_publish_failures.get((100, "cf_autopilot")) == 1
 
     response_box["value"] = {"published": True}
     validator.forward_count = 2
     _run(_publish_pending_epoch_seeds(validator))
 
-    assert (100, "cf_search_and_rescue") not in validator._epoch_publish_failures
-    assert (100, "cf_search_and_rescue") not in validator._epoch_publish_skip_until
+    assert (100, "cf_autopilot") not in validator._epoch_publish_failures
+    assert (100, "cf_autopilot") not in validator._epoch_publish_skip_until
     assert _is_published_on_disk(seeds_dir, 100) is True
 
 
@@ -268,8 +268,8 @@ def test_exception_during_publish_also_triggers_backoff(monkeypatch, tmp_path):
     )
 
     _run(_publish_pending_epoch_seeds(validator))
-    assert validator._epoch_publish_failures.get((110, "cf_search_and_rescue")) == 1
-    assert validator._epoch_publish_skip_until.get((110, "cf_search_and_rescue")) == 6
+    assert validator._epoch_publish_failures.get((110, "cf_autopilot")) == 1
+    assert validator._epoch_publish_skip_until.get((110, "cf_autopilot")) == 6
 
 
 def test_publish_pending_epoch_seeds_forwards_family_id(monkeypatch, tmp_path):

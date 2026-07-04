@@ -102,7 +102,7 @@ def test_infer_task_family_id_uses_legacy_version_fallback():
         version="5.0.0",
     )
 
-    assert infer_task_family_id(legacy_task) == "cf_search_and_rescue"
+    assert infer_task_family_id(legacy_task) == "cf_autopilot"
 
 
 def test_require_runtime_family_accepts_autopilot():
