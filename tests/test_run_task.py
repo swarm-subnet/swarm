@@ -97,7 +97,6 @@ async def test_run_task_screening_happy_path_submits_score(
             "model_hash": target_hash,
             "github_url": "https://github.com/x/y",
             "epoch_number": 5,
-            "early_fail_rules": {"threshold": 0.6, "checkpoints": {"50": 0.5}},
         },
         cancel_flag=cancel,
         wake_flag=wake,
