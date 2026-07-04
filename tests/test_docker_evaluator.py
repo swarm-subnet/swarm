@@ -1284,6 +1284,76 @@ def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp
     assert len([line for line in log_lines if "retrying RPC-transport seed" in line]) == 1
 
 
+def test_run_process_parallel_honors_exhausted_shared_retry_budget(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=4,
+        map_seed=3501,
+        horizon=60.0,
+    )
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 62,
+                            "map_seed": 3501,
+                            "challenge_type": 4,
+                            "status": "seed_rpc_disconnected",
+                            "success": False,
+                            "sim_time_sec": 3.0,
+                            "seed_wall_sec": 5.0,
+                            "step_idx": 20,
+                            "error": "[Errno 32] Broken pipe",
+                        }
+                    ],
+                    "results": [(62, False, 3.0, 0.0)],
+                    "elapsed_sec": 5.0,
+                },
+            ]
+        },
+    )
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    retry_budget = {
+        "timeout": de.parallel._MAX_TIMEOUT_RETRIES,
+        "rpc_transport": de.parallel._MAX_RPC_TRANSPORT_RETRIES,
+    }
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type4_village",
+                    "seed": 3501,
+                    "challenge_type": 4,
+                    "horizon": 60.0,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=62,
+            model_path=model_path,
+            effective_workers=1,
+            phase_label="eval",
+            retry_budget=retry_budget,
+        )
+    )
+
+    assert scripted_context.attempts == {0: 1}
+    assert len(results) == 1
+    assert results[0].success is False
+    assert not any("retrying RPC-transport seed" in line for line in log_lines)
+    assert retry_budget["rpc_transport"] == de.parallel._MAX_RPC_TRANSPORT_RETRIES
+
+
 def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")

@@ -60,6 +60,7 @@ async def _evaluate_seeds(
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
     pre_built_tasks: Optional[List] = None,
+    retry_budget: Optional[Dict[str, int]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
     """Evaluate a model on multiple seeds using parallel Docker containers."""
     all_scores = []
@@ -104,6 +105,7 @@ async def _evaluate_seeds(
         prior_seeds_done=prior_seeds_done,
         prior_total_seeds=prior_total_seeds,
         prior_avg=prior_avg,
+        retry_budget=retry_budget,
     )
 
     seed_details = []
@@ -202,6 +204,7 @@ async def _run_streaming_phase(
     inflight: List[asyncio.Task] = []
     failed_batches: List[List[dict]] = []
     cancel_reason: Optional[str] = None
+    retry_budget: Dict[str, int] = {"timeout": 0, "rpc_transport": 0}
     total_for_evaluator = (
         evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
     )
@@ -277,6 +280,7 @@ async def _run_streaming_phase(
                 prior_total_seeds=total_for_evaluator,
                 prior_avg=prior_avg,
                 pre_built_tasks=batch_tasks,
+                retry_budget=retry_budget,
             )
 
             seed_batch = [

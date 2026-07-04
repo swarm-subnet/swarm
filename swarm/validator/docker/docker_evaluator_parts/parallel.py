@@ -196,6 +196,7 @@ async def _run_process_parallel(
     heartbeat_sec: float = 30.0,
     model_image: Optional[str] = None,
     runtime_profile: Optional[dict[str, Any]] = None,
+    retry_budget: Optional[dict[str, int]] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -212,8 +213,8 @@ async def _run_process_parallel(
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
     batch_retry_counts: dict[int, int] = {}
     rpc_transport_retry_counts: dict[int, int] = {}
-    timeout_retries_used = 0
-    rpc_transport_retries_used = 0
+    if retry_budget is None:
+        retry_budget = {"timeout": 0, "rpc_transport": 0}
     stall_timeout_sec = max(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
@@ -707,15 +708,15 @@ async def _run_process_parallel(
                         or final_status == "container_start_failed"
                     )
                     and prior_retries < 1
-                    and timeout_retries_used < _MAX_TIMEOUT_RETRIES
+                    and retry_budget["timeout"] < _MAX_TIMEOUT_RETRIES
                 ):
-                    timeout_retries_used += 1
+                    retry_budget["timeout"] += 1
                     batch_retry_counts[int(request.batch_index)] = prior_retries + 1
                     _record_timeout_retry(meta)
                     bt.logging.warning(
                         f"[Validator eval] retrying timed-out seed {_seed_label(meta)} "
                         f"for UID {uid} (retry {prior_retries + 1}/1, "
-                        f"global retries {timeout_retries_used}/{_MAX_TIMEOUT_RETRIES}, "
+                        f"global retries {retry_budget['timeout']}/{_MAX_TIMEOUT_RETRIES}, "
                         f"status={final_status})"
                     )
                     worker_active_requests.pop(worker_slot, None)
@@ -730,10 +731,10 @@ async def _run_process_parallel(
                 if (
                     bench_engine._is_rpc_transport_status(final_status)
                     and prior_transport_retries < 1
-                    and rpc_transport_retries_used < _MAX_RPC_TRANSPORT_RETRIES
+                    and retry_budget["rpc_transport"] < _MAX_RPC_TRANSPORT_RETRIES
                 ):
                     _observe_final_seed(meta, final_seed_meta)
-                    rpc_transport_retries_used += 1
+                    retry_budget["rpc_transport"] += 1
                     rpc_transport_retry_counts[int(request.batch_index)] = (
                         prior_transport_retries + 1
                     )
@@ -741,7 +742,7 @@ async def _run_process_parallel(
                     bt.logging.warning(
                         f"[Validator eval] retrying RPC-transport seed {_seed_label(meta)} "
                         f"for UID {uid} (retry {prior_transport_retries + 1}/1, "
-                        f"global retries {rpc_transport_retries_used}/{_MAX_RPC_TRANSPORT_RETRIES}, "
+                        f"global retries {retry_budget['rpc_transport']}/{_MAX_RPC_TRANSPORT_RETRIES}, "
                         f"status={final_status})"
                     )
                     worker_active_requests.pop(worker_slot, None)
@@ -826,6 +827,7 @@ async def evaluate_seeds_parallel(
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
+    retry_budget: Optional[dict[str, int]] = None,
 ) -> list:
     """Evaluate validator seeds using the benchmark-grade process scheduler."""
     if not tasks:
@@ -904,6 +906,7 @@ async def evaluate_seeds_parallel(
         prior_avg=prior_avg,
         model_image=model_image,
         runtime_profile=runtime_profile.as_dict(),
+        retry_budget=retry_budget,
     )
 
 
