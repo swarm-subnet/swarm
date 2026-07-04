@@ -22,12 +22,19 @@ to the operator's private vault — it is never made public.
 import argparse
 import hashlib
 import json
+from pathlib import Path
 import sys
 import time
 import uuid
 from urllib.parse import urlparse
+import zipfile
 
 import bittensor as bt
+
+
+REQUIRED_ROOT_FILES = ("drone_agent.py",)
+FORBIDDEN_SUFFIXES = (".exe", ".so", ".dll", ".sh", ".bat", ".pyc")
+MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 
 
 def _validate_github_url(raw: str) -> str | None:
@@ -51,6 +58,54 @@ def _sha256_file(path: str) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _load_local_families() -> dict | None:
+    """{family_id: visibility} from the repo's domain schema, or None."""
+    schema_path = (
+        Path(__file__).resolve().parent.parent
+        / "swarm" / "domain_model" / "benchmark_domain_model.schema.json"
+    )
+    try:
+        families = json.loads(schema_path.read_text())["challenge_families"]
+        return {fid: str(fam.get("visibility", "public")) for fid, fam in families.items()}
+    except Exception:
+        return None
+
+
+def _fetch_backend_families(backend_url: str) -> dict | None:
+    """Same mapping fetched from the backend registry, or None on any failure."""
+    import httpx
+
+    try:
+        resp = httpx.get(backend_url.rstrip("/") + "/families/metadata", timeout=30)
+        if resp.status_code != 200:
+            return None
+        families = resp.json()["challenge_families"]
+        return {fid: str(fam.get("visibility", "public")) for fid, fam in families.items()}
+    except Exception:
+        return None
+
+
+def _validate_artifact_zip(path: str) -> str | None:
+    """Return a rejection reason for a structurally invalid artifact, else None."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            uncompressed = sum(info.file_size for info in zf.infolist())
+    except zipfile.BadZipFile:
+        return "not a valid ZIP archive"
+    except OSError as exc:
+        return f"cannot read artifact: {exc}"
+    if uncompressed > MAX_UNCOMPRESSED_BYTES:
+        return f"uncompressed size too large ({uncompressed / 1e6:.1f} MB, limit 50 MB)"
+    for required in REQUIRED_ROOT_FILES:
+        if required not in names:
+            return f"missing required file at the zip root: {required}"
+    forbidden = sorted({n for n in names if n.endswith(FORBIDDEN_SUFFIXES)})
+    if forbidden:
+        return f"forbidden file type(s): {', '.join(forbidden)}"
+    return None
 
 
 def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, wallet) -> bool:
@@ -155,6 +210,39 @@ def main(argv=None):
         if not (args.family_id and args.artifact and args.backend_url):
             bt.logging.error(
                 "Private submission needs --family_id, --artifact, and --backend_url."
+            )
+            return 1
+        families = _fetch_backend_families(args.backend_url)
+        if families is None:
+            bt.logging.warning(
+                "Could not reach the backend to verify the family list; using the local registry."
+            )
+            families = _load_local_families()
+        if families is None:
+            bt.logging.warning("Family registry unavailable; skipping family validation.")
+        elif args.family_id not in families:
+            bt.logging.error(f"Unknown family_id '{args.family_id}'.")
+            bt.logging.error(f"Valid families: {', '.join(sorted(families))}")
+            return 1
+        elif families[args.family_id] != "private":
+            bt.logging.error(
+                f"'{args.family_id}' is a public-track family, so it does not accept private submissions."
+            )
+            bt.logging.error(
+                "Public models are submitted by committing a GitHub repository URL instead:"
+            )
+            bt.logging.error(
+                "  python neurons/miner.py --netuid 124 --wallet.name miner --wallet.hotkey default \\"
+            )
+            bt.logging.error("      --github_url https://github.com/you/your-model")
+            bt.logging.error("The full submission guide is in docs/miner.md.")
+            return 1
+
+        reason = _validate_artifact_zip(args.artifact)
+        if reason is not None:
+            bt.logging.error(f"Artifact rejected before committing: {reason}")
+            bt.logging.error(
+                "Fix the zip and retry; nothing was committed on-chain."
             )
             return 1
         try:
