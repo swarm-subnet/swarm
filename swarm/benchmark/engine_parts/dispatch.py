@@ -119,6 +119,13 @@ _BACKOFF_TIMEOUT_STATUSES = frozenset(
         "seed_cancelled",
     }
 )
+_RPC_TRANSPORT_RETRY_STATUSES = frozenset(
+    {
+        "rpc_connect_failed",
+        "rpc_ping_timeout",
+        "seed_rpc_disconnected",
+    }
+)
 _BACKOFF_INFRA_FAILURE_STATUSES = frozenset(
     {
         "batch_exception",
@@ -130,6 +137,8 @@ _RESOURCE_SOFT_SIGNAL_STATUSES = frozenset(
         "seed_timeout_strikes",
         "seed_rpc_disconnected",
         "seed_exception",
+        "rpc_connect_failed",
+        "rpc_ping_timeout",
     }
 )
 _NON_RESOURCE_FAILURE_STATUSES = frozenset(
@@ -330,6 +339,10 @@ def _max_heavy_active(active_worker_cap: int) -> int:
 
 def _is_backoff_timeout_status(status: str) -> bool:
     return status in _BACKOFF_TIMEOUT_STATUSES
+
+
+def _is_rpc_transport_status(status: str) -> bool:
+    return status in _RPC_TRANSPORT_RETRY_STATUSES
 
 
 def _is_backoff_infra_status(status: str) -> bool:
