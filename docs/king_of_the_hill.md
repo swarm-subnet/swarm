@@ -15,6 +15,8 @@ This document describes how the King of the Hill (KotH) emissions mechanism work
     <li><a href="#why-it-exists">Why it exists</a></li>
     <li><a href="#the-5-king-window">The 5-king window</a></li>
     <li><a href="#how-each-kings-share-is-calculated">How each king's share is calculated</a></li>
+    <li><a href="#rank-weighting">Rank weighting</a></li>
+    <li><a href="#taking-the-throne--the-dynamic-floor">Taking the throne — the dynamic floor</a></li>
     <li><a href="#per-family-emissions">Per-family emissions</a></li>
     <li><a href="#edge-cases">Edge cases</a></li>
     <li><a href="#faq">FAQ</a></li>
@@ -29,8 +31,8 @@ This document describes how the King of the Hill (KotH) emissions mechanism work
 Swarm runs **one King of the Hill per challenge family** (e.g. Autopilot, Search-and-Rescue). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**, with each one's slice proportional to how much they improved the family's best score when they took the throne.
 
 - The **current champion** of a family is always at the top of that family's lineage.
-- The **four most recent past champions** of the family keep earning until they age out of the window — but each seat is paid for at most **7 days from when it was crowned** (see [Emission decay](#emission-decay--the-7-day-timer)).
-- Each king's share is computed once at crowning time and never recomputed.
+- The **four most recent past champions** of the family keep earning until they age out of the window.
+- Each king's gain is locked at crowning; the rank weight shifts as newer kings arrive, moving share toward the freshest champions.
 
 How the family slices add up is covered in [Per-family emissions](#per-family-emissions). The within-a-family split below is identical to the original single-competition design.
 
@@ -44,7 +46,7 @@ Winner-take-all has two failure modes that KotH addresses:
 
 1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add `0.015` of noise to pass the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, that miner's tiny jump translates to a tiny share — most of the emissions stay with the past kings whose jumps were larger.
 
-2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying — proportional to the real contribution — for up to four more dethronings, capped at 7 days per seat.
+2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying — proportional to the real contribution — for up to four more dethronings.
 
 KotH rewards **the act of moving the frontier**, not just the act of sitting on it.
 
@@ -69,23 +71,9 @@ Rank        Slot                          Earning
 
 After the next crowning, the king at slot `−4` leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
 
-A king keeps earning while three things hold: they are still in the window, their **7-day emission timer** has not run out (see below), and their submission repo is still reachable. Past kings are never re-evaluated — the share is locked at crowning — but the timer or a dead repo can switch the share off before they age out.
+A king keeps earning while two things hold: they are still in the window and their submission repo is still reachable. Past kings are never re-evaluated — the gain is locked at crowning — but rank taper or a dead repo can reduce or switch off the share before they age out.
 
-<p align="right">(<a href="#koth-top">back to top</a>)</p>
-
----
-
-## Emission decay — the 7-day timer
-
-A king is not paid forever for a model nobody beats. Each seat carries a **7-day timer that starts the moment it is crowned**:
-
-- While the timer is running, the seat earns its share as normal.
-- Once **7 days** pass since it was crowned — whatever its rank — the seat's slice **stops and burns**, routed to the burn UID exactly like a dropped seat. The other kings do **not** absorb it, so the subnet simply emits less. The clock is per seat: being dethroned does not pause or extend it.
-- The seat keeps its place in the window (shown at 0%) and leaves only when later crownings push it past the 5-king window.
-
-The only way to get a fresh 7 days is a **genuine improvement** that earns you a new crowning — a brand-new seat with its own clock. Surviving a weekly re-evaluation, or re-submitting the same model, does **not** reset it; the mechanism pays for progress, not for tenure.
-
-If every seat in a family has timed out, that family's entire slice burns until someone crowns a new king.
+Taper ranks are assigned among the **payable** kings only. When a seat stops being payable (dead repo or an admin drop), the kings behind it move up one taper step and its slice renormalizes onto the survivors; the rank badge on the ladder still shows window position, so a badge and its paid share can briefly diverge while a seat is unreachable.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -93,32 +81,66 @@ If every seat in a family has timed out, that family's entire slice burns until 
 
 ## How each king's share is calculated
 
-Each king's share depends on **two things measured at the moment they were crowned**:
+Each king's share depends on the gain they locked at crowning and their current rank in the family window:
 
 ```
-1.  How much they improved the score
-2.  How hard that improvement was to make
+1.  How much remaining headroom they closed
+2.  How fresh their crown is
 ```
 
-The "how hard" part recognises that improving from `0.20 → 0.25` is easier than improving from `0.80 → 0.85`. There is less remaining headroom near the top, so each percentage point closer to perfect is rarer.
+The gain recognises that improving from `0.20 → 0.25` is easier than improving from `0.80 → 0.85`. There is less remaining headroom near the top, so closing the same fraction of the remaining distance matters more.
 
 ### The formula
 
 For each king `i` in the 5-king window, with their score `score_i` and the previous king's score `prev_i`:
 
 ```
-delta_i    = max(0, score_i − prev_i)                     # raw improvement, clamped
-adjusted_i = delta_i / max(1 − prev_i, 0.05)              # headroom-adjusted, capped
-weight_i   = adjusted_i / sum(adjusted_j in window)        # normalised to share of 100 %
+gain_i   = log( max(1 − prev_i, 0.01) / max(1 − score_i, 0.01) )   # ≥ 0
+weight_i = (5 − rank_i) / 5                                        # rank 0 = reigning
+share_i  = gain_i × weight_i / sum(gain_j × weight_j in window)
 ```
 
-The cap (`0.05`) prevents the formula from blowing up as scores approach 1.0. The maximum effective multiplier is 1 / 0.05 = 20×.
+The `0.01` floor caps the headroom so improvements above `0.99` do not blow up.
 
 ### Plain-English version
 
-- **Compute how much each king improved the score** (their `delta`).
-- **Divide that improvement by the remaining headroom** when they were crowned. A small jump near 1.0 turns into a big number; a small jump from a low baseline turns into a small number.
-- **Add up everyone's adjusted numbers and divide each one by the total** to get their share.
+- **Measure improvement in log-headroom** — how much of the remaining distance-to-perfect the king closed.
+- **Taper by rank** — champion 100%, then 80%, 60%, 40%, 20%.
+- **Normalise the tapered gains** so the family window sums to 100%.
+
+<p align="right">(<a href="#koth-top">back to top</a>)</p>
+
+---
+
+## Rank weighting
+
+A king's gain is tapered by where it sits in the family lineage. The reigning champion (rank 0) keeps its full gain; every step further back loses **20%**:
+
+```
+weight = (5 − rank) / 5
+   rank 0 (champion) → 1.0     rank 2 → 0.6     rank 4 (oldest) → 0.2
+```
+
+So the freshest champions earn the most, and a king fades **as new champions are crowned and push it down the window** — not by any clock, and with no hard age cutoff. Every king in the window keeps a share (down to 20% weight at the bottom); a king only stops earning once a sixth crowning pushes it out of the window entirely.
+
+Splitting one improvement across several crownings earns *less* — each earlier piece sits at a lower rank and is weighted down — so there is no advantage to gaming the split.
+
+Rank weighting is separate from the crowning floor below: the floor decides who *takes* the throne, while rank weighting shapes how the throne's *earnings* are split.
+
+<p align="right">(<a href="#koth-top">back to top</a>)</p>
+
+---
+
+## Taking the throne — the dynamic floor
+
+To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs:
+
+```
+champion ≤ 0.5      floor = 0.015     (flat — anti-noise while scores are low)
+champion → 1.00     floor → 0.005     (smaller, since every point near the top is hard-won)
+```
+
+So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster. The same gate is applied at screening and at final crowning, and a family's registry policy can override the numbers.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -197,7 +219,7 @@ When a family has zero past champions, its first king's `prev_score` is treated 
 
 ### A king reaches the perfect score (1.0)
 
-If a king's score is at or extremely close to 1.0, subsequent jumps look like dividing by zero. The cap of `0.05` in the formula bounds the headroom-adjusted multiplier at 20×, so no single late jump can take more than ~95% of the window.
+If a king's score is at or extremely close to 1.0, subsequent jumps can otherwise make headroom look like zero. The `0.01` floor bounds the gain at `log(1 / 0.01) ≈ 4.6`, and a jump entirely inside the top `0.01` (for example `0.995 → 1.0`) earns nothing.
 
 ### Backend unreachable
 
@@ -211,15 +233,15 @@ When the validator cannot reach the backend, it falls back to the **last per-fam
 
 ### How often is my share recalculated?
 
-Your `delta` and `adjusted` values are computed at the moment of crowning and locked. The denominator (the sum of all 5 kings' `adjusted` values) changes when a new king joins the window or you age out of it. Your share also drops to **zero** when your 7-day emission timer runs out (see [Emission decay](#emission-decay--the-7-day-timer)) or your repo becomes unreachable.
+Your gain is computed at the moment of crowning and locked. Your share moves when the window changes: a new crowning shifts every rank, changes the rank taper, and eventually ages older kings out. Your share also drops to **zero** if your repo becomes unreachable.
 
 ### Do I keep earning forever if nobody beats me?
 
-No. Each seat has a **7-day timer** from crowning. If nobody beats you and you do not ship a stronger model within 7 days, your slice stops and burns until the frontier moves again. The only way to refresh it is a new crowning — see [Emission decay](#emission-decay--the-7-day-timer).
+Yes. You fade only as new champions push you down the ranks, and you leave after five crownings. There is no clock.
 
 ### What if I get dethroned?
 
-You stay in the window at rank `−1` and keep earning — but only until your **7-day emission timer** runs out or you age out at rank `−4` after four more dethronings, whichever comes first.
+You slide to rank `−1` at 80% taper and keep earning until you age out at rank `−4` after four more dethronings.
 
 ### Can I become king twice?
 
@@ -229,9 +251,9 @@ No. The subnet enforces **one model per hotkey, lifetime**. A hotkey that has be
 
 Their slice stops and burns. A king's repo is health-checked; if it is deleted or becomes unreachable the seat is treated like a dropped seat — it keeps its window slot but pays nobody, so its share burns rather than flowing to a model that can no longer be verified.
 
-### Why is there a minimum jump (0.015) to take the throne?
+### Why is there a minimum jump to take the throne?
 
-The crowning floor (`champion + 0.015`) is an anti-noise threshold. Without it, the network would re-elect a "new" champion every time a benchmark produced a 0.0001 score variance. The floor is unchanged by KotH.
+The crowning floor is an anti-noise threshold: without it, the network would re-elect a "new" champion every time a benchmark produced a 0.0001 score variance. It is **dynamic** — flat at `0.015` while the champion is at or below `0.5`, then shrinking toward `0.005` as the score approaches 1.0 (see [Taking the throne](#taking-the-throne--the-dynamic-floor)).
 
 ### What if the subnet emission rate changes?
 
@@ -257,7 +279,7 @@ No. Family slices are **absolute and independent** — a new family takes its sl
 
 | Term | Meaning |
 |---|---|
-| **King** | A model that took the throne by passing the screening + benchmark and beating the previous champion by ≥ 0.015. |
+| **King** | A model that took the throne by passing the screening + benchmark and clearing the dynamic crowning floor. |
 | **Challenge family** | An independent competition (e.g. Autopilot, Search-and-Rescue), each with its own lineage, window, and emission slice. |
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
@@ -265,9 +287,10 @@ No. Family slices are **absolute and independent** — a new family takes its sl
 | **Burn** | Emissions routed to UID 0 (not paid to any miner) — used for a participating family that has no payable king yet. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
-| **Headroom-adjusted jump** | The jump divided by the remaining headroom, capped to prevent singularity. |
+| **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity. |
+| **Rank weighting** | `(5 − rank) / 5`; the champion keeps full gain, and each older king loses 20%. |
 | **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
-| **Crowning floor** | The fixed minimum improvement (0.015) required to dethrone the current champion. |
+| **Crowning floor** | The minimum improvement required to dethrone the champion: 0.015 while the score is ≤ 0.5, decaying to 0.005 near 1.0. |
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>

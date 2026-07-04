@@ -15,19 +15,24 @@ from swarm.validator.koth import (
     KingEntry,
     MalformedKingEntry,
     active_window,
+    compute_row_weights,
     compute_weights,
-    headroom_adjusted,
+    headroom_gain,
     jump_delta,
+    rank_weight,
 )
 
 
-def _king(uid: int, score: float, prev: float, *, epoch: int = 0) -> KingEntry:
+def _king(
+    uid: int, score: float, prev: float, *, epoch: int = 0, lineage_id: int | None = None
+) -> KingEntry:
     return KingEntry(
         uid=uid,
         hotkey=f"hk{uid}",
         score=score,
         prev_score=prev,
         crowned_at_epoch=epoch,
+        lineage_id=lineage_id,
     )
 
 
@@ -46,8 +51,8 @@ def test_discord_example_matches_expected_weights():
        jumps +0.010, +0.001, +0.010, +0.005, +0.005
        expected weights ~[0.32, 0.03, 0.32, 0.16, 0.16]
 
-    With low previous scores the headroom cap doesn't activate, so the
-    formula collapses to raw-absolute proportions (within ~1%).
+    The rank tiebreak treats later hand-built rows as newer when epoch and
+    lineage_id are tied.
     """
     kings = [
         _king(uid=1, score=0.110, prev=0.100),  # +0.010
@@ -57,10 +62,16 @@ def test_discord_example_matches_expected_weights():
         _king(uid=5, score=0.131, prev=0.126),  # +0.005
     ]
     weights = compute_weights(kings)
-    expected = {1: 0.32, 2: 0.03, 3: 0.32, 4: 0.16, 5: 0.16}
+    expected = {
+        1: 0.11301789675460729,
+        2: 0.022743108697460924,
+        3: 0.3432727735781759,
+        4: 0.23080488209136316,
+        5: 0.29016133887839274,
+    }
     assert set(weights.keys()) == set(expected.keys())
     for uid, want in expected.items():
-        assert math.isclose(weights[uid], want, abs_tol=0.02), (
+        assert math.isclose(weights[uid], want, abs_tol=1e-12), (
             f"uid {uid}: got {weights[uid]:.4f}, want {want}"
         )
 
@@ -79,33 +90,31 @@ def test_mature_subnet_late_jump_dominates():
     assert weights[5] > weights[2]
 
 
-def test_miguel_question_late_jump_4x_early_same_size():
+def test_miguel_question_late_jump_outearns_early_same_size():
     """+0.05 absolute jump at 0.80 base vs at 0.20 base.
 
     With only those two kings in the window, the late one should earn
-    approximately 4x what the early one does.
+    more than what the early one does.
     """
     early = _king(uid=10, score=0.25, prev=0.20)
     late = _king(uid=11, score=0.85, prev=0.80)
     weights = compute_weights([early, late])
     ratio = weights[11] / weights[10]
-    assert 3.5 < ratio < 4.5, f"expected ~4x, got {ratio:.2f}"
+    assert ratio > 5.0, f"expected late jump to dominate, got {ratio:.2f}"
 
 
-def test_cap_activates_near_perfect_score():
-    """As prev->1.0, the eps cap prevents the multiplier from diverging.
-
-    A +0.01 jump from 0.99 should produce adjusted = 0.01 / 0.05 = 0.20,
-    NOT 0.01 / 0.01 = 1.00.
-    """
-    adj = headroom_adjusted(delta=0.01, prev_score=0.99)
-    assert math.isclose(adj, 0.20, abs_tol=1e-9)
+def test_headroom_gain_matches_log_headroom():
+    gain = headroom_gain(score=0.5, prev_score=0.0)
+    assert math.isclose(gain, math.log(2.0), abs_tol=1e-12)
 
 
-def test_cap_does_not_activate_below_threshold():
-    """prev_score = 0.80 gives headroom 0.20, well above eps."""
-    adj = headroom_adjusted(delta=0.02, prev_score=0.80)
-    assert math.isclose(adj, 0.10, abs_tol=1e-9)
+def test_headroom_gain_same_or_lower_score_is_zero():
+    assert headroom_gain(score=0.5, prev_score=0.5) == 0.0
+    assert headroom_gain(score=0.4, prev_score=0.5) == 0.0
+
+
+def test_headroom_gain_inside_eps_floor_is_zero():
+    assert headroom_gain(score=1.0, prev_score=0.995) == 0.0
 
 
 def test_score_clamping_to_unit_interval():
@@ -123,8 +132,8 @@ def test_score_clamping_to_unit_interval():
 def test_first_king_baseline_zero_means_jump_equals_score():
     """A king with prev=0 has jump=score (full benchmark progress)."""
     assert jump_delta(score=0.40, prev_score=0.0) == 0.40
-    adj = headroom_adjusted(delta=0.40, prev_score=0.0)
-    assert math.isclose(adj, 0.40, abs_tol=1e-9)
+    gain = headroom_gain(score=0.40, prev_score=0.0)
+    assert math.isclose(gain, math.log(1.0 / 0.60), abs_tol=1e-12)
 
 
 def test_zero_delta_yields_zero_weight():
@@ -185,11 +194,72 @@ def test_active_window_zero_or_negative_returns_empty():
 
 
 def test_headroom_eps_is_a_module_constant():
-    assert HEADROOM_EPS == 0.05
+    assert HEADROOM_EPS == 0.01
 
 
 def test_window_size_is_a_module_constant():
     assert WINDOW_SIZE == 5
+
+
+def test_rank_weight_tapers_by_window_position():
+    assert rank_weight(0) == 1.0
+    assert rank_weight(1) == 0.8
+    assert math.isclose(rank_weight(4), 0.2, abs_tol=1e-12)
+    assert rank_weight(5) == 0.0
+    assert rank_weight(10) == 0.0
+
+
+def test_canonical_log_headroom_rank_taper_example():
+    older = _king(uid=1, score=0.5, prev=0.0, epoch=1, lineage_id=1)
+    newest = _king(uid=2, score=0.8, prev=0.5, epoch=2, lineage_id=2)
+    weights = compute_weights([older, newest])
+    rows = compute_row_weights([older, newest])
+    assert math.isclose(weights[1], 0.3770156028979229, abs_tol=1e-4)
+    assert math.isclose(weights[2], 0.622984397102077, abs_tol=1e-4)
+    assert math.isclose(rows[0], 0.3770156028979229, abs_tol=1e-4)
+    assert math.isclose(rows[1], 0.622984397102077, abs_tol=1e-4)
+    assert math.isclose(sum(weights.values()), 1.0, abs_tol=1e-12)
+
+
+def test_rank_decay_shifts_share_to_the_champion():
+    older = _king(uid=1, score=0.5, prev=0.0, epoch=1, lineage_id=1)
+    newest = _king(uid=2, score=0.8, prev=0.5, epoch=2, lineage_id=2)
+    tapered = compute_weights([older, newest])
+    gain_older = math.log(1.0 / 0.5)
+    gain_newest = math.log(0.5 / 0.2)
+    untapered_newest = gain_newest / (gain_older + gain_newest)
+    assert tapered[2] > untapered_newest
+
+
+def test_newer_king_outearns_equal_older_one():
+    older = _king(uid=1, score=0.5, prev=0.0, epoch=1, lineage_id=1)
+    newest = _king(uid=2, score=0.5, prev=0.0, epoch=2, lineage_id=2)
+    weights = compute_weights([older, newest])
+    assert weights[2] > weights[1]
+
+
+def test_oldest_king_in_full_window_still_earns():
+    kings = [
+        _king(uid=1, score=0.20, prev=0.00, epoch=1, lineage_id=1),
+        _king(uid=2, score=0.35, prev=0.20, epoch=2, lineage_id=2),
+        _king(uid=3, score=0.50, prev=0.35, epoch=3, lineage_id=3),
+        _king(uid=4, score=0.65, prev=0.50, epoch=4, lineage_id=4),
+        _king(uid=5, score=0.80, prev=0.65, epoch=5, lineage_id=5),
+    ]
+    weights = compute_weights(kings)
+    assert weights[1] > 0.0
+    assert math.isclose(sum(weights.values()), 1.0, abs_tol=1e-12)
+
+
+def test_formula_is_independent_of_input_order():
+    oldest_to_newest = [
+        _king(uid=1, score=0.5, prev=0.0, epoch=10, lineage_id=100),
+        _king(uid=2, score=0.8, prev=0.5, epoch=20, lineage_id=200),
+        _king(uid=3, score=0.9, prev=0.8, epoch=30, lineage_id=300),
+    ]
+    newest_first = list(reversed(oldest_to_newest))
+    assert compute_weights(oldest_to_newest) == compute_weights(newest_first)
+    assert compute_row_weights(oldest_to_newest) == list(reversed(compute_row_weights(newest_first)))
 
 
 def test_duplicate_uid_aggregates_weight():
@@ -229,12 +299,12 @@ def test_active_window_filters_manual_override_drop():
     assert [k.uid for k in window] == [2, 3, 5, 6, 7]
 
 
-def test_headroom_adjusted_rejects_non_positive_eps():
+def test_headroom_gain_rejects_non_positive_eps():
     """Caller bug: eps <= 0 would divide by zero near prev=1. Raise instead."""
     with pytest.raises(ValueError):
-        headroom_adjusted(delta=0.01, prev_score=0.50, eps=0.0)
+        headroom_gain(score=0.51, prev_score=0.50, eps=0.0)
     with pytest.raises(ValueError):
-        headroom_adjusted(delta=0.01, prev_score=0.50, eps=-0.01)
+        headroom_gain(score=0.51, prev_score=0.50, eps=-0.01)
 
 
 def test_from_sync_dict_full_payload():

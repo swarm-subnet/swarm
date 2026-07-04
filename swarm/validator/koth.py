@@ -6,11 +6,12 @@ and the runtime behaviour agree by construction.
 
 For each king ``i`` in the active window:
 
-    delta_i    = max(0, score_i - prev_score_i)
-    adjusted_i = delta_i / max(1 - prev_score_i, HEADROOM_EPS)
-    weight_i   = adjusted_i / sum(adjusted_j in window)
+    gain_i   = log(max(1 - prev_i, HEADROOM_EPS) / max(1 - score_i, HEADROOM_EPS))
+    taper_i  = max(0, (WINDOW_SIZE - rank_i) / WINDOW_SIZE)
+    share_i  = gain_i * taper_i / sum(gain_j * taper_j over the window)
 
-Scores are clamped to [0, 1] before subtracting.
+Scores are clamped to [0, 1] first. Rank is derived from
+``(crowned_at_epoch, lineage_id)`` descending, not list position.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 
-HEADROOM_EPS: float = 0.05
+HEADROOM_EPS: float = 0.01
 WINDOW_SIZE: int = 5
 RESERVED_BURN_UID: int = 0
 
@@ -90,19 +91,34 @@ def jump_delta(score: float, prev_score: float) -> float:
     return max(0.0, s - p)
 
 
-def headroom_adjusted(delta: float, prev_score: float, eps: float = HEADROOM_EPS) -> float:
-    """Headroom-adjusted jump with the ``eps`` cap on the denominator.
-
-    The cap prevents the formula from diverging as ``prev_score`` approaches
-    1.0. The maximum effective multiplier is ``1 / eps`` (20× for the default).
-    """
+def headroom_gain(score: float, prev_score: float, eps: float = HEADROOM_EPS) -> float:
     if float(eps) <= 0.0:
         raise ValueError(f"headroom eps must be > 0, got {eps!r}")
-    if delta <= 0.0:
-        return 0.0
+    s = _clamp_unit(float(score))
     p = _clamp_unit(float(prev_score))
-    headroom = max(1.0 - p, float(eps))
-    return float(delta) / headroom
+    if s <= p:
+        return 0.0
+    return math.log(max(1.0 - p, float(eps)) / max(1.0 - s, float(eps)))
+
+
+def rank_weight(rank: int, window: int = WINDOW_SIZE) -> float:
+    return max(0.0, (float(window) - float(rank)) / float(window))
+
+
+def _ranks(rows: List[KingEntry]) -> List[int]:
+    order = sorted(
+        range(len(rows)),
+        key=lambda i: (
+            rows[i].crowned_at_epoch,
+            rows[i].lineage_id if rows[i].lineage_id is not None else -1,
+            i,
+        ),
+        reverse=True,
+    )
+    ranks = [0] * len(rows)
+    for rank, idx in enumerate(order):
+        ranks[idx] = rank
+    return ranks
 
 
 def compute_row_weights(
@@ -119,11 +135,11 @@ def compute_row_weights(
     if not rows:
         return []
 
-    adjusted_per_king: List[float] = []
-    for king in rows:
-        delta = jump_delta(king.score, king.prev_score)
-        adj = headroom_adjusted(delta, king.prev_score, eps=eps)
-        adjusted_per_king.append(adj)
+    ranks = _ranks(rows)
+    adjusted_per_king: List[float] = [
+        headroom_gain(king.score, king.prev_score, eps=eps) * rank_weight(ranks[i])
+        for i, king in enumerate(rows)
+    ]
 
     total = sum(adjusted_per_king)
     if total <= 0.0:
@@ -148,11 +164,11 @@ def compute_weights(
     if not rows:
         return {}
 
-    adjusted_per_king: List[float] = []
-    for king in rows:
-        delta = jump_delta(king.score, king.prev_score)
-        adj = headroom_adjusted(delta, king.prev_score, eps=eps)
-        adjusted_per_king.append(adj)
+    ranks = _ranks(rows)
+    adjusted_per_king: List[float] = [
+        headroom_gain(king.score, king.prev_score, eps=eps) * rank_weight(ranks[i])
+        for i, king in enumerate(rows)
+    ]
 
     total = sum(adjusted_per_king)
     if total <= 0.0:
