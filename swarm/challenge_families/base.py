@@ -1,14 +1,64 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
 
+from swarm.constants import BENCHMARK_FULL_SEED_COUNT, SWARM_MAX_DRONES, SWARM_MIN_DRONES
 from swarm.domain_model import (
     get_family_benchmark_admission_policy,
     get_family_screening_policy,
     get_policy_interface_contract,
     get_supported_interface_versions,
 )
+
+
+def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return True
+    return keyword in signature.parameters
+
+
+def banded_pool(
+    challenge_type: int,
+    distance: tuple[float, float],
+    *,
+    n_slots: int,
+    n_bands: int,
+    moving_prob: float,
+    goal_height_range: Optional[tuple[float, float]] = None,
+) -> list[dict[str, Any]]:
+    lo, hi = distance
+    width = (hi - lo) / n_bands
+    n_moving = round(n_slots * moving_prob)
+    pool: list[dict[str, Any]] = []
+    for i in range(n_slots):
+        band = i % n_bands
+        pool.append(dict(
+            challenge_type=challenge_type,
+            distance_range=(round(lo + band * width, 1), round(lo + (band + 1) * width, 1)),
+            goal_height_range=goal_height_range,
+            moving_platform=(i < n_moving),
+        ))
+    return pool
+
+
+def interleave(pools: list[list[dict[str, Any]]], expected: int) -> tuple[dict[str, Any], ...]:
+    slots: list[dict[str, Any]] = []
+    for i in range(max(len(p) for p in pools)):
+        for pool in pools:
+            if i < len(pool):
+                slots.append(pool[i])
+    if len(slots) != expected:
+        raise RuntimeError(f"Template must have {expected} entries, got {len(slots)}")
+    return tuple(slots)
+
+
+def with_drone_counts(slots: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    span = SWARM_MAX_DRONES - SWARM_MIN_DRONES + 1
+    return tuple(dict(slot, n_drones=SWARM_MIN_DRONES + (i % span)) for i, slot in enumerate(slots))
 
 
 class ChallengeFamilyRuntimeError(ValueError):
@@ -200,6 +250,47 @@ class ChallengeFamilyRuntime:
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
         raise NotImplementedError
 
+    def _build_template_tasks(
+        self,
+        template: tuple[dict[str, Any], ...],
+        *,
+        sim_dt: float,
+        seeds: list[int],
+        offset: int,
+        total_seed_count: Optional[int],
+    ) -> list[Any]:
+        from swarm.validator import task_gen as legacy_task_gen
+
+        template = list(template)
+        template_length = total_seed_count if total_seed_count is not None else len(seeds)
+        full_template = (template * ((template_length // len(template)) + 1))[:template_length]
+        template_slice = full_template[offset:offset + len(seeds)]
+
+        tasks = []
+        for seed, slot in zip(seeds, template_slice):
+            kwargs = {
+                "sim_dt": sim_dt,
+                "seed": seed,
+                "challenge_type": slot["challenge_type"],
+                "distance_range": slot["distance_range"],
+            }
+            if _supports_keyword_arg(legacy_task_gen.screening_task, "family_id"):
+                kwargs["family_id"] = self.family_id
+            if slot.get("goal_height_range") is not None and _supports_keyword_arg(
+                legacy_task_gen.screening_task, "goal_height_range"
+            ):
+                kwargs["goal_height_range"] = slot["goal_height_range"]
+            if "moving_platform" in slot and _supports_keyword_arg(
+                legacy_task_gen.screening_task, "moving_platform"
+            ):
+                kwargs["moving_platform"] = slot["moving_platform"]
+            if slot.get("n_drones") is not None and _supports_keyword_arg(
+                legacy_task_gen.screening_task, "n_drones"
+            ):
+                kwargs["n_drones"] = slot["n_drones"]
+            tasks.append(legacy_task_gen.screening_task(**kwargs))
+        return tasks
+
     def build_screening_tasks(
         self,
         *,
@@ -208,7 +299,12 @@ class ChallengeFamilyRuntime:
         offset: int = 0,
         total_seed_count: Optional[int] = None,
     ) -> list[Any]:
-        raise NotImplementedError
+        template = self.screening_template()
+        if not template:
+            raise NotImplementedError
+        return self._build_template_tasks(
+            template, sim_dt=sim_dt, seeds=seeds, offset=offset, total_seed_count=total_seed_count,
+        )
 
     def build_benchmark_tasks(
         self,
@@ -219,7 +315,16 @@ class ChallengeFamilyRuntime:
         total_seed_count: Optional[int] = None,
     ) -> list[Any]:
         """Families without a benchmark template fall back to random per-seed tasks."""
-        return [self.build_random_task(sim_dt=sim_dt, seed=seed) for seed in seeds]
+        template = self.benchmark_template()
+        if not template:
+            return [self.build_random_task(sim_dt=sim_dt, seed=seed) for seed in seeds]
+        return self._build_template_tasks(
+            template,
+            sim_dt=sim_dt,
+            seeds=seeds,
+            offset=offset,
+            total_seed_count=total_seed_count if total_seed_count is not None else BENCHMARK_FULL_SEED_COUNT,
+        )
 
     def evaluate_rollout(
         self,

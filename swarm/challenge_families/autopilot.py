@@ -7,7 +7,6 @@ import numpy as np
 import pybullet as p
 
 from swarm.constants import (
-    BENCHMARK_FULL_SEED_COUNT,
     SEARCH_AREA_NOISE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
 )
@@ -23,7 +22,7 @@ from swarm.validator.reward import (
     calculate_time_term,
 )
 
-from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile
+from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool, interleave
 
 
 AUTOPILOT_GOAL_REACH_RADIUS_M = 1.0
@@ -69,49 +68,14 @@ def _build_autopilot_screening_template() -> tuple[dict[str, Any], ...]:
 _AUTOPILOT_SCREENING_TEMPLATE: tuple[dict[str, Any], ...] = _build_autopilot_screening_template()
 
 
-def _banded_pool(
-    challenge_type: int,
-    distance: tuple[float, float],
-    *,
-    n_slots: int,
-    n_bands: int,
-    moving_prob: float,
-    goal_height_range: Optional[tuple[float, float]] = None,
-) -> list[dict[str, Any]]:
-    lo, hi = distance
-    width = (hi - lo) / n_bands
-    n_moving = round(n_slots * moving_prob)
-    pool: list[dict[str, Any]] = []
-    for i in range(n_slots):
-        band = i % n_bands
-        pool.append(dict(
-            challenge_type=challenge_type,
-            distance_range=(round(lo + band * width, 1), round(lo + (band + 1) * width, 1)),
-            goal_height_range=goal_height_range,
-            moving_platform=(i < n_moving),
-        ))
-    return pool
-
-
-def _interleave(pools: list[list[dict[str, Any]]], expected: int) -> tuple[dict[str, Any], ...]:
-    slots: list[dict[str, Any]] = []
-    for i in range(max(len(p) for p in pools)):
-        for pool in pools:
-            if i < len(pool):
-                slots.append(pool[i])
-    if len(slots) != expected:
-        raise RuntimeError(f"Autopilot benchmark template must have {expected} entries, got {len(slots)}")
-    return tuple(slots)
-
-
 def _build_autopilot_benchmark_template() -> tuple[dict[str, Any], ...]:
-    return _interleave([
-        _banded_pool(1, (22, 45),  n_slots=17, n_bands=3, moving_prob=0.25, goal_height_range=(0.2, 1.0)),
-        _banded_pool(2, (28, 72),  n_slots=17, n_bands=3, moving_prob=0.80, goal_height_range=(4.0, 14.0)),
-        _banded_pool(3, (65, 100), n_slots=17, n_bands=3, moving_prob=0.25),
-        _banded_pool(4, (28, 56),  n_slots=17, n_bands=3, moving_prob=0.25),
-        _banded_pool(5, (18, 35),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 10.0)),
-        _banded_pool(6, (22, 45),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 3.0)),
+    return interleave([
+        banded_pool(1, (22, 45),  n_slots=17, n_bands=3, moving_prob=0.25, goal_height_range=(0.2, 1.0)),
+        banded_pool(2, (28, 72),  n_slots=17, n_bands=3, moving_prob=0.80, goal_height_range=(4.0, 14.0)),
+        banded_pool(3, (65, 100), n_slots=17, n_bands=3, moving_prob=0.25),
+        banded_pool(4, (28, 56),  n_slots=17, n_bands=3, moving_prob=0.25),
+        banded_pool(5, (18, 35),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 10.0)),
+        banded_pool(6, (22, 45),  n_slots=16, n_bands=3, moving_prob=0.0, goal_height_range=(0.2, 3.0)),
     ], expected=100)
 
 
@@ -282,69 +246,6 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         if _supports_keyword_arg(legacy_task_gen.random_task, "family_id"):
             kwargs["family_id"] = self.family_id
         return legacy_task_gen.random_task(**kwargs)
-
-    def _build_template_tasks(
-        self,
-        template: list[dict[str, Any]],
-        *,
-        sim_dt: float,
-        seeds: list[int],
-        offset: int,
-        total_seed_count: Optional[int],
-    ) -> list[Any]:
-        from swarm.validator import task_gen as legacy_task_gen
-
-        template_length = total_seed_count if total_seed_count is not None else len(seeds)
-        full_template = (template * ((template_length // len(template)) + 1))[:template_length]
-        template_slice = full_template[offset:offset + len(seeds)]
-
-        tasks = []
-        for seed, slot in zip(seeds, template_slice):
-            kwargs = {
-                "sim_dt": sim_dt,
-                "seed": seed,
-                "challenge_type": slot["challenge_type"],
-                "distance_range": slot["distance_range"],
-            }
-            if _supports_keyword_arg(legacy_task_gen.screening_task, "family_id"):
-                kwargs["family_id"] = self.family_id
-            if slot.get("goal_height_range") is not None and _supports_keyword_arg(
-                legacy_task_gen.screening_task, "goal_height_range"
-            ):
-                kwargs["goal_height_range"] = slot["goal_height_range"]
-            if "moving_platform" in slot and _supports_keyword_arg(
-                legacy_task_gen.screening_task, "moving_platform"
-            ):
-                kwargs["moving_platform"] = slot["moving_platform"]
-            tasks.append(legacy_task_gen.screening_task(**kwargs))
-        return tasks
-
-    def build_screening_tasks(
-        self,
-        *,
-        sim_dt: float,
-        seeds: list[int],
-        offset: int = 0,
-        total_seed_count: Optional[int] = None,
-    ) -> list[Any]:
-        return self._build_template_tasks(
-            list(self.screening_template()),
-            sim_dt=sim_dt, seeds=seeds, offset=offset, total_seed_count=total_seed_count,
-        )
-
-    def build_benchmark_tasks(
-        self,
-        *,
-        sim_dt: float,
-        seeds: list[int],
-        offset: int = 0,
-        total_seed_count: Optional[int] = None,
-    ) -> list[Any]:
-        return self._build_template_tasks(
-            list(self.benchmark_template()),
-            sim_dt=sim_dt, seeds=seeds, offset=offset,
-            total_seed_count=total_seed_count if total_seed_count is not None else BENCHMARK_FULL_SEED_COUNT,
-        )
 
     def spawn_task_world(self, env: Any) -> None:
         env.task.start = env._original_start

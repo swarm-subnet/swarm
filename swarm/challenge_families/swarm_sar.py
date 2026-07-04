@@ -31,7 +31,7 @@ from swarm.validator.reward import (
     calculate_time_term,
 )
 
-from .base import ChallengeFamilyRuntimeProfile
+from .base import ChallengeFamilyRuntimeProfile, with_drone_counts
 from .search_and_rescue import SearchAndRescueChallengeFamily
 
 
@@ -65,6 +65,12 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
             global_eval_per_seed_sec=1500.0,
             global_eval_cap_sec=18000.0,
         )
+
+    def screening_template(self) -> tuple[dict[str, Any], ...]:
+        return with_drone_counts(super().screening_template())
+
+    def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        return with_drone_counts(super().benchmark_template())
 
     def reset_env_state(self, env: Any) -> None:
         super().reset_env_state(env)

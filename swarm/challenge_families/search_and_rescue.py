@@ -34,7 +34,7 @@ from swarm.validator.reward import (
     calculate_time_term,
 )
 
-from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile
+from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool, interleave
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -43,6 +43,20 @@ def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
     except (TypeError, ValueError):
         return True
     return keyword in signature.parameters
+
+
+def _build_sar_benchmark_template() -> tuple[dict[str, Any], ...]:
+    return interleave([
+        banded_pool(1, (15, 28), n_slots=17, n_bands=3, moving_prob=0.0),
+        banded_pool(2, (14, 22), n_slots=17, n_bands=3, moving_prob=0.0),
+        banded_pool(3, (30, 60), n_slots=17, n_bands=3, moving_prob=0.0),
+        banded_pool(4, (25, 50), n_slots=17, n_bands=3, moving_prob=0.0),
+        banded_pool(5, (10, 25), n_slots=16, n_bands=3, moving_prob=0.0),
+        banded_pool(6, (15, 31), n_slots=16, n_bands=3, moving_prob=0.0),
+    ], expected=100)
+
+
+_SAR_BENCHMARK_TEMPLATE: tuple[dict[str, Any], ...] = _build_sar_benchmark_template()
 
 
 def _sar_drone_state(env: Any) -> tuple[Any, Any]:
@@ -204,6 +218,9 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
     def screening_template(self) -> tuple[dict[str, Any], ...]:
         return tuple(SAR_SCREENING_TEMPLATE)
 
+    def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        return _SAR_BENCHMARK_TEMPLATE
+
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
         from swarm.validator import task_gen as legacy_task_gen
 
@@ -211,34 +228,6 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         if _supports_keyword_arg(legacy_task_gen.random_task, "family_id"):
             kwargs["family_id"] = self.family_id
         return legacy_task_gen.random_task(**kwargs)
-
-    def build_screening_tasks(
-        self,
-        *,
-        sim_dt: float,
-        seeds: list[int],
-        offset: int = 0,
-        total_seed_count: Optional[int] = None,
-    ) -> list[Any]:
-        from swarm.validator import task_gen as legacy_task_gen
-
-        template = list(self.screening_template())
-        template_length = total_seed_count if total_seed_count is not None else len(seeds)
-        full_template = (template * ((template_length // len(template)) + 1))[:template_length]
-        template_slice = full_template[offset:offset + len(seeds)]
-
-        tasks = []
-        for seed, slot in zip(seeds, template_slice):
-            kwargs = {
-                "sim_dt": sim_dt,
-                "seed": seed,
-                "challenge_type": slot["challenge_type"],
-                "distance_range": slot["distance_range"],
-            }
-            if _supports_keyword_arg(legacy_task_gen.screening_task, "family_id"):
-                kwargs["family_id"] = self.family_id
-            tasks.append(legacy_task_gen.screening_task(**kwargs))
-        return tasks
 
     def protected_body_uids(self, env: Any) -> set[int]:
         base = set(env.sar_world.victim_uids) if env.sar_world is not None else set()

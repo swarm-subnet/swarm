@@ -221,13 +221,14 @@ def _build_task_with_params(
     params: dict,
     family_id: str = "cf_search_and_rescue",
     moving_platform: bool = False,
+    n_drones: Optional[int] = None,
 ) -> MapTask:
     if family_id == "cf_interceptor":
         # chaser and target on opposite sides of a near-centre midpoint, 60-100 m apart,
         # so the chase fits inside the (larger) open terrain. z values are placeholders;
         # spawn_task_world reseats the chaser on its pad and lifts the target airborne.
         rng = random.Random(seed)
-        gap = rng.uniform(INTERCEPTOR_MIN_START_DISTANCE_M, INTERCEPTOR_MAX_START_DISTANCE_M)
+        gap = rng.uniform(params['r_min'], params['r_max'])
         ang = rng.uniform(0.0, 2.0 * math.pi)
         cx = rng.uniform(-INTERCEPTOR_CHASE_CENTER_JITTER_M, INTERCEPTOR_CHASE_CENTER_JITTER_M)
         cy = rng.uniform(-INTERCEPTOR_CHASE_CENTER_JITTER_M, INTERCEPTOR_CHASE_CENTER_JITTER_M)
@@ -241,8 +242,9 @@ def _build_task_with_params(
         )
 
     if family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
-        count_rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
-        n_drones = count_rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
+        if n_drones is None:
+            count_rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
+            n_drones = count_rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
         starts, goals = _swarm_pads(
             params, challenge_type=challenge_type, seed=seed, family_id=family_id, n=n_drones,
         )
@@ -312,6 +314,11 @@ def _build_task_for_type(
     if family_id == "cf_interceptor":
         challenge_type = 2
     params = _resolve_params(seed, challenge_type)
+    if family_id == "cf_interceptor":
+        params['r_min'], params['r_max'] = (
+            INTERCEPTOR_MIN_START_DISTANCE_M,
+            INTERCEPTOR_MAX_START_DISTANCE_M,
+        )
     resolved = _resolve_moving_platform(seed, challenge_type, family_id, moving_platform)
     return _build_task_with_params(
         sim_dt, seed,
@@ -621,6 +628,7 @@ def screening_task(
     goal_height_range: Optional[Tuple[float, float]] = None,
     family_id: str = "cf_search_and_rescue",
     moving_platform: Optional[bool] = None,
+    n_drones: Optional[int] = None,
 ) -> MapTask:
     """Build a task with controlled type and distance range (V5 SAR)."""
     if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
@@ -637,4 +645,5 @@ def screening_task(
         params=params,
         family_id=family_id,
         moving_platform=resolved,
+        n_drones=n_drones,
     )

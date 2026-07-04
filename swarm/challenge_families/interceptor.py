@@ -25,6 +25,8 @@ from swarm.constants import (
     INTERCEPTOR_JINK_FREQ_MIN,
     INTERCEPTOR_JINK_GAIN,
     INTERCEPTOR_KILL_RADIUS_M,
+    INTERCEPTOR_MAX_START_DISTANCE_M,
+    INTERCEPTOR_MIN_START_DISTANCE_M,
     INTERCEPTOR_MINER_SPEED,
     INTERCEPTOR_REACT_RANGE_M,
     INTERCEPTOR_SEARCH_RADIUS_MAX_M,
@@ -56,7 +58,7 @@ from swarm.validator.reward import (
     calculate_time_term,
 )
 
-from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile
+from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool
 
 # SWARM_DRONE PID gains, sized for the 36 cm drone.
 _GAINS_P_FOR = np.array([2.3, 2.3, 7.1])
@@ -67,6 +69,14 @@ _GAINS_I_TOR = np.array([0.0, 0.0, 16500.0])
 _GAINS_D_TOR = np.array([6.6e5, 6.6e5, 4.0e5])
 
 _PATROL_RADIUS_M = 55.0  # keep the target near its spawn so the chase stays bounded
+
+_INTERCEPTOR_BENCHMARK_TEMPLATE: tuple[dict[str, Any], ...] = tuple(banded_pool(
+    2,
+    (INTERCEPTOR_MIN_START_DISTANCE_M, INTERCEPTOR_MAX_START_DISTANCE_M),
+    n_slots=100,
+    n_bands=3,
+    moving_prob=0.0,
+))
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -507,17 +517,13 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
         # interceptor runs on the open map only (challenge_type 2)
-        return tuple({"challenge_type": 2, "distance_range": (25.0, 100.0)} for _ in range(8))
+        return tuple(
+            {
+                "challenge_type": 2,
+                "distance_range": (INTERCEPTOR_MIN_START_DISTANCE_M, INTERCEPTOR_MAX_START_DISTANCE_M),
+            }
+            for _ in range(8)
+        )
 
-    def build_screening_tasks(
-        self, *, sim_dt: float, seeds: list[int], offset: int = 0, total_seed_count: Optional[int] = None,
-    ) -> list[Any]:
-        from swarm.validator import task_gen as legacy_task_gen
-
-        tasks = []
-        for seed in seeds:
-            kwargs = {"sim_dt": sim_dt, "seed": seed, "challenge_type": 2, "distance_range": (25.0, 100.0)}
-            if _supports_keyword_arg(legacy_task_gen.screening_task, "family_id"):
-                kwargs["family_id"] = self.family_id
-            tasks.append(legacy_task_gen.screening_task(**kwargs))
-        return tasks
+    def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        return _INTERCEPTOR_BENCHMARK_TEMPLATE

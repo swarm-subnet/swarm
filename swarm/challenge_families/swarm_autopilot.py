@@ -19,7 +19,7 @@ from swarm.protocol import SCHEMA_VERSION
 from swarm.validator.reward import _calculate_swarm_target_time, _score_single_drone
 
 from .autopilot import AutopilotChallengeFamily
-from .base import ChallengeFamilyRuntimeProfile
+from .base import ChallengeFamilyRuntimeProfile, with_drone_counts
 
 
 class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
@@ -57,6 +57,12 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
         _ = task
         return {"sar_mode": False}
+
+    def screening_template(self) -> tuple[dict[str, Any], ...]:
+        return with_drone_counts(super().screening_template())
+
+    def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        return with_drone_counts(super().benchmark_template())
 
     def compute_terminated(self, env: Any) -> bool:
         # The simulator ends the episode when every drone is resolved (frozen).
