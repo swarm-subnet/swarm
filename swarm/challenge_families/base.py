@@ -56,6 +56,17 @@ def interleave(pools: list[list[dict[str, Any]]], expected: int) -> tuple[dict[s
     return tuple(slots)
 
 
+def without_challenge_type(
+    template: tuple[dict[str, Any], ...],
+    challenge_type: int,
+) -> tuple[dict[str, Any], ...]:
+    """Drop every template slot that targets the given challenge type."""
+    return tuple(
+        slot for slot in template
+        if int(slot.get("challenge_type", -1)) != int(challenge_type)
+    )
+
+
 def with_drone_counts(slots: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
     span = SWARM_MAX_DRONES - SWARM_MIN_DRONES + 1
     return tuple(dict(slot, n_drones=SWARM_MIN_DRONES + (i % span)) for i, slot in enumerate(slots))

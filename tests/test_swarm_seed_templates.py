@@ -31,9 +31,13 @@ def test_swarm_templates_match_parent_templates_without_drone_counts():
     swarm_sar = get_challenge_family("cf_swarm_sar")
     sar = get_challenge_family("cf_search_and_rescue")
 
-    assert _strip_n_drones(swarm_autopilot.screening_template()) == list(autopilot.screening_template())
-    assert _strip_n_drones(swarm_autopilot.benchmark_template()) == list(autopilot.benchmark_template())
-    assert _strip_n_drones(swarm_sar.screening_template()) == list(sar.screening_template())
+    def no_warehouse(template):
+        return [slot for slot in template if slot["challenge_type"] != 5]
+
+    assert _strip_n_drones(swarm_autopilot.screening_template()) == no_warehouse(autopilot.screening_template())
+    assert _strip_n_drones(swarm_autopilot.benchmark_template()) == no_warehouse(autopilot.benchmark_template())
+    assert _strip_n_drones(swarm_sar.screening_template()) == no_warehouse(sar.screening_template())
+    assert all(slot["challenge_type"] != 5 for slot in swarm_sar.benchmark_template())
 
 
 def test_screening_task_accepts_template_drone_count_and_keeps_random_fallback():

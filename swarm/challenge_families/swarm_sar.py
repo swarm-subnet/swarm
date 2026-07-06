@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from typing import Any
 
@@ -14,6 +15,7 @@ from swarm.constants import (
     SAR_HYSTERESIS_GRACE,
     SAR_NO_TOUCH_RADIUS,
     START_PLATFORM_TAKEOFF_BUFFER,
+    SWARM_MAX_DRONES,
     SWARM_SAR_SEARCH_RADIUS,
 )
 from swarm.core.env_builder.body_tagger import BodyTagger
@@ -31,8 +33,13 @@ from swarm.validator.reward import (
     calculate_time_term,
 )
 
-from .base import ChallengeFamilyRuntimeProfile, with_drone_counts
+from .base import ChallengeFamilyRuntimeProfile, with_drone_counts, without_challenge_type
 from .search_and_rescue import SearchAndRescueChallengeFamily
+
+
+def team_search_radius(n_drones: int) -> float:
+    """Search radius scaled so the per-drone sweep area stays constant across team sizes."""
+    return SWARM_SAR_SEARCH_RADIUS * math.sqrt(max(1, int(n_drones)) / SWARM_MAX_DRONES)
 
 
 class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
@@ -67,10 +74,10 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         )
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
-        return with_drone_counts(super().screening_template())
+        return with_drone_counts(without_challenge_type(super().screening_template(), 5))
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
-        return with_drone_counts(super().benchmark_template())
+        return with_drone_counts(without_challenge_type(super().benchmark_template(), 5))
 
     def reset_env_state(self, env: Any) -> None:
         super().reset_env_state(env)
@@ -145,7 +152,7 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
             # One shared, much bigger search clue centred on the victim.
             rng = random.Random((int(task.map_seed) ^ 0x53415253) & 0xFFFFFFFF)
             sc = sample_search_centre(
-                rng, (float(vc[0]), float(vc[1])), radius=SWARM_SAR_SEARCH_RADIUS,
+                rng, (float(vc[0]), float(vc[1])), radius=team_search_radius(n),
             )
             env.sar_world.search_centre = (float(sc[0]), float(sc[1]))
             env._search_area_center = np.array([float(sc[0]), float(sc[1]), 0.0], dtype=float)
@@ -298,7 +305,7 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         team_t = info.get("sar_team_t")
         team_t = float(team_t) if team_t is not None else float(task.horizon)
         target_time = _calculate_swarm_sar_target_time(
-            starts, getattr(task, "search_centre", None), n, SWARM_SAR_SEARCH_RADIUS,
+            starts, getattr(task, "search_centre", None), n, team_search_radius(n),
         )
         time_term = calculate_time_term(t=team_t, horizon=float(task.horizon), target_time=target_time)
 
