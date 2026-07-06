@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from swarm.constants import SIM_DT
+from swarm.domain_model import CHALLENGE_FAMILY_IDS
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.task_gen import random_task
 
@@ -40,6 +41,13 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Miner UID (default: inferred from filename UID_<n>.zip, else 0)",
+    )
+    parser.add_argument(
+        "--family_id",
+        type=str,
+        default="cf_autopilot",
+        choices=sorted(CHALLENGE_FAMILY_IDS),
+        help="Challenge family to generate tasks for (default: cf_autopilot).",
     )
     parser.add_argument(
         "--seed",
@@ -207,6 +215,7 @@ async def _evaluate_seeds(
     *,
     model_path: Path,
     uid: int,
+    family_id: str,
     seeds: List[int],
     workers: int,
     show_actions: bool,
@@ -224,7 +233,7 @@ async def _evaluate_seeds(
     task_infos: List[Dict[str, Any]] = []
     LOGGER.info("Generating %d task(s)", len(seeds))
     for i, map_seed in enumerate(seeds):
-        task = random_task(sim_dt=SIM_DT, seed=map_seed)
+        task = random_task(sim_dt=SIM_DT, seed=map_seed, family_id=family_id)
         task_info = _task_meta(task)
         tasks.append(task)
         task_infos.append(task_info)
@@ -412,6 +421,7 @@ def main() -> None:
 
     LOGGER.info("Model: %s", model_path)
     LOGGER.info("UID: %d", uid)
+    LOGGER.info("Family: %s", args.family_id)
     if args.seed is None:
         LOGGER.info("Seed source: random (no --seed provided)")
     else:
@@ -422,6 +432,7 @@ def main() -> None:
         _evaluate_seeds(
             model_path=model_path,
             uid=uid,
+            family_id=args.family_id,
             seeds=seeds,
             workers=args.workers,
             show_actions=args.show_actions,
