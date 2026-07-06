@@ -478,6 +478,7 @@ INTERCEPTOR_DRONE_URDF = "interceptor_drone.urdf"  # 36 cm drone shipped in swar
 INTERCEPTOR_DRONE_SCALE = 3                  # cf2x x3 ~= 36 cm diagonal
 
 INTERCEPTOR_MINER_SPEED = 6.0               # m/s — chaser velocity cap (env-local; tune later)
+INTERCEPTOR_MAX_TILT_DEG = 75.0             # deg — pursuit needs more lean than the global 60 cutoff; sustained chase speed stays under the 4.5 flee otherwise
 INTERCEPTOR_TARGET_FLEE_FRAC = 0.75         # target flee speed / chaser speed
 INTERCEPTOR_TARGET_CRUISE_FRAC = 0.45       # target speed when not threatened
 INTERCEPTOR_REACT_RANGE_M = 12.0            # chaser distance that makes the target flee

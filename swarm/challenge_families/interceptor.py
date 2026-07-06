@@ -26,6 +26,7 @@ from swarm.constants import (
     INTERCEPTOR_JINK_GAIN,
     INTERCEPTOR_KILL_RADIUS_M,
     INTERCEPTOR_MAX_START_DISTANCE_M,
+    INTERCEPTOR_MAX_TILT_DEG,
     INTERCEPTOR_MIN_START_DISTANCE_M,
     INTERCEPTOR_MINER_SPEED,
     INTERCEPTOR_REACT_RANGE_M,
@@ -175,6 +176,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         env.sar_mode = False
         env._target_uid = None
         env._target_ctrl = None
+        env.MAX_TILT_RAD = math.radians(INTERCEPTOR_MAX_TILT_DEG)
         self.reset_env_state(env)
 
     def reset_env_state(self, env: Any) -> None:
