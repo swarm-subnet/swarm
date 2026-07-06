@@ -365,6 +365,15 @@ def _spawn_roads(cli, tiles, tile_size, rng, offset,
         spawn_asset_exact(
             cli, path, cx, cy, 0, tile.rotation + 90, road_scale_vec,
         )
+        if tile.type == "roundabout":
+            island_vis = p.createVisualShape(
+                p.GEOM_CYLINDER, radius=2.6, length=0.05,
+                rgbaColor=[0.33, 0.62, 0.24, 1.0], physicsClientId=cli,
+            )
+            p.createMultiBody(
+                baseMass=0, baseVisualShapeIndex=island_vis,
+                basePosition=[cx, cy, 0.005], physicsClientId=cli,
+            )
 
 
 def _spawn_buildings(cli, buildings, blocks, city_type, tile_size,

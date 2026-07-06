@@ -38,12 +38,13 @@ def _find_flat_platform_spot(
     def _sample(cx, cy):
         center_z = _raycast_surface_z(cli, cx, cy)
         edge_zs = [center_z]
-        for angle_deg in range(0, 360, 45):
-            rad = _math.radians(angle_deg)
-            ex = cx + radius * _math.cos(rad)
-            ey = cy + radius * _math.sin(rad)
-            ez = _raycast_surface_z(cli, ex, ey)
-            edge_zs.append(ez)
+        for ring in (0.5 * radius, radius, 1.15 * radius):
+            for angle_deg in range(0, 360, 45):
+                rad = _math.radians(angle_deg)
+                ex = cx + ring * _math.cos(rad)
+                ey = cy + ring * _math.sin(rad)
+                ez = _raycast_surface_z(cli, ex, ey)
+                edge_zs.append(ez)
         max_z = max(edge_zs)
         slope = max_z - center_z
         return center_z, max_z, slope, edge_zs
@@ -78,6 +79,16 @@ def _find_flat_platform_spot(
                     best_max_z = nm_z
 
     _, final_max_z, _, _ = _sample(best_x, best_y)
+
+    span = radius * 1.15
+    steps = [-span + i * (2.0 * span / 8.0) for i in range(9)]
+    for gx_off in steps:
+        for gy_off in steps:
+            if gx_off * gx_off + gy_off * gy_off > span * span:
+                continue
+            gz = _raycast_surface_z(cli, best_x + gx_off, best_y + gy_off)
+            if gz > final_max_z:
+                final_max_z = gz
 
     if orbit_radius > 0:
         outer = orbit_radius + 0.3 + radius

@@ -7,6 +7,7 @@ check, the obstacle cull, and the safety-clearance metric.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pybullet as p
@@ -31,6 +32,56 @@ def surface_z_at(cli: int, x: float, y: float, top: float = 80.0, bottom: float 
     if hit and hit[0][0] != -1:
         return float(hit[0][3][2])
     return 0.0
+
+
+def surface_z_max_at(cli: int, x: float, y: float, radius: float,
+                     top: float = 500.0, bottom: float = -100.0) -> float:
+    """Highest surface Z inside the disc of ``radius`` around (x, y), so a pad
+    placed at the result cannot be pierced by terrain anywhere under it."""
+    steps = [-radius + i * (2.0 * radius / 8.0) for i in range(9)]
+    best = surface_z_at(cli, x, y, top, bottom)
+    for dx in steps:
+        for dy in steps:
+            if dx * dx + dy * dy > radius * radius:
+                continue
+            z = surface_z_at(cli, x + dx, y + dy, top, bottom)
+            if z > best:
+                best = z
+    return best
+
+
+def blocking_top(cli: int, x: float, y: float, exclude, pad_r: float = 1.2,
+                 min_height: float = 1.0):
+    """Top Z of the tallest floor-standing structure overlapping a pad footprint
+    at (x, y), or None when the spot is clear. Ignores map-wide slabs and
+    overhead bodies (roofs, trusses) that never block a ground pad."""
+    top = None
+    for idx in range(p.getNumBodies(physicsClientId=cli)):
+        uid = p.getBodyUniqueId(idx, physicsClientId=cli)
+        if uid in exclude:
+            continue
+        mn, mx = p.getAABB(uid, physicsClientId=cli)
+        if (mx[0] - mn[0]) > 60.0 or (mx[1] - mn[1]) > 60.0:
+            continue
+        if (mx[2] - mn[2]) <= min_height or mn[2] > 2.0:
+            continue
+        if mn[0] - pad_r <= x <= mx[0] + pad_r and mn[1] - pad_r <= y <= mx[1] + pad_r:
+            top = mx[2] if top is None else max(top, mx[2])
+    return top
+
+
+def clear_pad_spot(cli: int, sx: float, sy: float, exclude):
+    """Nudge a start-pad position out of any structure; the original spot wins
+    when already clear."""
+    if blocking_top(cli, sx, sy, exclude) is None:
+        return sx, sy
+    for r in (2.0, 4.0, 6.0, 8.0):
+        for k in range(8):
+            a = k * math.pi / 4.0
+            nx, ny = sx + r * math.cos(a), sy + r * math.sin(a)
+            if blocking_top(cli, nx, ny, exclude) is None:
+                return nx, ny
+    return sx, sy
 
 
 def build_start_platform(tagger: BodyTagger, cli: int, sx: float, sy: float,

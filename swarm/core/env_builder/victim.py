@@ -94,11 +94,17 @@ def select_victim_split_dir(seed: int, challenge_type: int, slope_deg: float = 0
     return split_dir
 
 
+def victim_scale_for(challenge_type: int) -> float:
+    """City and village assets are toy-scale, so the true-scale mannequin
+    shrinks there to stay believable next to cars and doorways."""
+    return 0.6 if challenge_type in (1, 4) else 1.0
+
+
 def accepted_categories_for(challenge_type: int) -> Set[BodyCategory]:
     if challenge_type == 5:
         return {BodyCategory.SUPPORT_FLOOR}
     if challenge_type in (1, 4):
-        return {BodyCategory.SUPPORT_TERRAIN, BodyCategory.SUPPORT_ROOFTOP}
+        return {BodyCategory.SUPPORT_TERRAIN}
     return {
         BodyCategory.SUPPORT_TERRAIN,
         BodyCategory.SUPPORT_SLOPE,
@@ -287,6 +293,7 @@ def spawn_victim(
     tagger: BodyTagger,
     split_dir: str | os.PathLike | None = None,
     double_sided: bool = True,
+    scale: float = 1.0,
 ) -> VictimAttrs:
     split_path = Path(split_dir) if split_dir else _DEFAULT_SPLIT_DIR
 
@@ -294,6 +301,8 @@ def spawn_victim(
         raise FileNotFoundError(f"no prebaked mannequin parts in {split_path}")
 
     raw_min, raw_max = prebaked_union_bounds(split_path)
+    raw_min = tuple(scale * v for v in raw_min)
+    raw_max = tuple(scale * v for v in raw_max)
     half_extents = (
         0.5 * (raw_max[0] - raw_min[0]),
         0.5 * (raw_max[1] - raw_min[1]),
@@ -356,6 +365,7 @@ def spawn_victim(
         base_orientation=quat,
         collision_id=collision_id,
         double_sided=double_sided,
+        scale=scale,
     )
     tagger.tag_body_group(BodyCategory.VICTIM, uids)
 

@@ -11,7 +11,7 @@ from .sar_types import SafetyPatch, SARWorld
 from .search_clue import sample_search_centre
 from .spawn_pipeline import SARSpawnError, find_spawn_xy
 from swarm.constants import SAR_MAX_VICTIM_DISTANCE_M
-from .victim import select_victim_split_dir, spawn_victim, terrain_slope_deg
+from .victim import select_victim_split_dir, spawn_victim, terrain_slope_deg, victim_scale_for
 
 
 def build_sar_world(
@@ -52,6 +52,7 @@ def build_sar_world(
         rng=rng,
         tagger=tagger,
         split_dir=split_dir,
+        scale=victim_scale_for(challenge_type),
     )
 
     n_after = p.getNumBodies(physicsClientId=cli)

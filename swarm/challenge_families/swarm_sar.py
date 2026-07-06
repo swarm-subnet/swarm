@@ -14,12 +14,17 @@ from swarm.constants import (
     SAR_HOVER_BAND,
     SAR_HYSTERESIS_GRACE,
     SAR_NO_TOUCH_RADIUS,
+    START_PLATFORM_RADIUS,
     START_PLATFORM_TAKEOFF_BUFFER,
     SWARM_MAX_DRONES,
     SWARM_SAR_SEARCH_RADIUS,
 )
 from swarm.core.env_builder.body_tagger import BodyTagger
-from swarm.core.env_builder.platform import build_start_platform, surface_z_at
+from swarm.core.env_builder.platform import (
+    build_start_platform,
+    clear_pad_spot,
+    surface_z_max_at,
+)
 from swarm.core.env_builder.sar_world import build_sar_world
 from swarm.core.env_builder.search_clue import sample_search_centre
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError
@@ -125,12 +130,14 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         adj_starts: list = []
         if env.sar_world is not None:
             tagger = BodyTagger(cli)
+            exclude = set(env.sar_world.victim_uids)
             for s in starts:
-                sx, sy = float(s[0]), float(s[1])
-                surf = surface_z_at(cli, sx, sy)
+                sx, sy = clear_pad_spot(cli, float(s[0]), float(s[1]), exclude)
+                surf = surface_z_max_at(cli, sx, sy, START_PLATFORM_RADIUS * 1.2) + 0.1
                 pad_uids, pad_top = build_start_platform(
                     tagger, cli, sx, sy, surf, int(task.challenge_type),
                 )
+                exclude.update(pad_uids)
                 all_pad_uids.extend(pad_uids)
                 adj_starts.append((sx, sy, pad_top + START_PLATFORM_TAKEOFF_BUFFER))
         else:
@@ -208,6 +215,8 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
             # Any no-touch breach fails the whole mission, order-independent.
             env._sar_mission_failed = True
             env._sar_team_failure_reason = FailureReason.NO_TOUCH_SPHERE.value
+            if env._d_failure_reason[i] == FailureReason.NONE.value:
+                env._d_failure_reason[i] = FailureReason.NO_TOUCH_SPHERE.value
             env._d_sar_predicate_active[i] = False
             env._d_sar_dwell_time[i] = 0.0
             return

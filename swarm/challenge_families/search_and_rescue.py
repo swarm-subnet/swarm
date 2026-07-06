@@ -17,12 +17,19 @@ from swarm.constants import (
     SAR_SCREENING_TEMPLATE,
     SAR_SEARCH_RADIUS,
     SPEED_LIMIT,
+    START_PLATFORM_RADIUS,
     START_PLATFORM_TAKEOFF_BUFFER,
 )
 from swarm.core.env_builder.body_tagger import BodyTagger
-from swarm.core.env_builder.platform import build_start_platform, surface_z_at
+from swarm.core.env_builder.platform import (
+    build_start_platform,
+    clear_pad_spot,
+    surface_z_max_at,
+)
 from swarm.core.env_builder.sar_world import build_sar_world
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError
+from swarm.core.env_builder.surface_resolver import resolve_surface
+from swarm.core.env_builder.victim import accepted_categories_for
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import FailureReason, SCHEMA_VERSION
 from swarm.validator.reward import (
@@ -270,7 +277,17 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         env._platform_uids = frozenset()
         if env.sar_world is not None:
             sx, sy = float(env.task.start[0]), float(env.task.start[1])
-            surf = surface_z_at(cli, sx, sy)
+            if int(env.task.challenge_type) == 5:
+                # Indoor map: a top-down ray hits the roof, so nudge clear of
+                # the racks and resolve the floor instead.
+                sx, sy = clear_pad_spot(cli, sx, sy, set(env.sar_world.victim_uids))
+                hit = resolve_surface(
+                    cli, sx, sy, env.sar_world.body_tags,
+                    accepted_categories_for(5),
+                )
+                surf = float(hit.surface_z) if hit is not None else 0.0
+            else:
+                surf = surface_z_max_at(cli, sx, sy, START_PLATFORM_RADIUS * 1.2)
             pad_uids, pad_top = build_start_platform(
                 BodyTagger(cli), cli, sx, sy, surf, int(env.task.challenge_type),
             )

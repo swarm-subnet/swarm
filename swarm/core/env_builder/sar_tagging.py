@@ -28,6 +28,8 @@ def classify_body(cli: int, uid: int, *, challenge_type: int) -> str:
 
     if shape_type in (p.GEOM_MESH, p.GEOM_PLANE):
         if is_large:
+            if challenge_type in (1, 4) and aabb_size_z > 2.0:
+                return BodyCategory.SUPPORT_ROOFTOP.value
             return BodyCategory.SUPPORT_TERRAIN.value
         return BodyCategory.OBSTACLE_OTHER.value
 

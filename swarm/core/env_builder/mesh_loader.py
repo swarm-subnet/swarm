@@ -97,6 +97,7 @@ def spawn_split_material_mesh(
     base_orientation,
     collision_id: int,
     double_sided: bool = True,
+    scale: float = 1.0,
 ) -> List[int]:
     parts = iter_prebaked_parts(prebaked_dir)
     if not parts:
@@ -107,6 +108,7 @@ def spawn_split_material_mesh(
         if double_sided and hasattr(p, "VISUAL_SHAPE_DOUBLE_SIDED")
         else 0
     )
+    mesh_scale = [float(scale)] * 3
 
     uids: list[int] = []
     for index, part_path in enumerate(parts):
@@ -115,7 +117,7 @@ def spawn_split_material_mesh(
             visual_id = p.createVisualShape(
                 p.GEOM_MESH,
                 fileName=part_path,
-                meshScale=[1.0, 1.0, 1.0],
+                meshScale=mesh_scale,
                 rgbaColor=rgba,
                 flags=flags,
                 physicsClientId=cli,
@@ -124,7 +126,7 @@ def spawn_split_material_mesh(
             visual_id = p.createVisualShape(
                 p.GEOM_MESH,
                 fileName=part_path,
-                meshScale=[1.0, 1.0, 1.0],
+                meshScale=mesh_scale,
                 rgbaColor=rgba,
                 physicsClientId=cli,
             )
