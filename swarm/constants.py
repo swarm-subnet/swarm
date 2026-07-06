@@ -310,6 +310,7 @@ SAR_HYSTERESIS_GRACE = 0.1           # m / m·s⁻¹ — boundary grace
 SAR_NO_TOUCH_RADIUS = 0.8            # m — terminal-failure sphere around victim
 SAR_DWELL_SEC = 2.0                  # s — continuous predicate hold required
 SAR_SEARCH_RADIUS = 30.0             # m — search clue circle radius
+SAR_MAX_VICTIM_DISTANCE_M = 80.0     # m — cap victim spawn distance from the drone start so tasks stay solvable within the horizon
 SAR_SWEEP_WIDTH = 24.0               # m — assumed sweep width for target-time
 SAR_TIME_TERM_BUFFER = 1.03          # multiplier on the Candidate-C target time
 

@@ -101,10 +101,13 @@ def find_spawn_xy(
     body_tags,
     bounds: Optional[float] = None,
     on_attempt=None,
+    near: Optional[Tuple[float, float]] = None,
+    max_dist: Optional[float] = None,
 ) -> Tuple[float, float, SurfaceHit]:
     bound = float(bounds) if bounds is not None else _DEFAULT_MAP_BOUNDS.get(challenge_type, 20.0)
     accepted = accepted_categories_for(challenge_type)
     last_reason = "no_attempts"
+    fallback: Optional[Tuple[float, Tuple[float, float, SurfaceHit]]] = None
     for attempt in range(MAX_SPAWN_ATTEMPTS):
         x, y = _sample_candidate(map_seed, attempt, bound)
         hit = resolve_surface(cli, x, y, body_tags, accepted)
@@ -133,9 +136,20 @@ def find_spawn_xy(
             if on_attempt is not None:
                 on_attempt(attempt, "no_touch_sphere_blocked", x, y)
             continue
+        if near is not None and max_dist is not None:
+            dist = ((x - near[0]) ** 2 + (y - near[1]) ** 2) ** 0.5
+            if dist > max_dist:
+                if fallback is None or dist < fallback[0]:
+                    fallback = (dist, (x, y, hit))
+                last_reason = "beyond_max_dist"
+                if on_attempt is not None:
+                    on_attempt(attempt, "beyond_max_dist", x, y)
+                continue
         if on_attempt is not None:
             on_attempt(attempt, "accept", x, y)
         return x, y, hit
+    if fallback is not None:
+        return fallback[1]
     raise SARSpawnError(
         f"spawn exhausted {MAX_SPAWN_ATTEMPTS} attempts for seed={map_seed} "
         f"challenge_type={challenge_type}: last_reason={last_reason}"

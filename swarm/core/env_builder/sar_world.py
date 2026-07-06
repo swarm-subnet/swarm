@@ -10,6 +10,7 @@ from .sar_tagging import build_and_tag_map, enumerate_bodies, tag_world_after_bu
 from .sar_types import SafetyPatch, SARWorld
 from .search_clue import sample_search_centre
 from .spawn_pipeline import SARSpawnError, find_spawn_xy
+from swarm.constants import SAR_MAX_VICTIM_DISTANCE_M
 from .victim import select_victim_split_dir, spawn_victim, terrain_slope_deg
 
 
@@ -32,6 +33,8 @@ def build_sar_world(
         map_seed=seed,
         challenge_type=challenge_type,
         body_tags=tagger.body_tags,
+        near=(float(start[0]), float(start[1])) if start is not None else None,
+        max_dist=SAR_MAX_VICTIM_DISTANCE_M,
     )
 
     rng = random.Random(seed ^ 0xA5A5A5A5)
