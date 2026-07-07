@@ -722,6 +722,59 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
     assert all_indices == list(range(300, 310))
 
 
+def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=11,
+        get_all_seeds=lambda: list(range(10)),
+        get_screening_seeds=lambda: list(range(5)),
+    )
+
+    monkeypatch.setattr(validator_evaluation, "BENCHMARK_SCREENING_SEED_COUNT", 5)
+    monkeypatch.setattr(validator_evaluation, "BENCHMARK_FULL_SEED_COUNT", 5)
+
+    screening_offsets: list[int] = []
+    benchmark_offsets: list[int] = []
+
+    def _screening_tasks(sim_dt, seeds, family_id, offset, total_seed_count):
+        screening_offsets.append(offset)
+        return [f"scr-{offset}"]
+
+    def _benchmark_tasks(sim_dt, seeds, family_id, offset, total_seed_count):
+        benchmark_offsets.append(offset)
+        return [f"bench-{offset}"]
+
+    monkeypatch.setattr(validator_evaluation, "build_screening_tasks", _screening_tasks)
+    monkeypatch.setattr(validator_evaluation, "build_benchmark_tasks", _benchmark_tasks)
+
+    uploads: list[list[dict]] = []
+
+    async def _capture_upload(**kwargs):
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture_upload
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+
+    async def _run():
+        return await validator_evaluation._run_full_benchmark(
+            validator,
+            uid=42,
+            model_path=Path("/tmp/fake.zip"),
+            seeds_from=0,
+            seeds_to=10,
+        )
+
+    avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert screening_offsets == [0, 1, 2, 3, 4]
+    assert benchmark_offsets == [0, 1, 2, 3, 4]
+    all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
+    assert all_indices == list(range(10))
+
+
 def test_run_screening_streams_with_unified_chunks(monkeypatch):
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(

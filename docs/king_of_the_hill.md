@@ -140,7 +140,7 @@ champion ≤ 0.5      floor = 0.015     (flat — anti-noise while scores are lo
 champion → 1.00     floor → 0.005     (smaller, since every point near the top is hard-won)
 ```
 
-So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster. The same gate is applied at screening and at final crowning, and a family's registry policy can override the numbers.
+So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster. The gate is applied at final crowning (and at screening, when that phase is enabled), and a family's registry policy can override the numbers.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -279,7 +279,7 @@ No. Family slices are **absolute and independent** — a new family takes its sl
 
 | Term | Meaning |
 |---|---|
-| **King** | A model that took the throne by passing the screening + benchmark and clearing the dynamic crowning floor. |
+| **King** | A model that took the throne by passing the full benchmark and clearing the dynamic crowning floor. |
 | **Challenge family** | An independent competition (e.g. Autopilot, Search-and-Rescue), each with its own lineage, window, and emission slice. |
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |

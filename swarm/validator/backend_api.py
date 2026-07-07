@@ -1,15 +1,19 @@
 """
-Backend API Client for Swarm v4 Benchmark System.
+Backend API client for the Swarm benchmark system.
 
-Validators need to report scores to backend. Backend aggregates
-scores from all validators (51% stake, average) and calculates final weights.
-This creates HTTP client to talk to backend.
+Validators report scores to the backend; the backend aggregates reports
+from all validators (51% stake, average) and calculates the final weights.
+This module is the HTTP client for that conversation.
 
-Endpoints (all under /validators prefix):
-- POST /validators/models/new           - Tell backend "I found a new model"
-- POST /validators/models/{uid}/screening - Submit screening result (200 private seeds)
-- POST /validators/models/{uid}/score   - Submit full benchmark score (1000 seeds)
+Endpoints used (all under /validators prefix):
+- GET  /validators/next-task            - Long-poll for the next authorized evaluation task
+- POST /validators/seed-scores          - Stream per-seed scores for the active task
+- POST /validators/tasks/{id}/result    - Submit the aggregated task result
 - GET  /validators/sync                 - Get current weights + re-eval queue + authoritative benchmark epoch
+
+The task metadata carries the phase (BENCHMARK, REEVAL, or SCREENING when the
+backend enables that pre-phase) and the seed range to run; all pass/fail
+decisions live backend-side.
 
 Freeze-last behavior:
 - If backend is down → use last known weights (saved locally)
@@ -19,11 +23,6 @@ Submission Rules:
 - Each miner hotkey can only submit ONE active model at a time
 - `EPOCH_EXPIRED` submissions free the hotkey for resubmission
 - `github_url` is required so pending models propagate across validators
-
-Scoring Thresholds (calculated by backend):
-- Screening pass: score >= 0.1 OR score >= 101% of current top model
-- Full benchmark: 51% stake must report before score is finalized
-- Champion: highest benchmark score after 51% threshold met
 """
 
 import asyncio

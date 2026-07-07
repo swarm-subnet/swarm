@@ -503,7 +503,7 @@ async def _run_full_benchmark(
     wrong-model edge cases).
     """
     if seeds is None:
-        # REEVAL (seeds_from < BENCHMARK_SCREENING_SEED_COUNT) covers all 1100 seeds; benchmark covers only 300..1099.
+        # A range starting below the screening boundary (REEVAL, or BENCHMARK when the backend runs without screening) spans the full seed list.
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
             all_family_seeds = _seed_manager_call(
                 self.seed_manager, "get_all_seeds", family_id

@@ -302,27 +302,24 @@ pm2 start --name auto_update_validator \
 2. **Download from GitHub**
    Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
 
-3. **Screening (200 seeds)**
-   New models run against 200 screening seeds first. The full benchmark is unlocked only once stake-weighted consensus clears **champion + 0.015** (or >= 0.01 if no champion exists). Pass/fail is a network decision — never a single validator's verdict.
+3. **Full benchmark (1,100 seeds)**
+   Every new model is evaluated on the full 1,100-seed set across all six environment types, in parallel Docker containers. The backend can additionally enable a screening pre-phase (a smaller seed set gated on the champion's score); the task metadata tells the validator which phase and seed range to run — no local configuration is needed.
 
-4. **Full benchmark (800 seeds)**
-   Models that advance are evaluated on the remaining 800 seeds across all six environment types, in parallel Docker containers.
-
-5. **Report scores**
+4. **Report scores**
    Per-seed and aggregate scores are submitted to the backend as they are computed.
 
-6. **Consensus**
+5. **Consensus**
    Reports from all active validators are combined by stake (>= 51%) to determine the network's per-model result.
 
-7. **Apply weights**
+6. **Apply weights**
    Validators pull the resulting weight map and set it on-chain each forward cycle.
 
-8. **Caching**
+7. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is never re-evaluated within the same epoch.
 
 ### Per-Validator Seeds
 
-Each validator independently generates its own 1,000 random seeds per epoch using `random.SystemRandom()`. With 1,000 seeds per validator and stake-weighted consensus, statistical variance across validators is negligible.
+Each validator independently generates its own 1,100 random seeds per epoch using `random.SystemRandom()`. With 1,100 seeds per validator and stake-weighted consensus, statistical variance across validators is negligible.
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 

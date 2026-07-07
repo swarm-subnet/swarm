@@ -232,7 +232,7 @@ swarm benchmark --model Submission/submission.zip --workers 4
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 ```
 
-The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds total (200 screening + 800 full).
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,100 seeds total.
 
 ### View Results
 
@@ -463,15 +463,13 @@ Past kings keep earning while they stay in the window — but a seat is paid for
 1. **Miner** commits the GitHub URL on-chain (one-shot, then goes offline)
 2. **Backend** detects the commit. The chain scanner polls every ~3 minutes, so registration completes within **3–5 minutes** of chain-commit finalization. The backend downloads `submission.zip`, verifies the SHA-256 and README hashes, and adds the model to the pending queue
 3. **Validators** sync the pending queue, download the model directly from the miner's GitHub repo, and verify the hash against the backend record
-4. Each validator runs the agent in a sandboxed Docker container:
-   - **Screening** (200 seeds) — the model advances to full benchmark only once validator scores clear **champion + 0.015** (or >= 0.01 if no champion)
-   - **Full benchmark** (800 seeds) — remaining seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
-5. Final score and pass/fail are determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
+4. Each validator runs the agent in a sandboxed Docker container through the **full benchmark** — 1,100 seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
+5. Final score is determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
 6. **Winner-take-all** — the highest-scoring model receives emissions
 
 ### Epoch Rotation
 
-Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates 1,000 cryptographically random seeds per epoch using `random.SystemRandom()` — there is no shared secret.
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates 1,100 cryptographically random seeds per epoch using `random.SystemRandom()` — there is no shared secret.
 
 Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 
@@ -479,10 +477,7 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 
 | Parameter | Value |
 |-----------|-------|
-| Total seeds per epoch | 1,000 |
-| Screening seeds | 200 |
-| Full benchmark seeds | 800 |
-| Screening threshold | >= champion score + 0.015 (or >= 0.01 bootstrap) |
+| Total seeds per epoch | 1,100 |
 | Max submission size | 50 MiB (compressed) |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -516,16 +511,16 @@ Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC)
 Validators process the pending model queue in submission order, one item at a time per validator. Expected latency depends on queue depth:
 
 - **Short queue** — first score reported within 10–30 minutes of submission.
-- **Busy queue** — add the screening + benchmark time for each model ahead.
+- **Busy queue** — add the benchmark time for each model ahead.
 - **Epoch rollover freeze** — new-model work is paused briefly before each epoch transition and resumes after seed rotation.
 
 The leaderboard reshuffles once stake-weighted consensus settles across validators.
 
-### What happens if my model fails screening?
+### What happens if my model fails evaluation?
 
 The hotkey is done. Each hotkey can commit **one model, lifetime** — any later commitment from the same hotkey is ignored. A failed model stays recorded against that hotkey; to compete again, register a new hotkey and submit from it.
 
-Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats **champion + 0.015** across all environment types.
+Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats the current champion across all environment types.
 
 ### Can I update my submission after committing?
 
