@@ -226,7 +226,8 @@ def test_model_package_creates_zip(tmp_path):
     out_zip = tmp_path / "submission.zip"
 
     rc = cli.main(
-        ["model", "package", "--source", str(src), "--output", str(out_zip)]
+        ["model", "package", "--source", str(src), "--output", str(out_zip),
+         "--family-id", "cf_autopilot"]
     )
     assert rc == 0
     assert out_zip.exists()
@@ -265,6 +266,56 @@ def test_model_package_supports_family_override(tmp_path):
     assert contract["family_id"] == "cf_autopilot"
 
 
+def test_prompt_family_id_selects_by_number(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "3")
+    assert cli._prompt_family_id() == "cf_search_and_rescue"
+
+
+def test_prompt_family_id_reprompts_on_invalid(monkeypatch):
+    answers = iter(["0", "99", "x", "1"])
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    assert cli._prompt_family_id() == "cf_autopilot"
+
+
+def test_prompt_family_id_cancel_returns_none(monkeypatch):
+    def _raise(*_a, **_k):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _raise)
+    assert cli._prompt_family_id() is None
+
+
+def test_model_package_errors_without_family_id_noninteractive(tmp_path, capsys):
+    src = tmp_path / "agent"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "drone_agent.py").write_text("class DroneFlightController:\n    pass\n")
+    out_zip = tmp_path / "submission.zip"
+
+    rc = cli.main(["model", "package", "--source", str(src), "--output", str(out_zip)])
+
+    assert rc == 1
+    assert not out_zip.exists()
+    assert "--family-id is required" in capsys.readouterr().err
+
+
+def test_model_package_prompts_family_when_interactive(tmp_path, monkeypatch):
+    src = tmp_path / "agent"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "drone_agent.py").write_text("class DroneFlightController:\n    pass\n")
+    out_zip = tmp_path / "submission.zip"
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "3")
+
+    rc = cli.main(["model", "package", "--source", str(src), "--output", str(out_zip)])
+
+    assert rc == 0
+    with zipfile.ZipFile(out_zip) as zf:
+        contract = json.loads(zf.read(POLICY_CONTRACT_FILENAME).decode("utf-8"))
+    assert contract["family_id"] == "cf_search_and_rescue"
+
+
 def test_model_package_requires_overwrite_for_existing_output(tmp_path):
     src = tmp_path / "agent"
     src.mkdir(parents=True, exist_ok=True)
@@ -273,7 +324,8 @@ def test_model_package_requires_overwrite_for_existing_output(tmp_path):
     out_zip.write_bytes(b"existing")
 
     rc = cli.main(
-        ["model", "package", "--source", str(src), "--output", str(out_zip)]
+        ["model", "package", "--source", str(src), "--output", str(out_zip),
+         "--family-id", "cf_autopilot"]
     )
 
     assert rc == 1
@@ -289,7 +341,8 @@ def test_model_package_skips_pycache_files(tmp_path):
     out_zip = tmp_path / "submission.zip"
 
     rc = cli.main(
-        ["model", "package", "--source", str(src), "--output", str(out_zip)]
+        ["model", "package", "--source", str(src), "--output", str(out_zip),
+         "--family-id", "cf_autopilot"]
     )
 
     assert rc == 0
@@ -440,6 +493,61 @@ def test_repo_verify_rejects_bad_artifact_and_surfaces_family_id(tmp_path, capsy
     output = capsys.readouterr().out
     assert "Compliant: False" in output
     assert "Reason: artifact_hash_mismatch:cf_autopilot:artifacts/cf_autopilot/submission.zip" in output
+
+
+def _package_repo(repo_root, tmp_path):
+    src = tmp_path / "agent"
+    _write_smoke_ready_agent(src, speed=0.5)
+    assert (
+        cli.main(
+            [
+                "repo", "package", "--repo-root", str(repo_root),
+                "--family-source", f"cf_autopilot={src}",
+            ]
+        )
+        == 0
+    )
+
+
+def test_repo_package_writes_canonical_readme(tmp_path, capsys):
+    import hashlib
+    from swarm.utils.github import REQUIRED_README_HASH
+
+    repo_root = tmp_path / "submission_repo"
+    _package_repo(repo_root, tmp_path)
+
+    readme = repo_root / "README.md"
+    assert readme.is_file()
+    assert hashlib.sha256(readme.read_bytes()).hexdigest() == REQUIRED_README_HASH
+    assert "README.md: written (canonical template)" in capsys.readouterr().out
+
+
+def test_repo_verify_fails_on_missing_readme(tmp_path, capsys):
+    repo_root = tmp_path / "submission_repo"
+    _package_repo(repo_root, tmp_path)
+    (repo_root / "README.md").unlink()
+
+    rc = cli.main(["repo", "verify", "--repo-root", str(repo_root), "--strict-manifest"])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "README.md: FAIL (missing" in out
+    assert "Compliant: False" in out
+
+
+def test_repo_verify_fails_on_edited_readme(tmp_path, capsys):
+    repo_root = tmp_path / "submission_repo"
+    _package_repo(repo_root, tmp_path)
+    readme = repo_root / "README.md"
+    readme.write_bytes(readme.read_bytes() + b"\n<!-- oops -->\n")
+
+    rc = cli.main(["repo", "verify", "--repo-root", str(repo_root), "--strict-manifest"])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "README.md: FAIL" in out
+    assert "does not match the template" in out
+    assert "Compliant: False" in out
 
 
 def test_model_test_fails_for_invalid_requirements(tmp_path):

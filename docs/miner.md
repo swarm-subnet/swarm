@@ -2,7 +2,7 @@
 
 # Swarm Miner Guide
 
-Train an autonomous drone pilot, benchmark it against 1,000 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
+Train an autonomous drone pilot, benchmark it against 1,100 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
 
 ---
 
@@ -11,14 +11,15 @@ Train an autonomous drone pilot, benchmark it against 1,000 procedurally generat
   <ol>
     <li><a href="#system-requirements">System Requirements</a></li>
     <li><a href="#installation">Installation</a></li>
+    <li><a href="#challenge-families">Challenge Families</a></li>
     <li><a href="#workflow">Workflow</a></li>
     <li><a href="#creating-your-agent">Creating Your Agent</a></li>
     <li><a href="#observations--actions">Observations & Actions</a></li>
     <li><a href="#cli">CLI</a></li>
     <li><a href="#github-repo-setup">GitHub Repo Setup</a></li>
     <li><a href="#running-the-miner">Running the Miner</a></li>
-    <li><a href="#private-track">Private Track</a></li>
     <li><a href="#scoring">Scoring</a></li>
+    <li><a href="#emissions-king-of-the-hill">Emissions: King of the Hill</a></li>
     <li><a href="#benchmark-system">Benchmark System</a></li>
     <li><a href="#docker-whitelist">Docker Whitelist</a></li>
     <li><a href="#faq">FAQ</a></li>
@@ -31,7 +32,7 @@ Train an autonomous drone pilot, benchmark it against 1,000 procedurally generat
 
 ## System Requirements
 
-Mining is extremely lightweight — your miner submits a GitHub URL to the backend and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (SB3, PyTorch, custom RL — your choice).
+Mining is extremely lightweight: your miner commits its submission to the chain (a GitHub URL for public families, or a hash plus a one-time artifact upload for the private families) and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (your choice of SB3, PyTorch, custom RL).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -57,13 +58,31 @@ pip install -e .
 
 ---
 
+## Challenge Families
+
+Swarm runs **five challenge families**, all active. Three are public track (Autopilot, Swarm Autopilot, Interceptor); two, Search and Rescue and Swarm Search and Rescue, are private track. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey can hold **one model per family**, up to five concurrent submissions.
+
+| Family | ID | Track | Drones | Maps | Emission slice | Guide |
+|--------|----|-------|--------|------|----------------|-------|
+| Autopilot / Navigation | `cf_autopilot` | Public | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/autopilot.md](families/autopilot.md) |
+| Search and Rescue | `cf_search_and_rescue` | Private | 1 | City, Open, Mountain, Village, Warehouse, Forest | 30% | [families/search_and_rescue.md](families/search_and_rescue.md) |
+| Swarm Autopilot | `cf_swarm_autopilot` | Public | 2–8 | City, Open, Mountain, Village, Forest | 15% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
+| Swarm Search and Rescue | `cf_swarm_sar` | Private | 2–8 | City, Open, Mountain, Village, Forest | 30% | [families/swarm_sar.md](families/swarm_sar.md) |
+| Interceptor | `cf_interceptor` | Public | 1 (vs. a validator-flown target) | Open | 15% | [families/interceptor.md](families/interceptor.md) |
+
+The swarm families fly 2–8 drones per seed, all under one policy. Emission slices are registry defaults and sum to 1.0; how each slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
 ## Workflow
 
-The full miner workflow — from first install to competing on the leaderboard:
+The full miner workflow, from first install to competing on the leaderboard:
 
 ```
 1. swarm doctor              ← Check environment readiness
-2. Train your model           ← SB3, PyTorch, custom — your choice
+2. Train your model           ← SB3, PyTorch, or custom
 3. swarm model test           ← Validate source folder before packaging
 4. swarm model package        ← Bundle one family into Submission/submission.zip
 5. swarm model verify         ← Verify local artifact compliance
@@ -71,8 +90,10 @@ The full miner workflow — from first install to competing on the leaderboard:
 7. swarm repo package         ← Build repo-root artifacts/ + submission_manifest.json
 8. swarm repo verify          ← Verify full GitHub submission layout
 9. Push to GitHub             ← Public repo with README + manifest + family artifacts
-10. Submit model              ← One-shot submit, then go offline
+10. Submit model              ← Commit the repo URL on-chain, then go offline
 ```
+
+> Run `swarm model package` without `--family-id` and it asks which family you trained for, so you never bundle the wrong one. Pass `--family-id` to skip the prompt (required in scripts); a mismatched policy contract fails verification.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -102,6 +123,7 @@ class DroneFlightController:
     def act(self, observation):
         # observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and "state" (N,)
         # Return action array [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
+        # (shapes shown are the Search-and-Rescue contract -- see families/<family>.md for yours)
         action, _ = self.model.predict(observation, deterministic=True)
         return action
 
@@ -111,14 +133,17 @@ class DroneFlightController:
 ```
 
 **Required files:**
-- `drone_agent.py` — Your controller class (REQUIRED)
-- `requirements.txt` — Additional pip packages (optional, must be on the [whitelist](#docker-whitelist))
-- Model files — weights, configs, etc.
+- `drone_agent.py`: Your controller class, at the zip root (REQUIRED)
+- `requirements.txt`: Additional pip packages (optional, must be on the [whitelist](#docker-whitelist))
+- Model files: weights, configs, etc.
 
 **Auto-injected (do not include):**
-- `main.py`, `agent.capnp`, `agent_server.py` — provided by the evaluation system
+- `main.py`, `agent.capnp`, `agent_server.py`: provided by the evaluation system
 
-Submissions must be ≤ **50 MiB** compressed.
+**Hard limits, enforced at intake:**
+- Total **uncompressed** content ≤ **50 MiB** (summed across zip entries: a zip-bomb guard, so squeezing the archive harder does not help)
+- No `.exe`, `.so`, `.dll`, `.sh`, `.bat`, or `.pyc` entries
+- No path traversal, absolute paths, or symlinks inside the zip
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -126,15 +151,17 @@ Submissions must be ≤ **50 MiB** compressed.
 
 ## Observations & Actions
 
+The interface below is the **Search and Rescue** one. Each family defines its own observation/action contract. Check the [family guide](#challenge-families) for the family you target before training.
+
 ### Observation Space
 
 | Field | Shape | Description |
 |-------|-------|-------------|
-| `depth` | (256, 256, 1) | Normalized depth map (0.5m – 30m range) |
+| `depth` | (256, 256, 1) | Normalized depth map (0.5 m – 30 m range) |
 | `rgb` | (256, 256, 3) | On-demand colour frame in [0,1]; all zeros unless your previous action requested it (max 40 requests per episode) |
 | `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
-The search clue is a 2D (Δx, Δy) offset sampled uniformly inside a 30m circle around the victim's true XY (no Z component in V5). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
+The search clue is an offset sampled inside a **30 m** circle around the victim (the swarm SAR family shares one clue over a disk that scales with team size: 80·√(n/8) m, i.e. 40 m for 2 drones up to 80 m for 8). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
 
 ### Action Space
 
@@ -175,18 +202,15 @@ Verifies Python version, Docker, required dependencies, writable directories, an
 swarm model test --source my_agent/
 ```
 
-Validates your source folder — checks `drone_agent.py` exists and compiles, `requirements.txt` format, and estimated package size.
+Validates your source folder: checks `drone_agent.py` exists and compiles, `requirements.txt` format, and estimated package size.
 
 ### Package Your Agent
 
 ```bash
-swarm model package --source my_agent/
-
-# Or select a specific family contract
 swarm model package --source my_agent/ --family-id cf_autopilot
 ```
 
-Bundles your `drone_agent.py`, model files, optional `requirements.txt`, and a generated `swarm_policy_contract.json` into `Submission/submission.zip` (default path).
+Bundles your `drone_agent.py`, model files, optional `requirements.txt`, and a generated `swarm_policy_contract.json` into `Submission/submission.zip` (default path). Omit `--family-id` in a terminal and it prompts you to pick the family; it is required (and errors without it) for non-interactive runs.
 
 ### Verify Submission
 
@@ -201,8 +225,8 @@ Checks structure, file sizes, family policy-contract compatibility, and a local 
 ```bash
 swarm repo package \
   --repo-root YOUR_REPO \
-  --family-source cf_search_and_rescue=./sar_agent \
-  --family-source cf_autopilot=./autopilot_agent
+  --family-source cf_autopilot=./autopilot_agent \
+  --family-source cf_swarm_autopilot=./swarm_agent
 
 # Or update a single family later
 swarm repo package \
@@ -250,30 +274,26 @@ Validators download models from your **public GitHub repository**. You must set 
 
 ### 1. Create Your Repo
 
-Create a public GitHub repository (e.g., `github.com/YOUR_USER/any-name`). Each repo is bound to a single hotkey — validators reject a repo already claimed by a different miner.
+Create a public GitHub repository. The URL you commit must be exactly `https://github.com/YOUR_USER/YOUR_REPO`: no subpaths, no other hosts. Files are fetched from the `main` branch (falling back to `master`). Each repo is bound to a single hotkey. A repo URL already registered to a different miner is skipped.
 
-### 2. Copy the Template README
+### 2. The Template README
 
-Your repo **must** contain the exact Swarm template README. This is enforced by SHA-256 hash — any modification will cause validators to reject your model.
+Your repo **must** contain the exact Swarm template README, enforced by SHA-256 hash. You do not copy it by hand: `swarm repo package` writes the correct `README.md` into your repo for you, and `swarm repo verify` re-checks it before you publish.
 
-```bash
-cp swarm/templates/README.md YOUR_REPO/README.md
-```
-
-Do not edit this file. The hash is checked on every download.
+> **Why this matters: the failure is silent.** If `README.md` is not a byte-identical copy of the template, the chain scanner never registers your submission, and no error reaches you: the commitment simply produces nothing on the leaderboard. The tooling prevents this, so the rule is simple: let `swarm repo package` write the README and do not hand-edit it. If a submission never appears, run `swarm repo verify` and check the `README.md` line **first**.
 
 ### 3. Add `submission_manifest.json`
 
-Multi-family repos now declare published artifacts through a repo-root
-`submission_manifest.json`.
+Repos declare published artifacts through a repo-root `submission_manifest.json`.
 
 Repo layout rules for manifest v1:
 
 - `submission_manifest.json` lives at the repo root.
 - `README.md` lives at the repo root.
-- Family artifacts live under `artifacts/<family_id>/`.
-- Each artifact entry points to one `.zip` file and one `family_id`.
+- Family artifacts live under `artifacts/<family_id>/` with a `.zip` extension.
+- Each artifact entry declares `family_id`, `interface_version`, `artifact_path`, `sha256`, and `metadata`.
 - A repo can publish at most one artifact per `family_id`.
+- Every artifact's `sha256` is verified against the downloaded file.
 
 Minimal example:
 
@@ -288,28 +308,27 @@ Minimal example:
   },
   "artifacts": [
     {
-      "family_id": "cf_search_and_rescue",
+      "family_id": "cf_autopilot",
       "interface_version": "submission_zip.v1",
-      "artifact_path": "artifacts/cf_search_and_rescue/submission.zip",
+      "artifact_path": "artifacts/cf_autopilot/submission.zip",
       "sha256": "<artifact sha256>",
       "metadata": {
-        "notes": "baseline SAR agent"
+        "notes": "baseline autopilot agent"
       }
     }
   ]
 }
 ```
 
-Legacy single-artifact repos that only publish a root `submission.zip` remain
-temporarily compatible, but new multi-family work should use the manifest.
+All five families use the `submission_zip.v1` interface. Legacy repos with only a root `submission.zip` and no manifest are still accepted and map to `cf_autopilot`, but new work should use the manifest.
 
-### 3. Package Family Artifacts Into The Repo
+### 4. Package Family Artifacts Into The Repo
 
 ```bash
 swarm repo package \
   --repo-root YOUR_REPO \
-  --family-source cf_search_and_rescue=./sar_agent \
-  --family-source cf_autopilot=./autopilot_agent
+  --family-source cf_autopilot=./autopilot_agent \
+  --family-source cf_swarm_autopilot=./swarm_agent
 
 swarm repo verify --repo-root YOUR_REPO --strict-manifest
 
@@ -318,9 +337,13 @@ git commit -m "Add submission"
 git push
 ```
 
-### 4. Submit
+### 5. Submit
 
-> **One-shot.** Each hotkey can commit one model, lifetime. The chain scanner ignores any later commitment from the same hotkey, and the database enforces a one-model-per-hotkey constraint. Benchmark locally and only commit when the model consistently beats **champion + 0.015**. To try a different model, a new hotkey and subnet registration are required.
+> **One model per hotkey per family.** A hotkey runs one model in each family it enters, so a single hotkey can compete in up to all five families at once: the three public families published from one repo's manifest, plus Search and Rescue and Swarm SAR submitted separately via the private track.
+>
+> Treat every submission as final. Once your model is evaluated in a family, that hotkey's slot in that family is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again in a family you have already entered, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
+>
+> The slot only reopens on its own if the submission never finished before the weekly rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey per family.
 
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
@@ -329,7 +352,7 @@ To protect your model from front-running (someone copying your submission before
 3. Wait for the commit to finalize (~30 seconds)
 4. Make the repo **public**
 
-The system processes commitments in block order — the earliest committer always wins, and duplicate model hashes are automatically rejected. Newer versions of the Bittensor SDK also encrypt your URL on-chain until the reveal round, adding another layer of protection.
+Commitments are processed in block order: the earliest committer wins. A model hash already registered to another miner is rejected, and so is a repo URL owned by a different hotkey.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -367,20 +390,13 @@ python neurons/miner.py \
      --github_url "https://github.com/YOUR_USER/YOUR_REPO"
 ```
 
-The miner submits your model and exits. You do **not** need to stay online — validators discover your model automatically.
+The miner commits your repo URL on-chain and exits. You do **not** need to stay online: validators discover your model automatically.
 
-<p align="right">(<a href="#miner-top">back to top</a>)</p>
+One repo URL covers every family artifact in your manifest: the scanner creates one model row per declared family.
 
----
+### Submit a Private Family (Search and Rescue, Swarm SAR)
 
-## Private Track
-
-Some challenge families are marked **private** in the family registry. On a private family your model is never published: there is no GitHub repo, no template README, and no manifest. Only the artifact's SHA-256 is committed on-chain; the zip itself is uploaded to the operator's private vault, and only whitelisted trusted validators can download it for evaluation.
-
-**Stays public:** your UID, scores, ranking, and the model hash.
-**Stays hidden:** your code, weights, and any source URL.
-
-### Submit a Private Model
+Search and Rescue and Swarm Search and Rescue run on the private track: no GitHub repo, no `--github_url`. Instead, commit the artifact's sha256 hash on-chain and upload the zip itself directly to the backend:
 
 ```bash
 source miner_env/bin/activate
@@ -391,27 +407,13 @@ python neurons/miner.py \
      --wallet.name my_cold \
      --wallet.hotkey my_hot \
      --family_id cf_search_and_rescue \
-     --artifact ./Submission/submission.zip \
-     --backend_url https://api.swarm124.com
+     --artifact ./submission.zip \
+     --backend_url <backend>
 ```
 
-The miner commits the artifact's SHA-256 on-chain, waits for the backend to register the commitment, then uploads the zip signed by your hotkey. The upload must hash to the committed digest — a different file is rejected.
+Package the artifact with `swarm model package --family-id cf_search_and_rescue` first, same as the public track. If the upload fails after the chain commit finalizes, re-run with `--upload_only` to retry just the upload without re-committing. The artifact bytes and any source code stay on the backend: only trusted validators fetch it, and it is never made public. Your leaderboard entry, per-seed scores, and the on-chain sha256 are public like any other family; only the model and its source are hidden.
 
-| Flag | Description |
-|------|-------------|
-| `--family_id` | The private family this submission targets |
-| `--artifact` | Path to the `submission.zip` to upload privately |
-| `--backend_url` | Backend base URL for the private upload |
-| `--upload_only` | Skip the chain commit and only (re)upload the artifact |
-
-If the chain commit succeeded but the upload failed (network drop, backend restart), re-run the same command with `--upload_only` — the commitment is already on-chain and is never re-sent.
-
-### Private Track Rules
-
-- The **one-shot per hotkey** rule applies exactly as on the public track.
-- Package and verify the artifact the same way (`swarm model package`, `swarm model verify`) — the policy contract and the **50 MiB** compressed limit still apply.
-- The zip must be **fully self-contained**: `requirements.txt` is **not** installed for private submissions, because private models are evaluated with networking locked down end to end. Vendor every dependency inside the zip.
-- The GitHub repo setup and template README steps do **not** apply to private submissions.
+A commitment must match its family's track: a public github-url commitment to a private family, or a private sha256 commitment to a public family, is rejected.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -419,19 +421,25 @@ If the chain commit succeeded but the upload failed (network drop, backend resta
 
 ## Scoring
 
+Per-seed reward for most families:
+
 ```
 score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
 | Term | Weight | Description |
 |------|--------|-------------|
-| **Success** | 0.45 | 1.0 if CONFIRMED, 0.0 otherwise |
-| **Time** | 0.45 | 1.0 if within target time, decays linearly to 0.0 at horizon |
-| **Safety** | 0.10 | 1.0 if min clearance ≥ safe distance, 0.0 if ≤ 0.2m, linear between (safe = 1.0m default, 0.6m for Forest) |
+| **Success** | 0.45 | 1.0 if the mission objective is met, 0.0 otherwise |
+| **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
+| **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
 
-Non-success failures (collision, no-touch sphere, infeasible, spawn-failure, tilt, timeout) score **0.01** participation for legitimate models. Evaluator errors and illegitimate models score 0.0.
+The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no safety term.
 
-### CONFIRMED Requirements (V5 Search-and-Rescue)
+Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
+
+Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each batch (earliest report per seed counts: re-runs never double-count).
+
+### CONFIRMED Requirements (Search and Rescue)
 
 All four conditions must hold continuously for 2.0 seconds:
 
@@ -439,18 +447,35 @@ All four conditions must hold continuously for 2.0 seconds:
 |-----------|-----------|
 | Drone speed | < 1.0 m/s |
 | Horizontal distance to victim | ≤ 2.0 m |
-| Height above victim's AABB top | 2.0 - 4.0 m |
+| Height above victim's AABB top | 2.0 – 4.0 m |
 | Distance from 0.8 m no-touch sphere | strictly outside |
 
-Boundaries get a 10 cm / 0.1 m·s⁻¹ hysteresis grace once the predicate is already active, except the no-touch sphere which stays strict.
+The speed, horizontal-distance, and height-band bounds get a 0.1 m / 0.1 m·s⁻¹ hysteresis grace once the predicate is already active; the 0.8 m no-touch sphere gets no grace.
 
-### Emissions — King of the Hill
+### Becoming Champion
 
-Subnet emissions are **not** winner-take-all. They are split among the **last 5 champions** (current king plus the four most recent past kings), weighted by how much each one improved the network's best score when they were crowned.
+The first evaluated model in a family becomes champion unconditionally. After that, a challenger must beat the reigning champion's score by a **dynamic improvement floor**: flat while the champion score is ≤ 0.5, then decaying toward a minimum as the champion approaches a perfect 1.0: late-game inches are cheaper to require than early-game leaps.
 
-The harder the jump, the larger the share. A late-stage jump from 0.92 → 0.95 earns more than the same absolute jump earlier in the curve, because there is less remaining headroom near a perfect score. A copycat model that barely clears the +0.015 floor earns almost nothing; a real innovation that closes a big chunk of the remaining headroom earns a dominant share for the next four dethronings.
+| Families | Floor (champion ≤ 0.5) | Floor minimum (champion → 1.0) |
+|----------|------------------------|--------------------------------|
+| Autopilot, Swarm Autopilot, Interceptor | +0.015 | +0.005 |
+| Search and Rescue, Swarm SAR | +0.02 | +0.007 |
 
-Past kings keep earning while they stay in the window — but a seat is paid for at most **7 days** from crowning. If nobody beats you and you do not ship a stronger model within 7 days, your slice stops and burns; the only way to refresh it is a new crowning. The share is locked at crowning (never re-evaluated upward), and it also stops if your repo becomes unreachable. The formula and edge cases are in [docs/king_of_the_hill.md](king_of_the_hill.md).
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Emissions: King of the Hill
+
+Emissions are **not** winner-take-all, and there is no single global leaderboard payout. Each family runs its own King-of-the-Hill lineage: the family's emission slice is split across its **last five crowned kings**, weighted by how much log-headroom each king closed when crowned and tapered by recency. Being dethroned doesn't stop your earnings. Only five newer crownings pushing you out of the window does.
+
+The practical consequences:
+
+- A copycat that barely clears the floor earns almost nothing; a real jump earns a dominant share and keeps paying through the next several dethronings.
+- Your seat's share is frozen at crowning; champion re-evaluations on fresh seeds don't change it.
+- Payout requires your repo to stay intact and reachable: a deleted, privatized, or tampered repo forfeits the seat.
+
+The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md](king_of_the_hill.md).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -460,25 +485,34 @@ Past kings keep earning while they stay in the window — but a seat is paid for
 
 ### How Your Model Is Evaluated
 
-1. **Miner** commits the GitHub URL on-chain (one-shot, then goes offline)
-2. **Backend** detects the commit. The chain scanner polls every ~3 minutes, so registration completes within **3–5 minutes** of chain-commit finalization. The backend downloads `submission.zip`, verifies the SHA-256 and README hashes, and adds the model to the pending queue
-3. **Validators** sync the pending queue, download the model directly from the miner's GitHub repo, and verify the hash against the backend record
-4. Each validator runs the agent in a sandboxed Docker container through the **full benchmark** — 1,100 seeds across all 6 environment types (City, Open, Mountain, Village, Warehouse, Forest)
-5. Final score is determined by **stake-weighted consensus across all active validators**. No single validator can block or advance a model on its own
-6. **Winner-take-all** — the highest-scoring model receives emissions
+1. **Miner** commits the GitHub URL on-chain, then goes offline
+2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. It verifies the README hash, downloads the manifest and every declared artifact, checks each artifact's SHA-256, and creates one **Pending Benchmark** row per family
+3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
+4. **Validators** lease the model's seed range in 50-seed batches and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
+5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed batches), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+
+Every submission runs the full 1,100-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
+
+A batch that fails 3 times marks the model **Evaluation Failed**: a dead RPC server or a crashing agent wastes the attempt, so smoke-test with `swarm model verify` before committing.
 
 ### Epoch Rotation
 
-Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates 1,100 cryptographically random seeds per epoch using `random.SystemRandom()` — there is no shared secret.
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
 
-Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
+At rollover, models still pending from the previous epoch are marked **Epoch Expired** (re-commit and the expired row is purged, so the hotkey resubmits cleanly), and every champion is queued for re-evaluation on the fresh seeds. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; commit after the rollover instead.
 
 ### Key Numbers
 
 | Parameter | Value |
 |-----------|-------|
-| Total seeds per epoch | 1,100 |
-| Max submission size | 50 MiB (compressed) |
+| Seeds per family per epoch | 1,100 |
+| Batch size (validator lease) | 50 seeds |
+| Chain scanner interval | 3 minutes |
+| Epoch length | 7 days (Monday 16:00 UTC) |
+| Pre-rollover registration freeze | 1.5 hours |
+| Max artifact size | 50 MiB uncompressed content |
+| Models per hotkey | 1 per family (5 families) |
+| Chain commit cooldown | ~20 minutes |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -486,7 +520,7 @@ Per-epoch seeds are published on [swarm124.com](https://swarm124.com) for full t
 
 ## Docker Whitelist
 
-Your `requirements.txt` can only include packages from the approved whitelist. Anything else will be rejected.
+Your `requirements.txt` can only include packages from the approved whitelist (`DOCKER_PIP_WHITELIST` in `swarm/constants.py`). It is enforced on the validator host at evaluation time: a non-whitelisted package fails your run there, not at submission.
 
 **Approved packages:**
 
@@ -498,6 +532,8 @@ matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack,
 swarm-bullet3, swarm-drone-gym
 ```
 
+Version pins are fine; pip option lines, URL/path installs (`git+`, `http://`, `https://`, `file:`, `./`, or an absolute path), and PEP 508 `@` direct references are rejected.
+
 Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -508,43 +544,44 @@ Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC)
 
 ### When will my score show up on the leaderboard?
 
-Validators process the pending model queue in submission order, one item at a time per validator. Expected latency depends on queue depth:
-
-- **Short queue** — first score reported within 10–30 minutes of submission.
-- **Busy queue** — add the benchmark time for each model ahead.
-- **Epoch rollover freeze** — new-model work is paused briefly before each epoch transition and resumes after seed rotation.
-
-The leaderboard reshuffles once stake-weighted consensus settles across validators.
-
-### What happens if my model fails evaluation?
-
-The hotkey is done. Each hotkey can commit **one model, lifetime** — any later commitment from the same hotkey is ignored. A failed model stays recorded against that hotkey; to compete again, register a new hotkey and submit from it.
-
-Treat every submission as one-shot. Run the full CLI benchmark locally, tune aggressively, and only commit on-chain once the model consistently beats the current champion across all environment types.
+Registration takes minutes (the scanner polls every 3 minutes). Evaluation time depends on how many models sit ahead of yours across the family lanes: champion epoch re-evals take priority, and the queue rotates one family at a time. During the 1.5-hour pre-rollover freeze new commitments wait until the next epoch.
 
 ### Can I update my submission after committing?
 
-No. A hotkey gets a single commitment. Validators (and the backend) see only the first registered model for that hotkey — subsequent chain commitments are ignored. To submit a different model, use a different hotkey.
+**No, once your model has been evaluated.** A hotkey gets one submission per family. A changed artifact on an evaluated model is ignored, not re-run, so to try a better model in that family you need a new hotkey.
+
+The only exceptions happen before evaluation finishes: a rejected (malformed) zip was never registered, so you can just fix it and re-commit on the same hotkey; and a submission that expired at the weekly rollover, or was retired by a version bump, frees its slot for a fresh commit. Never swap a reigning champion's artifact, though: that reads as tampering and permanently loses payout eligibility.
+
+The chain rate-limits commits to roughly one per 20 minutes.
+
+### What happens if my model fails evaluation?
+
+The hotkey is used up for that family. A model that was evaluated and failed (or whose repo went dead) keeps its slot locked, so pushing a new artifact will not re-run it. To try again, register a new hotkey. The exception is a submission rejected for a fixable packaging problem, which leaves the slot open to fix and re-commit.
+
+### Can I compete in more than one family?
+
+Yes, one model per family per hotkey. The three public families (Autopilot, Swarm Autopilot, Interceptor) publish from a single repo via `submission_manifest.json`; Search and Rescue and Swarm SAR are submitted separately through the private track. Each family artifact is evaluated and championed independently.
 
 ### I submitted, but I don't see a score yet. What should I check?
 
-Common causes:
+In order of likelihood:
 
-- **Repo still private** — validators cannot download it. Make the repo public after the chain commit finalizes.
-- **README hash mismatch** — `README.md` in the repo must be a byte-exact copy of `swarm/templates/README.md`. Any modification causes rejection.
-- **Non-whitelisted package in `requirements.txt`** — see the [Docker Whitelist](#docker-whitelist).
-- **Submission exceeds 50 MiB** — compressed size limit is enforced.
-- **No validators online** — check [swarm124.com](https://swarm124.com) for validator activity.
+- **README hash mismatch**: the number-one silent killer. `README.md` must be a byte-exact copy of the template; if it isn't, the scanner drops the submission without any visible error. Run `swarm repo verify` to catch it, or `swarm repo package` to rewrite the correct README. Check this first.
+- **Repo still private**: the backend cannot fetch it. Make it public after the chain commit finalizes; the scanner re-reads all commitments every pass.
+- **Wrong URL shape**: the commitment must be exactly `https://github.com/owner/repo`.
+- **Manifest problems**: artifact path/hash mismatch, or a family artifact missing from `artifacts/<family_id>/`.
+- **Freeze window**: commits during the last 1.5 hours of an epoch register after rollover.
+- **Non-whitelisted package or oversized artifact**: see [Docker Whitelist](#docker-whitelist) and the 50 MiB uncompressed cap.
 
 If none apply, contact the team on [Discord](https://discord.gg/8dPqPDw7GC).
 
 ### How often are weights updated on-chain?
 
-Validators set weights each forward cycle (a few minutes). Once consensus settles on a new champion, the next weight-set propagates the change across the subnet.
+Validators refresh the king windows from the backend, recompute the weights locally, and set them on-chain on a periodic cadence, so a new champion's effect on rewards shows up within the epoch, not instantly.
 
 ### What if two miners submit the same model?
 
-Duplicate submission hashes are rejected and duplicate GitHub URLs are rejected. The earliest on-chain committer is accepted. To guard against front-running, follow: **private repo → chain commit → wait for finalization → make repo public** (see [GitHub Repo Setup](#github-repo-setup)).
+Model hashes are globally unique: a hash already registered to any miner is rejected, and a repo URL owned by a different hotkey is skipped. The earliest on-chain committer wins. To guard against front-running, follow: **private repo → chain commit → wait for finalization → make repo public** (see [GitHub Repo Setup](#github-repo-setup)).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -552,17 +589,19 @@ Duplicate submission hashes are rejected and duplicate GitHub URLs are rejected.
 
 ## Troubleshooting
 
-**"Missing drone_agent.py"** — Your ZIP must contain `drone_agent.py` at the root level. Template files are auto-injected.
+**"Missing drone_agent.py"**: Your ZIP must contain `drone_agent.py` at the root level. Template files are auto-injected.
 
-**"Dangerous executable files detected"** — Remove `.exe`, `.so`, `.dll` files. Only Python code and model files allowed.
+**"Dangerous executable files detected"**: Remove `.exe`, `.so`, `.dll`, `.sh`, `.bat`, and `.pyc` files. Only Python code and model files are allowed.
 
-**"Agent too large"** — Submissions must be ≤ 50 MiB compressed.
+**"Agent too large"**: Total uncompressed content must be ≤ 50 MiB. Compressing harder does not help; shrink the weights.
 
-**"RPC connection failed"** — Ensure your agent starts correctly and responds to ping requests.
+**"RPC connection failed"**: Ensure your agent starts correctly and responds to ping requests. Three failed batch attempts mark the model as Evaluation Failed.
 
-**"README hash mismatch"** — Your GitHub repo's README.md must be the exact copy from `swarm/templates/README.md`. Any edit will cause rejection.
+**"README hash mismatch"**: Your repo's `README.md` must be the exact template copy. Any edit (including whitespace or line-ending changes) makes the scanner silently ignore your submission. Re-run `swarm repo package` to rewrite the correct file, then `swarm repo verify` to confirm.
 
-**Environment issues** — Run `swarm doctor` to diagnose.
+**Wrong family packaged**: repackage with `swarm model package` and pick the right family at the prompt (or pass the correct `--family-id`).
+
+**Environment issues**: Run `swarm doctor` to diagnose.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -570,8 +609,8 @@ Duplicate submission hashes are rejected and duplicate GitHub URLs are rejected.
 
 ## Support
 
-- **Discord** — [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
-- **GitHub Issues** — open a ticket with logs & error trace
-- **Website** — [swarm124.com](https://swarm124.com)
+- **Discord**: [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
+- **GitHub Issues**: open a ticket with logs & error trace
+- **Website**: [swarm124.com](https://swarm124.com)
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>

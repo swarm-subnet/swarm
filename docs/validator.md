@@ -1,8 +1,22 @@
 # 🔐 Swarm Validator Guide
 
-This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models on procedurally generated maps — cities, open terrain, mountains, villages, warehouses, and forests. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
+This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models across five challenge families on procedurally generated maps: cities, open terrain, mountains, villages, warehouses, and forests. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
 
 Run `swarm doctor` after installation to verify your environment is ready.
+
+## 🎯 What You Evaluate
+
+Swarm runs **five challenge families**, all active. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
+
+| Family | ID | Track | Mission | Emissions |
+|--------|-----|-------|---------|-----------|
+| [Autopilot](families/autopilot.md) | `cf_autopilot` | Public | One drone crosses a generated world and lands on a pad inside a noisy search area | 10% |
+| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | Private | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 30% |
+| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | Public | One policy lands 2–8 drones on a shared pool of pads | 15% |
+| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | Private | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 30% |
+| [Interceptor](families/interceptor.md) | `cf_interceptor` | Public | One drone hunts down and rams a validator-flown target over open terrain | 15% |
+
+Search and Rescue and Swarm Search and Rescue run on the private track: only trusted validators (>= 5.0.0) with the backend's trusted-validator whitelist configured fetch the artifact from the backend and evaluate it. The other three families are public: any validator downloads the model from the miner's GitHub repo as usual.
 
 ## 🖥️ System Requirements
 
@@ -18,7 +32,7 @@ Run `swarm doctor` after installation to verify your environment is ready.
 - Ubuntu 22.04 LTS (Jammy)
 - Ubuntu 24.04 LTS (Noble)
 
-Other distros should work — install equivalent packages manually.
+Other distros should work; install equivalent packages manually.
 
 ## 🐳 Docker Installation (Required)
 
@@ -108,10 +122,10 @@ source validator_env/bin/activate
 Create `.env` file in repository root:
 
 ```bash
-# REQUIRED — Backend API endpoint
+# REQUIRED: Backend API endpoint
 SWARM_BACKEND_API_URL=<contact the team>
 
-# REQUIRED — WandB logging
+# REQUIRED: WandB logging
 WANDB_API_KEY=<contact the team>
 VALIDATOR_NAME=my_validator_name
 ```
@@ -145,8 +159,8 @@ source validator_env/bin/activate
 pm2 start neurons/validator.py --name swarm_validator -- \
   --netuid 124 \
   --subtensor.network finney \
-  --wallet.name coldkey \
-  --wallet.hotkey hotkey \
+  --wallet.name my_cold \
+  --wallet.hotkey my_validator \
   --logging.debug
 ```
 
@@ -230,6 +244,8 @@ swarm monitor --max-events 20
   - `benchmark`
   - `score_submit`
   - `completed`
+
+  The `screening` and `screening_submit` stages run only when the backend enables the screening phase, which is off by default, so new models go straight to `benchmark`.
 - `last_completed_forward_count` keeps increasing.
 - `backend.fallback` stays `false` most of the time.
 - Docker `active_worker_cap` usually matches the requested worker count.
@@ -297,29 +313,26 @@ pm2 start --name auto_update_validator \
 ## 🧩 What the Validator Does
 
 1. **Sync with the backend**
-   `GET /validators/sync` returns the current epoch, the pending model queue, the re-eval queue, and the latest weight map. Runs once per forward cycle.
+   `GET /validators/sync` returns the current epoch, the per-family King of the Hill windows and family shares, the champions, and the latest weight map. Runs once per forward cycle. Evaluation work arrives separately via the `GET /validators/next-task` long-poll, which leases the next 50-seed batch.
 
-2. **Download from GitHub**
-   Download `submission.zip` from the miner's public repo and verify the SHA-256 hash against the backend record. The README hash is checked at submission time by the backend.
+2. **Fetch the model**
+   For public families, download `submission.zip` from the miner's GitHub repo and verify the SHA-256 hash against the backend record (the README hash is checked at submission time by the backend). For the two private families (Search and Rescue, Swarm SAR) there is no public repo: trusted validators fetch the artifact from the backend instead.
 
 3. **Full benchmark (1,100 seeds)**
-   Every new model is evaluated on the full 1,100-seed set across all six environment types, in parallel Docker containers. The backend can additionally enable a screening pre-phase (a smaller seed set gated on the champion's score); the task metadata tells the validator which phase and seed range to run — no local configuration is needed.
+   Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers, leased from the backend in 50-seed batches. The task metadata carries the family, phase, and seed range, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
 
 4. **Report scores**
    Per-seed and aggregate scores are submitted to the backend as they are computed.
 
-5. **Consensus**
-   Reports from all active validators are combined by stake (>= 51%) to determine the network's per-model result.
+5. **Apply weights**
+   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last five champions share that family's emission slice; see [king_of_the_hill.md](king_of_the_hill.md).
 
-6. **Apply weights**
-   Validators pull the resulting weight map and set it on-chain each forward cycle.
-
-7. **Caching**
-   Results are cached by model hash + benchmark version + epoch. The same model is never re-evaluated within the same epoch.
+6. **Caching**
+   Results are cached by model hash + benchmark version + epoch. The same model is not re-evaluated within the same epoch unless a re-eval is explicitly queued (for example, a benchmark version bump).
 
 ### Per-Validator Seeds
 
-Each validator independently generates its own 1,100 random seeds per epoch using `random.SystemRandom()`. With 1,100 seeds per validator and stake-weighted consensus, statistical variance across validators is negligible.
+Each validator independently generates its own 1,100 random seeds per family per epoch using `random.SystemRandom()`. With 1,100 seeds per validator and per-seed results stitched across validators, statistical variance across validators is negligible.
 
 Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 
@@ -372,8 +385,8 @@ docker system prune -f
 
 ## 🆘 Support
 
-- **Discord** — [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
-- **GitHub Issues** — open a ticket with logs & error trace
-- **Website** — [swarm124.com](https://swarm124.com)
+- **Discord**: [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
+- **GitHub Issues**: open a ticket with logs & error trace
+- **Website**: [swarm124.com](https://swarm124.com)
 
 Happy validating!

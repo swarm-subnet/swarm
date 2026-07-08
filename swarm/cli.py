@@ -21,6 +21,7 @@ from swarm.domain_model import (
     BENCHMARK_GROUP_TO_CHALLENGE_TYPE,
     CHALLENGE_FAMILY_IDS,
     CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
+    get_challenge_family_definition,
 )
 from swarm.policy_interface import (
     POLICY_CONTRACT_FILENAME,
@@ -550,6 +551,26 @@ def _default_repo_artifact_relpath(family_id: str) -> str:
     ).as_posix()
 
 
+def _template_readme_path() -> Path:
+    return Path(__file__).resolve().parent / "templates" / "README.md"
+
+
+def _check_repo_readme(repo_root: Path) -> tuple[bool, str]:
+    """Confirm the repo's README.md is a byte-exact copy of the required template.
+
+    The backend rejects a submission whose README hash does not match, and the
+    rejection is silent, so catch it here before the miner commits on-chain."""
+    from swarm.utils.github import REQUIRED_README_HASH
+
+    readme = repo_root / "README.md"
+    if not readme.is_file():
+        return False, "missing (run `swarm repo package` to write it)"
+    digest = hashlib.sha256(readme.read_bytes()).hexdigest()
+    if digest != REQUIRED_README_HASH:
+        return False, "does not match the template; do not edit, reformat, or change its line endings"
+    return True, "matches template"
+
+
 def _parse_repo_family_source(raw_value: str) -> RepoPackageSource:
     family_and_version, separator, source_token = raw_value.partition("=")
     if not separator or not source_token.strip():
@@ -645,14 +666,58 @@ def _inspect_submission_repo(
     return repo_ok, first_failure, artifact_reports
 
 
+def _family_display_name(family_id: str) -> str:
+    try:
+        return str(get_challenge_family_definition(family_id)["name"])
+    except Exception:
+        return family_id
+
+
+def _prompt_family_id() -> Optional[str]:
+    """Ask the miner which challenge family the artifact targets. Returns the
+    chosen family id, or None if the prompt was cancelled."""
+    families = sorted(CHALLENGE_FAMILY_IDS)
+    names = [_family_display_name(fid) for fid in families]
+    width = max(len(name) for name in names)
+
+    print("\nWhich challenge family did you train for?\n")
+    for i, (fid, name) in enumerate(zip(families, names), start=1):
+        print(f"  {i}) {name.ljust(width)}  ({fid})")
+    print()
+
+    while True:
+        try:
+            choice = input(f"Select [1-{len(families)}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.", file=sys.stderr)
+            return None
+        if choice.isdigit() and 1 <= int(choice) <= len(families):
+            return families[int(choice) - 1]
+        print(f"Please enter a number between 1 and {len(families)}.", file=sys.stderr)
+
+
 def _cmd_model_package(args: argparse.Namespace) -> int:
+    family_id = args.family_id
+    if family_id is None:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            family_id = _prompt_family_id()
+            if family_id is None:
+                return 1
+        else:
+            print(
+                "--family-id is required when not run interactively (no terminal to prompt).",
+                file=sys.stderr,
+            )
+            return 1
+
     source_dir = Path(args.source)
     output_zip = Path(args.output)
+    print(f"\nPackaging for {_family_display_name(family_id)} ({family_id})...")
     try:
         packaged = _package_model_artifact(
             source_dir=source_dir,
             output_zip=output_zip,
-            family_id=str(args.family_id),
+            family_id=str(family_id),
             interface_version=args.interface_version,
             overwrite=bool(args.overwrite),
         )
@@ -781,9 +846,11 @@ def _cmd_repo_package(args: argparse.Namespace) -> int:
         packaged_artifacts.append(packaged)
 
     write_submission_manifest(repo_root, tuple(existing_artifacts.values()))
+    shutil.copyfile(_template_readme_path(), repo_root / "README.md")
 
     print(f"Repo root: {repo_root}")
     print(f"Manifest: {repo_root / SUBMISSION_MANIFEST_FILENAME}")
+    print("README.md: written (canonical template)")
     print(f"Artifacts updated: {len(packaged_artifacts)}")
     for packaged in packaged_artifacts:
         print(
@@ -804,14 +871,17 @@ def _cmd_repo_verify(args: argparse.Namespace) -> int:
         repo_root,
         allow_legacy_fallback=not args.strict_manifest,
     )
+    readme_ok, readme_detail = _check_repo_readme(repo_root)
+    overall_ok = repo_ok and readme_ok
 
     manifest_path = repo_root / SUBMISSION_MANIFEST_FILENAME
     print(f"Repo: {repo_root}")
     print(f"Manifest path: {manifest_path}")
-    print(f"Compliant: {repo_ok}")
+    print(f"README.md: {'OK' if readme_ok else 'FAIL'} ({readme_detail})")
+    print(f"Compliant: {overall_ok}")
     if not artifact_reports:
         print(f"Reason: {reason}")
-        return 0 if repo_ok else 1
+        return 0 if overall_ok else 1
 
     for report in artifact_reports:
         print(f"Family: {report['family_id']}")
@@ -826,7 +896,7 @@ def _cmd_repo_verify(args: argparse.Namespace) -> int:
         )
     if not repo_ok:
         print(f"Reason: {reason}")
-    return 0 if repo_ok else 1
+    return 0 if overall_ok else 1
 
 
 def _cmd_model_test(args: argparse.Namespace) -> int:
@@ -1225,8 +1295,11 @@ def build_parser() -> argparse.ArgumentParser:
     model_package_parser.add_argument(
         "--family-id",
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        default="cf_autopilot",
-        help="Challenge family implemented by this artifact.",
+        default=None,
+        help=(
+            "Challenge family implemented by this artifact. Omit it in a "
+            "terminal to pick from a menu; required for non-interactive runs."
+        ),
     )
     model_package_parser.add_argument(
         "--interface-version",

@@ -252,7 +252,7 @@
       },
       "family_state": "active",
       "emissions_state": "active",
-      "visibility": "public",
+      "visibility": "private",
       "skill_ids": [
         "sk_autonomous_navigation",
         "sk_search_and_rescue"
@@ -348,7 +348,7 @@
       },
       "family_state": "active",
       "emissions_state": "active",
-      "visibility": "public",
+      "visibility": "private",
       "skill_ids": [
         "sk_autonomous_navigation",
         "sk_search_and_rescue"

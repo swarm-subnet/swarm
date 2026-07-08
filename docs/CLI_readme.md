@@ -10,7 +10,7 @@ Command-line interface for benchmarking, testing, and packaging drone navigation
 pip install -e .
 ```
 
-Once published on PyPI:
+Or install from PyPI (the published release may lag this repo):
 
 ```bash
 pip install swarm-sotapilot
@@ -24,6 +24,20 @@ python -m swarm <command>
 
 ---
 
+## Challenge families
+
+Family-aware commands (`swarm model package`, `swarm repo package`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
+
+| Family ID | Environment types |
+| --- | --- |
+| `cf_autopilot` | City, Open, Mountain, Village, Warehouse, Forest |
+| `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest |
+| `cf_swarm_autopilot` | City, Open, Mountain, Village, Forest |
+| `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
+| `cf_interceptor` | Open |
+
+---
+
 ## Commands
 
 ### `swarm doctor`
@@ -34,26 +48,37 @@ Checks your environment is ready for benchmarking.
 swarm doctor
 ```
 
-Verifies: Python version, Docker (binary + daemon), required Python modules (`capnp`, `pybullet`, `gym_pybullet_drones`), writable runtime directories, submission template files, and benchmark script presence.
+Verifies: Python version (3.11+), Docker (binary + daemon), sandbox lockdown binaries (`nsenter`, `iptables`) and their permissions, required Python modules (`capnp`, `pybullet`, `gym_pybullet_drones`), writable runtime directories, submission template files, and the benchmark engine module.
 
 ### `swarm benchmark`
 
-Runs a local benchmark — evaluates a model across 6 procedurally generated environment types (City, Open, Mountain, Village, Warehouse, Forest). The `--seeds-per-group` flag controls seeds per environment type (default: 3). Validators run 1,100 seeds total.
+Runs a local benchmark for the `cf_autopilot` family, evaluating a model across its 6 environment types (City, Open, Mountain, Village, Warehouse, Forest). This subcommand has no family flag; it always drives the engine's default family. The `--seeds-per-group` flag controls seeds per environment group (default: 3). Validators run 1,100 seeds per family per epoch.
 
 ```bash
 # Default benchmark (3 seeds per environment group)
 swarm benchmark --model Submission/submission.zip --workers 4
 
-# Quick test (1 seed per environment type)
+# Quick test (1 seed per environment group)
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 
 # With options
 swarm benchmark --model Submission/submission.zip --workers 3 --relax-timeouts --rpc-verbosity low
 ```
 
+If `--model` is omitted, the current champion (the default-family / cf_autopilot champion) is downloaded (with SHA-256 verification) and benchmarked instead.
+
+Useful options:
+
+- `--workers <n>`: parallel Docker workers (default: one worker per 2 vCPUs, capped at 12).
+- `--seed-file <path>` / `--save-seed-file <path>`: replay an exact seed set / save the resolved seeds for later replay.
+- `--summary-json-out <path>`: write the benchmark summary as JSON.
+- `--log-out <path>`: benchmark log output path.
+- `--relax-timeouts`: timeout overrides for slow machines.
+- `--rpc-verbosity low|mid|high`: RPC tracing verbosity (default: mid).
+
 ### `swarm model verify`
 
-Validates a submission ZIP against Swarm rules — checks structure, size limits, path safety, family policy-contract compatibility, and a local runtime smoke test for `DroneFlightController.act()`.
+Validates a submission ZIP against Swarm rules: checks structure, ZIP safety, and the 50 MiB uncompressed cap that intake enforces (the local `--max-uncompressed-mb` check defaults to 300), family policy-contract compatibility, and a local runtime smoke test that instantiates the family's entry-point controller and exercises its `reset`/`act` methods.
 
 ```bash
 swarm model verify --model Submission/submission.zip
@@ -63,26 +88,34 @@ swarm model verify --model Submission/submission.zip
 
 Bundles a source folder into `Submission/submission.zip` (default path). Automatically includes `drone_agent.py`, `requirements.txt` (if present), model artifacts (`.pt`, `.pth`, `.onnx`, `.zip`, etc.), and a generated `swarm_policy_contract.json`.
 
+Omit `--family-id` in a terminal and the command asks which family you trained for, so you never package the wrong one by accident. Pass `--family-id` to skip the prompt; it is required for non-interactive runs (CI, piped input).
+
 ```bash
+# Interactive: pick the family from a menu
 swarm model package --source ./my_agent
 
-# Custom output path
-swarm model package --source ./my_agent --output Submission/submission.zip --overwrite
+# Explicit family (skips the prompt, needed in scripts)
+swarm model package --source ./my_agent --family-id cf_search_and_rescue
 
-# Explicit family selection
-swarm model package --source ./my_agent --family-id cf_autopilot
+# Custom output path
+swarm model package --source ./my_agent --family-id cf_autopilot --output Submission/submission.zip --overwrite
 ```
+
+Options:
+
+- `--family-id <id>`: challenge family implemented by this artifact (required for non-interactive runs; omit it in a terminal to pick from a menu). See the family table above for valid IDs.
+- `--interface-version <version>`: explicit policy interface version. Defaults to the first supported version for the selected family.
 
 ### `swarm repo package`
 
-Builds or updates a repo-root multi-family submission layout. This writes artifact ZIPs under `artifacts/<family_id>/submission.zip` and updates `submission_manifest.json`.
+Builds or updates a repo-root multi-family submission layout. This writes artifact ZIPs under `artifacts/<family_id>/submission.zip`, updates `submission_manifest.json`, and writes the canonical `README.md` (a byte-exact copy of the required template, so the backend accepts your repo).
 
 ```bash
 # Package two families at once
 swarm repo package \
   --repo-root ./my_submission_repo \
-  --family-source cf_search_and_rescue=./sar_agent \
-  --family-source cf_autopilot=./autopilot_agent
+  --family-source cf_autopilot=./autopilot_agent \
+  --family-source cf_swarm_autopilot=./swarm_agent
 
 # Update one family later without replacing the others
 swarm repo package \
@@ -92,9 +125,11 @@ swarm repo package \
   --overwrite
 ```
 
+`--family-source` takes `FAMILY_ID=PATH` or `FAMILY_ID@INTERFACE_VERSION=PATH` and may be repeated, one artifact per family. The `--source` + `--family-id` pair is a single-family shortcut for the same thing.
+
 ### `swarm repo verify`
 
-Validates `submission_manifest.json`, artifact hashes/paths, family policy contracts, and runtime smoke tests for every published artifact in a repo layout.
+Validates `submission_manifest.json`, artifact hashes/paths, family policy contracts, runtime smoke tests, and the `README.md` hash for every published artifact in a repo layout. A `README.md` that was hand-edited or reformatted fails here, before you commit on-chain.
 
 ```bash
 swarm repo verify --repo-root ./my_submission_repo --strict-manifest
@@ -102,7 +137,7 @@ swarm repo verify --repo-root ./my_submission_repo --strict-manifest
 
 ### `swarm model test`
 
-Validates a source folder before packaging — checks that `drone_agent.py` exists and compiles, `requirements.txt` has no blocked patterns, and estimated package size is within limits.
+Validates a source folder before packaging: checks that `drone_agent.py` exists and compiles, `requirements.txt` has no blocked patterns, and estimated package size is within limits.
 
 ```bash
 swarm model test --source ./my_agent
@@ -163,11 +198,11 @@ swarm champion --output my_champion.zip
 
 Options:
 
-- `--output <path>` — output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
-- `--backend-url <url>` — override the backend API URL (defaults to the public API).
+- `--output <path>`: output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
+- `--backend-url <url>`: override the backend API URL (defaults to the public API).
 
 The download includes SHA-256 integrity verification against the hash reported by the backend.
 
 ## Tests
 
-CLI behavior is covered in `tests/test_cli.py` — doctor, benchmark delegation, model verify/package/test, and report parsing.
+CLI behavior is covered in `tests/test_cli.py`: doctor, benchmark delegation, model verify/package/test, and report parsing.

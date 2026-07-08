@@ -1,195 +1,59 @@
 <a id="readme-top"></a>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm" width="60%" />
+  <img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Swarm_2.png" alt="Swarm" width="50%" />
 </p>
 
-<h1 align="center">Autonomous Drone Navigation</h1>
+<h1 align="center">Swarm Benchmark Entry</h1>
 
 <p align="center">
-  <i>No hand-crafted rules. No pre-built maps. No shortcuts.<br/>
-  A neural network that learned to fly — from scratch.</i>
+  <b>A trained drone pilot, packaged as a verified entry to the Swarm benchmark.</b><br/>
+  <i>Depth camera in, velocity commands out. Scored on 1,100 worlds it has never seen.</i>
 </p>
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v5.0.0-green?style=flat-square" /></a>
+  <a href="https://github.com/swarm-subnet/swarm"><img alt="Benchmark" src="https://img.shields.io/badge/benchmark-Subnet%20124-F5D400?style=flat-square&labelColor=111111" /></a>
   <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white" /></a>
-  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=flat-square&logo=googlechrome&logoColor=white" /></a>
+  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-111111?style=flat-square&logo=x&logoColor=white" /></a>
+  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-F5D400?style=flat-square&labelColor=111111" /></a>
+</p>
+
+<p align="center">
+  <a href="#run-this-model"><img alt="Run This Model" src="https://img.shields.io/badge/Run%20This%20Model-Benchmark-F5D400?style=for-the-badge" /></a>
+  &nbsp;
+  <a href="https://swarm124.com/benchmark"><img alt="Leaderboard" src="https://img.shields.io/badge/Leaderboard-swarm124.com-111111?style=for-the-badge" /></a>
 </p>
 
 ---
 
-This model was trained on the [Swarm](https://swarm124.com) open benchmark — a competition where AI agents learn to pilot drones through procedurally generated 3D worlds using nothing but a depth camera and their own flight state.
+> [!NOTE]
+> This repository is a verified entry to the [Swarm](https://swarm124.com) benchmark. This README is the benchmark's hash-locked template, checked byte-for-byte, so it is identical across every entry and must not be edited.
 
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary><b>Table of Contents</b></summary>
-  <ol>
-    <li><a href="#about-swarm">About Swarm</a></li>
-    <li><a href="#from-simulation-to-reality">From Simulation to Reality</a></li>
-    <li><a href="#see-it-fly">See It Fly</a></li>
-    <li><a href="#environments">Environments</a></li>
-    <li><a href="#how-it-works">How It Works</a></li>
-    <li><a href="#run-this-model">Run This Model</a></li>
-    <li><a href="#scoring">Scoring</a></li>
-    <li><a href="#train-your-own">Train Your Own</a></li>
-    <li><a href="#community">Community</a></li>
-  </ol>
-</details>
+---
 
-<!-- ABOUT SWARM -->
-## About Swarm
-
-[Swarm](https://swarm124.com) is the **open benchmark for autonomous drone navigation**. AI agents learn to fly through complex 3D worlds from raw sensor input — no privileged information, no handholding.
-
-* **Hard problem** — depth camera + state vector in, velocity commands out
-* **No memorization** — 1,000 procedurally generated environments, every seed is unique
-* **Fully reproducible** — deterministic seeds, containerized evaluation, public leaderboard
-* **Open to everyone** — train, submit, compete — the best model wins
-
-Autonomous navigation shouldn't live in closed labs. Swarm makes drone AI **measurable**, **comparable**, and **open**. Powered by the [Bittensor](https://bittensor.com) network (Subnet 124).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- FROM SIMULATION TO REALITY -->
-## From Simulation to Reality
-
-Models trained on the Swarm benchmark don't stay in simulation — **they fly on real hardware.**
+https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/Langostino">
-    <img src="https://raw.githubusercontent.com/swarm-subnet/Langostino/main/assets/banner_section_1.png" alt="Langostino — The Swarm Drone" width="80%" />
-  </a>
+  <sub><b>Search and Rescue.</b> One of five missions on the Swarm benchmark: teaching a drone to find people.</sub>
 </p>
 
-<p align="center">
-  <b><a href="https://github.com/swarm-subnet/Langostino">Langostino</a></b> is our open-source autonomous drone — built from scratch with ROS2, Raspberry Pi, and INAV.<br/>
-  Full assembly guide, bill of materials, and 3D-printable parts included. Build it yourself.
-</p>
+---
 
-<p align="center">
-  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.youtube.com/vi/gf9mxroeurU/maxresdefault.jpg" alt="Langostino autonomous flight" width="80%" loading="lazy" />
-  </a>
-</p>
+## This Repository
 
-<p align="center">
-  <a href="https://www.youtube.com/shorts/gf9mxroeurU" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.shields.io/badge/Watch-Autonomous%20Flight-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch on YouTube" />
-  </a>
-  &nbsp;
-  <a href="https://github.com/swarm-subnet/Langostino">
-    <img src="https://img.shields.io/badge/Build%20Your%20Own-Langostino-111111?style=for-the-badge&logo=github" alt="Build your own" />
-  </a>
-</p>
+This repository holds one or more trained flight models entered into [Swarm](https://swarm124.com), the open benchmark for autonomous drone AI. Each artifact under `artifacts/` is a complete pilot: a policy that reads a depth camera and its own flight state, and flies. Models are evaluated across six procedurally generated world types, 1,100 fresh seeds per family every weekly epoch, with no privileged information and no pre-built maps.
 
-<p align="center">
-  <b>Train in Simulation</b> &nbsp;→&nbsp; <b>Compete on the Leaderboard</b> &nbsp;→&nbsp; <b>Deploy on Real Hardware</b><br/>
-  <sub><a href="https://github.com/swarm-subnet/swarm">Swarm</a> · <a href="https://swarm124.com/benchmark">swarm124.com</a> · <a href="https://github.com/swarm-subnet/Langostino">Langostino</a></sub>
-</p>
+```
+README.md                              # This file, the byte-exact benchmark template
+submission_manifest.json               # Declares which families this repo competes in
+artifacts/<family_id>/submission.zip   # One trained agent per family
+```
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+Each `.zip` carries the agent's `DroneFlightController` class in `drone_agent.py` plus its trained weights; the manifest pins every artifact's SHA-256. One artifact per family, up to all five from a single repo.
 
-<!-- SEE IT FLY -->
-## See It Fly
-
-<table>
-<tr>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying.gif" alt="Drone navigating a procedural city" width="100%">
-<br><sub>Third-person view</sub>
-</td>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying_FPV.gif" alt="Drone FPV view" width="100%">
-<br><sub>FPV — what the drone sees</sub>
-</td>
-</tr>
-</table>
-
-<p align="center">
-  <sub>No GPS. No pre-built map. Just a depth camera and learned instincts.</sub>
-</p>
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- ENVIRONMENTS -->
-## Environments
-
-<table>
-<tr>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type1_sub2.png" alt="City" width="100%">
-<br><b>City</b>
-</td>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3_sub2.png" alt="Ski Village" width="100%">
-<br><b>Ski Village</b>
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3.png" alt="Mountains" width="100%">
-<br><b>Mountains</b>
-</td>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type4_2.png" alt="Warehouse" width="100%">
-<br><b>Warehouse</b>
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub1.png" alt="Forest Normal" width="100%">
-<br><b>Forest — Normal</b>
-</td>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub2.png" alt="Forest Autumn" width="100%">
-<br><b>Forest — Autumn</b>
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub3.png" alt="Forest Snow" width="100%">
-<br><b>Forest — Snow</b>
-</td>
-<td align="center" width="50%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub4.png" alt="Forest Dead" width="100%">
-<br><b>Forest — Dead</b>
-</td>
-</tr>
-</table>
-
-<p align="center">
-  <sub>6 environment types, each <b>procedurally generated</b> across <b>1,000 unique seeds</b> per epoch.</sub>
-</p>
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- HOW IT WORKS -->
-## How It Works
-
-<table align="center">
-<tr>
-<td align="center"><b>Depth Camera</b><br><sub>128×128 image</sub></td>
-<td align="center" rowspan="2"><b>&nbsp;→&nbsp; Neural Network &nbsp;→&nbsp;</b></td>
-<td align="center" rowspan="2"><b>Velocity Commands</b><br><sub>3D movement</sub></td>
-<td align="center" rowspan="2"><b>&nbsp;→&nbsp; Drone</b></td>
-</tr>
-<tr>
-<td align="center"><b>State Vector</b><br><sub>position · velocity · orientation</sub></td>
-</tr>
-</table>
-
-<br/>
-
-The drone sees the world through a **128×128 depth image** and knows its own position, velocity, and orientation. It also receives a **2D search clue** sampled within 30 m of a humanoid victim on the ground. A neural network maps these raw inputs to **3D velocity commands** — the drone must find the victim, then **hover 2–4 m above** at less than **1 m/s** for **2 continuous seconds** to register a CONFIRMED rescue.
-
-**No pre-built maps. No obstacle positions. Everything is learned from experience.**
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- RUN THIS MODEL -->
 ## Run This Model
+
+Every artifact in this repo runs on your machine with the public benchmark engine: the same worlds and the same scoring the leaderboard uses.
 
 **1. Clone and install**
 
@@ -199,87 +63,100 @@ cd swarm
 pip install -e .
 ```
 
-**2. Run a benchmark** (3 seeds per environment type by default)
+**2. Run a benchmark**
 
 ```bash
-swarm benchmark --model submission.zip --workers 4
+python -m swarm.benchmark.engine \
+  --model /path/to/this-repo/artifacts/cf_autopilot/submission.zip \
+  --family-id cf_autopilot \
+  --seeds-per-group 3 --workers 4
 ```
 
-**3. Quick test** (one seed per environment type)
+Point `--model` and `--family-id` at any artifact this repo ships. The artifacts live here, not in the swarm checkout, so pass their full path.
 
-```bash
-swarm benchmark --model submission.zip --seeds-per-group 1
-```
+> [!NOTE]
+> `--seeds-per-group 1` runs a quick pass; validators score the full 1,100 seeds.
 
-<details>
-  <summary><b>What's in this repo?</b></summary>
+## See It Fly
 
-```
-submission.zip   # Trained agent — neural network weights + inference code
-README.md        # This file
-```
+https://github.com/user-attachments/assets/a16e9453-663c-4483-a3b8-160c412fd3e7
 
-The `.zip` contains the agent's `DroneFlightController` class and trained weights. The Swarm benchmark runner loads the agent, places it in a procedurally generated environment, and measures its performance.
+<p align="center">
+  <sub><b>Interceptor:</b> air-to-air pursuit, from a real benchmark run.</sub>
+</p>
 
-</details>
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying.gif" alt="Drone navigating a procedural city" width="100%">
+<br><sub>Third-person view</sub>
+</td>
+<td align="center" width="50%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/Drone_flying_FPV.gif" alt="Drone FPV depth view" width="100%">
+<br><sub>FPV: what the drone actually sees</sub>
+</td>
+</tr>
+</table>
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+The policy reads a depth image and its own flight state 50 times a second and answers with velocity commands: a direction, a speed, a turn. No waypoints, no obstacle coordinates, no map. It learns to read the world through the camera and react.
 
-<!-- SCORING -->
+## Challenge Families
+
+The benchmark runs **five challenge families**. Each is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo can enter any of them, or all five.
+
+| Family | ID | Mission | Emissions |
+|--------|----|---------|:--------:|
+| [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | 30% |
+| [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | 30% |
+| [Swarm Autopilot](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 15% |
+| [Interceptor](https://github.com/swarm-subnet/swarm/blob/main/docs/families/interceptor.md) | `cf_interceptor` | Hunt a fleeing, jinking drone and catch it before the 60 s clock | 15% |
+| [Autopilot](https://github.com/swarm-subnet/swarm/blob/main/docs/families/autopilot.md) | `cf_autopilot` | Cross the world, find the pad inside a noisy search area, touch down clean | 10% |
+
+Each guide spells out the full contract: observation layout, action bounds, maps, episode rules, and scoring.
+
 ## Scoring
 
 | Component | Weight | What It Measures |
 |-----------|--------|-----------------|
-| **Success** | 45% | Did the drone CONFIRM over the victim (2 s steady hover)? |
+| **Success** | 45% | Did the drone complete the family's mission? |
 | **Speed** | 45% | How fast relative to the time limit? |
 | **Safety** | 10% | Minimum clearance from obstacles |
 
 ```
-Final score = 0.45 × success + 0.45 × time_bonus + 0.10 × safety_bonus
+seed score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-Models are ranked by **average score across 1,000 seeds** — consistency matters more than lucky runs. To claim the top spot, a new model must beat the current champion by at least **+0.015**.
+Interceptor is the one exception: 50% success, 50% speed, no safety term. It is a pursuit.
 
-### Emissions — King of the Hill
+Every submission runs the **full 1,100-seed benchmark** and is ranked by its **mean score across all 1,100 seeds**. Seeds rotate weekly (Monday 16:00 UTC) and champions are re-evaluated on the fresh set. To take a crown, a challenger must beat the champion by the family's improvement floor: **+0.015** (Autopilot, Swarm Autopilot, Interceptor) or **+0.02** (the two SAR families).
 
-Subnet emissions are split among the **last 5 champions**, not just the current one. Each king's share is weighted by how much they improved the network's best score when they were crowned, with **harder late-stage jumps weighted more than easy early-stage jumps of the same size**. Past kings keep earning automatically until they age out of the 5-king window. Full spec at [docs/king_of_the_hill.md](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
+Each family's emission slice is split among its **last five champions**, weighted by how much each one raised the family's best score. Full spec in [King of the Hill](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+## Build Your Own Entry
 
-<!-- TRAIN YOUR OWN -->
-## Train Your Own
+This entry was trained by one miner. The benchmark is open, every family has a champion, and every champion can be beaten.
 
-Think you can build a better pilot? The benchmark is open — **prove it.**
+1. **Read the docs**: the [Miner guide](https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md) covers repo setup, packaging, submission, and training tips.
+2. **Pick your family**: each family guide above defines the exact interface your model needs.
+3. **Study the baseline**: the [agent template](https://github.com/swarm-subnet/swarm/blob/main/swarm/submission_template/drone_agent.py) shows the contract in code.
+4. **Train and iterate**: benchmark locally, push your score higher.
+5. **Submit and compete**: publish your repo and climb the [leaderboard](https://swarm124.com/benchmark).
 
-1. **Read the docs** — [Miner guide](https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md) covers observations, actions, training tips, and submission format
-2. **Study the baseline** — [Agent template](https://github.com/swarm-subnet/swarm/blob/main/swarm/submission_template/drone_agent.py) shows the exact interface your model needs
-3. **Train and iterate** — Test locally against all environment types, push your score higher
-4. **Submit and compete** — Push to a public GitHub repo and climb the [leaderboard](https://swarm124.com/benchmark)
+Models trained on this benchmark fly on real hardware: see [Langostino](https://github.com/swarm-subnet/Langostino), Swarm's open-source ROS2 drone.
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md">
-    <img alt="Start training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-111111?style=for-the-badge" />
-  </a>
+  <a href="https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md"><img alt="Start Training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-F5D400?style=for-the-badge" /></a>
 </p>
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- COMMUNITY -->
 ## Community
-
-Swarm is built by researchers, engineers, and drone builders. **Join us.**
 
 <p align="center">
   <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
   &nbsp;
-  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/Follow-000000?style=for-the-badge&logo=x&logoColor=white" /></a>
+  <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/Follow-111111?style=for-the-badge&logo=x&logoColor=white" /></a>
   &nbsp;
   <a href="https://github.com/swarm-subnet"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white" /></a>
-  &nbsp;
-  <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-orange?style=for-the-badge&logo=googlechrome&logoColor=white" /></a>
 </p>
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
@@ -288,6 +165,6 @@ Swarm is built by researchers, engineers, and drone builders. **Join us.**
 </p>
 
 <p align="center">
-  <b><a href="https://swarm124.com">Swarm</a> — where AI learns to fly.</b><br/>
+  <b><a href="https://swarm124.com">Swarm</a>: where AI learns to fly.</b><br/>
   <sub>Subnet 124 on <a href="https://bittensor.com">Bittensor</a></sub>
 </p>
