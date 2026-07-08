@@ -108,16 +108,15 @@ Options:
 
 ### `swarm repo package`
 
-Builds or updates a repo-root multi-family submission layout. This writes artifact ZIPs under `artifacts/<family_id>/submission.zip`, updates `submission_manifest.json`, and writes the canonical `README.md` (a byte-exact copy of the required template, so the backend accepts your repo).
+Builds or updates a repo-root submission layout for your one family. This writes the artifact ZIP under `artifacts/<family_id>/submission.zip`, updates `submission_manifest.json`, and writes the canonical `README.md` (a byte-exact copy of the required template, so the backend accepts your repo).
 
 ```bash
-# Package two families at once
+# Package your family
 swarm repo package \
   --repo-root ./my_submission_repo \
-  --family-source cf_autopilot=./autopilot_agent \
-  --family-source cf_swarm_autopilot=./swarm_agent
+  --family-source cf_autopilot=./autopilot_agent
 
-# Update one family later without replacing the others
+# Update the artifact later
 swarm repo package \
   --repo-root ./my_submission_repo \
   --source ./autopilot_agent_v2 \
@@ -125,11 +124,11 @@ swarm repo package \
   --overwrite
 ```
 
-`--family-source` takes `FAMILY_ID=PATH` or `FAMILY_ID@INTERFACE_VERSION=PATH` and may be repeated, one artifact per family. The `--source` + `--family-id` pair is a single-family shortcut for the same thing.
+`--family-source` takes `FAMILY_ID=PATH` or `FAMILY_ID@INTERFACE_VERSION=PATH`; a repo holds exactly one family, so passing two sources, or a family different from the one already in the manifest, is rejected. The `--source` + `--family-id` pair is a single-family shortcut for the same thing.
 
 ### `swarm repo verify`
 
-Validates `submission_manifest.json`, artifact hashes/paths, family policy contracts, runtime smoke tests, and the `README.md` hash for every published artifact in a repo layout. A `README.md` that was hand-edited or reformatted fails here, before you commit on-chain.
+Validates `submission_manifest.json`, the artifact hash/path, the family policy contract, a runtime smoke test, and the `README.md` hash for the published artifact in a repo layout. A `README.md` that was hand-edited or reformatted fails here, before you commit on-chain.
 
 ```bash
 swarm repo verify --repo-root ./my_submission_repo --strict-manifest

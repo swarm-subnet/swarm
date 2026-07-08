@@ -169,7 +169,7 @@ Each family runs its own 5-king window. Two levels decide a UID's final weight:
 weight(uid) = sum over families f of  family_share(f) × koth_share(uid, f)
 ```
 
-A hotkey that is a king in two families earns from both: the contributions add.
+Every hotkey competes in a single family, so a UID's weight comes from that family's slice.
 
 ### How a family's slice is sized
 
@@ -266,7 +266,7 @@ You slide to rank `−1` (80% taper) and keep earning, dropping one rank with ea
 
 ### Can I become king twice?
 
-Not on the same hotkey in the same family. Once your model is evaluated, that hotkey's slot in that family is locked, so you cannot swap in a stronger model on it. To take a crown again, register a new hotkey and submit your improved model from it. A single hotkey can hold crowns in several families at once (one model per family), but each one is a single, final submission.
+Not on the same hotkey. Once your model is evaluated, the hotkey's slot is locked, so you cannot swap in a stronger model on it. To take a crown again, register a new hotkey and submit your improved model from it. Every hotkey is one family, one model, one final submission.
 
 ### What happens to a king who deletes their GitHub repo?
 
@@ -278,7 +278,7 @@ The crowning floor is an anti-noise threshold: without it, the network would re-
 
 ### Can I earn from more than one family?
 
-Yes. Families are independent: a hotkey that is a king in two families collects from both, and the two slices simply add. There is one model per hotkey per family, so competing in several families means winning each one on its own merits.
+Yes, with separate hotkeys. Every hotkey competes in exactly one family, so entering several families means registering one hotkey per family and winning each crown on its own merits. The seats pay independently.
 
 ### Does my family's share drop when another family launches?
 

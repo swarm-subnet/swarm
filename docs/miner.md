@@ -60,7 +60,7 @@ pip install -e .
 
 ## Challenge Families
 
-Swarm runs **five challenge families**, all active. Three are public track (Autopilot, Swarm Autopilot, Interceptor); two, Search and Rescue and Swarm Search and Rescue, are private track. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey can hold **one model per family**, up to five concurrent submissions.
+Swarm runs **five challenge families**, all active. Three are public track (Autopilot, Swarm Autopilot, Interceptor); two, Search and Rescue and Swarm Search and Rescue, are private track. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
 | Family | ID | Track | Drones | Maps | Emission slice | Guide |
 |--------|----|-------|--------|------|----------------|-------|
@@ -89,7 +89,7 @@ The full miner workflow, from first install to competing on the leaderboard:
 6. swarm benchmark            ← Run local benchmark
 7. swarm repo package         ← Build repo-root artifacts/ + submission_manifest.json
 8. swarm repo verify          ← Verify full GitHub submission layout
-9. Push to GitHub             ← Public repo with README + manifest + family artifacts
+9. Push to GitHub             ← Public repo with README + manifest + the family artifact
 10. Submit model              ← Commit the repo URL on-chain, then go offline
 ```
 
@@ -225,10 +225,9 @@ Checks structure, file sizes, family policy-contract compatibility, and a local 
 ```bash
 swarm repo package \
   --repo-root YOUR_REPO \
-  --family-source cf_autopilot=./autopilot_agent \
-  --family-source cf_swarm_autopilot=./swarm_agent
+  --family-source cf_autopilot=./autopilot_agent
 
-# Or update a single family later
+# Or update the artifact later
 swarm repo package \
   --repo-root YOUR_REPO \
   --source ./autopilot_agent_v2 \
@@ -236,7 +235,7 @@ swarm repo package \
   --overwrite
 ```
 
-This writes family artifacts under `artifacts/<family_id>/submission.zip` and updates the repo-root `submission_manifest.json`.
+This writes the family artifact under `artifacts/<family_id>/submission.zip` and updates the repo-root `submission_manifest.json`. A repo packages exactly **one family**: passing a second `--family-source`, or a family different from the one already in the manifest, is rejected.
 
 ### Verify Repo Submission Layout
 
@@ -244,7 +243,7 @@ This writes family artifacts under `artifacts/<family_id>/submission.zip` and up
 swarm repo verify --repo-root YOUR_REPO --strict-manifest
 ```
 
-Checks manifest structure, artifact hashes, policy-contract compatibility, and a local runtime smoke test for every published family artifact in the repo.
+Checks manifest structure, the artifact hash, policy-contract compatibility, and a local runtime smoke test for the published family artifact in the repo.
 
 ### Run Benchmark
 
@@ -284,16 +283,16 @@ Your repo **must** contain the exact Swarm template README, enforced by SHA-256 
 
 ### 3. Add `submission_manifest.json`
 
-Repos declare published artifacts through a repo-root `submission_manifest.json`.
+Repos declare their published artifact through a repo-root `submission_manifest.json`.
 
 Repo layout rules for manifest v1:
 
 - `submission_manifest.json` lives at the repo root.
 - `README.md` lives at the repo root.
-- Family artifacts live under `artifacts/<family_id>/` with a `.zip` extension.
-- Each artifact entry declares `family_id`, `interface_version`, `artifact_path`, `sha256`, and `metadata`.
-- A repo can publish at most one artifact per `family_id`.
-- Every artifact's `sha256` is verified against the downloaded file.
+- The family artifact lives under `artifacts/<family_id>/` with a `.zip` extension.
+- The artifact entry declares `family_id`, `interface_version`, `artifact_path`, `sha256`, and `metadata`.
+- A repo publishes exactly **one artifact for one family**; a manifest listing more is rejected.
+- The artifact's `sha256` is verified against the downloaded file.
 
 Minimal example:
 
@@ -322,13 +321,12 @@ Minimal example:
 
 All five families use the `submission_zip.v1` interface. Legacy repos with only a root `submission.zip` and no manifest are still accepted and map to `cf_autopilot`, but new work should use the manifest.
 
-### 4. Package Family Artifacts Into The Repo
+### 4. Package The Family Artifact Into The Repo
 
 ```bash
 swarm repo package \
   --repo-root YOUR_REPO \
-  --family-source cf_autopilot=./autopilot_agent \
-  --family-source cf_swarm_autopilot=./swarm_agent
+  --family-source cf_autopilot=./autopilot_agent
 
 swarm repo verify --repo-root YOUR_REPO --strict-manifest
 
@@ -339,11 +337,11 @@ git push
 
 ### 5. Submit
 
-> **One model per hotkey per family.** A hotkey runs one model in each family it enters, so a single hotkey can compete in up to all five families at once: the three public families published from one repo's manifest, plus Search and Rescue and Swarm SAR submitted separately via the private track.
+> **One model per hotkey.** A hotkey enters exactly one family with exactly one model: a public family published from its repo's manifest, or a private family committed as a digest. To compete in more families, register more hotkeys, one per family.
 >
-> Treat every submission as final. Once your model is evaluated in a family, that hotkey's slot in that family is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again in a family you have already entered, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
+> Treat every submission as final. Once your model is evaluated, the hotkey's slot is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
 >
-> The slot only reopens on its own if the submission never finished before the weekly rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey per family.
+> The slot only reopens on its own if the submission never finished before the weekly rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey.
 
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
@@ -392,7 +390,7 @@ python neurons/miner.py \
 
 The miner commits your repo URL on-chain and exits. You do **not** need to stay online: validators discover your model automatically.
 
-One repo URL covers every family artifact in your manifest: the scanner creates one model row per declared family.
+The repo URL carries your single family artifact. A manifest declaring more than one family is rejected outright, and a commitment naming a different family while your hotkey already holds a live model is ignored.
 
 ### Submit a Private Family (Search and Rescue, Swarm SAR)
 
@@ -486,7 +484,7 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 ### How Your Model Is Evaluated
 
 1. **Miner** commits the GitHub URL on-chain, then goes offline
-2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. It verifies the README hash, downloads the manifest and every declared artifact, checks each artifact's SHA-256, and creates one **Pending Benchmark** row per family
+2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. It verifies the README hash, downloads the manifest and the declared artifact, checks its SHA-256, and creates one **Pending Benchmark** row
 3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
 4. **Validators** lease the model's seed range in 50-seed batches and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
 5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed batches), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
@@ -511,7 +509,7 @@ At rollover, models still pending from the previous epoch are marked **Epoch Exp
 | Epoch length | 7 days (Monday 16:00 UTC) |
 | Pre-rollover registration freeze | 1.5 hours |
 | Max artifact size | 50 MiB uncompressed content |
-| Models per hotkey | 1 per family (5 families) |
+| Models per hotkey | 1 (one family per hotkey) |
 | Chain commit cooldown | ~20 minutes |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -548,7 +546,7 @@ Registration takes minutes (the scanner polls every 3 minutes). Evaluation time 
 
 ### Can I update my submission after committing?
 
-**No, once your model has been evaluated.** A hotkey gets one submission per family. A changed artifact on an evaluated model is ignored, not re-run, so to try a better model in that family you need a new hotkey.
+**No, once your model has been evaluated.** A hotkey gets one submission. A changed artifact on an evaluated model is ignored, not re-run, so to try a better model you need a new hotkey.
 
 The only exceptions happen before evaluation finishes: a rejected (malformed) zip was never registered, so you can just fix it and re-commit on the same hotkey; and a submission that expired at the weekly rollover, or was retired by a version bump, frees its slot for a fresh commit. Never swap a reigning champion's artifact, though: that reads as tampering and permanently loses payout eligibility.
 
@@ -556,11 +554,11 @@ The chain rate-limits commits to roughly one per 20 minutes.
 
 ### What happens if my model fails evaluation?
 
-The hotkey is used up for that family. A model that was evaluated and failed (or whose repo went dead) keeps its slot locked, so pushing a new artifact will not re-run it. To try again, register a new hotkey. The exception is a submission rejected for a fixable packaging problem, which leaves the slot open to fix and re-commit.
+The hotkey is used up. A model that was evaluated and failed (or whose repo went dead) keeps its slot locked, so pushing a new artifact will not re-run it. To try again, register a new hotkey. The exception is a submission rejected for a fixable packaging problem, which leaves the slot open to fix and re-commit.
 
 ### Can I compete in more than one family?
 
-Yes, one model per family per hotkey. The three public families (Autopilot, Swarm Autopilot, Interceptor) publish from a single repo via `submission_manifest.json`; Search and Rescue and Swarm SAR are submitted separately through the private track. Each family artifact is evaluated and championed independently.
+Not on the same hotkey: every hotkey enters exactly one family. To compete in several families, register one hotkey per family. Public families (Autopilot, Swarm Autopilot, Interceptor) each publish from their own repo via `submission_manifest.json`; Search and Rescue and Swarm SAR are submitted through the private track. Each entry is evaluated and championed independently.
 
 ### I submitted, but I don't see a score yet. What should I check?
 
@@ -569,7 +567,7 @@ In order of likelihood:
 - **README hash mismatch**: the number-one silent killer. `README.md` must be a byte-exact copy of the template; if it isn't, the scanner drops the submission without any visible error. Run `swarm repo verify` to catch it, or `swarm repo package` to rewrite the correct README. Check this first.
 - **Repo still private**: the backend cannot fetch it. Make it public after the chain commit finalizes; the scanner re-reads all commitments every pass.
 - **Wrong URL shape**: the commitment must be exactly `https://github.com/owner/repo`.
-- **Manifest problems**: artifact path/hash mismatch, or a family artifact missing from `artifacts/<family_id>/`.
+- **Manifest problems**: artifact path/hash mismatch, the artifact missing from `artifacts/<family_id>/`, or a manifest declaring more than one family.
 - **Freeze window**: commits during the last 1.5 hours of an epoch register after rollover.
 - **Non-whitelisted package or oversized artifact**: see [Docker Whitelist](#docker-whitelist) and the 50 MiB uncompressed cap.
 

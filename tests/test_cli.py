@@ -352,7 +352,7 @@ def test_model_package_skips_pycache_files(tmp_path):
     assert "weights.pt" in names
 
 
-def test_repo_package_creates_multi_family_manifest_and_artifacts(tmp_path):
+def test_repo_package_rejects_multiple_family_sources(tmp_path, capsys):
     repo_root = tmp_path / "submission_repo"
     sar_src = tmp_path / "sar_agent"
     autopilot_src = tmp_path / "autopilot_agent"
@@ -372,24 +372,56 @@ def test_repo_package_creates_multi_family_manifest_and_artifacts(tmp_path):
         ]
     )
 
-    assert rc == 0
-    manifest_path = repo_root / "submission_manifest.json"
-    assert manifest_path.exists()
-    manifest = json.loads(manifest_path.read_text())
-    assert [item["family_id"] for item in manifest["artifacts"]] == [
-        "cf_autopilot",
-        "cf_search_and_rescue",
-    ]
-    assert (repo_root / "artifacts" / "cf_autopilot" / "submission.zip").exists()
-    assert (repo_root / "artifacts" / "cf_search_and_rescue" / "submission.zip").exists()
+    assert rc == 1
+    assert "multiple_families_not_allowed:2" in capsys.readouterr().err
+    assert not (repo_root / "submission_manifest.json").exists()
 
 
-def test_repo_package_supports_single_family_incremental_updates(tmp_path):
+def test_repo_package_rejects_second_family_in_existing_repo(tmp_path, capsys):
     repo_root = tmp_path / "submission_repo"
     sar_src = tmp_path / "sar_agent"
     autopilot_src = tmp_path / "autopilot_agent"
     _write_smoke_ready_agent(sar_src, speed=0.5)
     _write_smoke_ready_agent(autopilot_src, speed=0.4)
+
+    assert (
+        cli.main(
+            [
+                "repo",
+                "package",
+                "--repo-root",
+                str(repo_root),
+                "--family-source",
+                f"cf_search_and_rescue={sar_src}",
+            ]
+        )
+        == 0
+    )
+    rc = cli.main(
+        [
+            "repo",
+            "package",
+            "--repo-root",
+            str(repo_root),
+            "--source",
+            str(autopilot_src),
+            "--family-id",
+            "cf_autopilot",
+        ]
+    )
+
+    assert rc == 1
+    assert "repo_already_packages_family:cf_search_and_rescue" in capsys.readouterr().err
+    manifest = json.loads((repo_root / "submission_manifest.json").read_text())
+    assert [item["family_id"] for item in manifest["artifacts"]] == [
+        "cf_search_and_rescue",
+    ]
+
+
+def test_repo_package_supports_same_family_incremental_updates(tmp_path):
+    repo_root = tmp_path / "submission_repo"
+    sar_src = tmp_path / "sar_agent"
+    _write_smoke_ready_agent(sar_src, speed=0.5)
 
     assert (
         cli.main(
@@ -411,28 +443,24 @@ def test_repo_package_supports_single_family_incremental_updates(tmp_path):
                 "package",
                 "--repo-root",
                 str(repo_root),
-                "--source",
-                str(autopilot_src),
-                "--family-id",
-                "cf_autopilot",
+                "--family-source",
+                f"cf_search_and_rescue={sar_src}",
+                "--overwrite",
             ]
         )
         == 0
     )
 
     manifest = json.loads((repo_root / "submission_manifest.json").read_text())
-    assert {item["family_id"] for item in manifest["artifacts"]} == {
+    assert [item["family_id"] for item in manifest["artifacts"]] == [
         "cf_search_and_rescue",
-        "cf_autopilot",
-    }
+    ]
 
 
-def test_repo_verify_passes_for_packaged_multi_family_repo(tmp_path, capsys):
+def test_repo_verify_passes_for_packaged_repo(tmp_path, capsys):
     repo_root = tmp_path / "submission_repo"
     sar_src = tmp_path / "sar_agent"
-    autopilot_src = tmp_path / "autopilot_agent"
     _write_smoke_ready_agent(sar_src, speed=0.5)
-    _write_smoke_ready_agent(autopilot_src, speed=0.4)
 
     assert (
         cli.main(
@@ -443,8 +471,6 @@ def test_repo_verify_passes_for_packaged_multi_family_repo(tmp_path, capsys):
                 str(repo_root),
                 "--family-source",
                 f"cf_search_and_rescue={sar_src}",
-                "--family-source",
-                f"cf_autopilot={autopilot_src}",
             ]
         )
         == 0
@@ -455,16 +481,13 @@ def test_repo_verify_passes_for_packaged_multi_family_repo(tmp_path, capsys):
     assert rc == 0
     output = capsys.readouterr().out
     assert "Compliant: True" in output
-    assert "Family: cf_autopilot" in output
     assert "Family: cf_search_and_rescue" in output
     assert "Runtime smoke: True (ok)" in output
 
 
 def test_repo_verify_rejects_bad_artifact_and_surfaces_family_id(tmp_path, capsys):
     repo_root = tmp_path / "submission_repo"
-    sar_src = tmp_path / "sar_agent"
     autopilot_src = tmp_path / "autopilot_agent"
-    _write_smoke_ready_agent(sar_src, speed=0.5)
     _write_smoke_ready_agent(autopilot_src, speed=0.4)
 
     assert (
@@ -474,8 +497,6 @@ def test_repo_verify_rejects_bad_artifact_and_surfaces_family_id(tmp_path, capsy
                 "package",
                 "--repo-root",
                 str(repo_root),
-                "--family-source",
-                f"cf_search_and_rescue={sar_src}",
                 "--family-source",
                 f"cf_autopilot={autopilot_src}",
             ]

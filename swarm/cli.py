@@ -607,12 +607,8 @@ def _resolve_repo_package_sources(args: argparse.Namespace) -> list[RepoPackageS
 
     if not specs:
         raise ValueError("no_family_sources_specified")
-
-    seen_family_ids: set[str] = set()
-    for spec in specs:
-        if spec.family_id in seen_family_ids:
-            raise ValueError(f"duplicate_family_id:{spec.family_id}")
-        seen_family_ids.add(spec.family_id)
+    if len(specs) > 1:
+        raise ValueError(f"multiple_families_not_allowed:{len(specs)}")
     return specs
 
 
@@ -816,6 +812,14 @@ def _cmd_repo_package(args: argparse.Namespace) -> int:
         existing_artifacts = {
             artifact.family_id: artifact for artifact in existing_manifest.artifacts
         }
+        for existing_family_id in existing_artifacts:
+            if existing_family_id != package_sources[0].family_id:
+                print(
+                    f"repo_already_packages_family:{existing_family_id} "
+                    "(one task per hotkey; use a fresh repo to switch)",
+                    file=sys.stderr,
+                )
+                return 1
 
     packaged_artifacts: list[PackagedModelArtifact] = []
     for spec in package_sources:
@@ -1325,13 +1329,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     repo_parser = subparsers.add_parser(
         "repo",
-        help="Repository-level multi-family packaging and verification.",
+        help="Repository-level submission packaging and verification.",
     )
     repo_subparsers = repo_parser.add_subparsers(dest="repo_command", required=True)
 
     repo_package_parser = repo_subparsers.add_parser(
         "package",
-        help="Build or update a multi-family submission repo manifest and artifacts.",
+        help="Build or update a submission repo manifest and its artifact.",
     )
     repo_package_parser.add_argument(
         "--repo-root",
@@ -1345,7 +1349,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help=(
             "Family source mapping in the form FAMILY_ID=PATH or "
-            "FAMILY_ID@INTERFACE_VERSION=PATH. May be repeated."
+            "FAMILY_ID@INTERFACE_VERSION=PATH. One family per repo."
         ),
     )
     repo_package_parser.add_argument(

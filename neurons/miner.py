@@ -52,6 +52,38 @@ def _validate_github_url(raw: str) -> str | None:
     return f"https://github.com/{parts[0]}/{repo}"
 
 
+def _check_public_manifest(github_url: str) -> str | None:
+    """Return a rejection reason when the repo manifest names more than one
+    family; None when it is fine or cannot be fetched (the scanner enforces)."""
+    import httpx
+
+    for branch in ("main", "master"):
+        try:
+            resp = httpx.get(
+                f"{github_url}/raw/{branch}/submission_manifest.json",
+                timeout=30, follow_redirects=True,
+            )
+        except Exception:
+            return None
+        if resp.status_code != 200:
+            continue
+        try:
+            artifacts = resp.json().get("artifacts") or []
+        except ValueError:
+            return None
+        families = sorted(
+            {str(a.get("family_id")) for a in artifacts if isinstance(a, dict)}
+        )
+        if len(artifacts) > 1 or len(families) > 1:
+            return (
+                f"the repo manifest declares {len(artifacts)} artifacts "
+                f"({', '.join(families)}); one hotkey competes in one task, "
+                "so package exactly one family"
+            )
+        return None
+    return None
+
+
 def _sha256_file(path: str) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -266,6 +298,11 @@ def main(argv=None):
             bt.logging.error(
                 "Invalid GitHub URL. Must be https://github.com/{owner}/{repo}"
             )
+            return 1
+        manifest_reason = _check_public_manifest(github_url)
+        if manifest_reason is not None:
+            bt.logging.error(f"Submission rejected before committing: {manifest_reason}")
+            bt.logging.error("Fix the repo and retry; nothing was committed on-chain.")
             return 1
         commit_data = github_url
         commit_label = github_url

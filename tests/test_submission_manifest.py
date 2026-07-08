@@ -79,7 +79,7 @@ def test_parse_submission_manifest_rejects_invalid_manifest_version():
         raise AssertionError("Expected invalid manifest version to be rejected")
 
 
-def test_parse_submission_manifest_rejects_duplicate_family_id():
+def test_parse_submission_manifest_rejects_multiple_artifacts():
     payload = {
         "manifest_version": SUBMISSION_MANIFEST_VERSION,
         "repo_layout_rules": dict(REPO_LAYOUT_RULES),
@@ -92,9 +92,9 @@ def test_parse_submission_manifest_rejects_duplicate_family_id():
                 "metadata": {},
             },
             {
-                "family_id": "cf_search_and_rescue",
+                "family_id": "cf_autopilot",
                 "interface_version": "submission_zip.v1",
-                "artifact_path": "artifacts/cf_search_and_rescue/alt.zip",
+                "artifact_path": "artifacts/cf_autopilot/submission.zip",
                 "sha256": "2" * 64,
                 "metadata": {},
             },
@@ -104,9 +104,9 @@ def test_parse_submission_manifest_rejects_duplicate_family_id():
     try:
         parse_submission_manifest_payload(payload)
     except ValueError as exc:
-        assert str(exc) == "duplicate_family_id:cf_search_and_rescue"
+        assert str(exc) == "multiple_families_not_allowed:2"
     else:  # pragma: no cover
-        raise AssertionError("Expected duplicate family_id rejection")
+        raise AssertionError("Expected multi-family manifest rejection")
 
 
 def test_parse_submission_manifest_rejects_unsupported_family():

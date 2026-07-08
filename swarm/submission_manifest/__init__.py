@@ -107,6 +107,10 @@ def parse_submission_manifest_payload(payload: Any) -> SubmissionManifest:
     artifacts_payload = manifest.get("artifacts")
     if not isinstance(artifacts_payload, list) or not artifacts_payload:
         raise SubmissionManifestError("invalid_artifacts")
+    if len(artifacts_payload) > 1:
+        raise SubmissionManifestError(
+            f"multiple_families_not_allowed:{len(artifacts_payload)}"
+        )
 
     seen_family_ids: set[str] = set()
     seen_paths: set[str] = set()

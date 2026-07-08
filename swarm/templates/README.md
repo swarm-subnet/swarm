@@ -41,19 +41,19 @@ https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 
 ## This Repository
 
-This repository holds one or more trained flight models entered into [Swarm](https://swarm124.com), the open benchmark for autonomous drone AI. Each artifact under `artifacts/` is a complete pilot: a policy that reads a depth camera and its own flight state, and flies. Models are evaluated across six procedurally generated world types, 1,100 fresh seeds per family every weekly epoch, with no privileged information and no pre-built maps.
+This repository holds one trained flight model entered into [Swarm](https://swarm124.com), the open benchmark for autonomous drone AI. The artifact under `artifacts/` is a complete pilot: a policy that reads a depth camera and its own flight state, and flies. Models are evaluated across six procedurally generated world types, 1,100 fresh seeds per family every weekly epoch, with no privileged information and no pre-built maps.
 
 ```
 README.md                              # This file, the byte-exact benchmark template
-submission_manifest.json               # Declares which families this repo competes in
-artifacts/<family_id>/submission.zip   # One trained agent per family
+submission_manifest.json               # Declares which family this repo competes in
+artifacts/<family_id>/submission.zip   # The trained agent for that family
 ```
 
-Each `.zip` carries the agent's `DroneFlightController` class in `drone_agent.py` plus its trained weights; the manifest pins every artifact's SHA-256. One artifact per family, up to all five from a single repo.
+The `.zip` carries the agent's `DroneFlightController` class in `drone_agent.py` plus its trained weights; the manifest pins its SHA-256. One artifact, one family: every entry competes in exactly one challenge.
 
 ## Run This Model
 
-Every artifact in this repo runs on your machine with the public benchmark engine: the same worlds and the same scoring the leaderboard uses.
+The model in this repo runs on your machine with the public benchmark engine: the same worlds and the same scoring the leaderboard uses.
 
 **1. Clone and install**
 
@@ -72,7 +72,7 @@ python -m swarm.benchmark.engine \
   --seeds-per-group 3 --workers 4
 ```
 
-Point `--model` and `--family-id` at any artifact this repo ships. The artifacts live here, not in the swarm checkout, so pass their full path.
+Point `--model` and `--family-id` at the artifact this repo ships. The artifact lives here, not in the swarm checkout, so pass its full path.
 
 > [!NOTE]
 > `--seeds-per-group 1` runs a quick pass; validators score the full 1,100 seeds.
@@ -102,7 +102,7 @@ The policy reads a depth image and its own flight state 50 times a second and an
 
 ## Challenge Families
 
-The benchmark runs **five challenge families**. Each is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo can enter any of them, or all five.
+The benchmark runs **five challenge families**. Each is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
 
 | Family | ID | Mission | Emissions |
 |--------|----|---------|:--------:|
