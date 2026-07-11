@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import zipfile
 from pathlib import Path
 
@@ -51,6 +52,13 @@ def _single_node_artifact(tmp_path: Path, model_bytes: bytes, family="cf_autopil
         action="p.action",
     )
     return build_artifact(tmp_path, manifest, {"models/p.onnx": model_bytes})
+
+
+def _daemonic_admission(zip_path, queue):
+    from swarm.model_graph import admit_artifact_subprocess
+
+    result = admit_artifact_subprocess(Path(zip_path))
+    queue.put((result.accepted, result.reason_code))
 
 
 class TestHappyPath:
@@ -608,3 +616,16 @@ class TestSubprocessBoundary:
         result = admit_artifact_subprocess(path)
         assert not result.accepted
         assert result.reason_code == ReasonCode.ARCHIVE_REJECTED.value
+
+    def test_subprocess_falls_back_inline_in_daemonic_workers(self, tmp_path):
+        path = autopilot_artifact(tmp_path)
+        context = multiprocessing.get_context("spawn")
+        queue = context.Queue()
+        worker = context.Process(
+            target=_daemonic_admission, args=(str(path), queue), daemon=True
+        )
+        worker.start()
+        accepted, reason_code = queue.get(timeout=60)
+        worker.join(10)
+        assert accepted, reason_code
+        assert reason_code == ReasonCode.OK.value

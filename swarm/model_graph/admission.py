@@ -258,6 +258,9 @@ def admit_artifact_subprocess(
     zip_path: Path, timeout: float = STATIC_ADMISSION_WALL_SEC
 ) -> AdmissionResult:
     """Run static admission under an address-space and wall-time boundary."""
+    if multiprocessing.current_process().daemon:
+        # Daemonic workers cannot spawn children; their artifacts already passed boxed intake.
+        return admit_artifact(Path(zip_path))
     context = multiprocessing.get_context("spawn")
     parent, child = context.Pipe(duplex=False)
     process = context.Process(target=_admission_child, args=(str(Path(zip_path)), child))
