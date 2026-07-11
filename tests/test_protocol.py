@@ -57,10 +57,14 @@ def test_map_task_unpack_infers_family_id_for_legacy_payloads():
 def test_policy_ref_as_dict_includes_github_url():
     ref = PolicyRef(
         sha256="abc",
-        entrypoint="main.py",
-        framework="torch",
         size_bytes=42,
         github_url="https://github.com/user/repo",
+        artifact_path="artifacts/cf_autopilot/submission.zip",
+        family_id="cf_autopilot",
+        interface_version="model_graph.v1",
+        execution_profile="swarm.onnx-neural.cpu.v1",
+        profile_digest="d" * 64,
+        runner_abi="graph_runner.v1",
     )
     d = ref.as_dict()
     assert d["sha256"] == "abc"
@@ -76,10 +80,14 @@ def test_policy_synapse_request_ref():
 def test_policy_synapse_accessors_for_ref_and_result():
     ref = PolicyRef(
         sha256="h",
-        entrypoint="e",
-        framework="f",
         size_bytes=1,
         github_url="https://github.com/a/b",
+        artifact_path="artifacts/cf_autopilot/submission.zip",
+        family_id="cf_autopilot",
+        interface_version="model_graph.v1",
+        execution_profile="swarm.onnx-neural.cpu.v1",
+        profile_digest="d" * 64,
+        runner_abi="graph_runner.v1",
     )
     result = ValidationResult(uid=7, success=True, time_sec=1.2, score=0.8)
 

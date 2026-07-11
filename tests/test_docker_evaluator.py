@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import queue
-import shutil
 import socket
 import threading
 import time
@@ -29,7 +28,7 @@ class _ProcResult:
 
 def _new_evaluator() -> de.DockerSecureEvaluator:
     ev = de.DockerSecureEvaluator.__new__(de.DockerSecureEvaluator)
-    ev.base_image = "swarm_evaluator_base:latest"
+    ev.base_image = "swarm_model_graph_runner:latest"
     ev.base_images = {"base": ev.base_image}
     ev.base_ready = True
     de.DockerSecureEvaluator._base_ready = True
@@ -139,46 +138,6 @@ class _ScriptedContext:
     @property
     def attempts(self):
         return dict(self._attempts)
-
-
-def test_normalize_package_name():
-    assert (
-        de.DockerSecureEvaluator._normalize_package_name("NumPy_Pkg.Name")
-        == "numpy-pkg-name"
-    )
-
-
-def test_validate_requirements_accepts_whitelisted_packages(tmp_path):
-    ev = _new_evaluator()
-    req = tmp_path / "requirements.txt"
-    req.write_text(
-        "\n".join(
-            [
-                "# comment",
-                "numpy>=2.0.1",
-                "torch==2.0.0",
-                "swarm-bullet3==2.0.0.1",
-                "swarm-drone-gym==2.0.0.1",
-            ]
-        )
-    )
-    assert ev._validate_requirements(req, uid=1) is True
-
-
-@pytest.mark.parametrize(
-    "line",
-    [
-        "-r other.txt",
-        "git+https://example.com/repo.git",
-        "mypkg @ https://example.com/pkg.whl",
-        "httpx==0.27.0",  # not in DOCKER_PIP_WHITELIST
-    ],
-)
-def test_validate_requirements_rejects_disallowed_lines(tmp_path, line):
-    ev = _new_evaluator()
-    req = tmp_path / "requirements.txt"
-    req.write_text(line + "\n")
-    assert ev._validate_requirements(req, uid=2) is False
 
 
 def test_serialize_observation_dict():
@@ -423,7 +382,7 @@ def test_setup_base_container_uses_real_docker_paths_after_split(monkeypatch):
 
     assert ev.base_ready is True
     assert len(build_cmds) == 1
-    dockerfile_path = Path(__file__).resolve().parents[1] / "swarm" / "validator" / "docker" / "Dockerfile"
+    dockerfile_path = Path(__file__).resolve().parents[1] / "swarm" / "validator" / "docker" / "Dockerfile.model_graph"
     assert build_cmds[0][build_cmds[0].index("-f") + 1] == str(dockerfile_path)
 
 
@@ -668,62 +627,6 @@ def test_host_worker_runtime_parse_cpuset_spec():
 
     parsed = HostWorkerRuntimeSettings.parse_cpuset_spec("0,2-4,7")
     assert parsed == {0, 2, 3, 4, 7}
-
-
-def test_calibrate_rpc_overhead_fallback_on_failures(monkeypatch):
-    ev = _new_evaluator()
-    monkeypatch.setattr(ev, "_serialize_observation", lambda *a, **k: object())
-    monkeypatch.setattr(de, "CALIBRATION_ROUNDS", 4)
-
-    class _Agent:
-        async def calibrate(self, obs):
-            _ = obs
-            raise asyncio.TimeoutError()
-
-    overhead, cpu_factor = asyncio.run(
-        ev._calibrate_rpc_overhead_async(
-            _Agent(), object(), {"state": np.zeros(2)}, uid=5
-        )
-    )
-    fallback = max(de.RPC_STEP_TIMEOUT_SEC - de.MINER_COMPUTE_BUDGET_SEC, 0.010)
-    assert overhead == fallback
-    assert cpu_factor == 1.0
-
-
-def test_calibrate_rpc_overhead_success(monkeypatch):
-    ev = _new_evaluator()
-    monkeypatch.setattr(ev, "_serialize_observation", lambda *a, **k: object())
-    monkeypatch.setattr(de, "CALIBRATION_ROUNDS", 4)
-
-    timeline = iter([0.0, 0.05, 1.0, 1.06, 2.0, 2.07, 3.0, 3.08])
-    last = {"t": 3.08}
-
-    def _fake_time():
-        try:
-            last["t"] = next(timeline)
-            return last["t"]
-        except StopIteration:
-            return last["t"]
-
-    monkeypatch.setattr(de.time, "time", _fake_time)
-
-    class _Resp:
-        def __init__(self, benchmark_ns):
-            self.benchmarkNs = benchmark_ns
-
-    class _Agent:
-        async def calibrate(self, obs):
-            _ = obs
-            return _Resp(12_000_000)
-
-    overhead, cpu_factor = asyncio.run(
-        ev._calibrate_rpc_overhead_async(
-            _Agent(), object(), {"state": np.zeros(2)}, uid=6
-        )
-    )
-    expected_overheads = [0.038, 0.048, 0.058, 0.068]
-    assert overhead == pytest.approx(np.median(expected_overheads), abs=1e-9)
-    assert cpu_factor == pytest.approx(1.0, abs=1e-9)
 
 
 def test_run_multi_seed_rpc_sync_uses_initial_obs_without_extra_reset(monkeypatch):
@@ -1630,57 +1533,6 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
     assert captured["runtime_profile_payload"]["profile_name"] == "search_and_rescue"
 
 
-def test_setup_workspace_uses_runtime_profile_for_image_limits_and_bootstrap(monkeypatch, tmp_path):
-    ev = _new_evaluator()
-    ev.base_images["mission"] = "swarm_evaluator_mission:latest"
-    model_path = tmp_path / "model.zip"
-    with zipfile.ZipFile(model_path, "w") as zf:
-        zf.writestr("drone_agent.py", "print('ok')\n")
-
-    monkeypatch.setattr(ev, "_get_docker_host_ip", lambda: "172.17.0.1")
-
-    ctx = de.batch._BatchContext(
-        self=ev,
-        tasks=[SimpleNamespace(map_seed=1, challenge_type=1, family_id="cf_autopilot")],
-        uid=77,
-        model_path=model_path,
-        worker_id=0,
-        model_image=None,
-        runtime_profile_payload=ChallengeFamilyRuntimeProfile(
-            family_id="cf_autopilot",
-            profile_name="custom_navigation",
-            resource_class="navigation",
-            image_key="mission",
-            env_bootstrap={"sar_mode": False},
-            docker_env={"EXTRA_FLAG": "1"},
-            docker_worker_cpus="1.25",
-            docker_worker_memory="3g",
-        ).as_dict(),
-        helpers=de.batch._BatchHelpers(
-            phase=lambda *_args, **_kwargs: None,
-            on_seed_complete_guarded=lambda *_args, **_kwargs: None,
-            build_failure_seed_meta=lambda *_args, **_kwargs: {},
-            notify_all_failed=lambda *_args, **_kwargs: None,
-            run_docker_cmd_quiet=lambda *_args, **_kwargs: None,
-            cleanup_tmpdir_quiet=lambda path: None,
-        ),
-    )
-
-    try:
-        early = de.batch._setup_workspace(ctx)
-        assert early is None
-        assert ctx.run_image == "swarm_evaluator_mission:latest"
-        assert ctx.worker_limits["cpus"] == "1.25"
-        assert ctx.worker_limits["memory"] == "3g"
-        assert ctx.docker_envs["SWARM_RUNTIME_PROFILE"] == "custom_navigation"
-        assert ctx.docker_envs["SWARM_RUNTIME_IMAGE_KEY"] == "mission"
-        assert ctx.docker_envs["SWARM_BOOTSTRAP_SAR_MODE"] == "0"
-        assert ctx.docker_envs["EXTRA_FLAG"] == "1"
-    finally:
-        if ctx.tmpdir:
-            shutil.rmtree(ctx.tmpdir, ignore_errors=True)
-
-
 def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):
     ev = _new_evaluator()
     de.DockerSecureEvaluator._base_ready = True
@@ -1705,7 +1557,7 @@ def test_evaluate_seeds_batch_returns_failures_when_docker_not_ready(tmp_path):
     de.DockerSecureEvaluator._base_ready = False
     model = tmp_path / "model.zip"
     with zipfile.ZipFile(model, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("drone_agent.py", "class Agent: pass")
+        zf.writestr("manifest.json", "{}")
     payloads = []
     tasks = [SimpleNamespace(map_seed=3)]
     results = asyncio.run(

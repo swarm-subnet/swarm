@@ -1,6 +1,6 @@
-"""Single-task worker for the new-flow validator.
+"""Single-task worker for the validator.
 
-The new ``forward`` loop hands one task at a time to ``run_task``. The
+The ``forward`` loop hands one task at a time to ``run_task``. The
 function downloads the model, runs the requested phase, and submits
 the result. Cancellation flows through ``cancel_flag`` (set by the SSE
 listener); the streaming evaluator checks it at chunk boundaries.
@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.constants import MODEL_DIR
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
@@ -60,6 +59,9 @@ async def run_task(
         [{
             "uid": uid, "model_hash": model_hash,
             "github_url": github_url, "is_private": is_private,
+            "family_id": family_id,
+            "interface_version": str(task.get("interface_version") or "model_graph.v1"),
+            "artifact_path": str(task.get("artifact_path") or ""),
         }],
     )
     entry = paths.get(uid)

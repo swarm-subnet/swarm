@@ -212,7 +212,6 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
                     min_clearance=clr[i],
                     collision=bool(col[i]),
                     challenge_type=int(task.challenge_type),
-                    legitimate_model=True,
                     failure_reason=str(fr[i]),
                 )
             )

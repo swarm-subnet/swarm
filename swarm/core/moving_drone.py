@@ -1132,7 +1132,6 @@ class MovingDroneAviary(BaseRLAviary):
                 horizon=self.EP_LEN_SEC,
                 min_clearance=self._min_clearance_episode,
                 collision=self._collision,
-                legitimate_model=True,
                 failure_reason=self._failure_reason,
             ).score
 
@@ -1345,7 +1344,6 @@ class MovingDroneAviary(BaseRLAviary):
             horizon=self.EP_LEN_SEC,
             min_clearance=self._min_clearance_episode,
             collision=self._collision,
-            legitimate_model=True,
             failure_reason=getattr(self, "_failure_reason", "NONE"),
         )
 

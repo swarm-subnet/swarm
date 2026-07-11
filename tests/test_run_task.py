@@ -228,7 +228,7 @@ async def test_run_task_benchmark_happy_path(monkeypatch, fake_model_path):
 async def test_run_task_reeval_evaluates_full_1000_seeds(
     monkeypatch, fake_model_path,
 ):
-    """Plan §2.10: REEVAL covers all 1000 seeds (0..999), not just the
+    """REEVAL covers all 1000 seeds (0..999), not just the
     benchmark 800. Validators receive a REEVAL task with seeds_from=0
     and the streaming evaluator must iterate the full epoch seed list."""
     target_hash = ("abc" * 22)[:64]

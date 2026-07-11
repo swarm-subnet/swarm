@@ -110,10 +110,10 @@ def test_swarm_sar_smoke_obs_batches_and_action_validates():
         validate_action_output,
     )
 
-    contract = get_policy_interface_contract("cf_swarm_sar", "submission_zip.v1")
+    contract = get_policy_interface_contract("cf_swarm_sar", "model_graph.v1")
     action_space = contract["action_space"]
     for n in (SWARM_MIN_DRONES, SWARM_MAX_DRONES):
-        obs = build_smoke_test_observation("cf_swarm_sar", "submission_zip.v1", num_drones=n)
+        obs = build_smoke_test_observation("cf_swarm_sar", "model_graph.v1", num_drones=n)
         assert obs["depth"].shape == (n, 256, 256, 1)
         assert obs["rgb"].shape == (n, 256, 256, 3)
         assert obs["state"].shape == (n, 214)

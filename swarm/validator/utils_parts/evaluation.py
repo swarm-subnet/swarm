@@ -20,14 +20,61 @@ from swarm.constants import (
     UNIFIED_CHUNK_SIZE,
 )
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
+from swarm.model_graph import (
+    EXECUTION_PROFILE_ID,
+    INFRA_FAULT_CODES,
+    ModelGraphError,
+    ReasonCode,
+    RUNNER_ABI,
+    profile_digest,
+)
 from swarm.protocol import FailureReason
-from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
+from swarm.utils.hash import sha256sum
+from swarm.validator.backend_api import authorize_with_retry
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
 
 
 _EMPTY_PER_TYPE = tuple(ENVIRONMENT_TYPES) + ("moving_platform",)
+
+_INFRA_FAILURE_REASONS = frozenset(
+    {FailureReason.INFRA.value} | {code.value for code in INFRA_FAULT_CODES}
+)
+
+
+def _is_infra_failure(reason) -> bool:
+    """Infrastructure faults are the validator's problem and are never uploaded as miner scores."""
+    return reason in _INFRA_FAILURE_REASONS
+
+
+def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
+    """Provenance fields the backend seed-score schema requires on every upload.
+
+    ``runner_image_digest`` carries the runner image's build-input fingerprint
+    (the ``swarm.code_hash`` label), not an OCI digest. An absent or stale label
+    means the scores cannot be attributed to a known image, so the upload is
+    refused as an infrastructure fault rather than stamped with a placeholder."""
+    evaluator = self.docker_evaluator
+    try:
+        label = str(evaluator._get_image_hash_label() or "")
+        expected = str(evaluator._calculate_docker_hash())
+    except Exception as exc:
+        raise ModelGraphError(
+            ReasonCode.INFRA_IMAGE_MISMATCH, f"runner image provenance unavailable: {exc}"
+        ) from exc
+    if not label or label != expected:
+        raise ModelGraphError(
+            ReasonCode.INFRA_IMAGE_MISMATCH,
+            f"runner image label {label!r} does not match expected build hash {expected!r}",
+        )
+    return {
+        "artifact_sha256": sha256sum(model_path),
+        "execution_profile_id": EXECUTION_PROFILE_ID,
+        "execution_profile_digest": profile_digest(),
+        "runner_abi": RUNNER_ABI,
+        "runner_image_digest": label,
+    }
 
 
 def _utils_facade():
@@ -118,7 +165,7 @@ async def _evaluate_seeds(
                     "score": 0.0,
                     "metric_key": "unknown",
                     "map_type": "unknown",
-                    "failure_reason": "NONE",
+                    "failure_reason": FailureReason.INFRA.value,
                     "metrics": {},
                 }
             )
@@ -161,7 +208,7 @@ async def _evaluate_seeds(
                     "score": 0.0,
                     "metric_key": type_name,
                     "map_type": type_name,
-                    "failure_reason": "NONE",
+                    "failure_reason": FailureReason.INFRA.value,
                     "metrics": {},
                 }
             )
@@ -208,6 +255,7 @@ async def _run_streaming_phase(
     total_for_evaluator = (
         evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
     )
+    provenance = _seed_upload_provenance(self, model_path)
 
     async def _safe_upload(batch: List[dict]) -> None:
         try:
@@ -215,6 +263,7 @@ async def _run_streaming_phase(
                 model_uid=uid, epoch_number=epoch_number, scores=batch,
                 task_id=task_id,
                 family_id=family_id,
+                provenance=provenance,
             )
         except Exception as exc:
             bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
@@ -293,7 +342,7 @@ async def _run_streaming_phase(
                 }
                 for j, detail in enumerate(batch_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"
-                and detail.get("failure_reason") != FailureReason.INFRA.value
+                and not _is_infra_failure(detail.get("failure_reason"))
             ]
             if seed_batch:
                 await _wait_for_slot()
@@ -328,6 +377,7 @@ async def _run_streaming_phase(
                         model_uid=uid, epoch_number=epoch_number, scores=batch,
                         task_id=task_id,
                         family_id=family_id,
+                        provenance=provenance,
                     )
                 except Exception as exc:
                     bt.logging.warning(
@@ -355,7 +405,7 @@ async def _run_screening(
     """Run screening seeds and stream per-seed scores.
 
     Returns ``(avg, all_scores, per_type, cancel_reason, early_failed)`` with
-    ``early_failed`` always ``False`` — pass/fail and copy-detection are now
+    ``early_failed`` always ``False`` — pass/fail and copy-detection are
     decided by the backend from the streamed seed scores.
 
     ``seeds_from`` / ``seeds_to`` carve a sub-range out of the epoch's full

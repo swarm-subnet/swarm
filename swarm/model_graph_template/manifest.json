@@ -1,0 +1,26 @@
+{
+  "model_graph_version": "model_graph.v1",
+  "family_id": "cf_autopilot",
+  "execution_profile": "swarm.onnx-neural.cpu.v1",
+  "runner_abi": "graph_runner.v1",
+  "models": [
+    {
+      "id": "policy",
+      "file": "models/policy.onnx",
+      "sha256": "f5eac6a4c0bd7268e89edcaed4e4bda5faa3a3271aa82a487ee381f0f0bc4567"
+    }
+  ],
+  "memory": [],
+  "nodes": [
+    {
+      "id": "policy",
+      "model": "policy",
+      "inputs": {
+        "depth": "obs.depth",
+        "state": "obs.state"
+      },
+      "every_n_steps": 1
+    }
+  ],
+  "action": "policy.action"
+}

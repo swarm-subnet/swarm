@@ -605,7 +605,7 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     model_path.write_bytes(b"zip")
     captured = {}
 
-    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
         return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
@@ -613,7 +613,7 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group: {"type5_warehouse": [200662]},
+        lambda seeds_per_group, **kwargs: {"type5_warehouse": [200662]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "argv", _argv_for_model(model_path))
@@ -627,7 +627,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
     model_path.write_bytes(b"zip")
     captured = {}
 
-    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
         return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
@@ -635,7 +635,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group: {"type5_warehouse": [200662]},
+        lambda seeds_per_group, **kwargs: {"type5_warehouse": [200662]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "argv", _argv_for_model(model_path, "--uid", "12"))
@@ -660,7 +660,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
     }]
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
-    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
         _ = model_path, uid, type_seeds, num_workers, run_opts
         eval_start = 1000.0
         return (
@@ -679,7 +679,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group: {"type5_warehouse": [seed]},
+        lambda seeds_per_group, **kwargs: {"type5_warehouse": [seed]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -712,7 +712,7 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
     }]
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
-    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
         _ = model_path, uid, type_seeds, num_workers, run_opts
         eval_start = 1000.0
         return (
@@ -731,7 +731,7 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group: {"type5_warehouse": [seed]},
+        lambda seeds_per_group, **kwargs: {"type5_warehouse": [seed]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -752,14 +752,14 @@ def test_main_prints_failed_footer_when_benchmark_raises(monkeypatch, tmp_path):
     out = io.StringIO()
     err = io.StringIO()
 
-    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
         _ = model_path, uid, type_seeds, num_workers, run_opts
         raise RuntimeError("simulated benchmark failure")
 
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group: {"type5_warehouse": [200662]},
+        lambda seeds_per_group, **kwargs: {"type5_warehouse": [200662]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -791,7 +791,7 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
     }]
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
-    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts):
+    async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
         _ = model_path, uid, type_seeds, num_workers, run_opts
         eval_start = 1000.0
         return (
@@ -810,7 +810,7 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bench_full_eval,
         "_find_seeds",
-        lambda seeds_per_group: {"type5_warehouse": [seed]},
+        lambda seeds_per_group, **kwargs: {"type5_warehouse": [seed]},
     )
     monkeypatch.setattr(bench_full_eval, "_run_benchmark", _fake_run_benchmark)
     monkeypatch.setattr(sys, "__stdout__", out)
@@ -828,7 +828,7 @@ def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_p
     out = io.StringIO()
     err = io.StringIO()
 
-    def _fake_find_seeds(seeds_per_group):
+    def _fake_find_seeds(seeds_per_group, **kwargs):
         _ = seeds_per_group
         raise ValueError("simulated seed selection failure")
 
@@ -1057,9 +1057,9 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
             on_seed_complete=None,
             task_offset=0,
             task_total=None,
-            model_image=None,
+            runtime_profile_payload=None,
         ):
-            _ = uid, model_path, worker_id, task_offset, task_total, model_image
+            _ = uid, model_path, worker_id, task_offset, task_total, runtime_profile_payload
             for task in tasks:
                 if on_seed_complete is not None:
                     on_seed_complete(

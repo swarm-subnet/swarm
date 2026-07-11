@@ -31,9 +31,8 @@ def _shape(value) -> str:
 
 
 def render_block(schema: dict, family_id: str) -> str:
-    interface = schema["policy_interfaces"][f"{family_id}:submission_zip.v1"]
+    interface = schema["policy_interfaces"][f"{family_id}:model_graph.v1"]
     family = schema["challenge_families"][family_id]
-    entry = interface["entry_point"]
     obs = interface["observation_space"]
     action = interface["action_space"]
     smoke = interface.get("smoke_test_observation", {})
@@ -45,8 +44,8 @@ def render_block(schema: dict, family_id: str) -> str:
         "| | |",
         "|---|---|",
         f"| Interface version | `{interface['interface_version']}` |",
-        f"| Entry point | `{entry['module']}.{entry['class_name']}` |",
-        f"| Methods | `{entry['act_method']}(obs)` / `{entry['reset_method']}()` |",
+        f"| Execution profile | `{interface['execution_profile']}` |",
+        f"| Runner ABI | `{interface['runner_abi']}` |",
         f"| Contract file | `{interface['contract_filename']}` ({interface['contract_version']}) |",
         f"| Environment types | {', '.join(family['environment_types'])} |",
         "",

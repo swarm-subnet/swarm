@@ -3,9 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import json
 import os
-import py_compile
 import re
 import shutil
 import subprocess
@@ -23,16 +21,14 @@ from swarm.domain_model import (
     CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
     get_challenge_family_definition,
 )
+from swarm.model_graph import admit_artifact
 from swarm.policy_interface import (
-    POLICY_CONTRACT_FILENAME,
     PolicyInterfaceError,
-    render_artifact_policy_contract,
     resolve_policy_interface_version,
     smoke_test_policy_package,
     verify_policy_package_contract,
 )
 from swarm.submission_manifest import (
-    LEGACY_FALLBACK,
     REPO_LAYOUT_RULES,
     SUBMISSION_MANIFEST_FILENAME,
     SubmissionArtifact,
@@ -44,35 +40,13 @@ from swarm.submission_manifest import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
-DEFAULT_MODEL_ZIP = REPO_ROOT / "Submission" / "submission.zip"
-
-MODEL_EXTENSIONS = {
-    ".bin",
-    ".ckpt",
-    ".h5",
-    ".json",
-    ".npy",
-    ".npz",
-    ".onnx",
-    ".pb",
-    ".pkl",
-    ".pt",
-    ".pth",
-    ".safetensors",
-    ".tflite",
-    ".weights",
-    ".zip",
-}
+DEFAULT_MODEL_ZIP = REPO_ROOT / "Submission" / "model_graph.zip"
 
 REQUIRED_TEMPLATE_FILES = {
     "main.py",
     "agent.capnp",
     "agent_server.py",
-    "drone_agent.py",
 }
-
-REQUIREMENTS_DIRECT_REF_RE = re.compile(r"\s@\s")
-REQUIREMENTS_URL_RE = re.compile(r"^(?:https?://|git\+|file:|/|\.\.?/)")
 
 REPORT_FIELD_PATTERNS = {
     "seeds_evaluated": re.compile(r"Seeds evaluated:\s+(\d+)"),
@@ -134,7 +108,6 @@ class RepoPackageSource:
     family_id: str
     source_dir: Path
     interface_version: str | None = None
-
 
 
 def _check_module_available(module_name: str) -> DoctorCheck:
@@ -454,35 +427,12 @@ def _group_label(group_name: str) -> str:
     return TYPE_LABELS.get(int(challenge_type), str(group_name))
 
 
-
-
-def _validate_requirements_file(requirements_path: Path) -> list[str]:
-    issues: list[str] = []
-    for idx, raw_line in enumerate(requirements_path.read_text().splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("-"):
-            issues.append(f"line {idx}: pip option not allowed ({line})")
-            continue
-        if REQUIREMENTS_DIRECT_REF_RE.search(line):
-            issues.append(f"line {idx}: direct reference not allowed ({line})")
-            continue
-        if REQUIREMENTS_URL_RE.search(line):
-            issues.append(f"line {idx}: direct URL/path not allowed ({line})")
-    return issues
-
-
 def _collect_packable_files(source_dir: Path) -> list[Path]:
-    allowed_names = {"drone_agent.py", "requirements.txt"}
-    files: list[Path] = []
-    for path in sorted(source_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        if "__pycache__" in path.parts:
-            continue
-        if path.name in allowed_names or path.suffix.lower() in MODEL_EXTENSIONS:
-            files.append(path)
+    manifest = source_dir / "manifest.json"
+    models_dir = source_dir / "models"
+    files = [manifest] if manifest.is_file() else []
+    if models_dir.is_dir():
+        files.extend(sorted(path for path in models_dir.iterdir() if path.is_file() and path.suffix == ".onnx"))
     return files
 
 
@@ -504,9 +454,9 @@ def _package_model_artifact(
 ) -> PackagedModelArtifact:
     if not source_dir.is_dir():
         raise ValueError(f"Source directory not found: {source_dir}")
-    drone_agent = source_dir / "drone_agent.py"
-    if not drone_agent.exists():
-        raise ValueError("Source must contain drone_agent.py")
+    graph_manifest = source_dir / "manifest.json"
+    if not graph_manifest.is_file():
+        raise ValueError("Source must contain manifest.json")
     if output_zip.exists() and not overwrite:
         raise ValueError(
             f"Output already exists: {output_zip} (use --overwrite to replace)"
@@ -514,38 +464,36 @@ def _package_model_artifact(
 
     output_zip.parent.mkdir(parents=True, exist_ok=True)
     files_to_pack = _collect_packable_files(source_dir)
-    if drone_agent not in files_to_pack:
-        files_to_pack.append(drone_agent)
-        files_to_pack.sort()
-
     try:
         interface_version = resolve_policy_interface_version(
-            family_id,
-            interface_version,
-        )
-        policy_contract_json = render_artifact_policy_contract(
             family_id,
             interface_version,
         )
     except PolicyInterfaceError as exc:
         raise ValueError(str(exc)) from exc
 
-    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_STORED) as zf:
         for file_path in files_to_pack:
             zf.write(file_path, arcname=str(file_path.relative_to(source_dir)))
-        zf.writestr(POLICY_CONTRACT_FILENAME, policy_contract_json)
+    admission = admit_artifact(output_zip)
+    if not admission.accepted:
+        output_zip.unlink(missing_ok=True)
+        raise ValueError(f"{admission.reason_code}:{admission.detail}")
+    if admission.family_id != family_id:
+        output_zip.unlink(missing_ok=True)
+        raise ValueError(f"artifact_family_mismatch:{family_id}:{admission.family_id}")
 
     return PackagedModelArtifact(
         family_id=family_id,
         interface_version=interface_version,
         output_zip=output_zip,
         sha256=_sha256sum(output_zip),
-        packaged_files_count=len(files_to_pack) + 1,
+        packaged_files_count=len(files_to_pack),
     )
 
 
 def _default_repo_artifact_relpath(family_id: str) -> str:
-    artifact_basename = Path(str(LEGACY_FALLBACK["artifact_path"])).name
+    artifact_basename = "model_graph.zip"
     return (
         Path(REPO_LAYOUT_RULES["artifacts_dir"]) / family_id / artifact_basename
     ).as_posix()
@@ -614,13 +562,8 @@ def _resolve_repo_package_sources(args: argparse.Namespace) -> list[RepoPackageS
 
 def _inspect_submission_repo(
     repo_root: Path,
-    *,
-    allow_legacy_fallback: bool = True,
 ) -> tuple[bool, str, list[dict[str, Any]]]:
-    ok, reason, manifest = validate_submission_repo(
-        repo_root,
-        allow_legacy_fallback=allow_legacy_fallback,
-    )
+    ok, reason, manifest = validate_submission_repo(repo_root)
     if not ok or manifest is None:
         return False, reason, []
 
@@ -646,7 +589,6 @@ def _inspect_submission_repo(
                 "policy_contract_reason": contract_reason,
                 "runtime_smoke_ok": smoke_ok,
                 "runtime_smoke_reason": smoke_reason,
-                "legacy_fallback_used": manifest.legacy_fallback_used,
                 "compliant": compliant,
                 "policy_contract": contract,
             }
@@ -728,60 +670,40 @@ def _cmd_model_package(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_model_verify(args: argparse.Namespace) -> int:
-    from swarm.constants import MAX_MODEL_BYTES
-    from swarm.core.model_verify import (
-        classify_model_validity,
-        inspect_model_structure,
-        zip_is_safe,
-    )
-
+def _cmd_model_admit(args: argparse.Namespace) -> int:
     model_path = Path(args.model)
     if not model_path.is_file():
         print(f"Model zip not found: {model_path}", file=sys.stderr)
         return 1
 
     size_bytes = model_path.stat().st_size
-    max_uncompressed = int(args.max_uncompressed_mb * 1024 * 1024)
-    size_ok = size_bytes <= MAX_MODEL_BYTES
-    zip_safe = zip_is_safe(model_path, max_uncompressed=max_uncompressed)
-    inspection = inspect_model_structure(model_path)
-    status, reason = classify_model_validity(inspection)
+    admission = admit_artifact(model_path)
     contract_ok, contract_reason, contract = verify_policy_package_contract(model_path)
     smoke_ok = False
     smoke_reason = "skipped_due_to_contract_failure"
     if contract_ok:
         smoke_ok, smoke_reason = smoke_test_policy_package(model_path)
-    compliant = bool(
-        size_ok
-        and zip_safe
-        and status == "legitimate"
-        and contract_ok
-        and smoke_ok
-    )
+    compliant = bool(admission.accepted and contract_ok and smoke_ok)
 
     payload = {
         "model": str(model_path),
         "compliant": compliant,
         "size_bytes": size_bytes,
-        "size_limit_bytes": MAX_MODEL_BYTES,
-        "size_ok": size_ok,
-        "zip_safe": zip_safe,
-        "status": status,
-        "reason": reason,
+        "status": "accepted" if admission.accepted else "rejected",
+        "reason": admission.reason_code,
         "policy_contract_ok": contract_ok,
         "policy_contract_reason": contract_reason,
         "runtime_smoke_ok": smoke_ok,
         "runtime_smoke_reason": smoke_reason,
         "policy_contract": contract,
-        "inspection": inspection,
+        "admission": admission.to_record(),
     }
 
     print(f"Model: {payload['model']}")
     print(f"Compliant: {payload['compliant']}")
     print(f"Status: {payload['status']}")
     print(f"Reason: {payload['reason']}")
-    print(f"Size: {payload['size_bytes']} bytes (limit {payload['size_limit_bytes']})")
+    print(f"Size: {payload['size_bytes']} bytes")
     print(f"Policy contract: {payload['policy_contract_ok']} ({payload['policy_contract_reason']})")
     if payload["policy_contract"] is not None:
         print(f"Policy family: {payload['policy_contract']['family_id']}")
@@ -842,6 +764,7 @@ def _cmd_repo_package(args: argparse.Namespace) -> int:
             interface_version=packaged.interface_version,
             artifact_path=artifact_relpath,
             sha256=packaged.sha256,
+            size_bytes=packaged.output_zip.stat().st_size,
             metadata={
                 "packaged_with": "swarm_cli",
                 "source_dir_name": spec.source_dir.name,
@@ -871,10 +794,7 @@ def _cmd_repo_verify(args: argparse.Namespace) -> int:
         print(f"Repo root not found: {repo_root}", file=sys.stderr)
         return 1
 
-    repo_ok, reason, artifact_reports = _inspect_submission_repo(
-        repo_root,
-        allow_legacy_fallback=not args.strict_manifest,
-    )
+    repo_ok, reason, artifact_reports = _inspect_submission_repo(repo_root)
     readme_ok, readme_detail = _check_repo_readme(repo_root)
     overall_ok = repo_ok and readme_ok
 
@@ -904,62 +824,27 @@ def _cmd_repo_verify(args: argparse.Namespace) -> int:
 
 
 def _cmd_model_test(args: argparse.Namespace) -> int:
-    from swarm.constants import MAX_MODEL_BYTES
-
     source_dir = Path(args.source)
     if not source_dir.is_dir():
         print(f"Source directory not found: {source_dir}", file=sys.stderr)
         return 1
 
     checks: list[DoctorCheck] = []
-    drone_agent = source_dir / "drone_agent.py"
-    checks.append(
-        DoctorCheck(
-            name="drone_agent.py",
-            ok=drone_agent.exists(),
-            detail="present" if drone_agent.exists() else "missing",
-            required=True,
-        )
-    )
-
-    if drone_agent.exists():
+    with tempfile.TemporaryDirectory(prefix="swarm_graph_test_") as tmp:
+        output = Path(tmp) / "model_graph.zip"
         try:
-            py_compile.compile(str(drone_agent), doraise=True)
-            checks.append(DoctorCheck("drone_agent_syntax", True, "valid python", True))
-        except py_compile.PyCompileError as exc:
-            checks.append(DoctorCheck("drone_agent_syntax", False, str(exc), True))
-
-    requirements_path = source_dir / "requirements.txt"
-    if requirements_path.exists():
-        req_issues = _validate_requirements_file(requirements_path)
-        checks.append(
-            DoctorCheck(
-                "requirements.txt",
-                ok=not req_issues,
-                detail="ok" if not req_issues else "; ".join(req_issues),
-                required=True,
+            packaged = _package_model_artifact(
+                source_dir=source_dir,
+                output_zip=output,
+                family_id=str(args.family_id),
+                interface_version=args.interface_version,
+                overwrite=True,
             )
-        )
-    else:
-        checks.append(
-            DoctorCheck(
-                "requirements.txt",
-                ok=True,
-                detail="not present (optional)",
-                required=False,
-            )
-        )
-
-    files_to_pack = _collect_packable_files(source_dir)
-    total_size = sum(f.stat().st_size for f in files_to_pack)
-    checks.append(
-        DoctorCheck(
-            "estimated_package_size",
-            ok=total_size <= MAX_MODEL_BYTES,
-            detail=f"{total_size} bytes (limit {MAX_MODEL_BYTES})",
-            required=True,
-        )
-    )
+            ok, reason = smoke_test_policy_package(packaged.output_zip)
+            checks.append(DoctorCheck("model_graph_admission", True, "ok", True))
+            checks.append(DoctorCheck("runtime_probe", ok, reason, True))
+        except ValueError as exc:
+            checks.append(DoctorCheck("model_graph_admission", False, str(exc), True))
 
     print("Model Test")
     for check in checks:
@@ -1253,27 +1138,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_parser.set_defaults(func=_cmd_benchmark)
 
-
     model_parser = subparsers.add_parser("model", help="Model packaging and validation.")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
 
-    model_verify_parser = model_subparsers.add_parser(
+    model_admit_parser = model_subparsers.add_parser(
         "verify",
         help="Verify submission zip compliance.",
     )
-    model_verify_parser.add_argument(
+    model_admit_parser.add_argument(
         "--model",
         type=Path,
         required=True,
         help="Path to submission zip.",
     )
-    model_verify_parser.add_argument(
-        "--max-uncompressed-mb",
-        type=float,
-        default=300.0,
-        help="Maximum allowed uncompressed ZIP size in MB for safety checks.",
-    )
-    model_verify_parser.set_defaults(func=_cmd_model_verify)
+    model_admit_parser.set_defaults(func=_cmd_model_admit)
 
     model_package_parser = model_subparsers.add_parser(
         "package",
@@ -1283,7 +1161,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         type=Path,
         required=True,
-        help="Source directory containing drone_agent.py and model files.",
+        help="Source directory containing manifest.json and models/*.onnx.",
     )
     model_package_parser.add_argument(
         "--output",
@@ -1323,8 +1201,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         type=Path,
         required=True,
-        help="Source directory containing drone_agent.py.",
+        help="Source directory containing manifest.json and models/*.onnx.",
     )
+    model_test_parser.add_argument("--family-id", choices=sorted(CHALLENGE_FAMILY_IDS), required=True)
+    model_test_parser.add_argument("--interface-version", default=None)
     model_test_parser.set_defaults(func=_cmd_model_test)
 
     repo_parser = subparsers.add_parser(
@@ -1385,11 +1265,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Repo root containing submission_manifest.json.",
-    )
-    repo_verify_parser.add_argument(
-        "--strict-manifest",
-        action="store_true",
-        help="Require submission_manifest.json and disable legacy submission.zip fallback.",
     )
     repo_verify_parser.set_defaults(func=_cmd_repo_verify)
 

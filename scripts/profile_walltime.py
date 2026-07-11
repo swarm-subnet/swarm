@@ -358,8 +358,7 @@ def print_family_totals(results):
     per_family = defaultdict(list)
     for r in results:
         per_family[r["family"]].append(r["per_seed_s"])
-    print("\nValidator-side cost only: excludes the RPC round trip and miner compute")
-    print("(see scripts/profile_docker_e2e.py for end-to-end numbers).")
+    print("\nValidator-side cost only: excludes the RPC round trip and miner compute.")
     print(f"\n{'family':<22} {'avg seed_s':>10} {'x1100 core-h':>13} {'@6 workers':>11}")
     print("-" * 60)
     for family, seeds_s in per_family.items():

@@ -194,7 +194,6 @@ def _score_single_drone(
     min_clearance: Optional[float],
     collision: bool,
     challenge_type: int,
-    legitimate_model: bool,
     failure_reason: str,
 ) -> float:
     """Per-drone autopilot score (0.45 success + 0.45 time + 0.10 safety).
@@ -202,7 +201,7 @@ def _score_single_drone(
     Numerically identical to AutopilotChallengeFamily.normalize_rollout_metrics
     for one drone; the swarm family averages this over its drones.
     """
-    if not legitimate_model or failure_reason == "EVAL_ERROR":
+    if failure_reason == "EVAL_ERROR":
         return 0.0
     if not success:
         return PARTICIPATION_REWARD if t > 0.0 else 0.0
@@ -228,7 +227,6 @@ def flight_reward(
     w_success: float = REWARD_W_SUCCESS,
     w_t: float = REWARD_W_TIME,
     w_safety: float = REWARD_W_SAFETY,
-    legitimate_model: bool = True,
     failure_reason: str = "NONE",
     sar_mode: bool = False,
 ) -> float:
@@ -251,10 +249,6 @@ def flight_reward(
         ``True`` if the drone collided with an obstacle. Forces safety term to 0.
     w_success, w_t, w_safety
         Weights for success, time, and safety terms. They should sum to ``1``.
-    legitimate_model
-        ``True`` if the model passed verification. Legitimate models that fail
-        missions receive a base reward of 0.01.
-
     Returns
     -------
     float
@@ -264,18 +258,18 @@ def flight_reward(
     if horizon <= 0:
         raise ValueError("'horizon' must be positive")
 
-    if not legitimate_model or failure_reason == "EVAL_ERROR":
+    if failure_reason == "EVAL_ERROR":
         return 0.0
 
     if not success:
         if failure_reason in PARTICIPATION_REASONS:
             return PARTICIPATION_REWARD
-        if not sar_mode and legitimate_model and t > 0.0:
+        if not sar_mode and t > 0.0:
             return PARTICIPATION_REWARD
         return 0.0
 
     if collision:
-        if legitimate_model and t > 0.0:
+        if t > 0.0:
             return PARTICIPATION_REWARD
         return 0.0
 

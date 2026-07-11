@@ -194,7 +194,6 @@ async def _run_process_parallel(
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
     heartbeat_sec: float = 30.0,
-    model_image: Optional[str] = None,
     runtime_profile: Optional[dict[str, Any]] = None,
     retry_budget: Optional[dict[str, int]] = None,
 ) -> list:
@@ -363,7 +362,6 @@ async def _run_process_parallel(
                 uid=uid,
                 model_path=str(model_path),
                 task_total=len(all_tasks),
-                model_image=model_image,
                 runtime_profile=resolved_runtime_profile.as_dict(),
             )
             worker_active_requests[worker_slot] = request
@@ -459,7 +457,10 @@ async def _run_process_parallel(
             _emit_seed_complete(on_seed_complete, seed_meta)
 
         for idx in request.batch_indices:
-            vr = ValidationResult(int(uid), False, 0.0, 0.0)
+            vr = ValidationResult(
+                int(uid), False, 0.0, 0.0,
+                failure_reason=FailureReason.INFRA.value,
+            )
             results[idx] = vr
             meta = task_meta[idx] if idx < len(task_meta) else None
             _record_seed_result(
@@ -705,7 +706,7 @@ async def _run_process_parallel(
                     (
                         bench_engine._is_backoff_timeout_status(final_status)
                         # transient (e.g. host port briefly taken) -> retry, don't score 0
-                        or final_status == "container_start_failed"
+                        or final_status in ("container_start_failed", "INFRA_DOCKER")
                     )
                     and prior_retries < 1
                     and retry_budget["timeout"] < _MAX_TIMEOUT_RETRIES
@@ -769,7 +770,13 @@ async def _run_process_parallel(
                 seed_status = _seed_status(final_seed_meta)
                 if vr is not None and (
                     bench_engine._is_backoff_timeout_status(seed_status)
-                    or seed_status == "container_start_failed"
+                    or bench_engine._is_rpc_transport_status(seed_status)
+                    or bench_engine._is_backoff_infra_status(seed_status)
+                    or seed_status in (
+                        "container_start_failed",
+                        "stopped_during_connect",
+                        "stopped_before_seed",
+                    )
                 ):
                     # Infra failure, not a real 0 — flag it so the upload skips it
                     # and the seed is re-dispatched on resume instead of scored 0.
@@ -793,7 +800,9 @@ async def _run_process_parallel(
         _drain_progress_events()
         _log_summary()
         return [
-            result if result is not None else ValidationResult(int(uid), False, 0.0, 0.0)
+            result if result is not None else ValidationResult(
+                int(uid), False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value
+            )
             for result in results
         ]
     finally:
@@ -858,7 +867,7 @@ async def evaluate_seeds_parallel(
             runtime_profile_payload=runtime_profile.as_dict(),
         )
 
-    from .batch import check_task_versions, prepare_model_image
+    from .batch import check_task_versions
 
     schema_reject = check_task_versions(uid, 0, tasks)
     if schema_reject is not None:
@@ -870,14 +879,6 @@ async def evaluate_seeds_parallel(
             error=f"uid {uid} task schema version not supported",
         )
         return schema_reject
-
-    model_image = await asyncio.to_thread(
-        prepare_model_image,
-        self,
-        uid,
-        model_path,
-        runtime_profile_payload=runtime_profile.as_dict(),
-    )
 
     task_meta = [
         {
@@ -904,7 +905,6 @@ async def evaluate_seeds_parallel(
         prior_seeds_done=prior_seeds_done,
         prior_total_seeds=prior_total_seeds,
         prior_avg=prior_avg,
-        model_image=model_image,
         runtime_profile=runtime_profile.as_dict(),
         retry_budget=retry_budget,
     )

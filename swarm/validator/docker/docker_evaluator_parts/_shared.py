@@ -2,22 +2,18 @@ import asyncio
 import gc
 import hashlib
 import os
-import re
 import shutil
 import socket
 import statistics
 import subprocess
-import tempfile
 import threading
 import time
-import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
 import bittensor as bt
 import capnp
 import numpy as np
-from gym_pybullet_drones.utils.enums import ActionType
 
 from swarm.challenge_families import runtime_profile_for_tasks
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
@@ -28,7 +24,6 @@ from swarm.constants import (
     CALIBRATION_OVERHEAD_CAP_SEC,
     CALIBRATION_ROUNDS,
     CALIBRATION_TIMEOUT_SEC,
-    DOCKER_PIP_WHITELIST,
     DOCKER_WORKER_CPUS,
     DOCKER_WORKER_MEMORY,
     GLOBAL_EVAL_BASE_SEC,
@@ -42,12 +37,9 @@ from swarm.constants import (
     RPC_RESET_TIMEOUT_SEC,
     RPC_STEP_TIMEOUT_SEC,
     SIM_DT,
-    SPEED_LIMIT,
 )
-from swarm.core.model_verify import add_to_blacklist
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env
-from swarm.utils.hash import sha256sum
 
 _HEAVY_CHALLENGE_TYPES = frozenset({3, 4, 5, 6})
 

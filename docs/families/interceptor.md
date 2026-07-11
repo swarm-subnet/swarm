@@ -50,10 +50,10 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 
 | | |
 |---|---|
-| Interface version | `submission_zip.v1` |
-| Entry point | `drone_agent.DroneFlightController` |
-| Methods | `act(obs)` / `reset()` |
-| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
+| Interface version | `model_graph.v1` |
+| Execution profile | `swarm.onnx-neural.cpu.v1` |
+| Runner ABI | `graph_runner.v1` |
+| Contract file | `manifest.json` (model_graph.v1) |
 | Environment types | open |
 
 ### Observation: `dict` with keys `depth`, `state`
@@ -61,7 +61,7 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
 | `depth` | float32 | (1024, 1024, 1) | [0, 1] |
-| `state` | float32 | (140) at evaluation settings | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` |
+| `state` | float32 | (140) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` |
 
 ### Action: float32 tensor, shape (5)
 
@@ -75,7 +75,7 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 
 <!-- io-tables:end -->
 
-> There is **no `rgb` key and no 6th action component** here: those are Search-and-Rescue features. The submission template's docstring describes SAR defaults; do not copy its shapes for this family.
+> There is **no `rgb` key and no 6th action component** here: those are Search-and-Rescue features. Do not copy SAR shapes for this family.
 
 ### Depth camera
 
@@ -93,7 +93,7 @@ The forward depth camera is the long-range HD variant, tuned so a 36 cm drone is
 
 Actions run through the VEL controller: commanded velocity = `6.0 × |speed| × unit(dir_xyz)`, so `speed` is a fraction of the 6.0 m/s family cap. The `yaw` component is an absolute target yaw (`clip(yaw, −1, 1) × π`), rate-limited to 3.141 rad/s per control step; a PID converts the command to rotor RPMs.
 
-Your `act()` call has a guaranteed pure-compute budget of **0.500 s per step**; separate wall-clock timeouts allow 2.0 s for the first step and 5.0 s for `reset()`, with up to 15 timeout strikes tolerated per seed before the episode is scrapped.
+Each control step has a guaranteed pure-compute budget of **0.500 s**; separate wall-clock timeouts allow 2.0 s for the first step and 5.0 s for `reset()`, with up to 15 timeout strikes tolerated per seed before the episode is scrapped.
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>
 
@@ -214,12 +214,12 @@ Per-episode `info` exposes the chase telemetry you'll want when tuning: `interce
 
 ## Local Testing
 
-Package your agent against this family's contract, then run the benchmark engine with the family selected (the plain `swarm benchmark` wrapper does not take a family flag and defaults to Autopilot, so use the module form):
+Package your model against this family's contract, then run the benchmark engine with the family selected (the plain `swarm benchmark` wrapper does not take a family flag and defaults to Autopilot, so use the module form):
 
 ```bash
-swarm model package --source my_agent/ --family-id cf_interceptor
+swarm model package --source ./my_model --family-id cf_interceptor
 
-python3 -m swarm.benchmark --model Submission/submission.zip --family-id cf_interceptor
+python3 -m swarm.benchmark --model model_graph.zip --family-id cf_interceptor
 ```
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>

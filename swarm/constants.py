@@ -119,32 +119,13 @@ def default_docker_worker_count(*, maximum: int = 12) -> int:
 # dedicated CPU group; capped at 12 workers.
 N_DOCKER_WORKERS = default_docker_worker_count(maximum=12)
 
-# Docker pip package whitelist (approved packages for miner requirements.txt)
-DOCKER_PIP_WHITELIST = {
-    "torch", "torchvision", "torchaudio",
-    "onnx", "onnxruntime", "onnxruntime-gpu",
-    "stable-baselines3", "sb3-contrib",
-    "gymnasium", "gym",
-    "swarm-bullet3", "swarm-drone-gym",
-    "numpy", "scipy", "scikit-learn",
-    "opencv-python", "opencv-python-headless",
-    "pillow", "imageio",
-    "matplotlib",
-    "pyyaml",
-    "tqdm",
-    "einops",
-    "tensorboard",
-    "h5py",
-    "msgpack",
-}
-
 # Per-step RPC timing (miner inference fairness)
 RPC_STEP_TIMEOUT_SEC = 0.500            # Per agent.act() call fallback (seconds)
-RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for model warmup/JIT (seconds)
+RPC_FIRST_STEP_TIMEOUT_SEC = 0.500      # Sessions are warmed before RPC readiness
 RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() between seeds (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
-RPC_CONNECT_MAX_WAIT_SEC = 60.0         # Total budget to reach a serving RPC agent; covers slow cold model loads
-RPC_MAX_STRIKES_PER_SEED = 15           # Timeouts before failing a seed
+RPC_CONNECT_MAX_WAIT_SEC = 60.0         # Total budget to reach a serving RPC agent
+RPC_MAX_STRIKES_PER_SEED = 15           # Soft timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 600.0            # Base overhead for global worker timeout (seconds); one-seed validator batches get ~600s wall-clock
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
 GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker timeout (seconds)
@@ -173,7 +154,6 @@ FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in
 
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
-BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file
 CHUNK_SIZE = 2 * 1024 * 1024            # File transfer chunk size (2 MiB)
 SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess (MB)
 

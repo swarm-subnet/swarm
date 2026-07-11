@@ -105,7 +105,6 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         horizon: float,
         min_clearance: Optional[float],
         collision: bool,
-        legitimate_model: bool,
         failure_reason: str,
     ) -> dict[str, Any]:
         challenge_type = int(getattr(task, "challenge_type", -1))
@@ -121,7 +120,6 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
             "target_time_sec": None if target_time is None else float(target_time),
             "min_clearance": None if min_clearance is None else float(min_clearance),
             "collision": bool(collision),
-            "legitimate_model": bool(legitimate_model),
             "failure_reason": str(failure_reason),
             "success": bool(success),
         }
@@ -138,11 +136,10 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
 
         success = bool(metrics["success"])
         collision = bool(metrics["collision"])
-        legitimate_model = bool(metrics["legitimate_model"])
         failure_reason = str(metrics["failure_reason"])
         t = float(metrics["time_sec"])
 
-        if not legitimate_model or failure_reason == FailureReason.EVAL_ERROR.value:
+        if failure_reason == FailureReason.EVAL_ERROR.value:
             return {
                 "success_term": 0.0,
                 "time_term": 0.0,

@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import logging
-import sys
-import types
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from swarm.protocol import (
     FailureReason,
     MapTask,
     SCHEMA_VERSION,
-    is_supported_schema,
     normalize_version,
 )
 from swarm.validator.docker.docker_evaluator_parts.batch import (
@@ -55,13 +49,13 @@ def _make_ctx(tasks):
 
 def test_v1_now_rejected_post_cutover():
     """D.3.1 cutover: allow-list collapsed to {SCHEMA_VERSION}; V1 tasks are
-    rejected with EVAL_ERROR instead of warned-then-passed."""
+    rejected as an infrastructure fault instead of warned-then-passed."""
     tasks = [_make_task("1")]
     ctx, helpers = _make_ctx(tasks)
     result = _validate_inputs(ctx)
     helpers.notify_all_failed.assert_called_once_with(status="unsupported_schema_version")
     assert result is not None
-    assert all(r.failure_reason == FailureReason.EVAL_ERROR.value for r in result)
+    assert all(r.failure_reason == FailureReason.INFRA.value for r in result)
 
 
 def test_v5_accepted():
@@ -72,7 +66,7 @@ def test_v5_accepted():
     status = helpers.notify_all_failed.call_args.kwargs.get("status")
     assert status != "unsupported_schema_version"
     assert result is not None
-    assert all(r.failure_reason == "NONE" for r in result)
+    assert all(r.failure_reason == FailureReason.INFRA.value for r in result)
 
 
 def test_missing_version_skipped():
@@ -87,7 +81,7 @@ def test_missing_version_skipped():
     helpers.notify_all_failed.assert_called_once()
     status = helpers.notify_all_failed.call_args.kwargs.get("status")
     assert status != "unsupported_schema_version"
-    assert all(r.failure_reason == "NONE" for r in result)
+    assert all(r.failure_reason == FailureReason.INFRA.value for r in result)
 
 
 def test_unknown_rejected():
@@ -96,4 +90,4 @@ def test_unknown_rejected():
     result = _validate_inputs(ctx)
     assert result is not None
     helpers.notify_all_failed.assert_called_once_with(status="unsupported_schema_version")
-    assert all(r.failure_reason == FailureReason.EVAL_ERROR.value for r in result)
+    assert all(r.failure_reason == FailureReason.INFRA.value for r in result)

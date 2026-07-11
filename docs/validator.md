@@ -1,6 +1,6 @@
 # 🔐 Swarm Validator Guide
 
-This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models across five challenge families on procedurally generated maps: cities, open terrain, mountains, villages, warehouses, and forests. Miner code runs in isolated Docker containers while evaluation and scoring execute on the validator host.
+This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models across five challenge families on procedurally generated maps: cities, open terrain, mountains, villages, warehouses, and forests. Miner models run in isolated Docker containers under the subnet-owned runner, while evaluation and scoring execute on the validator host.
 
 Run `swarm doctor` after installation to verify your environment is ready.
 
@@ -316,7 +316,7 @@ pm2 start --name auto_update_validator \
    `GET /validators/sync` returns the current epoch, the per-family King of the Hill windows and family shares, the champions, and the latest weight map. Runs once per forward cycle. Evaluation work arrives separately via the `GET /validators/next-task` long-poll, which leases the next 50-seed batch.
 
 2. **Fetch the model**
-   For public families, download `submission.zip` from the miner's GitHub repo and verify the SHA-256 hash against the backend record (the README hash is checked at submission time by the backend). For the two private families (Search and Rescue, Swarm SAR) there is no public repo: trusted validators fetch the artifact from the backend instead.
+   For public families, download `model_graph.zip` from the miner's GitHub repo and verify the SHA-256 hash against the backend record (the README hash is checked at submission time by the backend). For the two private families (Search and Rescue, Swarm SAR) there is no public repo: trusted validators fetch the artifact from the backend instead.
 
 3. **Full benchmark (1,100 seeds)**
    Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers, leased from the backend in 50-seed batches. The task metadata carries the family, phase, and seed range, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.

@@ -11,9 +11,6 @@ from swarm.config import DockerRuntimeSettings, env_bool
 from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
 
 from ._shared import _THREAD_CAP_ENV_VARS
-from .batch import remove_all_model_images
-
-
 def __new__(cls):
     if cls._instance is None:
         cls._instance = super().__new__(cls)
@@ -35,7 +32,7 @@ def __init__(self):
     evaluator_cls = self.__class__
     # Only initialize attributes on first instantiation
     if not hasattr(self, "base_image"):
-        self.base_image = "swarm_evaluator_base:latest"
+        self.base_image = "swarm_model_graph_runner:latest"
     if not hasattr(self, "last_fake_model_info"):
         self.last_fake_model_info = None
     if not hasattr(self, "base_images"):
@@ -73,7 +70,7 @@ def _check_docker_available(self):
     except (subprocess.CalledProcessError, FileNotFoundError):
         bt.logging.error("🐳 Docker not found! Please install Docker manually.")
         bt.logging.error(
-            "📖 See installation instructions in swarm/requirements.txt"
+            "Docker is required for graph evaluation."
         )
         return False
 
@@ -131,23 +128,33 @@ def _resolve_base_image_for_key(self, image_key: str) -> str:
     return str(getattr(self, "base_images", {}).get(normalized, self.base_image))
 
 def _calculate_docker_hash(self) -> str:
-    """Calculate hash of all source files that go into the Docker image."""
-    dockerfile = _docker_dir() / "Dockerfile"
-    requirements = _docker_dir() / "docker-requirements.txt"
+    """Cache key over every input that shapes the runner image.
+
+    Each entry is framed as path + length + bytes so file boundaries are
+    unambiguous; a missing or unreadable input hashes as a distinct marker
+    instead of silently keeping a stale key."""
+    root = _repo_root()
     swarm_pkg = _swarm_package_dir()
+    inputs = [
+        root / ".dockerignore",
+        _docker_dir() / "Dockerfile.model_graph",
+        _docker_dir() / "model-graph-requirements.lock",
+        swarm_pkg / "__init__.py",
+    ]
+    for image_dir in (swarm_pkg / "model_graph", swarm_pkg / "submission_template"):
+        inputs.extend(sorted(p for p in image_dir.rglob("*") if p.is_file() and "__pycache__" not in p.parts))
 
     hasher = hashlib.sha256()
-
-    if dockerfile.exists():
-        hasher.update(dockerfile.read_bytes())
-    if requirements.exists():
-        hasher.update(requirements.read_bytes())
-    if swarm_pkg.exists():
-        for f in sorted(swarm_pkg.rglob("*.py")):
-            try:
-                hasher.update(f.read_bytes())
-            except Exception:
-                pass
+    for f in inputs:
+        try:
+            data = f.read_bytes()
+        except OSError:
+            data = b"__missing_input__"
+        rel = f.relative_to(root).as_posix().encode()
+        hasher.update(len(rel).to_bytes(4, "big"))
+        hasher.update(rel)
+        hasher.update(len(data).to_bytes(8, "big"))
+        hasher.update(data)
 
     return hasher.hexdigest()[:16]
 
@@ -244,7 +251,6 @@ def _setup_base_container(self):
                 shell=True,
                 capture_output=True,
             )
-            remove_all_model_images()
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
             subprocess.run(
@@ -254,7 +260,7 @@ def _setup_base_container(self):
         except Exception:
             pass
 
-        dockerfile_path = _docker_dir() / "Dockerfile"
+        dockerfile_path = _docker_dir() / "Dockerfile.model_graph"
         build_context = _repo_root()
         current_hash = self._calculate_docker_hash()
 

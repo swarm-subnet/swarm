@@ -440,6 +440,7 @@ class BackendApiClient:
         scores: list,
         task_id: Optional[int] = None,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+        provenance: Optional[Dict[str, Any]] = None,
         retries: int = 3,
     ) -> Dict[str, Any]:
         retries = max(retries, 1)
@@ -458,6 +459,16 @@ class BackendApiClient:
                 for score in scores
             ],
         }
+        if provenance:
+            for key in (
+                "artifact_sha256",
+                "execution_profile_id",
+                "execution_profile_digest",
+                "runner_abi",
+                "runner_image_digest",
+            ):
+                if key in provenance:
+                    payload[key] = provenance[key]
         if task_id is not None:
             payload["task_id"] = task_id
         for attempt in range(retries):
@@ -499,7 +510,7 @@ class BackendApiClient:
         return await self._post_signed("/validators/epoch/publish", data)
 
     # ──────────────────────────────────────────────────────────────────────
-    # New-flow endpoints (Plan §3.1, §3.2, §3.3)
+    # Task lease and seed upload endpoints
     # ──────────────────────────────────────────────────────────────────────
 
     async def next_task(self) -> Optional[Dict[str, Any]]:

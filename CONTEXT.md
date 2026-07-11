@@ -13,8 +13,8 @@ At a high level, the repo supports two main workflows:
 
 Core benchmark assumptions:
 
-- Models receive a `128x128` depth image plus a state vector.
-- Models output 5D flight commands.
+- Models receive a depth image (resolution set per challenge family) plus a state vector.
+- Models output 5- or 6-component flight commands per the family contract.
 - Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain.
 
 ## Primary Entrypoints
@@ -100,10 +100,10 @@ Common CLI workflow:
 
 ```bash
 swarm doctor
-swarm model test --source my_agent/
-swarm model package --source my_agent/
-swarm model verify --model Submission/submission.zip
-swarm benchmark --model Submission/submission.zip --workers 4
+swarm model test --source my_model/ --family-id cf_autopilot
+swarm model package --source my_model/
+swarm model verify --model Submission/model_graph.zip
+swarm benchmark --model Submission/model_graph.zip --workers 4
 swarm report
 ```
 

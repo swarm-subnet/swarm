@@ -1,4 +1,4 @@
-"""New-flow validator forward loop.
+"""Validator forward loop.
 
 Single-task model: pull one task from /next-task, run it, repeat. The
 SSE listener runs as a supervised background task and uses two
@@ -17,7 +17,7 @@ import traceback
 
 import bittensor as bt
 
-from swarm.constants import FORWARD_SLEEP_SEC
+from swarm.constants import FORWARD_SLEEP_SEC, N_DOCKER_WORKERS
 
 from .backend_api import (
     BackendApiClient,
@@ -25,6 +25,7 @@ from .backend_api import (
     BackendTransportError,
 )
 from .docker.docker_evaluator import DockerSecureEvaluator
+from .docker.docker_evaluator_parts.batch import _ensure_worker_speed_factor
 from .runtime_telemetry import tracker_call
 from .seed_manager import BenchmarkSeedManager
 from .sse_listener import SseListener
@@ -92,6 +93,11 @@ async def _forward_iteration(self) -> None:
         tracker_call(self, "update_koth_window", stamped)
 
         await _publish_pending_epoch_seeds(self)
+
+        if not await _host_may_score(self):
+            await _idle_until_wake(self, FORWARD_SLEEP_SEC)
+            tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
+            return
 
         # Reset flags before each long-poll so SSE events that arrive
         # during the next /next-task wait can wake us promptly.
@@ -190,6 +196,48 @@ def _record_sse_listener_exit(self, task: asyncio.Task) -> None:
         if wake_flag is not None:
             wake_flag.set()
     bt.logging.error(f"SSE listener exited: {exc}")
+
+
+def _image_provenance_ok(self) -> bool:
+    evaluator = self.docker_evaluator
+    try:
+        label = str(evaluator._get_image_hash_label() or "")
+        expected = str(evaluator._calculate_docker_hash())
+    except Exception as exc:
+        bt.logging.warning(f"Runner image provenance unavailable: {exc}")
+        return False
+    if label != expected:
+        bt.logging.warning(
+            f"Runner image label {label!r} does not match the expected build hash "
+            f"{expected!r}; not polling for scoring tasks until the image is rebuilt"
+        )
+        return False
+    return True
+
+
+async def _host_may_score(self) -> bool:
+    """Every scoring worker needs a fresh, eligible speed factor and a
+    provenance-verified runner image before this host leases work.
+
+    A worker without a valid calibration fails closed: an unmeasurable host
+    must not score miners with unnormalized timing."""
+    if not _image_provenance_ok(self):
+        return False
+    for worker_id in range(N_DOCKER_WORKERS):
+        speed = await _ensure_worker_speed_factor(self.docker_evaluator, worker_id)
+        if speed is None:
+            bt.logging.warning(
+                f"Worker {worker_id} has no valid reference calibration; "
+                "not polling for scoring tasks until calibration succeeds"
+            )
+            return False
+        if not speed.eligible:
+            bt.logging.warning(
+                f"Worker {worker_id} speed factor {speed.factor:.2f}x exceeds the "
+                "eligibility limit; not polling for scoring tasks until recalibration passes"
+            )
+            return False
+    return True
 
 
 async def _idle_until_wake(self, timeout: float) -> None:

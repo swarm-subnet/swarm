@@ -63,6 +63,8 @@ class _FakeBackendApi:
             raise RuntimeError("boom")
         return {
             "kings": list(self.kings),
+            "kings_by_family": {"cf_autopilot": list(self.kings)},
+            "family_shares": {"cf_autopilot": 1.0},
             "weights": dict(self.weights),
             "fallback": self.fallback,
         }
@@ -83,7 +85,10 @@ def _king(uid, hotkey, score, prev_score, *, crowned_at_epoch=1):
 
 def _make_self(metagraph_n=256):
     obj = SimpleNamespace()
-    obj.metagraph = SimpleNamespace(n=metagraph_n)
+    obj.metagraph = SimpleNamespace(
+        n=metagraph_n,
+        hotkeys=[f"hk{uid}" for uid in range(metagraph_n)],
+    )
     obj.scores = np.zeros(metagraph_n, dtype=np.float32)
     obj._scores_lock = None
     obj._mark_weights_ready_for_setting = lambda: None

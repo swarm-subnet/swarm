@@ -346,7 +346,6 @@ class ChallengeFamilyRuntime:
         horizon: float,
         min_clearance: Optional[float],
         collision: bool,
-        legitimate_model: bool,
         failure_reason: str,
     ) -> ChallengeFamilyEvaluation:
         metrics = self.build_rollout_metrics(
@@ -356,7 +355,6 @@ class ChallengeFamilyRuntime:
             horizon=horizon,
             min_clearance=min_clearance,
             collision=collision,
-            legitimate_model=legitimate_model,
             failure_reason=failure_reason,
         )
         normalized_metrics = self.normalize_rollout_metrics(task=task, metrics=metrics)
@@ -379,7 +377,6 @@ class ChallengeFamilyRuntime:
         horizon: float,
         min_clearance: Optional[float],
         collision: bool,
-        legitimate_model: bool,
         failure_reason: str,
     ) -> Dict[str, Any]:
         raise NotImplementedError

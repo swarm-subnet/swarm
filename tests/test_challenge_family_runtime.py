@@ -199,7 +199,6 @@ def test_evaluate_rollout_returns_common_evaluation_schema():
         horizon=60.0,
         min_clearance=1.5,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
 
@@ -230,7 +229,6 @@ def test_search_and_rescue_score_evaluation_is_reproducible():
         horizon=60.0,
         min_clearance=0.7,
         collision=False,
-        legitimate_model=True,
         failure_reason="INFEASIBLE",
     )
     second = evaluate_rollout(
@@ -240,7 +238,6 @@ def test_search_and_rescue_score_evaluation_is_reproducible():
         horizon=60.0,
         min_clearance=0.7,
         collision=False,
-        legitimate_model=True,
         failure_reason="INFEASIBLE",
     )
 
@@ -258,7 +255,6 @@ def test_autopilot_evaluation_matches_legacy_navigation_reward_curve():
         horizon=60.0,
         min_clearance=1.5,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
 
@@ -269,7 +265,6 @@ def test_autopilot_evaluation_matches_legacy_navigation_reward_curve():
         task=task,
         min_clearance=1.5,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
         sar_mode=False,
     )
@@ -289,7 +284,6 @@ def test_autopilot_score_monotonicity_prefers_success_and_faster_time():
         horizon=60.0,
         min_clearance=1.0,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
     slow_success = evaluate_rollout(
@@ -299,7 +293,6 @@ def test_autopilot_score_monotonicity_prefers_success_and_faster_time():
         horizon=60.0,
         min_clearance=1.0,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
     failed_run = evaluate_rollout(
@@ -309,7 +302,6 @@ def test_autopilot_score_monotonicity_prefers_success_and_faster_time():
         horizon=60.0,
         min_clearance=1.0,
         collision=False,
-        legitimate_model=True,
         failure_reason="TIMEOUT",
     )
 
@@ -326,7 +318,6 @@ def test_family_runtime_training_reward_defaults_to_score_delta():
         horizon=60.0,
         min_clearance=1.0,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
 
@@ -347,7 +338,6 @@ def test_family_normalization_is_isolated_between_autopilot_and_search_and_rescu
         horizon=60.0,
         min_clearance=1.0,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
     search_and_rescue = evaluate_rollout(
@@ -357,7 +347,6 @@ def test_family_normalization_is_isolated_between_autopilot_and_search_and_rescu
         horizon=60.0,
         min_clearance=1.0,
         collision=False,
-        legitimate_model=True,
         failure_reason="NONE",
     )
 

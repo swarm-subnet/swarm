@@ -8,7 +8,7 @@ Handshake (single message):
     ────────── empty ─────►      (request PolicyRef)
                    ref   ◄──────  (includes github_url for model download)
 
-Validators download submission.zip directly from the miner's public GitHub
+Validators download model_graph.zip directly from the miner's public GitHub
 repository.  No binary streaming over the wire.
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def is_supported_schema(version) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# 1.  Core dataclasses (unchanged)                                            #
+# 1.  Core dataclasses                                                        #
 # --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class MapTask:
@@ -108,10 +108,14 @@ class ValidationResult:
 @dataclass(slots=True)
 class PolicyRef:
     sha256: str
-    entrypoint: str
-    framework: str
     size_bytes: int
     github_url: str
+    artifact_path: str
+    family_id: str
+    interface_version: str
+    execution_profile: str
+    profile_digest: str
+    runner_abi: str
     version: str = "1"
 
     def as_dict(self) -> Dict[str, Any]:

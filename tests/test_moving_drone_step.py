@@ -30,6 +30,14 @@ def test_step_runs_collision_bookkeeping_after_physics(monkeypatch) -> None:
         dtype=np.float32,
     )
     env.last_clipped_action = np.zeros((1, 4), dtype=np.float32)
+    env.family_runtime = type(
+        "FamilyRuntime",
+        (),
+        {
+            "advance_world": lambda self, env: None,
+            "apply_world_physics": lambda self, env: None,
+        },
+    )()
 
     order: list[str] = []
     flags = {"stepped": False}

@@ -5,14 +5,30 @@ from types import SimpleNamespace
 import zipfile
 
 from neurons import miner
+from tests.model_graph.fixtures import base_manifest, build_artifact, dense_model
 
 
-def _make_zip(tmp_path, names):
+def _make_bad_zip(tmp_path, names=("payload.bin",)):
     path = tmp_path / "submission.zip"
     with zipfile.ZipFile(path, "w") as zf:
         for name in names:
             zf.writestr(name, "data")
     return str(path)
+
+
+def _make_graph(tmp_path, family_id="cf_search_and_rescue"):
+    state_width, action_width = {
+        "cf_autopilot": (141, 5),
+        "cf_search_and_rescue": (165, 6),
+    }[family_id]
+    model = dense_model({"state": (state_width,)}, "action", (action_width,))
+    manifest = base_manifest(
+        family_id,
+        models=[{"id": "p", "file": "models/p.onnx", "sha256": "0" * 64}],
+        nodes=[{"id": "p", "model": "p", "inputs": {"state": "obs.state"}}],
+        action="p.action",
+    )
+    return str(build_artifact(tmp_path, manifest, {"models/p.onnx": model}))
 
 
 def test_validate_github_url_strips_git_suffix():
@@ -106,7 +122,7 @@ def test_private_unknown_family_blocks_before_wallet(monkeypatch, tmp_path):
             "--family_id",
             "cf_definitely_not_real",
             "--artifact",
-            _make_zip(tmp_path, ["drone_agent.py"]),
+            _make_bad_zip(tmp_path),
             "--backend_url",
             "http://backend.test",
         ]
@@ -134,7 +150,7 @@ def test_private_public_family_blocks_with_guidance(monkeypatch, tmp_path):
             "--family_id",
             "cf_search_and_rescue",
             "--artifact",
-            _make_zip(tmp_path, ["drone_agent.py"]),
+            _make_bad_zip(tmp_path),
             "--backend_url",
             "http://backend.test",
         ]
@@ -170,7 +186,7 @@ def test_private_bad_zip_blocks_before_commit(monkeypatch, tmp_path):
             "--family_id",
             "cf_search_and_rescue",
             "--artifact",
-            _make_zip(tmp_path, ["not_agent.py"]),
+            _make_bad_zip(tmp_path),
             "--backend_url",
             "http://backend.test",
         ]
@@ -227,7 +243,7 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
             "--family_id",
             "cf_search_and_rescue",
             "--artifact",
-            _make_zip(tmp_path, ["drone_agent.py"]),
+            _make_graph(tmp_path),
             "--backend_url",
             "http://backend.test",
             "--wallet.name",
@@ -249,22 +265,15 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
     assert commit["family_id"] == "cf_search_and_rescue"
 
 
-def test_validate_artifact_zip_rules(tmp_path):
-    assert miner._validate_artifact_zip(_make_zip(tmp_path, ["drone_agent.py"])) is None
-    assert "drone_agent.py" in miner._validate_artifact_zip(
-        _make_zip(tmp_path, ["other.py"])
-    )
-    assert "run.sh" in miner._validate_artifact_zip(
-        _make_zip(tmp_path, ["drone_agent.py", "run.sh"])
+def test_validate_artifact_rules(tmp_path):
+    artifact = _make_graph(tmp_path)
+    assert miner._validate_artifact(artifact, family_id="cf_search_and_rescue") is None
+    assert "does not match" in miner._validate_artifact(
+        artifact, family_id="cf_autopilot"
     )
     not_zip = tmp_path / "not_zip.txt"
     not_zip.write_text("data")
-    assert isinstance(miner._validate_artifact_zip(str(not_zip)), str)
-    oversized = tmp_path / "oversized.zip"
-    with zipfile.ZipFile(oversized, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("drone_agent.py", "data")
-        zf.writestr("weights.bin", b"\0" * (miner.MAX_UNCOMPRESSED_BYTES + 1))
-    assert "too large" in miner._validate_artifact_zip(str(oversized))
+    assert "MG_ARCHIVE_REJECTED" in miner._validate_artifact(str(not_zip))
 
 
 def test_load_local_families_reads_schema():

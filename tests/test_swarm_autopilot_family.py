@@ -103,10 +103,10 @@ def test_swarm_smoke_obs_batches_and_action_validates():
         validate_action_output,
     )
 
-    contract = get_policy_interface_contract("cf_swarm_autopilot", "submission_zip.v1")
+    contract = get_policy_interface_contract("cf_swarm_autopilot", "model_graph.v1")
     action_space = contract["action_space"]
     for n in (SWARM_MIN_DRONES, SWARM_MAX_DRONES):
-        obs = build_smoke_test_observation("cf_swarm_autopilot", "submission_zip.v1", num_drones=n)
+        obs = build_smoke_test_observation("cf_swarm_autopilot", "model_graph.v1", num_drones=n)
         assert obs["depth"].shape == (n, 128, 128, 1)
         assert obs["state"].shape == (n, 190)
         validate_action_output(np.zeros((n, 5), dtype=np.float32), action_space, num_drones=n)
@@ -139,13 +139,12 @@ def test_score_single_drone_matches_autopilot_formula():
         single = _score_single_drone(
             success=c["success"], t=c["t"], horizon=60.0, target_time=target,
             min_clearance=c["min_clearance"], collision=c["collision"],
-            challenge_type=task.challenge_type, legitimate_model=True,
-            failure_reason=c["failure_reason"],
+            challenge_type=task.challenge_type, failure_reason=c["failure_reason"],
         )
         metrics = ap.build_rollout_metrics(
             task=task, success=c["success"], t=c["t"], horizon=60.0,
             min_clearance=c["min_clearance"], collision=c["collision"],
-            legitimate_model=True, failure_reason=c["failure_reason"],
+            failure_reason=c["failure_reason"],
         )
         expected = ap.normalize_rollout_metrics(task=task, metrics=metrics)["final_score"]
         assert single == expected, (c, single, expected)

@@ -15,8 +15,10 @@ bittensor==10.2.0
 async-substrate-interface<2.0
 msgpack==1.1.2
 importlib-metadata==9.0.0
+onnx==1.22.0
 onnxruntime==1.23.2
-stable-baselines3[extra]==2.7.1
+# pulled in transitively by gym-pybullet-drones; pinned for reproducible installs
+stable-baselines3==2.7.1
 wandb==0.25.1
 python-dotenv==1.2.2
 typing-extensions==4.15.0

@@ -31,24 +31,22 @@ def _task(ct=1, start=(0.0, 0.0, 0.0), goal=(3.0, 4.0, 0.0), horizon=60.0) -> Ma
 
 
 _SCORING_CASES = {
-    "illegit": dict(task=_task(), success=True, t=1.0, horizon=60.0,
-                    min_clearance=1.0, collision=False, legitimate_model=False, failure_reason="NONE"),
     "eval_error": dict(task=_task(), success=False, t=1.0, horizon=60.0,
-                       min_clearance=1.0, collision=False, legitimate_model=True, failure_reason="EVAL_ERROR"),
+                       min_clearance=1.0, collision=False, failure_reason="EVAL_ERROR"),
     "fail_participation": dict(task=_task(), success=False, t=2.0, horizon=60.0,
-                               min_clearance=1.0, collision=False, legitimate_model=True, failure_reason="OBSTACLE_COLLISION"),
+                               min_clearance=1.0, collision=False, failure_reason="OBSTACLE_COLLISION"),
     "fail_t0": dict(task=_task(), success=False, t=0.0, horizon=60.0,
-                    min_clearance=1.0, collision=False, legitimate_model=True, failure_reason="TIMEOUT"),
+                    min_clearance=1.0, collision=False, failure_reason="TIMEOUT"),
     "success_fast_safe": dict(task=_task(), success=True, t=0.1, horizon=60.0,
-                              min_clearance=2.0, collision=False, legitimate_model=True, failure_reason="NONE"),
+                              min_clearance=2.0, collision=False, failure_reason="NONE"),
     "success_mid_clearance": dict(task=_task(), success=True, t=0.1, horizon=60.0,
-                                  min_clearance=0.6, collision=False, legitimate_model=True, failure_reason="NONE"),
+                                  min_clearance=0.6, collision=False, failure_reason="NONE"),
     "success_slow_time": dict(task=_task(start=(0.0, 0.0, 0.0), goal=(30.0, 0.0, 0.0)), success=True, t=40.0, horizon=60.0,
-                              min_clearance=2.0, collision=False, legitimate_model=True, failure_reason="NONE"),
+                              min_clearance=2.0, collision=False, failure_reason="NONE"),
     "success_no_clearance": dict(task=_task(), success=True, t=0.1, horizon=60.0,
-                                 min_clearance=None, collision=False, legitimate_model=True, failure_reason="NONE"),
+                                 min_clearance=None, collision=False, failure_reason="NONE"),
     "success_with_collision": dict(task=_task(), success=True, t=1.0, horizon=60.0,
-                                   min_clearance=2.0, collision=True, legitimate_model=True, failure_reason="NONE"),
+                                   min_clearance=2.0, collision=True, failure_reason="NONE"),
 }
 
 

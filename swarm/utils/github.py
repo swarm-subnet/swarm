@@ -14,7 +14,7 @@ GITHUB_CONNECT_TIMEOUT_SEC = 10.0
 GITHUB_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 GITHUB_MAX_README_BYTES = 64 * 1024
 
-REQUIRED_README_HASH = "c23b24d2fcb8505d25d526d3a882925446904b8c7750b2640664d16dacdc1549"
+REQUIRED_README_HASH = "e463fb82ef78cbee185c6ded276f63949772aaa1ea7384d7b3dc8669c4d1ce17"
 
 
 def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[str]:
@@ -53,15 +53,19 @@ def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[
     return f"https://github.com/{segments[0]}/{repo}"
 
 
-def build_raw_urls(repo_url: str) -> list[str]:
-    """Build candidate raw download URLs for ``submission.zip``.
+def build_raw_urls(repo_url: str, artifact_path: str) -> list[str]:
+    """Build candidate raw download URLs for a manifest-declared artifact.
 
     Tries ``main`` first, then ``master`` as a fallback.
     """
+    path = Path(artifact_path)
+    if path.is_absolute() or ".." in path.parts or "\\" in artifact_path:
+        raise ValueError("invalid artifact_path")
+    normalized = path.as_posix()
     base = repo_url.rstrip("/")
     return [
-        f"{base}/raw/main/submission.zip",
-        f"{base}/raw/master/submission.zip",
+        f"{base}/raw/main/{normalized}",
+        f"{base}/raw/master/{normalized}",
     ]
 
 

@@ -49,7 +49,7 @@ def test_target_time_under_horizon():
 def test_scoring_is_50_50():
     fam = get_challenge_family("cf_interceptor")
     t = _task(3)
-    base = dict(task=t, min_clearance=1.0, legitimate_model=True, collision=False)
+    base = dict(task=t, min_clearance=1.0, collision=False)
     # caught quickly -> high score driven by 0.5 success + 0.5 time
     m = fam.build_rollout_metrics(success=True, t=2.0, horizon=t.horizon,
                                   failure_reason="NONE", **base)

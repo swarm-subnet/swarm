@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,11 @@ import pytest
 from swarm.validator import utils as validator_utils
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 from swarm.validator.utils_parts.heartbeat import HeartbeatManager
+
+
+_FAKE_MODEL_DIR = tempfile.TemporaryDirectory(prefix="swarm_streaming_phase_")
+_FAKE_MODEL_ZIP = Path(_FAKE_MODEL_DIR.name) / "fake_model.zip"
+_FAKE_MODEL_ZIP.write_bytes(b"streaming-phase fixture artifact")
 
 
 def _make_validator(
@@ -39,6 +45,10 @@ def _make_validator(
             post_heartbeat=_post_heartbeat,
             post_seed_scores_batch=_post_seed_scores_batch,
             authorize_task=_authorize_task,
+        ),
+        docker_evaluator=SimpleNamespace(
+            _get_image_hash_label=lambda: "test-image-hash",
+            _calculate_docker_hash=lambda: "test-image-hash",
         ),
     )
 
@@ -95,7 +105,7 @@ def test_streaming_phase_excludes_infra_seeds_from_upload(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(20)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -129,7 +139,7 @@ def test_streaming_phase_forwards_task_id_to_upload(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(20)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -165,7 +175,7 @@ def test_streaming_phase_final_retry_carries_task_id(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(10)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -198,7 +208,7 @@ def test_streaming_phase_happy_path(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(25)),
                 phase_description="benchmark",
                 seed_offset=100,
@@ -240,7 +250,7 @@ def test_streaming_phase_re_authorize_cancels(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(30)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -278,7 +288,7 @@ def test_streaming_phase_retries_failed_batches(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(10)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -316,7 +326,7 @@ def test_streaming_phase_retries_upload_exception(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(5)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -356,7 +366,7 @@ def test_streaming_phase_respects_inflight_cap(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(80)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -390,7 +400,7 @@ def test_streaming_phase_invokes_on_chunk_complete(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(23)),
                 phase_description="screening",
                 seed_offset=0,
@@ -417,7 +427,7 @@ def test_streaming_phase_empty_seeds():
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=[],
                 phase_description="benchmark",
                 seed_offset=0,
@@ -467,7 +477,7 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(10)),
                 phase_description="benchmark",
                 seed_offset=100,
@@ -514,7 +524,7 @@ def test_streaming_phase_reauthorize_passes_first_then_fails(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(40)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -547,7 +557,7 @@ def test_streaming_phase_final_retry_also_fails_does_not_raise(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(10)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -590,7 +600,7 @@ def test_streaming_phase_forwards_evaluator_prior_done(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(20)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -635,7 +645,7 @@ def test_streaming_phase_slices_pre_built_tasks_per_chunk(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(25)),
                 phase_description="screening",
                 seed_offset=0,
@@ -677,7 +687,7 @@ def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
-            model_path=Path("/tmp/fake.zip"),
+            model_path=_FAKE_MODEL_ZIP,
             seeds=list(range(20)),
             reeval=True,
         )
@@ -713,7 +723,7 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
-            model_path=Path("/tmp/fake.zip"),
+            model_path=_FAKE_MODEL_ZIP,
         )
 
     asyncio.run(_run())
@@ -760,7 +770,7 @@ def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
-            model_path=Path("/tmp/fake.zip"),
+            model_path=_FAKE_MODEL_ZIP,
             seeds_from=0,
             seeds_to=10,
         )
@@ -797,7 +807,7 @@ def test_run_screening_streams_with_unified_chunks(monkeypatch):
         return await validator_evaluation._run_screening(
             validator,
             uid=99,
-            model_path=Path("/tmp/fake.zip"),
+            model_path=_FAKE_MODEL_ZIP,
         )
 
     avg, scores, per_type, cancel, _early = asyncio.run(_run())
@@ -822,7 +832,11 @@ def _make_docker_evaluator(score: float = 0.73):
     async def _evaluate_seeds_parallel(tasks, uid, model_path, **kwargs):
         return [ValidationResult(int(uid), True, 1.0, float(score)) for _ in tasks]
 
-    return SimpleNamespace(evaluate_seeds_parallel=_evaluate_seeds_parallel)
+    return SimpleNamespace(
+        evaluate_seeds_parallel=_evaluate_seeds_parallel,
+        _get_image_hash_label=lambda: "test-image-hash",
+        _calculate_docker_hash=lambda: "test-image-hash",
+    )
 
 
 def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
@@ -934,7 +948,7 @@ def test_run_full_benchmark_reeval_does_not_authorize_per_chunk(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_full_benchmark(
-            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             seeds=list(range(30)), reeval=True,
         )
 
@@ -982,7 +996,7 @@ def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_full_benchmark(
-            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             seeds=list(range(30)), reeval=True,
             cancel_flag=cancel_flag,
         )
@@ -1011,7 +1025,7 @@ def test_run_full_benchmark_non_reeval_skips_authorize(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_full_benchmark(
-            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            validator, uid=42, model_path=_FAKE_MODEL_ZIP,
         )
 
     _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
@@ -1039,7 +1053,7 @@ def test_run_screening_reeval_does_not_authorize_per_chunk(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_screening(
-            validator, uid=99, model_path=Path("/tmp/fake.zip"), reeval=True,
+            validator, uid=99, model_path=_FAKE_MODEL_ZIP, reeval=True,
         )
 
     _avg, scores, _per_type, cancel, _early = asyncio.run(_run())
@@ -1078,7 +1092,7 @@ def test_run_screening_reeval_cancels_via_cancel_flag(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_screening(
-            validator, uid=99, model_path=Path("/tmp/fake.zip"), reeval=True,
+            validator, uid=99, model_path=_FAKE_MODEL_ZIP, reeval=True,
             cancel_flag=cancel_flag,
         )
 
@@ -1106,7 +1120,7 @@ def test_run_screening_non_reeval_skips_authorize(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_screening(
-            validator, uid=99, model_path=Path("/tmp/fake.zip"),
+            validator, uid=99, model_path=_FAKE_MODEL_ZIP,
         )
 
     _avg, scores, _per_type, cancel, _early = asyncio.run(_run())
@@ -1114,8 +1128,6 @@ def test_run_screening_non_reeval_skips_authorize(monkeypatch):
     assert cancel is None
     assert len(scores) == 15
     assert auth_calls == []
-
-
 
 
 def test_heartbeat_manager_honors_stop_required():
@@ -1192,7 +1204,7 @@ def test_streaming_phase_stops_when_should_stop_fires(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(40)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -1220,7 +1232,7 @@ def test_streaming_phase_runs_when_should_stop_clear(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(20)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -1456,7 +1468,7 @@ def test_streaming_phase_checks_stop_each_chunk(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(50)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -1496,7 +1508,7 @@ def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatc
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(20)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -1536,7 +1548,7 @@ def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(20)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -1577,7 +1589,7 @@ def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(30)),
                 phase_description="benchmark",
                 seed_offset=0,
@@ -1595,11 +1607,10 @@ def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
     assert calls["n"] == 1
 
 
-
 def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
     """Heartbeats sent during screening must carry assignment_id so the
     backend's consistency report does not flag ACTIVE_HEARTBEAT_MISSING_
-    ASSIGNMENT_ID for new-flow validators."""
+    ASSIGNMENT_ID for task-lease validators."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
     validator.seed_manager = SimpleNamespace(
@@ -1610,7 +1621,7 @@ def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_screening(
-            validator, uid=314, model_path=Path("/tmp/fake.zip"),
+            validator, uid=314, model_path=_FAKE_MODEL_ZIP,
             task_id=4242,
         )
 
@@ -1637,7 +1648,7 @@ def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_full_benchmark(
-            validator, uid=271, model_path=Path("/tmp/fake.zip"),
+            validator, uid=271, model_path=_FAKE_MODEL_ZIP,
             task_id=8888,
         )
 
@@ -1664,7 +1675,7 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
 
     async def _run():
         return await validator_evaluation._run_full_benchmark(
-            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             task_id=999, reeval=True,
         )
 
@@ -1693,7 +1704,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_full_benchmark(
-            validator, uid=42, model_path=Path("/tmp/fake.zip"),
+            validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             task_id=8888, seeds_from=400,
         )
 
@@ -1717,7 +1728,7 @@ def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
 
     async def _run():
         return await validator_evaluation._run_screening(
-            validator, uid=314, model_path=Path("/tmp/fake.zip"),
+            validator, uid=314, model_path=_FAKE_MODEL_ZIP,
             task_id=4242, seeds_from=50,
         )
 
@@ -1753,7 +1764,7 @@ def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
         return await validator_evaluation._run_screening(
             validator,
             uid=314,
-            model_path=Path("/tmp/fake.zip"),
+            model_path=_FAKE_MODEL_ZIP,
             family_id="cf_autopilot",
             task_id=4242,
             seeds_from=50,
@@ -1777,7 +1788,7 @@ def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
-            model_path=Path("/tmp/fake.zip"),
+            model_path=_FAKE_MODEL_ZIP,
             family_id="cf_autopilot",
             task_id=8888,
             seeds_from=305,
@@ -1806,7 +1817,7 @@ def test_run_streaming_phase_uploads_family_local_seed_indices(monkeypatch):
             return await validator_evaluation._run_streaming_phase(
                 validator,
                 uid=7,
-                model_path=Path("/tmp/fake.zip"),
+                model_path=_FAKE_MODEL_ZIP,
                 seeds=list(range(5)),
                 phase_description="benchmark",
                 family_id="cf_autopilot",

@@ -144,9 +144,8 @@ _RESOURCE_SOFT_SIGNAL_STATUSES = frozenset(
 _NON_RESOURCE_FAILURE_STATUSES = frozenset(
     {
         "container_start_failed",
-        "pip_install_failed",
+        "INFRA_DOCKER",
         "network_lockdown_failed",
-        "submission_start_failed",
         "rpc_connection_failed",
     }
 )

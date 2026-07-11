@@ -21,11 +21,7 @@ from swarm.constants import (
     SIM_DT,
     UID_ZERO,
 )
-from swarm.core.model_verify import (
-    load_blacklist,
-    verify_new_model_with_docker,
-    zip_is_safe,
-)
+from swarm.model_graph import admit_artifact
 from swarm.protocol import PolicyRef
 from swarm.utils.github import (
     build_raw_urls,

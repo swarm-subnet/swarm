@@ -217,7 +217,7 @@ The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../
 | `SWARM_WEIGHT_SETTER_RETRY_SEC` | 300 | Retry after a failed weight set |
 | `SWARM_WEIGHT_REFRESH_SEC` | 300 | Weight map refresh |
 
-`swarm/.env.example` lists exactly the first three (its header still says "V4 Configuration," which is stale and worth fixing on the next touch).
+`swarm/.env.example` lists exactly the first three.
 
 Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_CAPS` (default false), `SWARM_TORCH_NUM_THREADS`, `SWARM_TORCH_INTEROP_THREADS`, `SWARM_DOCKER_WORKER_CPUS_OVERRIDE`, `SWARM_DOCKER_WORKER_MEMORY_OVERRIDE`, `SWARM_DOCKER_WORKER_CPUSETS`, `SWARM_DOCKER_WORKER_CPUSET_CPUS_{i}`, `SWARM_HOST_WORKER_MEMORY_MB`, `SWARM_HOST_WORKER_CPUSETS`, `SWARM_BATCH_TIMEOUT_MULT` (1.0), `SWARM_BATCH_TIMEOUT_HARD_CAP_SEC` (0), `SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS` (false), `SWARM_BATCH_TIMEOUT_EXTEND_SEC` (30), `SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC` (0), `SWARM_LOG_RPC_TRACE` (false), `SWARM_TERRAIN_CACHE_DIR`; burn validator: `BURN_VALIDATOR_HEARTBEAT_SEC` (5), `BURN_VALIDATOR_STALL_TIMEOUT_SEC` (900).
 

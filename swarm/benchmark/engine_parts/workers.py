@@ -28,11 +28,8 @@ from ._shared import (
 )
 from .config import _build_progress_bar, _temporary_env, _ts
 from .dispatch import (
-    _PARENT_WORKER_HEARTBEAT_SEC,
-    _PARENT_WORKER_STALL_TIMEOUT_SEC,
     _AdaptiveBackoffController,
     _build_worker_stall_seed_meta,
-    _is_clean_execution_status,
     _max_heavy_active,
     _select_next_batch_index,
 )
@@ -59,7 +56,7 @@ def _create_prepared_benchmark_evaluator():
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 
     evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
-    evaluator.base_image = "swarm_evaluator_base:latest"
+    evaluator.base_image = "swarm_model_graph_runner:latest"
     evaluator.last_fake_model_info = None
     evaluator.base_ready = True
     DockerSecureEvaluator._base_ready = True
@@ -198,7 +195,6 @@ def _benchmark_worker_main(
                         on_seed_complete=_on_seed_complete,
                         task_offset=request.batch_indices[0] if request.batch_indices else 0,
                         task_total=request.task_total,
-                        model_image=getattr(request, "model_image", None),
                         runtime_profile_payload=getattr(request, "runtime_profile", None),
                     )
                 )
@@ -272,7 +268,7 @@ async def _run_benchmark_process_mode(
         float(getattr(engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
     )
     last_pressure_poll_at = 0.0
-    
+
     def _active_group_names() -> List[str]:
         return [
             str(task_meta[batch_plan[batch_id][0]]["group"])

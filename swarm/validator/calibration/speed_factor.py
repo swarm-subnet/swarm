@@ -23,10 +23,14 @@ from typing import Dict, Optional
 
 from swarm.constants import SPEED_FACTOR_MAX_ELIGIBLE, SPEED_FACTOR_MIN
 from swarm.utils.hash import sha256sum
+from swarm.model_graph import EXECUTION_PROFILE_ID, RUNNER_ABI, admit_artifact, profile_digest
 
 _CALIBRATION_DIR = Path(__file__).resolve().parent
 _MANIFEST_PATH = _CALIBRATION_DIR / "baseline_manifest.json"
-_REQUIRED_KEYS = ("calibration_version", "baseline_model", "owner_compute_p90_ms")
+_REQUIRED_KEYS = (
+    "calibration_version", "baseline_model", "owner_compute_p90_ms",
+    "interface_version", "execution_profile", "execution_profile_digest", "runner_abi",
+)
 
 
 def load_baseline_manifest() -> dict:
@@ -34,6 +38,14 @@ def load_baseline_manifest() -> dict:
     missing = [key for key in _REQUIRED_KEYS if key not in data]
     if missing:
         raise ValueError(f"baseline manifest missing keys: {missing}")
+    if data["interface_version"] != "model_graph.v1":
+        raise ValueError("baseline interface mismatch")
+    if data["execution_profile"] != EXECUTION_PROFILE_ID:
+        raise ValueError("baseline execution profile mismatch")
+    if data["execution_profile_digest"] != profile_digest():
+        raise ValueError("baseline execution profile digest mismatch")
+    if data["runner_abi"] != RUNNER_ABI:
+        raise ValueError("baseline runner ABI mismatch")
     return data
 
 
@@ -49,7 +61,10 @@ def baseline_model_available() -> bool:
         path = _CALIBRATION_DIR / manifest["baseline_model"]["artifact"]
         if not path.is_file():
             return False
-        return sha256sum(path) == manifest["baseline_model"]["sha256"]
+        return (
+            sha256sum(path) == manifest["baseline_model"]["sha256"]
+            and admit_artifact(path).accepted
+        )
     except Exception:
         return False
 

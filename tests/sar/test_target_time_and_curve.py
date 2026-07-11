@@ -101,17 +101,6 @@ def test_spawn_failure_t_zero_returns_participation():
     assert r == 0.01
 
 
-def test_illegitimate_model_returns_zero_regardless_of_reason():
-    task = _task()
-    for reason in ("NONE", "INFEASIBLE", "EVAL_ERROR"):
-        r = flight_reward(
-            success=False, t=5.0, horizon=HORIZON_SEC, task=task,
-            failure_reason=reason, legitimate_model=False, sar_mode=True,
-            min_clearance=None,
-        )
-        assert r == 0.0
-
-
 def test_sar_collision_labeled_gives_participation():
     task = _task()
     r = flight_reward(
@@ -134,11 +123,11 @@ def test_sar_collision_unlabeled_returns_zero():
     assert r == 0.0
 
 
-def test_eval_error_returns_zero_even_legitimate():
+def test_eval_error_returns_zero():
     task = _task()
     r = flight_reward(
         success=False, t=5.0, horizon=HORIZON_SEC, task=task,
-        failure_reason="EVAL_ERROR", legitimate_model=True, sar_mode=True,
+        failure_reason="EVAL_ERROR", sar_mode=True,
         min_clearance=None,
     )
     assert r == 0.0

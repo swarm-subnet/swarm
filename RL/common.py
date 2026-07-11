@@ -1,8 +1,9 @@
 """Shared training harness for the per-family baseline starters.
 
 Each RL/<family_id>/train.py calls train_family(): a small PPO baseline is
-trained on real generator tasks, saved, packaged into a validator-ready
-submission.zip, and smoke-tested against the family's policy contract.
+trained on real generator tasks, exported to ONNX, packaged into a
+validator-ready model_graph.zip, and smoke-tested against the family's
+graph contract.
 
 The policy sees a downsampled depth frame plus the full state vector; rgb is
 never requested. Multi-drone families train one shared policy by exposing each
@@ -29,7 +30,7 @@ from swarm.policy_interface import resolve_policy_interface_version, smoke_test_
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.task_gen import random_task
 
-POLICY_DEPTH_SIZE = 64
+from export_onnx import POLICY_DEPTH_SIZE, export_policy
 DEFAULT_TIMESTEPS = 50_000
 DEFAULT_SWARM_DRONES = 4
 _MAX_TASK_RESAMPLES = 200
@@ -158,15 +159,13 @@ class FamilyVecEnv(VecEnv):
         return [seed] * self.num_envs
 
 
-def _package_submission(policy_path: Path, family_id: str, out_dir: Path) -> Path:
-    pkg_dir = out_dir / "package"
-    if pkg_dir.exists():
-        shutil.rmtree(pkg_dir)
-    pkg_dir.mkdir(parents=True)
-    shutil.copy2(Path(__file__).resolve().parent / "agent_template.py", pkg_dir / "drone_agent.py")
-    shutil.copy2(policy_path, pkg_dir / "ppo_policy.zip")
+def _package_submission(model: PPO, family_id: str, out_dir: Path) -> Path:
+    source_dir = out_dir / "graph"
+    if source_dir.exists():
+        shutil.rmtree(source_dir)
+    export_policy(model, family_id, source_dir)
 
-    submission_zip = out_dir / "submission.zip"
+    artifact_zip = out_dir / "model_graph.zip"
     subprocess.run(
         [
             sys.executable,
@@ -175,16 +174,16 @@ def _package_submission(policy_path: Path, family_id: str, out_dir: Path) -> Pat
             "model",
             "package",
             "--source",
-            str(pkg_dir),
+            str(source_dir),
             "--family-id",
             family_id,
             "--output",
-            str(submission_zip),
+            str(artifact_zip),
             "--overwrite",
         ],
         check=True,
     )
-    return submission_zip
+    return artifact_zip
 
 
 def train_family(family_id: str, *, supports_drone_count: bool = False) -> None:
@@ -213,15 +212,14 @@ def train_family(family_id: str, *, supports_drone_count: bool = False) -> None:
     model = PPO("MultiInputPolicy", env, n_steps=512, seed=args.seed, verbose=1)
     model.learn(total_timesteps=args.timesteps)
 
-    policy_path = out_dir / "ppo_policy.zip"
-    model.save(str(policy_path))
+    model.save(str(out_dir / "ppo_policy.zip"))
     env.close()
 
-    submission_zip = _package_submission(policy_path, family_id, out_dir)
-    smoke_ok, smoke_reason = smoke_test_policy_package(submission_zip)
+    artifact_zip = _package_submission(model, family_id, out_dir)
+    smoke_ok, smoke_reason = smoke_test_policy_package(artifact_zip)
     if not smoke_ok:
         raise RuntimeError(f"Packaged submission failed the contract smoke test: {smoke_reason}")
 
-    print(f"\nSubmission ready: {submission_zip}")
+    print(f"\nSubmission ready: {artifact_zip}")
     print("Test it like a validator:")
-    print(f"  python3 RL/test_RL.py --model {submission_zip} --family_id {family_id}")
+    print(f"  python3 RL/test_RL.py --model {artifact_zip} --family_id {family_id}")

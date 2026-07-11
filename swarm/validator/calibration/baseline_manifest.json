@@ -1,16 +1,23 @@
 {
-  "calibration_version": "swarm-ref-v1",
+  "calibration_version": "swarm-model-graph-ref-v1",
   "scope": "all_challenge_families",
+  "interface_version": "model_graph.v1",
+  "execution_profile": "swarm.onnx-neural.cpu.v1",
+  "execution_profile_digest": "92ee34d9920c1bb30cbb03bccc8863b5bd8594a54869dcd20d6fdc808cc2e95b",
+  "runner_abi": "graph_runner.v1",
   "baseline_model": {
     "artifact": "baseline_model.zip",
-    "sha256": "83914e7129334129b70aad961ae9498364320b55154bc480452e6a4ce50a5123",
+    "sha256": "171587ec1ef6902f5d4ed1ffaace762a7fb7c1380613d9e150d3b0005b580160",
     "run_as_family_id": "cf_autopilot",
     "run_as_challenge_type": 2
   },
   "owner_compute_p90_ms": 260.8,
   "owner_overhead_ms": 28.3,
   "measurement": {
-    "sample_seeds": [1001, 1002],
+    "sample_seeds": [
+      1001,
+      1002
+    ],
     "sample_count": 890,
     "warmup_steps": 1,
     "docker_worker_cpus": "2"

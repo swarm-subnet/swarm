@@ -11,9 +11,12 @@ import os
 import random
 import re
 import statistics
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from swarm.constants import SIM_DT
 from swarm.domain_model import CHALLENGE_FAMILY_IDS

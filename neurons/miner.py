@@ -27,14 +27,10 @@ import sys
 import time
 import uuid
 from urllib.parse import urlparse
-import zipfile
 
 import bittensor as bt
 
-
-REQUIRED_ROOT_FILES = ("drone_agent.py",)
-FORBIDDEN_SUFFIXES = (".exe", ".so", ".dll", ".sh", ".bat", ".pyc")
-MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+from swarm.model_graph import admit_artifact
 
 
 def _validate_github_url(raw: str) -> str | None:
@@ -119,24 +115,19 @@ def _fetch_backend_families(backend_url: str) -> dict | None:
         return None
 
 
-def _validate_artifact_zip(path: str) -> str | None:
-    """Return a rejection reason for a structurally invalid artifact, else None."""
+def _validate_artifact(path: str, *, family_id: str | None = None) -> str | None:
+    """Run the same static graph admission used by validators and the backend."""
     try:
-        with zipfile.ZipFile(path) as zf:
-            names = zf.namelist()
-            uncompressed = sum(info.file_size for info in zf.infolist())
-    except zipfile.BadZipFile:
-        return "not a valid ZIP archive"
+        result = admit_artifact(Path(path))
     except OSError as exc:
-        return f"cannot read artifact: {exc}"
-    if uncompressed > MAX_UNCOMPRESSED_BYTES:
-        return f"uncompressed size too large ({uncompressed / 1e6:.1f} MB, limit 50 MB)"
-    for required in REQUIRED_ROOT_FILES:
-        if required not in names:
-            return f"missing required file at the zip root: {required}"
-    forbidden = sorted({n for n in names if n.endswith(FORBIDDEN_SUFFIXES)})
-    if forbidden:
-        return f"forbidden file type(s): {', '.join(forbidden)}"
+        return f"MG_ARCHIVE_REJECTED:cannot read artifact: {exc}"
+    if not result.accepted:
+        return f"{result.reason_code}:{result.detail}"
+    if family_id is not None and result.family_id != family_id:
+        return (
+            "MG_SHAPE_CONTRACT_MISMATCH:artifact family "
+            f"{result.family_id!r} does not match {family_id!r}"
+        )
     return None
 
 
@@ -211,7 +202,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--artifact", type=str, default=None,
-        help="Private track: path to the submission.zip to upload privately",
+        help="Private track: path to the model_graph.zip to upload privately",
     )
     parser.add_argument(
         "--backend_url", type=str, default=None,
@@ -270,7 +261,7 @@ def main(argv=None):
             bt.logging.error("The full submission guide is in docs/miner.md.")
             return 1
 
-        reason = _validate_artifact_zip(args.artifact)
+        reason = _validate_artifact(args.artifact, family_id=args.family_id)
         if reason is not None:
             bt.logging.error(f"Artifact rejected before committing: {reason}")
             bt.logging.error(

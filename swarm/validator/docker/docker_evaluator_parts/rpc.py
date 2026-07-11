@@ -9,10 +9,8 @@ from typing import Callable, Optional
 import bittensor as bt
 import capnp
 import numpy as np
-from gym_pybullet_drones.utils.enums import ActionType
 
 from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
-from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_RECAL_INTERVAL,
@@ -29,11 +27,11 @@ from swarm.constants import (
     RPC_RESET_TIMEOUT_SEC,
     RPC_STEP_TIMEOUT_SEC,
     SIM_DT,
-    SPEED_LIMIT,
 )
-from swarm.protocol import ValidationResult
+from swarm.protocol import FailureReason, ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.calibration import act_hard_cap_sec, judge_act
+from swarm.model_graph.action import canonicalize_action
 
 from ._shared import (
     _cleanup_env_quietly,
@@ -43,6 +41,13 @@ from ._shared import (
 )
 from .submission import _serialize_observation_shm
 from swarm.config import RpcTraceSettings
+
+
+def _strike_zero_action(n_drones: int, act_dim: int) -> np.ndarray:
+    """Neutral substitute action in the exact family contract shape."""
+    if n_drones > 1:
+        return np.zeros((n_drones, act_dim), dtype=np.float32)
+    return np.zeros(act_dim, dtype=np.float32)
 
 
 def _run_multi_seed_rpc_sync(
@@ -326,7 +331,12 @@ def _run_multi_seed_rpc_sync(
                         success=False,
                         sim_t=0.0,
                     )
-                return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
+                return [
+                    ValidationResult(
+                        uid, False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value
+                    )
+                    for _ in tasks
+                ]
 
             calibrated_timeout = default_step_timeout_sec
             rpc_overhead_sec = max(
@@ -477,14 +487,6 @@ def _run_multi_seed_rpc_sync(
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
                         act_dim = int(env.action_space.shape[-1])
-                        if n_drones > 1:
-                            lo, hi = env.action_space.low, env.action_space.high
-                        else:
-                            lo, hi = (
-                                env.action_space.low.flatten(),
-                                env.action_space.high.flatten(),
-                            )
-
                         while t_sim < task.horizon and not (
                             stop_event is not None and stop_event.is_set()
                         ):
@@ -533,7 +535,7 @@ def _run_multi_seed_rpc_sync(
                                         hard_cap_sec=step_timeout,
                                     ).strike:
                                         strikes += 1
-                                        action = np.zeros(act_dim * n_drones, dtype=np.float32)
+                                        action = _strike_zero_action(n_drones, act_dim)
                                         _trace(
                                             f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
                                             f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) "
@@ -554,7 +556,7 @@ def _run_multi_seed_rpc_sync(
                             except asyncio.TimeoutError:
                                 act_ms = (time.perf_counter() - t_act_start) * 1000
                                 strikes += 1
-                                action = np.zeros(act_dim * n_drones, dtype=np.float32)
+                                action = _strike_zero_action(n_drones, act_dim)
                                 if use_ref:
                                     hard_cap_hits += 1
                                 _trace(
@@ -585,7 +587,7 @@ def _run_multi_seed_rpc_sync(
                                     )
                                     break
                             except Exception as e:
-                                action = np.zeros(act_dim * n_drones, dtype=np.float32)
+                                action = _strike_zero_action(n_drones, act_dim)
                                 err_txt = f"{type(e).__name__}: {e}"
                                 strikes += 1
                                 _trace(
@@ -611,61 +613,18 @@ def _run_multi_seed_rpc_sync(
 
                             is_first_step = False
 
-                            if n_drones > 1:
-                                raw_act = np.nan_to_num(
-                                    np.asarray(action, dtype=np.float32).reshape(-1),
-                                    nan=0.0, posinf=0.0, neginf=0.0,
-                                )
-                                if raw_act.size != act_dim * n_drones:
-                                    raw_act = np.zeros(act_dim * n_drones, dtype=np.float32)
-                                act = np.clip(raw_act.reshape(n_drones, act_dim), lo, hi)
-                                if (
-                                    hasattr(env, "ACT_TYPE")
-                                    and hasattr(env, "SPEED_LIMIT")
-                                    and env.ACT_TYPE == ActionType.VEL
-                                    and env.SPEED_LIMIT
-                                ):
-                                    for _row in range(n_drones):
-                                        nrm = max(np.linalg.norm(act[_row, :3]), 1e-6)
-                                        act[_row, :3] *= min(1.0, SPEED_LIMIT / nrm)
-                                    act = np.clip(act, lo, hi)
-                                _set_phase(
-                                    "env_step",
-                                    task=task_label,
-                                    step=step_idx,
-                                    sim_t=t_sim,
-                                )
-                                obs, _r, terminated, truncated, info = env.step(act)
-                            else:
-                                raw_act = np.nan_to_num(
-                                    np.asarray(action, dtype=np.float32).reshape(-1),
-                                    nan=0.0, posinf=0.0, neginf=0.0,
-                                )
-                                if raw_act.size != act_dim:
-                                    raw_act = np.zeros(act_dim, dtype=np.float32)
-                                act = np.clip(raw_act, lo, hi)
-
-                                if hasattr(env, "ACT_TYPE") and hasattr(
-                                    env, "SPEED_LIMIT"
-                                ):
-                                    if (
-                                        env.ACT_TYPE == ActionType.VEL
-                                        and env.SPEED_LIMIT
-                                    ):
-                                        n = max(np.linalg.norm(act[:3]), 1e-6)
-                                        scale = min(1.0, SPEED_LIMIT / n)
-                                        act[:3] *= scale
-                                        act = np.clip(act, lo, hi)
-
-                                _set_phase(
-                                    "env_step",
-                                    task=task_label,
-                                    step=step_idx,
-                                    sim_t=t_sim,
-                                )
-                                obs, _r, terminated, truncated, info = env.step(
-                                    act[None, :]
-                                )
+                            family_id = str(getattr(task, "family_id", "cf_autopilot"))
+                            act = canonicalize_action(
+                                np.asarray(action),
+                                family_id,
+                                n_drones if n_drones > 1 else None,
+                            )
+                            _set_phase(
+                                "env_step", task=task_label, step=step_idx, sim_t=t_sim
+                            )
+                            obs, _r, terminated, truncated, info = env.step(
+                                act if n_drones > 1 else act[None, :]
+                            )
 
                             t_sim += SIM_DT
                             _emit_rollout_event(
@@ -787,7 +746,6 @@ def _run_multi_seed_rpc_sync(
                                     horizon=task.horizon,
                                     min_clearance=min_clearance,
                                     collision=collision,
-                                    legitimate_model=True,
                                     failure_reason=failure_reason,
                                 )
                                 score = evaluation.score
@@ -850,7 +808,12 @@ def _run_multi_seed_rpc_sync(
                     _trace(
                         f"{task_label} failed with exception: {type(e).__name__}: {e}"
                     )
-                    results.append(ValidationResult(uid, False, exc_t_sim, 0.0))
+                    results.append(
+                        ValidationResult(
+                            uid, False, exc_t_sim, 0.0,
+                            failure_reason=FailureReason.INFRA.value,
+                        )
+                    )
                     _emit_seed_complete(
                         task,
                         status="seed_exception",
@@ -907,85 +870,8 @@ async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: floa
 
 
 async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
-    """Measure RPC pipeline overhead and CPU speed factor.
-
-    The round-trip time includes both network overhead and benchmark compute.
-    We subtract the benchmark compute to isolate pure network/serialization cost,
-    so the timeout formula doesn't double-count compute via both cpu_factor and overhead.
-    """
-    docker_evaluator_mod = _docker_evaluator_facade()
-    pure_overheads = []
-    benchmark_times_ns = []
-
-    for r in range(docker_evaluator_mod.CALIBRATION_ROUNDS):
-        cal_obs = self._serialize_observation(agent_capnp, obs)
-
-        try:
-            t0 = time.time()
-            cal_response = await asyncio.wait_for(
-                agent.calibrate(cal_obs),
-                timeout=docker_evaluator_mod.CALIBRATION_TIMEOUT_SEC,
-            )
-            dt = time.time() - t0
-            bench_ns = cal_response.benchmarkNs
-            bench_sec = bench_ns / 1e9 if bench_ns > 0 else 0.0
-            pure_overheads.append(max(0.001, dt - bench_sec))
-            if bench_ns > 0:
-                benchmark_times_ns.append(bench_ns)
-        except (asyncio.TimeoutError, Exception) as e:
-            bt.logging.warning(
-                f"UID {uid}: calibration round {r+1}/{docker_evaluator_mod.CALIBRATION_ROUNDS} failed: {e}"
-            )
-
-    if len(pure_overheads) < 3:
-        fallback = max(
-            docker_evaluator_mod.RPC_STEP_TIMEOUT_SEC
-            - docker_evaluator_mod.MINER_COMPUTE_BUDGET_SEC,
-            0.010,
-        )
-        bt.logging.warning(
-            f"UID {uid}: calibration mostly failed ({len(pure_overheads)}/{docker_evaluator_mod.CALIBRATION_ROUNDS} ok), "
-            f"using fallback overhead={fallback*1000:.0f}ms, cpu_factor=1.0"
-        )
-        return fallback, 1.0
-
-    pure_overheads.sort()
-    trimmed = pure_overheads[1:-1] if len(pure_overheads) > 4 else pure_overheads
-    median_overhead = statistics.median(trimmed)
-
-    if median_overhead > docker_evaluator_mod.CALIBRATION_OVERHEAD_CAP_SEC:
-        bt.logging.warning(
-            f"UID {uid}: measured RPC overhead {median_overhead*1000:.1f}ms exceeds cap "
-            f"{docker_evaluator_mod.CALIBRATION_OVERHEAD_CAP_SEC*1000:.0f}ms — capping."
-        )
-        median_overhead = docker_evaluator_mod.CALIBRATION_OVERHEAD_CAP_SEC
-
-    cpu_factor = 1.0
-    if len(benchmark_times_ns) >= 3:
-        benchmark_times_ns.sort()
-        trimmed_bench = (
-            benchmark_times_ns[1:-1]
-            if len(benchmark_times_ns) > 4
-            else benchmark_times_ns
-        )
-        median_bench_ns = statistics.median(trimmed_bench)
-        cpu_factor = (
-            median_bench_ns / docker_evaluator_mod.CALIBRATION_BENCHMARK_REF_NS
-        )
-        cpu_factor = max(
-            1.0,
-            min(cpu_factor, docker_evaluator_mod.CALIBRATION_CPU_FACTOR_CAP),
-        )
-
-    bench_median_ms = (
-        statistics.median(benchmark_times_ns) / 1e6 if benchmark_times_ns else 0.0
+    """Measure trusted transport overhead; graph artifacts cannot calibrate hosts."""
+    overhead = await _measure_rpc_overhead_via_ping(
+        agent, uid, _docker_evaluator_facade().RPC_PING_TIMEOUT_SEC
     )
-    overhead_ms = median_overhead * 1000
-    if overhead_ms > docker_evaluator_mod.CALIBRATION_WARN_OVERHEAD_MS or cpu_factor > docker_evaluator_mod.CALIBRATION_WARN_CPU_FACTOR:
-        bt.logging.warning(
-            f"UID {uid}: abnormal calibration — "
-            f"overhead={overhead_ms:.1f}ms, cpu_factor={cpu_factor:.2f}x, "
-            f"benchmark={bench_median_ms:.1f}ms"
-        )
-
-    return median_overhead, cpu_factor
+    return overhead, 1.0

@@ -48,7 +48,7 @@ def test_spawn_terrain_keeps_grass_tint_when_applying_texture(monkeypatch) -> No
     dummy_p = _DummyPyBullet()
 
     monkeypatch.setattr(open_builder, "p", dummy_p)
-    monkeypatch.setattr(open_builder, "_generate_terrain_obj", lambda seed: "/tmp/open.obj")
+    monkeypatch.setattr(open_builder, "_generate_terrain_obj", lambda seed, size: "/tmp/open.obj")
     monkeypatch.setattr(open_builder, "_load_texture", lambda cli: 77)
 
     open_builder._spawn_terrain(cli=5, seed=123)
@@ -77,5 +77,4 @@ def test_terrain_obj_path_uses_state_cache_dir() -> None:
         / "open_terrain"
         / "open_terrain_v3_s123.obj"
     )
-
 

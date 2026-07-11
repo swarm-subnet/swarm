@@ -1,11 +1,6 @@
 {
   "manifest_version": "submission_manifest.v1",
   "manifest_filename": "submission_manifest.json",
-  "legacy_fallback": {
-    "enabled": true,
-    "default_family_id": "cf_autopilot",
-    "artifact_path": "submission.zip"
-  },
   "repo_layout_rules": {
     "manifest_path": "submission_manifest.json",
     "readme_path": "README.md",
@@ -17,6 +12,7 @@
     "interface_version",
     "artifact_path",
     "sha256",
+    "size_bytes",
     "metadata"
   ]
 }

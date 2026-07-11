@@ -3,7 +3,7 @@ from __future__ import annotations
 from swarm.protocol import FailureReason
 
 
-def test_eight_members_exist():
+def test_failure_reason_members_exist():
     expected = {
         "NONE": "NONE",
         "OBSTACLE_COLLISION": "OBSTACLE_COLLISION",
@@ -13,6 +13,7 @@ def test_eight_members_exist():
         "INFEASIBLE": "INFEASIBLE",
         "SPAWN_FAILURE": "SPAWN_FAILURE",
         "EVAL_ERROR": "EVAL_ERROR",
+        "INFRA": "INFRA",
     }
     members = {m.name: m.value for m in FailureReason}
     assert members == expected

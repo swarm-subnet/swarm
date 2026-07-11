@@ -40,10 +40,10 @@ Scoring rewards landing, landing fast, and flying with clearance from obstacles.
 
 | | |
 |---|---|
-| Interface version | `submission_zip.v1` |
-| Entry point | `drone_agent.DroneFlightController` |
-| Methods | `act(obs)` / `reset()` |
-| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
+| Interface version | `model_graph.v1` |
+| Execution profile | `swarm.onnx-neural.cpu.v1` |
+| Runner ABI | `graph_runner.v1` |
+| Contract file | `manifest.json` (model_graph.v1) |
 | Environment types | city, open, mountain, village, warehouse, forest |
 
 ### Observation: `dict` with keys `depth`, `state`
@@ -51,7 +51,7 @@ Scoring rewards landing, landing fast, and flying with clearance from obstacles.
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
 | `depth` | float32 | (128, 128, 1) | [0, 1] |
-| `state` | float32 | (141) at evaluation settings | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `goal_offset_xyz` |
+| `state` | float32 | (141) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `goal_offset_xyz` |
 
 ### Action: float32 tensor, shape (5)
 
@@ -73,7 +73,7 @@ The `depth` image comes from a forward-facing camera mounted **0.13 m ahead and 
 
 Components 0–2 are a direction vector: it is normalized to a unit vector (an all-zero vector commands zero velocity). The commanded velocity is `3.0 m/s × speed × direction`, with **`SPEED_LIMIT` = 3.0 m/s**. `yaw` maps to a target heading of `yaw × π` radians, slewed at most **3.141 rad/s**. A DSLPID controller converts the command to rotor RPMs each step.
 
-The validator sanitizes every action before stepping: NaN/inf become 0, a wrong-sized tensor becomes a zero action, and values are clipped to the environment's [-1, 1] bounds on every component. Note that a negative `speed` survives that clip and is used as its magnitude. Per the contract you should still send `speed` in [0, 1].
+The runner canonicalizes every action before it reaches the sim: components are clipped to the contract bounds and quantized to a fixed step so every validator computes the identical value. A NaN/inf or wrong-shaped action is an artifact fault that fails the seed (`MG_OUTPUT_NONFINITE` / `MG_OUTPUT_CONTRACT`).
 
 <p align="right">(<a href="#autopilot-top">back to top</a>)</p>
 
@@ -206,7 +206,7 @@ To take the family throne, a challenger must beat the champion's benchmark score
 
 ## Runtime limits
 
-Your zip runs inside a Docker container as a Cap'n Proto RPC server; the validator calls `reset()` between seeds and `act()` every control step. Autopilot uses the default timing profile:
+Your graph runs inside a Docker container behind the subnet-owned runner's Cap'n Proto RPC server; the validator calls `reset()` between seeds and steps the graph every control step. Autopilot uses the default timing profile:
 
 | Budget | Value |
 |---|---|
@@ -218,7 +218,7 @@ Your zip runs inside a Docker container as a Cap'n Proto RPC server; the validat
 | Zip size | 50 MiB uncompressed max |
 | Container | 6 GB RAM, 2 CPUs |
 
-`requirements.txt` packages must be on the Docker whitelist: torch, onnxruntime, stable-baselines3, gymnasium, numpy, opencv and friends; the full list lives in `swarm/constants.py`.
+The graph must stay inside the execution profile's ONNX op allowlist (`swarm.onnx-neural.cpu.v1`); the full profile lives in `swarm/model_graph/execution_profile.v1.json`.
 
 Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,100-seed benchmark directly. A separate champion-gated screening phase (300 seeds with early-fail checkpoints) exists behind a code constant but is switched off.
 
@@ -231,13 +231,13 @@ Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,100-seed b
 Autopilot is the default family for the local benchmark, so this is all it takes:
 
 ```bash
-swarm benchmark --model Submission/submission.zip --workers 4
+swarm benchmark --model model_graph.zip --workers 4
 ```
 
 Package first with the family pinned explicitly:
 
 ```bash
-swarm model package --source ./my_agent --family-id cf_autopilot
+swarm model package --source ./my_model --family-id cf_autopilot
 ```
 
 `--seeds-per-group 1` gives a fast smoke run; see the [CLI reference](../CLI_readme.md) for seed files, timeout relaxation, and report parsing.

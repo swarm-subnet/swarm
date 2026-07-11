@@ -63,21 +63,16 @@ def test_flight_reward_requires_positive_horizon():
         flight_reward(success=True, t=1.0, horizon=0.0)
 
 
-def test_flight_reward_collision_penalty_for_legitimate_model():
-    assert flight_reward(success=True, t=1.0, horizon=10.0, collision=True, legitimate_model=True) == 0.01
+def test_flight_reward_collision_penalty():
+    assert flight_reward(success=True, t=1.0, horizon=10.0, collision=True) == 0.01
 
 
-def test_flight_reward_collision_zero_for_illegitimate_or_zero_time():
-    assert flight_reward(success=True, t=1.0, horizon=10.0, collision=True, legitimate_model=False) == 0.0
-    assert flight_reward(success=True, t=0.0, horizon=10.0, collision=True, legitimate_model=True) == 0.0
+def test_flight_reward_collision_zero_at_zero_time():
+    assert flight_reward(success=True, t=0.0, horizon=10.0, collision=True) == 0.0
 
 
-def test_flight_reward_failed_mission_returns_base_score_for_legitimate():
-    assert flight_reward(success=False, t=1.0, horizon=10.0, legitimate_model=True) == 0.01
-
-
-def test_flight_reward_failed_mission_zero_for_illegitimate():
-    assert flight_reward(success=False, t=1.0, horizon=10.0, legitimate_model=False) == 0.0
+def test_flight_reward_failed_mission_returns_base_score():
+    assert flight_reward(success=False, t=1.0, horizon=10.0) == 0.01
 
 
 def test_flight_reward_success_with_fast_time_and_safe_clearance_is_one():

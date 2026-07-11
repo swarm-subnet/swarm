@@ -44,12 +44,20 @@ https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 This repository holds one trained flight model entered into [Swarm](https://swarm124.com), the open benchmark for autonomous drone AI. The artifact under `artifacts/` is a complete pilot: a policy that reads a depth camera and its own flight state, and flies. Models are evaluated across six procedurally generated world types, 1,100 fresh seeds per family every weekly epoch, with no privileged information and no pre-built maps.
 
 ```
-README.md                              # This file, the byte-exact benchmark template
-submission_manifest.json               # Declares which family this repo competes in
-artifacts/<family_id>/submission.zip   # The trained agent for that family
+README.md                               # This file, the byte-exact benchmark template
+submission_manifest.json                # Declares which family this repo competes in
+artifacts/<family_id>/model_graph.zip   # The trained model for that family
 ```
 
-The `.zip` carries the agent's `DroneFlightController` class in `drone_agent.py` plus its trained weights; the manifest pins its SHA-256. One artifact, one family: every entry competes in exactly one challenge.
+The `.zip` carries the model graph itself: a `manifest.json` that wires trained ONNX networks into one flight policy, plus the networks under `models/`. Pure tensor math, no code; the manifest pins its SHA-256. One artifact, one family: every entry competes in exactly one challenge.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/3679d3aa-7be0-4f30-a8a3-fc00009efa24" alt="Model graph" width="100%">
+</p>
+
+<p align="center">
+  <sub><b>The model graph.</b> Observations flow through ONNX networks wired by the manifest; velocity commands come out.</sub>
+</p>
 
 ## Run This Model
 
@@ -67,7 +75,7 @@ pip install -e .
 
 ```bash
 python -m swarm.benchmark.engine \
-  --model /path/to/this-repo/artifacts/cf_autopilot/submission.zip \
+  --model /path/to/this-repo/artifacts/cf_autopilot/model_graph.zip \
   --family-id cf_autopilot \
   --seeds-per-group 3 --workers 4
 ```
@@ -138,7 +146,7 @@ This entry was trained by one miner. The benchmark is open, every family has a c
 
 1. **Read the docs**: the [Miner guide](https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md) covers repo setup, packaging, submission, and training tips.
 2. **Pick your family**: each family guide above defines the exact interface your model needs.
-3. **Study the baseline**: the [agent template](https://github.com/swarm-subnet/swarm/blob/main/swarm/submission_template/drone_agent.py) shows the contract in code.
+3. **Study the baseline**: the [training starters](https://github.com/swarm-subnet/swarm/tree/main/RL) train a policy and package it into a ready artifact.
 4. **Train and iterate**: benchmark locally, push your score higher.
 5. **Submit and compete**: publish your repo and climb the [leaderboard](https://swarm124.com/benchmark).
 
