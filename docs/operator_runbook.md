@@ -97,12 +97,12 @@ Comma-separated coldkey whitelist, checked by `require_trusted_validator` on the
 
 | Whitelist state | Behavior |
 |-----------------|----------|
-| Empty / unset | Gate is **inert**: any stake-verified validator passes |
+| Empty / unset | **Fail-closed**: every evaluation endpoint returns 403 and heartbeats tell validators to stop — nothing is evaluated until the whitelist is configured |
 | Configured | **Fail-closed**: coldkey resolved from the DB (`validatoronchain`) then the metagraph; unresolved or unlisted coldkeys get 403 with "Contact the team to be added" |
 
-`require_strict_trusted_validator` (private artifact bytes) is fail-closed **even when the whitelist is unconfigured**.
+`require_strict_trusted_validator` (private artifact bytes) applies the same fail-closed rule.
 
-> **Required for the private families.** `cf_search_and_rescue` and `cf_swarm_sar` are registered `private`, so their artifacts are served only through the strict fail-closed gate. Until `TRUSTED_VALIDATOR_COLDKEYS` is set and those validators run `>= 5.0.0`, no validator can fetch or evaluate a private-family model, and those families stall. Set the whitelist and roll out 5.0.0 validators **before** relying on private-family evaluation. The three public families keep working regardless.
+> **Required before anything scores.** The whitelist gates all evaluation, so a fresh deploy must set `TRUSTED_VALIDATOR_COLDKEYS` before validators can take tasks. The private families (`cf_search_and_rescue`, `cf_swarm_sar`) additionally serve artifacts only through the strict gate and need those validators on `>= 5.0.0`. Set the whitelist and roll out 5.0.0 validators **before** relying on evaluation.
 
 ---
 
@@ -178,7 +178,7 @@ The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../
 | `SWARM_ROLLOUT_DEFAULT_FAMILY_ID` | `cf_autopilot` | Rollout default family |
 | `SWARM_ENABLED_CHALLENGE_FAMILIES` | all registry families | Enabled family set |
 | `SWARM_ENFORCE_VALIDATOR_CONTRACT` | `false` | Reject contract-less validators in multi_family |
-| `TRUSTED_VALIDATOR_COLDKEYS` | unset → gate inert | Coldkey whitelist (configured = fail-closed) |
+| `TRUSTED_VALIDATOR_COLDKEYS` | unset → nothing evaluates | Coldkey whitelist (fail-closed; required before any scoring) |
 
 ### Backend: version gates
 
@@ -232,7 +232,7 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_
 | Force validators to upgrade for multi-family | `SWARM_ENFORCE_VALIDATOR_CONTRACT=true` in `multi_family` mode |
 | Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py`, commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
-| Lock down which validators evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed once set) |
+| Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |
 | Trigger a benchmark-version cutover | Merge the `swarm/__init__.py` version bump to the `SWARM_VERSION_REF` branch: backend follows within up to about 20 minutes |
 | Turn screening on/off | Flip `SCREENING_ENABLED` in `benchmark_logic.py`, deploy, restart: startup fixups migrate the queue |

@@ -383,7 +383,10 @@ def _run_multi_seed_rpc_sync(
                         )
                         results.extend(
                             [
-                                ValidationResult(uid, False, 0.0, 0.0)
+                                ValidationResult(
+                                    uid, False, 0.0, 0.0,
+                                    failure_reason=FailureReason.INFRA.value,
+                                )
                                 for _ in range(remaining)
                             ]
                         )
