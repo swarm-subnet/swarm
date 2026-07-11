@@ -12,7 +12,7 @@ import bittensor as bt
 
 from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
 from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC, SIM_DT
-from swarm.model_graph import ReasonCode, admit_artifact
+from swarm.model_graph import ReasonCode, admit_artifact_subprocess
 from swarm.model_graph.constants import RUNNER_STARTUP_WALL_SEC
 from swarm.protocol import (
     FailureReason,
@@ -281,7 +281,7 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
             for _ in tasks
         ]
 
-    admission = admit_artifact(model_path)
+    admission = admit_artifact_subprocess(model_path)
     if not admission.accepted:
         bt.logging.warning(
             f"[Worker {worker_id}] UID {uid} graph admission failed: "
@@ -576,7 +576,12 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                 _notify_all_failed(status="batch_timeout_partial")
                 return partial_results
             _notify_all_failed(status="batch_timeout")
-            return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
+            return [
+                ValidationResult(
+                    uid, False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value
+                )
+                for _ in tasks
+            ]
 
         if "error" in rpc_payload:
             raise RuntimeError(f"RPC worker failed: {rpc_payload['error']}")

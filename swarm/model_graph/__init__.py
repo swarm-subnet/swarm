@@ -6,7 +6,7 @@ the runner that executes it. Importing this package never creates an ONNX
 Runtime session.
 """
 
-from .admission import AdmissionResult, admit_artifact
+from .admission import AdmissionResult, admit_artifact, admit_artifact_subprocess
 from .constants import (
     EXECUTION_PROFILE_ID,
     FAMILY_GRAPH_CONTRACTS,
@@ -33,6 +33,7 @@ __all__ = [
     "SUBMISSION_INTERFACE_VERSION",
     "VALIDATOR_CONTRACT",
     "admit_artifact",
+    "admit_artifact_subprocess",
     "parse_manifest",
     "profile_digest",
 ]

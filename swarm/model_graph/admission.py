@@ -8,6 +8,9 @@ logic runs in the backend mirror; both must emit the same reason code.
 from __future__ import annotations
 
 import hashlib
+import multiprocessing
+import os
+import resource
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +19,8 @@ from .constants import (
     EXECUTION_PROFILE_ID,
     FAMILY_GRAPH_CONTRACTS,
     RUNNER_ABI,
+    STATIC_ADMISSION_ADDRESS_BYTES,
+    STATIC_ADMISSION_WALL_SEC,
     resolve_shape,
 )
 from .errors import ModelGraphError, ReasonCode
@@ -223,3 +228,62 @@ def admit_artifact(zip_path: Path) -> AdmissionResult:
         worst_tick_flops=totals.worst_tick_flops,
         memory_floats=manifest.memory_floats,
     )
+
+
+def _admission_child(zip_path: str, connection) -> None:
+    try:
+        if os.name == "posix":
+            resource.setrlimit(
+                resource.RLIMIT_AS,
+                (STATIC_ADMISSION_ADDRESS_BYTES, STATIC_ADMISSION_ADDRESS_BYTES),
+            )
+        record = admit_artifact(Path(zip_path)).to_record()
+    except MemoryError:
+        record = AdmissionResult(
+            accepted=False,
+            reason_code=ReasonCode.RESOURCE_CAP_EXCEEDED.value,
+            detail="static admission exceeded the address-space budget",
+        ).to_record()
+    except BaseException as exc:
+        record = {"crash": f"{type(exc).__name__}: {exc}"}
+    try:
+        connection.send(record)
+    except OSError:
+        pass
+    finally:
+        connection.close()
+
+
+def admit_artifact_subprocess(
+    zip_path: Path, timeout: float = STATIC_ADMISSION_WALL_SEC
+) -> AdmissionResult:
+    """Run static admission under an address-space and wall-time boundary."""
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe(duplex=False)
+    process = context.Process(target=_admission_child, args=(str(Path(zip_path)), child))
+    process.start()
+    child.close()
+    try:
+        if not parent.poll(timeout):
+            return AdmissionResult(
+                accepted=False,
+                reason_code=ReasonCode.RESOURCE_CAP_EXCEEDED.value,
+                detail=f"static admission exceeded {timeout:.1f}s",
+            )
+        try:
+            record = parent.recv()
+        except (EOFError, OSError):
+            return AdmissionResult(
+                accepted=False,
+                reason_code=ReasonCode.RESOURCE_CAP_EXCEEDED.value,
+                detail="static admission terminated before producing a result",
+            )
+    finally:
+        parent.close()
+        process.join(2)
+        if process.is_alive():
+            process.kill()
+            process.join()
+    if "crash" in record:
+        raise RuntimeError(f"static admission failed: {record['crash']}")
+    return AdmissionResult(**record)

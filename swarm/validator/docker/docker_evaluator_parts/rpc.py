@@ -257,7 +257,12 @@ def _run_multi_seed_rpc_sync(
                             success=False,
                             sim_t=0.0,
                         )
-                    return [ValidationResult(uid, False, 0.0, 0.0) for _ in tasks]
+                    return [
+                        ValidationResult(
+                            uid, False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value
+                        )
+                        for _ in tasks
+                    ]
                 try:
                     _set_phase("rpc_connect", task="n/a", step=attempt, sim_t=0.0)
                     _trace(f"connect attempt {attempt}/{max_ping_attempts}")
@@ -298,7 +303,11 @@ def _run_multi_seed_rpc_sync(
                                 sim_t=0.0,
                             )
                         return [
-                            ValidationResult(uid, False, 0.0, 0.0) for _ in tasks
+                            ValidationResult(
+                                uid, False, 0.0, 0.0,
+                                failure_reason=FailureReason.INFRA.value,
+                            )
+                            for _ in tasks
                         ]
                     await asyncio.sleep(2)
                 except Exception as e:
@@ -319,7 +328,11 @@ def _run_multi_seed_rpc_sync(
                                 error=f"{type(e).__name__}: {e}",
                             )
                         return [
-                            ValidationResult(uid, False, 0.0, 0.0) for _ in tasks
+                            ValidationResult(
+                                uid, False, 0.0, 0.0,
+                                failure_reason=FailureReason.INFRA.value,
+                            )
+                            for _ in tasks
                         ]
                     await asyncio.sleep(2)
 
@@ -662,7 +675,12 @@ def _run_multi_seed_rpc_sync(
                             _trace(
                                 f"{task_label} cancelled due to stop request at t_sim={t_sim:.2f}s"
                             )
-                            results.append(ValidationResult(uid, False, t_sim, 0.0))
+                            results.append(
+                                ValidationResult(
+                                    uid, False, t_sim, 0.0,
+                                    failure_reason=FailureReason.INFRA.value,
+                                )
+                            )
                             _emit_seed_complete(
                                 task,
                                 status="seed_cancelled",
@@ -682,7 +700,12 @@ def _run_multi_seed_rpc_sync(
                                 sim_t=t_sim,
                             )
                             _trace(f"{task_label} failed due to rpc disconnect")
-                            results.append(ValidationResult(uid, False, t_sim, 0.0))
+                            results.append(
+                                ValidationResult(
+                                    uid, False, t_sim, 0.0,
+                                    failure_reason=FailureReason.INFRA.value,
+                                )
+                            )
                             _emit_seed_complete(
                                 task,
                                 status="seed_rpc_disconnected",

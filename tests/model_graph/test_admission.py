@@ -10,7 +10,12 @@ import numpy as np
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
-from swarm.model_graph import ReasonCode, admit_artifact, parse_manifest
+from swarm.model_graph import (
+    ReasonCode,
+    admit_artifact,
+    admit_artifact_subprocess,
+    parse_manifest,
+)
 from swarm.model_graph.constants import ONNX_IR_VERSION, ONNX_OPSET_VERSION
 from swarm.model_graph.errors import ModelGraphError
 from swarm.model_graph.onnx_profile import inspect_onnx_bytes
@@ -583,3 +588,23 @@ class TestDeterminism:
 
         assert profile_digest() == profile_digest()
         assert len(profile_digest()) == 64
+
+
+class TestSubprocessBoundary:
+    def test_subprocess_matches_inline_admission(self, tmp_path):
+        path = autopilot_artifact(tmp_path)
+        boxed = admit_artifact_subprocess(path)
+        assert boxed.to_record() == admit_artifact(path).to_record()
+
+    def test_subprocess_rejects_on_wall_timeout(self, tmp_path):
+        path = autopilot_artifact(tmp_path)
+        result = admit_artifact_subprocess(path, timeout=0.001)
+        assert not result.accepted
+        assert result.reason_code == ReasonCode.RESOURCE_CAP_EXCEEDED.value
+
+    def test_subprocess_rejects_bad_archive(self, tmp_path):
+        path = tmp_path / "bad.zip"
+        path.write_bytes(b"not a zip")
+        result = admit_artifact_subprocess(path)
+        assert not result.accepted
+        assert result.reason_code == ReasonCode.ARCHIVE_REJECTED.value
