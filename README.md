@@ -26,20 +26,18 @@
 
 ---
 
-https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
-
-<p align="center">
-  <sub><b>Search and Rescue.</b> The mission Swarm is built around: teaching a drone to find people.</sub>
-</p>
-
----
-
 <!-- ABOUT -->
 ## What Is Swarm
 
 Drones are moving into everyday life: delivering packages, inspecting bridges and power lines, searching for survivors after a disaster. The hardware is ready. The hard part is the **AI that flies them**, and today that AI is built behind closed doors, where no one can compare it or prove whose is best.
 
 **Swarm is the open arena that settles it.** Anyone can train a drone pilot, submit it, and watch it compete on a public [leaderboard](https://swarm124.com/benchmark) across thousands of fresh worlds it has never seen. No private test sets, no memorizing, no shortcuts. The best pilot wins, out in the open, and its rewards are paid automatically by the [Bittensor](https://bittensor.com) network (Subnet 124).
+
+https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
+
+<p align="center">
+  <sub><b>Search and Rescue.</b> The mission Swarm is built around: teaching a drone to find people.</sub>
+</p>
 
 <p align="center">
   <sub><b>5</b> missions &nbsp;·&nbsp; <b>1,100</b> fresh worlds every week &nbsp;·&nbsp; <b>60-second</b> flights &nbsp;·&nbsp; one live leaderboard</sub>
