@@ -157,7 +157,8 @@ class BaseValidatorNeuron(BaseNeuron):
                 local_weights = compute_koth_weights_from_sync(
                     data, metagraph=self.metagraph
                 )
-                _apply_backend_weights_to_scores(self, local_weights)
+                if local_weights is not None:
+                    _apply_backend_weights_to_scores(self, local_weights)
             except asyncio.CancelledError:
                 break
             except Exception as e:

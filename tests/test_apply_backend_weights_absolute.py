@@ -1,7 +1,7 @@
-"""Validator-side weight application. With burning off (the default) miners keep
-their raw share and UID0 stays at zero; set_weights later renormalizes the raw
-shares to 1.0. The parked BURN_FRACTION lever, when enabled, scales miners down
-to KEEP_FRACTION and routes BURN_FRACTION to UID0."""
+"""Validator-side weight application. Each weight is an absolute fraction of
+total emissions; miners keep exactly their raw share and the unassigned
+remainder always goes to the burn UID, so the vector conserves to 1.0 and
+set_weights' normalization is a no-op."""
 import numpy as np
 import pytest
 from types import SimpleNamespace
@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from bittensor.utils.weight_utils import process_weights
 
 from swarm.constants import UID_ZERO
-from swarm.validator.utils_parts import weights as wmod
 from swarm.validator.utils_parts.weights import (
     _apply_backend_weights_to_scores_unlocked as apply_weights,
 )
@@ -23,35 +22,36 @@ def _sum(self):
     return float(self.scores.sum())
 
 
-def test_no_burn_leaves_miner_scores_and_zero_uid0():
+def test_miners_keep_raw_share_and_remainder_burns():
     s = _self()
     apply_weights(s, {"5": 0.10, "7": 0.10})
     assert s.scores[5] == pytest.approx(0.10)
     assert s.scores[7] == pytest.approx(0.10)
-    # Nothing on UID0; set_weights renormalizes the raw shares to 1.0 downstream.
-    assert s.scores[UID_ZERO] == pytest.approx(0.0)
-    assert _sum(s) == pytest.approx(0.20)
+    assert s.scores[UID_ZERO] == pytest.approx(0.80)
+    assert _sum(s) == pytest.approx(1.0)
 
 
-def test_empty_map_leaves_all_zero():
+def test_empty_map_burns_everything():
     s = _self()
     apply_weights(s, {})
-    # All-zero -> set_weights refuses and holds the last good weights (no burn).
-    assert np.count_nonzero(s.scores) == 0
+    # Valid payload, nobody payable: the whole emission burns.
+    assert s.scores[UID_ZERO] == pytest.approx(1.0)
+    assert _sum(s) == pytest.approx(1.0)
 
 
-def test_uid0_entry_is_ignored():
+def test_uid0_entry_is_ignored_but_still_receives_remainder():
     s = _self()
     apply_weights(s, {"0": 0.5, "5": 0.10})
     assert s.scores[5] == pytest.approx(0.10)
-    assert s.scores[UID_ZERO] == pytest.approx(0.0)
+    assert s.scores[UID_ZERO] == pytest.approx(0.90)
 
 
 def test_out_of_range_and_nonfinite_skipped():
     s = _self(n=10)
     apply_weights(s, {"999": 0.4, "-3": 0.2, "5": 0.10, "6": float("nan")})
     assert s.scores[5] == pytest.approx(0.10)
-    assert s.scores[UID_ZERO] == pytest.approx(0.0)
+    assert s.scores[UID_ZERO] == pytest.approx(0.90)
+    assert _sum(s) == pytest.approx(1.0)
 
 
 def test_overallocation_is_clamped_to_full_pool():
@@ -60,19 +60,6 @@ def test_overallocation_is_clamped_to_full_pool():
     assert s.scores[5] == pytest.approx(0.5)
     assert s.scores[7] == pytest.approx(0.5)
     assert s.scores[UID_ZERO] == pytest.approx(0.0)
-    assert _sum(s) == pytest.approx(1.0)
-
-
-def test_parked_lever_routes_fraction_to_uid0(monkeypatch):
-    monkeypatch.setattr(wmod, "BURN_EMISSIONS", True)
-    monkeypatch.setattr(wmod, "BURN_FRACTION", 0.75)
-    monkeypatch.setattr(wmod, "KEEP_FRACTION", 0.25)
-    s = _self()
-    apply_weights(s, {"5": 0.10, "7": 0.10})
-    # Miners scaled to KEEP_FRACTION (0.25) by their raw share; UID0 = BURN_FRACTION.
-    assert s.scores[5] == pytest.approx(0.125)
-    assert s.scores[7] == pytest.approx(0.125)
-    assert s.scores[UID_ZERO] == pytest.approx(0.75)
     assert _sum(s) == pytest.approx(1.0)
 
 

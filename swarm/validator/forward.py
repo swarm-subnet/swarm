@@ -86,7 +86,8 @@ async def _forward_iteration(self) -> None:
         local_koth_weights = compute_koth_weights_from_sync(
             sync_data, metagraph=self.metagraph
         )
-        _apply_backend_weights_to_scores(self, local_koth_weights)
+        if local_koth_weights is not None:
+            _apply_backend_weights_to_scores(self, local_koth_weights)
 
         kings_payload = sync_data.get("kings") or []
         stamped = stamp_local_weights_on_kings(kings_payload)

@@ -226,11 +226,8 @@ assert abs(sum(CITY_VARIANT_DISTRIBUTION.values()) - 1.0) < 0.001, "City variant
 
 # Miner sampling and evaluation
 SAMPLE_K = 256                          # Number of miners sampled per forward pass
-# Emission burning mechanism
-BURN_EMISSIONS = False                  # Off: King of the Hill pays the kings in full (no burn to UID 0)
-BURN_FRACTION = 0.0                     # Parked lever: fraction burned to UID 0 when BURN_EMISSIONS is on
-KEEP_FRACTION = 1.0 - BURN_FRACTION     # Fraction distributed to miners
-UID_ZERO = 0                            # Special UID for burning emissions
+# Emission burning
+UID_ZERO = 0                            # Burn UID: receives every emission slice not paid to a miner
 
 # Safety metric parameters
 REWARD_W_SUCCESS = 0.45                 # Weight for success term in reward calculation

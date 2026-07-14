@@ -98,7 +98,7 @@ bonus_i  = 1 + 0.3 × min(gain_i, 1.0)
 share_i  = ladder_i × bonus_i / sum(ladder_j × bonus_j in window)
 ```
 
-The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. Rank is derived from crowning recency (epoch, then lineage order), not from list position. A row whose gain is zero earns nothing. The bonus gain is capped at `1.0` so the ladder order can never flip: the reigning champion always holds the largest share. If every share in a family is zero, the family pays nobody, and its slice redistributes to the other families (see below).
+The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. Rank is derived from crowning recency (epoch, then lineage order), not from list position. A row whose gain is zero earns nothing. The bonus gain is capped at `1.0` so the ladder order can never flip: the reigning champion always holds the largest share. If every share in a family is zero, the family pays nobody, and its slice burns (see below).
 
 ### Plain-English version
 
@@ -195,24 +195,16 @@ archived                                       0.0   (out of payout)
 
 All five families are currently `active`. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
 
-### Inactive slices redistribute
+### Unpaid slices burn
 
-A family is **payable** when it is not archived and its window has at least one eligible king with a positive improvement gain. The normalised slices of every non-payable family (kingless, solved-and-archived, or archived for any other reason) are split **equally** across the payable families:
-
-```
-share(f) = base(f) + sum(base of non-payable families) / count(payable families)
-```
-
-Example: four families payable, Interceptor (base `0.15`) has no king yet:
+A family is **payable** when it is not archived and its window has at least one eligible king with a positive improvement gain. Each family owns exactly its own slice — nothing redistributes. The slice of every non-payable family (kingless, solved-and-archived, or archived for any other reason) goes to the **burn UID**:
 
 ```
-share(Autopilot)          = 0.10 + 0.15/4 = 0.1375
-share(Search-and-Rescue)  = 0.30 + 0.15/4 = 0.3375
-share(Swarm Autopilot)    = 0.15 + 0.15/4 = 0.1875
-share(Swarm SAR)          = 0.30 + 0.15/4 = 0.3375
+share(f)   = allocation(f)          for every payable family
+burn share = 1 − sum of paid shares
 ```
 
-The moment Interceptor crowns its first king, its slice snaps back to `0.15` and the top-ups disappear. If **no** family is payable, validators simply hold their last weights.
+Example: four families payable, Interceptor (allocation `0.15`) has no king yet — the other four keep exactly `0.10 / 0.30 / 0.15 / 0.30` and Interceptor's `0.15` burns. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
 ### Who a seat can pay
@@ -228,7 +220,7 @@ Champion status is **not** required: past kings in the window are ordinary evalu
 
 ### Solved families
 
-Each family carries a secret `solve_threshold`. When a champion clears it, the family is **solved**: no new champions are crowned, and the current window keeps earning as-is. Seven days later the family is archived, and its slice redistributes equally to the remaining payable families.
+Each family carries a secret `solve_threshold`. When a champion clears it, the family is **solved**: no new champions are crowned, and the current window keeps earning as-is. Seven days later the family is archived, and its slice burns.
 
 ### How weights reach the chain
 
@@ -299,7 +291,7 @@ For now there are only five families and their slices are already fixed, so noth
 | **Challenge family** | An independent competition (e.g. Autopilot, Search-and-Rescue), each with its own lineage, window, and emission slice. |
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
-| **Family share** | A family's normalised `emission_allocation`, plus an equal split of every non-payable family's slice. |
+| **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
 | **Payable seat** | A window seat that passes the eligibility check: intact + accessible repo for public submissions, sealed artifact on file for private ones. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
@@ -308,6 +300,6 @@ For now there are only five families and their slices are already fixed, so noth
 | **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
 | **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` by default, `0.02 → 0.007` for the SAR families. |
-| **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived after 7 days, its slice redistributing to the payable families. |
+| **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived after 7 days, its slice burning from then on. |
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>

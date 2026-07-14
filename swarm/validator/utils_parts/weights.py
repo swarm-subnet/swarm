@@ -48,21 +48,22 @@ def _make_uid_validator(metagraph: Any):
 
 def compute_koth_weights_from_sync(
     sync_data: Dict[str, Any], *, metagraph: Any = None
-) -> Dict[int, float]:
+) -> Optional[Dict[int, float]]:
     """Local {uid: weight} from the sync payload; advisory backend weights ignored.
 
     Per-family when the payload carries ``kings_by_family`` + ``family_shares``
-    (weight = Σ family_share · koth_share). A legacy payload without
-    ``kings_by_family`` is refused (returns empty) so V5 never pays one family
-    100%.
+    (weight = Σ family_slice · koth_share; the slices are absolute, so the
+    unassigned remainder burns). An empty map is a valid full-burn state. A
+    legacy payload without ``kings_by_family`` is refused (returns None) so the
+    caller holds its last good weights instead of burning on a bad payload.
     """
     family_shares = sync_data.get("family_shares") or {}
     kings_by_family_raw = sync_data.get("kings_by_family") or {}
 
     # A modern payload always carries kings_by_family; use the per-family path
-    # even when family_shares is empty (no family has a payable king), so we
+    # even when family_shares is empty (no family payable -> full burn), so we
     # converge with the backend. A legacy payload (no kings_by_family) is refused.
-    if kings_by_family_raw:
+    if kings_by_family_raw or "kings_by_family" in sync_data:
         kings_by_family = {
             str(fid): _parse_king_entries(rows)
             for fid, rows in kings_by_family_raw.items()
@@ -73,13 +74,12 @@ def compute_koth_weights_from_sync(
         )
         local_weights = combined.miner_raw
     else:
-        is_legacy = "kings_by_family" not in sync_data and "family_shares" not in sync_data
-        if is_legacy and sync_data.get("kings"):
+        if sync_data.get("kings"):
             bt.logging.warning(
                 "KotH: legacy flat payload without kings_by_family; refusing "
                 "(V5 requires the per-family payload)."
             )
-        return {}
+        return None
 
     if not sync_data.get("fallback"):
         advisory = sync_data.get("weights") or {}
@@ -185,13 +185,11 @@ def _apply_backend_weights_to_scores(self, backend_weights: Dict[Any, Any]) -> N
 def _apply_backend_weights_to_scores_unlocked(self, backend_weights: Dict[Any, Any]) -> None:
     """Apply the per-family KotH miner map to the score vector.
 
-    Each weight is already an ABSOLUTE fraction of total emissions
-    (family_allocation × koth_share). With burning off (the default) the scores
-    stay as the raw miner shares and ``set_weights`` renormalizes them to 1.0,
-    so any slice the backend did not assign to a live miner is spread across the
-    paid miners instead of going to UID 0. The parked ``BURN_FRACTION`` lever,
-    when enabled, scales miners down to ``KEEP_FRACTION`` and routes
-    ``BURN_FRACTION`` to UID 0.
+    Each weight is an ABSOLUTE fraction of total emissions
+    (family_slice × koth_share). Every slice the backend did not assign to a
+    live miner — kingless families, archived families, dropped shares — goes to
+    the burn UID, so ``set_weights``' normalization is a no-op and no unpaid
+    slice ever leaks onto the paid miners. An empty map burns everything.
     """
     self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
@@ -213,7 +211,5 @@ def _apply_backend_weights_to_scores_unlocked(self, backend_weights: Dict[Any, A
         self.scores /= distributed
         distributed = 1.0
 
-    if BURN_EMISSIONS and 0 <= UID_ZERO < self.metagraph.n:
-        if distributed > 0.0:
-            self.scores *= KEEP_FRACTION / distributed
-        self.scores[UID_ZERO] = BURN_FRACTION
+    if 0 <= UID_ZERO < self.metagraph.n:
+        self.scores[UID_ZERO] = max(0.0, 1.0 - distributed)

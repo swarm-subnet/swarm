@@ -82,9 +82,9 @@ def test_recompute_matches_backend_combine_oracle():
 
 def test_legacy_flat_payload_refused_when_no_family_fields():
     # A payload with only the flat `kings` list (no kings_by_family) is legacy;
-    # V5 refuses it rather than paying a single family 100%.
+    # V5 refuses it (None -> hold last weights) rather than paying or burning.
     sync = {"kings": [_king(5, 0.5, 0.0, "cf_autopilot"), _king(6, 0.7, 0.5, "cf_autopilot")]}
-    assert compute_koth_weights_from_sync(sync) == {}
+    assert compute_koth_weights_from_sync(sync) is None
 
 
 def test_empty_family_shares_with_kings_burns_not_flat_fallback():

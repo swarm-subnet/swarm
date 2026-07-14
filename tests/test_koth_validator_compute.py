@@ -120,7 +120,8 @@ def test_legacy_flat_payload_refused():
     }
     with patch("bittensor.logging.warning") as warn_mock:
         w = compute_koth_weights_from_sync(sync)
-    assert w == {}
+    # None means "refused, hold last weights" — never a burn on a bad payload.
+    assert w is None
     assert warn_mock.call_count == 1
     assert "legacy" in warn_mock.call_args[0][0].lower()
 
@@ -238,16 +239,32 @@ def test_compute_then_apply_routes_share_correctly():
     assert obj.scores[50] > 0
 
 
-def test_empty_computed_map_leaves_zero():
+def test_empty_computed_map_burns_everything():
     from swarm.constants import UID_ZERO
 
     sync = _family_sync({"cf_autopilot": []}, {"cf_autopilot": 1.0})
     w = compute_koth_weights_from_sync(sync)
     obj = _make_validator_self()
     _apply_backend_weights_to_scores(obj, w)
-    # Burning off by default: nothing on UID0 (set_weights then holds last weights).
-    assert obj.scores[UID_ZERO] == pytest.approx(0.0)
-    assert float(obj.scores.sum()) == pytest.approx(0.0)
+    # No payable king anywhere: the whole emission goes to the burn UID.
+    assert obj.scores[UID_ZERO] == pytest.approx(1.0)
+    assert float(obj.scores.sum()) == pytest.approx(1.0)
+
+
+def test_unassigned_remainder_burns_to_uid_zero():
+    from swarm.constants import UID_ZERO
+
+    sync = _family_sync(
+        {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
+        {"cf_autopilot": 0.10},
+    )
+    w = compute_koth_weights_from_sync(sync)
+    obj = _make_validator_self()
+    _apply_backend_weights_to_scores(obj, w)
+    # The family's sole king takes its absolute 0.10 slice; the rest burns.
+    assert obj.scores[7] == pytest.approx(0.10)
+    assert obj.scores[UID_ZERO] == pytest.approx(0.90)
+    assert float(obj.scores.sum()) == pytest.approx(1.0)
 
 
 def test_backend_api_runtime_state_seed_includes_last_kings(tmp_path, monkeypatch):
