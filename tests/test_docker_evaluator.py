@@ -871,6 +871,7 @@ def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
     assert snapshot["docker"]["effective_workers"] == 2
 
 
+@pytest.mark.full
 def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
@@ -957,6 +958,7 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
     assert any("1 retried_timeout" in line for line in log_lines)
 
 
+@pytest.mark.full
 def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
@@ -1036,6 +1038,7 @@ def test_is_rpc_transport_status_classifies_transport_failures():
     assert not bench_full_eval._is_rpc_transport_status("rpc_connection_failed")
 
 
+@pytest.mark.full
 def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
@@ -1122,6 +1125,7 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
     assert any("1 retried_rpc_transport" in line for line in log_lines)
 
 
+@pytest.mark.full
 def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
@@ -1187,6 +1191,7 @@ def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp
     assert len([line for line in log_lines if "retrying RPC-transport seed" in line]) == 1
 
 
+@pytest.mark.full
 def test_run_process_parallel_honors_exhausted_shared_retry_budget(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
@@ -1257,6 +1262,7 @@ def test_run_process_parallel_honors_exhausted_shared_retry_budget(monkeypatch, 
     assert retry_budget["rpc_transport"] == de.parallel._MAX_RPC_TRANSPORT_RETRIES
 
 
+@pytest.mark.full
 def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
@@ -1332,6 +1338,7 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
     assert not any("stale-status" in line for line in log_lines)
 
 
+@pytest.mark.full
 def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")

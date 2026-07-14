@@ -15,7 +15,7 @@ import pytest
 
 from swarm.constants import SIM_DT
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 
 def _docker_available() -> bool:

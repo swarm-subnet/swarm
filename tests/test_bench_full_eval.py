@@ -16,6 +16,8 @@ import pytest
 from swarm.benchmark import engine as bench_full_eval
 from swarm.constants import N_DOCKER_WORKERS
 
+pytestmark = pytest.mark.full
+
 
 def _argv_for_model(model_path, *extra: str) -> list[str]:
     return [
