@@ -206,6 +206,12 @@ burn share = 1 − sum of paid shares
 
 Example: four families payable, Interceptor (allocation `0.15`) has no king yet — the other four keep exactly `0.10 / 0.30 / 0.15 / 0.30` and Interceptor's `0.15` burns. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
+### Stale tasks burn
+
+A family must keep improving to keep earning. If **7 days** pass without a new crowning, the family's whole slice burns — every seat in its window stops earning — until the next crowning resumes payments. Burned time is never back-paid.
+
+The clock only resets on a **real crowning**: the weekly champion re-evaluation does not count, and neither does a re-scored champion keeping its crown. The reigning champion feels this too — to keep the slice alive they must beat their own score from a fresh hotkey, clearing the crowning floor like anyone else. A **solved** family is exempt while its 7-day victory window runs.
+
 <a id="who-a-seat-can-pay"></a>
 ### Who a seat can pay
 
@@ -292,6 +298,7 @@ For now there are only five families and their slices are already fixed, so noth
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
+| **Stale task** | A family with no new crowning for 7 days; its whole slice burns until the next crowning. Re-evals never reset the clock. |
 | **Payable seat** | A window seat that passes the eligibility check: intact + accessible repo for public submissions, sealed artifact on file for private ones. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
