@@ -7,10 +7,14 @@ and the runtime behaviour agree by construction.
 For each king ``i`` in the active window:
 
     gain_i   = log(max(1 - prev_i, HEADROOM_EPS) / max(1 - score_i, HEADROOM_EPS))
-    taper_i  = max(0, (WINDOW_SIZE - rank_i) / WINDOW_SIZE)
-    share_i  = gain_i * taper_i / sum(gain_j * taper_j over the window)
+    ladder_i = RANK_LADDER_RATIO ** rank_i        (0 when rank_i >= WINDOW_SIZE)
+    bonus_i  = 1 + GAIN_BONUS * min(gain_i, GAIN_BONUS_CAP)
+    share_i  = ladder_i * bonus_i / sum(over the window)
 
-Scores are clamped to [0, 1] first. Rank is derived from
+Rank first: the reigning king always holds the largest share and every
+dethronement steps a seat down the ladder; the gain is a bonus that can never
+flip the order. A row with zero gain earns nothing (real crownings always
+improve the score). Scores are clamped to [0, 1] first. Rank is derived from
 ``(crowned_at_epoch, lineage_id)`` descending, not list position.
 """
 from __future__ import annotations
@@ -23,6 +27,9 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 HEADROOM_EPS: float = 0.01
 WINDOW_SIZE: int = 5
 RESERVED_BURN_UID: int = 0
+RANK_LADDER_RATIO: float = 0.7
+GAIN_BONUS: float = 0.3
+GAIN_BONUS_CAP: float = 1.0
 
 
 class MalformedKingEntry(ValueError):
@@ -102,7 +109,19 @@ def headroom_gain(score: float, prev_score: float, eps: float = HEADROOM_EPS) ->
 
 
 def rank_weight(rank: int, window: int = WINDOW_SIZE) -> float:
-    return max(0.0, (float(window) - float(rank)) / float(window))
+    """Geometric ladder: each seat holds RANK_LADDER_RATIO of the seat above."""
+    if rank < 0 or rank >= window:
+        return 0.0
+    return RANK_LADDER_RATIO ** float(rank)
+
+
+def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
+    # Bonus gain is capped: max factor 1 + GAIN_BONUS * CAP = 1.3, below the
+    # ladder step 1/RANK_LADDER_RATIO ~= 1.43, so no gain can flip the order.
+    gain = headroom_gain(king.score, king.prev_score, eps=eps)
+    if gain <= 0.0:
+        return 0.0
+    return rank_weight(rank) * (1.0 + GAIN_BONUS * min(gain, GAIN_BONUS_CAP))
 
 
 def _ranks(rows: List[KingEntry]) -> List[int]:
@@ -137,8 +156,7 @@ def compute_row_weights(
 
     ranks = _ranks(rows)
     adjusted_per_king: List[float] = [
-        headroom_gain(king.score, king.prev_score, eps=eps) * rank_weight(ranks[i])
-        for i, king in enumerate(rows)
+        _adjusted_weight(king, ranks[i], eps) for i, king in enumerate(rows)
     ]
 
     total = sum(adjusted_per_king)
@@ -166,8 +184,7 @@ def compute_weights(
 
     ranks = _ranks(rows)
     adjusted_per_king: List[float] = [
-        headroom_gain(king.score, king.prev_score, eps=eps) * rank_weight(ranks[i])
-        for i, king in enumerate(rows)
+        _adjusted_weight(king, ranks[i], eps) for i, king in enumerate(rows)
     ]
 
     total = sum(adjusted_per_king)

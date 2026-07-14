@@ -49,7 +49,7 @@ def test_single_first_king_takes_100_percent():
 def test_discord_example_matches_expected_weights():
     """The Discord conversation:
        jumps +0.010, +0.001, +0.010, +0.005, +0.005
-       expected weights ~[0.32, 0.03, 0.32, 0.16, 0.16]
+       expected weights ~[0.09, 0.12, 0.18, 0.25, 0.36] — a recency staircase.
 
     The rank tiebreak treats later hand-built rows as newer when epoch and
     lineage_id are tied.
@@ -63,11 +63,11 @@ def test_discord_example_matches_expected_weights():
     ]
     weights = compute_weights(kings)
     expected = {
-        1: 0.11301789675460729,
-        2: 0.022743108697460924,
-        3: 0.3432727735781759,
-        4: 0.23080488209136316,
-        5: 0.29016133887839274,
+        1: 0.08669999032774986,
+        2: 0.12348498166027977,
+        3: 0.17694611143717362,
+        4: 0.25235633416042663,
+        5: 0.36051258241437023,
     }
     assert set(weights.keys()) == set(expected.keys())
     for uid, want in expected.items():
@@ -93,14 +93,14 @@ def test_mature_subnet_late_jump_dominates():
 def test_miguel_question_late_jump_outearns_early_same_size():
     """+0.05 absolute jump at 0.80 base vs at 0.20 base.
 
-    With only those two kings in the window, the late one should earn
-    more than what the early one does.
+    With only those two kings in the window, the late one earns more: rank
+    puts the crown on top and its harder jump adds a bigger bonus.
     """
     early = _king(uid=10, score=0.25, prev=0.20)
     late = _king(uid=11, score=0.85, prev=0.80)
     weights = compute_weights([early, late])
     ratio = weights[11] / weights[10]
-    assert ratio > 5.0, f"expected late jump to dominate, got {ratio:.2f}"
+    assert ratio > 1.0, f"expected the crown to earn the most, got {ratio:.2f}"
 
 
 def test_headroom_gain_matches_log_headroom():
@@ -203,8 +203,8 @@ def test_window_size_is_a_module_constant():
 
 def test_rank_weight_tapers_by_window_position():
     assert rank_weight(0) == 1.0
-    assert rank_weight(1) == 0.8
-    assert math.isclose(rank_weight(4), 0.2, abs_tol=1e-12)
+    assert math.isclose(rank_weight(1), 0.7, abs_tol=1e-12)
+    assert math.isclose(rank_weight(4), 0.7 ** 4, abs_tol=1e-12)
     assert rank_weight(5) == 0.0
     assert rank_weight(10) == 0.0
 
@@ -214,10 +214,10 @@ def test_canonical_log_headroom_rank_taper_example():
     newest = _king(uid=2, score=0.8, prev=0.5, epoch=2, lineage_id=2)
     weights = compute_weights([older, newest])
     rows = compute_row_weights([older, newest])
-    assert math.isclose(weights[1], 0.3770156028979229, abs_tol=1e-4)
-    assert math.isclose(weights[2], 0.622984397102077, abs_tol=1e-4)
-    assert math.isclose(rows[0], 0.3770156028979229, abs_tol=1e-4)
-    assert math.isclose(rows[1], 0.622984397102077, abs_tol=1e-4)
+    assert math.isclose(weights[1], 0.3987651935265884, abs_tol=1e-4)
+    assert math.isclose(weights[2], 0.6012348064734114, abs_tol=1e-4)
+    assert math.isclose(rows[0], 0.3987651935265884, abs_tol=1e-4)
+    assert math.isclose(rows[1], 0.6012348064734114, abs_tol=1e-4)
     assert math.isclose(sum(weights.values()), 1.0, abs_tol=1e-12)
 
 
@@ -258,8 +258,16 @@ def test_formula_is_independent_of_input_order():
         _king(uid=3, score=0.9, prev=0.8, epoch=30, lineage_id=300),
     ]
     newest_first = list(reversed(oldest_to_newest))
-    assert compute_weights(oldest_to_newest) == compute_weights(newest_first)
-    assert compute_row_weights(oldest_to_newest) == list(reversed(compute_row_weights(newest_first)))
+    forward = compute_weights(oldest_to_newest)
+    backward = compute_weights(newest_first)
+    assert set(forward) == set(backward)
+    for uid in forward:
+        assert math.isclose(forward[uid], backward[uid], abs_tol=1e-12)
+    for a, b in zip(
+        compute_row_weights(oldest_to_newest),
+        reversed(compute_row_weights(newest_first)),
+    ):
+        assert math.isclose(a, b, abs_tol=1e-12)
 
 
 def test_duplicate_uid_aggregates_weight():

@@ -93,17 +93,18 @@ For each king `i` in the 5-king window, with their score `score_i` and the previ
 
 ```
 gain_i   = log( max(1 − prev_i, 0.01) / max(1 − score_i, 0.01) )   # 0 when score_i ≤ prev_i
-weight_i = max(0, (5 − rank_i) / 5)                                # rank 0 = newest crowning
-share_i  = gain_i × weight_i / sum(gain_j × weight_j in window)
+ladder_i = 0.7 ^ rank_i                                            # rank 0 = newest crowning
+bonus_i  = 1 + 0.3 × min(gain_i, 1.0)
+share_i  = ladder_i × bonus_i / sum(ladder_j × bonus_j in window)
 ```
 
-The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. Rank is derived from crowning recency (epoch, then lineage order), not from list position. If every `gain × weight` in a family is zero, the family pays nobody, and its slice redistributes to the other families (see below).
+The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. Rank is derived from crowning recency (epoch, then lineage order), not from list position. A row whose gain is zero earns nothing. The bonus gain is capped at `1.0` so the ladder order can never flip: the reigning champion always holds the largest share. If every share in a family is zero, the family pays nobody, and its slice redistributes to the other families (see below).
 
 ### Plain-English version
 
-- **Measure improvement in log-headroom**: how much of the remaining distance-to-perfect the king closed.
-- **Taper by rank**: champion 100%, then 80%, 60%, 40%, 20%.
-- **Normalise the tapered gains** so the family window sums to 100%.
+- **Rank rules**: the reigning champion earns the most; each older seat holds 70% of the seat above it.
+- **The jump fine-tunes**: a bigger log-headroom improvement earns its seat up to a 30% bonus, never a higher rung.
+- **Normalise** so the family window sums to 100%.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -111,16 +112,16 @@ The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. 
 
 ## Rank weighting
 
-A king's gain is tapered by where it sits in the family lineage. The reigning champion (rank 0) keeps its full gain; every step further back loses **20%**:
+A king's seat is weighted by where it sits in the family lineage. The reigning champion (rank 0) holds the full weight; every step further back keeps **70%** of the seat above:
 
 ```
-weight = (5 − rank) / 5
-   rank 0 (champion) → 1.0     rank 2 → 0.6     rank 4 (oldest) → 0.2
+weight = 0.7 ^ rank
+   rank 0 (champion) → 1.0     rank 2 → 0.49     rank 4 (oldest) → 0.24
 ```
 
-So the freshest champions earn the most, and a king fades **as new champions are crowned and push it down the window**, not by any clock, and with no hard age cutoff. Every king in the window keeps a share (down to 20% weight at the bottom); a king only stops earning once a sixth crowning pushes it out of the window entirely.
+So the freshest champions earn the most, and a king fades **as new champions are crowned and push it down the window**, not by any clock, and with no hard age cutoff. Every king in the window keeps a share (down to ~24% weight at the bottom); a king only stops earning once a sixth crowning pushes it out of the window entirely.
 
-Splitting one improvement across several crownings earns *less* (each earlier piece sits at a lower rank and is weighted down), so there is no advantage to gaming the split.
+Because rank outranks gain, repeatedly improving the family score keeps you on the freshest seats — each crowning needs a fresh hotkey and must clear the crowning floor, so seats are bought with real improvements, not spam.
 
 Rank weighting is separate from the crowning floor below: the floor decides who *takes* the throne, while rank weighting shapes how the throne's *earnings* are split.
 
@@ -262,7 +263,7 @@ Your gain is computed at the moment of crowning and locked: the weekly re-eval n
 
 ### What if I get dethroned?
 
-You slide to rank `−1` (80% taper) and keep earning, dropping one rank with each new crowning down to rank `−4` (20% taper). The fifth crowning after yours pushes you out of the 5-king window, and you stop earning.
+You slide down one rung (70% of the seat above) and keep earning, dropping another rung with each new crowning down to `0.7^4 ≈ 24%` weight. The fifth crowning after yours pushes you out of the 5-king window, and you stop earning.
 
 ### Can I become king twice?
 
@@ -302,8 +303,8 @@ For now there are only five families and their slices are already fixed, so noth
 | **Payable seat** | A window seat that passes the eligibility check: intact + accessible repo for public submissions, sealed artifact on file for private ones. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
-| **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity; zero when the score does not exceed the previous king's. |
-| **Rank weighting** | `(5 − rank) / 5`; the champion keeps full gain, and each older king loses 20%. Ranks run over the payable seats by crowning recency. |
+| **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity; zero when the score does not exceed the previous king's. Feeds the seat bonus, capped at `1.0`. |
+| **Rank weighting** | `0.7^rank × (1 + 0.3 × min(gain, 1.0))`; the champion holds the top seat and each older king keeps 70% of the seat above. Ranks run over the payable seats by crowning recency. |
 | **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
 | **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` by default, `0.02 → 0.007` for the SAR families. |

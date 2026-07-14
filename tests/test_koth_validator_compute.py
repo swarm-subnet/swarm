@@ -58,7 +58,7 @@ def test_compute_returns_weight_map_summing_to_one():
     )
     w = compute_koth_weights_from_sync(sync)
     assert pytest.approx(sum(w.values()), abs=1e-9) == 1.0
-    assert w[5] > w[7]
+    assert w[7] > w[5]
 
 
 def test_compute_ignores_advisory_weights_on_apply_path():
