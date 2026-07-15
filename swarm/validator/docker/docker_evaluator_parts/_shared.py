@@ -19,7 +19,6 @@ from swarm.challenge_families import runtime_profile_for_tasks
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import (
     CALIBRATION_BENCHMARK_REF_NS,
-    CALIBRATION_CPU_FACTOR_CAP,
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_OVERHEAD_CAP_SEC,
     CALIBRATION_ROUNDS,

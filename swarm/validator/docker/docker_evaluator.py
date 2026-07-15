@@ -3,7 +3,6 @@ import time
 
 from swarm.constants import (
     CALIBRATION_BENCHMARK_REF_NS,
-    CALIBRATION_CPU_FACTOR_CAP,
     CALIBRATION_OVERHEAD_CAP_SEC,
     CALIBRATION_ROUNDS,
     CALIBRATION_TIMEOUT_SEC,
@@ -83,7 +82,6 @@ DockerSecureEvaluator.cleanup = batch.cleanup
 __all__ = [
     "DockerSecureEvaluator",
     "CALIBRATION_BENCHMARK_REF_NS",
-    "CALIBRATION_CPU_FACTOR_CAP",
     "CALIBRATION_OVERHEAD_CAP_SEC",
     "CALIBRATION_ROUNDS",
     "CALIBRATION_TIMEOUT_SEC",
