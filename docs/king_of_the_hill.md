@@ -179,12 +179,12 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 | Family | emission_allocation |
 |---|---|
 | Autopilot | 0.10 |
-| Search-and-Rescue | 0.30 |
-| Swarm Autopilot | 0.15 |
-| Swarm SAR | 0.30 |
-| Interceptor | 0.15 |
+| Search-and-Rescue | 0.10 |
+| Swarm Autopilot | 0.10 |
+| Swarm SAR | 0.10 |
+| Interceptor | 0.10 |
 
-Allocations are **normalised** so they sum to `1.0` across every family with a positive allocation (the table above already does). A family's **emissions state** then decides whether it participates at all:
+Allocations are **absolute**, never normalised: each family pays out exactly its own slice, and any share of the pool not allocated to a family burns. The table above sums to `0.50`, so `0.50` of emissions burn by design during the rollout; allocations will be raised by governance as the tasks prove themselves. A family's **emissions state** then decides whether it participates at all:
 
 ```
 emissions state                              weight
@@ -204,7 +204,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: four families payable, Interceptor (allocation `0.15`) has no king yet — the other four keep exactly `0.10 / 0.30 / 0.15 / 0.30` and Interceptor's `0.15` burns. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: four families payable, Interceptor has no king yet — the other four keep exactly `0.10` each and Interceptor's `0.10` burns on top of the unallocated remainder. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 ### Stale tasks burn
 

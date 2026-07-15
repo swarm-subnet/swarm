@@ -65,10 +65,12 @@ Five families, all `family_state='active'` and `emissions_state='active'`:
 | Family | `emission_allocation` |
 |--------|----------------------|
 | `cf_autopilot` | 0.10 |
-| `cf_search_and_rescue` | 0.30 |
-| `cf_swarm_autopilot` | 0.15 |
-| `cf_swarm_sar` | 0.30 |
-| `cf_interceptor` | 0.15 |
+| `cf_search_and_rescue` | 0.10 |
+| `cf_swarm_autopilot` | 0.10 |
+| `cf_swarm_sar` | 0.10 |
+| `cf_interceptor` | 0.10 |
+
+Allocations sum to 0.50: the unallocated half of the pool burns during the rollout and is raised manually as the tasks prove out.
 
 State enums: `family_state` ∈ {incubating, active, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 
@@ -79,7 +81,7 @@ Persisted per-family state lives in the DB table `challenge_family` (`family_sta
 - `GET /admin/families`: lists persisted states plus derived allocation shares.
 - `POST /admin/families/{family_id}`: updates `family_state` / `emissions_state` / `emission_allocation` / `solve_threshold` (admin session required, at least one field, 400 otherwise). Setting `family_state='archived'` implicitly archives emissions unless an explicit `emissions_state` is given. `emission_allocation` and `solve_threshold` must be in [0.0, 1.0].
 
-Allocation semantics are **absolute**: `allocation_share = emission_allocation × status_multiplier`, never normalized. All base weights are 1.0 except archived (0.0). If included shares sum past 1.0 a warning logs, miner weights scale down pro-rata, and the burn share drops to 0. A solved family keeps paying for `SOLVED_PAYOUT_DURATION` = 7 days after `solved_at`, then `archive_expired_solved_families` auto-archives its emissions and redistributes its normalized share equally across the remaining active families.
+Allocation semantics are **absolute**: `allocation_share = emission_allocation × status_multiplier`, never normalized. All base weights are 1.0 except archived (0.0). If included shares sum past 1.0 a warning logs, miner weights scale down pro-rata, and the burn share drops to 0. A solved family keeps paying for `SOLVED_PAYOUT_DURATION` = 7 days after `solved_at`, then `archive_expired_solved_families` auto-archives its emissions and the family's slice burns from that point on.
 
 ---
 
