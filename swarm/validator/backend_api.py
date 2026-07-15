@@ -41,6 +41,7 @@ from swarm import __version__ as CODE_VERSION
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.config import BackendApiSettings
 from swarm.constants import BENCHMARK_VERSION, MAX_MODEL_BYTES
+from swarm.model_graph.constants import VALIDATOR_CONTRACT
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"
@@ -52,7 +53,7 @@ _TRANSPORT_EXCEPTIONS: Tuple[type, ...] = (
 
 AUTHORIZE_RETRY_ATTEMPTS = 3
 AUTHORIZE_RETRY_BASE_DELAY_SEC = 2.0
-VALIDATOR_CONTRACT_VERSION = "family_sync.v1"
+VALIDATOR_CONTRACT_VERSION = VALIDATOR_CONTRACT
 
 
 class BackendTransportError(RuntimeError):
