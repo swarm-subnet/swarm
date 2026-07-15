@@ -57,12 +57,15 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 6,
-            "items": {
-              "oneOf": [
-                { "type": "integer", "minimum": 1 },
-                { "const": "N" }
-              ]
-            }
+            "prefixItems": [
+              {
+                "oneOf": [
+                  { "type": "integer", "minimum": 1 },
+                  { "const": "N" }
+                ]
+              }
+            ],
+            "items": { "type": "integer", "minimum": 1 }
           },
           "writer": { "$ref": "#/$defs/nodeOutputRef" }
         }
