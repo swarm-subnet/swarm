@@ -293,3 +293,23 @@ def test_backend_api_runtime_state_missing_last_kings_defaults_safely(
     state = backend_api_mod._load_runtime_state()
     cached_kings = state.get("last_kings", [])
     assert cached_kings == []
+
+
+def test_overallocated_shares_renormalize_and_burn_nothing():
+    from swarm.constants import UID_ZERO
+
+    sync = _family_sync(
+        {
+            "cf_autopilot": [_king_dict(7, score=0.60, prev_score=0.0)],
+            "cf_interceptor": [_king_dict(9, score=0.50, prev_score=0.0)],
+        },
+        {"cf_autopilot": 0.7, "cf_interceptor": 0.7},
+    )
+    w = compute_koth_weights_from_sync(sync)
+    obj = _make_validator_self()
+    _apply_backend_weights_to_scores(obj, w)
+    # Misconfigured allocations summing past 1.0 scale down instead of burning.
+    assert obj.scores[7] == pytest.approx(0.5)
+    assert obj.scores[9] == pytest.approx(0.5)
+    assert obj.scores[UID_ZERO] == pytest.approx(0.0)
+    assert float(obj.scores.sum()) == pytest.approx(1.0)
