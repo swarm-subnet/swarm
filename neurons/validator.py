@@ -349,6 +349,10 @@ class Validator(BaseValidatorNeuron):
             bt.logging.info("✅ Docker evaluator ready")
         else:
             bt.logging.warning("⚠️  Docker evaluator initialization failed")
+        try:
+            self.docker_evaluator.cleanup()
+        except Exception as exc:
+            bt.logging.warning(f"Startup evaluation cleanup failed: {exc}")
 
     async def forward(self):
         """
