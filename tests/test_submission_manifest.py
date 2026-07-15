@@ -92,3 +92,15 @@ def test_manifest_is_mandatory_even_when_root_zip_exists(tmp_path):
     repo.mkdir()
     (repo / "submission.zip").write_bytes(b"not used")
     assert validate_submission_repo(repo)[1] == f"missing_manifest:{SUBMISSION_MANIFEST_FILENAME}"
+
+
+def test_backend_mirror_matches_apart_from_imports():
+    swarm_pkg = Path(__file__).resolve().parents[1] / "swarm" / "submission_manifest"
+    backend = Path(__file__).resolve().parents[2] / "swarm-backend" / "app"
+    if not backend.is_dir():
+        pytest.skip("swarm-backend repository is not checked out next to swarm")
+    ours = (swarm_pkg / "__init__.py").read_text()
+    theirs = (backend / "submission_manifest.py").read_text()
+    assert ours.replace("from swarm.", "from app.") == theirs
+    ours_schema = (swarm_pkg / "submission_manifest.schema.json").read_bytes()
+    assert ours_schema == (backend / "submission_manifest.schema.json").read_bytes()

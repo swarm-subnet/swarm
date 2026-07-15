@@ -13,6 +13,11 @@ from swarm.utils.github import (
 )
 
 
+def test_required_readme_hash_pins_the_template():
+    template = Path(__file__).resolve().parents[1] / "swarm" / "templates" / "README.md"
+    assert hashlib.sha256(template.read_bytes()).hexdigest() == REQUIRED_README_HASH
+
+
 def test_validate_github_url_accepts_valid():
     assert validate_github_url("https://github.com/user/repo") == "https://github.com/user/repo"
 
