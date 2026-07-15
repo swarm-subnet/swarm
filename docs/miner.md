@@ -151,6 +151,7 @@ Search and Rescue and Swarm SAR keep your weights off GitHub: the SHA-256 goes o
 ```bash
 python3 neurons/miner.py --family_id cf_search_and_rescue \
   --artifact ./model_graph.zip \
+  --backend_url https://api.swarm124.com \
   --wallet.name <coldkey> --wallet.hotkey <hotkey>
 ```
 
