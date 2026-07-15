@@ -6,28 +6,24 @@ Internal guide for the team running the Swarm backend and validators. It covers 
 
 ## Family Rollout Controls
 
-The backend decides which challenge families each validator may evaluate. Four env vars drive it (`swarm-backend/app/rollout.py`); none of them appear in `.env.example`, so an unset production `.env` runs the defaults.
-
-| Env var | Values | Default | Effect |
-|---------|--------|---------|--------|
-| `SWARM_ROLLOUT_MODE` | `single_family`, `staged`, `multi_family` | `multi_family` (anything else normalizes to it) | Selects the rollout mode |
-| `SWARM_ROLLOUT_DEFAULT_FAMILY_ID` | any known family id | `cf_autopilot` (`DEFAULT_CHALLENGE_FAMILY_ID`; unknown ids fall back too) | The family used when a validator can't be trusted with the full set |
-| `SWARM_ENABLED_CHALLENGE_FAMILIES` | comma-separated family ids | unset = all families in `CHALLENGE_FAMILY_IDS` | Restricts the enabled set. Unknown ids are dropped; if none survive, only the default family stays. The default family is always included; it is inserted at position 0 only if it is not already in the requested list. In `single_family` mode the set is forced to just the default family |
-| `SWARM_ENFORCE_VALIDATOR_CONTRACT` | `true` / anything else | `false` (only the literal `true` enables) | In `multi_family` mode, reject validators that don't present the contract |
+The rollout is hardcoded: every validator on the current contract may evaluate
+every registry family. The old `SWARM_ROLLOUT_*` env vars were removed together
+with the code-shipping submission format; setting them today has no effect.
 
 ### The validator contract
 
-`VALIDATOR_CONTRACT_VERSION = 'family_sync.v1'` is hardcoded identically in the backend (`app/rollout.py`) and the validator (`swarm/validator/backend_api.py`). The validator sends it on every signed request as `X-Swarm-Validator-Contract`, alongside `X-Validator-Hotkey` / `-Signature` / `-Nonce` / `-Timestamp` and `X-Code-Version`.
+`VALIDATOR_CONTRACT_VERSION = 'model_graph_rpc.v1'` is the single accepted
+contract. The backend pins it in `app/rollout.py`; the validator sends it on
+every signed request as `X-Swarm-Validator-Contract`, sourced from
+`swarm/model_graph/constants.py` (`VALIDATOR_CONTRACT`), alongside
+`X-Validator-Hotkey` / `-Signature` / `-Nonce` / `-Timestamp` and
+`X-Code-Version`.
 
-### Compatibility matrix (`get_validator_rollout_compatibility`)
+### Compatibility (`get_validator_rollout_compatibility`)
 
-| Mode | Contract sent | Compatible | `safe_family_ids` | Reason |
-|------|--------------|------------|-------------------|--------|
-| `single_family` | any | yes | default family only | `single_family_rollout` |
-| any | `family_sync.v1` | yes | all enabled families | `validator_contract_accepted` |
-| `staged` | missing / other | yes | default family only | `staged_rollout_default_family_only` |
-| `multi_family` | missing, enforce off | yes | all enabled families | `validator_contract_optional` |
-| `multi_family` | missing, enforce on | **no** (`upgrade_required=True`) | empty | `validator_contract_upgrade_required` |
+Binary: a validator presenting `model_graph_rpc.v1` is compatible and may
+evaluate all enabled families; anything else gets `upgrade_required=True`,
+an empty `safe_family_ids`, and reason `validator_contract_upgrade_required`.
 
 `POST /validators/tasks/authorize` denies any family outside the validator's `safe_family_ids`: `authorized=False`, `reason_code='upgrade_required'` (when upgrade is required) or `'rollout_restricted'`, `requeue_policy='permanent'`.
 
@@ -172,14 +168,10 @@ Both directions cancel stale-phase tasks/batches, keep already-recorded seed sco
 
 The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../../.env`; the backend is bound to 127.0.0.1:8000.
 
-### Backend: rollout & trust (NOT in `.env.example`, add to the live `.env` explicitly)
+### Backend: trust (in `.env.example` as a template; set it in the live `.env`)
 
 | Var | Default when unset | Meaning |
 |-----|--------------------|---------|
-| `SWARM_ROLLOUT_MODE` | `multi_family` | Rollout mode |
-| `SWARM_ROLLOUT_DEFAULT_FAMILY_ID` | `cf_autopilot` | Rollout default family |
-| `SWARM_ENABLED_CHALLENGE_FAMILIES` | all registry families | Enabled family set |
-| `SWARM_ENFORCE_VALIDATOR_CONTRACT` | `false` | Reject contract-less validators in multi_family |
 | `TRUSTED_VALIDATOR_COLDKEYS` | unset → nothing evaluates | Coldkey whitelist (fail-closed; required before any scoring) |
 
 ### Backend: version gates
@@ -230,9 +222,7 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_
 
 | I want to… | Do this |
 |------------|---------|
-| Restrict validators to one family | `SWARM_ROLLOUT_MODE=single_family` (+ `SWARM_ROLLOUT_DEFAULT_FAMILY_ID`), restart backend |
-| Roll out a new family gradually | `SWARM_ROLLOUT_MODE=staged`: contract-less validators get the default family only |
-| Force validators to upgrade for multi-family | `SWARM_ENFORCE_VALIDATOR_CONTRACT=true` in `multi_family` mode |
+| Keep out validators on the old contract | Nothing to do — only `model_graph_rpc.v1` validators are ever authorized |
 | Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py`, commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
