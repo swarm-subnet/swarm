@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
+from swarm.protocol import FailureReason
+
 if TYPE_CHECKING:
     from swarm.protocol import MapTask
 
@@ -201,7 +203,7 @@ def _score_single_drone(
     Numerically identical to AutopilotChallengeFamily.normalize_rollout_metrics
     for one drone; the swarm family averages this over its drones.
     """
-    if failure_reason == "EVAL_ERROR":
+    if failure_reason == FailureReason.EVAL_ERROR.value:
         return 0.0
     if not success:
         return PARTICIPATION_REWARD if t > 0.0 else 0.0
@@ -258,7 +260,7 @@ def flight_reward(
     if horizon <= 0:
         raise ValueError("'horizon' must be positive")
 
-    if failure_reason == "EVAL_ERROR":
+    if failure_reason == FailureReason.EVAL_ERROR.value:
         return 0.0
 
     if not success:
