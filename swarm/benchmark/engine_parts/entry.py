@@ -99,8 +99,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         runtime_overrides = _active_runtime_overrides()
         if runtime_overrides:
             print(f"[{_ts()}] Runtime overrides: {runtime_overrides}")
-        from ._shared import BENCH_GROUP_ORDER
-        print(f"[{_ts()}] Map types selected: {', '.join(BENCH_GROUP_ORDER)}")
+        from .seeds import family_bench_groups
+        print(f"[{_ts()}] Map types selected: {', '.join(family_bench_groups(args.family_id))}")
         if effective_log_out:
             print(f"[{_ts()}] Log file: {effective_log_out}")
         print()

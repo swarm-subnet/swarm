@@ -77,11 +77,11 @@ Checks: Python 3.11+, the Docker binary and a reachable Docker daemon, the sandb
 
 ### `swarm benchmark`
 
-Runs a local benchmark against the default family's engine, evaluating a submission ZIP across its environment groups. There is no family flag; the command always drives the engine's default family. Exits `0` on success, `1` on any failure or interrupt.
+Runs a local benchmark, evaluating a submission ZIP across its environment groups. Pass `--family-id` to benchmark the artifact's family; without it the engine runs its default family. Exits `0` on success, `1` on any failure or interrupt.
 
 ```bash
 # Default benchmark (3 seeds per environment group)
-swarm benchmark --model Submission/model_graph.zip --workers 4
+swarm benchmark --model Submission/model_graph.zip --family-id cf_swarm_sar --workers 4
 
 # Quick check (1 seed per environment group)
 swarm benchmark --model Submission/model_graph.zip --seeds-per-group 1

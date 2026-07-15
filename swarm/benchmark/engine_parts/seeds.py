@@ -12,7 +12,20 @@ from ._shared import (
     random,
 )
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, build_random_task
-from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP
+from swarm.domain_model import (
+    BENCHMARK_GROUP_TO_ENVIRONMENT_TYPE,
+    CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
+    CHALLENGE_TYPE_TO_BENCHMARK_GROUP,
+)
+
+
+def family_bench_groups(family_id: str) -> List[str]:
+    environment_types = set(CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES[family_id])
+    return [
+        group
+        for group in BENCH_GROUP_ORDER
+        if BENCHMARK_GROUP_TO_ENVIRONMENT_TYPE[group] in environment_types
+    ]
 
 
 def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
@@ -42,12 +55,13 @@ def _normalize_type_seeds(raw: Any, *, family_id: str) -> Dict[str, List[int]]:
         if not isinstance(raw, dict):
             raise ValueError("Seed file type_seeds must be a JSON object.")
 
+    family_groups = family_bench_groups(family_id)
     normalized: Dict[str, List[int]] = {}
-    missing = [group for group in BENCH_GROUP_ORDER if group not in raw]
+    missing = [group for group in family_groups if group not in raw]
     if missing:
         raise ValueError(f"Seed file missing groups: {', '.join(missing)}")
 
-    for group in BENCH_GROUP_ORDER:
+    for group in family_groups:
         values = raw.get(group)
         if not isinstance(values, list) or not values:
             raise ValueError(f"Seed group {group} must be a non-empty list.")
@@ -91,7 +105,7 @@ def _find_seeds(
 ) -> Dict[str, List[int]]:
     from swarm.constants import SIM_DT
 
-    groups: Dict[str, List[int]] = {g: [] for g in BENCH_GROUP_ORDER}
+    groups: Dict[str, List[int]] = {g: [] for g in family_bench_groups(family_id)}
 
     seed = random.randint(100000, 900000)
     max_search = seed + 500000

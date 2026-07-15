@@ -331,6 +331,8 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
     argv = ["--model", str(args.model)]
     if args.uid is not None:
         argv.extend(["--uid", str(args.uid)])
+    if args.family_id is not None:
+        argv.extend(["--family-id", str(args.family_id)])
     argv.extend(["--seeds-per-group", str(args.seeds_per_group)])
     argv.extend(["--workers", str(args.workers)])
     if args.log_out is not None:
@@ -1082,6 +1084,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Miner UID. If omitted, benchmark script infers from model name.",
+    )
+    benchmark_parser.add_argument(
+        "--family-id",
+        choices=sorted(CHALLENGE_FAMILY_IDS),
+        default=None,
+        help="Challenge family to benchmark (default: the engine's default family).",
     )
     benchmark_parser.add_argument(
         "--seeds-per-group",
