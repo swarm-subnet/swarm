@@ -50,7 +50,8 @@ def _validate_github_url(raw: str) -> str | None:
 
 def _check_public_manifest(github_url: str) -> str | None:
     """Return a rejection reason when the repo manifest names more than one
-    family; None when it is fine or cannot be fetched (the scanner enforces)."""
+    family; None when it is fine or cannot be fetched. Fetch problems are
+    logged and do not block the commit — the scanner enforces the rule."""
     import httpx
 
     for branch in ("main", "master"):
@@ -59,13 +60,21 @@ def _check_public_manifest(github_url: str) -> str | None:
                 f"{github_url}/raw/{branch}/submission_manifest.json",
                 timeout=30, follow_redirects=True,
             )
-        except Exception:
+        except Exception as exc:
+            bt.logging.warning(
+                f"Could not fetch the repo manifest ({exc}); proceeding with the "
+                "commit. Make sure the repo is public and packaged correctly."
+            )
             return None
         if resp.status_code != 200:
             continue
         try:
             artifacts = resp.json().get("artifacts") or []
         except ValueError:
+            bt.logging.warning(
+                "The repo manifest is not valid JSON; proceeding with the commit. "
+                "Run `swarm repo verify` before publishing."
+            )
             return None
         families = sorted(
             {str(a.get("family_id")) for a in artifacts if isinstance(a, dict)}
@@ -77,6 +86,10 @@ def _check_public_manifest(github_url: str) -> str | None:
                 "so package exactly one family"
             )
         return None
+    bt.logging.warning(
+        "No submission_manifest.json found on main or master; proceeding with "
+        "the commit. Make sure the repo is public and pushed before submitting."
+    )
     return None
 
 
@@ -134,7 +147,8 @@ def _validate_artifact(path: str, *, family_id: str | None = None) -> str | None
 def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, wallet) -> bool:
     """Upload the private artifact to the operator vault, signed by the hotkey.
 
-    Retries while the backend has not yet scanned the on-chain commitment (404).
+    Retries while the backend has not yet scanned the commitment (404) or
+    answers with a server error (5xx); any other status fails immediately.
     """
     import httpx
 

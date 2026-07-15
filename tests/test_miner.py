@@ -63,6 +63,7 @@ def test_main_uses_set_commitment(monkeypatch):
     fake_logging = SimpleNamespace(
         set_debug=lambda *_args, **_kwargs: None,
         info=lambda *_args, **_kwargs: None,
+        warning=lambda *_args, **_kwargs: None,
         error=lambda *_args, **_kwargs: None,
     )
 
