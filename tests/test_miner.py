@@ -228,6 +228,7 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
     monkeypatch.setattr(
         miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "private"}
     )
+    monkeypatch.setattr(miner, "_backend_reachable", lambda url: True)
     monkeypatch.setattr(miner, "_upload_private_artifact", lambda *args, **kwargs: True)
     if hasattr(miner.bt, "Wallet"):
         monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
@@ -283,3 +284,42 @@ def test_load_local_families_reads_schema():
     assert isinstance(families, dict)
     assert "cf_autopilot" in families
     assert "cf_search_and_rescue" in families
+
+
+def test_private_unreachable_backend_blocks_before_commit(monkeypatch, tmp_path):
+    class FakeWallet:
+        def __init__(self, name, hotkey):
+            raise AssertionError("wallet should not be constructed")
+
+    fake_logging = SimpleNamespace(
+        set_debug=lambda *_args, **_kwargs: None,
+        info=lambda *_args, **_kwargs: None,
+        warning=lambda *_args, **_kwargs: None,
+        error=lambda *_args, **_kwargs: None,
+    )
+
+    monkeypatch.setattr(
+        miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "private"}
+    )
+    monkeypatch.setattr(miner, "_validate_artifact", lambda path, family_id: None)
+    monkeypatch.setattr(miner, "_backend_reachable", lambda url: False)
+    if hasattr(miner.bt, "Wallet"):
+        monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
+    else:
+        monkeypatch.setattr(miner.bt, "wallet", FakeWallet)
+    monkeypatch.setattr(miner.bt, "logging", fake_logging)
+
+    artifact = tmp_path / "model_graph.zip"
+    artifact.write_bytes(b"zip-bytes")
+    exit_code = miner.main(
+        [
+            "--family_id",
+            "cf_search_and_rescue",
+            "--artifact",
+            str(artifact),
+            "--backend_url",
+            "http://backend.test",
+        ]
+    )
+
+    assert exit_code == 1

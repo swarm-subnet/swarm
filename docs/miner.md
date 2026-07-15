@@ -155,7 +155,7 @@ python3 neurons/miner.py --family_id cf_search_and_rescue \
   --wallet.name <coldkey> --wallet.hotkey <hotkey>
 ```
 
-If the chain commit succeeded but the upload failed, rerun with `--upload_only` to (re)upload the same artifact.
+If the chain commit succeeded but the upload failed, rerun with `--upload_only` to (re)upload the same artifact. The backend holds the slot for a limited window (6 hours by default); after that the commitment expires, the hotkey frees up, and you can commit a fresh digest.
 
 ## Rules of the Game
 

@@ -93,6 +93,19 @@ def _check_public_manifest(github_url: str) -> str | None:
     return None
 
 
+def _backend_reachable(backend_url: str) -> bool:
+    """True when the backend answers its health endpoint. The private track
+    checks this before committing so a digest never lands on-chain without a
+    reachable upload target."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{backend_url.rstrip('/')}/health", timeout=15)
+    except Exception:
+        return False
+    return resp.status_code == 200
+
+
 def _sha256_file(path: str) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -286,6 +299,12 @@ def main(argv=None):
             digest = _sha256_file(args.artifact)
         except OSError as exc:
             bt.logging.error(f"Cannot read artifact: {exc}")
+            return 1
+        if not args.upload_only and not _backend_reachable(args.backend_url):
+            bt.logging.error(
+                f"Backend {args.backend_url} is unreachable; nothing was committed on-chain."
+            )
+            bt.logging.error("Verify --backend_url and your connection, then retry.")
             return 1
         commit_data = json.dumps(
             {
