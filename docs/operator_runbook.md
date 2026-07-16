@@ -147,7 +147,7 @@ Both directions cancel stale-phase tasks/batches, keep already-recorded seed sco
 
 - Epoch anchor: **2026-03-30 16:00:00 UTC** (a Monday); duration 7 × 86400 s. `epoch = floor((now − anchor) / duration) + 1`, derived purely from wall clock (no state to manage). The same anchor/duration constants exist validator-side.
 - `EPOCH_FREEZE_SECONDS = 5400` (1.5 h, hardcoded): `is_in_freeze_window()` is true in the last 5400 s of an epoch. Its only production caller is the **chain scanner**, which skips scanning new chain commitments during the freeze. Commitments made in the window are picked up after rollover. The same constant exists in `swarm/constants.py` but nothing in the validator consumes it.
-- The epoch-transition job runs every 5 minutes; on rollover it sets all `PENDING_SCREENING`/`PENDING_BENCHMARK` models submitted before the new epoch to `EPOCH_EXPIRED` and queues every current champion for re-evaluation on the fresh seeds.
+- The epoch-transition job runs every 5 minutes; on rollover it carries all `PENDING_SCREENING`/`PENDING_BENCHMARK` models submitted before the new epoch into it (partial results are discarded and evaluation restarts on the fresh seed set, queue position kept) and queues every current champion for re-evaluation on the fresh seeds.
 - Seeds: each validator generates its own 1100 seeds per epoch per family from OS entropy (`random.SystemRandom`), stored under `state/epoch_seeds/`, and publishes them to the backend only **after** the epoch ends (`POST /validators/epoch/publish`, trusted-validator gated).
 
 ---
