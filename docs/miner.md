@@ -155,11 +155,11 @@ python3 neurons/miner.py --family_id cf_search_and_rescue \
   --wallet.name <coldkey> --wallet.hotkey <hotkey>
 ```
 
-If the chain commit succeeded but the upload failed, rerun with `--upload_only` to (re)upload the same artifact. The backend holds the slot for a limited window (6 hours by default); after that the commitment expires, the hotkey frees up, and you can commit a fresh digest.
+If the chain commit succeeded but the upload failed, rerun with `--upload_only` to (re)upload the same artifact. The backend waits a limited window (6 hours by default); after that the commitment expires and the hotkey is spent, so make sure the upload completes within the window.
 
 ## Rules of the Game
 
-- **One hotkey, one submission.** A hotkey gets a single submission slot in a single family; the slot only frees up if the model expires at an epoch or version rollover. Competing again — after a failure or with a new model — means registering a fresh hotkey.
+- **One hotkey, one submission.** A hotkey gets a single submission slot, once, in a single family — the slot never frees, whatever happens to the model. Competing again — after a failure, an expiry, or with a new model — always means registering a fresh hotkey.
 - **One family per repo.** A submission repo holds exactly one family's artifact.
 - **Full benchmark.** Your model runs the family's complete 1,100-seed set. Validators evaluate seed batches; the backend recomputes the authoritative score from the seed records.
 - **Champions defend weekly.** Seeds rotate every epoch and champions are re-evaluated on the fresh set. See [King of the Hill](king_of_the_hill.md) for emissions.
