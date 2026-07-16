@@ -17,6 +17,11 @@
 # DEALINGS IN THE SOFTWARE.
 
 import os
+
+# bittensor >=10.3 skips CLI parsing unless this is set, which would silently
+# drop --netuid/--wallet/--neuron args and fall back to its own defaults.
+os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
+
 import subprocess
 import argparse
 import bittensor as bt
