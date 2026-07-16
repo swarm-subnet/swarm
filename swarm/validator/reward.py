@@ -114,9 +114,11 @@ def _calculate_sar_target_time(task: "MapTask") -> float:
     sweep = 0.70 * math.pi * (SAR_SEARCH_RADIUS ** 2) / max(
         SAR_SWEEP_WIDTH * SPEED_LIMIT, 1e-6
     )
-    return SAR_TIME_TERM_BUFFER * (
+    target = SAR_TIME_TERM_BUFFER * (
         d / max(SPEED_LIMIT, 1e-6) + sweep + SAR_DWELL_SEC
     )
+    # Keep the target inside the horizon so the time term always discriminates.
+    return min(target, float(task.horizon) * 0.95)
 
 
 def _calculate_safety_term(

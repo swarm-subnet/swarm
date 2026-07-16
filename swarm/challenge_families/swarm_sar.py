@@ -313,8 +313,11 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         starts = [tuple(float(c) for c in s) for s in raw_starts]
         team_t = info.get("sar_team_t")
         team_t = float(team_t) if team_t is not None else float(task.horizon)
-        target_time = _calculate_swarm_sar_target_time(
-            starts, getattr(task, "search_centre", None), n, team_search_radius(n),
+        target_time = min(
+            _calculate_swarm_sar_target_time(
+                starts, getattr(task, "search_centre", None), n, team_search_radius(n),
+            ),
+            float(task.horizon) * 0.95,
         )
         time_term = calculate_time_term(t=team_t, horizon=float(task.horizon), target_time=target_time)
 
