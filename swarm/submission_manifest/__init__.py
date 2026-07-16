@@ -155,7 +155,17 @@ def write_submission_manifest(repo_root: Path, artifacts: Sequence[SubmissionArt
     return path
 
 
-def validate_submission_repo(repo_root: Path) -> tuple[bool, str, SubmissionManifest | None]:
+def validate_submission_repo(
+    repo_root: Path,
+    *,
+    run_admission: bool = True,
+) -> tuple[bool, str, SubmissionManifest | None]:
+    """Validate a submission repo layout, artifact bytes, and (optionally) admission.
+
+    ``run_admission=False`` skips the in-process ``admit_artifact`` call for
+    callers that run the sandboxed subprocess admission themselves; the
+    manifest, presence, size, and hash checks always run.
+    """
     try:
         manifest = resolve_submission_manifest(repo_root)
     except SubmissionManifestError as exc:
@@ -168,11 +178,12 @@ def validate_submission_repo(repo_root: Path) -> tuple[bool, str, SubmissionMani
         return False, f"artifact_size_mismatch:{artifact.family_id}:{artifact.artifact_path}", manifest
     if _sha256sum(path) != artifact.sha256:
         return False, f"artifact_hash_mismatch:{artifact.family_id}:{artifact.artifact_path}", manifest
-    result = admit_artifact(path)
-    if not result.accepted:
-        return False, f"invalid_artifact:{artifact.family_id}:{result.reason_code}:{result.detail}", manifest
-    if result.family_id != artifact.family_id:
-        return False, f"artifact_family_mismatch:{artifact.family_id}:{result.family_id}", manifest
+    if run_admission:
+        result = admit_artifact(path)
+        if not result.accepted:
+            return False, f"invalid_artifact:{artifact.family_id}:{result.reason_code}:{result.detail}", manifest
+        if result.family_id != artifact.family_id:
+            return False, f"artifact_family_mismatch:{artifact.family_id}:{result.family_id}", manifest
     return True, "ok", manifest
 
 
