@@ -632,6 +632,11 @@ async def _run_baseline_calibration(self, worker_id: int):
         )
         for seed in seeds
     ]
+    sample_horizon = measurement.get("sample_horizon_sec")
+    if sample_horizon:
+        # Timing only needs a few hundred acts; a shorter episode keeps startup cheap.
+        for task in tasks:
+            task.horizon = min(float(task.horizon), float(sample_horizon))
 
     act_ms: list[float] = []
     overhead = {"ms": 0.0}

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import os
+import sys
 from typing import Iterable, Optional, Set
 
 import pybullet as p
@@ -8,11 +11,31 @@ from .body_tagger import BodyTagger
 from .sar_types import BodyCategory
 
 
-def classify_body(cli: int, uid: int, *, challenge_type: int) -> str:
+@contextlib.contextmanager
+def _muted_stderr():
+    """Drop the C++ warning pybullet prints for shape queries that legitimately miss."""
     try:
-        shape_data = p.getCollisionShapeData(uid, -1, physicsClientId=cli)
-    except p.error:
-        shape_data = None
+        fd = sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError):
+        yield
+        return
+    saved = os.dup(fd)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, fd)
+        yield
+    finally:
+        os.dup2(saved, fd)
+        os.close(devnull)
+        os.close(saved)
+
+
+def classify_body(cli: int, uid: int, *, challenge_type: int) -> str:
+    with _muted_stderr():
+        try:
+            shape_data = p.getCollisionShapeData(uid, -1, physicsClientId=cli)
+        except p.error:
+            shape_data = None
     shape_type = shape_data[0][2] if shape_data else None
 
     try:

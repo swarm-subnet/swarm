@@ -40,8 +40,9 @@ def generate_baseline(output_dir: Path) -> None:
         "owner_compute_p90_ms": 5.5,
         "owner_overhead_ms": 2.7,
         "measurement": {
-            "sample_seeds": [1001, 1002],
-            "sample_count": 5998,
+            "sample_seeds": [1001],
+            "sample_horizon_sec": 30.0,
+            "sample_count": 1499,
             "warmup_steps": 1,
             "docker_worker_cpus": "2",
         },

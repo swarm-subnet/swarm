@@ -101,8 +101,21 @@ def _failure_seed_meta(
     }
 
 
+_last_hold_caps: Optional[str] = None
+
+
 def _log_scheduler_note(note: str) -> None:
-    if "Scheduler pressure backoff" in note or "Scheduler pressure hold" in note:
+    global _last_hold_caps
+    if "Scheduler pressure hold" in note:
+        # The scheduler re-emits the hold every poll; only report cap changes.
+        caps = note.split(" (")[0]
+        if caps == _last_hold_caps:
+            return
+        _last_hold_caps = caps
+        bt.logging.warning(note)
+        return
+    _last_hold_caps = None
+    if "Scheduler pressure backoff" in note:
         bt.logging.warning(note)
     else:
         bt.logging.info(note)
