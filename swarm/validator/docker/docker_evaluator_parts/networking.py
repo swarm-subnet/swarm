@@ -145,6 +145,14 @@ def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool
         for rule in ipv6_rules:
             result = subprocess.run(rule, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
+                stderr = (result.stderr or "").lower()
+                if "address family not supported" in stderr:
+                    # IPv6 is disabled on this host: no IPv6 egress exists, so
+                    # there is nothing to lock down.
+                    bt.logging.info(
+                        "IPv6 unavailable on host; skipping ip6tables lockdown"
+                    )
+                    break
                 bt.logging.warning(
                     f"Failed to apply ip6tables rule: {' '.join(rule)}"
                 )

@@ -498,6 +498,26 @@ def test_apply_network_lockdown_fails_closed_on_ipv6_rule_failure(monkeypatch):
     assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
 
 
+def test_apply_network_lockdown_tolerates_ipv6_disabled_host(monkeypatch):
+    ev = _new_evaluator()
+    calls = {"count": 0}
+
+    def _run(*args, **kwargs):
+        _ = args, kwargs
+        calls["count"] += 1
+        if calls["count"] == 5:  # first IPv6 rule on an ipv6.disable=1 host
+            return _ProcResult(
+                returncode=1,
+                stderr="ip6tables: can't initialize ip6tables table 'filter': "
+                       "Address family not supported by protocol",
+            )
+        return _ProcResult(returncode=0)
+
+    monkeypatch.setattr(de.subprocess, "run", _run)
+    assert ev._apply_network_lockdown(9999, "10.0.0.1") is True
+    assert calls["count"] == 5  # remaining IPv6 rules skipped
+
+
 def test_docker_env_overrides_enable_thread_caps(monkeypatch):
     monkeypatch.setenv("SWARM_DOCKER_THREAD_CAPS", "1")
     envs = de.DockerSecureEvaluator._docker_env_overrides()
