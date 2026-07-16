@@ -262,9 +262,11 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
     assert exit_code == 0
     assert len(commit_calls) == 1
     _, _, data, _ = commit_calls[0]
+    assert len(data.encode()) <= 128  # chain commitment cap (Raw128)
     commit = json.loads(data)
-    assert commit["visibility"] == "private"
-    assert commit["family_id"] == "cf_search_and_rescue"
+    assert commit["v"] == 1
+    assert commit["f"] == "cf_search_and_rescue"
+    assert len(commit["s"]) == 64
 
 
 def test_validate_artifact_rules(tmp_path):

@@ -306,13 +306,9 @@ def main(argv=None):
             )
             bt.logging.error("Verify --backend_url and your connection, then retry.")
             return 1
+        # Compact keys: the chain commitment field caps at Raw128 (128 bytes).
         commit_data = json.dumps(
-            {
-                "v": 1,
-                "visibility": "private",
-                "family_id": args.family_id,
-                "sha256": digest,
-            },
+            {"v": 1, "f": args.family_id, "s": digest},
             separators=(",", ":"),
         )
         commit_label = f"private {args.family_id} (sha256 {digest[:16]}...)"
