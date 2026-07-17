@@ -29,7 +29,6 @@ requests==2.34.2
 httpx==0.28.1
 pycapnp==2.2.2
 swarm-drone-gym==2.0.0.2
-setuptools>=69,<82  # swarm-drone-gym imports pkg_resources; setuptools 82 removed it
 pytest==8.4.2
 pytest-xdist==3.8.0
 build==1.4.2

@@ -23,6 +23,8 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
+os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
+
 import bittensor as bt
 import subprocess
 
