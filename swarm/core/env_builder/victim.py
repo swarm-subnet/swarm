@@ -40,6 +40,7 @@ _FLAT_SLOPE_RAD = math.radians(5.0)
 _STAND_MAX_TILT = math.radians(12.0)
 _LIE_MAX_TILT = math.radians(40.0)
 _MAX_TERRAIN_PENETRATION = 0.35
+_MAX_FOOT_FLOAT = 0.03
 
 _PEOPLE_DIR = (
     _REPO_ROOT
@@ -280,6 +281,8 @@ def _footprint_seat_z(cli, cx, cy, fx, fy, surface_z, q, normal):
         max_pen = max(max_pen, z - underside)
     if max_pen > _MAX_TERRAIN_PENETRATION:
         seat += max_pen - _MAX_TERRAIN_PENETRATION
+    # on steep ground sink the uphill side rather than float the feet
+    seat = min(seat, min(s[2] for s in samples) + _MAX_FOOT_FLOAT)
     return seat
 
 
