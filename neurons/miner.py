@@ -22,11 +22,14 @@ to the operator's private vault — it is never made public.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import time
 import uuid
 from urllib.parse import urlparse
+
+os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
 
 import bittensor as bt
 

@@ -18,7 +18,7 @@
 import sys
 from pathlib import Path
 
-__version__ = "5.0.0.3"
+__version__ = "5.0.0.4"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
 
@@ -33,3 +33,16 @@ src_path = Path(__file__).resolve().parent / "src"
 
 if src_path.is_dir() and str(src_path) not in sys.path:
     sys.path.append(str(src_path))
+
+try:
+    import pkg_resources  # noqa: F401
+except ImportError:
+    # setuptools 82 removed pkg_resources; the drone gym still imports it
+    import types
+    from importlib.resources import files as _pkg_files
+
+    _pkg_resources = types.ModuleType("pkg_resources")
+    _pkg_resources.resource_filename = (
+        lambda package, resource: str(_pkg_files(package).joinpath(resource))
+    )
+    sys.modules["pkg_resources"] = _pkg_resources
