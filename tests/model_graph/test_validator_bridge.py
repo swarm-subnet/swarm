@@ -4,10 +4,11 @@ import asyncio
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from swarm.model_graph import admit_artifact
 from swarm.model_graph.action import canonicalize_action
 from swarm.validator.calibration import (
-    CalibrationState,
     SpeedFactor,
     baseline_model_available,
     baseline_model_path,
@@ -66,15 +67,14 @@ def test_strike_zero_action_matches_family_contracts():
 
 def test_ineligible_host_self_excludes_with_infra_code(tmp_path, monkeypatch):
     artifact = autopilot_artifact(tmp_path)
-    state = CalibrationState()
-    state.set(
-        0,
-        SpeedFactor(raw=5.0, factor=5.0, eligible=False, owner_p90_ms=100.0, local_p90_ms=500.0),
-        overhead_ms=1.0,
-        calibration_version="test",
-    )
-    monkeypatch.setattr(batch, "CALIBRATION_STATE", state)
-    monkeypatch.setattr(batch, "baseline_model_available", lambda: True)
+
+    async def ineligible_calibration(_self, _worker_count):
+        return SpeedFactor(
+            raw=5.0, factor=5.0, eligible=False,
+            owner_p90_ms=100.0, local_p90_ms=500.0,
+        )
+
+    monkeypatch.setattr(batch, "_ensure_host_speed_factor", ineligible_calibration)
     monkeypatch.setattr(
         batch, "_docker_evaluator_facade",
         lambda: SimpleNamespace(DockerSecureEvaluator=SimpleNamespace(_base_ready=True)),
@@ -91,6 +91,30 @@ def test_ineligible_host_self_excludes_with_infra_code(tmp_path, monkeypatch):
     assert results[0].score == 0.0
     assert results[0].failure_reason == "INFRA_CALIBRATION"
     assert statuses == ["INFRA_CALIBRATION"]
+
+
+def test_host_calibration_uses_average_contended_worker(monkeypatch):
+    def fake_normalize(local_p90_ms):
+        raw = float(local_p90_ms) / 100.0
+        return SpeedFactor(
+            raw=raw,
+            factor=raw,
+            eligible=True,
+            owner_p90_ms=100.0,
+            local_p90_ms=float(local_p90_ms),
+        )
+
+    monkeypatch.setattr(batch, "normalize_speed_factor", fake_normalize)
+
+    speed = batch._average_host_speed(
+        [
+            SpeedFactor(raw=0.35, factor=0.35, eligible=True, owner_p90_ms=100.0, local_p90_ms=35.0),
+            SpeedFactor(raw=0.52, factor=0.52, eligible=True, owner_p90_ms=100.0, local_p90_ms=52.0),
+            SpeedFactor(raw=0.41, factor=0.41, eligible=True, owner_p90_ms=100.0, local_p90_ms=41.0),
+        ]
+    )
+
+    assert speed.factor == pytest.approx(0.4266666666666667)
 
 
 def test_seed_upload_provenance_matches_backend_schema(tmp_path):
@@ -154,16 +178,16 @@ def test_host_gate_requires_every_worker_eligible(monkeypatch):
     )
     validator = SimpleNamespace(docker_evaluator=good_image)
 
-    def run(by_worker):
-        async def fake_ensure(evaluator, worker_id):
-            return by_worker.get(worker_id, fast)
-        monkeypatch.setattr(forward, "_ensure_worker_speed_factor", fake_ensure)
+    def run(speed):
+        async def fake_ensure(evaluator, worker_count):
+            assert worker_count == forward.N_DOCKER_WORKERS
+            return speed
+        monkeypatch.setattr(forward, "_ensure_host_speed_factor", fake_ensure)
         return asyncio.run(forward._host_may_score(validator))
 
-    assert run({}) is True
-    assert run({0: slow}) is False
-    assert run({forward.N_DOCKER_WORKERS - 1: slow}) is False
-    assert run({3: None}) is False
+    assert run(fast) is True
+    assert run(slow) is False
+    assert run(None) is False
 
 
 def test_host_gate_fails_closed_on_bad_image_provenance(monkeypatch):
@@ -173,7 +197,7 @@ def test_host_gate_fails_closed_on_bad_image_provenance(monkeypatch):
 
     async def fake_ensure(evaluator, worker_id):
         return fast
-    monkeypatch.setattr(forward, "_ensure_worker_speed_factor", fake_ensure)
+    monkeypatch.setattr(forward, "_ensure_host_speed_factor", fake_ensure)
 
     stale = SimpleNamespace(
         _get_image_hash_label=lambda: "old", _calculate_docker_hash=lambda: "new"
@@ -188,12 +212,10 @@ def test_host_gate_fails_closed_on_bad_image_provenance(monkeypatch):
 
 def test_batch_guard_fails_closed_without_calibration(tmp_path, monkeypatch):
     artifact = autopilot_artifact(tmp_path)
-    monkeypatch.setattr(batch, "CALIBRATION_STATE", CalibrationState())
-    monkeypatch.setattr(batch, "baseline_model_available", lambda: True)
 
-    async def no_calibration(self, worker_id):
+    async def no_calibration(self, worker_count):
         return None
-    monkeypatch.setattr(batch, "_run_baseline_calibration", no_calibration)
+    monkeypatch.setattr(batch, "_ensure_host_speed_factor", no_calibration)
     monkeypatch.setattr(
         batch, "_docker_evaluator_facade",
         lambda: SimpleNamespace(DockerSecureEvaluator=SimpleNamespace(_base_ready=True)),

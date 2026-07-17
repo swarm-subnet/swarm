@@ -17,7 +17,7 @@ import json
 import math
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -27,7 +27,6 @@ from swarm.model_graph import EXECUTION_PROFILE_ID, RUNNER_ABI, admit_artifact, 
 
 _CALIBRATION_DIR = Path(__file__).resolve().parent
 _MANIFEST_PATH = _CALIBRATION_DIR / "baseline_manifest.json"
-_CACHE_PATH = Path(__file__).resolve().parents[2] / "state" / "calibration_cache.json"
 _REQUIRED_KEYS = (
     "calibration_version", "baseline_model", "owner_compute_p90_ms",
     "interface_version", "execution_profile", "execution_profile_digest", "runner_abi",
@@ -125,62 +124,15 @@ class CalibrationEntry:
 
 
 class CalibrationState:
-    """Cache of the host speed factor, keyed by worker id.
+    """In-memory speed-factor state kept only for process-local callers."""
 
-    Each Docker worker is pinned to its own cpuset, so the factor is stored per
-    worker. The factor is a property of the host, so it is also persisted to
-    disk and survives a restart until it ages out or the baseline changes.
-    """
-
-    def __init__(self, cache_path: Path = _CACHE_PATH) -> None:
+    def __init__(self, cache_path: Optional[Path] = None) -> None:
+        _ = cache_path
         self._lock = threading.Lock()
         self._by_worker: Dict[int, CalibrationEntry] = {}
-        self._cache_path = Path(cache_path)
-        self._loaded = False
-
-    def _load(self) -> None:
-        if self._loaded:
-            return
-        self._loaded = True
-        try:
-            payload = json.loads(self._cache_path.read_text())
-            version = load_baseline_manifest()["calibration_version"]
-        except Exception:
-            return
-        for key, row in (payload or {}).items():
-            try:
-                if row["calibration_version"] != version:
-                    continue
-                self._by_worker[int(key)] = CalibrationEntry(
-                    speed=SpeedFactor(**row["speed"]),
-                    overhead_ms=float(row["overhead_ms"]),
-                    calibration_version=str(row["calibration_version"]),
-                    computed_at=float(row["computed_at"]),
-                )
-            except Exception:
-                continue
-
-    def _save(self) -> None:
-        payload = {
-            str(worker_id): {
-                "speed": asdict(entry.speed),
-                "overhead_ms": entry.overhead_ms,
-                "calibration_version": entry.calibration_version,
-                "computed_at": entry.computed_at,
-            }
-            for worker_id, entry in self._by_worker.items()
-        }
-        try:
-            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._cache_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, indent=2))
-            tmp.replace(self._cache_path)
-        except OSError:
-            pass
 
     def get(self, worker_id: int) -> Optional[CalibrationEntry]:
         with self._lock:
-            self._load()
             return self._by_worker.get(int(worker_id))
 
     def set(
@@ -197,9 +149,7 @@ class CalibrationState:
             computed_at=time.time(),
         )
         with self._lock:
-            self._load()
             self._by_worker[int(worker_id)] = entry
-            self._save()
         return entry
 
     def is_stale(self, worker_id: int, *, max_age_sec: float) -> bool:

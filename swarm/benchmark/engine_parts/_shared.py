@@ -75,6 +75,7 @@ class _ProcessBatchRequest:
     model_path: str
     task_total: int
     runtime_profile: Optional[Dict[str, Any]] = None
+    host_speed_factor: Optional[float] = None
 
 
 @dataclass
