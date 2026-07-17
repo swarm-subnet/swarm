@@ -39,10 +39,10 @@ def test_speed_factor_scales_linearly():
     assert sf.eligible
 
 
-def test_fast_host_factor_below_one_is_not_floored_up():
+def test_fast_host_never_shrinks_the_guaranteed_budget():
     sf = normalize_speed_factor(130.4, owner_p90_ms=260.8)
     assert sf.raw == pytest.approx(0.5, abs=1e-6)
-    assert sf.factor == pytest.approx(0.5, abs=1e-6)
+    assert sf.factor == pytest.approx(1.0, abs=1e-6)
 
 
 def test_low_guard_only_protects_against_bad_measurement():
