@@ -15,6 +15,7 @@ import pytest
 from swarm.benchmark import engine as bench_full_eval
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.protocol import ValidationResult
+from swarm.validator.calibration import SpeedFactor
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
 
@@ -33,6 +34,16 @@ def _new_evaluator() -> de.DockerSecureEvaluator:
     ev.base_ready = True
     de.DockerSecureEvaluator._base_ready = True
     return ev
+
+
+def _eligible_speed(factor: float = 1.0) -> SpeedFactor:
+    return SpeedFactor(
+        raw=factor,
+        factor=factor,
+        eligible=True,
+        owner_p90_ms=100.0,
+        local_p90_ms=100.0 * factor,
+    )
 
 
 class _ScriptedQueue:
@@ -99,6 +110,7 @@ class _ScriptedContext:
         self._scripted_attempts = scripted_attempts
         self._attempts = {}
         self._queues = []
+        self.requests = []
 
     def Queue(self):
         queue_obj = _ScriptedQueue()
@@ -112,6 +124,7 @@ class _ScriptedContext:
     def handle_request(self, worker_slot, request, result_queue, progress_queue):
         if request is None:
             return
+        self.requests.append(request)
         batch_index = int(request.batch_index)
         attempt = self._attempts.get(batch_index, 0)
         self._attempts[batch_index] = attempt + 1
@@ -796,6 +809,7 @@ def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
         captured["effective_workers"] = kwargs["effective_workers"]
         captured["task_meta"] = kwargs["task_meta"]
         captured["runtime_profile"] = kwargs["runtime_profile"]
+        captured["host_speed_factor"] = kwargs["host_speed_factor"]
         for task in kwargs["all_tasks"]:
             kwargs["on_seed_complete"](
                 {
@@ -810,6 +824,10 @@ def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
         ]
 
     monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
+    monkeypatch.setattr(
+        de.batch, "_ensure_host_speed_factor",
+        lambda _self, _worker_count: asyncio.sleep(0, result=_eligible_speed(1.25)),
+    )
     results = asyncio.run(
         ev.evaluate_seeds_parallel(
             tasks,
@@ -830,6 +848,7 @@ def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
     ]
     assert captured["runtime_profile"]["family_id"] == "cf_search_and_rescue"
     assert captured["runtime_profile"]["profile_name"] == "search_and_rescue"
+    assert captured["host_speed_factor"] == pytest.approx(1.25)
     assert [payload["status"] for payload in callback_payloads] == [
         "seed_done",
         "seed_done",
@@ -853,15 +872,21 @@ def test_evaluate_seeds_parallel_uses_default_worker_count_of_three(monkeypatch,
     async def _fake_run_process_parallel(**kwargs):
         captured["effective_workers"] = kwargs["effective_workers"]
         captured["runtime_profile"] = kwargs["runtime_profile"]
+        captured["host_speed_factor"] = kwargs["host_speed_factor"]
         return [ValidationResult(kwargs["uid"], True, 1.0, 0.5) for _ in kwargs["all_tasks"]]
 
     monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
+    monkeypatch.setattr(
+        de.batch, "_ensure_host_speed_factor",
+        lambda _self, _worker_count: asyncio.sleep(0, result=_eligible_speed(1.1)),
+    )
     results = asyncio.run(ev.evaluate_seeds_parallel(tasks, uid=17, model_path=model_path))
 
     assert len(results) == 5
     assert captured["effective_workers"] == min(len(tasks), de.parallel.N_DOCKER_WORKERS)
     assert captured["runtime_profile"]["family_id"] == "cf_autopilot"
     assert captured["runtime_profile"]["profile_name"] == "autopilot_navigation"
+    assert captured["host_speed_factor"] == pytest.approx(1.1)
 
 
 def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
@@ -877,9 +902,14 @@ def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
 
     async def _fake_run_process_parallel(**kwargs):
         captured["runtime_tracker"] = kwargs["runtime_tracker"]
+        captured["host_speed_factor"] = kwargs["host_speed_factor"]
         return [ValidationResult(kwargs["uid"], True, 1.0, 0.5) for _ in kwargs["all_tasks"]]
 
     monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
+    monkeypatch.setattr(
+        de.batch, "_ensure_host_speed_factor",
+        lambda _self, _worker_count: asyncio.sleep(0, result=_eligible_speed(0.9)),
+    )
     results = asyncio.run(
         ev.evaluate_seeds_parallel(tasks, uid=19, model_path=model_path, num_workers=4)
     )
@@ -887,6 +917,7 @@ def test_evaluate_seeds_parallel_updates_runtime_tracker(monkeypatch, tmp_path):
     snapshot = ev.runtime_tracker.snapshot_copy()
     assert len(results) == 2
     assert captured["runtime_tracker"] is ev.runtime_tracker
+    assert captured["host_speed_factor"] == pytest.approx(0.9)
     assert snapshot["docker"]["requested_workers"] == 4
     assert snapshot["docker"]["effective_workers"] == 2
 
@@ -1533,17 +1564,23 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
         task_offset=0,
         task_total=None,
         runtime_profile_payload=None,
+        host_speed_factor=None,
     ):
         captured["chunk"] = list(chunk)
         captured["worker_id"] = worker_id
         captured["task_offset"] = task_offset
         captured["task_total"] = task_total
         captured["runtime_profile_payload"] = dict(runtime_profile_payload or {})
+        captured["host_speed_factor"] = host_speed_factor
         _ = model_path, on_seed_complete
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in chunk]
 
     monkeypatch.setattr(de.DockerSecureEvaluator, "_base_ready", False)
     monkeypatch.setattr(ev, "evaluate_seeds_batch", _fake_batch)
+    monkeypatch.setattr(
+        de.batch, "_ensure_host_speed_factor",
+        lambda _self, _worker_count: asyncio.sleep(0, result=_eligible_speed(1.4)),
+    )
     try:
         results = asyncio.run(
             ev.evaluate_seeds_parallel(tasks, uid=5, model_path=model_path, num_workers=3)
@@ -1558,6 +1595,7 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
     assert captured["task_total"] == 2
     assert captured["runtime_profile_payload"]["family_id"] == "cf_search_and_rescue"
     assert captured["runtime_profile_payload"]["profile_name"] == "search_and_rescue"
+    assert captured["host_speed_factor"] == pytest.approx(1.4)
 
 
 def test_evaluate_seeds_batch_returns_failures_when_model_missing(tmp_path):

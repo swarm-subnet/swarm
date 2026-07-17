@@ -1,5 +1,8 @@
 import asyncio
+import math
+import multiprocessing as mp
 import os
+import queue
 import shutil
 import subprocess
 import threading
@@ -22,7 +25,7 @@ from swarm.protocol import (
     normalize_version,
 )
 from swarm.validator.calibration import (
-    CALIBRATION_STATE,
+    SpeedFactor,
     baseline_model_available,
     baseline_model_path,
     load_baseline_manifest,
@@ -38,6 +41,77 @@ from ._shared import (
 )
 
 _CALIBRATION_MAX_AGE_SEC = 6 * 3600  # re-measure the host speed factor at least this often
+
+
+@dataclass(frozen=True)
+class HostSpeedCalibration:
+    """In-memory, host-level calibration measured under concurrent worker load."""
+
+    speed: SpeedFactor
+    worker_count: int
+    worker_speeds: tuple[SpeedFactor, ...]
+    calibration_version: str
+    computed_at: float
+
+
+_HOST_SPEED_CALIBRATION: Optional[HostSpeedCalibration] = None
+
+
+def _calibration_mp_context() -> mp.context.BaseContext:
+    try:
+        return mp.get_context("fork")
+    except ValueError:
+        return mp.get_context("spawn")
+
+
+def _prepared_calibration_evaluator(base_image: str):
+    from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+
+    evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
+    evaluator.base_image = str(base_image)
+    evaluator.base_images = {"base": str(base_image)}
+    evaluator.base_ready = True
+    evaluator.last_fake_model_info = None
+    evaluator.family_runtime_profiles = {}
+    evaluator.last_runtime_profile_info = None
+    evaluator.last_selected_run_image = None
+    evaluator.last_selected_worker_limits = None
+    evaluator.last_selected_runtime_profile = None
+    evaluator.last_selected_runtime_env = None
+    DockerSecureEvaluator._base_ready = True
+    return evaluator
+
+
+def _host_calibration_worker_main(worker_id: int, base_image: str, result_queue: Any) -> None:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        evaluator = _prepared_calibration_evaluator(base_image)
+        speed = loop.run_until_complete(_run_baseline_calibration(evaluator, int(worker_id)))
+        if speed is None:
+            result_queue.put(
+                {
+                    "worker_id": int(worker_id),
+                    "error": "baseline calibration returned no speed factor",
+                }
+            )
+            return
+        result_queue.put(
+            {
+                "worker_id": int(worker_id),
+                "speed": speed,
+            }
+        )
+    except Exception as exc:
+        result_queue.put(
+            {
+                "worker_id": int(worker_id),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
@@ -683,7 +757,6 @@ async def _run_baseline_calibration(self, worker_id: int):
         bt.logging.warning(f"[Worker {worker_id}] invalid speed factor: {e}")
         return None
 
-    CALIBRATION_STATE.set(worker_id, speed, overhead["ms"], manifest["calibration_version"])
     summary = (
         f"[Worker {worker_id}] reference calibration: speed_factor={speed.factor:.2f}x "
         f"(local_p90={local_p90:.0f}ms / owner_p90={speed.owner_p90_ms:.0f}ms, n={len(compute)})"
@@ -695,14 +768,171 @@ async def _run_baseline_calibration(self, worker_id: int):
     return speed
 
 
-async def _ensure_worker_speed_factor(self, worker_id: int):
-    """Return the cached/freshly-measured SpeedFactor, or None to use legacy timing."""
+def _host_calibration_is_valid(
+    calibration: Optional[HostSpeedCalibration],
+    *,
+    worker_count: int,
+    calibration_version: str,
+) -> bool:
+    if calibration is None:
+        return False
+    if calibration.calibration_version != str(calibration_version):
+        return False
+    if int(calibration.worker_count) < int(worker_count):
+        return False
+    return (time.time() - float(calibration.computed_at)) <= _CALIBRATION_MAX_AGE_SEC
+
+
+def _average_host_speed(worker_speeds: list[SpeedFactor]) -> Optional[SpeedFactor]:
+    if not worker_speeds:
+        return None
+    avg_local_p90 = math.fsum(
+        float(speed.local_p90_ms) for speed in worker_speeds
+    ) / len(worker_speeds)
+    return normalize_speed_factor(avg_local_p90)
+
+
+async def _run_host_baseline_calibration(self, worker_count: int):
+    """Measure one host speed factor under concurrent worker load."""
+    global _HOST_SPEED_CALIBRATION
+
     if not baseline_model_available():
         return None
-    if CALIBRATION_STATE.is_stale(worker_id, max_age_sec=_CALIBRATION_MAX_AGE_SEC):
-        await _run_baseline_calibration(self, worker_id)
-    entry = CALIBRATION_STATE.get(worker_id)
-    return entry.speed if entry is not None else None
+
+    manifest = load_baseline_manifest()
+    requested = max(1, int(worker_count))
+    bt.logging.info(
+        f"Starting host reference calibration with {requested} concurrent worker(s)"
+    )
+    base_image = str(getattr(self, "base_image", "swarm_model_graph_runner:latest"))
+    ctx = _calibration_mp_context()
+    result_queue = ctx.Queue()
+    processes = [
+        ctx.Process(
+            target=_host_calibration_worker_main,
+            args=(worker_id, base_image, result_queue),
+            name=f"swarm_host_calibration_{worker_id}",
+            daemon=True,
+        )
+        for worker_id in range(requested)
+    ]
+    for proc in processes:
+        proc.start()
+
+    payloads: list[dict[str, Any]] = []
+    deadline = time.monotonic() + max(180.0, 90.0 + (requested * 30.0))
+    while len(payloads) < requested and time.monotonic() < deadline:
+        try:
+            payload = result_queue.get(timeout=0.5)
+        except queue.Empty:
+            if all(not proc.is_alive() for proc in processes):
+                break
+            await asyncio.sleep(0)
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+
+    for proc in processes:
+        proc.join(timeout=5.0)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=2.0)
+    try:
+        result_queue.close()
+    except Exception:
+        pass
+
+    speeds_by_worker: dict[int, SpeedFactor] = {}
+    seen_workers: set[int] = set()
+    for payload in payloads:
+        worker_id = int(payload.get("worker_id", -1))
+        seen_workers.add(worker_id)
+        error = payload.get("error")
+        if error:
+            bt.logging.warning(
+                f"[Worker {worker_id}] host calibration failed: {error}"
+            )
+            continue
+        speed = payload.get("speed")
+        if isinstance(speed, SpeedFactor):
+            speeds_by_worker[worker_id] = speed
+
+    missing = sorted(set(range(requested)) - seen_workers)
+    for worker_id in missing:
+        bt.logging.warning(f"[Worker {worker_id}] host calibration produced no result")
+
+    worker_speeds = [
+        speeds_by_worker[worker_id]
+        for worker_id in range(requested)
+        if worker_id in speeds_by_worker
+    ]
+    if len(worker_speeds) != requested:
+        bt.logging.warning(
+            f"Host reference calibration failed: {len(worker_speeds)}/{requested} "
+            "workers produced usable speed factors"
+        )
+        return None
+
+    try:
+        host_speed = _average_host_speed(worker_speeds)
+    except ValueError as e:
+        bt.logging.warning(f"Host reference calibration produced invalid speed factor: {e}")
+        return None
+    if host_speed is None:
+        return None
+    local_p90s = [float(speed.local_p90_ms) for speed in worker_speeds]
+    avg_local_p90 = float(host_speed.local_p90_ms)
+    min_local_p90 = min(local_p90s)
+    max_local_p90 = max(local_p90s)
+    spread = max_local_p90 / min_local_p90 if min_local_p90 > 0.0 else float("inf")
+
+    _HOST_SPEED_CALIBRATION = HostSpeedCalibration(
+        speed=host_speed,
+        worker_count=requested,
+        worker_speeds=tuple(worker_speeds),
+        calibration_version=str(manifest["calibration_version"]),
+        computed_at=time.time(),
+    )
+    per_worker = ", ".join(
+        f"w{i}={speed.factor:.2f}x/{speed.local_p90_ms:.1f}ms"
+        for i, speed in enumerate(worker_speeds)
+    )
+    summary = (
+        f"Host reference calibration: speed_factor={host_speed.factor:.2f}x "
+        f"(avg_local_p90={avg_local_p90:.1f}ms / "
+        f"owner_p90={host_speed.owner_p90_ms:.1f}ms, workers={requested}, "
+        f"min={min_local_p90:.1f}ms, max={max_local_p90:.1f}ms, spread={spread:.2f}x; "
+        f"{per_worker})"
+    )
+    if host_speed.eligible:
+        bt.logging.info(summary)
+    else:
+        bt.logging.warning(
+            summary + " — host slower than the eligibility limit; it will not score miners"
+        )
+    return host_speed
+
+
+async def _ensure_host_speed_factor(self, worker_count: int):
+    """Return the in-memory host speed factor, calibrated under concurrent load."""
+    global _HOST_SPEED_CALIBRATION
+
+    if not baseline_model_available():
+        return None
+    manifest = load_baseline_manifest()
+    requested = max(1, int(worker_count))
+    if _host_calibration_is_valid(
+        _HOST_SPEED_CALIBRATION,
+        worker_count=requested,
+        calibration_version=str(manifest["calibration_version"]),
+    ):
+        return _HOST_SPEED_CALIBRATION.speed
+    return await _run_host_baseline_calibration(self, requested)
+
+
+async def _ensure_worker_speed_factor(self, worker_id: int):
+    """Compatibility wrapper; scoring uses the host-level factor."""
+    return await _ensure_host_speed_factor(self, max(1, int(worker_id) + 1))
 
 
 def _setup_graph_workspace(ctx: _BatchContext) -> Optional[list]:
@@ -831,6 +1061,7 @@ async def evaluate_seeds_batch(
     task_total: Optional[int] = None,
     runtime_profile_payload: Optional[dict[str, Any]] = None,
     is_calibration_run: bool = False,
+    host_speed_factor: Optional[float] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -866,8 +1097,23 @@ async def evaluate_seeds_batch(
         return early
 
     if not is_calibration_run:
-        speed = await _ensure_worker_speed_factor(self, worker_id)
-        if speed is None or not speed.eligible:
+        speed = None
+        if host_speed_factor is not None:
+            try:
+                factor = float(host_speed_factor)
+            except (TypeError, ValueError):
+                factor = 0.0
+            if math.isfinite(factor) and factor > 0.0:
+                ctx.speed_factor = factor
+            else:
+                host_speed_factor = None
+
+        if ctx.speed_factor is None:
+            speed = await _ensure_host_speed_factor(self, 1)
+            if speed is not None and speed.eligible:
+                ctx.speed_factor = speed.factor
+
+        if ctx.speed_factor is None or (speed is not None and not speed.eligible):
             detail = (
                 "reference calibration is unavailable"
                 if speed is None
@@ -886,7 +1132,6 @@ async def evaluate_seeds_batch(
                 )
                 for _ in tasks
             ]
-        ctx.speed_factor = speed.factor
 
     _setup_pretry_state(ctx)
 

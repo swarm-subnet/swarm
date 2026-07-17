@@ -25,7 +25,7 @@ from .backend_api import (
     BackendTransportError,
 )
 from .docker.docker_evaluator import DockerSecureEvaluator
-from .docker.docker_evaluator_parts.batch import _ensure_worker_speed_factor
+from .docker.docker_evaluator_parts.batch import _ensure_host_speed_factor
 from .runtime_telemetry import tracker_call
 from .seed_manager import BenchmarkSeedManager
 from .sse_listener import SseListener
@@ -224,20 +224,19 @@ async def _host_may_score(self) -> bool:
     must not score miners with unnormalized timing."""
     if not _image_provenance_ok(self):
         return False
-    for worker_id in range(N_DOCKER_WORKERS):
-        speed = await _ensure_worker_speed_factor(self.docker_evaluator, worker_id)
-        if speed is None:
-            bt.logging.warning(
-                f"Worker {worker_id} has no valid reference calibration; "
-                "not polling for scoring tasks until calibration succeeds"
-            )
-            return False
-        if not speed.eligible:
-            bt.logging.warning(
-                f"Worker {worker_id} speed factor {speed.factor:.2f}x exceeds the "
-                "eligibility limit; not polling for scoring tasks until recalibration passes"
-            )
-            return False
+    speed = await _ensure_host_speed_factor(self.docker_evaluator, N_DOCKER_WORKERS)
+    if speed is None:
+        bt.logging.warning(
+            "Host has no valid reference calibration; "
+            "not polling for scoring tasks until calibration succeeds"
+        )
+        return False
+    if not speed.eligible:
+        bt.logging.warning(
+            f"Host speed factor {speed.factor:.2f}x exceeds the eligibility limit; "
+            "not polling for scoring tasks until recalibration passes"
+        )
+        return False
     return True
 
 

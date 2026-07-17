@@ -196,6 +196,7 @@ def _benchmark_worker_main(
                         task_offset=request.batch_indices[0] if request.batch_indices else 0,
                         task_total=request.task_total,
                         runtime_profile_payload=getattr(request, "runtime_profile", None),
+                        host_speed_factor=getattr(request, "host_speed_factor", None),
                     )
                 )
                 result_queue.put(

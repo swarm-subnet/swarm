@@ -108,6 +108,7 @@ def find_spawn_xy(
     accepted = accepted_categories_for(challenge_type)
     last_reason = "no_attempts"
     fallback: Optional[Tuple[float, Tuple[float, float, SurfaceHit]]] = None
+    flattest: Optional[Tuple[float, Tuple[float, float, SurfaceHit]]] = None
     for attempt in range(MAX_SPAWN_ATTEMPTS):
         x, y = _sample_candidate(map_seed, attempt, bound)
         hit = resolve_surface(cli, x, y, body_tags, accepted)
@@ -115,12 +116,6 @@ def find_spawn_xy(
             last_reason = "no_support_hit"
             if on_attempt is not None:
                 on_attempt(attempt, "no_support_hit", x, y)
-            continue
-        if (terrain_slope_deg(cli, x, y, hit.surface_z, radius=0.4) > MAX_SPAWN_SLOPE_DEG
-                or terrain_slope_deg(cli, x, y, hit.surface_z, radius=1.0) > MAX_SPAWN_SLOPE_DEG):
-            last_reason = "too_steep"
-            if on_attempt is not None:
-                on_attempt(attempt, "too_steep", x, y)
             continue
         if not _hover_column_clear(
             cli, x, y, hit.surface_z, body_tags=body_tags, support_uid=hit.support_uid,
@@ -136,6 +131,18 @@ def find_spawn_xy(
             if on_attempt is not None:
                 on_attempt(attempt, "no_touch_sphere_blocked", x, y)
             continue
+        slope = max(
+            terrain_slope_deg(cli, x, y, hit.surface_z, radius=0.4),
+            terrain_slope_deg(cli, x, y, hit.surface_z, radius=1.0),
+        )
+        if slope > MAX_SPAWN_SLOPE_DEG:
+            # keep the flattest valid spot so an all-steep map still spawns
+            if flattest is None or slope < flattest[0]:
+                flattest = (slope, (x, y, hit))
+            last_reason = "too_steep"
+            if on_attempt is not None:
+                on_attempt(attempt, "too_steep", x, y)
+            continue
         if near is not None and max_dist is not None:
             dist = ((x - near[0]) ** 2 + (y - near[1]) ** 2) ** 0.5
             if dist > max_dist:
@@ -150,6 +157,8 @@ def find_spawn_xy(
         return x, y, hit
     if fallback is not None:
         return fallback[1]
+    if flattest is not None:
+        return flattest[1]
     raise SARSpawnError(
         f"spawn exhausted {MAX_SPAWN_ATTEMPTS} attempts for seed={map_seed} "
         f"challenge_type={challenge_type}: last_reason={last_reason}"

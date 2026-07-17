@@ -25,7 +25,7 @@ def generate_baseline(output_dir: Path) -> None:
 
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     manifest = {
-        "calibration_version": "swarm-model-graph-ref-v1",
+        "calibration_version": "swarm-model-graph-ref-v2",
         "scope": "all_challenge_families",
         "interface_version": "model_graph.v1",
         "execution_profile": EXECUTION_PROFILE_ID,
@@ -37,7 +37,7 @@ def generate_baseline(output_dir: Path) -> None:
             "run_as_family_id": "cf_autopilot",
             "run_as_challenge_type": 2,
         },
-        "owner_compute_p90_ms": 5.5,
+        "owner_compute_p90_ms": 17.6,
         "owner_overhead_ms": 2.7,
         "measurement": {
             "sample_seeds": [1001],

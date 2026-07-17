@@ -1,5 +1,5 @@
 {
-  "calibration_version": "swarm-model-graph-ref-v1",
+  "calibration_version": "swarm-model-graph-ref-v2",
   "scope": "all_challenge_families",
   "interface_version": "model_graph.v1",
   "execution_profile": "swarm.onnx-neural.cpu.v1",
@@ -11,7 +11,7 @@
     "run_as_family_id": "cf_autopilot",
     "run_as_challenge_type": 2
   },
-  "owner_compute_p90_ms": 5.5,
+  "owner_compute_p90_ms": 17.6,
   "owner_overhead_ms": 2.7,
   "measurement": {
     "sample_seeds": [

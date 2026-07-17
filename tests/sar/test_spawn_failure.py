@@ -88,3 +88,40 @@ def test_score_is_participation_on_spawn_failure(monkeypatch):
         assert score == 0.01
     finally:
         _close(env)
+
+
+def test_all_steep_map_spawns_on_flattest_spot(monkeypatch):
+    from swarm.core.env_builder import spawn_pipeline as sp
+
+    slopes = {}
+
+    def _fake_resolve(cli, x, y, body_tags, accepted):
+        return sp.SurfaceHit(
+            surface_z=1.0, support_uid=7, category="SUPPORT_TERRAIN",
+            normal=(0.0, 0.0, 1.0), is_slope=True,
+        )
+
+    def _fake_slope(cli, x, y, surface_z, radius=0.4):
+        key = (round(x, 6), round(y, 6))
+        slopes.setdefault(key, 30.0 + (len(slopes) % 17))
+        return slopes[key]
+
+    monkeypatch.setattr(sp, "resolve_surface", _fake_resolve)
+    monkeypatch.setattr(sp, "terrain_slope_deg", _fake_slope)
+    monkeypatch.setattr(sp, "_hover_column_clear", lambda *a, **k: True)
+    monkeypatch.setattr(sp, "_sphere_obstacle_clear", lambda *a, **k: True)
+
+    x, y, hit = sp.find_spawn_xy(
+        0, map_seed=1234, challenge_type=3, body_tags={},
+    )
+    assert hit.surface_z == 1.0
+    flattest = min(slopes.items(), key=lambda kv: kv[1])[0]
+    assert (round(x, 6), round(y, 6)) == flattest
+
+
+def test_spawn_still_fails_without_any_valid_surface(monkeypatch):
+    from swarm.core.env_builder import spawn_pipeline as sp
+
+    monkeypatch.setattr(sp, "resolve_surface", lambda *a, **k: None)
+    with pytest.raises(sp.SARSpawnError):
+        sp.find_spawn_xy(0, map_seed=1234, challenge_type=3, body_tags={})

@@ -23,6 +23,7 @@ import bittensor as bt
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
+from swarm.model_graph import ReasonCode
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.runtime_telemetry import tracker_call
 
@@ -209,6 +210,7 @@ async def _run_process_parallel(
     heartbeat_sec: float = 30.0,
     runtime_profile: Optional[dict[str, Any]] = None,
     retry_budget: Optional[dict[str, int]] = None,
+    host_speed_factor: Optional[float] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -376,6 +378,7 @@ async def _run_process_parallel(
                 model_path=str(model_path),
                 task_total=len(all_tasks),
                 runtime_profile=resolved_runtime_profile.as_dict(),
+                host_speed_factor=host_speed_factor,
             )
             worker_active_requests[worker_slot] = request
             now = time.time()
@@ -869,6 +872,33 @@ async def evaluate_seeds_parallel(
     )
 
     if not _docker_evaluator_facade().DockerSecureEvaluator._base_ready:
+        from .batch import _ensure_host_speed_factor
+
+        speed = await _ensure_host_speed_factor(self, 1)
+        if speed is None or not speed.eligible:
+            detail = (
+                "reference calibration is unavailable"
+                if speed is None
+                else f"host speed factor {speed.factor:.2f}x is not eligible to score"
+            )
+            bt.logging.warning(detail)
+            for task in tasks:
+                _emit_seed_complete(
+                    on_seed_complete,
+                    _failure_seed_meta(
+                        task,
+                        uid=uid,
+                        status=ReasonCode.INFRA_CALIBRATION.value,
+                        error=detail,
+                    ),
+                )
+            return [
+                ValidationResult(
+                    uid, False, 0.0, 0.0,
+                    failure_reason=ReasonCode.INFRA_CALIBRATION.value,
+                )
+                for _ in tasks
+            ]
         return await self.evaluate_seeds_batch(
             tasks,
             uid,
@@ -878,6 +908,7 @@ async def evaluate_seeds_parallel(
             task_offset=0,
             task_total=len(tasks),
             runtime_profile_payload=runtime_profile.as_dict(),
+            host_speed_factor=speed.factor,
         )
 
     from .batch import check_task_versions
@@ -903,6 +934,35 @@ async def evaluate_seeds_parallel(
         for index, task in enumerate(tasks)
     ]
     batch_plan = _benchmark_engine()._batch_indices(len(tasks))
+    from .batch import _ensure_host_speed_factor
+
+    speed = await _ensure_host_speed_factor(self, effective_workers)
+    if speed is None or not speed.eligible:
+        detail = (
+            "reference calibration is unavailable"
+            if speed is None
+            else f"host speed factor {speed.factor:.2f}x is not eligible to score"
+        )
+        bt.logging.warning(
+            f"[Validator eval] {detail}; excluding this host from scoring UID {uid}"
+        )
+        for task in tasks:
+            _emit_seed_complete(
+                on_seed_complete,
+                _failure_seed_meta(
+                    task,
+                    uid=uid,
+                    status=ReasonCode.INFRA_CALIBRATION.value,
+                    error=detail,
+                ),
+            )
+        return [
+            ValidationResult(
+                uid, False, 0.0, 0.0,
+                failure_reason=ReasonCode.INFRA_CALIBRATION.value,
+            )
+            for _ in tasks
+        ]
 
     return await _run_process_parallel(
         all_tasks=list(tasks),
@@ -920,6 +980,7 @@ async def evaluate_seeds_parallel(
         prior_avg=prior_avg,
         runtime_profile=runtime_profile.as_dict(),
         retry_budget=retry_budget,
+        host_speed_factor=speed.factor,
     )
 
 
