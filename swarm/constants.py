@@ -143,7 +143,7 @@ CALIBRATION_WARN_CPU_FACTOR = 1.5       # Log warning when CPU factor exceeds th
 EVAL_SUMMARY_INTERVAL_SEC = 60          # Periodic evaluation progress summary interval (seconds)
 
 # Reference-time normalization (baseline-relative, hardware-fair per-act scoring)
-SPEED_FACTOR_MIN = 0.25                  # Lower guard against an invalid calibration measurement
+SPEED_FACTOR_MIN = 1.0                   # Scoring floor: a fast host never shrinks the guaranteed per-step budget
 SPEED_FACTOR_MAX_ELIGIBLE = 3.0          # Beyond this the host is too slow to score fairly; it self-excludes
 HARD_CAP_REF_SEC = 1.25                  # Per-act ceiling in baseline-equivalent seconds before a hard timeout
 HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the per-act hard cap (seconds)
