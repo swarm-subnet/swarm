@@ -4,10 +4,10 @@ import inspect
 import math
 import os
 import random
+from importlib.resources import files as _pkg_files
 from typing import Any, Optional
 
 import numpy as np
-import pkg_resources
 import pybullet as p
 
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
@@ -89,14 +89,14 @@ def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
 
 def interceptor_urdf_path() -> str:
     """Absolute path to the 36 cm URDF in the swarm package assets."""
-    return pkg_resources.resource_filename("swarm", os.path.join("assets", INTERCEPTOR_DRONE_URDF))
+    return str(_pkg_files("swarm").joinpath("assets", INTERCEPTOR_DRONE_URDF))
 
 
 def ensure_interceptor_urdf_in_gym_assets() -> str:
     """Make the 36 cm URDF available in gym_pybullet_drones/assets (next to cf2.dae) so
     BaseAviary's hardcoded loader finds it via self.URDF. Content-verified and atomic so every
     validator parses byte-identical physical constants. Returns the URDF basename."""
-    dst_dir = pkg_resources.resource_filename("gym_pybullet_drones", "assets")
+    dst_dir = str(_pkg_files("gym_pybullet_drones").joinpath("assets"))
     dst = os.path.join(dst_dir, INTERCEPTOR_DRONE_URDF)
     with open(interceptor_urdf_path(), "rb") as f:
         src_bytes = f.read()
@@ -210,7 +210,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
 
         # (a) load the target OFF-WORLD; it is flown into place after the map is built
         urdf = ensure_interceptor_urdf_in_gym_assets()
-        urdf_path = pkg_resources.resource_filename("gym_pybullet_drones", os.path.join("assets", urdf))
+        urdf_path = str(_pkg_files("gym_pybullet_drones").joinpath("assets", urdf))
         target_uid = p.loadURDF(
             urdf_path, [0.0, 0.0, -1000.0], p.getQuaternionFromEuler([0, 0, 0]),
             flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli,
