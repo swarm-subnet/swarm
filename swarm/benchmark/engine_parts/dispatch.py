@@ -332,8 +332,6 @@ def _is_clean_execution_status(status: str) -> bool:
 
 
 def _max_heavy_active(active_worker_cap: int) -> int:
-    # Ceiling only: one slot stays free for lighter seeds. The real per-seed
-    # guards are the CPU/RAM budgets and pressure backoff in can_admit_group.
     worker_cap = max(1, int(active_worker_cap))
     return max(1, worker_cap - 1)
 
