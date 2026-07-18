@@ -16,6 +16,7 @@ from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
+    RE_AUTH_INTERVAL_SEC,
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
@@ -30,7 +31,7 @@ from swarm.model_graph import (
 )
 from swarm.protocol import FailureReason
 from swarm.utils.hash import sha256sum
-from swarm.validator.backend_api import authorize_with_retry
+from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
@@ -103,13 +104,22 @@ async def _evaluate_seeds(
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     description: str = "benchmark",
     on_seed_complete: Optional[Callable[[], None]] = None,
+    on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
+    should_stop: Optional[Callable[[], Optional[str]]] = None,
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
     pre_built_tasks: Optional[List] = None,
     retry_budget: Optional[Dict[str, int]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
-    """Evaluate a model on multiple seeds using parallel Docker containers."""
+    """Evaluate a model on multiple seeds using parallel Docker containers.
+
+    ``on_seed_result`` fires once per finally-scored seed with the seed's
+    position in ``seeds`` and its detail dict (score, map_type, metric_key,
+    failure_reason, moving_platform). ``should_stop`` is polled by the
+    dispatcher; a non-None reason stops new dispatches, in-flight seeds
+    finish, and undispatched seeds are skipped (returned lists then cover
+    only the evaluated seeds)."""
     all_scores = []
     per_type_scores = _empty_per_type()
 
@@ -142,12 +152,39 @@ async def _evaluate_seeds(
         bt.logging.warning(f"No valid tasks created for UID {uid}")
         return [], per_type_scores, []
 
+    valid_positions = [i for i, t in enumerate(tasks) if t is not None]
+
+    def _forward_seed_result(valid_idx: int, result: Any, status: str) -> None:
+        if on_seed_result is None or result is None:
+            return
+        if not (0 <= int(valid_idx) < len(valid_positions)):
+            return
+        position = valid_positions[int(valid_idx)]
+        task = tasks[position]
+        type_name = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(
+            task.challenge_type, "unknown"
+        )
+        on_seed_result(
+            position,
+            {
+                "score": float(getattr(result, "score", 0.0)),
+                "metric_key": type_name,
+                "map_type": type_name,
+                "failure_reason": str(
+                    getattr(result, "failure_reason", "NONE") or "NONE"
+                ),
+                "moving_platform": bool(getattr(task, "moving_platform", False)),
+            },
+        )
+
     phase = "screening" if "screening" in description.lower() else "benchmark"
     results = await self.docker_evaluator.evaluate_seeds_parallel(
         tasks=valid_tasks,
         uid=uid,
         model_path=model_path,
         on_seed_complete=on_seed_complete,
+        on_seed_result=_forward_seed_result if on_seed_result is not None else None,
+        should_stop=should_stop,
         phase_label=phase,
         prior_seeds_done=prior_seeds_done,
         prior_total_seeds=prior_total_seeds,
@@ -173,8 +210,12 @@ async def _evaluate_seeds(
 
         if task_idx < len(results):
             result = results[task_idx]
-            score = result.score if result else 0.0
-            reason = getattr(result, "failure_reason", "NONE") if result else "NONE"
+            task_idx += 1
+            if result is None:
+                # Skipped after a stop request: not evaluated, not scored.
+                continue
+            score = result.score
+            reason = getattr(result, "failure_reason", "NONE")
             metrics = dict(getattr(result, "metrics", {}) or {})
             all_scores.append(score)
 
@@ -196,7 +237,6 @@ async def _evaluate_seeds(
                     "metrics": metrics,
                 }
             )
-            task_idx += 1
         else:
             type_name = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(
                 task.challenge_type,
@@ -237,20 +277,24 @@ async def _run_streaming_phase(
     max_inflight: int = MAX_INFLIGHT_SEED_UPLOADS,
     evaluator_prior_done: int = 0,
     evaluator_total_seeds: Optional[int] = None,
+    re_auth_interval_sec: float = RE_AUTH_INTERVAL_SEC,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict], Optional[str]]:
-    """Evaluate seeds in chunks, streaming scores with fire-and-forget uploads.
+    """Evaluate the full seed range as one rolling queue with streamed uploads.
 
-    The caller owns heartbeat lifecycle and outer telemetry. Returns accumulated
-    scores, per-type scores, seed details, and an optional cancel reason set
-    either by ``re_authorize`` (task no longer authorized) or ``should_stop``
-    (backend requested stop via heartbeat response).
+    Every seed goes to the parallel evaluator in a single call: a worker picks
+    up the next pending seed the moment it frees, with no barrier between
+    upload groups. Completed scores upload in groups of ``chunk_size`` as they
+    arrive (fire-and-forget, capped at ``max_inflight``). ``re_authorize``
+    (when given) re-checks the task every ``re_auth_interval_sec`` alongside
+    evaluation; a denial — like a backend stop via ``should_stop`` — halts new
+    seed dispatches, lets in-flight seeds finish, and returns the accumulated
+    partials with the cancel reason.
     """
     all_scores: List[float] = []
     all_per_type: Dict[str, List[float]] = _empty_per_type()
     all_details: List[dict] = []
     inflight: List[asyncio.Task] = []
     failed_batches: List[List[dict]] = []
-    cancel_reason: Optional[str] = None
     retry_budget: Dict[str, int] = {"timeout": 0, "rpc_transport": 0}
     total_for_evaluator = (
         evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
@@ -286,87 +330,167 @@ async def _run_streaming_phase(
             await asyncio.gather(*inflight, return_exceptions=True)
             inflight.clear()
 
-    try:
-        for chunk_start in range(0, len(seeds), chunk_size):
-            if should_stop is not None:
-                stop_reason = should_stop()
-                if stop_reason:
-                    await _drain_inflight()
-                    cancel_reason = f"backend stop_required: {stop_reason}"
-                    break
+    upload_queue: asyncio.Queue = asyncio.Queue()
 
-            if re_authorize is not None:
-                await _drain_inflight()
-                auth = await authorize_with_retry(
-                    re_authorize,
-                    log_prefix=f"UID {uid} mid-{phase_description}: ",
-                )
-                if not auth.get("authorized"):
-                    cancel_reason = str(auth.get("reason") or "unauthorized")
-                    break
-
-            batch_seeds = seeds[chunk_start:chunk_start + chunk_size]
-            batch_tasks = (
-                pre_built_tasks[chunk_start:chunk_start + chunk_size]
-                if pre_built_tasks is not None else None
-            )
-            if not batch_seeds:
+    async def _upload_pump() -> None:
+        group: List[dict] = []
+        while True:
+            row = await upload_queue.get()
+            if row is None:
                 break
+            group.append(row)
+            if len(group) >= chunk_size:
+                batch, group = group, []
+                await _wait_for_slot()
+                inflight.append(asyncio.create_task(_safe_upload(batch)))
+        if group:
+            await _wait_for_slot()
+            inflight.append(asyncio.create_task(_safe_upload(group)))
 
-            prior_avg = float(np.mean(all_scores)) if all_scores else 0.0
-            batch_scores, batch_per_type, batch_details = await _utils_facade()._evaluate_seeds(
-                self,
-                uid,
-                model_path,
-                batch_seeds,
-                family_id=family_id,
-                description=(
-                    f"{phase_description} "
-                    f"[{chunk_start + 1}..{chunk_start + len(batch_seeds)}]"
+    stop_state: Dict[str, Any] = {"cancel": None, "raise": None}
+    seen: set = set()
+    completed_scores: List[float] = []
+    window: Dict[str, Any] = {
+        "scores": [], "per_type": _empty_per_type(), "details": [],
+    }
+
+    def _fire_chunk_complete() -> None:
+        if on_chunk_complete is None or not window["scores"]:
+            return
+        chunk_scores = window["scores"]
+        chunk_per_type = window["per_type"]
+        chunk_details = window["details"]
+        window["scores"] = []
+        window["per_type"] = _empty_per_type()
+        window["details"] = []
+        try:
+            on_chunk_complete(
+                evaluated=len(completed_scores),
+                total=len(seeds),
+                running_avg=(
+                    float(np.mean(completed_scores)) if completed_scores else 0.0
                 ),
-                on_seed_complete=hb.on_seed_complete,
-                prior_seeds_done=evaluator_prior_done + len(all_scores),
-                prior_total_seeds=total_for_evaluator,
-                prior_avg=prior_avg,
-                pre_built_tasks=batch_tasks,
-                retry_budget=retry_budget,
+                chunk_scores=list(chunk_scores),
+                chunk_per_type={k: list(v) for k, v in chunk_per_type.items()},
+                chunk_details=list(chunk_details),
             )
+        except Exception as exc:
+            bt.logging.warning(f"on_chunk_complete callback failed for UID {uid}: {exc}")
 
-            seed_batch = [
+    def _on_result(idx: int, detail: dict) -> None:
+        if idx in seen or not isinstance(detail, dict):
+            return
+        seen.add(idx)
+        score = float(detail.get("score", 0.0))
+        reason = str(detail.get("failure_reason", "NONE") or "NONE")
+        type_name = str(detail.get("metric_key") or detail.get("map_type") or "unknown")
+        completed_scores.append(score)
+        window["scores"].append(score)
+        if detail.get("moving_platform"):
+            window["per_type"]["moving_platform"].append(score)
+        elif type_name in window["per_type"]:
+            window["per_type"][type_name].append(score)
+        window["details"].append(
+            {
+                "score": score,
+                "metric_key": type_name,
+                "map_type": type_name,
+                "failure_reason": reason,
+            }
+        )
+        if type_name != "unknown" and not _is_infra_failure(reason):
+            upload_queue.put_nowait(
                 {
-                    "seed_index": seed_offset + chunk_start + j,
+                    "seed_index": seed_offset + idx,
+                    "score": score,
+                    "metric_key": type_name,
+                    "map_type": type_name,
+                    "failure_reason": reason,
+                }
+            )
+        if len(completed_scores) % chunk_size == 0:
+            _fire_chunk_complete()
+
+    def _combined_stop() -> Optional[str]:
+        if stop_state["cancel"] is not None:
+            return stop_state["cancel"]
+        if should_stop is not None:
+            reason = should_stop()
+            if reason:
+                stop_state["cancel"] = f"backend stop_required: {reason}"
+                return stop_state["cancel"]
+        return None
+
+    reauth_task: Optional[asyncio.Task] = None
+    if re_authorize is not None:
+        async def _reauth_loop() -> None:
+            while stop_state["cancel"] is None:
+                await asyncio.sleep(re_auth_interval_sec)
+                try:
+                    auth = await authorize_with_retry(
+                        re_authorize,
+                        log_prefix=f"UID {uid} mid-{phase_description}: ",
+                    )
+                except BackendTransportError as exc:
+                    stop_state["raise"] = exc
+                    stop_state["cancel"] = str(exc)
+                    return
+                if not auth.get("authorized"):
+                    stop_state["cancel"] = str(auth.get("reason") or "unauthorized")
+                    return
+
+        reauth_task = asyncio.create_task(_reauth_loop())
+
+    pump_task = asyncio.create_task(_upload_pump())
+
+    try:
+        all_scores, all_per_type, all_details = await _utils_facade()._evaluate_seeds(
+            self,
+            uid,
+            model_path,
+            seeds,
+            family_id=family_id,
+            description=phase_description,
+            on_seed_complete=hb.on_seed_complete,
+            on_seed_result=_on_result,
+            should_stop=_combined_stop,
+            prior_seeds_done=evaluator_prior_done,
+            prior_total_seeds=total_for_evaluator,
+            prior_avg=0.0,
+            pre_built_tasks=pre_built_tasks,
+            retry_budget=retry_budget,
+        )
+        _fire_chunk_complete()
+    finally:
+        if reauth_task is not None:
+            reauth_task.cancel()
+            try:
+                await reauth_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        upload_queue.put_nowait(None)
+        try:
+            await pump_task
+        except Exception as exc:
+            bt.logging.warning(f"Seed score upload pump failed for UID {uid}: {exc}")
+        if not seen and all_details:
+            rows = [
+                {
+                    "seed_index": seed_offset + j,
                     "score": detail["score"],
                     "metric_key": detail.get("metric_key") or detail["map_type"],
                     "map_type": detail["map_type"],
                     "failure_reason": detail.get("failure_reason", "NONE"),
                 }
-                for j, detail in enumerate(batch_details)
+                for j, detail in enumerate(all_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"
                 and not _is_infra_failure(detail.get("failure_reason"))
             ]
-            if seed_batch:
+            for start in range(0, len(rows), chunk_size):
                 await _wait_for_slot()
-                inflight.append(asyncio.create_task(_safe_upload(seed_batch)))
-
-            all_scores.extend(batch_scores)
-            for type_name, scores in batch_per_type.items():
-                if type_name in all_per_type:
-                    all_per_type[type_name].extend(scores)
-            all_details.extend(batch_details)
-
-            if on_chunk_complete is not None:
-                try:
-                    on_chunk_complete(
-                        evaluated=len(all_scores),
-                        total=len(seeds),
-                        running_avg=float(np.mean(all_scores)) if all_scores else 0.0,
-                        chunk_scores=list(batch_scores),
-                        chunk_per_type={k: list(v) for k, v in batch_per_type.items()},
-                        chunk_details=list(batch_details),
-                    )
-                except Exception as exc:
-                    bt.logging.warning(f"on_chunk_complete callback failed for UID {uid}: {exc}")
-    finally:
+                inflight.append(
+                    asyncio.create_task(_safe_upload(rows[start:start + chunk_size]))
+                )
         await _drain_inflight()
         if failed_batches:
             retry_queue = list(failed_batches)
@@ -389,7 +513,9 @@ async def _run_streaming_phase(
                         f"Final retry of {len(batch)} seed scores not recorded for UID {uid}"
                     )
 
-    return all_scores, all_per_type, all_details, cancel_reason
+    if stop_state["raise"] is not None:
+        raise stop_state["raise"]
+    return all_scores, all_per_type, all_details, stop_state["cancel"]
 
 
 async def _run_screening(
@@ -410,8 +536,8 @@ async def _run_screening(
 
     ``seeds_from`` / ``seeds_to`` carve a sub-range out of the epoch's full
     screening seed list — used for resuming an interrupted task. ``cancel_flag``
-    is set by the SSE listener; when set the streaming phase aborts at the next
-    chunk boundary.
+    is set by the SSE listener; when set the streaming phase stops dispatching
+    at the next seed.
     """
     full_seeds = _seed_manager_call(
         self.seed_manager, "get_screening_seeds", family_id
@@ -547,10 +673,9 @@ async def _run_full_benchmark(
 
     Returns (avg_score, per_type_avgs, all_scores, per_type_raw, cancel_reason).
 
-    When ``reeval`` is True the heartbeat labels the active task as REEVAL and a
-    backend authorization check runs before each streaming chunk so a stale
-    champion re-eval can be halted mid-flight (epoch rollover, admin override,
-    wrong-model edge cases).
+    When ``reeval`` is True the heartbeat labels the active task as REEVAL; a
+    stale champion re-eval is halted mid-flight via ``cancel_flag`` (SSE) or a
+    heartbeat stop, both polled before every seed dispatch.
     """
     if seeds is None:
         # A range starting below the screening boundary (REEVAL, or BENCHMARK when the backend runs without screening) spans the full seed list.

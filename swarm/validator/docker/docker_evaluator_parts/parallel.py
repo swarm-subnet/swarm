@@ -203,6 +203,8 @@ async def _run_process_parallel(
     effective_workers: int,
     runtime_tracker: Any = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
+    should_stop: Optional[Callable[[], Optional[str]]] = None,
     phase_label: str = "eval",
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
@@ -238,6 +240,15 @@ async def _run_process_parallel(
         float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
     )
     last_pressure_poll_at = 0.0
+    stop_reason: Optional[str] = None
+
+    def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
+        if on_seed_result is None:
+            return
+        try:
+            on_seed_result(int(idx), result_obj, str(status))
+        except Exception:
+            pass
     resolved_runtime_profile = _runtime_profile_from_payload(runtime_profile, all_tasks)
 
     from swarm.constants import (
@@ -344,6 +355,8 @@ async def _run_process_parallel(
             )
 
     def _dispatch_available_batches() -> None:
+        if stop_reason is not None:
+            return
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
             idle_worker_slots = [
                 slot
@@ -485,6 +498,7 @@ async def _run_process_parallel(
                 status=str(status),
                 is_runtime_failure=True,
             )
+            _emit_seed_result(idx, vr, str(status))
 
         batch_seed_meta.pop(int(request.batch_index), None)
 
@@ -621,6 +635,19 @@ async def _run_process_parallel(
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
+            if stop_reason is None and should_stop is not None:
+                reason = should_stop()
+                if reason:
+                    stop_reason = str(reason)
+                    dropped = len(pending_batch_ids)
+                    pending_batch_ids.clear()
+                    bt.logging.warning(
+                        f"[Validator eval] stop requested for UID {uid} ({stop_reason}); "
+                        f"dropping {dropped} pending seeds, finishing "
+                        f"{len(worker_active_requests)} in-flight"
+                    )
+            if stop_reason is not None and not worker_active_requests:
+                break
             _drain_progress_events()
             _maybe_poll_scheduler()
             _dispatch_available_batches()
@@ -800,6 +827,7 @@ async def _run_process_parallel(
                 _observe_final_seed(meta, final_seed_meta)
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(vr, meta, status=seed_status)
+                _emit_seed_result(idx, vr, seed_status)
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
@@ -815,6 +843,8 @@ async def _run_process_parallel(
 
         _drain_progress_events()
         _log_summary()
+        if stop_reason is not None:
+            return results
         return [
             result if result is not None else ValidationResult(
                 int(uid), False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value
@@ -848,6 +878,8 @@ async def evaluate_seeds_parallel(
     model_path: Path,
     num_workers: int = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
+    should_stop: Optional[Callable[[], Optional[str]]] = None,
     phase_label: str = "eval",
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
@@ -973,6 +1005,8 @@ async def evaluate_seeds_parallel(
         effective_workers=effective_workers,
         runtime_tracker=runtime_tracker,
         on_seed_complete=on_seed_complete,
+        on_seed_result=on_seed_result,
+        should_stop=should_stop,
         heartbeat_sec=30.0,
         phase_label=phase_label,
         prior_seeds_done=prior_seeds_done,

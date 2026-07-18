@@ -57,34 +57,57 @@ def _heartbeat(validator) -> HeartbeatManager:
     return HeartbeatManager(validator.backend_api, asyncio.get_event_loop())
 
 
-def _make_evaluate_stub(score_per_seed: float = 0.75, map_type: str = "city"):
+_ALL_MAP_TYPES = ("city", "open", "mountain", "village", "warehouse", "forest")
+
+
+def _make_evaluate_stub(
+    score_per_seed: float = 0.75,
+    map_type: str = "city",
+    per_seed_delay: float = 0.0,
+    detail_fn=None,
+):
+    """Rolling-contract stub: one call for all seeds, honoring the
+    ``should_stop`` poll before each seed and firing ``on_seed_result``
+    with a per-seed detail dict — the same protocol as the real
+    ``_evaluate_seeds``."""
+
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
-        scores = [score_per_seed] * len(seeds)
-        per_type = {"city": [], "open": [], "mountain": [], "village": [],
-                    "warehouse": [], "forest": []}
-        if map_type in per_type:
-            per_type[map_type] = list(scores)
-        details = [{"score": score_per_seed, "map_type": map_type} for _ in seeds]
+        on_seed_result = kwargs.get("on_seed_result")
+        should_stop = kwargs.get("should_stop")
+        scores: list = []
+        per_type = {name: [] for name in _ALL_MAP_TYPES}
+        details: list = []
+        for i, _seed in enumerate(seeds):
+            if should_stop is not None and should_stop():
+                break
+            if per_seed_delay:
+                await asyncio.sleep(per_seed_delay)
+            detail = (
+                dict(detail_fn(i))
+                if detail_fn is not None
+                else {"score": score_per_seed, "map_type": map_type,
+                      "failure_reason": "NONE"}
+            )
+            detail.setdefault("failure_reason", "NONE")
+            detail.setdefault("metric_key", detail["map_type"])
+            scores.append(detail["score"])
+            details.append(detail)
+            if detail["map_type"] in per_type:
+                per_type[detail["map_type"]].append(detail["score"])
+            if on_seed_result is not None:
+                on_seed_result(i, dict(detail))
         return scores, per_type, details
     return _evaluate
 
 
 def _make_evaluate_stub_with_infra(infra_local_index: int, score_per_seed: float = 0.75, map_type: str = "city"):
-    async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
-        scores = [score_per_seed] * len(seeds)
-        per_type = {"city": [], "open": [], "mountain": [], "village": [],
-                    "warehouse": [], "forest": []}
-        per_type[map_type] = list(scores)
-        details = [
-            {
-                "score": score_per_seed,
-                "map_type": map_type,
-                "failure_reason": "INFRA" if j == infra_local_index else "NONE",
-            }
-            for j in range(len(seeds))
-        ]
-        return scores, per_type, details
-    return _evaluate
+    def _detail(i):
+        return {
+            "score": score_per_seed,
+            "map_type": map_type,
+            "failure_reason": "INFRA" if i % 10 == infra_local_index else "NONE",
+        }
+    return _make_evaluate_stub(score_per_seed, map_type, detail_fn=_detail)
 
 
 def test_streaming_phase_excludes_infra_seeds_from_upload(monkeypatch):
@@ -234,7 +257,9 @@ def test_streaming_phase_happy_path(monkeypatch):
 
 def test_streaming_phase_re_authorize_cancels(monkeypatch):
     validator = _make_validator()
-    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(
+        validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
+    )
 
     authorize_calls = {"n": 0}
 
@@ -258,6 +283,7 @@ def test_streaming_phase_re_authorize_cancels(monkeypatch):
                 hb=hb,
                 chunk_size=10,
                 re_authorize=_re_authorize,
+                re_auth_interval_sec=0.01,
             )
         finally:
             hb.finish()
@@ -265,7 +291,8 @@ def test_streaming_phase_re_authorize_cancels(monkeypatch):
     scores, _per_type, _details, cancel = asyncio.run(_run())
 
     assert cancel == "epoch rotated"
-    assert len(scores) == 10
+    assert 0 < len(scores) < 30
+    assert authorize_calls["n"] == 2
 
 
 def test_streaming_phase_retries_failed_batches(monkeypatch):
@@ -506,15 +533,15 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
 
 def test_streaming_phase_reauthorize_passes_first_then_fails(monkeypatch):
     validator = _make_validator()
-    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(
+        validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
+    )
 
     calls = {"n": 0}
 
     async def _re_authorize():
         calls["n"] += 1
-        if calls["n"] == 1:
-            return {"authorized": True}
-        if calls["n"] == 2:
+        if calls["n"] <= 2:
             return {"authorized": True}
         return {"authorized": False, "reason": "model banned"}
 
@@ -532,13 +559,14 @@ def test_streaming_phase_reauthorize_passes_first_then_fails(monkeypatch):
                 hb=hb,
                 chunk_size=10,
                 re_authorize=_re_authorize,
+                re_auth_interval_sec=0.01,
             )
         finally:
             hb.finish()
 
     scores, _per_type, _details, cancel = asyncio.run(_run())
     assert cancel == "model banned"
-    assert len(scores) == 20
+    assert 0 < len(scores) < 40
     assert calls["n"] == 3
 
 
@@ -615,13 +643,12 @@ def test_streaming_phase_forwards_evaluator_prior_done(monkeypatch):
 
     asyncio.run(_run())
 
-    assert evaluator_calls[0]["prior_seeds_done"] == 300
-    assert evaluator_calls[0]["prior_total_seeds"] == 1000
-    assert evaluator_calls[1]["prior_seeds_done"] == 310
-    assert evaluator_calls[1]["prior_total_seeds"] == 1000
+    assert evaluator_calls == [
+        {"seeds_len": 20, "prior_seeds_done": 300, "prior_total_seeds": 1000}
+    ]
 
 
-def test_streaming_phase_slices_pre_built_tasks_per_chunk(monkeypatch):
+def test_streaming_phase_passes_all_pre_built_tasks_in_one_call(monkeypatch):
     validator = _make_validator()
     slices: list[list[object]] = []
 
@@ -659,10 +686,7 @@ def test_streaming_phase_slices_pre_built_tasks_per_chunk(monkeypatch):
 
     asyncio.run(_run())
 
-    assert [len(s) for s in slices] == [10, 10, 5]
-    assert slices[0] == tasks[:10]
-    assert slices[1] == tasks[10:20]
-    assert slices[2] == tasks[20:25]
+    assert slices == [tasks]
 
 
 def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
@@ -830,7 +854,18 @@ def _make_docker_evaluator(score: float = 0.73):
     from swarm.protocol import ValidationResult
 
     async def _evaluate_seeds_parallel(tasks, uid, model_path, **kwargs):
-        return [ValidationResult(int(uid), True, 1.0, float(score)) for _ in tasks]
+        on_seed_result = kwargs.get("on_seed_result")
+        should_stop = kwargs.get("should_stop")
+        results: list = []
+        for i, _task in enumerate(tasks):
+            if should_stop is not None and should_stop():
+                results.extend([None] * (len(tasks) - len(results)))
+                break
+            result = ValidationResult(int(uid), True, 1.0, float(score))
+            results.append(result)
+            if on_seed_result is not None:
+                on_seed_result(i, result, "seed_done")
+        return results
 
     return SimpleNamespace(
         evaluate_seeds_parallel=_evaluate_seeds_parallel,
@@ -975,23 +1010,15 @@ def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
     validator.backend_api.post_seed_scores_batch = _capture_upload
 
     cancel_flag = asyncio.Event()
-    chunks_seen = {"n": 0}
 
-    def _evaluate_stub_with_trip(*args, **kwargs):
-        async def _impl(_self, _uid, _model_path, seeds, *_a, **_k):
-            chunks_seen["n"] += 1
-            if chunks_seen["n"] >= 2:
-                cancel_flag.set()
-            scores = [0.5] * len(seeds)
-            details = [
-                {"score": 0.5, "map_type": "city"} for _ in seeds
-            ]
-            return scores, {"city": list(scores)}, details
-        return _impl
+    def _detail(i):
+        if i >= 19:
+            cancel_flag.set()
+        return {"score": 0.5, "map_type": "city"}
 
     monkeypatch.setattr(
         validator_utils, "_evaluate_seeds",
-        _evaluate_stub_with_trip(),
+        _make_evaluate_stub(detail_fn=_detail),
     )
 
     async def _run():
@@ -1071,23 +1098,15 @@ def test_run_screening_reeval_cancels_via_cancel_flag(monkeypatch):
     )
 
     cancel_flag = asyncio.Event()
-    chunks_seen = {"n": 0}
 
-    def _evaluate_stub_with_trip(*args, **kwargs):
-        async def _impl(_self, _uid, _model_path, seeds, *_a, **_k):
-            chunks_seen["n"] += 1
-            if chunks_seen["n"] >= 1:
-                cancel_flag.set()
-            scores = [0.5] * len(seeds)
-            details = [
-                {"score": 0.5, "map_type": "city"} for _ in seeds
-            ]
-            return scores, {"city": list(scores)}, details
-        return _impl
+    def _detail(i):
+        if i >= 9:
+            cancel_flag.set()
+        return {"score": 0.5, "map_type": "city"}
 
     monkeypatch.setattr(
         validator_utils, "_evaluate_seeds",
-        _evaluate_stub_with_trip(),
+        _make_evaluate_stub(detail_fn=_detail),
     )
 
     async def _run():
@@ -1219,7 +1238,7 @@ def test_streaming_phase_stops_when_should_stop_fires(monkeypatch):
     scores, _per_type, _details, cancel = asyncio.run(_run())
 
     assert cancel == "backend stop_required: INVALID_BENCHMARK_IN_FLIGHT: model failed"
-    assert len(scores) == 20
+    assert len(scores) == 2
 
 
 def test_streaming_phase_runs_when_should_stop_clear(monkeypatch):
@@ -1296,7 +1315,7 @@ def test_run_full_benchmark_stops_on_heartbeat_stop_required(tmp_path, monkeypat
     assert cancel is not None
     assert "INVALID_BENCHMARK_IN_FLIGHT" in cancel
     assert "BENCHMARK_FAILED" in cancel
-    assert len(scores) == 10
+    assert len(scores) == 1
 
 
 def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
@@ -1344,7 +1363,7 @@ def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
 
     assert cancel is not None
     assert "INVALID_SCREENING_IN_FLIGHT" in cancel
-    assert len(scores) == 10
+    assert len(scores) == 1
 
 
 def test_heartbeat_manager_ignores_none_response():
@@ -1452,7 +1471,7 @@ def test_heartbeat_manager_stop_latches_until_next_session():
     assert "X" in second
 
 
-def test_streaming_phase_checks_stop_each_chunk(monkeypatch):
+def test_streaming_phase_polls_stop_per_seed(monkeypatch):
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
@@ -1484,15 +1503,25 @@ def test_streaming_phase_checks_stop_each_chunk(monkeypatch):
 
     assert cancel is None
     assert len(scores) == 50
-    assert len(call_log) == 5
+    assert len(call_log) == 50
+
+
+def _patch_fast_authorize(monkeypatch):
+    real_authorize = validator_evaluation.authorize_with_retry
+
+    async def _fast_authorize(auth_fn, **kwargs):
+        kwargs["base_delay"] = 0.0
+        return await real_authorize(auth_fn, **kwargs)
+
+    monkeypatch.setattr(validator_evaluation, "authorize_with_retry", _fast_authorize)
 
 
 def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatch):
     validator = _make_validator()
-    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
     monkeypatch.setattr(
-        "swarm.validator.backend_api.AUTHORIZE_RETRY_BASE_DELAY_SEC", 0.0,
+        validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
     )
+    _patch_fast_authorize(monkeypatch)
 
     calls = {"n": 0}
 
@@ -1516,6 +1545,7 @@ def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatc
                 hb=hb,
                 chunk_size=10,
                 re_authorize=_re_authorize,
+                re_auth_interval_sec=0.01,
             )
         finally:
             hb.finish()
@@ -1531,10 +1561,10 @@ def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
     from swarm.validator.backend_api import BackendTransportError
 
     validator = _make_validator()
-    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
     monkeypatch.setattr(
-        "swarm.validator.backend_api.AUTHORIZE_RETRY_BASE_DELAY_SEC", 0.0,
+        validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
     )
+    _patch_fast_authorize(monkeypatch)
 
     calls = {"n": 0}
 
@@ -1556,6 +1586,7 @@ def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
                 hb=hb,
                 chunk_size=10,
                 re_authorize=_re_authorize,
+                re_auth_interval_sec=0.01,
             )
         finally:
             hb.finish()
@@ -1572,10 +1603,10 @@ def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
 
 def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
     validator = _make_validator()
-    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
     monkeypatch.setattr(
-        "swarm.validator.backend_api.AUTHORIZE_RETRY_BASE_DELAY_SEC", 0.0,
+        validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
     )
+    _patch_fast_authorize(monkeypatch)
 
     calls = {"n": 0}
 
@@ -1597,6 +1628,7 @@ def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
                 hb=hb,
                 chunk_size=10,
                 re_authorize=_re_authorize,
+                re_auth_interval_sec=0.01,
             )
         finally:
             hb.finish()
@@ -1604,6 +1636,7 @@ def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
     scores, _per_type, _details, cancel = asyncio.run(_run())
 
     assert cancel == "epoch rotated"
+    assert len(scores) < 30
     assert calls["n"] == 1
 
 
