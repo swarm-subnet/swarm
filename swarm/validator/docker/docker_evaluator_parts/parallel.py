@@ -156,6 +156,8 @@ def _summary_bucket_for_result(
     result_obj: Optional[ValidationResult],
     is_infra_failure: bool = False,
 ) -> str:
+    if status == "seed_timeout_strikes":
+        return "slow_act"
     if bench_engine._is_backoff_timeout_status(status):
         return "timeout"
     if is_infra_failure or bench_engine._is_backoff_infra_status(status):
@@ -203,6 +205,8 @@ async def _run_process_parallel(
     effective_workers: int,
     runtime_tracker: Any = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
+    should_stop: Optional[Callable[[], Optional[str]]] = None,
     phase_label: str = "eval",
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
@@ -238,6 +242,15 @@ async def _run_process_parallel(
         float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
     )
     last_pressure_poll_at = 0.0
+    stop_reason: Optional[str] = None
+
+    def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
+        if on_seed_result is None:
+            return
+        try:
+            on_seed_result(int(idx), result_obj, str(status))
+        except Exception:
+            pass
     resolved_runtime_profile = _runtime_profile_from_payload(runtime_profile, all_tasks)
 
     from swarm.constants import (
@@ -344,6 +357,8 @@ async def _run_process_parallel(
             )
 
     def _dispatch_available_batches() -> None:
+        if stop_reason is not None:
+            return
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
             idle_worker_slots = [
                 slot
@@ -485,6 +500,7 @@ async def _run_process_parallel(
                 status=str(status),
                 is_runtime_failure=True,
             )
+            _emit_seed_result(idx, vr, str(status))
 
         batch_seed_meta.pop(int(request.batch_index), None)
 
@@ -516,6 +532,7 @@ async def _run_process_parallel(
     seed_stats: dict[str, Any] = {
         "ok": 0,
         "failed": 0,
+        "slow_act": 0,
         "timeout": 0,
         "runtime": 0,
         "retried_timeout": 0,
@@ -559,6 +576,8 @@ async def _run_process_parallel(
             seed_stats.setdefault("timeout_seeds", []).append(_seed_label(meta))
         elif bucket == "runtime":
             seed_stats.setdefault("runtime_seeds", []).append(_seed_label(meta))
+        elif bucket == "slow_act":
+            seed_stats.setdefault("slow_act_seeds", []).append(_seed_label(meta))
 
     def _record_timeout_retry(meta: Optional[dict]) -> None:
         seed_stats["retried_timeout"] += 1
@@ -585,6 +604,7 @@ async def _run_process_parallel(
         active = len(worker_active_requests)
         counts = (
             f"{seed_stats['ok']} ok, {seed_stats['failed']} failed, "
+            f"{seed_stats['slow_act']} slow_act, "
             f"{seed_stats['timeout']} timeout, {seed_stats['runtime']} runtime, "
             f"{seed_stats['retried_timeout']} retried_timeout, "
             f"{seed_stats['retried_rpc_transport']} retried_rpc_transport"
@@ -604,6 +624,10 @@ async def _run_process_parallel(
             bt.logging.info(
                 f"  retried_rpc_transports: {', '.join(seed_stats['retried_rpc_transport_seeds'])}"
             )
+        if seed_stats.get("slow_act_seeds"):
+            bt.logging.info(
+                f"  slow_act_failures: {', '.join(seed_stats['slow_act_seeds'])}"
+            )
         if seed_stats.get("timeout_seeds"):
             bt.logging.info(f"  timeouts: {', '.join(seed_stats['timeout_seeds'])}")
         if seed_stats.get("runtime_seeds"):
@@ -621,6 +645,19 @@ async def _run_process_parallel(
 
         completed_batches = 0
         while completed_batches < len(batch_plan):
+            if stop_reason is None and should_stop is not None:
+                reason = should_stop()
+                if reason:
+                    stop_reason = str(reason)
+                    dropped = len(pending_batch_ids)
+                    pending_batch_ids.clear()
+                    bt.logging.warning(
+                        f"[Validator eval] stop requested for UID {uid} ({stop_reason}); "
+                        f"dropping {dropped} pending seeds, finishing "
+                        f"{len(worker_active_requests)} in-flight"
+                    )
+            if stop_reason is not None and not worker_active_requests:
+                break
             _drain_progress_events()
             _maybe_poll_scheduler()
             _dispatch_available_batches()
@@ -800,6 +837,7 @@ async def _run_process_parallel(
                 _observe_final_seed(meta, final_seed_meta)
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(vr, meta, status=seed_status)
+                _emit_seed_result(idx, vr, seed_status)
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
@@ -815,6 +853,8 @@ async def _run_process_parallel(
 
         _drain_progress_events()
         _log_summary()
+        if stop_reason is not None:
+            return results
         return [
             result if result is not None else ValidationResult(
                 int(uid), False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value
@@ -848,6 +888,8 @@ async def evaluate_seeds_parallel(
     model_path: Path,
     num_workers: int = None,
     on_seed_complete: Optional[Callable[..., None]] = None,
+    on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
+    should_stop: Optional[Callable[[], Optional[str]]] = None,
     phase_label: str = "eval",
     prior_seeds_done: int = 0,
     prior_total_seeds: int = 0,
@@ -973,6 +1015,8 @@ async def evaluate_seeds_parallel(
         effective_workers=effective_workers,
         runtime_tracker=runtime_tracker,
         on_seed_complete=on_seed_complete,
+        on_seed_result=on_seed_result,
+        should_stop=should_stop,
         heartbeat_sec=30.0,
         phase_label=phase_label,
         prior_seeds_done=prior_seeds_done,

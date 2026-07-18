@@ -527,105 +527,125 @@ def _run_multi_seed_rpc_sync(
                                 sim_t=t_sim,
                             )
 
-                            try:
-                                t_act_start = time.perf_counter()
-                                action_response = await asyncio.wait_for(
-                                    agent.act(observation), timeout=step_timeout
-                                )
-                                act_ms = (time.perf_counter() - t_act_start) * 1000.0
-                                action = np.frombuffer(
-                                    action_response.action.data,
-                                    dtype=np.dtype(action_response.action.dtype),
-                                ).reshape(tuple(action_response.action.shape))
-                                if use_ref:
-                                    budget = (
-                                        FIRST_STEP_BUDGET_REF_SEC
-                                        if is_first_step
-                                        else MINER_COMPUTE_BUDGET_SEC
+                            action = None
+                            step_striked = False
+                            for act_attempt in (0, 1):
+                                try:
+                                    t_act_start = time.perf_counter()
+                                    action_response = await asyncio.wait_for(
+                                        agent.act(observation), timeout=step_timeout
                                     )
-                                    if judge_act(
-                                        act_ms / 1000.0,
-                                        overhead_sec=rpc_overhead_sec,
-                                        speed_factor=speed_factor,
-                                        budget_sec=budget,
-                                        hard_cap_sec=step_timeout,
-                                    ).strike:
-                                        strikes += 1
-                                        action = _strike_zero_action(n_drones, act_dim)
+                                    act_ms = (time.perf_counter() - t_act_start) * 1000.0
+                                    candidate = np.frombuffer(
+                                        action_response.action.data,
+                                        dtype=np.dtype(action_response.action.dtype),
+                                    ).reshape(tuple(action_response.action.shape))
+                                    if use_ref:
+                                        budget = (
+                                            FIRST_STEP_BUDGET_REF_SEC
+                                            if is_first_step
+                                            else MINER_COMPUTE_BUDGET_SEC
+                                        )
+                                        if judge_act(
+                                            act_ms / 1000.0,
+                                            overhead_sec=rpc_overhead_sec,
+                                            speed_factor=speed_factor,
+                                            budget_sec=budget,
+                                            hard_cap_sec=step_timeout,
+                                        ).strike:
+                                            if not step_striked:
+                                                step_striked = True
+                                                strikes += 1
+                                            _trace(
+                                                f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
+                                                f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) "
+                                                f"attempt {act_attempt + 1}/2 "
+                                                f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                            )
+                                            if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                                bt.logging.warning(
+                                                    f"UID {uid} seed {task_idx}: {strikes} slow-act strikes, failing seed"
+                                                )
+                                                break
+                                            if act_attempt == 0:
+                                                continue
+                                            break
+                                    action = candidate
+                                    if trace_rpc and (
+                                        step_idx == 1 or step_idx % trace_every == 0
+                                    ):
                                         _trace(
-                                            f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
-                                            f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) "
+                                            f"{task_label} step={step_idx} t_sim={t_sim:.2f}s "
+                                            f"act_ok={act_ms:.1f}ms timeout={step_timeout*1000:.0f}ms"
+                                        )
+                                    break
+                                except asyncio.TimeoutError:
+                                    act_ms = (time.perf_counter() - t_act_start) * 1000
+                                    if not step_striked:
+                                        step_striked = True
+                                        strikes += 1
+                                    if use_ref:
+                                        hard_cap_hits += 1
+                                    _trace(
+                                        f"{task_label} step={step_idx} act timeout {act_ms:.1f}ms "
+                                        f"attempt {act_attempt + 1}/2 "
+                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                    )
+                                    if is_first_step:
+                                        bt.logging.warning(
+                                            f"UID {uid}: first-step act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
                                             f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                         )
-                                        if strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                            bt.logging.warning(
-                                                f"UID {uid} seed {task_idx}: {strikes} slow-act strikes, failing seed"
-                                            )
-                                            break
-                                if trace_rpc and (
-                                    step_idx == 1 or step_idx % trace_every == 0
-                                ):
+                                    else:
+                                        bt.logging.warning(
+                                            f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
+                                            f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
+                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                        )
+                                    if use_ref and hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
+                                        rpc_disconnected = True
+                                        bt.logging.warning(
+                                            f"UID {uid} seed {task_idx}: {hard_cap_hits} hard-cap timeouts, "
+                                            f"aborting seed and recycling container"
+                                        )
+                                        break
+                                    if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                        bt.logging.warning(
+                                            f"UID {uid} seed {task_idx}: {strikes} RPC timeouts, failing seed"
+                                        )
+                                        break
+                                    if act_attempt == 0:
+                                        continue
+                                except Exception as e:
+                                    err_txt = f"{type(e).__name__}: {e}"
+                                    if not step_striked:
+                                        step_striked = True
+                                        strikes += 1
                                     _trace(
-                                        f"{task_label} step={step_idx} t_sim={t_sim:.2f}s "
-                                        f"act_ok={act_ms:.1f}ms timeout={step_timeout*1000:.0f}ms"
-                                    )
-                            except asyncio.TimeoutError:
-                                act_ms = (time.perf_counter() - t_act_start) * 1000
-                                strikes += 1
-                                action = _strike_zero_action(n_drones, act_dim)
-                                if use_ref:
-                                    hard_cap_hits += 1
-                                _trace(
-                                    f"{task_label} step={step_idx} act timeout {act_ms:.1f}ms "
-                                    f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                )
-                                if is_first_step:
-                                    bt.logging.warning(
-                                        f"UID {uid}: first-step act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms), "
+                                        f"{task_label} step={step_idx} act error: {err_txt} "
                                         f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                     )
-                                else:
-                                    bt.logging.warning(
-                                        f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
-                                        f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
-                                        f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                    )
-                                if use_ref and hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
-                                    rpc_disconnected = True
-                                    bt.logging.warning(
-                                        f"UID {uid} seed {task_idx}: {hard_cap_hits} hard-cap timeouts, "
-                                        f"aborting seed and recycling container"
-                                    )
+                                    lowered = err_txt.lower()
+                                    if (
+                                        "broken pipe" in lowered
+                                        or "disconnected" in lowered
+                                        or "connection reset" in lowered
+                                    ):
+                                        rpc_disconnected = True
+                                        _trace(
+                                            f"{task_label} rpc disconnected; aborting seed"
+                                        )
+                                        break
+                                    if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                        bt.logging.warning(
+                                            f"UID {uid} seed {task_idx}: {strikes} RPC errors, failing seed"
+                                        )
                                     break
-                                if strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                    bt.logging.warning(
-                                        f"UID {uid} seed {task_idx}: {strikes} RPC timeouts, failing seed"
-                                    )
-                                    break
-                            except Exception as e:
+
+                            if action is None:
                                 action = _strike_zero_action(n_drones, act_dim)
-                                err_txt = f"{type(e).__name__}: {e}"
-                                strikes += 1
-                                _trace(
-                                    f"{task_label} step={step_idx} act error: {err_txt} "
-                                    f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                )
-                                lowered = err_txt.lower()
-                                if (
-                                    "broken pipe" in lowered
-                                    or "disconnected" in lowered
-                                    or "connection reset" in lowered
-                                ):
-                                    rpc_disconnected = True
-                                    _trace(
-                                        f"{task_label} rpc disconnected; aborting seed"
-                                    )
-                                    break
-                                if strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                    bt.logging.warning(
-                                        f"UID {uid} seed {task_idx}: {strikes} RPC errors, failing seed"
-                                    )
-                                    break
+                            if rpc_disconnected or strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                break
 
                             is_first_step = False
 
@@ -730,7 +750,12 @@ def _run_multi_seed_rpc_sync(
                             _trace(
                                 f"{task_label} failed due to strike limit; returning zero result"
                             )
-                            results.append(ValidationResult(uid, False, t_sim, 0.0))
+                            results.append(
+                                ValidationResult(
+                                    uid, False, t_sim, 0.0,
+                                    failure_reason=FailureReason.SLOW_ACT_STRIKES.value,
+                                )
+                            )
                             _emit_seed_complete(
                                 task,
                                 status="seed_timeout_strikes",

@@ -270,10 +270,11 @@ COPY_CORR_MIN = 0.995
 COPY_SD_MAX = 0.03
 COPY_MEAN_MAX = 0.002
 
-# Unified streaming chunk size used by screening, benchmark, and reeval phases.
-# Smaller chunks give fresher UI updates at the cost of more seed-score uploads.
+# Upload group size for streamed seed scores across screening, benchmark, and
+# reeval; smaller groups give fresher UI updates at the cost of more uploads.
 UNIFIED_CHUNK_SIZE = 10
 MAX_INFLIGHT_SEED_UPLOADS = 3
+RE_AUTH_INTERVAL_SEC = 60.0
 
 # =============================================================================
 # SAR (Search-and-Rescue) thresholds and scoring constants

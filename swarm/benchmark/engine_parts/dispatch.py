@@ -84,7 +84,7 @@ _RESOURCE_CLASS_GROUPS = {
     "heavy": ("type4_village", "type3_mountain", "type6_forest"),
 }
 _GROUP_CONCURRENCY_LIMITS = {
-    "type3_mountain": 1,
+    "type3_mountain": 2,
 }
 _HEAVY_GROUPS = frozenset(
     group_name
@@ -333,7 +333,7 @@ def _is_clean_execution_status(status: str) -> bool:
 
 def _max_heavy_active(active_worker_cap: int) -> int:
     worker_cap = max(1, int(active_worker_cap))
-    return max(1, min(4, (worker_cap + 1) // 3))
+    return max(1, worker_cap - 1)
 
 
 def _is_backoff_timeout_status(status: str) -> bool:

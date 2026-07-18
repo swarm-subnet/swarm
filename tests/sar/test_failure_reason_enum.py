@@ -10,6 +10,7 @@ def test_failure_reason_members_exist():
         "NO_TOUCH_SPHERE": "NO_TOUCH_SPHERE",
         "TILT": "TILT",
         "TIMEOUT": "TIMEOUT",
+        "SLOW_ACT_STRIKES": "SLOW_ACT_STRIKES",
         "INFEASIBLE": "INFEASIBLE",
         "SPAWN_FAILURE": "SPAWN_FAILURE",
         "EVAL_ERROR": "EVAL_ERROR",

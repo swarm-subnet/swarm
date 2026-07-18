@@ -204,11 +204,11 @@ def test_select_next_batch_index_allows_heavy_seed_when_capacity_is_available():
 def test_max_heavy_active_scales_with_worker_count():
     assert bench_full_eval._max_heavy_active(1) == 1
     assert bench_full_eval._max_heavy_active(2) == 1
-    assert bench_full_eval._max_heavy_active(3) == 1
-    assert bench_full_eval._max_heavy_active(4) == 1
-    assert bench_full_eval._max_heavy_active(6) == 2
-    assert bench_full_eval._max_heavy_active(8) == 3
-    assert bench_full_eval._max_heavy_active(12) == 4
+    assert bench_full_eval._max_heavy_active(3) == 2
+    assert bench_full_eval._max_heavy_active(4) == 3
+    assert bench_full_eval._max_heavy_active(6) == 5
+    assert bench_full_eval._max_heavy_active(8) == 7
+    assert bench_full_eval._max_heavy_active(12) == 11
 
 
 def test_scheduler_ignores_non_resource_failure_statuses():
