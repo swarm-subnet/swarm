@@ -1076,7 +1076,11 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
     assert results[0].score == pytest.approx(0.0)
     assert [payload["status"] for payload in callback_payloads] == ["seed_timeout_strikes"]
     assert not any("retrying timed-out seed mountain:3201" in line for line in log_lines)
-    assert any("1 failed, 0 timeout, 0 runtime, 0 retried_timeout" in line for line in log_lines)
+    assert any(
+        "0 failed, 1 slow_act, 0 timeout, 0 runtime, 0 retried_timeout" in line
+        for line in log_lines
+    )
+    assert any("slow_act_failures: mountain:3201" in line for line in log_lines)
 
 
 def test_is_rpc_transport_status_classifies_transport_failures():

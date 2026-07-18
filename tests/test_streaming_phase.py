@@ -144,6 +144,60 @@ def test_streaming_phase_excludes_infra_seeds_from_upload(monkeypatch):
     assert sorted(uploaded_indices) == [i for i in range(20) if i not in (2, 12)]
 
 
+def test_streaming_phase_uploads_slow_act_strikes_as_valid_zero(monkeypatch):
+    validator = _make_validator()
+
+    def _detail(i):
+        if i == 1:
+            return {"score": 0.0, "map_type": "mountain",
+                    "failure_reason": "SLOW_ACT_STRIKES"}
+        return {"score": 0.6, "map_type": "city"}
+
+    monkeypatch.setattr(
+        validator_utils, "_evaluate_seeds", _make_evaluate_stub(detail_fn=_detail),
+    )
+
+    rows: list[dict] = []
+
+    async def _capture(**kwargs):
+        rows.extend(kwargs["scores"])
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=_FAKE_MODEL_ZIP,
+                seeds=list(range(3)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=3,
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == 3
+    striked = [r for r in rows if r["seed_index"] == 1]
+    assert striked == [
+        {
+            "seed_index": 1,
+            "score": 0.0,
+            "metric_key": "mountain",
+            "map_type": "mountain",
+            "failure_reason": "SLOW_ACT_STRIKES",
+        }
+    ]
+
+
 def test_streaming_phase_forwards_task_id_to_upload(monkeypatch):
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())

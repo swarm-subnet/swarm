@@ -156,6 +156,8 @@ def _summary_bucket_for_result(
     result_obj: Optional[ValidationResult],
     is_infra_failure: bool = False,
 ) -> str:
+    if status == "seed_timeout_strikes":
+        return "slow_act"
     if bench_engine._is_backoff_timeout_status(status):
         return "timeout"
     if is_infra_failure or bench_engine._is_backoff_infra_status(status):
@@ -530,6 +532,7 @@ async def _run_process_parallel(
     seed_stats: dict[str, Any] = {
         "ok": 0,
         "failed": 0,
+        "slow_act": 0,
         "timeout": 0,
         "runtime": 0,
         "retried_timeout": 0,
@@ -573,6 +576,8 @@ async def _run_process_parallel(
             seed_stats.setdefault("timeout_seeds", []).append(_seed_label(meta))
         elif bucket == "runtime":
             seed_stats.setdefault("runtime_seeds", []).append(_seed_label(meta))
+        elif bucket == "slow_act":
+            seed_stats.setdefault("slow_act_seeds", []).append(_seed_label(meta))
 
     def _record_timeout_retry(meta: Optional[dict]) -> None:
         seed_stats["retried_timeout"] += 1
@@ -599,6 +604,7 @@ async def _run_process_parallel(
         active = len(worker_active_requests)
         counts = (
             f"{seed_stats['ok']} ok, {seed_stats['failed']} failed, "
+            f"{seed_stats['slow_act']} slow_act, "
             f"{seed_stats['timeout']} timeout, {seed_stats['runtime']} runtime, "
             f"{seed_stats['retried_timeout']} retried_timeout, "
             f"{seed_stats['retried_rpc_transport']} retried_rpc_transport"
@@ -617,6 +623,10 @@ async def _run_process_parallel(
         if seed_stats.get("retried_rpc_transport_seeds"):
             bt.logging.info(
                 f"  retried_rpc_transports: {', '.join(seed_stats['retried_rpc_transport_seeds'])}"
+            )
+        if seed_stats.get("slow_act_seeds"):
+            bt.logging.info(
+                f"  slow_act_failures: {', '.join(seed_stats['slow_act_seeds'])}"
             )
         if seed_stats.get("timeout_seeds"):
             bt.logging.info(f"  timeouts: {', '.join(seed_stats['timeout_seeds'])}")
