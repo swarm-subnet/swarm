@@ -11,6 +11,7 @@ def test_failure_reason_members_exist():
         "TILT": "TILT",
         "TIMEOUT": "TIMEOUT",
         "SLOW_ACT_STRIKES": "SLOW_ACT_STRIKES",
+        "ENV_FAILURE": "ENV_FAILURE",
         "INFEASIBLE": "INFEASIBLE",
         "SPAWN_FAILURE": "SPAWN_FAILURE",
         "EVAL_ERROR": "EVAL_ERROR",

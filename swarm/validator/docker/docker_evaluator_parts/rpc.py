@@ -374,7 +374,10 @@ def _run_multi_seed_rpc_sync(
                 act_hard_cap, first_hard_cap = _ref_hard_caps(rpc_overhead_sec)
             else:
                 act_hard_cap, first_hard_cap = calibrated_timeout, first_step_timeout_sec
-            for task_idx, task in enumerate(tasks):
+            task_idx = 0
+            retry_signature: Optional[str] = None
+            while task_idx < len(tasks):
+                task = tasks[task_idx]
                 if stop_event is not None and stop_event.is_set():
                     remaining = len(tasks) - task_idx
                     if remaining > 0:
@@ -850,33 +853,52 @@ def _run_multi_seed_rpc_sync(
                         exc_t_sim = t_sim
                     except NameError:
                         exc_t_sim = 0.0
+                    signature = f"{type(e).__name__}: {e}"
+                    if retry_signature is None:
+                        retry_signature = signature
+                        bt.logging.warning(
+                            f"UID {uid} {task_label} failed: {signature}; "
+                            f"rebuilding environment for one retry"
+                        )
+                        _set_phase(
+                            "seed_env_retry", task=task_label, step=0, sim_t=exc_t_sim
+                        )
+                        continue
+                    deterministic = signature == retry_signature
+                    failure_reason = (
+                        FailureReason.ENV_FAILURE
+                        if deterministic
+                        else FailureReason.INFRA
+                    )
+                    status = "seed_env_failure" if deterministic else "seed_exception"
                     bt.logging.warning(
-                        f"UID {uid} {task_label} failed: {type(e).__name__}: {e}"
+                        f"UID {uid} {task_label} failed twice "
+                        f"({'identical' if deterministic else 'different'} error): "
+                        f"{signature}"
                     )
-                    _set_phase(
-                        "seed_exception", task=task_label, step=0, sim_t=exc_t_sim
-                    )
-                    _trace(
-                        f"{task_label} failed with exception: {type(e).__name__}: {e}"
-                    )
+                    _set_phase(status, task=task_label, step=0, sim_t=exc_t_sim)
+                    _trace(f"{task_label} failed with exception: {signature}")
                     results.append(
                         ValidationResult(
                             uid, False, exc_t_sim, 0.0,
-                            failure_reason=FailureReason.INFRA.value,
+                            failure_reason=failure_reason.value,
                         )
                     )
                     _emit_seed_complete(
                         task,
-                        status="seed_exception",
+                        status=status,
                         success=False,
                         sim_t=exc_t_sim,
                         seed_wall_sec=time.time() - seed_wall_start,
                         step_idx=0,
-                        error=f"{type(e).__name__}: {e}",
+                        error=signature,
                         calibration_overhead_sec=locals().get("rpc_overhead_sec"),
                         calibration_cpu_factor=locals().get("cpu_factor"),
                         calibrated_timeout_sec=locals().get("calibrated_timeout"),
                     )
+
+                retry_signature = None
+                task_idx += 1
 
         return results
 
