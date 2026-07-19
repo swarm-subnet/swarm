@@ -428,7 +428,10 @@ class MovingDroneAviary(BaseRLAviary):
                 body_uid = p.getBodyUniqueId(body_idx, physicsClientId=cli)
                 if body_uid in excluded:
                     continue
-                mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+                try:
+                    mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+                except p.error:
+                    continue
                 if (mx[0] - mn[0]) > 50.0 or (mx[1] - mn[1]) > 50.0:
                     continue
                 contacts = p.getClosestPoints(plat_uid, body_uid, distance=0.15, physicsClientId=cli)
@@ -580,7 +583,10 @@ class MovingDroneAviary(BaseRLAviary):
             return False
 
         cli = getattr(self, "CLIENT", 0)
-        mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+        try:
+            mn, mx = p.getAABB(body_uid, physicsClientId=cli)
+        except p.error:
+            return False
 
         if mx[2] >= platform_pos[2]:
             return False
@@ -816,7 +822,10 @@ class MovingDroneAviary(BaseRLAviary):
             uid = p.getBodyUniqueId(i, physicsClientId=cli)
             if uid in protected:
                 continue
-            mn, mx = p.getAABB(uid, physicsClientId=cli)
+            try:
+                mn, mx = p.getAABB(uid, physicsClientId=cli)
+            except p.error:
+                continue
             span = max(mx[0] - mn[0], mx[1] - mn[1])
             if span < CULL_MIN_AABB_SPAN:
                 continue
