@@ -150,7 +150,11 @@ def _find_clear_platform_position(
     if min_obstacle_height > 0:
         skip_bodies = set()
         for bid in range(body_count_before, p.getNumBodies(physicsClientId=cli)):
-            mn, mx = p.getAABB(bid, physicsClientId=cli)
+            try:
+                mn, mx = p.getAABB(bid, physicsClientId=cli)
+            except p.error:
+                skip_bodies.add(bid)
+                continue
             if (mx[2] - mn[2]) <= min_obstacle_height:
                 skip_bodies.add(bid)
 
@@ -396,7 +400,10 @@ def build_autopilot_world(tagger, cli, seed, start, goal, challenge_type,
         if challenge_type == 4:
             new_s_surface = float(_raycast_surface_z(cli, sx, sy))
             for bid in range(static_world_body_base, p.getNumBodies(physicsClientId=cli)):
-                mn, mx = p.getAABB(bid, physicsClientId=cli)
+                try:
+                    mn, mx = p.getAABB(bid, physicsClientId=cli)
+                except p.error:
+                    continue
                 if mn[0] <= sx <= mx[0] and mn[1] <= sy <= mx[1] and mx[2] > new_s_surface:
                     new_s_surface = mx[2]
             sz = new_s_surface + C.START_PLATFORM_HEIGHT + 0.15
@@ -429,7 +436,10 @@ def build_autopilot_world(tagger, cli, seed, start, goal, challenge_type,
             if challenge_type == 4:
                 new_gz = float(_raycast_surface_z(cli, new_gx, new_gy))
                 for bid in range(static_world_body_base, p.getNumBodies(physicsClientId=cli)):
-                    mn, mx = p.getAABB(bid, physicsClientId=cli)
+                    try:
+                        mn, mx = p.getAABB(bid, physicsClientId=cli)
+                    except p.error:
+                        continue
                     if mn[0] <= new_gx <= mx[0] and mn[1] <= new_gy <= mx[1] and mx[2] > new_gz:
                         new_gz = mx[2]
             gx, gy, gz = new_gx, new_gy, new_gz

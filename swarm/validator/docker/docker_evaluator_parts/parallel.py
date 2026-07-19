@@ -158,6 +158,8 @@ def _summary_bucket_for_result(
 ) -> str:
     if status == "seed_timeout_strikes":
         return "slow_act"
+    if status == "seed_env_failure":
+        return "runtime"
     if bench_engine._is_backoff_timeout_status(status):
         return "timeout"
     if is_infra_failure or bench_engine._is_backoff_infra_status(status):

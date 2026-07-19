@@ -137,6 +137,7 @@ _RESOURCE_SOFT_SIGNAL_STATUSES = frozenset(
         "seed_timeout_strikes",
         "seed_rpc_disconnected",
         "seed_exception",
+        "seed_env_failure",
         "rpc_connect_failed",
         "rpc_ping_timeout",
     }
