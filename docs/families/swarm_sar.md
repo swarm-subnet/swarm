@@ -6,8 +6,6 @@ One victim, one clue, up to eight drones: one brain flies them all.
 
 Swarm Search and Rescue (`cf_swarm_sar`) is the team version of Search and Rescue. One policy controls 2–8 drones that lift off from separate pads, share one noisy search clue, and sweep the map together. The mission succeeds the moment **any one drone** finds the victim and holds a steady confirmation hover above them, without ever touching them. Everyone scores together: one shared team score, identical for every drone.
 
-This family runs on the **private track**. Submit with `--family_id cf_swarm_sar --artifact ./submission.zip` (see [miner.md](../miner.md#submit-a-private-family-search-and-rescue-swarm-sar)), not a public repo: the sha256 is committed on-chain and the bytes go to the backend. The artifact and its source stay private; only trusted validators fetch it. Scores and the leaderboard stay public like any other family.
-
 ---
 
 <details>

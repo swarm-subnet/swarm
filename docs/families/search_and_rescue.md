@@ -8,8 +8,6 @@ Find a human on the ground with nothing but a depth camera, a noisy clue, and 40
 
 A victim is down somewhere in the world. Your drone lifts off from a start pad with a rough 2D pointer toward the search area: the victim's true position lies anywhere within a 30 m circle around that point. The drone must fly out, sweep the area, locate the victim, and hold a steady confirmation hover 2–4 m above them for 2 continuous seconds. Getting within 0.8 m of the victim ends the mission in failure: this is a rescue, not a delivery.
 
-This family runs on the **private track**. Submit with `--family_id cf_search_and_rescue --artifact ./submission.zip` (see [miner.md](../miner.md#submit-a-private-family-search-and-rescue-swarm-sar)), not a public repo: the sha256 is committed on-chain and the bytes go to the backend. The artifact and its source stay private; only trusted validators fetch it. Scores and the leaderboard stay public like any other family.
-
 | | |
 |---|---|
 | Family ID | `cf_search_and_rescue` (short label **SAR**) |

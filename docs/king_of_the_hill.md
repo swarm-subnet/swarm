@@ -215,12 +215,7 @@ The clock only resets on a **real crowning**: the weekly champion re-evaluation 
 <a id="who-a-seat-can-pay"></a>
 ### Who a seat can pay
 
-Before shipping a window to validators, the backend checks every seat:
-
-| Submission type | Eligible when |
-|---|---|
-| Public (GitHub) | `repo_intact` is true, and the repo is accessible |
-| Private | the sealed artifact is still on file |
+Before shipping a window to validators, the backend checks every seat: a seat is payable while `repo_intact` is true and the repo is accessible.
 
 Champion status is **not** required: past kings in the window are ordinary evaluated models. An ineligible seat is skipped at payout and its slice renormalizes onto the family's surviving kings. UID 0 is reserved and can never hold a seat.
 
@@ -269,7 +264,7 @@ Not on the same hotkey. Once your model is evaluated, the hotkey's slot is locke
 
 ### What happens to a king who deletes their GitHub repo?
 
-Their seat stops paying. A seat is only payable while its repo is intact and accessible (or, for private submissions, while the sealed artifact is on file). The seat keeps its window slot but is skipped at payout, and its slice renormalizes onto the family's surviving kings. It comes back if the repo does.
+Their seat stops paying. A seat is only payable while its repo is intact and accessible. The seat keeps its window slot but is skipped at payout, and its slice renormalizes onto the family's surviving kings. It comes back if the repo does.
 
 ### Why is there a minimum jump to take the throne?
 
@@ -299,7 +294,7 @@ For now there are only five families and their slices are already fixed, so noth
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
 | **Stale task** | A family with no new crowning for 7 days; its whole slice burns until the next crowning. Re-evals never reset the clock. |
-| **Payable seat** | A window seat that passes the eligibility check: intact + accessible repo for public submissions, sealed artifact on file for private ones. |
+| **Payable seat** | A window seat that passes the eligibility check: an intact and accessible repo. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
 | **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity; zero when the score does not exceed the previous king's. Feeds the seat bonus, capped at `1.0`. |

@@ -98,9 +98,9 @@ Comma-separated coldkey whitelist, checked by `require_trusted_validator` on the
 | Empty / unset | **Fail-closed**: every evaluation endpoint returns 403 and heartbeats tell validators to stop — nothing is evaluated until the whitelist is configured |
 | Configured | **Fail-closed**: coldkey resolved from the DB (`validatoronchain`) then the metagraph; unresolved or unlisted coldkeys get 403 with "Contact the team to be added" |
 
-`require_strict_trusted_validator` (private artifact bytes) applies the same fail-closed rule.
+`require_strict_trusted_validator` (private-track artifact bytes) applies the same fail-closed rule; the private track itself is dormant — every family is public.
 
-> **Required before anything scores.** The whitelist gates all evaluation, so a fresh deploy must set `TRUSTED_VALIDATOR_COLDKEYS` before validators can take tasks. The private families (`cf_search_and_rescue`, `cf_swarm_sar`) additionally serve artifacts only through the strict gate and need those validators on `>= 5.0.0`. Set the whitelist and roll out 5.0.0 validators **before** relying on evaluation.
+> **Required before anything scores.** The whitelist gates all evaluation, so a fresh deploy must set `TRUSTED_VALIDATOR_COLDKEYS` before validators can take tasks. Set the whitelist **before** relying on evaluation.
 
 ---
 

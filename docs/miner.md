@@ -32,7 +32,7 @@ Train an autonomous drone pilot, benchmark it against 1,100 procedurally generat
 
 ## System Requirements
 
-Mining is extremely lightweight: your miner commits its submission to the chain (a GitHub URL for public families, or a hash plus a one-time artifact upload for the private families) and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (your choice of SB3, PyTorch, custom RL).
+Mining is extremely lightweight: your miner commits its submission to the chain (a GitHub URL) and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (your choice of SB3, PyTorch, custom RL).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -60,15 +60,15 @@ pip install -e .
 
 ## Challenge Families
 
-Swarm runs **five challenge families**, all active. Three are public track (Autopilot, Swarm Autopilot, Interceptor); two, Search and Rescue and Swarm Search and Rescue, are private track. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
+Swarm runs **five challenge families**, all active and all public. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
-| Family | ID | Track | Drones | Maps | Emission slice | Guide |
-|--------|----|-------|--------|------|----------------|-------|
-| Autopilot / Navigation | `cf_autopilot` | Public | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/autopilot.md](families/autopilot.md) |
-| Search and Rescue | `cf_search_and_rescue` | Private | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/search_and_rescue.md](families/search_and_rescue.md) |
-| Swarm Autopilot | `cf_swarm_autopilot` | Public | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
-| Swarm Search and Rescue | `cf_swarm_sar` | Private | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](families/swarm_sar.md) |
-| Interceptor | `cf_interceptor` | Public | 1 (vs. a validator-flown target) | Open | 10% | [families/interceptor.md](families/interceptor.md) |
+| Family | ID | Drones | Maps | Emission slice | Guide |
+|--------|----|--------|------|----------------|-------|
+| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/autopilot.md](families/autopilot.md) |
+| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/search_and_rescue.md](families/search_and_rescue.md) |
+| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
+| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](families/swarm_sar.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 10% | [families/interceptor.md](families/interceptor.md) |
 
 The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions; the remainder that no family claims is burned. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
@@ -337,7 +337,7 @@ git push
 
 ### 5. Submit
 
-> **One model per hotkey.** A hotkey enters exactly one family with exactly one model: a public family published from its repo's manifest, or a private family committed as a digest. To compete in more families, register more hotkeys, one per family.
+> **One model per hotkey.** A hotkey enters exactly one family with exactly one model, published from its repo's manifest. To compete in more families, register more hotkeys, one per family.
 >
 > Treat every submission as final. Once your model is evaluated, the hotkey's slot is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
 >
@@ -391,27 +391,6 @@ python neurons/miner.py \
 The miner commits your repo URL on-chain and exits. You do **not** need to stay online: validators discover your model automatically.
 
 The repo URL carries your single family artifact. A manifest declaring more than one family is rejected outright, and a commitment naming a different family while your hotkey already holds a live model is ignored.
-
-### Submit a Private Family (Search and Rescue, Swarm SAR)
-
-Search and Rescue and Swarm Search and Rescue run on the private track: no GitHub repo, no `--github_url`. Instead, commit the artifact's sha256 hash on-chain and upload the zip itself directly to the backend:
-
-```bash
-source miner_env/bin/activate
-
-python neurons/miner.py \
-     --netuid 124 \
-     --subtensor.network finney \
-     --wallet.name my_cold \
-     --wallet.hotkey my_hot \
-     --family_id cf_search_and_rescue \
-     --artifact ./submission.zip \
-     --backend_url https://api.swarm124.com
-```
-
-Package the artifact with `swarm model package --family-id cf_search_and_rescue` first, same as the public track. If the upload fails after the chain commit finalizes, re-run with `--upload_only` to retry just the upload without re-committing. The backend waits a limited window (6 hours by default); after that the commitment expires and the hotkey is spent, so make sure the upload completes within the window. The artifact bytes and any source code stay on the backend: only trusted validators fetch it, and it is never made public. Your leaderboard entry, per-seed scores, and the on-chain sha256 are public like any other family; only the model and its source are hidden.
-
-A commitment must match its family's track: a public github-url commitment to a private family, or a private sha256 commitment to a public family, is rejected.
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -558,7 +537,7 @@ The hotkey is used up. A model that was evaluated and failed (or whose repo went
 
 ### Can I compete in more than one family?
 
-Not on the same hotkey: every hotkey enters exactly one family. To compete in several families, register one hotkey per family. Public families (Autopilot, Swarm Autopilot, Interceptor) each publish from their own repo via `submission_manifest.json`; Search and Rescue and Swarm SAR are submitted through the private track. Each entry is evaluated and championed independently.
+Not on the same hotkey: every hotkey enters exactly one family. To compete in several families, register one hotkey per family, each publishing from its own repo via `submission_manifest.json`. Each entry is evaluated and championed independently.
 
 ### I submitted, but I don't see a score yet. What should I check?
 
