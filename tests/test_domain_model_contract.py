@@ -133,7 +133,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
     assert autopilot["emissions_state"] == "active"
     assert autopilot["score_schema_id"] == "ss_navigation_v1"
     assert list(get_supported_interface_versions("cf_autopilot", registry=registry)) == [
-        "model_graph.v1"
+        "submission_zip.v1"
     ]
 
     assert sar["display"]["short_label"] == "SAR"
@@ -144,11 +144,11 @@ def test_challenge_family_registry_contains_canonical_metadata():
     )
 
     assert CHALLENGE_FAMILY_TO_INTERFACE_VERSIONS == {
-        "cf_autopilot": ("model_graph.v1",),
-        "cf_interceptor": ("model_graph.v1",),
-        "cf_search_and_rescue": ("model_graph.v1",),
-        "cf_swarm_autopilot": ("model_graph.v1",),
-        "cf_swarm_sar": ("model_graph.v1",),
+        "cf_autopilot": ("submission_zip.v1",),
+        "cf_interceptor": ("submission_zip.v1",),
+        "cf_search_and_rescue": ("submission_zip.v1",),
+        "cf_swarm_autopilot": ("submission_zip.v1",),
+        "cf_swarm_sar": ("submission_zip.v1",),
     }
 
 
@@ -211,13 +211,13 @@ def test_filter_challenge_family_definitions_handles_incubating_and_archived():
 def test_policy_interface_contracts_are_registry_backed():
     contract = get_policy_interface_contract(
         "cf_search_and_rescue",
-        "model_graph.v1",
+        "submission_zip.v1",
     )
 
-    assert contract["contract_filename"] == "manifest.json"
-    assert contract["execution_profile"] == "swarm.onnx-neural.cpu.v1"
-    assert contract["runner_abi"] == "graph_runner.v1"
-    assert "entry_point" not in contract
+    assert contract["contract_filename"] == "swarm_policy_contract.json"
+    assert contract["entry_point"]["module"] == "drone_agent"
+    assert contract["entry_point"]["class_name"] == "DroneFlightController"
+    assert contract["entry_point"]["act_method"] == "act"
     assert contract["observation_space"]["fields"]["depth"]["shape"] == [256, 256, 1]
     assert contract["observation_space"]["fields"]["rgb"]["shape"] == [256, 256, 3]
     assert contract["action_space"]["shape"] == [6]

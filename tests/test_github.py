@@ -45,13 +45,13 @@ def test_validate_github_url_rejects_empty():
 
 def test_build_raw_urls_returns_main_and_master():
     urls = build_raw_urls(
-        "https://github.com/user/repo", "artifacts/cf_autopilot/model_graph.zip"
+        "https://github.com/user/repo", "artifacts/cf_autopilot/submission.zip"
     )
     assert len(urls) == 2
     assert "main" in urls[0]
     assert "master" in urls[1]
-    assert urls[0].endswith("/artifacts/cf_autopilot/model_graph.zip")
-    assert urls[1].endswith("/artifacts/cf_autopilot/model_graph.zip")
+    assert urls[0].endswith("/artifacts/cf_autopilot/submission.zip")
+    assert urls[1].endswith("/artifacts/cf_autopilot/submission.zip")
 
 
 def _make_response(status_code: int, content: bytes = b"") -> MagicMock:

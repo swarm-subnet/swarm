@@ -23,7 +23,7 @@ import bittensor as bt
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
-from swarm.model_graph import ReasonCode
+from swarm.core.faults import ReasonCode
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.runtime_telemetry import tracker_call
 
@@ -217,6 +217,7 @@ async def _run_process_parallel(
     runtime_profile: Optional[dict[str, Any]] = None,
     retry_budget: Optional[dict[str, int]] = None,
     host_speed_factor: Optional[float] = None,
+    model_image: Optional[str] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -396,6 +397,7 @@ async def _run_process_parallel(
                 task_total=len(all_tasks),
                 runtime_profile=resolved_runtime_profile.as_dict(),
                 host_speed_factor=host_speed_factor,
+                model_image=model_image,
             )
             worker_active_requests[worker_slot] = request
             now = time.time()
@@ -915,6 +917,8 @@ async def evaluate_seeds_parallel(
         total_tasks=int(len(tasks)),
     )
 
+    from .batch import check_task_versions, prepare_model_image
+
     if not _docker_evaluator_facade().DockerSecureEvaluator._base_ready:
         from .batch import _ensure_host_speed_factor
 
@@ -953,9 +957,14 @@ async def evaluate_seeds_parallel(
             task_total=len(tasks),
             runtime_profile_payload=runtime_profile.as_dict(),
             host_speed_factor=speed.factor,
+            model_image=await asyncio.to_thread(
+                prepare_model_image,
+                self,
+                uid,
+                model_path,
+                runtime_profile_payload=runtime_profile.as_dict(),
+            ),
         )
-
-    from .batch import check_task_versions
 
     schema_reject = check_task_versions(uid, 0, tasks)
     if schema_reject is not None:
@@ -967,6 +976,14 @@ async def evaluate_seeds_parallel(
             error=f"uid {uid} task schema version not supported",
         )
         return schema_reject
+
+    model_image = await asyncio.to_thread(
+        prepare_model_image,
+        self,
+        uid,
+        model_path,
+        runtime_profile_payload=runtime_profile.as_dict(),
+    )
 
     task_meta = [
         {
@@ -1027,6 +1044,7 @@ async def evaluate_seeds_parallel(
         runtime_profile=runtime_profile.as_dict(),
         retry_budget=retry_budget,
         host_speed_factor=speed.factor,
+        model_image=model_image,
     )
 
 

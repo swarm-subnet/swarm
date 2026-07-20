@@ -1,6 +1,73 @@
 import json
+import re
+from pathlib import Path
 
+import bittensor as bt
 import numpy as np
+
+from swarm.constants import DOCKER_PIP_WHITELIST
+
+
+def _normalize_package_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
+    """Gate a miner's requirements.txt against the approved package list.
+
+    Only plain, whitelisted package specifiers are accepted: pip options, direct
+    URL/path installs and PEP 508 direct references are all refused, so the
+    dependency phase cannot fetch arbitrary code.
+    """
+    try:
+        lines = requirements_path.read_text().splitlines()
+    except Exception as e:
+        bt.logging.warning(f"UID {uid}: Failed to read requirements.txt: {e}")
+        return False
+
+    rejected = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("-"):
+            bt.logging.warning(f"UID {uid}: Pip option not allowed: {line}")
+            return False
+
+        if line.startswith(("git+", "http://", "https://", "file:", "./", "/")):
+            bt.logging.warning(f"UID {uid}: Direct URL/path install not allowed: {line}")
+            return False
+
+        if " @ " in line:
+            bt.logging.warning(f"UID {uid}: PEP 508 direct reference not allowed: {line}")
+            return False
+
+        line = line.split("#")[0].strip()
+        if not line:
+            continue
+
+        line = line.split(";")[0].strip()
+        if " " in line:
+            bt.logging.warning(
+                f"UID {uid}: Unexpected token after requirement: {raw_line.strip()!r}"
+            )
+            return False
+        name = re.split(r"[>=<!~\[]", line)[0].strip()
+        if not name:
+            continue
+
+        normalized = self._normalize_package_name(name)
+        if normalized not in DOCKER_PIP_WHITELIST:
+            rejected.append(normalized)
+
+    if rejected:
+        bt.logging.warning(
+            f"UID {uid}: Requirements rejected — packages not whitelisted: {', '.join(rejected)}"
+        )
+        return False
+
+    return True
 
 
 def _all_zero_bits(arr):

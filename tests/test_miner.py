@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import zipfile
 
 from neurons import miner
-from tests.model_graph.fixtures import base_manifest, build_artifact, dense_model
 
 
 def _make_bad_zip(tmp_path, names=("payload.bin",)):
@@ -16,19 +15,20 @@ def _make_bad_zip(tmp_path, names=("payload.bin",)):
     return str(path)
 
 
-def _make_graph(tmp_path, family_id="cf_search_and_rescue"):
-    state_width, action_width = {
-        "cf_autopilot": (141, 5),
-        "cf_search_and_rescue": (165, 6),
-    }[family_id]
-    model = dense_model({"state": (state_width,)}, "action", (action_width,))
-    manifest = base_manifest(
-        family_id,
-        models=[{"id": "p", "file": "models/p.onnx", "sha256": "0" * 64}],
-        nodes=[{"id": "p", "model": "p", "inputs": {"state": "obs.state"}}],
-        action="p.action",
-    )
-    return str(build_artifact(tmp_path, manifest, {"models/p.onnx": model}))
+def _make_submission(tmp_path, family_id="cf_search_and_rescue"):
+    action_width = {"cf_autopilot": 5, "cf_search_and_rescue": 6}[family_id]
+    path = tmp_path / "submission.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(
+            "drone_agent.py",
+            "import numpy as np\n\n\n"
+            "class DroneFlightController:\n"
+            "    def act(self, observation):\n"
+            f"        return np.zeros({action_width}, dtype=np.float32)\n\n"
+            "    def reset(self):\n"
+            "        pass\n",
+        )
+    return str(path)
 
 
 def test_validate_github_url_strips_git_suffix():
@@ -245,7 +245,7 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
             "--family_id",
             "cf_search_and_rescue",
             "--artifact",
-            _make_graph(tmp_path),
+            _make_submission(tmp_path),
             "--backend_url",
             "http://backend.test",
             "--wallet.name",
@@ -270,14 +270,40 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
 
 
 def test_validate_artifact_rules(tmp_path):
-    artifact = _make_graph(tmp_path)
+    artifact = _make_submission(tmp_path)
     assert miner._validate_artifact(artifact, family_id="cf_search_and_rescue") is None
-    assert "does not match" in miner._validate_artifact(
-        artifact, family_id="cf_autopilot"
-    )
+    bad = _make_bad_zip(tmp_path)
+    assert "missing_required_file" in miner._validate_artifact(bad)
     not_zip = tmp_path / "not_zip.txt"
     not_zip.write_text("data")
-    assert "MG_ARCHIVE_REJECTED" in miner._validate_artifact(str(not_zip))
+    assert miner._validate_artifact(str(not_zip)) is not None
+
+
+def test_validate_artifact_rejects_a_family_it_was_not_packaged_for(tmp_path):
+    """A commitment must not claim a family the packaged contract disagrees with."""
+    from swarm.cli import _package_model_artifact
+
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "drone_agent.py").write_text(
+        "import numpy as np\n\n\n"
+        "class DroneFlightController:\n"
+        "    def act(self, observation):\n"
+        "        return np.zeros(6, dtype=np.float32)\n\n"
+        "    def reset(self):\n"
+        "        pass\n"
+    )
+    packaged = _package_model_artifact(
+        source_dir=source,
+        output_zip=tmp_path / "sar.zip",
+        family_id="cf_search_and_rescue",
+        interface_version=None,
+        overwrite=True,
+    )
+    path = str(packaged.output_zip)
+
+    assert miner._validate_artifact(path, family_id="cf_search_and_rescue") is None
+    assert "does not match" in miner._validate_artifact(path, family_id="cf_autopilot")
 
 
 def test_load_local_families_reads_schema():
@@ -311,7 +337,7 @@ def test_private_unreachable_backend_blocks_before_commit(monkeypatch, tmp_path)
         monkeypatch.setattr(miner.bt, "wallet", FakeWallet)
     monkeypatch.setattr(miner.bt, "logging", fake_logging)
 
-    artifact = tmp_path / "model_graph.zip"
+    artifact = tmp_path / "submission.zip"
     artifact.write_bytes(b"zip-bytes")
     exit_code = miner.main(
         [

@@ -103,10 +103,10 @@ def test_swarm_smoke_obs_batches_and_action_validates():
         validate_action_output,
     )
 
-    contract = get_policy_interface_contract("cf_swarm_autopilot", "model_graph.v1")
+    contract = get_policy_interface_contract("cf_swarm_autopilot", "submission_zip.v1")
     action_space = contract["action_space"]
     for n in (SWARM_MIN_DRONES, SWARM_MAX_DRONES):
-        obs = build_smoke_test_observation("cf_swarm_autopilot", "model_graph.v1", num_drones=n)
+        obs = build_smoke_test_observation("cf_swarm_autopilot", "submission_zip.v1", num_drones=n)
         assert obs["depth"].shape == (n, 128, 128, 1)
         assert obs["state"].shape == (n, 190)
         validate_action_output(np.zeros((n, 5), dtype=np.float32), action_space, num_drones=n)

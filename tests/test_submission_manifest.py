@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from swarm.cli import _package_model_artifact
-from swarm.model_graph_template.generate_template import generate
 from swarm.submission_manifest import (
     REPO_LAYOUT_RULES,
     SUBMISSION_MANIFEST_FILENAME,
@@ -21,15 +20,33 @@ from swarm.submission_manifest import (
 )
 
 
+_AGENT_SOURCE = """import numpy as np
+
+
+class DroneFlightController:
+    def act(self, observation):
+        state = np.asarray(observation["state"], dtype=np.float32)
+        dim = {dim}
+        if state.ndim == 2:
+            return np.zeros((state.shape[0], dim), dtype=np.float32)
+        return np.zeros(dim, dtype=np.float32)
+
+    def reset(self):
+        pass
+"""
+
+
 def _artifact(tmp_path: Path, family_id="cf_autopilot"):
     source = tmp_path / "source"
-    generate(source)
-    output = tmp_path / "repo" / "artifacts" / family_id / "model_graph.zip"
+    source.mkdir(parents=True, exist_ok=True)
+    action_dim = 6 if "search_and_rescue" in family_id or "sar" in family_id else 5
+    (source / "drone_agent.py").write_text(_AGENT_SOURCE.format(dim=action_dim))
+    output = tmp_path / "repo" / "artifacts" / family_id / "submission.zip"
     return _package_model_artifact(
         source_dir=source,
         output_zip=output,
         family_id=family_id,
-        interface_version="model_graph.v1",
+        interface_version="submission_zip.v1",
         overwrite=True,
     )
 
@@ -38,17 +55,17 @@ def _entry(packaged) -> SubmissionArtifact:
     return SubmissionArtifact(
         family_id=packaged.family_id,
         interface_version=packaged.interface_version,
-        artifact_path=f"artifacts/{packaged.family_id}/model_graph.zip",
+        artifact_path=f"artifacts/{packaged.family_id}/submission.zip",
         sha256=packaged.sha256,
         size_bytes=packaged.output_zip.stat().st_size,
         metadata={},
     )
 
 
-def test_parse_accepts_exact_single_graph_artifact(tmp_path):
+def test_parse_accepts_exact_single_artifact(tmp_path):
     packaged = _artifact(tmp_path)
     parsed = parse_submission_manifest_payload(build_submission_manifest_payload([_entry(packaged)]))
-    assert parsed.artifacts[0].interface_version == "model_graph.v1"
+    assert parsed.artifacts[0].interface_version == "submission_zip.v1"
 
 
 @pytest.mark.parametrize("artifacts", [[], [{}, {}]])
@@ -67,8 +84,8 @@ def test_parse_rejects_old_interface():
         "manifest_version": SUBMISSION_MANIFEST_VERSION,
         "repo_layout_rules": dict(REPO_LAYOUT_RULES),
         "artifacts": [{
-            "family_id": "cf_autopilot", "interface_version": "model_graph.v0",
-            "artifact_path": "artifacts/cf_autopilot/model_graph.zip", "sha256": "0" * 64,
+            "family_id": "cf_autopilot", "interface_version": "submission_zip.v0",
+            "artifact_path": "artifacts/cf_autopilot/submission.zip", "sha256": "0" * 64,
             "size_bytes": 1, "metadata": {},
         }],
     }
@@ -94,6 +111,15 @@ def test_manifest_is_mandatory_even_when_root_zip_exists(tmp_path):
     assert validate_submission_repo(repo)[1] == f"missing_manifest:{SUBMISSION_MANIFEST_FILENAME}"
 
 
+def _normalize_imports(source: str) -> str:
+    """Map both repos' import roots onto one form; the logic must be identical."""
+    return (
+        source.replace("from swarm.core.submission_policy", "from POLICY")
+        .replace("from app.submission_policy", "from POLICY")
+        .replace("from swarm.", "from app.")
+    )
+
+
 def test_backend_mirror_matches_apart_from_imports():
     swarm_pkg = Path(__file__).resolve().parents[1] / "swarm" / "submission_manifest"
     backend = Path(__file__).resolve().parents[2] / "swarm-backend" / "app"
@@ -101,6 +127,6 @@ def test_backend_mirror_matches_apart_from_imports():
         pytest.skip("swarm-backend repository is not checked out next to swarm")
     ours = (swarm_pkg / "__init__.py").read_text()
     theirs = (backend / "submission_manifest.py").read_text()
-    assert ours.replace("from swarm.", "from app.") == theirs
+    assert _normalize_imports(ours) == _normalize_imports(theirs)
     ours_schema = (swarm_pkg / "submission_manifest.schema.json").read_bytes()
     assert ours_schema == (backend / "submission_manifest.schema.json").read_bytes()

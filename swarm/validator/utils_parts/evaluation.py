@@ -21,11 +21,9 @@ from swarm.constants import (
     UNIFIED_CHUNK_SIZE,
 )
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
-from swarm.model_graph import (
+from swarm.core.faults import EvaluationFault, INFRA_FAULT_CODES, ReasonCode
+from swarm.core.submission_policy import (
     EXECUTION_PROFILE_ID,
-    INFRA_FAULT_CODES,
-    ModelGraphError,
-    ReasonCode,
     RUNNER_ABI,
     profile_digest,
 )
@@ -61,11 +59,11 @@ def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
         label = str(evaluator._get_image_hash_label() or "")
         expected = str(evaluator._calculate_docker_hash())
     except Exception as exc:
-        raise ModelGraphError(
+        raise EvaluationFault(
             ReasonCode.INFRA_IMAGE_MISMATCH, f"runner image provenance unavailable: {exc}"
         ) from exc
     if not label or label != expected:
-        raise ModelGraphError(
+        raise EvaluationFault(
             ReasonCode.INFRA_IMAGE_MISMATCH,
             f"runner image label {label!r} does not match expected build hash {expected!r}",
         )

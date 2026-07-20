@@ -41,7 +41,7 @@ from swarm import __version__ as CODE_VERSION
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.config import BackendApiSettings
 from swarm.constants import BENCHMARK_VERSION, MAX_MODEL_BYTES
-from swarm.model_graph.constants import VALIDATOR_CONTRACT
+from swarm.core.submission_policy import VALIDATOR_CONTRACT
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"

@@ -5,8 +5,10 @@ import os
 import queue
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -14,9 +16,17 @@ from typing import Any, Callable, Optional
 import bittensor as bt
 
 from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
-from swarm.constants import GLOBAL_EVAL_BASE_SEC, GLOBAL_EVAL_CAP_SEC, GLOBAL_EVAL_PER_SEED_SEC, SIM_DT
-from swarm.model_graph import ReasonCode, admit_artifact_subprocess
-from swarm.model_graph.constants import RUNNER_STARTUP_WALL_SEC
+from swarm.constants import (
+    AGENT_STARTUP_WALL_SEC,
+    GLOBAL_EVAL_BASE_SEC,
+    GLOBAL_EVAL_CAP_SEC,
+    GLOBAL_EVAL_PER_SEED_SEC,
+    MODEL_DIR,
+    SIM_DT,
+)
+from swarm.core.faults import ReasonCode
+from swarm.core.submission_policy import validate_submission_zip
+from swarm.utils.hash import sha256sum
 from swarm.protocol import (
     FailureReason,
     SCHEMA_VERSION,
@@ -38,6 +48,7 @@ from ._shared import (
     _docker_evaluator_facade,
     _runtime_profile_env,
     _runtime_profile_from_payload,
+    _submission_template_dir,
 )
 
 _CALIBRATION_MAX_AGE_SEC = 6 * 3600  # re-measure the host speed factor at least this often
@@ -122,6 +133,199 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Per-model images — miner dependencies installed before the sandbox closes
+# ──────────────────────────────────────────────────────────────────────
+
+_PIP_INSTALL_TIMEOUT_SEC = 120
+
+
+def model_image_tag(model_hash: str) -> str:
+    return f"swarm_eval_model_{model_hash[:12]}:latest"
+
+
+def _image_exists(image_tag: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image_tag],
+            capture_output=True, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def prepare_model_image(
+    self,
+    uid: int,
+    model_path: Path,
+    runtime_profile_payload: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
+    """Build a per-model image with the miner's pip dependencies baked in.
+
+    Dependencies are installed here, in a throwaway container that never runs
+    miner code, so the evaluation container itself needs no network. Returns the
+    image tag, or None when the submission declares no dependencies or the
+    install fails. Images are cached by content hash; cleanup() reaps them once
+    the model zip is gone.
+    """
+    if not model_path.is_file():
+        return None
+    image_tag = model_image_tag(sha256sum(model_path))
+    if not model_path.with_suffix(".private").exists() and _image_exists(image_tag):
+        return image_tag
+
+    tmpdir = None
+    container_name = f"swarm_pip_{uid}_{int(time.time() * 1000)}"
+    try:
+        current_uid = os.getuid()
+        current_gid = os.getgid()
+        runtime_profile = (
+            _runtime_profile_from_payload(runtime_profile_payload, [])
+            if runtime_profile_payload is not None
+            else None
+        )
+        worker_limits = self._resolve_worker_limits(0, runtime_profile=runtime_profile)
+        run_image = self.base_image
+        if runtime_profile is not None:
+            run_image = self._resolve_base_image_for_key(runtime_profile.image_key)
+
+        tmpdir = tempfile.mkdtemp()
+        os.chmod(tmpdir, 0o755)
+        submission_dir = Path(tmpdir) / "submission"
+        submission_dir.mkdir()
+        os.chmod(submission_dir, 0o755)
+
+        _extract_submission(model_path, submission_dir)
+
+        miner_requirements = submission_dir / "requirements.txt"
+        if not miner_requirements.exists():
+            return None
+
+        if model_path.with_suffix(".private").exists():
+            bt.logging.warning(
+                f"UID {uid}: private model with requirements.txt rejected "
+                "(no pre-lockdown dependency install for private submissions)"
+            )
+            return None
+
+        if not self._validate_requirements(miner_requirements, uid):
+            bt.logging.warning(f"UID {uid}: requirements.txt rejected during image build")
+            return None
+
+        startup_script = submission_dir / "startup.sh"
+        startup_script.write_text(
+            "#!/bin/bash\n"
+            "pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n"
+            "if [ $? -ne 0 ]; then exit 1; fi\n"
+            "touch /workspace/submission/.pip_done\n"
+            "sleep infinity\n"
+        )
+        os.chmod(startup_script, 0o755)
+        os.chown(startup_script, current_uid, current_gid)
+
+        cmd = [
+            "docker", "run", "--rm", "-d",
+            "--name", container_name,
+            "--user", f"{current_uid}:{current_gid}",
+            f"--memory={worker_limits['memory']}",
+            f"--cpus={worker_limits['cpus']}",
+            "--pids-limit=50",
+            "--ulimit", "nofile=256:256",
+            "--ulimit", "fsize=524288000:524288000",
+            "--security-opt", "no-new-privileges",
+            "--cap-drop", "ALL",
+            "--network", "bridge",
+            "-v", f"{submission_dir}:/workspace/submission:rw",
+        ]
+        if runtime_profile is not None:
+            for key, value in _runtime_profile_env(runtime_profile).items():
+                cmd.extend(["-e", f"{key}={value}"])
+        cmd.extend([run_image, "bash", "/workspace/submission/startup.sh"])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            bt.logging.warning(f"UID {uid}: pip container start failed: {result.stderr[:200]}")
+            return None
+
+        pip_done_flag = submission_dir / ".pip_done"
+        pip_start = time.time()
+        pip_done = False
+
+        bt.logging.info(f"UID {uid}: installing pip dependencies...")
+        while time.time() - pip_start < _PIP_INSTALL_TIMEOUT_SEC:
+            if pip_done_flag.exists():
+                pip_done = True
+                break
+            check = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                capture_output=True, text=True, timeout=10,
+            )
+            if check.returncode != 0 or check.stdout.strip() != "true":
+                break
+            time.sleep(2)
+
+        if not pip_done:
+            bt.logging.warning(f"UID {uid}: pip install failed during image build")
+            _docker_cmd_quiet(["docker", "kill", container_name])
+            _docker_cmd_quiet(["docker", "rm", "-f", container_name])
+            return None
+
+        elapsed = time.time() - pip_start
+        commit_result = subprocess.run(
+            [
+                "docker", "commit",
+                "--change", 'CMD ["python", "/workspace/submission/main.py"]',
+                container_name, image_tag,
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        _docker_cmd_quiet(["docker", "kill", container_name])
+        _docker_cmd_quiet(["docker", "rm", "-f", container_name])
+
+        if commit_result.returncode != 0:
+            bt.logging.warning(f"UID {uid}: docker commit failed: {commit_result.stderr[:200]}")
+            return None
+
+        bt.logging.info(f"UID {uid}: model image ready ({image_tag}, pip took {elapsed:.1f}s)")
+        return image_tag
+
+    except Exception as e:
+        bt.logging.warning(f"UID {uid}: prepare_model_image failed: {e}")
+        _docker_cmd_quiet(["docker", "kill", container_name])
+        _docker_cmd_quiet(["docker", "rm", "-f", container_name])
+        return None
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def remove_model_image(image_tag: str) -> None:
+    """Remove a per-model image once its evaluation is finished."""
+    try:
+        subprocess.run(["docker", "rmi", image_tag], capture_output=True, timeout=15)
+    except Exception:
+        pass
+
+
+def remove_all_model_images() -> None:
+    """Drop every cached per-model image; stale bases must not survive a base rebuild."""
+    try:
+        result = subprocess.run(
+            [
+                "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
+                "--filter", "reference=swarm_eval_model_*",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout:
+            for img in result.stdout.strip().split("\n"):
+                if img:
+                    remove_model_image(img)
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────
 # evaluate_seeds_batch — extracted phases
 # ──────────────────────────────────────────────────────────────────────
 
@@ -165,7 +369,9 @@ class _BatchContext:
     host_port: Optional[int] = None
     tmpdir: Optional[str] = None
 
-    # Graph runner state
+    # Agent runner state
+    submission_dir: Optional[Path] = None
+    model_image: Optional[str] = None
     run_image: Optional[str] = None
     current_uid: Optional[int] = None
     current_gid: Optional[int] = None
@@ -355,16 +561,15 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
             for _ in tasks
         ]
 
-    admission = admit_artifact_subprocess(model_path)
-    if not admission.accepted:
+    accepted, detail = validate_submission_zip(model_path)
+    if not accepted:
         bt.logging.warning(
-            f"[Worker {worker_id}] UID {uid} graph admission failed: "
-            f"{admission.reason_code}: {admission.detail}"
+            f"[Worker {worker_id}] UID {uid} submission rejected: {detail}"
         )
-        _notify_all_failed(status=admission.reason_code, error=admission.detail)
+        _notify_all_failed(status=ReasonCode.LOAD_FAILED.value, error=detail)
         return [
             ValidationResult(
-                uid, False, 0.0, 0.0, failure_reason=admission.reason_code
+                uid, False, 0.0, 0.0, failure_reason=ReasonCode.LOAD_FAILED.value
             )
             for _ in tasks
         ]
@@ -677,7 +882,7 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                 valid_results.append(
                     ValidationResult(
                         uid, False, 0.0, 0.0,
-                        failure_reason=ReasonCode.OUTPUT_CONTRACT.value,
+                        failure_reason=FailureReason.EVAL_ERROR.value,
                     )
                 )
 
@@ -804,7 +1009,7 @@ async def _run_host_baseline_calibration(self, worker_count: int):
     bt.logging.info(
         f"Starting host reference calibration with {requested} concurrent worker(s)"
     )
-    base_image = str(getattr(self, "base_image", "swarm_model_graph_runner:latest"))
+    base_image = str(getattr(self, "base_image", "swarm_evaluator_base:latest"))
     ctx = _calibration_mp_context()
     result_queue = ctx.Queue()
     processes = [
@@ -935,22 +1140,77 @@ async def _ensure_worker_speed_factor(self, worker_id: int):
     return await _ensure_host_speed_factor(self, max(1, int(worker_id) + 1))
 
 
-def _setup_graph_workspace(ctx: _BatchContext) -> Optional[list]:
-    """Prepare immutable artifact execution state; no submission is extracted."""
+def _extract_submission(model_path: Path, submission_dir: Path) -> None:
+    """Extract the miner's zip, flattening a single wrapping directory if present."""
+    with zipfile.ZipFile(model_path, "r") as zf:
+        zf.extractall(submission_dir)
+
+    contents = list(submission_dir.iterdir())
+    if len(contents) == 1 and contents[0].is_dir():
+        nested_dir = contents[0]
+        for item in nested_dir.iterdir():
+            target = submission_dir / item.name
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            shutil.move(str(item), str(target))
+        nested_dir.rmdir()
+
+
+def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
+    """Extract the submission and stage the RPC server next to the miner's agent."""
     runtime_profile = _runtime_profile_from_payload(ctx.runtime_profile_payload, ctx.tasks)
     worker_limits = ctx.self._resolve_worker_limits(ctx.worker_id, runtime_profile=runtime_profile)
     docker_envs = ctx.self._docker_env_overrides()
     docker_envs.update(_runtime_profile_env(runtime_profile))
     docker_envs.update({
-        "SWARM_MODEL_GRAPH_ARTIFACT": "/workspace/model_graph.zip",
         "SWARM_AGENT_PORT": "8000",
         "SWARM_START_GATE": _START_GATE_PATH,
     })
-    ctx.current_uid = os.getuid()
-    ctx.current_gid = os.getgid()
+
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+
+    tmpdir = tempfile.mkdtemp()
+    ctx.tmpdir = tmpdir  # set before chown/chmod so the outer finally still cleans up
+    os.chown(tmpdir, current_uid, current_gid)
+    os.chmod(tmpdir, 0o755)
+
+    submission_dir = Path(tmpdir) / "submission"
+    submission_dir.mkdir(exist_ok=True)
+    os.chown(submission_dir, current_uid, current_gid)
+    os.chmod(submission_dir, 0o755)
+
+    try:
+        _extract_submission(ctx.model_path, submission_dir)
+    except Exception as exc:
+        ctx.helpers.notify_all_failed(
+            status=ReasonCode.LOAD_FAILED.value, error=f"extract failed: {exc}"
+        )
+        return [
+            ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=ReasonCode.LOAD_FAILED.value)
+            for _ in ctx.tasks
+        ]
+
+    template_dir = _submission_template_dir()
+    for name in ("agent.capnp", "agent_server.py", "main.py"):
+        shutil.copy(template_dir / name, submission_dir)
+
+    for f in submission_dir.iterdir():
+        if f.is_file():
+            os.chown(f, current_uid, current_gid)
+            os.chmod(f, 0o644)
+
+    ctx.submission_dir = submission_dir
+    ctx.current_uid = current_uid
+    ctx.current_gid = current_gid
     ctx.worker_limits = worker_limits
     ctx.docker_envs = docker_envs
-    ctx.run_image = ctx.self.base_image
+    ctx.run_image = ctx.model_image or ctx.self._resolve_base_image_for_key(
+        runtime_profile.image_key
+    )
     ctx.validator_ip = ctx.self._get_docker_host_ip()
     ctx.runtime_profile = runtime_profile
     ctx.self.last_selected_runtime_profile = runtime_profile.as_dict()
@@ -997,7 +1257,7 @@ def _container_is_gone(container_name: str) -> bool:
         return False
 
 
-def _launch_graph_container(ctx: _BatchContext) -> Optional[list]:
+def _launch_container(ctx: _BatchContext) -> Optional[list]:
     obs_shm_path = _create_obs_shm(ctx.host_port)
     cmd = [
         "docker", "run", "--rm", "-d", "--name", ctx.container_name,
@@ -1009,7 +1269,7 @@ def _launch_graph_container(ctx: _BatchContext) -> Optional[list]:
         "--cap-drop", "ALL", "--network", "bridge", "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
         "-p", f"127.0.0.1:{ctx.host_port}:8000",
-        "-v", f"{ctx.model_path.resolve()}:/workspace/model_graph.zip:ro",
+        "-v", f"{ctx.submission_dir}:/workspace/submission:rw",
     ]
     if ctx.worker_limits["cpuset_cpus"]:
         cmd.extend(["--cpuset-cpus", str(ctx.worker_limits["cpuset_cpus"])])
@@ -1018,7 +1278,7 @@ def _launch_graph_container(ctx: _BatchContext) -> Optional[list]:
     if obs_shm_path:
         cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
         cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
-    cmd.append(ctx.run_image)
+    cmd.extend([ctx.run_image, "python", "/workspace/submission/main.py"])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         ctx.helpers.notify_all_failed(status=ReasonCode.INFRA_DOCKER.value, error=result.stderr[:300])
@@ -1026,7 +1286,7 @@ def _launch_graph_container(ctx: _BatchContext) -> Optional[list]:
     return None
 
 
-async def _prepare_graph_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
+async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
     container_pid = ctx.self._get_container_pid(ctx.container_name)
     if (
         not container_pid
@@ -1036,7 +1296,7 @@ async def _prepare_graph_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
         ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
         ctx.helpers.notify_all_failed(status=ReasonCode.INFRA_DOCKER.value)
         return [ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=ReasonCode.INFRA_DOCKER.value) for _ in ctx.tasks]
-    deadline = time.monotonic() + RUNNER_STARTUP_WALL_SEC
+    deadline = time.monotonic() + AGENT_STARTUP_WALL_SEC
     while time.monotonic() < deadline:
         if ctx.self._check_rpc_ready(ctx.host_port):
             ctx.connected = True
@@ -1062,6 +1322,7 @@ async def evaluate_seeds_batch(
     runtime_profile_payload: Optional[dict[str, Any]] = None,
     is_calibration_run: bool = False,
     host_speed_factor: Optional[float] = None,
+    model_image: Optional[str] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1070,6 +1331,7 @@ async def evaluate_seeds_batch(
         uid: Miner UID
         model_path: Path to model zip file
         worker_id: Worker ID for logging (0 to N_DOCKER_WORKERS-1)
+        model_image: Pre-built image carrying the miner's pip dependencies
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -1088,6 +1350,7 @@ async def evaluate_seeds_batch(
         task_offset=task_offset,
         task_total=task_total,
         runtime_profile_payload=runtime_profile_payload,
+        model_image=model_image,
     )
 
     _init_batch_state(ctx)
@@ -1136,15 +1399,15 @@ async def evaluate_seeds_batch(
     _setup_pretry_state(ctx)
 
     try:
-        early = _setup_graph_workspace(ctx)
+        early = _setup_workspace(ctx)
         if early is not None:
             return early
 
-        early = _launch_graph_container(ctx)
+        early = _launch_container(ctx)
         if early is not None:
             return early
 
-        early = await _prepare_graph_network_and_rpc(ctx)
+        early = await _prepare_network_and_rpc(ctx)
         if early is not None:
             return early
 
@@ -1236,6 +1499,37 @@ def cleanup(self):
                     bt.logging.debug(
                         f"Cleaned up orphaned verify container: {container}"
                     )
+
+        result_pip = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=swarm_pip_", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+        )
+        if result_pip.returncode == 0 and result_pip.stdout:
+            for container in result_pip.stdout.strip().split("\n"):
+                if container:
+                    subprocess.run(
+                        ["docker", "rm", "-f", container], capture_output=True, timeout=30
+                    )
+
+        result_images = subprocess.run(
+            [
+                "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
+                "--filter", "reference=swarm_eval_model_*",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result_images.returncode == 0 and result_images.stdout:
+            live_tags = set()
+            for zip_fp in MODEL_DIR.glob("*.zip"):
+                try:
+                    live_tags.add(model_image_tag(sha256sum(zip_fp)))
+                except Exception:
+                    continue
+            for img in result_images.stdout.strip().split("\n"):
+                if img and img not in live_tags:
+                    remove_model_image(img)
 
         subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
         subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)

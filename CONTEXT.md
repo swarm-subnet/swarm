@@ -102,8 +102,8 @@ Common CLI workflow:
 swarm doctor
 swarm model test --source my_model/ --family-id cf_autopilot
 swarm model package --source my_model/
-swarm model verify --model Submission/model_graph.zip
-swarm benchmark --model Submission/model_graph.zip --workers 4
+swarm model verify --model Submission/submission.zip
+swarm benchmark --model Submission/submission.zip --workers 4
 swarm report
 ```
 

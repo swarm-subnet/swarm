@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""
+Model Verification Module for Swarm Subnet.
+
+Blacklist management, ZIP safety inspection, Docker-based model verification,
+and forensic storage of detected fake models.
+"""
+
+import asyncio
+import json
+import os
+import subprocess
+import tempfile
+import time
+import shutil
+from pathlib import Path
+from typing import Dict, Tuple, Set
+from zipfile import ZipFile, BadZipFile
+
+import logging
+
+try:
+    import bittensor as bt
+    _log = bt.logging
+except ImportError:
+    _log = logging.getLogger("swarm.model_verify")
+
+from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
+from swarm.core.submission_policy import (
+    MAX_UNCOMPRESSED_BYTES,
+    check_safety,
+    check_structure,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Blacklist Management
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def load_blacklist(file_path: Path = None) -> Set[str]:
+    """Load blacklisted fake model hashes from file."""
+    try:
+        target_file = file_path if file_path is not None else BLACKLIST_FILE
+        if target_file.exists():
+            with open(target_file, "r") as f:
+                return {line.strip() for line in f if line.strip()}
+        return set()
+    except Exception as e:
+        _log.warning(f"Error loading blacklist: {e}")
+        return set()
+
+
+def save_blacklist(blacklist: Set[str], file_path: Path = None) -> None:
+    """Save blacklisted fake model hashes to file."""
+    try:
+        # Ensure the directory exists
+        target_file = file_path if file_path is not None else BLACKLIST_FILE
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_file, "w") as f:
+            for hash_val in sorted(blacklist):
+                f.write(f"{hash_val}\n")
+    except Exception as e:
+        _log.error(f"Error saving blacklist: {e}")
+
+
+def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
+    """Add a single model hash to the blacklist."""
+    try:
+        blacklist = load_blacklist(file_path)
+        blacklist.add(model_hash)
+        save_blacklist(blacklist, file_path)
+        _log.info(f"🚫 Added {model_hash[:16]}... to blacklist")
+    except Exception as e:
+        _log.error(f"Error adding to blacklist: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Model Structure Analysis
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def inspect_model_structure(zip_path: Path) -> Dict:
+    """Inspect RPC agent submission structure via the shared policy module."""
+    ok, reason = check_structure(zip_path)
+    if ok:
+        return {
+            "submission_type": "rpc",
+            "has_mlp_extractor": True,
+            "suspicious_patterns": [],
+            "class_names": ["RPC Custom Agent"],
+        }
+
+    if reason.startswith("missing_required_file:drone_agent.py"):
+        return {
+            "error": "Missing drone_agent.py - RPC agent submission required",
+            "missing_drone_agent": True,
+        }
+
+    if reason.startswith("forbidden_suffix:"):
+        suffixes = reason.removeprefix("forbidden_suffix:").split(",")
+        return {"error": f"Dangerous executable files detected: {suffixes}"}
+
+    return {"error": f"ZIP inspection failed: {reason}"}
+
+
+def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
+    """
+    Classify RPC agent validity:
+    - "legitimate": RPC agent passes all checks
+    - "missing_drone_agent": Missing drone_agent.py (reject but don't blacklist)
+    - "fake": Dangerous files detected (reject and blacklist)
+
+    Returns (status, reason)
+    """
+    if inspection_results.get("missing_drone_agent", False):
+        return (
+            "missing_drone_agent",
+            "Missing drone_agent.py - RPC agent submission required",
+        )
+
+    if "malicious_findings" in inspection_results:
+        return "fake", "Security violation: Malicious code detected"
+
+    if "error" in inspection_results:
+        if "Security violation" in inspection_results["error"]:
+            return "fake", inspection_results["error"]
+        if "Missing drone_agent.py" in inspection_results["error"]:
+            return "missing_drone_agent", inspection_results["error"]
+        if "Dangerous executable" in inspection_results["error"]:
+            return "fake", inspection_results["error"]
+        return "fake", f"Inspection error: {inspection_results['error']}"
+
+    if inspection_results.get("submission_type") == "rpc":
+        return "legitimate", "RPC submission validated"
+
+    return "legitimate", "RPC agent appears legitimate"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Forensic Storage
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def save_fake_model_for_analysis(
+    model_path: Path, uid: int, model_hash: str, reason: str, inspection_results: Dict
+) -> None:
+    """
+    Save fake model for forensic analysis. Keep max 3 fake models per UID.
+    Creates: miner_models_v2/UID_X_fake_Y/
+    """
+    try:
+        # Create base directory for this UID's fake models
+        uid_fake_dir = MODEL_DIR / f"UID_{uid}_fake"
+        uid_fake_dir.mkdir(parents=True, exist_ok=True)
+
+        # Find existing fake models for this UID
+        existing_fakes = []
+        if uid_fake_dir.exists():
+            existing_fakes = [
+                d for d in uid_fake_dir.iterdir() if d.is_dir() and d.name.isdigit()
+            ]
+            existing_fakes.sort(key=lambda x: int(x.name))
+
+        # Determine next fake number
+        if len(existing_fakes) >= 3:
+            # Remove oldest fake model (fake_1) and shift others
+            for i, fake_dir in enumerate(existing_fakes):
+                if i == 0:  # Remove first (oldest)
+                    shutil.rmtree(fake_dir, ignore_errors=True)
+                else:  # Rename others: fake_2 -> fake_1, fake_3 -> fake_2
+                    new_name = fake_dir.parent / str(i)
+                    fake_dir.rename(new_name)
+            next_fake_num = 3
+        else:
+            next_fake_num = len(existing_fakes) + 1
+
+        # Create directory for this fake model
+        fake_model_dir = uid_fake_dir / str(next_fake_num)
+        fake_model_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy the fake model
+        fake_model_file = fake_model_dir / "model.zip"
+        shutil.copy2(model_path, fake_model_file)
+
+        # Save analysis report
+        report_file = fake_model_dir / "analysis_report.json"
+        report_data = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "uid": uid,
+            "model_hash": model_hash,
+            "detection_reason": reason,
+            "file_size_bytes": model_path.stat().st_size,
+            "inspection_results": inspection_results,
+        }
+
+        with open(report_file, "w") as f:
+            json.dump(report_data, f, indent=2, default=str)
+
+        _log.info(
+            f"📁 Saved fake model UID_{uid}_fake/{next_fake_num}/ for analysis"
+        )
+        _log.info(f"   Size: {model_path.stat().st_size} bytes")
+        _log.info(f"   Hash: {model_hash[:16]}...")
+
+    except Exception as e:
+        _log.error(f"Failed to save fake model for analysis: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# ZIP Safety Inspection
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def zip_is_safe(path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES) -> bool:
+    """Reject dangerous ZIP files via the shared safety policy."""
+    ok, reason = check_safety(path, max_uncompressed=max_uncompressed)
+    if not ok:
+        _log.error(f"ZIP safety check failed: {reason}")
+    return ok
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Docker-based First-Time Model Verification
+# ──────────────────────────────────────────────────────────────────────────
+
+
+async def verify_new_model_with_docker(
+    model_path: Path, model_hash: str, miner_hotkey: str, uid: int
+) -> None:
+    """Run fake model detection in a Docker container for first-time verification."""
+    from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+
+    if not model_path.is_file():
+        _log.warning(f"Verification skipped; model file missing: {model_path}")
+        return
+
+    _log.info(
+        f"🔍 Starting first-time verification for model {model_hash[:16]}... from {miner_hotkey}"
+    )
+
+    docker_evaluator = DockerSecureEvaluator()
+
+    if not docker_evaluator._base_ready:
+        _log.warning(f"Docker not ready for verification of {model_hash[:16]}...")
+        return
+
+    container_name = f"swarm_verify_{model_hash[:8]}_{int(time.time() * 1000)}"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            current_uid = os.getuid()
+            current_gid = os.getgid()
+            os.chown(tmpdir, current_uid, current_gid)
+            os.chmod(tmpdir, 0o755)
+
+            verification_result_file = Path(tmpdir) / "verification_result.json"
+
+            dummy_task = {
+                "start": [0, 0, 1],
+                "goal": [5, 5, 2],
+                "obstacles": [],
+                "horizon": HORIZON_SEC,
+                "seed": 12345,
+            }
+
+            task_file = Path(tmpdir) / "task.json"
+            with open(task_file, "w") as f:
+                json.dump(dummy_task, f)
+
+            _log.info(
+                f"🐳 Starting Docker container for verification of UID model {model_hash[:16]}..."
+            )
+
+            cmd = [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                container_name,
+                "--user",
+                f"{current_uid}:{current_gid}",
+                "--memory=4g",
+                "--cpus=1",
+                "--pids-limit=10",
+                "--ulimit",
+                "nofile=256:256",
+                "--ulimit",
+                "fsize=524288000:524288000",
+                "--security-opt",
+                "no-new-privileges",
+                "--network",
+                "none",
+                "-v",
+                f"{tmpdir}:/workspace/shared",
+                "-v",
+                f"{model_path.absolute()}:/workspace/model.zip:ro",
+                docker_evaluator.base_image,
+                "python",
+                "-m",
+                "swarm.core.evaluator",
+                "VERIFY_ONLY",
+                str(uid),
+                "/workspace/model.zip",
+                "/workspace/shared/verification_result.json",
+            ]
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+                stdout_str = stdout.decode() if stdout else ""
+                stderr_str = stderr.decode() if stderr else ""
+
+                _log.debug(f"Verification container for {model_hash[:16]}:")
+                _log.debug(f"  Return code: {proc.returncode}")
+                _log.debug(f"  STDOUT: {stdout_str}")
+                _log.debug(f"  STDERR: {stderr_str}")
+
+                if proc.returncode != 0:
+                    _log.warning(
+                        f"Verification container failed for {model_hash[:16]} "
+                        f"with return code {proc.returncode}"
+                    )
+                    _log.warning(f"Error output: {stderr_str}")
+
+            except asyncio.TimeoutError:
+                subprocess.run(["docker", "kill", container_name], capture_output=True)
+                _log.warning(
+                    f"⏰ Verification timeout for model {model_hash[:16]}..."
+                )
+                return
+
+            _log.info(
+                f"🔚 Ending Docker container for verification of model {model_hash[:16]}..."
+            )
+
+            if verification_result_file.exists():
+                try:
+                    with open(verification_result_file, "r") as f:
+                        verification_data = json.load(f)
+
+                    if verification_data.get("is_fake_model", False):
+                        fake_reason = verification_data.get("fake_reason", "Unknown")
+                        inspection_results = verification_data.get(
+                            "inspection_results", {}
+                        )
+
+                        _log.warning(
+                            f"🚫 FAKE MODEL DETECTED during verification: {fake_reason}"
+                        )
+                        _log.info(f"Model hash: {model_hash}")
+                        _log.debug(f"Inspection details: {inspection_results}")
+
+                        save_fake_model_for_analysis(
+                            model_path, uid, model_hash, fake_reason, inspection_results
+                        )
+                        add_to_blacklist(model_hash)
+                        model_path.unlink(missing_ok=True)
+                        _log.info(
+                            f"🗑️ Removed fake model {model_hash[:16]}... from cache and blacklisted"
+                        )
+
+                    elif verification_data.get("missing_drone_agent", False):
+                        rejection_reason = verification_data.get(
+                            "rejection_reason", "Missing drone_agent.py"
+                        )
+                        _log.warning(
+                            f"⚠️ MISSING drone_agent.py during verification: {rejection_reason}"
+                        )
+                        _log.info(f"Model hash: {model_hash}")
+                        model_path.unlink(missing_ok=True)
+                        _log.info(
+                            f"🗑️ Removed model {model_hash[:16]}... from cache "
+                            f"(missing drone_agent.py - can resubmit)"
+                        )
+
+                    else:
+                        _log.info(
+                            f"✅ Model {model_hash[:16]}... passed verification - legitimate model"
+                        )
+
+                except Exception as e:
+                    _log.warning(
+                        f"Failed to parse verification results for {model_hash[:16]}: {e}"
+                    )
+            else:
+                _log.warning(
+                    f"No verification results found for model {model_hash[:16]}..."
+                )
+                try:
+                    temp_files = list(Path(tmpdir).glob("*"))
+                    _log.debug(
+                        f"Files in temp directory: {[f.name for f in temp_files]}"
+                    )
+                    expected_file = Path(tmpdir) / "verification_result.json"
+                    _log.debug(f"Expected result file: {expected_file}")
+                    _log.debug(f"Expected file exists: {expected_file.exists()}")
+                except Exception as e:
+                    _log.debug(f"Error checking temp directory: {e}")
+
+    except Exception as e:
+        _log.warning(
+            f"Docker verification failed for model {model_hash[:16]}: {e}"
+        )
+        subprocess.run(["docker", "kill", container_name], capture_output=True)

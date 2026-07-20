@@ -40,10 +40,9 @@ Scoring rewards landing, landing fast, and flying with clearance from obstacles.
 
 | | |
 |---|---|
-| Interface version | `model_graph.v1` |
-| Execution profile | `swarm.onnx-neural.cpu.v1` |
-| Runner ABI | `graph_runner.v1` |
-| Contract file | `manifest.json` (model_graph.v1) |
+| Interface version | `submission_zip.v1` |
+| Entry point | `drone_agent.DroneFlightController` |
+| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | city, open, mountain, village, warehouse, forest |
 
 ### Observation: `dict` with keys `depth`, `state`
@@ -51,7 +50,7 @@ Scoring rewards landing, landing fast, and flying with clearance from obstacles.
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
 | `depth` | float32 | (128, 128, 1) | [0, 1] |
-| `state` | float32 | (141) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `goal_offset_xyz` |
+| `state` | float32 | (141) at evaluation settings | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `goal_offset_xyz` |
 
 ### Action: float32 tensor, shape (5)
 
@@ -206,7 +205,7 @@ To take the family throne, a challenger must beat the champion's benchmark score
 
 ## Runtime limits
 
-Your graph runs inside a Docker container behind the subnet-owned runner's Cap'n Proto RPC server; the validator calls `reset()` between seeds and steps the graph every control step. Autopilot uses the default timing profile:
+Your zip runs inside a Docker container as a Cap'n Proto RPC server; the validator calls `reset()` between seeds and `act()` every control step. Autopilot uses the default timing profile:
 
 | Budget | Value |
 |---|---|
@@ -218,7 +217,7 @@ Your graph runs inside a Docker container behind the subnet-owned runner's Cap'n
 | Zip size | 50 MiB uncompressed max |
 | Container | 6 GB RAM, 2 CPUs |
 
-The graph must stay inside the execution profile's ONNX op allowlist (`swarm.onnx-neural.cpu.v1`); the full profile lives in `swarm/model_graph/execution_profile.v1.json`.
+`requirements.txt` packages must be on the Docker whitelist: torch, onnxruntime, stable-baselines3, gymnasium, numpy, opencv and friends; the full list lives in `swarm/constants.py`.
 
 Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,100-seed benchmark directly. A separate champion-gated screening phase (300 seeds with early-fail checkpoints) exists behind a code constant but is switched off.
 
@@ -231,7 +230,7 @@ Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,100-seed b
 Autopilot is the default family for the local benchmark, so this is all it takes:
 
 ```bash
-swarm benchmark --model model_graph.zip --workers 4
+swarm benchmark --model submission.zip --workers 4
 ```
 
 Package first with the family pinned explicitly:

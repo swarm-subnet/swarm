@@ -194,20 +194,12 @@ Everything happens from the terminal, with no dashboards to wrangle. Train, pack
 
 ```bash
 swarm doctor                                   # check your setup
-swarm model package --source my_model/         # package your model graph
-swarm benchmark --model model_graph.zip --workers 4   # score it locally
+swarm model package --source my_model/         # package your agent
+swarm benchmark --model submission.zip --workers 4   # score it locally
 swarm report                                   # see how it did
 ```
 
 The same engine validators use runs on your own machine, so the score you see locally is the score that counts. Full reference in the [CLI docs](docs/CLI_readme.md).
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/3679d3aa-7be0-4f30-a8a3-fc00009efa24" alt="Model graph" width="100%">
-</p>
-
-<p align="center">
-  <sub><b>What you ship.</b> A model graph: trained ONNX networks wired by a manifest, reading the world and answering with velocity commands.</sub>
-</p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

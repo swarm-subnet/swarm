@@ -33,20 +33,19 @@ The `dynamic` leading axis is the drone count for the current seed (2–8). Your
 
 | | |
 |---|---|
-| Interface version | `model_graph.v1` |
-| Execution profile | `swarm.onnx-neural.cpu.v1` |
-| Runner ABI | `graph_runner.v1` |
-| Contract file | `manifest.json` (model_graph.v1) |
+| Interface version | `submission_zip.v1` |
+| Entry point | `drone_agent.DroneFlightController` |
+| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | city, open, mountain, village, forest |
 
 ### Observation: `dict` with keys `depth`, `state`
 
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
-| `depth` | float32 | (N, 128, 128, 1) | [0, 1] |
-| `state` | float32 | (N, 190) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `goal_offset_xyz` → `teammate_rel_state` |
+| `depth` | float32 | (dynamic, 128, 128, 1) | [0, 1] |
+| `state` | float32 | (dynamic, 190) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `goal_offset_xyz` → `teammate_rel_state` |
 
-### Action: float32 tensor, shape (N, 5)
+### Action: float32 tensor, shape (dynamic, 5)
 
 | # | Component | Min | Max |
 |---|---|---|---|
@@ -215,7 +214,7 @@ Submissions run the full 1,100-seed benchmark. A screening admission phase exist
 
 ## Runtime limits
 
-Your graph runs in Docker behind the subnet-owned runner's Cap'n Proto RPC server; the validator calls `reset()` between seeds and steps the graph once per 50 Hz step. This family uses the default timing budget:
+Your model runs in Docker as a Cap'n Proto RPC server; the validator calls `reset()` between seeds and `act(obs)` once per 50 Hz step. This family uses the default timing budget:
 
 | Call | Budget |
 |---|---|
@@ -226,9 +225,9 @@ Your graph runs in Docker behind the subnet-owned runner's Cap'n Proto RPC serve
 
 A timed-out step substitutes a zero action and counts a strike; **15 strikes** or **3 hard-cap timeouts** fail the seed with score 0.
 
-The pre-eval probe loads your graph and steps it at **both ends of the drone range (n = 2 and n = 8)** with synthetic observations; the returned action must be the family action shape, finite, and within bounds. Make sure your graph handles the dynamic axis before submitting.
+The pre-eval smoke test instantiates your controller and calls `reset()` + `act()` at **both ends of the drone range (n = 2 and n = 8)**, with synthetic observations; the returned action must be shape `(n, 5)`, finite, and within bounds. Make sure your policy handles the dynamic axis before submitting.
 
-The graph must stay inside the execution profile's ONNX op allowlist (`swarm.onnx-neural.cpu.v1`); anything outside it is rejected at admission.
+`requirements.txt` is limited to the Docker pip whitelist: torch/torchvision/torchaudio, onnx/onnxruntime(-gpu), stable-baselines3, sb3-contrib, gymnasium/gym, swarm-bullet3, swarm-drone-gym, numpy, scipy, scikit-learn, opencv-python(-headless), pillow, imageio, matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack.
 
 <p align="right">(<a href="#swarm-autopilot-top">back to top</a>)</p>
 
@@ -239,7 +238,7 @@ The graph must stay inside the execution profile's ONNX op allowlist (`swarm.onn
 Benchmark your submission against this family locally:
 
 ```bash
-python3 -m swarm.benchmark --model model_graph.zip --family-id cf_swarm_autopilot --workers 4
+python3 -m swarm.benchmark --model submission.zip --family-id cf_swarm_autopilot --workers 4
 ```
 
 The `swarm benchmark` CLI wrapper does not expose `--family-id` and defaults to `cf_autopilot`, so use the module form for Swarm Autopilot.
@@ -248,7 +247,7 @@ Package and verify with the same family id:
 
 ```bash
 swarm model package --source ./my_model --family-id cf_swarm_autopilot
-swarm model verify --model model_graph.zip
+swarm model verify --model submission.zip
 ```
 
 <p align="right">(<a href="#swarm-autopilot-top">back to top</a>)</p>

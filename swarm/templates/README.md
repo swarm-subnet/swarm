@@ -44,20 +44,12 @@ https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 This repository holds one trained flight model entered into [Swarm](https://swarm124.com), the open benchmark for autonomous drone AI. The artifact under `artifacts/` is a complete pilot: a policy that reads a depth camera and its own flight state, and flies. Models are evaluated across six procedurally generated world types, 1,100 fresh seeds per family every weekly epoch, with no privileged information and no pre-built maps.
 
 ```
-README.md                               # This file, the byte-exact benchmark template
-submission_manifest.json                # Declares which family this repo competes in
-artifacts/<family_id>/model_graph.zip   # The trained model for that family
+README.md                              # This file, the byte-exact benchmark template
+submission_manifest.json               # Declares which family this repo competes in
+artifacts/<family_id>/submission.zip   # The trained agent for that family
 ```
 
-The `.zip` carries the model graph itself: a `manifest.json` that wires trained ONNX networks into one flight policy, plus the networks under `models/`. Pure tensor math, no code; the manifest pins its SHA-256. One artifact, one family: every entry competes in exactly one challenge.
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/3679d3aa-7be0-4f30-a8a3-fc00009efa24" alt="Model graph" width="100%">
-</p>
-
-<p align="center">
-  <sub><b>The model graph.</b> Observations flow through ONNX networks wired by the manifest; velocity commands come out.</sub>
-</p>
+The `.zip` carries the agent's `DroneFlightController` class in `drone_agent.py` plus its trained weights; the manifest pins its SHA-256. One artifact, one family: every entry competes in exactly one challenge.
 
 ## Run This Model
 
@@ -75,7 +67,7 @@ pip install -e .
 
 ```bash
 python -m swarm.benchmark.engine \
-  --model /path/to/this-repo/artifacts/cf_autopilot/model_graph.zip \
+  --model /path/to/this-repo/artifacts/cf_autopilot/submission.zip \
   --family-id cf_autopilot \
   --seeds-per-group 3 --workers 4
 ```
@@ -114,10 +106,10 @@ The benchmark runs **five challenge families**. Each is its own competition with
 
 | Family | ID | Mission | Emissions |
 |--------|----|---------|:--------:|
-| [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | 30% |
-| [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | 30% |
-| [Swarm Autopilot](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 15% |
-| [Interceptor](https://github.com/swarm-subnet/swarm/blob/main/docs/families/interceptor.md) | `cf_interceptor` | Hunt a fleeing, jinking drone and catch it before the 60 s clock | 15% |
+| [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | 10% |
+| [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | 10% |
+| [Swarm Autopilot](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 10% |
+| [Interceptor](https://github.com/swarm-subnet/swarm/blob/main/docs/families/interceptor.md) | `cf_interceptor` | Hunt a fleeing, jinking drone and catch it before the 60 s clock | 10% |
 | [Autopilot](https://github.com/swarm-subnet/swarm/blob/main/docs/families/autopilot.md) | `cf_autopilot` | Cross the world, find the pad inside a noisy search area, touch down clean | 10% |
 
 Each guide spells out the full contract: observation layout, action bounds, maps, episode rules, and scoring.

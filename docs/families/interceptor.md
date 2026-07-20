@@ -50,10 +50,9 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 
 | | |
 |---|---|
-| Interface version | `model_graph.v1` |
-| Execution profile | `swarm.onnx-neural.cpu.v1` |
-| Runner ABI | `graph_runner.v1` |
-| Contract file | `manifest.json` (model_graph.v1) |
+| Interface version | `submission_zip.v1` |
+| Entry point | `drone_agent.DroneFlightController` |
+| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | open |
 
 ### Observation: `dict` with keys `depth`, `state`
@@ -61,7 +60,7 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
 | `depth` | float32 | (1024, 1024, 1) | [0, 1] |
-| `state` | float32 | (140) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` |
+| `state` | float32 | (140) at evaluation settings | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` |
 
 ### Action: float32 tensor, shape (5)
 
@@ -219,7 +218,7 @@ Package your model against this family's contract, then run the benchmark engine
 ```bash
 swarm model package --source ./my_model --family-id cf_interceptor
 
-python3 -m swarm.benchmark --model model_graph.zip --family-id cf_interceptor
+python3 -m swarm.benchmark --model submission.zip --family-id cf_interceptor
 ```
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>

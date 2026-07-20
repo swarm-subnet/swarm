@@ -12,16 +12,16 @@ with the code-shipping submission format; setting them today has no effect.
 
 ### The validator contract
 
-`VALIDATOR_CONTRACT_VERSION = 'model_graph_rpc.v1'` is the single accepted
+`VALIDATOR_CONTRACT_VERSION = 'agent_rpc.v1'` is the single accepted
 contract. The backend pins it in `app/rollout.py`; the validator sends it on
 every signed request as `X-Swarm-Validator-Contract`, sourced from
-`swarm/model_graph/constants.py` (`VALIDATOR_CONTRACT`), alongside
+`swarm/core/submission_policy.py` (`VALIDATOR_CONTRACT`), alongside
 `X-Validator-Hotkey` / `-Signature` / `-Nonce` / `-Timestamp` and
 `X-Code-Version`.
 
 ### Compatibility (`get_validator_rollout_compatibility`)
 
-Binary: a validator presenting `model_graph_rpc.v1` is compatible and may
+Binary: a validator presenting `agent_rpc.v1` is compatible and may
 evaluate all enabled families; anything else gets `upgrade_required=True`,
 an empty `safe_family_ids`, and reason `validator_contract_upgrade_required`.
 
@@ -222,7 +222,7 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_
 
 | I want to… | Do this |
 |------------|---------|
-| Keep out validators on the old contract | Nothing to do — only `model_graph_rpc.v1` validators are ever authorized |
+| Keep out validators on the old contract | Nothing to do — only `agent_rpc.v1` validators are ever authorized |
 | Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py`, commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |

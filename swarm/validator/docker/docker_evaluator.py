@@ -69,12 +69,18 @@ DockerSecureEvaluator._get_docker_host_ip = networking._get_docker_host_ip
 DockerSecureEvaluator._get_container_pid = networking._get_container_pid
 DockerSecureEvaluator._apply_network_lockdown = networking._apply_network_lockdown
 
+DockerSecureEvaluator._normalize_package_name = staticmethod(
+    submission._normalize_package_name
+)
+DockerSecureEvaluator._validate_requirements = submission._validate_requirements
+
 DockerSecureEvaluator._serialize_observation = staticmethod(
     submission._serialize_observation
 )
 
 DockerSecureEvaluator._run_multi_seed_rpc_sync = rpc._run_multi_seed_rpc_sync
 DockerSecureEvaluator._calibrate_rpc_overhead_async = rpc._calibrate_rpc_overhead_async
+DockerSecureEvaluator.prepare_model_image = batch.prepare_model_image
 DockerSecureEvaluator.evaluate_seeds_batch = batch.evaluate_seeds_batch
 DockerSecureEvaluator.evaluate_seeds_parallel = parallel.evaluate_seeds_parallel
 DockerSecureEvaluator.cleanup = batch.cleanup
