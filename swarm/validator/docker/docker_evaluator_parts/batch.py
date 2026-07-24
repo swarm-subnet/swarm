@@ -25,7 +25,8 @@ from swarm.constants import (
     SIM_DT,
 )
 from swarm.core.faults import ReasonCode
-from swarm.core.submission_policy import validate_submission_zip
+from swarm.core.submission_lane import is_model_graph_artifact
+from swarm.core.submission_policy import check_safety, validate_submission_zip
 from swarm.utils.hash import sha256sum
 from swarm.protocol import (
     FailureReason,
@@ -46,6 +47,7 @@ from swarm.validator.task_gen import task_for_seed_and_type
 
 from ._shared import (
     _docker_evaluator_facade,
+    _graph_runtime_template_dir,
     _runtime_profile_env,
     _runtime_profile_from_payload,
     _submission_template_dir,
@@ -169,6 +171,10 @@ def prepare_model_image(
     the model zip is gone.
     """
     if not model_path.is_file():
+        return None
+    if is_model_graph_artifact(model_path):
+        # the graph runner ships with the image; a legacy artifact never
+        # contributes dependencies of its own
         return None
     image_tag = model_image_tag(sha256sum(model_path))
     if not model_path.with_suffix(".private").exists() and _image_exists(image_tag):
@@ -370,6 +376,7 @@ class _BatchContext:
     tmpdir: Optional[str] = None
 
     # Agent runner state
+    is_model_graph: bool = False
     submission_dir: Optional[Path] = None
     model_image: Optional[str] = None
     run_image: Optional[str] = None
@@ -392,6 +399,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
     tasks = ctx.tasks
     on_seed_complete = ctx.on_seed_complete
 
+    ctx.is_model_graph = is_model_graph_artifact(ctx.model_path)
     ctx.trace_rpc = RpcTraceSettings.from_env().enabled
     ctx.stop_event = threading.Event()
     ctx.progress_state = {
@@ -561,7 +569,12 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
             for _ in tasks
         ]
 
-    accepted, detail = validate_submission_zip(model_path)
+    # a legacy graph artifact carries no drone_agent.py; the runner admits it
+    # inside the container, where the ONNX rules are enforced
+    if ctx.is_model_graph:
+        accepted, detail = check_safety(model_path)
+    else:
+        accepted, detail = validate_submission_zip(model_path)
     if not accepted:
         bt.logging.warning(
             f"[Worker {worker_id}] UID {uid} submission rejected: {detail}"
@@ -1184,7 +1197,12 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     os.chmod(submission_dir, 0o755)
 
     try:
-        _extract_submission(ctx.model_path, submission_dir)
+        if ctx.is_model_graph:
+            # the graph runner reads the archive itself, so nothing is unpacked
+            # and no file from it can shadow the bootstrap we stage below
+            shutil.copy(ctx.model_path, submission_dir / _GRAPH_ARTIFACT_NAME)
+        else:
+            _extract_submission(ctx.model_path, submission_dir)
     except Exception as exc:
         ctx.helpers.notify_all_failed(
             status=ReasonCode.LOAD_FAILED.value, error=f"extract failed: {exc}"
@@ -1195,8 +1213,15 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
         ]
 
     template_dir = _submission_template_dir()
-    for name in ("agent.capnp", "agent_server.py", "main.py"):
-        shutil.copy(template_dir / name, submission_dir)
+    if ctx.is_model_graph:
+        shutil.copy(template_dir / "agent.capnp", submission_dir)
+        shutil.copy(_graph_runtime_template_dir() / "main.py", submission_dir)
+        docker_envs["SWARM_MODEL_GRAPH_ARTIFACT"] = (
+            f"/workspace/submission/{_GRAPH_ARTIFACT_NAME}"
+        )
+    else:
+        for name in ("agent.capnp", "agent_server.py", "main.py"):
+            shutil.copy(template_dir / name, submission_dir)
 
     for f in submission_dir.iterdir():
         if f.is_file():
@@ -1220,6 +1245,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     return None
 
 
+_GRAPH_ARTIFACT_NAME = "model_graph.zip"
 _START_GATE_PATH = "/tmp/swarm_start.gate"
 
 

@@ -60,6 +60,10 @@ def _submission_template_dir() -> Path:
     return _swarm_package_dir() / "submission_template"
 
 
+def _graph_runtime_template_dir() -> Path:
+    return _swarm_package_dir() / "graph_runtime_template"
+
+
 def _run_multi_seed_rpc_sync_isolated_payload(
     tasks: list, uid: int, rpc_port: int
 ) -> list[tuple[int, bool, float, float]]:

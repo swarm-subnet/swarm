@@ -12,13 +12,22 @@ def _set_private_marker(model_fp: Path, is_private: bool) -> None:
 
 
 def _admitted(path: Path, expected_family: str | None = None) -> bool:
-    accepted, detail = validate_submission_zip(path)
+    if is_model_graph_artifact(path):
+        # a legacy graph artifact declares its family in the graph manifest and
+        # is admitted against the ONNX rules by the runner, inside the sandbox
+        accepted, detail = check_safety(path)
+        declared_family = graph_declared_family
+    else:
+        accepted, detail = validate_submission_zip(path)
+        declared_family = _declared_family
+
     if not accepted:
         bt.logging.error(f"Submission rejected: {detail}")
         return False
     if expected_family is None:
         return True
-    declared = _declared_family(path)
+
+    declared = declared_family(path)
     if declared is not None and declared != expected_family:
         bt.logging.error(
             f"Submission declares family {declared!r}, expected {expected_family!r}"
@@ -97,7 +106,9 @@ async def _ensure_models_from_backend(
         github_url = str(entry.get("github_url", "") or "")
         artifact_path = str(entry.get("artifact_path", "") or "")
         is_private = bool(entry.get("is_private"))
-        if uid < 0 or not model_hash or not family_id or interface_version != SUBMISSION_INTERFACE_VERSION:
+        if uid < 0 or not model_hash or not family_id:
+            continue
+        if interface_version not in RUNNABLE_INTERFACE_VERSIONS:
             continue
         if model_hash in load_blacklist():
             bt.logging.warning(

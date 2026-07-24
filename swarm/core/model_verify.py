@@ -26,6 +26,7 @@ except ImportError:
     _log = logging.getLogger("swarm.model_verify")
 
 from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
+from swarm.core.submission_lane import is_model_graph_artifact
 from swarm.core.submission_policy import (
     MAX_UNCOMPRESSED_BYTES,
     check_safety,
@@ -82,6 +83,16 @@ def add_to_blacklist(model_hash: str, file_path: Path = None) -> None:
 
 def inspect_model_structure(zip_path: Path) -> Dict:
     """Inspect RPC agent submission structure via the shared policy module."""
+    if is_model_graph_artifact(zip_path):
+        # a legacy graph artifact carries weights, not code; the ONNX rules are
+        # enforced by the runner when it loads the archive
+        return {
+            "submission_type": "model_graph",
+            "has_mlp_extractor": True,
+            "suspicious_patterns": [],
+            "class_names": ["Model Graph Runner"],
+        }
+
     ok, reason = check_structure(zip_path)
     if ok:
         return {
@@ -130,6 +141,9 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
         if "Dangerous executable" in inspection_results["error"]:
             return "fake", inspection_results["error"]
         return "fake", f"Inspection error: {inspection_results['error']}"
+
+    if inspection_results.get("submission_type") == "model_graph":
+        return "legitimate", "Model graph artifact validated"
 
     if inspection_results.get("submission_type") == "rpc":
         return "legitimate", "RPC submission validated"
