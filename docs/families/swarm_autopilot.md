@@ -4,7 +4,7 @@
 
 One policy, up to eight drones, one shared pool of landing pads.
 
-Swarm Autopilot (`cf_swarm_autopilot`) is the team version of Autopilot: each seed spawns **2–8 drones**, all flown by one policy that sees every drone at once. The team gets one shared, noisy clue about where the goal pads are, and the pads are a common pool: any drone may land on any pad that a teammate has not already claimed. Land every drone cleanly, fast, and without hitting the world or each other. The family is active and carries **0.10** of subnet emissions.
+Swarm Autopilot (`cf_swarm_autopilot`) is the team version of Autopilot: each seed spawns **2–8 drones**, all flown by one policy that sees every drone at once. The team gets one shared, noisy clue about where the goal pads are, and the pads are a common pool: any drone may land on any pad that a teammate has not already claimed. Land every drone cleanly, fast, and without hitting the world or each other. The family is active and carries **0.20** of subnet emissions.
 
 ---
 

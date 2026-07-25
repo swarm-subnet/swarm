@@ -14,7 +14,7 @@ A victim is down somewhere in the world. Your drone lifts off from a start pad w
 | Drones | 1 |
 | Control / physics rate | 50 Hz (`sim_dt` = 1/50 s) |
 | Episode horizon | 60 s (3,000 control steps) |
-| Emission allocation | 0.1 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Emission allocation | 0.15 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
 | Benchmark | 1,100 seeds per weekly epoch, all 6 environment types |
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>

@@ -64,13 +64,13 @@ Swarm runs **five challenge families**, all active and all public. Each family i
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
-| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/autopilot.md](families/autopilot.md) |
-| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/search_and_rescue.md](families/search_and_rescue.md) |
-| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
-| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](families/swarm_sar.md) |
-| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 10% | [families/interceptor.md](families/interceptor.md) |
+| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/autopilot.md](families/autopilot.md) |
+| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](families/search_and_rescue.md) |
+| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
+| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](families/swarm_sar.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 30% | [families/interceptor.md](families/interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions; the remainder that no family claims is burned. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions, and the five slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, no crowning for 7 days, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 

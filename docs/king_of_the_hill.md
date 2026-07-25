@@ -178,13 +178,13 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Autopilot | 0.10 |
-| Search-and-Rescue | 0.10 |
-| Swarm Autopilot | 0.10 |
-| Swarm SAR | 0.10 |
-| Interceptor | 0.10 |
+| Interceptor | 0.30 |
+| Swarm Autopilot | 0.20 |
+| Swarm SAR | 0.20 |
+| Autopilot | 0.15 |
+| Search-and-Rescue | 0.15 |
 
-Allocations are **absolute**, never normalised: each family pays out exactly its own slice, and any share of the pool not allocated to a family burns. The table above sums to `0.50`, so `0.50` of emissions burn by design during the rollout; allocations will be raised by governance as the tasks prove themselves. A family's **emissions state** then decides whether it participates at all:
+Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
 ```
 emissions state                              weight
@@ -204,7 +204,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: four families payable, Interceptor has no king yet — the other four keep exactly `0.10` each and Interceptor's `0.10` burns on top of the unallocated remainder. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: four families payable, Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Interceptor's `0.30` burns. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 ### Stale tasks burn
 
@@ -278,7 +278,7 @@ Yes, with separate hotkeys. Every hotkey competes in exactly one family, so ente
 
 Yes, it can. Every family is allocated a percentage of the subnet's total emissions, and all the family slices add up to 100%. When a new family is added, it takes its own percentage out of that same total, so the existing families each end up with a little less.
 
-For now there are only five families and their slices are already fixed, so nothing is changing today.
+The five slices are set by the team, not derived automatically, so a new family does not silently dilute yours: the split is re-decided and announced when it changes.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 

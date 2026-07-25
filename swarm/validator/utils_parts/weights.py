@@ -52,8 +52,8 @@ def compute_koth_weights_from_sync(
     """Local {uid: weight} from the sync payload; advisory backend weights ignored.
 
     Per-family when the payload carries ``kings_by_family`` + ``family_shares``
-    (weight = Σ family_slice · koth_share; the slices are absolute, so the
-    unassigned remainder burns). An empty map is a valid full-burn state. A
+    (weight = Σ family_slice · koth_share; the slices are absolute, so whatever
+    a family does not pay out burns). An empty map is a valid full-burn state. A
     legacy payload without ``kings_by_family`` is refused (returns None) so the
     caller holds its last good weights instead of burning on a bad payload.
     """

@@ -36,7 +36,7 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 | Airframe | 36 cm interceptor drone: mass 0.729 kg, thrust-to-weight 2.25, max 60 km/h |
 | Catch condition | Contact with the target, or distance ≤ 0.15 m |
 | Score weights | 0.5 success + 0.5 time (no safety term) |
-| Emission allocation | 0.1 |
+| Emission allocation | 0.30 |
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>
 

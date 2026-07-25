@@ -10,11 +10,11 @@ Swarm runs **five challenge families**, all active. Evaluation is family-scoped:
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
-| [Autopilot](families/autopilot.md) | `cf_autopilot` | One drone crosses a generated world and lands on a pad inside a noisy search area | 10% |
-| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 10% |
-| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 10% |
-| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 10% |
-| [Interceptor](families/interceptor.md) | `cf_interceptor` | One drone hunts down and rams a validator-flown target over open terrain | 10% |
+| [Autopilot](families/autopilot.md) | `cf_autopilot` | One drone crosses a generated world and lands on a pad inside a noisy search area | 15% |
+| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 15% |
+| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 20% |
+| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 20% |
+| [Interceptor](families/interceptor.md) | `cf_interceptor` | One drone hunts down and rams a validator-flown target over open terrain | 30% |
 
 ## 🖥️ System Requirements
 

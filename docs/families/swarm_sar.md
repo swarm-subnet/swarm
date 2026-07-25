@@ -4,7 +4,7 @@
 
 One victim, one clue, up to eight drones: one brain flies them all.
 
-Swarm Search and Rescue (`cf_swarm_sar`) is the team version of Search and Rescue. One policy controls 2–8 drones that lift off from separate pads, share one noisy search clue, and sweep the map together. The mission succeeds the moment **any one drone** finds the victim and holds a steady confirmation hover above them, without ever touching them. Everyone scores together: one shared team score, identical for every drone.
+Swarm Search and Rescue (`cf_swarm_sar`) is the team version of Search and Rescue. One policy controls 2–8 drones that lift off from separate pads, share one noisy search clue, and sweep the map together. The mission succeeds the moment **any one drone** finds the victim and holds a steady confirmation hover above them, without ever touching them. Everyone scores together: one shared team score, identical for every drone. The family is active and carries **0.20** of subnet emissions.
 
 ---
 
