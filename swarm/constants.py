@@ -151,7 +151,7 @@ GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeo
 GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker timeout (seconds)
 
 # Hardware-fair calibrated timing
-MINER_COMPUTE_BUDGET_SEC = 0.500        # Guaranteed pure-compute budget per step (seconds)
+MINER_COMPUTE_BUDGET_SEC = 0.600        # Guaranteed pure-compute budget per step (seconds)
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
