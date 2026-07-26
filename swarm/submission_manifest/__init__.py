@@ -11,7 +11,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 
 from swarm.domain_model import CHALLENGE_FAMILY_IDS, get_supported_interface_versions
-from swarm.model_graph import SUBMISSION_INTERFACE_VERSION, admit_artifact
+from swarm.core.submission_policy import (
+    SUBMISSION_INTERFACE_VERSION,
+    validate_submission_zip,
+)
 
 
 class SubmissionManifestError(ValueError):
@@ -162,9 +165,8 @@ def validate_submission_repo(
 ) -> tuple[bool, str, SubmissionManifest | None]:
     """Validate a submission repo layout, artifact bytes, and (optionally) admission.
 
-    ``run_admission=False`` skips the in-process ``admit_artifact`` call for
-    callers that run the sandboxed subprocess admission themselves; the
-    manifest, presence, size, and hash checks always run.
+    ``run_admission=False`` skips the zip content checks for callers that run
+    them separately; the manifest, presence, size, and hash checks always run.
     """
     try:
         manifest = resolve_submission_manifest(repo_root)
@@ -179,11 +181,9 @@ def validate_submission_repo(
     if _sha256sum(path) != artifact.sha256:
         return False, f"artifact_hash_mismatch:{artifact.family_id}:{artifact.artifact_path}", manifest
     if run_admission:
-        result = admit_artifact(path)
-        if not result.accepted:
-            return False, f"invalid_artifact:{artifact.family_id}:{result.reason_code}:{result.detail}", manifest
-        if result.family_id != artifact.family_id:
-            return False, f"artifact_family_mismatch:{artifact.family_id}:{result.family_id}", manifest
+        accepted, detail = validate_submission_zip(path)
+        if not accepted:
+            return False, f"invalid_artifact:{artifact.family_id}:{detail}", manifest
     return True, "ok", manifest
 
 

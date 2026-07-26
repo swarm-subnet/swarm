@@ -18,7 +18,18 @@ from swarm.constants import (
     SIM_DT,
     UID_ZERO,
 )
-from swarm.model_graph import admit_artifact
+from swarm.core.model_verify import load_blacklist, verify_new_model_with_docker
+from swarm.policy_interface import PolicyInterfaceError, read_policy_contract_from_zip
+from swarm.core.submission_lane import (
+    RUNNABLE_INTERFACE_VERSIONS,
+    graph_declared_family,
+    is_model_graph_artifact,
+)
+from swarm.core.submission_policy import (
+    SUBMISSION_INTERFACE_VERSION,
+    check_safety,
+    validate_submission_zip,
+)
 from swarm.protocol import PolicyRef
 from swarm.utils.github import (
     build_raw_urls,

@@ -4,22 +4,39 @@
 
 Train an autonomous drone pilot, benchmark it against 1,100 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
 
-## What You Submit
+---
 
-A submission is a **model graph**: `model_graph.zip`, holding a `manifest.json` plus up to 16 ONNX networks under `models/`. The manifest wires the networks into one policy — which observation tensors feed which model, and which output is the action. Validators run it with the subnet-owned runner inside a locked container at 50 Hz.
+<details>
+  <summary><b>Table of Contents</b></summary>
+  <ol>
+    <li><a href="#system-requirements">System Requirements</a></li>
+    <li><a href="#installation">Installation</a></li>
+    <li><a href="#challenge-families">Challenge Families</a></li>
+    <li><a href="#workflow">Workflow</a></li>
+    <li><a href="#creating-your-agent">Creating Your Agent</a></li>
+    <li><a href="#observations--actions">Observations & Actions</a></li>
+    <li><a href="#cli">CLI</a></li>
+    <li><a href="#github-repo-setup">GitHub Repo Setup</a></li>
+    <li><a href="#running-the-miner">Running the Miner</a></li>
+    <li><a href="#scoring">Scoring</a></li>
+    <li><a href="#emissions-king-of-the-hill">Emissions: King of the Hill</a></li>
+    <li><a href="#benchmark-system">Benchmark System</a></li>
+    <li><a href="#docker-whitelist">Docker Whitelist</a></li>
+    <li><a href="#faq">FAQ</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
+    <li><a href="#support">Support</a></li>
+  </ol>
+</details>
 
-You ship no code. No classes, no server, no dependency list — pure tensor graphs. Anything the manifest and the ONNX files cannot express does not run.
-
-```
-model_graph.zip
-├── manifest.json        # the wiring: models, inputs, action
-└── models/
-    └── policy.onnx      # one or more networks, 50 MiB zip cap total
-```
+---
 
 ## System Requirements
 
-Mining is extremely lightweight: your miner commits its submission to the chain (a GitHub URL for public families, or a hash plus a one-time artifact upload for the private families) and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach — train with whatever you like, ship the result as ONNX.
+Mining is extremely lightweight: your miner commits its submission to the chain (a GitHub URL) and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (your choice of SB3, PyTorch, custom RL).
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
 
 ## Installation
 
@@ -37,152 +54,540 @@ source miner_env/bin/activate
 pip install -e .
 ```
 
-## Pick a Family
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
 
-Five challenge families, each its own competition with its own champion and emissions. One hotkey competes in exactly one family.
+---
 
-| Family | ID | Track |
-|--------|----|-------|
-| [Autopilot](families/autopilot.md) | `cf_autopilot` | public |
-| [Interceptor](families/interceptor.md) | `cf_interceptor` | public |
-| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | public |
-| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | private |
-| [Swarm SAR](families/swarm_sar.md) | `cf_swarm_sar` | private |
+## Challenge Families
 
-Each family guide defines the exact contract: observation tensors (`obs.depth`, `obs.state`, and `obs.rgb` where the family has it), action shape and bounds, maps, episode rules, and scoring.
+Swarm runs **five challenge families**, all active and all public. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
-## Quick Start: Train a Baseline
+| Family | ID | Drones | Maps | Emission slice | Guide |
+|--------|----|--------|------|----------------|-------|
+| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/autopilot.md](families/autopilot.md) |
+| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](families/search_and_rescue.md) |
+| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
+| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](families/swarm_sar.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 30% | [families/interceptor.md](families/interceptor.md) |
 
-The fastest path to a working artifact is the training starter for your family:
+The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions, and the five slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, no crowning for 7 days, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
-```bash
-python3 RL/cf_autopilot/train.py --timesteps 500000
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Workflow
+
+The full miner workflow, from first install to competing on the leaderboard:
+
+```
+1. swarm doctor              ← Check environment readiness
+2. Train your model           ← SB3, PyTorch, or custom
+3. swarm model test           ← Validate source folder before packaging
+4. swarm model package        ← Bundle one family into Submission/submission.zip
+5. swarm model verify         ← Verify local artifact compliance
+6. swarm benchmark            ← Run local benchmark
+7. swarm repo package         ← Build repo-root artifacts/ + submission_manifest.json
+8. swarm repo verify          ← Verify full GitHub submission layout
+9. Push to GitHub             ← Public repo with README + manifest + the family artifact
+10. Submit model              ← Commit the repo URL on-chain, then go offline
 ```
 
-The starter trains a PPO policy in the real simulator, exports it to ONNX, writes the manifest, and packages everything into a validated `model_graph.zip`. It prints the artifact path when done. Swarm families take `--drones` to fix the training drone count.
+> Run `swarm model package` without `--family-id` and it asks which family you trained for, so you never bundle the wrong one. Pass `--family-id` to skip the prompt (required in scripts); a mismatched policy contract fails verification.
 
-Score it the way validators will — real Docker sandbox, real seeds:
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Creating Your Agent
+
+### Start from the Template
 
 ```bash
-python3 RL/test_RL.py --model RL/cf_autopilot/out/model_graph.zip \
-  --family_id cf_autopilot --num-seeds 10
+cp -r swarm/submission_template/ my_agent/
+cd my_agent/
+# Edit drone_agent.py with your controller
 ```
 
-The baseline is a starting point, not a contender. Better architectures, better training, and better reward shaping are where you win.
+### Agent Structure
 
-## The Manifest
+Your agent must implement a `DroneFlightController` class:
 
-`manifest.json` declares the graph. The starter writes this for you; hand-build it when you go beyond a single network:
+```python
+class DroneFlightController:
+    def __init__(self):
+        # Load your model (SB3, PyTorch, ONNX, etc.)
+        from stable_baselines3 import PPO
+        self.model = PPO.load("./my_model.zip")
+
+    def act(self, observation):
+        # observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and "state" (N,)
+        # Return action array [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
+        # (shapes shown are the Search-and-Rescue contract -- see families/<family>.md for yours)
+        action, _ = self.model.predict(observation, deterministic=True)
+        return action
+
+    def reset(self):
+        # Reset internal state between missions
+        pass
+```
+
+**Required files:**
+- `drone_agent.py`: Your controller class, at the zip root (REQUIRED)
+- `requirements.txt`: Additional pip packages (optional, must be on the [whitelist](#docker-whitelist))
+- Model files: weights, configs, etc.
+
+**Auto-injected (do not include):**
+- `main.py`, `agent.capnp`, `agent_server.py`: provided by the evaluation system
+
+**Hard limits, enforced at intake:**
+- Total **uncompressed** content ≤ **50 MiB** (summed across zip entries: a zip-bomb guard, so squeezing the archive harder does not help)
+- No `.exe`, `.so`, `.dll`, `.sh`, `.bat`, or `.pyc` entries
+- No path traversal, absolute paths, or symlinks inside the zip
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Observations & Actions
+
+The interface below is the **Search and Rescue** one. Each family defines its own observation/action contract. Check the [family guide](#challenge-families) for the family you target before training.
+
+### Observation Space
+
+| Field | Shape | Description |
+|-------|-------|-------------|
+| `depth` | (256, 256, 1) | Normalized depth map (0.5 m – 30 m range) |
+| `rgb` | (256, 256, 3) | On-demand colour frame in [0,1]; all zeros unless your previous action requested it (max 40 requests per episode) |
+| `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
+
+The search clue is an offset sampled inside a **30 m** circle around the victim (the swarm SAR family shares one clue over a disk that scales with team size: 80·√(n/8) m, i.e. 40 m for 2 drones up to 80 m for 8). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
+
+### Action Space
+
+| Index | Name | Range | Description |
+|-------|------|-------|-------------|
+| 0 | dir_x | [-1, 1] | Direction X component |
+| 1 | dir_y | [-1, 1] | Direction Y component |
+| 2 | dir_z | [-1, 1] | Direction Z component |
+| 3 | speed | [0, 1] | Thrust multiplier |
+| 4 | yaw | [-1, 1] | Target yaw angle (maps to [-π, π]) |
+| 5 | rgb_request | [0, 1] | Set above 0.5 to receive a colour frame in the next observation's `rgb` (max 40 per episode) |
+
+**Constraints:**
+- Max velocity: 3.0 m/s
+- Max yaw rate: 3.141 rad/s (180°/s)
+- Simulation rate: 50 Hz (dt = 1/50)
+- Episode horizon: 60 seconds
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## CLI
+
+Swarm includes a CLI for the full development workflow. Install with `pip install -e .`, then use `swarm <command>`.
+
+### Check Environment
+
+```bash
+swarm doctor
+```
+
+Verifies Python version, Docker, required dependencies, writable directories, and environment setup.
+
+### Test Your Agent
+
+```bash
+swarm model test --source my_agent/
+```
+
+Validates your source folder: checks `drone_agent.py` exists and compiles, `requirements.txt` format, and estimated package size.
+
+### Package Your Agent
+
+```bash
+swarm model package --source my_agent/ --family-id cf_autopilot
+```
+
+Bundles your `drone_agent.py`, model files, optional `requirements.txt`, and a generated `swarm_policy_contract.json` into `Submission/submission.zip` (default path). Omit `--family-id` in a terminal and it prompts you to pick the family; it is required (and errors without it) for non-interactive runs.
+
+### Verify Submission
+
+```bash
+swarm model verify --model Submission/submission.zip
+```
+
+Checks structure, file sizes, family policy-contract compatibility, and a local runtime smoke test before uploading.
+
+### Build Repo Submission Layout
+
+```bash
+swarm repo package \
+  --repo-root YOUR_REPO \
+  --family-source cf_autopilot=./autopilot_agent
+
+# Or update the artifact later
+swarm repo package \
+  --repo-root YOUR_REPO \
+  --source ./autopilot_agent_v2 \
+  --family-id cf_autopilot \
+  --overwrite
+```
+
+This writes the family artifact under `artifacts/<family_id>/submission.zip` and updates the repo-root `submission_manifest.json`. A repo packages exactly **one family**: passing a second `--family-source`, or a family different from the one already in the manifest, is rejected.
+
+### Verify Repo Submission Layout
+
+```bash
+swarm repo verify --repo-root YOUR_REPO --strict-manifest
+```
+
+Checks manifest structure, the artifact hash, policy-contract compatibility, and a local runtime smoke test for the published family artifact in the repo.
+
+### Run Benchmark
+
+```bash
+# Default benchmark (3 seeds per environment group)
+swarm benchmark --model Submission/submission.zip --workers 4
+
+# Quick test (1 seed per environment type)
+swarm benchmark --model Submission/submission.zip --seeds-per-group 1
+```
+
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,100 seeds total.
+
+### View Results
+
+```bash
+swarm report
+```
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## GitHub Repo Setup
+
+Validators download models from your **public GitHub repository**. You must set up a repo with the correct structure.
+
+### 1. Create Your Repo
+
+Create a public GitHub repository. The URL you commit must be exactly `https://github.com/YOUR_USER/YOUR_REPO`: no subpaths, no other hosts. Files are fetched from the `main` branch (falling back to `master`). Each repo is bound to a single hotkey. A repo URL already registered to a different miner is skipped.
+
+### 2. The Template README
+
+Your repo **must** contain the exact Swarm template README, enforced by SHA-256 hash. You do not copy it by hand: `swarm repo package` writes the correct `README.md` into your repo for you, and `swarm repo verify` re-checks it before you publish.
+
+> **Why this matters: the failure is silent.** If `README.md` is not a byte-identical copy of the template, the chain scanner never registers your submission, and no error reaches you: the commitment simply produces nothing on the leaderboard. The tooling prevents this, so the rule is simple: let `swarm repo package` write the README and do not hand-edit it. If a submission never appears, run `swarm repo verify` and check the `README.md` line **first**.
+
+### 3. Add `submission_manifest.json`
+
+Repos declare their published artifact through a repo-root `submission_manifest.json`.
+
+Repo layout rules for manifest v1:
+
+- `submission_manifest.json` lives at the repo root.
+- `README.md` lives at the repo root.
+- The family artifact lives under `artifacts/<family_id>/` with a `.zip` extension.
+- The artifact entry declares `family_id`, `interface_version`, `artifact_path`, `sha256`, and `metadata`.
+- A repo publishes exactly **one artifact for one family**; a manifest listing more is rejected.
+- The artifact's `sha256` is verified against the downloaded file.
+
+Minimal example:
 
 ```json
 {
-  "model_graph_version": "model_graph.v1",
-  "family_id": "cf_autopilot",
-  "execution_profile": "swarm.onnx-neural.cpu.v1",
-  "runner_abi": "graph_runner.v1",
-  "models": [
-    {"id": "policy", "file": "models/policy.onnx", "sha256": "<hash of the file>"}
-  ],
-  "nodes": [
-    {"id": "policy", "model": "policy",
-     "inputs": {"depth": "obs.depth", "state": "obs.state"}}
-  ],
-  "action": "policy.action"
+  "manifest_version": "submission_manifest.v1",
+  "repo_layout_rules": {
+    "manifest_path": "submission_manifest.json",
+    "readme_path": "README.md",
+    "artifacts_dir": "artifacts",
+    "artifact_extension": ".zip"
+  },
+  "artifacts": [
+    {
+      "family_id": "cf_autopilot",
+      "interface_version": "submission_zip.v1",
+      "artifact_path": "artifacts/cf_autopilot/submission.zip",
+      "sha256": "<artifact sha256>",
+      "metadata": {
+        "notes": "baseline autopilot agent"
+      }
+    }
+  ]
 }
 ```
 
-- **models** — every ONNX file, pinned by SHA-256.
-- **nodes** — execution steps. Inputs bind each model input to an observation (`obs.depth`), a memory slot (`memory.<name>`), or another node's output (`<node>.<output>`). A node can run every step or every N steps (`every_n_steps`, 1–256).
-- **memory** — optional named slots for recurrent state: a node writes a tensor this step, another (or the same) reads it next step.
-- **action** — exactly one node output, matching the family's action shape.
+All five families use the `submission_zip.v1` interface. Legacy repos with only a root `submission.zip` and no manifest are still accepted and map to `cf_autopilot`, but new work should use the manifest.
 
-The full schema lives in `swarm/model_graph/model_graph.schema.json`.
-
-## The Execution Profile
-
-Every graph must pass admission against `swarm.onnx-neural.cpu.v1`:
-
-| Rule | Value |
-|------|-------|
-| Format | ONNX opset 18, IR 10 |
-| Dtype | float32 tensors only |
-| Operators | allowlist of standard neural ops (Conv, Gemm, MatMul, activations, pooling, norms, RNN/LSTM/GRU, elementwise math) |
-| Structural ops | Reshape, Slice, Squeeze, Concat and friends, with compile-time-constant shapes |
-| Denied | control flow (If/Loop), comparisons, Where, ArgMax, Shape, Cast |
-| Size | 50 MiB zip, 16 models max |
-
-The exact lists live in `swarm/model_graph/execution_profile.v1.json`. The intent: your model is a neural network, not a program. Preprocessing like downsampling belongs inside the graph — the starters show the pattern with a constant-stride Slice.
-
-## Package and Verify
-
-Built your own source folder? Package and check it with the CLI:
+### 4. Package The Family Artifact Into The Repo
 
 ```bash
-swarm model package --source ./my_model --family-id cf_autopilot \
-  --output model_graph.zip --overwrite
-swarm model verify --model model_graph.zip
+swarm repo package \
+  --repo-root YOUR_REPO \
+  --family-source cf_autopilot=./autopilot_agent
+
+swarm repo verify --repo-root YOUR_REPO --strict-manifest
+
+git add README.md submission_manifest.json artifacts/
+git commit -m "Add submission"
+git push
 ```
 
-`package` zips `manifest.json` + `models/*.onnx` and runs the same admission validators run; invalid graphs are rejected on the spot with an `MG_` reason code. See the [CLI reference](CLI_readme.md) for every command and flag.
+### 5. Submit
 
-## Submit — Public Track
+> **One model per hotkey.** A hotkey enters exactly one family with exactly one model, published from its repo's manifest. To compete in more families, register more hotkeys, one per family.
+>
+> Treat every submission as final. Once your model is evaluated, the hotkey's slot is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
+>
+> The slot only reopens on its own if the submission never finished before the weekly rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey.
 
-Public families live in a GitHub repo the backend can read:
+To protect your model from front-running (someone copying your submission before you commit), follow this order:
+
+1. Keep your GitHub repo **private**
+2. Run the miner command below to commit the URL to chain
+3. Wait for the commit to finalize (~30 seconds)
+4. Make the repo **public**
+
+Commitments are processed in block order: the earliest committer wins. A model hash already registered to another miner is rejected, and so is a repo URL owned by a different hotkey.
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Running the Miner
+
+### Configuration
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--github_url` | **Required.** Public GitHub repo URL | `--github_url https://github.com/user/repo` |
+| `--netuid` | Subnet netuid | `--netuid 124` |
+| `--wallet.name` | Your coldkey name | `--wallet.name my_cold` |
+| `--wallet.hotkey` | Hotkey used for mining | `--wallet.hotkey my_hot` |
+| `--subtensor.network` | Network (finney, test) | `--subtensor.network finney` |
+
+### Create Keys
 
 ```bash
-swarm repo package --repo-root ./my_entry \
-  --family-source cf_autopilot=./my_model
-swarm repo verify --repo-root ./my_entry
+btcli wallet new_coldkey --wallet.name my_cold
+btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
-This writes three things: `artifacts/cf_autopilot/model_graph.zip`, `submission_manifest.json` (family, artifact path, SHA-256, interface `model_graph.v1`), and `README.md` — a byte-exact copy of the benchmark template. **Do not edit the README.** Its hash is checked by the backend; any change means silent rejection. `swarm repo verify` catches this before you commit.
-
-Push the repo to a public GitHub, then commit it on-chain:
+### Submit Your Model
 
 ```bash
-python3 neurons/miner.py --github_url https://github.com/<you>/<repo> \
-  --wallet.name <coldkey> --wallet.hotkey <hotkey>
+source miner_env/bin/activate
+
+python neurons/miner.py \
+     --netuid 124 \
+     --subtensor.network finney \
+     --wallet.name my_cold \
+     --wallet.hotkey my_hot \
+     --github_url "https://github.com/YOUR_USER/YOUR_REPO"
 ```
 
-## Submit — Private Track
+The miner commits your repo URL on-chain and exits. You do **not** need to stay online: validators discover your model automatically.
 
-Search and Rescue and Swarm SAR keep your weights off GitHub: the SHA-256 goes on-chain, the bytes go to the backend vault, and only trusted validators fetch them.
+The repo URL carries your single family artifact. A manifest declaring more than one family is rejected outright, and a commitment naming a different family while your hotkey already holds a live model is ignored.
 
-```bash
-python3 neurons/miner.py --family_id cf_search_and_rescue \
-  --artifact ./model_graph.zip \
-  --backend_url https://api.swarm124.com \
-  --wallet.name <coldkey> --wallet.hotkey <hotkey>
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Scoring
+
+Per-seed reward for most families:
+
+```
+score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-If the chain commit succeeded but the upload failed, rerun with `--upload_only` to (re)upload the same artifact. The backend waits a limited window (6 hours by default); after that the commitment expires and the hotkey is spent, so make sure the upload completes within the window.
+| Term | Weight | Description |
+|------|--------|-------------|
+| **Success** | 0.45 | 1.0 if the mission objective is met, 0.0 otherwise |
+| **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
+| **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
 
-## Rules of the Game
+The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no safety term.
 
-- **One hotkey, one submission.** A hotkey gets a single submission slot, once, in a single family — the slot never frees, whatever happens to the model. Competing again — after a failure, an expiry, or with a new model — always means registering a fresh hotkey.
-- **One family per repo.** A submission repo holds exactly one family's artifact.
-- **Full benchmark.** Your model runs the family's complete 1,100-seed set. Validators evaluate seed batches; the backend recomputes the authoritative score from the seed records.
-- **Champions defend weekly.** Seeds rotate every epoch and champions are re-evaluated on the fresh set. See [King of the Hill](king_of_the_hill.md) for emissions.
+Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
+
+Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each batch (earliest report per seed counts: re-runs never double-count).
+
+### CONFIRMED Requirements (Search and Rescue)
+
+All four conditions must hold continuously for 2.0 seconds:
+
+| Condition | Threshold |
+|-----------|-----------|
+| Drone speed | < 1.0 m/s |
+| Horizontal distance to victim | ≤ 2.0 m |
+| Height above victim's AABB top | 2.0 – 4.0 m |
+| Distance from 0.8 m no-touch sphere | strictly outside |
+
+The speed, horizontal-distance, and height-band bounds get a 0.1 m / 0.1 m·s⁻¹ hysteresis grace once the predicate is already active; the 0.8 m no-touch sphere gets no grace.
+
+### Becoming Champion
+
+The first evaluated model in a family becomes champion unconditionally. After that, a challenger must beat the reigning champion's score by a **dynamic improvement floor**: flat while the champion score is ≤ 0.5, then decaying toward a minimum as the champion approaches a perfect 1.0: late-game inches are cheaper to require than early-game leaps.
+
+| Families | Floor (champion ≤ 0.5) | Floor minimum (champion → 1.0) |
+|----------|------------------------|--------------------------------|
+| Autopilot, Swarm Autopilot, Interceptor | +0.015 | +0.005 |
+| Search and Rescue, Swarm SAR | +0.02 | +0.007 |
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Emissions: King of the Hill
+
+Emissions are **not** winner-take-all, and there is no single global leaderboard payout. Each family runs its own King-of-the-Hill lineage: the family's emission slice is split across its **last five crowned kings**. A seat's share is set first by its rank in the window — the reigning champion holds the full weight and every step back keeps **70%** of the seat above it — and fine-tuned by how much that king improved on the score it beat. Being dethroned doesn't stop your earnings. Only five newer crownings pushing you out of the window does.
+
+The practical consequences:
+
+- A copycat that barely clears the floor earns almost nothing; a real jump earns a dominant share and keeps paying through the next several dethronings.
+- Your seat's share is frozen at crowning; champion re-evaluations on fresh seeds don't change it.
+- Payout requires your repo to stay intact and reachable: a deleted, privatized, or tampered repo forfeits the seat.
+
+The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md](king_of_the_hill.md).
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Benchmark System
+
+### How Your Model Is Evaluated
+
+1. **Miner** commits the GitHub URL on-chain, then goes offline
+2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. It verifies the README hash, downloads the manifest and the declared artifact, checks its SHA-256, and creates one **Pending Benchmark** row
+3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
+4. **Validators** lease the model's seed range in 50-seed batches and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
+5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed batches), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+
+Every submission runs the full 1,100-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
+
+A batch that fails 3 times marks the model **Evaluation Failed**: a dead RPC server or a crashing agent wastes the attempt, so smoke-test with `swarm model verify` before committing.
+
+### Epoch Rotation
+
+Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
+
+At rollover, models still pending from the previous epoch are marked **Epoch Expired** (re-commit and the expired row is purged, so the hotkey resubmits cleanly), and every champion is queued for re-evaluation on the fresh seeds. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; commit after the rollover instead.
+
+### Key Numbers
+
+| Parameter | Value |
+|-----------|-------|
+| Seeds per family per epoch | 1,100 |
+| Batch size (validator lease) | 50 seeds |
+| Chain scanner interval | 3 minutes |
+| Epoch length | 7 days (Monday 16:00 UTC) |
+| Pre-rollover registration freeze | 1.5 hours |
+| Max artifact size | 50 MiB uncompressed content |
+| Models per hotkey | 1 (one family per hotkey) |
+| Chain commit cooldown | ~20 minutes |
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## Docker Whitelist
+
+Your `requirements.txt` can only include packages from the approved whitelist (`DOCKER_PIP_WHITELIST` in `swarm/constants.py`). It is enforced on the validator host at evaluation time: a non-whitelisted package fails your run there, not at submission.
+
+**Approved packages:**
+
+```
+torch, torchvision, torchaudio, onnx, onnxruntime, onnxruntime-gpu,
+stable-baselines3, sb3-contrib, gymnasium, gym, numpy, scipy,
+scikit-learn, opencv-python, opencv-python-headless, pillow, imageio,
+matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack,
+swarm-bullet3, swarm-drone-gym
+```
+
+Version pins are fine; pip option lines, URL/path installs (`git+`, `http://`, `https://`, `file:`, `./`, or an absolute path), and PEP 508 `@` direct references are rejected.
+
+Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC).
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
+
+## FAQ
+
+### When will my score show up on the leaderboard?
+
+Registration takes minutes (the scanner polls every 3 minutes). Evaluation time depends on how many models sit ahead of yours across the family lanes: champion epoch re-evals take priority, and the queue rotates one family at a time. During the 1.5-hour pre-rollover freeze new commitments wait until the next epoch.
+
+### Can I update my submission after committing?
+
+**No, once your model has been evaluated.** A hotkey gets one submission. A changed artifact on an evaluated model is ignored, not re-run, so to try a better model you need a new hotkey.
+
+The only exceptions happen before evaluation finishes: a rejected (malformed) zip was never registered, so you can just fix it and re-commit on the same hotkey; and a submission that expired at the weekly rollover, or was retired by a version bump, frees its slot for a fresh commit. Never swap a reigning champion's artifact, though: that reads as tampering and permanently loses payout eligibility.
+
+The chain rate-limits commits to roughly one per 20 minutes.
+
+### What happens if my model fails evaluation?
+
+The hotkey is used up. A model that was evaluated and failed (or whose repo went dead) keeps its slot locked, so pushing a new artifact will not re-run it. To try again, register a new hotkey. The exception is a submission rejected for a fixable packaging problem, which leaves the slot open to fix and re-commit.
+
+### Can I compete in more than one family?
+
+Not on the same hotkey: every hotkey enters exactly one family. To compete in several families, register one hotkey per family, each publishing from its own repo via `submission_manifest.json`. Each entry is evaluated and championed independently.
+
+### I submitted, but I don't see a score yet. What should I check?
+
+In order of likelihood:
+
+- **README hash mismatch**: the number-one silent killer. `README.md` must be a byte-exact copy of the template; if it isn't, the scanner drops the submission without any visible error. Run `swarm repo verify` to catch it, or `swarm repo package` to rewrite the correct README. Check this first.
+- **Repo still private**: the backend cannot fetch it. Make it public after the chain commit finalizes; the scanner re-reads all commitments every pass.
+- **Wrong URL shape**: the commitment must be exactly `https://github.com/owner/repo`.
+- **Manifest problems**: artifact path/hash mismatch, the artifact missing from `artifacts/<family_id>/`, or a manifest declaring more than one family.
+- **Freeze window**: commits during the last 1.5 hours of an epoch register after rollover.
+- **Non-whitelisted package or oversized artifact**: see [Docker Whitelist](#docker-whitelist) and the 50 MiB uncompressed cap.
+
+If none apply, contact the team on [Discord](https://discord.gg/8dPqPDw7GC).
+
+### How often are weights updated on-chain?
+
+Validators refresh the king windows from the backend, recompute the weights locally, and set them on-chain on a periodic cadence, so a new champion's effect on rewards shows up within the epoch, not instantly.
+
+### What if two miners submit the same model?
+
+Model hashes are globally unique: a hash already registered to any miner is rejected, and a repo URL owned by a different hotkey is skipped. The earliest on-chain committer wins. To guard against front-running, follow: **private repo → chain commit → wait for finalization → make repo public** (see [GitHub Repo Setup](#github-repo-setup)).
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
 
 ## Troubleshooting
 
-Failures charged to your artifact carry an `MG_` reason code, visible on the website's model page:
+**"Missing drone_agent.py"**: Your ZIP must contain `drone_agent.py` at the root level. Template files are auto-injected.
 
-| Code | Meaning | Fix |
-|------|---------|-----|
-| `MG_MANIFEST_MISSING` / `MG_MANIFEST_INVALID` | zip has no valid `manifest.json` | package with `swarm model package`, not by hand-zipping |
-| `MG_PROFILE_DENIED_OP` | a model uses an op outside the allowlist | export simpler ops; check the profile JSON |
-| `MG_SHAPE_CONTRACT_MISMATCH` | action or observation shapes don't match the family contract | compare against the family guide's tables |
-| `MG_MODEL_FILE_INVALID` | an ONNX file is corrupt or malformed | re-export; verify the manifest SHA-256 matches the file |
-| `MG_LOAD_FAILED` | the graph didn't load and serve within the startup window | shrink the model; test with `RL/test_RL.py` first |
-| `MG_STEP_HARD_TIMEOUT` | an action step blew the per-step compute budget | reduce per-step FLOPs; the budget is baseline-equivalent, so slow hosts don't penalize you |
+**"Dangerous executable files detected"**: Remove `.exe`, `.so`, `.dll`, `.sh`, `.bat`, and `.pyc` files. Only Python code and model files are allowed.
 
-`swarm model verify` and `RL/test_RL.py` reproduce almost every rejection locally before you spend your weekly shot.
+**"Agent too large"**: Total uncompressed content must be ≤ 50 MiB. Compressing harder does not help; shrink the weights.
 
-**Environment issues**: run `swarm doctor` to diagnose.
+**"RPC connection failed"**: Ensure your agent starts correctly and responds to ping requests. Three failed batch attempts mark the model as Evaluation Failed.
+
+**"README hash mismatch"**: Your repo's `README.md` must be the exact template copy. Any edit (including whitespace or line-ending changes) makes the scanner silently ignore your submission. Re-run `swarm repo package` to rewrite the correct file, then `swarm repo verify` to confirm.
+
+**Wrong family packaged**: repackage with `swarm model package` and pick the right family at the prompt (or pass the correct `--family-id`).
+
+**Environment issues**: Run `swarm doctor` to diagnose.
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>
+
+---
 
 ## Support
 
 - **Discord**: [discord.gg/8dPqPDw7GC](https://discord.gg/8dPqPDw7GC) (ping @Miguelikk or @AliSaaf)
 - **GitHub Issues**: open a ticket with logs & error trace
 - **Website**: [swarm124.com](https://swarm124.com)
+
+<p align="right">(<a href="#miner-top">back to top</a>)</p>

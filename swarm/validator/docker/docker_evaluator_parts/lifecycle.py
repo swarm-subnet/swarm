@@ -11,6 +11,7 @@ from swarm.config import DockerRuntimeSettings, env_bool
 from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
 
 from ._shared import _THREAD_CAP_ENV_VARS
+from .batch import remove_all_model_images
 def __new__(cls):
     if cls._instance is None:
         cls._instance = super().__new__(cls)
@@ -32,7 +33,7 @@ def __init__(self):
     evaluator_cls = self.__class__
     # Only initialize attributes on first instantiation
     if not hasattr(self, "base_image"):
-        self.base_image = "swarm_model_graph_runner:latest"
+        self.base_image = "swarm_evaluator_base:latest"
     if not hasattr(self, "last_fake_model_info"):
         self.last_fake_model_info = None
     if not hasattr(self, "base_images"):
@@ -137,12 +138,12 @@ def _calculate_docker_hash(self) -> str:
     swarm_pkg = _swarm_package_dir()
     inputs = [
         root / ".dockerignore",
-        _docker_dir() / "Dockerfile.model_graph",
-        _docker_dir() / "model-graph-requirements.lock",
-        swarm_pkg / "__init__.py",
+        _docker_dir() / "Dockerfile",
+        _docker_dir() / "docker-requirements.txt",
     ]
-    for image_dir in (swarm_pkg / "model_graph", swarm_pkg / "submission_template"):
-        inputs.extend(sorted(p for p in image_dir.rglob("*") if p.is_file() and "__pycache__" not in p.parts))
+    inputs.extend(
+        sorted(p for p in swarm_pkg.rglob("*.py") if "__pycache__" not in p.parts)
+    )
 
     hasher = hashlib.sha256()
     for f in inputs:
@@ -251,6 +252,7 @@ def _setup_base_container(self):
                 shell=True,
                 capture_output=True,
             )
+            remove_all_model_images()
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
             subprocess.run(
@@ -260,7 +262,7 @@ def _setup_base_container(self):
         except Exception:
             pass
 
-        dockerfile_path = _docker_dir() / "Dockerfile.model_graph"
+        dockerfile_path = _docker_dir() / "Dockerfile"
         build_context = _repo_root()
         current_hash = self._calculate_docker_hash()
 

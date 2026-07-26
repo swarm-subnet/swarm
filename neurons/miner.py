@@ -33,7 +33,8 @@ os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
 
 import bittensor as bt
 
-from swarm.model_graph import admit_artifact
+from swarm.core.submission_policy import validate_submission_zip
+from swarm.policy_interface import PolicyInterfaceError, read_policy_contract_from_zip
 
 
 def _validate_github_url(raw: str) -> str | None:
@@ -145,18 +146,21 @@ def _fetch_backend_families(backend_url: str) -> dict | None:
 
 
 def _validate_artifact(path: str, *, family_id: str | None = None) -> str | None:
-    """Run the same static graph admission used by validators and the backend."""
+    """Run the same static submission checks used by validators and the backend."""
     try:
-        result = admit_artifact(Path(path))
+        accepted, detail = validate_submission_zip(Path(path))
     except OSError as exc:
-        return f"MG_ARCHIVE_REJECTED:cannot read artifact: {exc}"
-    if not result.accepted:
-        return f"{result.reason_code}:{result.detail}"
-    if family_id is not None and result.family_id != family_id:
-        return (
-            "MG_SHAPE_CONTRACT_MISMATCH:artifact family "
-            f"{result.family_id!r} does not match {family_id!r}"
-        )
+        return f"invalid_artifact:cannot read artifact: {exc}"
+    if not accepted:
+        return detail
+    if family_id is None:
+        return None
+    try:
+        declared = str(read_policy_contract_from_zip(Path(path)).get("family_id") or "")
+    except PolicyInterfaceError:
+        return None  # a hand-built zip may omit the contract; nothing to bind against
+    if declared and declared != family_id:
+        return f"artifact_family_mismatch:artifact family {declared!r} does not match {family_id!r}"
     return None
 
 
@@ -232,7 +236,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--artifact", type=str, default=None,
-        help="Private track: path to the model_graph.zip to upload privately",
+        help="Private track: path to the submission.zip to upload privately",
     )
     parser.add_argument(
         "--backend_url", type=str, default=None,

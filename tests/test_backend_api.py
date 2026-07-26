@@ -121,7 +121,7 @@ def test_sign_request_with_wallet_contains_expected_fields(monkeypatch, tmp_path
         assert headers["X-Validator-Signature"] == "0102"
         assert "X-Validator-Nonce" in headers
         assert "X-Validator-Timestamp" in headers
-        assert headers["X-Swarm-Validator-Contract"] == "model_graph_rpc.v1"
+        assert headers["X-Swarm-Validator-Contract"] == "agent_rpc.v1"
     finally:
         _run(client.close())
 

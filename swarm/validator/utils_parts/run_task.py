@@ -20,6 +20,7 @@ import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
@@ -60,7 +61,7 @@ async def run_task(
             "uid": uid, "model_hash": model_hash,
             "github_url": github_url, "is_private": is_private,
             "family_id": family_id,
-            "interface_version": str(task.get("interface_version") or "model_graph.v1"),
+            "interface_version": str(task.get("interface_version") or SUBMISSION_INTERFACE_VERSION),
             "artifact_path": str(task.get("artifact_path") or ""),
         }],
     )

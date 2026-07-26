@@ -31,7 +31,7 @@ from swarm.constants import (
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.calibration import act_hard_cap_sec, judge_act
-from swarm.model_graph.action import canonicalize_action
+from swarm.core.action import canonicalize_action
 
 from ._shared import (
     _cleanup_env_quietly,
@@ -506,6 +506,14 @@ def _run_multi_seed_rpc_sync(
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
                         act_dim = int(env.action_space.shape[-1])
+                        if n_drones > 1:
+                            lo, hi = env.action_space.low, env.action_space.high
+                        else:
+                            lo, hi = (
+                                env.action_space.low.flatten(),
+                                env.action_space.high.flatten(),
+                            )
+
                         while t_sim < task.horizon and not (
                             stop_event is not None and stop_event.is_set()
                         ):
@@ -652,11 +660,12 @@ def _run_multi_seed_rpc_sync(
 
                             is_first_step = False
 
-                            family_id = str(getattr(task, "family_id", "cf_autopilot"))
                             act = canonicalize_action(
-                                np.asarray(action),
-                                family_id,
-                                n_drones if n_drones > 1 else None,
+                                action,
+                                lo,
+                                hi,
+                                n_drones=n_drones if n_drones > 1 else None,
+                                act_dim=act_dim,
                             )
                             _set_phase(
                                 "env_step", task=task_label, step=step_idx, sim_t=t_sim

@@ -54,11 +54,11 @@ Swarm is five separate competitions, each with its own champion and its own shar
 
 | Mission | What your drone has to do | Reward share |
 |---------|---------------------------|:------------:|
-| **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
-| **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
-| **[Swarm Autopilot](docs/families/swarm_autopilot.md)** | Land a whole team of drones, fast and without collisions | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
-| **[Interceptor](docs/families/interceptor.md)** | Chase down a fleeing drone and catch it before time runs out | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
-| **[Autopilot](docs/families/autopilot.md)** | Cross the world, find the landing pad, and touch down clean | <img src="https://img.shields.io/badge/10%25-F5D400?style=flat-square" alt="10%" /> |
+| **[Interceptor](docs/families/interceptor.md)** | Chase down a fleeing drone and catch it before time runs out | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
+| **[Swarm Autopilot](docs/families/swarm_autopilot.md)** | Land a whole team of drones, fast and without collisions | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
+| **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
+| **[Autopilot](docs/families/autopilot.md)** | Cross the world, find the landing pad, and touch down clean | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
+| **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
 
 <p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
 
@@ -194,20 +194,12 @@ Everything happens from the terminal, with no dashboards to wrangle. Train, pack
 
 ```bash
 swarm doctor                                   # check your setup
-swarm model package --source my_model/         # package your model graph
-swarm benchmark --model model_graph.zip --workers 4   # score it locally
+swarm model package --source my_model/         # package your agent
+swarm benchmark --model submission.zip --workers 4   # score it locally
 swarm report                                   # see how it did
 ```
 
 The same engine validators use runs on your own machine, so the score you see locally is the score that counts. Full reference in the [CLI docs](docs/CLI_readme.md).
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/3679d3aa-7be0-4f30-a8a3-fc00009efa24" alt="Model graph" width="100%">
-</p>
-
-<p align="center">
-  <sub><b>What you ship.</b> A model graph: trained ONNX networks wired by a manifest, reading the world and answering with velocity commands.</sub>
-</p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

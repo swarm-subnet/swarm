@@ -8,15 +8,13 @@ Find a human on the ground with nothing but a depth camera, a noisy clue, and 40
 
 A victim is down somewhere in the world. Your drone lifts off from a start pad with a rough 2D pointer toward the search area: the victim's true position lies anywhere within a 30 m circle around that point. The drone must fly out, sweep the area, locate the victim, and hold a steady confirmation hover 2–4 m above them for 2 continuous seconds. Getting within 0.8 m of the victim ends the mission in failure: this is a rescue, not a delivery.
 
-This family runs on the **private track**. Submit with `--family_id cf_search_and_rescue --artifact ./model_graph.zip` (see [miner.md](../miner.md#submit-a-private-family-search-and-rescue-swarm-sar)), not a public repo: the sha256 is committed on-chain and the bytes go to the backend. The artifact and its source stay private; only trusted validators fetch it. Scores and the leaderboard stay public like any other family.
-
 | | |
 |---|---|
 | Family ID | `cf_search_and_rescue` (short label **SAR**) |
 | Drones | 1 |
 | Control / physics rate | 50 Hz (`sim_dt` = 1/50 s) |
 | Episode horizon | 60 s (3,000 control steps) |
-| Emission allocation | 0.1 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Emission allocation | 0.15 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
 | Benchmark | 1,100 seeds per weekly epoch, all 6 environment types |
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
@@ -31,10 +29,9 @@ This family runs on the **private track**. Submit with `--family_id cf_search_an
 
 | | |
 |---|---|
-| Interface version | `model_graph.v1` |
-| Execution profile | `swarm.onnx-neural.cpu.v1` |
-| Runner ABI | `graph_runner.v1` |
-| Contract file | `manifest.json` (model_graph.v1) |
+| Interface version | `submission_zip.v1` |
+| Entry point | `drone_agent.DroneFlightController` |
+| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | city, open, mountain, village, warehouse, forest |
 
 ### Observation: `dict` with keys `depth`, `rgb`, `state`
@@ -43,7 +40,7 @@ This family runs on the **private track**. Submit with `--family_id cf_search_an
 |---|---|---|---|
 | `depth` | float32 | (256, 256, 1) | [0, 1] |
 | `rgb` | float32 | (256, 256, 3) | [0, 1] |
-| `state` | float32 | (165) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xyz` |
+| `state` | float32 | (165) at evaluation settings | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xyz` |
 
 ### Action: float32 tensor, shape (6)
 
@@ -208,7 +205,7 @@ For local training, `env.step` returns the per-step **change** in this same roll
 
 ## Runtime limits
 
-Models run inside a sandboxed Docker container (6 GB RAM, 2 CPUs) served over Cap'n Proto RPC; the graph must stay inside the execution profile's ONNX op allowlist (see the [miner guide](../miner.md)) and the zip is capped at 50 MiB.
+Models run inside a sandboxed Docker container (6 GB RAM, 2 CPUs) as a Cap'n Proto RPC server; `requirements.txt` is restricted to the [whitelist](../miner.md#docker-whitelist) and the uncompressed zip is capped at 50 MiB.
 
 | Limit | Value |
 |---|---|
@@ -233,7 +230,7 @@ Package your model against this family's contract, then benchmark it locally wit
 swarm model package --source ./my_model --family-id cf_search_and_rescue
 
 python -m swarm.benchmark.engine \
-  --model model_graph.zip \
+  --model submission.zip \
   --family-id cf_search_and_rescue \
   --seeds-per-group 3 --workers 4
 ```

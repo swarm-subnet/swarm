@@ -12,16 +12,16 @@ with the code-shipping submission format; setting them today has no effect.
 
 ### The validator contract
 
-`VALIDATOR_CONTRACT_VERSION = 'model_graph_rpc.v1'` is the single accepted
+`VALIDATOR_CONTRACT_VERSION = 'agent_rpc.v1'` is the single accepted
 contract. The backend pins it in `app/rollout.py`; the validator sends it on
 every signed request as `X-Swarm-Validator-Contract`, sourced from
-`swarm/model_graph/constants.py` (`VALIDATOR_CONTRACT`), alongside
+`swarm/core/submission_policy.py` (`VALIDATOR_CONTRACT`), alongside
 `X-Validator-Hotkey` / `-Signature` / `-Nonce` / `-Timestamp` and
 `X-Code-Version`.
 
 ### Compatibility (`get_validator_rollout_compatibility`)
 
-Binary: a validator presenting `model_graph_rpc.v1` is compatible and may
+Binary: a validator presenting `agent_rpc.v1` is compatible and may
 evaluate all enabled families; anything else gets `upgrade_required=True`,
 an empty `safe_family_ids`, and reason `validator_contract_upgrade_required`.
 
@@ -47,10 +47,11 @@ The registry that defines the families, their states, policies, and emission all
 **Sync is manual.** After editing the schema in the swarm repo, run:
 
 ```bash
-python3 swarm/scripts/sync_family_registry.py
+python3 swarm/scripts/sync_family_registry.py \
+  --backend swarm-backend --website Swarm-Website
 ```
 
-The script reads the swarm-repo schema and overwrites both copies. It assumes the three repos are sibling directories under one workspace root. There is no CI hook: the only automated guard is the backend test `test_registry_copies_are_in_sync_across_repos`, and it **skips** when the sibling checkouts are absent, so divergence is only caught when backend tests run in a full three-repo workspace.
+The script reads the swarm-repo schema and overwrites both copies. Both checkouts must be named: a workspace can hold several worktrees of the same repo on different branches, and a directory name cannot tell them apart, so pointing at the wrong one would write the registry into an unrelated branch. Add `--check` to report drift without writing (non-zero exit when a mirror is stale) — useful before a release. There is no CI hook: the only other automated guard is the backend test `test_registry_copies_are_in_sync_across_code_repos`, and it **skips** when the sibling checkouts are absent, so divergence is only caught when backend tests run in a full three-repo workspace.
 
 Divergence matters: the backend derives `CHALLENGE_FAMILY_IDS`, `FAMILY_STATES`, and `EMISSIONS_STATES` from **its** copy at import time, DB `challenge_family` rows are seeded and repaired from that copy, and the chain scanner rejects any submission naming a family the backend copy doesn't know.
 
@@ -60,13 +61,13 @@ Five families, all `family_state='active'` and `emissions_state='active'`:
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_autopilot` | 0.10 |
-| `cf_search_and_rescue` | 0.10 |
-| `cf_swarm_autopilot` | 0.10 |
-| `cf_swarm_sar` | 0.10 |
-| `cf_interceptor` | 0.10 |
+| `cf_interceptor` | 0.30 |
+| `cf_swarm_autopilot` | 0.20 |
+| `cf_swarm_sar` | 0.20 |
+| `cf_autopilot` | 0.15 |
+| `cf_search_and_rescue` | 0.15 |
 
-Allocations sum to 0.50: the unallocated half of the pool burns during the rollout and is raised manually as the tasks prove out.
+Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, no crowning for 7 days, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first.
 
 State enums: `family_state` ∈ {incubating, active, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 
@@ -98,9 +99,9 @@ Comma-separated coldkey whitelist, checked by `require_trusted_validator` on the
 | Empty / unset | **Fail-closed**: every evaluation endpoint returns 403 and heartbeats tell validators to stop — nothing is evaluated until the whitelist is configured |
 | Configured | **Fail-closed**: coldkey resolved from the DB (`validatoronchain`) then the metagraph; unresolved or unlisted coldkeys get 403 with "Contact the team to be added" |
 
-`require_strict_trusted_validator` (private artifact bytes) applies the same fail-closed rule.
+`require_strict_trusted_validator` (private-track artifact bytes) applies the same fail-closed rule; the private track itself is dormant — every family is public.
 
-> **Required before anything scores.** The whitelist gates all evaluation, so a fresh deploy must set `TRUSTED_VALIDATOR_COLDKEYS` before validators can take tasks. The private families (`cf_search_and_rescue`, `cf_swarm_sar`) additionally serve artifacts only through the strict gate and need those validators on `>= 5.0.0`. Set the whitelist and roll out 5.0.0 validators **before** relying on evaluation.
+> **Required before anything scores.** The whitelist gates all evaluation, so a fresh deploy must set `TRUSTED_VALIDATOR_COLDKEYS` before validators can take tasks. Set the whitelist **before** relying on evaluation.
 
 ---
 
@@ -222,8 +223,8 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_
 
 | I want to… | Do this |
 |------------|---------|
-| Keep out validators on the old contract | Nothing to do — only `model_graph_rpc.v1` validators are ever authorized |
-| Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py`, commit all three copies |
+| Keep out validators on the old contract | Nothing to do — only `agent_rpc.v1` validators are ever authorized |
+| Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py --backend swarm-backend --website Swarm-Website`, commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |

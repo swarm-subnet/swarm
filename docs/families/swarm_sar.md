@@ -4,9 +4,7 @@
 
 One victim, one clue, up to eight drones: one brain flies them all.
 
-Swarm Search and Rescue (`cf_swarm_sar`) is the team version of Search and Rescue. One policy controls 2–8 drones that lift off from separate pads, share one noisy search clue, and sweep the map together. The mission succeeds the moment **any one drone** finds the victim and holds a steady confirmation hover above them, without ever touching them. Everyone scores together: one shared team score, identical for every drone.
-
-This family runs on the **private track**. Submit with `--family_id cf_swarm_sar --artifact ./model_graph.zip` (see [miner.md](../miner.md#submit-a-private-family-search-and-rescue-swarm-sar)), not a public repo: the sha256 is committed on-chain and the bytes go to the backend. The artifact and its source stay private; only trusted validators fetch it. Scores and the leaderboard stay public like any other family.
+Swarm Search and Rescue (`cf_swarm_sar`) is the team version of Search and Rescue. One policy controls 2–8 drones that lift off from separate pads, share one noisy search clue, and sweep the map together. The mission succeeds the moment **any one drone** finds the victim and holds a steady confirmation hover above them, without ever touching them. Everyone scores together: one shared team score, identical for every drone. The family is active and carries **0.20** of subnet emissions.
 
 ---
 
@@ -32,21 +30,20 @@ This family runs on the **private track**. Submit with `--family_id cf_swarm_sar
 
 | | |
 |---|---|
-| Interface version | `model_graph.v1` |
-| Execution profile | `swarm.onnx-neural.cpu.v1` |
-| Runner ABI | `graph_runner.v1` |
-| Contract file | `manifest.json` (model_graph.v1) |
+| Interface version | `submission_zip.v1` |
+| Entry point | `drone_agent.DroneFlightController` |
+| Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | city, open, mountain, village, forest |
 
 ### Observation: `dict` with keys `depth`, `rgb`, `state`
 
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
-| `depth` | float32 | (N, 256, 256, 1) | [0, 1] |
-| `rgb` | float32 | (N, 256, 256, 3) | [0, 1] |
-| `state` | float32 | (N, 214) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` → `teammate_rel_state` |
+| `depth` | float32 | (dynamic, 256, 256, 1) | [0, 1] |
+| `rgb` | float32 | (dynamic, 256, 256, 3) | [0, 1] |
+| `state` | float32 | (dynamic, 214) | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` → `teammate_rel_state` |
 
-### Action: float32 tensor, shape (N, 6)
+### Action: float32 tensor, shape (dynamic, 6)
 
 | # | Component | Min | Max |
 |---|---|---|---|
@@ -219,20 +216,20 @@ Per-drone minimum clearance **excludes live teammates, the victim, the start pad
 
 ## Runtime limits
 
-Your graph runs inside Docker behind the subnet-owned runner's Cap'n Proto RPC server; the validator calls `ping()`, `reset()` between seeds, and steps the graph once per control step.
+Your zip runs as a Cap'n Proto RPC server inside Docker; the validator calls `ping()`, `reset()` between seeds, and `act(obs)` once per control step.
 
 | Limit | Value |
 |---|---|
-| Zip contents | `manifest.json` at root + ONNX networks under `models/` |
+| Zip contents | `drone_agent.py` at root with `DroneFlightController` (`act`/`reset`) + `swarm_policy_contract.json` |
 | Uncompressed size | 50 MiB max |
-| Layout | exact: `manifest.json` + the declared `models/*.onnx`, nothing else |
+| Forbidden suffixes | `.exe` `.so` `.dll` `.sh` `.bat` `.pyc` |
 | Container resources | 6 GB memory, 2 CPUs |
 | `ping` / `reset` timeouts | 2.0 s / 5.0 s |
 | First `act` | 2.0 s budget, 3.0 s hard cap (reference time) |
 | Per-step `act` | 0.5 s; hard cap 1.25 s reference + 0.05 s margin |
 | Strikes | 3 hard-cap strikes or 15 RPC timeouts fail the seed |
 
-Timing is hardware-fair: your steps are judged in baseline-equivalent time, so a slower validator host doesn't penalize you. The graph must stay inside the execution profile's ONNX op allowlist (`swarm.onnx-neural.cpu.v1`); anything outside it is rejected at admission.
+Timing is hardware-fair: your steps are judged in baseline-equivalent time, so a slower validator host doesn't penalize you. Pip installs in the container are whitelisted: torch/torchvision/torchaudio, onnx/onnxruntime(-gpu), stable-baselines3, sb3-contrib, gymnasium/gym, swarm-bullet3, swarm-drone-gym, numpy, scipy, scikit-learn, opencv-python(-headless), pillow, imageio, matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack.
 
 Every submission goes straight to the full benchmark. (A screening phase with its own 41-slot template and early-fail checkpoints exists in the codebase behind an operator constant, currently disabled.)
 
@@ -245,7 +242,7 @@ Every submission goes straight to the full benchmark. (A screening phase with it
 Run the local benchmark engine against this family directly:
 
 ```bash
-python3 -m swarm.benchmark --model model_graph.zip --family-id cf_swarm_sar --workers 4
+python3 -m swarm.benchmark --model submission.zip --family-id cf_swarm_sar --workers 4
 ```
 
 `--seeds-per-group` controls seeds per environment type (default 3). Note the `swarm benchmark` CLI wrapper does not expose `--family-id` and defaults to `cf_autopilot`. Use the module form above for Swarm SAR.

@@ -56,7 +56,7 @@ def _create_prepared_benchmark_evaluator():
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 
     evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
-    evaluator.base_image = "swarm_model_graph_runner:latest"
+    evaluator.base_image = "swarm_evaluator_base:latest"
     evaluator.last_fake_model_info = None
     evaluator.base_ready = True
     DockerSecureEvaluator._base_ready = True
@@ -197,6 +197,7 @@ def _benchmark_worker_main(
                         task_total=request.task_total,
                         runtime_profile_payload=getattr(request, "runtime_profile", None),
                         host_speed_factor=getattr(request, "host_speed_factor", None),
+                        model_image=getattr(request, "model_image", None),
                     )
                 )
                 result_queue.put(

@@ -62,19 +62,26 @@ def _expected_v1_state(env, family_id):
 def test_artifact_contract_shape_for_v1():
     expected_depth = {"cf_autopilot": [128, 128, 1], "cf_search_and_rescue": [256, 256, 1]}
     for family_id in ("cf_autopilot", "cf_search_and_rescue"):
-        art = build_artifact_policy_contract(family_id, "model_graph.v1")
-        assert art["execution_profile"] == "swarm.onnx-neural.cpu.v1"
-        assert art["runner_abi"] == "graph_runner.v1"
-        assert "entry_point" not in art
-        assert "observation_assembly" in art
+        art = build_artifact_policy_contract(family_id, "submission_zip.v1")
+        assert art["entry_point"]["module"] == "drone_agent"
+        assert art["entry_point"]["class_name"] == "DroneFlightController"
+        state_field = art["observation_space"]["fields"]["state"]
+        assert state_field["semantic_channels"][:4] == [
+            "position_xyz",
+            "orientation_rpy",
+            "linear_velocity_xyz",
+            "angular_velocity_xyz",
+        ]
         assert art["observation_space"]["fields"]["depth"]["shape"] == expected_depth[family_id]
         expected_state = 141 if family_id == "cf_autopilot" else 165
-        assert art["observation_space"]["fields"]["state"]["shape"] == [expected_state]
+        smoke = build_smoke_test_observation(family_id, "submission_zip.v1")
+        assert smoke["state"].shape == (expected_state,)
+        assert state_field["minimum_length"] <= expected_state
 
 
 def test_smoke_observation_lengths_match_production_runtime():
-    autopilot = build_smoke_test_observation("cf_autopilot", "model_graph.v1")
-    sar = build_smoke_test_observation("cf_search_and_rescue", "model_graph.v1")
+    autopilot = build_smoke_test_observation("cf_autopilot", "submission_zip.v1")
+    sar = build_smoke_test_observation("cf_search_and_rescue", "submission_zip.v1")
     assert autopilot["depth"].shape == (128, 128, 1)
     assert sar["depth"].shape == (256, 256, 1)
     assert sar["rgb"].shape == (256, 256, 3)

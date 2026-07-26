@@ -8,15 +8,13 @@ Run `swarm doctor` after installation to verify your environment is ready.
 
 Swarm runs **five challenge families**, all active. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
 
-| Family | ID | Track | Mission | Emissions |
-|--------|-----|-------|---------|-----------|
-| [Autopilot](families/autopilot.md) | `cf_autopilot` | Public | One drone crosses a generated world and lands on a pad inside a noisy search area | 10% |
-| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | Private | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 30% |
-| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | Public | One policy lands 2–8 drones on a shared pool of pads | 15% |
-| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | Private | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 30% |
-| [Interceptor](families/interceptor.md) | `cf_interceptor` | Public | One drone hunts down and rams a validator-flown target over open terrain | 15% |
-
-Search and Rescue and Swarm Search and Rescue run on the private track: only trusted validators (>= 5.0.0) with the backend's trusted-validator whitelist configured fetch the artifact from the backend and evaluate it. The other three families are public: any validator downloads the model from the miner's GitHub repo as usual.
+| Family | ID | Mission | Emissions |
+|--------|-----|---------|-----------|
+| [Autopilot](families/autopilot.md) | `cf_autopilot` | One drone crosses a generated world and lands on a pad inside a noisy search area | 15% |
+| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 15% |
+| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 20% |
+| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 20% |
+| [Interceptor](families/interceptor.md) | `cf_interceptor` | One drone hunts down and rams a validator-flown target over open terrain | 30% |
 
 ## 🖥️ System Requirements
 
@@ -316,7 +314,7 @@ pm2 start --name auto_update_validator \
    `GET /validators/sync` returns the current epoch, the per-family King of the Hill windows and family shares, the champions, and the latest weight map. Runs once per forward cycle. Evaluation work arrives separately via the `GET /validators/next-task` long-poll, which leases the next 50-seed batch.
 
 2. **Fetch the model**
-   For public families, download `model_graph.zip` from the miner's GitHub repo and verify the SHA-256 hash against the backend record (the README hash is checked at submission time by the backend). For the two private families (Search and Rescue, Swarm SAR) there is no public repo: trusted validators fetch the artifact from the backend instead.
+   Download `submission.zip` from the miner's GitHub repo and verify the SHA-256 hash against the backend record (the README hash is checked at submission time by the backend).
 
 3. **Full benchmark (1,100 seeds)**
    Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers, leased from the backend in 50-seed batches. The task metadata carries the family, phase, and seed range, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.

@@ -29,7 +29,7 @@ class _ProcResult:
 
 def _new_evaluator() -> de.DockerSecureEvaluator:
     ev = de.DockerSecureEvaluator.__new__(de.DockerSecureEvaluator)
-    ev.base_image = "swarm_model_graph_runner:latest"
+    ev.base_image = "swarm_evaluator_base:latest"
     ev.base_images = {"base": ev.base_image}
     ev.base_ready = True
     de.DockerSecureEvaluator._base_ready = True
@@ -395,7 +395,7 @@ def test_setup_base_container_uses_real_docker_paths_after_split(monkeypatch):
 
     assert ev.base_ready is True
     assert len(build_cmds) == 1
-    dockerfile_path = Path(__file__).resolve().parents[1] / "swarm" / "validator" / "docker" / "Dockerfile.model_graph"
+    dockerfile_path = Path(__file__).resolve().parents[1] / "swarm" / "validator" / "docker" / "Dockerfile"
     assert build_cmds[0][build_cmds[0].index("-f") + 1] == str(dockerfile_path)
 
 
@@ -1569,6 +1569,7 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
         task_total=None,
         runtime_profile_payload=None,
         host_speed_factor=None,
+        model_image=None,
     ):
         captured["chunk"] = list(chunk)
         captured["worker_id"] = worker_id

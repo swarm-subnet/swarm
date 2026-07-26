@@ -8,7 +8,7 @@ Handshake (single message):
     ────────── empty ─────►      (request PolicyRef)
                    ref   ◄──────  (includes github_url for model download)
 
-Validators download model_graph.zip directly from the miner's public GitHub
+Validators download the submission zip directly from the miner's public GitHub
 repository.  No binary streaming over the wire.
 """
 from __future__ import annotations
