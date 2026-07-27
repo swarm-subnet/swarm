@@ -73,15 +73,19 @@ _GROUP_BASE_RESOURCE_COSTS = {
     "type4_village": _SeedResourceCost("heavy", 1.20, 3150.0, 2),
     "type3_mountain": _SeedResourceCost("heavy", 1.25, 3300.0, 2),
     "type6_forest": _SeedResourceCost("heavy", 1.35, 3600.0, 2),
+    "type7_office": _SeedResourceCost("light", 0.85, 2000.0, 0),
 }
 _GROUP_RESOURCE_CLASS = {
     group_name: cost.resource_class
     for group_name, cost in _GROUP_BASE_RESOURCE_COSTS.items()
 }
 _RESOURCE_CLASS_GROUPS = {
-    "light": ("type1_city",),
-    "medium": ("type2_open", "type5_warehouse"),
-    "heavy": ("type4_village", "type3_mountain", "type6_forest"),
+    resource_class: tuple(
+        group_name
+        for group_name, cost in _GROUP_BASE_RESOURCE_COSTS.items()
+        if cost.resource_class == resource_class
+    )
+    for resource_class in ("light", "medium", "heavy")
 }
 _GROUP_CONCURRENCY_LIMITS = {
     "type3_mountain": 2,

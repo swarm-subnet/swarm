@@ -4,11 +4,7 @@ import numpy as np
 import pybullet as p
 import pytest
 
-from swarm.core.maps.office import (
-    OFFICE_CEILING_M,
-    build_office_map,
-    clear_office_shape_cache,
-)
+from swarm.core.maps.office import OFFICE_CEILING_M, build_office_map
 
 
 @pytest.fixture()
@@ -17,7 +13,6 @@ def office_client():
     info = build_office_map(seed=0, cli=cli)
     yield cli, info
     p.disconnect(cli)
-    clear_office_shape_cache(cli)
 
 
 def _ray_hit(cli, start, end):
@@ -64,5 +59,4 @@ def test_office_map_deterministic():
         info = build_office_map(seed=seed, cli=cli)
         aabbs.append([p.getAABB(b, physicsClientId=cli) for b in sorted(info["bodies"].values())])
         p.disconnect(cli)
-        clear_office_shape_cache(cli)
     assert np.allclose(np.array(aabbs[0]), np.array(aabbs[1]))

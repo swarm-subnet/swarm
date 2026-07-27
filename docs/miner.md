@@ -69,6 +69,7 @@ Swarm runs **five challenge families**, all active and all public. Each family i
 | Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
 | Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](families/swarm_sar.md) |
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 10% | [families/interceptor.md](families/interceptor.md) |
+| Office Interceptor | `cf_office_interceptor` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 0% (incubating) | [families/office_interceptor.md](families/office_interceptor.md) |
 
 The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions; the remainder that no family claims is burned. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 

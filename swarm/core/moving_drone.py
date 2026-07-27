@@ -20,6 +20,7 @@ from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
+    OFFICE_DEPTH_RES, OFFICE_RC_DEAD_ZONE, OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD,
     SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
     LIGHT_RANDOMIZATION_ENABLED,
@@ -40,6 +41,25 @@ from swarm.constants import (
 
 # Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
 _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
+
+# Families driven by body-frame RC sticks [lr, fb, ud, yaw] instead of the
+# world-frame velocity contract (indoor Tello: no GPS, no world frame).
+_OFFICE_RC_FAMILIES = ("cf_office_interceptor",)
+
+
+def rc_sticks_to_world_velocity(rc, yaw, speed):
+    """Map RC sticks [lr, fb, ud] to a world-frame velocity for the given yaw.
+
+    Body frame is Tello-style: fb along the camera heading, lr positive to the
+    drone's right, ud straight up. Per-axis scaling mirrors real RC sticks
+    (diagonal input is faster than a single axis, like the physical drone).
+    """
+    c, s = math.cos(yaw), math.sin(yaw)
+    lr, fb, ud = float(rc[0]), float(rc[1]), float(rc[2])
+    return np.array(
+        [speed * (fb * c + lr * s), speed * (fb * s - lr * c), speed * ud],
+        dtype=np.float64,
+    )
 
 
 @functools.lru_cache(maxsize=4096)
@@ -209,6 +229,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._alt_ray_origin_offset = DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET
         family_id = getattr(self.family_runtime, "family_id", "")
         self._sar_rgb_enabled = family_id in _SAR_RGB_FAMILIES
+        self._office_rc_enabled = family_id in _OFFICE_RC_FAMILIES
         if family_id == "cf_interceptor":
             from swarm.challenge_families.interceptor import make_interceptor_control
             self.ctrl = [make_interceptor_control(self) for _ in range(self.NUM_DRONES)]
@@ -216,6 +237,10 @@ class MovingDroneAviary(BaseRLAviary):
             self._depth_max_m = float(INTERCEPTOR_DEPTH_MAX_M)
             self._alt_ray_origin_offset = float(INTERCEPTOR_HULL_RADIUS - ALTITUDE_RAY_INSET)
             enhanced_width = enhanced_height = int(INTERCEPTOR_DEPTH_RES)
+        elif self._office_rc_enabled:
+            from swarm.challenge_families.office_interceptor import make_office_control
+            self.ctrl = [make_office_control(self) for _ in range(self.NUM_DRONES)]
+            enhanced_width = enhanced_height = int(OFFICE_DEPTH_RES)
         elif self._sar_rgb_enabled:
             self._depth_far_m = float(SAR_DEPTH_MAX_M)
             self._depth_max_m = float(SAR_DEPTH_MAX_M)
@@ -236,6 +261,13 @@ class MovingDroneAviary(BaseRLAviary):
                 (self.NUM_DRONES, SAR_RGB_RES, SAR_RGB_RES, 3), dtype=np.float32
             )
             self._rgb_dirty = False
+
+        # RC state (office only); _visual_stale=True cuts forward motion
+        if self._office_rc_enabled:
+            self._rc_command = np.zeros((self.NUM_DRONES, 4), dtype=np.float64)
+            self._rc_target_yaw = np.zeros(self.NUM_DRONES, dtype=np.float64)
+            self._rc_max_step = OFFICE_RC_SLEW_PER_SEC * self.CTRL_TIMESTEP
+            self._visual_stale = False
 
         self._clue_dim = int(self.family_runtime.state_clue_dim(task))
         self._obs_layout = self.family_runtime.observation_assembly(task)
@@ -259,19 +291,39 @@ class MovingDroneAviary(BaseRLAviary):
         return 1.0 / self.CTRL_FREQ
 
     def _parseURDFParameters(self):
-        """For cf_interceptor, point self.URDF at the 36 cm drone before BaseAviary parses
-        and loads it (both _parseURDFParameters and _housekeeping read self.URDF)."""
-        if getattr(self.family_runtime, "family_id", "") == "cf_interceptor":
+        """For cf_interceptor and the office family, point self.URDF at the family's drone
+        before BaseAviary parses and loads it (both _parseURDFParameters and _housekeeping
+        read self.URDF)."""
+        family_id = getattr(self.family_runtime, "family_id", "")
+        if family_id == "cf_interceptor":
             from swarm.challenge_families.interceptor import ensure_interceptor_urdf_in_gym_assets
             self.URDF = ensure_interceptor_urdf_in_gym_assets()
+        elif family_id in _OFFICE_RC_FAMILIES:
+            from swarm.challenge_families.office_interceptor import ensure_tello_assets_in_gym_assets
+            self.URDF = ensure_tello_assets_in_gym_assets()
         return super()._parseURDFParameters()
 
     def _actionSpace(self):
         """SAR adds a 6th action value per drone: the RGB-on-demand request (0..1, fires above
-        0.5). Runs inside BaseRLAviary.__init__, so it gates on family_runtime (set before super)
-        and rebuilds the action buffer to the wider width that base seeded at 5."""
+        0.5). The office family replaces the whole space with the 4 body-frame RC sticks
+        [lr, fb, ud, yaw]. Runs inside BaseRLAviary.__init__, so it gates on family_runtime
+        (set before super) and rebuilds the action buffer at the family's width."""
         space = super()._actionSpace()
         fam = getattr(getattr(self, "family_runtime", None), "family_id", "")
+
+        def _reseed_buffer(width):
+            # _reset_action_buffer reads action_space, which is not assigned yet
+            self.action_buffer.clear()
+            for _ in range(self.ACTION_BUFFER_SIZE):
+                self.action_buffer.append(np.zeros((self.NUM_DRONES, width)))
+
+        if fam in _OFFICE_RC_FAMILIES and self.ACT_TYPE == ActionType.VEL:
+            _reseed_buffer(4)
+            return spaces.Box(
+                low=-np.ones((self.NUM_DRONES, 4), dtype=np.float32),
+                high=np.ones((self.NUM_DRONES, 4), dtype=np.float32),
+                dtype=np.float32,
+            )
         if fam not in _SAR_RGB_FAMILIES or self.ACT_TYPE != ActionType.VEL:
             return space
         low = np.concatenate(
@@ -280,15 +332,16 @@ class MovingDroneAviary(BaseRLAviary):
         high = np.concatenate(
             [space.high, np.ones((self.NUM_DRONES, 1), dtype=space.high.dtype)], axis=1
         )
-        self.action_buffer.clear()
-        for _ in range(self.ACTION_BUFFER_SIZE):
-            self.action_buffer.append(np.zeros((self.NUM_DRONES, low.shape[1])))
+        _reseed_buffer(low.shape[1])
         return spaces.Box(low=low, high=high, dtype=np.float32)
 
     def _preprocessAction(self, action):
         """For SAR, coerce a wrong-width action to the env's action width before the base buffers
-        it, so a stray caller cannot corrupt the action-history buffer. Production always sends the
+        it, so a stray caller cannot corrupt the action-history buffer. The office family converts
+        its body-frame RC sticks here instead of in the base class. Production always sends the
         right width (rpc clips to action_space); other families pass straight through unchanged."""
+        if getattr(self, "_office_rc_enabled", False):
+            return self._preprocess_rc_action(action)
         if getattr(self, "_sar_rgb_enabled", False):
             arr = np.asarray(action)
             expected = int(self.action_space.shape[-1])
@@ -298,6 +351,43 @@ class MovingDroneAviary(BaseRLAviary):
                 fixed[:, :w] = arr[:, :w]
                 return super()._preprocessAction(fixed)
         return super()._preprocessAction(action)
+
+    def _preprocess_rc_action(self, action):
+        """Convert RC sticks [lr, fb, ud, yaw] to RPMs via the velocity PID.
+
+        The raw sticks enter the action-history buffer (that is all the real
+        controller would know); zero sticks command a hover.
+        """
+        action = np.asarray(action, dtype=np.float32).reshape(self.NUM_DRONES, 4)
+        self.action_buffer.append(action.copy())
+        rpm = np.zeros((self.NUM_DRONES, 4))
+        for k in range(self.NUM_DRONES):
+            rc = action[k].astype(np.float64)
+            rc[np.abs(rc) < OFFICE_RC_DEAD_ZONE] = 0.0
+            if self._visual_stale and rc[1] > 0.0:
+                rc[1] = 0.0
+            prev = self._rc_command[k]
+            rc = prev + np.clip(rc - prev, -self._rc_max_step, self._rc_max_step)
+            self._rc_command[k] = rc
+            cur_yaw = float(self.rpy[k, 2])
+            target_vel = rc_sticks_to_world_velocity(rc, cur_yaw, self.SPEED_LIMIT)
+            # persistent setpoint with clamped lead, so the stick's rate is
+            # tracked but the target cannot run away from a rate-limited frame
+            advanced = self._rc_target_yaw[k] + rc[3] * self.MAX_YAW_RATE * self.CTRL_TIMESTEP
+            lead = math.atan2(math.sin(advanced - cur_yaw), math.cos(advanced - cur_yaw))
+            lead = max(-OFFICE_RC_YAW_LEAD_RAD, min(OFFICE_RC_YAW_LEAD_RAD, lead))
+            self._rc_target_yaw[k] = target_yaw = cur_yaw + lead
+            rpm[k, :], _, _ = self.ctrl[k].computeControl(
+                control_timestep=self.CTRL_TIMESTEP,
+                cur_pos=self.pos[k],
+                cur_quat=self.quat[k],
+                cur_vel=self.vel[k],
+                cur_ang_vel=self.ang_v[k],
+                target_pos=self.pos[k],
+                target_rpy=np.array([0.0, 0.0, target_yaw]),
+                target_vel=target_vel,
+            )
+        return rpm
 
     def _get_movement_pattern_from_seed(self, seed: int) -> str:
         """Deterministically select movement pattern based on seed."""
@@ -1128,6 +1218,11 @@ class MovingDroneAviary(BaseRLAviary):
             self._rgb_request_count[:] = 0
             self._rgb_buffer.fill(0.0)
             self._rgb_dirty = False
+
+        if getattr(self, "_office_rc_enabled", False):
+            self._rc_command.fill(0.0)
+            self._rc_target_yaw.fill(0.0)
+            self._visual_stale = False
 
         self._reset_action_buffer()
 

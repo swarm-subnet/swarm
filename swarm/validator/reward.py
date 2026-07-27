@@ -181,6 +181,18 @@ def _calculate_interceptor_target_time(task: "MapTask") -> float:
     return min(par, float(task.horizon) * 0.95)
 
 
+def _calculate_office_target_time(task) -> float:
+    """Par time for the office interceptor: cross the spawn gap at the RC speed
+    cap plus a fixed slack for locating the target, capped under the horizon."""
+    from swarm.constants import OFFICE_ACQUIRE_SLACK_SEC, OFFICE_RC_SPEED
+
+    sx, sy, _ = task.start
+    gx, gy, _ = task.goal
+    gap = math.hypot(gx - sx, gy - sy)
+    par = gap / OFFICE_RC_SPEED + OFFICE_ACQUIRE_SLACK_SEC
+    return min(par, 0.95 * float(task.horizon))
+
+
 def _calculate_swarm_target_time(start, goal, n_congested: int) -> float:
     """Straight-line autopilot target time plus a per-neighbour congestion slack
     so a drone that detours to deconflict is not punished as merely slow."""

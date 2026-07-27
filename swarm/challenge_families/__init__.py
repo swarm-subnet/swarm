@@ -12,6 +12,7 @@ from .base import (
     ChallengeFamilyRuntimeError,
 )
 from .interceptor import InterceptorChallengeFamily
+from .office_interceptor import OfficeInterceptorChallengeFamily
 from .search_and_rescue import SearchAndRescueChallengeFamily
 from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
@@ -26,6 +27,7 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_swarm_autopilot": SwarmAutopilotChallengeFamily(),
     "cf_swarm_sar": SwarmSarChallengeFamily(),
     "cf_interceptor": InterceptorChallengeFamily(),
+    "cf_office_interceptor": OfficeInterceptorChallengeFamily(),
 }
 
 
@@ -159,6 +161,7 @@ __all__ = [
     "ChallengeFamilyRuntimeError",
     "DEFAULT_RUNTIME_FAMILY_ID",
     "InterceptorChallengeFamily",
+    "OfficeInterceptorChallengeFamily",
     "SearchAndRescueChallengeFamily",
     "SwarmAutopilotChallengeFamily",
     "SwarmSarChallengeFamily",

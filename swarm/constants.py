@@ -521,6 +521,37 @@ if INTERCEPTOR_MINER_SPEED <= 0.0:
 if not (0.0 < INTERCEPTOR_MIN_START_DISTANCE_M <= INTERCEPTOR_MAX_START_DISTANCE_M):
     raise ValueError("INTERCEPTOR start-distance bounds invalid")
 
+# =============================================================================
+# OFFICE INTERCEPTOR (indoor Tello family)
+# =============================================================================
+# Body-frame RC contract [lr, fb, ud, yaw] mirroring the Tello SDK sticks.
+# Sim defaults from the official specs; calibration knobs for real-flight logs.
+
+OFFICE_CHALLENGE_TYPE = 7                   # office indoor map (fixed layout, no random terrain)
+OFFICE_RC_SPEED = 3.0                       # m/s — per-axis stick-full speed (Tello slow mode)
+OFFICE_RC_YAW_RATE = 3.141                  # rad/s — stick-full yaw rate
+OFFICE_RC_DEAD_ZONE = 0.05                  # |stick| below this counts as zero
+OFFICE_RC_SLEW_PER_SEC = 4.0                # max stick-units/s of command change (RC feel)
+OFFICE_RC_YAW_LEAD_RAD = 0.6                # max angle the yaw setpoint may lead the true yaw
+OFFICE_MAX_TILT_DEG = 60.0                  # deg — safety cutoff for the indoor drone
+OFFICE_DEPTH_RES = 256                      # env-local depth resolution (placeholder until the obs contract card)
+OFFICE_HORIZON_SEC = 60.0                   # episode horizon
+OFFICE_SPAWN_Z = 0.05                       # floor spawn height (no platform indoors)
+OFFICE_MIN_START_DISTANCE_M = 4.0           # min chaser-to-target spawn separation
+OFFICE_MAX_START_DISTANCE_M = 14.0          # max chaser-to-target spawn separation
+OFFICE_ACQUIRE_SLACK_SEC = 5.0              # target-time slack for finding the target indoors
+OFFICE_W_SUCCESS = 0.5                      # score weight: interception achieved
+OFFICE_W_TIME = 0.5                         # score weight: time term
+
+if OFFICE_RC_SPEED <= 0.0 or OFFICE_RC_YAW_RATE <= 0.0:
+    raise ValueError("OFFICE_RC speed and yaw rate must be positive")
+if not (0.0 <= OFFICE_RC_DEAD_ZONE < 1.0):
+    raise ValueError("OFFICE_RC_DEAD_ZONE must be in [0, 1)")
+if OFFICE_RC_SLEW_PER_SEC <= 0.0 or OFFICE_RC_YAW_LEAD_RAD <= 0.0:
+    raise ValueError("OFFICE_RC slew and yaw lead must be positive")
+if not (0.0 < OFFICE_MIN_START_DISTANCE_M <= OFFICE_MAX_START_DISTANCE_M):
+    raise ValueError("OFFICE start-distance bounds invalid")
+
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2
 PLATFORM_RADIUS_MIN, PLATFORM_RADIUS_MAX = 2.0, 4.0

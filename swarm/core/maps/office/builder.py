@@ -11,7 +11,7 @@ is spawned at mass 0 from committed assets.
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import pybullet as p
 
@@ -35,9 +35,6 @@ _VISUAL_ONLY_GROUPS: Tuple[str, ...] = ("led", "backdrop")
 _WINDOW_PLUG_CENTER: Tuple[float, float, float] = (17.99, 3.8, 1.65)
 _WINDOW_PLUG_HALF_EXTENTS: Tuple[float, float, float] = (0.02, 1.26, 0.76)
 
-_SHAPE_CACHE: Dict[Tuple[int, str, str], int] = {}
-
-
 def _asset(name: str) -> str:
     path = os.path.join(_OFFICE_ASSET_DIR, name)
     if not os.path.exists(path):
@@ -46,31 +43,14 @@ def _asset(name: str) -> str:
 
 
 def _visual_shape(cli: int, obj_path: str) -> int:
-    key = (cli, obj_path, "vis")
-    if key not in _SHAPE_CACHE:
-        _SHAPE_CACHE[key] = p.createVisualShape(
-            p.GEOM_MESH, fileName=obj_path, physicsClientId=cli
-        )
-    return _SHAPE_CACHE[key]
+    return p.createVisualShape(p.GEOM_MESH, fileName=obj_path, physicsClientId=cli)
 
 
 def _collision_shape(cli: int, obj_path: str) -> int:
-    key = (cli, obj_path, "col")
-    if key not in _SHAPE_CACHE:
-        flags = p.GEOM_FORCE_CONCAVE_TRIMESH if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH") else 0
-        _SHAPE_CACHE[key] = p.createCollisionShape(
-            p.GEOM_MESH, fileName=obj_path, flags=flags, physicsClientId=cli
-        )
-    return _SHAPE_CACHE[key]
-
-
-def clear_office_shape_cache(cli: Optional[int] = None) -> None:
-    """Drop cached shape ids (all clients, or one) after a client disconnects."""
-    global _SHAPE_CACHE
-    if cli is None:
-        _SHAPE_CACHE = {}
-    else:
-        _SHAPE_CACHE = {k: v for k, v in _SHAPE_CACHE.items() if k[0] != cli}
+    flags = p.GEOM_FORCE_CONCAVE_TRIMESH if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH") else 0
+    return p.createCollisionShape(
+        p.GEOM_MESH, fileName=obj_path, flags=flags, physicsClientId=cli
+    )
 
 
 def build_office_map(seed: int = 0, cli: int = 0) -> dict:

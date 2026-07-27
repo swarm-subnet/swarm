@@ -7,6 +7,7 @@
       "ids": [
         "cf_autopilot",
         "cf_interceptor",
+        "cf_office_interceptor",
         "cf_search_and_rescue",
         "cf_swarm_autopilot",
         "cf_swarm_sar"
@@ -63,7 +64,8 @@
       "mountain",
       "village",
       "warehouse",
-      "forest"
+      "forest",
+      "office"
     ]
   },
   "skills": {
@@ -427,6 +429,49 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.1
+    },
+    "cf_office_interceptor": {
+      "family_id": "cf_office_interceptor",
+      "name": "Office Interceptor",
+      "description": "Indoor air-to-air pursuit: a Tello-class drone hunts a target drone inside a fixed office digital twin. Body-frame RC actions (no GPS or world-frame control), built for sim-to-real transfer to a physical Tello.",
+      "display": {
+        "label": "Office Interceptor",
+        "short_label": "Office",
+        "slug": "office-interceptor"
+      },
+      "family_state": "incubating",
+      "emissions_state": "incubating",
+      "visibility": "private",
+      "skill_ids": [
+        "sk_autonomous_navigation"
+      ],
+      "market_vertical_ids": [
+        "mv_general_autonomy"
+      ],
+      "environment_types": [
+        "office"
+      ],
+      "score_schema_id": "ss_navigation_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
+        "early_fail_checkpoints": {
+          "50": 0.5,
+          "100": 0.7,
+          "150": 0.85
+        },
+        "min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.015,
+        "champion_min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "emission_allocation": 0.0
     }
   },
   "policy_interfaces": {
@@ -1040,6 +1085,111 @@
           "fill": 0.0
         }
       }
+    },
+    "cf_office_interceptor:submission_zip.v1": {
+      "family_id": "cf_office_interceptor",
+      "interface_version": "submission_zip.v1",
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "depth",
+          "state"
+        ],
+        "fields": {
+          "depth": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              256,
+              256,
+              1
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              "dynamic"
+            ],
+            "rank": 1,
+            "minimum_length": 16,
+            "semantic_channels": [
+              "position_xyz",
+              "orientation_rpy",
+              "linear_velocity_xyz",
+              "angular_velocity_xyz",
+              "action_history",
+              "altitude_norm",
+              "search_clue_offset_xy"
+            ]
+          }
+        }
+      },
+      "observation_assembly": {
+        "depth": [
+          "depth_camera_md"
+        ],
+        "state": [
+          "position",
+          "orientation",
+          "linear_velocity",
+          "angular_velocity",
+          "action_history",
+          "altitude_norm",
+          "search_clue_offset"
+        ]
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": [
+          4
+        ],
+        "component_names": [
+          "lr",
+          "fb",
+          "ud",
+          "yaw"
+        ],
+        "lower_bound": [
+          -1.0,
+          -1.0,
+          -1.0,
+          -1.0
+        ],
+        "upper_bound": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "smoke_test_observation": {
+        "depth": {
+          "shape": [
+            256,
+            256,
+            1
+          ],
+          "fill": 0.25
+        },
+        "state": {
+          "shape": [
+            115
+          ],
+          "fill": 0.0
+        }
+      }
     }
   },
   "legacy_aliases": {
@@ -1049,7 +1199,8 @@
       "3": "mountain",
       "4": "village",
       "5": "warehouse",
-      "6": "forest"
+      "6": "forest",
+      "7": "office"
     },
     "benchmark_group_to_environment_type": {
       "type1_city": "city",
@@ -1057,7 +1208,8 @@
       "type3_mountain": "mountain",
       "type4_village": "village",
       "type5_warehouse": "warehouse",
-      "type6_forest": "forest"
+      "type6_forest": "forest",
+      "type7_office": "office"
     },
     "field_renames": {
       "challenge_type": "environment_type",
