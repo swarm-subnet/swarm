@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 import pybullet as p
 
-from .sar_types import BodyCategory
+from .sar_types import BodyCategory, SUPPORT_CATEGORIES
 from .surface_resolver import SurfaceHit, resolve_surface
 from .victim import accepted_categories_for, terrain_slope_deg
 
@@ -14,6 +14,10 @@ MAX_SPAWN_ATTEMPTS = 50
 NO_TOUCH_SPHERE_RADIUS = 0.8
 HOVER_COLUMN_TOP_Z = 5.0
 MAX_SPAWN_SLOPE_DEG = 22.0
+
+# Reached only after the strict pass fails; a dense map can leave no fully clear spot.
+RELAXED_SPAWN_ATTEMPTS = 100
+_RELAXED_STAGES = ((0.6, 0.5, 1.0), (0.3, 0.25, 1.5))
 
 
 class SARSpawnError(RuntimeError):
@@ -38,9 +42,10 @@ def _hover_column_clear(
     *,
     body_tags,
     support_uid: int,
+    top_z: float = HOVER_COLUMN_TOP_Z,
 ) -> bool:
     bottom = (x, y, surface_z + 0.05)
-    top = (x, y, surface_z + HOVER_COLUMN_TOP_Z)
+    top = (x, y, surface_z + top_z)
     hits = p.rayTest(bottom, top, physicsClientId=cli)
     if not hits:
         return True
@@ -64,8 +69,9 @@ def _sphere_obstacle_clear(
     *,
     body_tags,
     support_uid: int,
+    radius: float = NO_TOUCH_SPHERE_RADIUS,
 ) -> bool:
-    r = NO_TOUCH_SPHERE_RADIUS
+    r = radius
     aabb_min = (x - r, y - r, surface_z + 0.01)
     aabb_max = (x + r, y + r, surface_z + r)
     overlaps = p.getOverlappingObjects(aabb_min, aabb_max, physicsClientId=cli)
@@ -109,16 +115,30 @@ def find_spawn_xy(
     last_reason = "no_attempts"
     fallback: Optional[Tuple[float, Tuple[float, float, SurfaceHit]]] = None
     flattest: Optional[Tuple[float, Tuple[float, float, SurfaceHit]]] = None
-    for attempt in range(MAX_SPAWN_ATTEMPTS):
-        x, y = _sample_candidate(map_seed, attempt, bound)
+    grounded: Optional[Tuple[float, float, SurfaceHit]] = None
+    any_support: Optional[Tuple[float, float, SurfaceHit]] = None
+    for attempt in range(MAX_SPAWN_ATTEMPTS + RELAXED_SPAWN_ATTEMPTS):
+        if attempt < MAX_SPAWN_ATTEMPTS:
+            column_scale, sphere_scale, bound_scale = 1.0, 1.0, 1.0
+        else:
+            stage = (attempt - MAX_SPAWN_ATTEMPTS) * len(_RELAXED_STAGES) // RELAXED_SPAWN_ATTEMPTS
+            column_scale, sphere_scale, bound_scale = _RELAXED_STAGES[stage]
+        x, y = _sample_candidate(map_seed, attempt, bound * bound_scale)
         hit = resolve_surface(cli, x, y, body_tags, accepted)
         if hit is None:
+            if any_support is None and attempt >= MAX_SPAWN_ATTEMPTS:
+                loose = resolve_surface(cli, x, y, body_tags, SUPPORT_CATEGORIES)
+                if loose is not None:
+                    any_support = (x, y, loose)
             last_reason = "no_support_hit"
             if on_attempt is not None:
                 on_attempt(attempt, "no_support_hit", x, y)
             continue
+        if grounded is None:
+            grounded = (x, y, hit)
         if not _hover_column_clear(
             cli, x, y, hit.surface_z, body_tags=body_tags, support_uid=hit.support_uid,
+            top_z=HOVER_COLUMN_TOP_Z * column_scale,
         ):
             last_reason = "hover_column_blocked"
             if on_attempt is not None:
@@ -126,6 +146,7 @@ def find_spawn_xy(
             continue
         if not _sphere_obstacle_clear(
             cli, x, y, hit.surface_z, body_tags=body_tags, support_uid=hit.support_uid,
+            radius=NO_TOUCH_SPHERE_RADIUS * sphere_scale,
         ):
             last_reason = "no_touch_sphere_blocked"
             if on_attempt is not None:
@@ -159,7 +180,11 @@ def find_spawn_xy(
         return fallback[1]
     if flattest is not None:
         return flattest[1]
+    if grounded is not None:
+        return grounded
+    if any_support is not None:
+        return any_support
     raise SARSpawnError(
-        f"spawn exhausted {MAX_SPAWN_ATTEMPTS} attempts for seed={map_seed} "
+        f"spawn exhausted {MAX_SPAWN_ATTEMPTS + RELAXED_SPAWN_ATTEMPTS} attempts for seed={map_seed} "
         f"challenge_type={challenge_type}: last_reason={last_reason}"
     )
