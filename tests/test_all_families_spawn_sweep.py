@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 
 import pybullet as p
@@ -14,7 +15,7 @@ from swarm.validator.task_gen import random_task
 pytestmark = pytest.mark.full
 
 
-_N_SEEDS = 100
+_N_SEEDS = int(os.environ.get("SWARM_SPAWN_SWEEP_SEEDS", "100"))
 _SAR_FAMILIES = {"cf_search_and_rescue", "cf_swarm_sar"}
 
 
