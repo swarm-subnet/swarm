@@ -19,6 +19,7 @@ from importlib.resources import files as _pkg_files
 from typing import Any
 
 import numpy as np
+import pybullet as p
 
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel
@@ -28,6 +29,21 @@ from swarm.constants import (
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
     OFFICE_MIN_START_DISTANCE_M,
+    OFFICE_TELEM_ACCEL_BIAS,
+    OFFICE_TELEM_ACCEL_NOISE,
+    OFFICE_TELEM_ATTITUDE_NOISE_DEG,
+    OFFICE_TELEM_BARO_NOISE_M,
+    OFFICE_TELEM_BARO_WALK_M,
+    OFFICE_TELEM_DELAY_STEPS,
+    OFFICE_TELEM_DROP_PROB,
+    OFFICE_TELEM_HEIGHT_NOISE_M,
+    OFFICE_TELEM_PERIOD_STEPS,
+    OFFICE_TELEM_SEED_OFFSET,
+    OFFICE_TELEM_STALE_SEC,
+    OFFICE_TELEM_TOF_MAX_M,
+    OFFICE_TELEM_TOF_NOISE_M,
+    OFFICE_TELEM_VELOCITY_NOISE,
+    OFFICE_VPS_DRIFT_FORCE_N,
     OFFICE_W_SUCCESS,
     OFFICE_W_TIME,
 )
@@ -56,6 +72,23 @@ _TEMPLATE_SLOT = {
 }
 
 _tello_assets_ready = False
+
+# Telemetry packet layout: [pitch, roll, sin_yaw, cos_yaw, vf, vr, vu, af, ar, au,
+# tof, height, baro, age, valid]. Body axes follow the sticks: forward, right, up.
+# Snapshots hold the raw yaw (index 2) that delivery expands into sin/cos.
+_TELEM_DIM = 15
+_ATT_Q = math.radians(1.0)  # the SDK reports attitude in whole degrees
+_VEL_Q = 0.1                # the SDK reports velocity in dm/s
+_ACC_Q = 0.01               # accelerometer granularity (~0.001 g)
+_ALT_Q = 0.01               # the SDK reports heights in cm
+_ATT_STD = math.radians(OFFICE_TELEM_ATTITUDE_NOISE_DEG)
+_SNAP_NOISE_STD = np.array(
+    [_ATT_STD] * 3
+    + [OFFICE_TELEM_VELOCITY_NOISE] * 3
+    + [OFFICE_TELEM_ACCEL_NOISE] * 3
+    + [OFFICE_TELEM_TOF_NOISE_M, OFFICE_TELEM_HEIGHT_NOISE_M, OFFICE_TELEM_BARO_NOISE_M]
+)
+_SNAP_QUANT = np.array([_ATT_Q] * 3 + [_VEL_Q] * 3 + [_ACC_Q] * 3 + [_ALT_Q] * 3)
 
 
 def tello_urdf_path() -> str:
@@ -144,15 +177,34 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     def env_kwargs_for_task(self, task) -> dict:
         return {"sar_mode": False}
 
-    def state_clue_dim(self, task) -> int:
-        return 2
-
     # ------------------------------------------------------------------ #
     # env lifecycle
     # ------------------------------------------------------------------ #
     def initialise_env_state(self, env, *, requested_mode: bool = False) -> None:
         env.sar_mode = False
         env.MAX_TILT_RAD = math.radians(OFFICE_MAX_TILT_DEG)
+
+    def reset_env_state(self, env) -> None:
+        n = env.NUM_DRONES
+        seed = int(getattr(env.task, "map_seed", 0))
+        env._office_telemetry = np.zeros((n, _TELEM_DIM), dtype=np.float32)
+        # Age starts beyond the stale threshold: no packet has arrived yet.
+        env._office_telemetry[:, 13] = 2.0 * OFFICE_TELEM_STALE_SEC
+        env._office_telem_rng = np.random.default_rng(seed ^ OFFICE_TELEM_SEED_OFFSET)
+        env._office_telem_step = 0
+        env._office_pending = [None] * n
+        env._office_prev_vel = np.array(env.vel, dtype=np.float64)
+        env._office_accel_bias = env._office_telem_rng.normal(
+            0.0, OFFICE_TELEM_ACCEL_BIAS, (n, 3)
+        )
+        env._office_baro_walk = np.zeros(n, dtype=np.float64)
+        env._office_takeoff_z = np.array(env.pos[:, 2], dtype=np.float64)
+        angle = env._office_telem_rng.uniform(0.0, 2.0 * math.pi)
+        env._office_vps_force = [
+            OFFICE_VPS_DRIFT_FORCE_N * math.cos(angle),
+            OFFICE_VPS_DRIFT_FORCE_N * math.sin(angle),
+            0.0,
+        ]
 
     def spawn_task_world(self, env) -> None:
         build_office_map(seed=env.task.map_seed, cli=env.getPyBulletClient())
@@ -162,6 +214,68 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             "schema_version": SCHEMA_VERSION,
             "task_version": str(getattr(env.task, "version", "")),
         }
+
+    # ------------------------------------------------------------------ #
+    # telemetry link: noisy delayed packets at ~10 Hz, like the real SDK
+    # ------------------------------------------------------------------ #
+    def post_step_update(self, env) -> None:
+        rng = getattr(env, "_office_telem_rng", None)
+        if rng is None:
+            return
+        dt = float(env.CTRL_TIMESTEP)
+        env._office_telem_step += 1
+        step = env._office_telem_step
+        # Snapshot only the step whose state the next packet will carry.
+        if (step + OFFICE_TELEM_DELAY_STEPS) % OFFICE_TELEM_PERIOD_STEPS == 0:
+            for d in range(env.NUM_DRONES):
+                env._office_pending[d] = self._snapshot(env, d, dt)
+        env._office_prev_vel[:] = env.vel
+        telem = env._office_telemetry
+        telem[:, 13] = np.minimum(telem[:, 13] + dt, 2.0 * OFFICE_TELEM_STALE_SEC)
+        if step % OFFICE_TELEM_PERIOD_STEPS == 0:
+            for d in range(env.NUM_DRONES):
+                self._deliver_packet(env, d, rng, dt)
+        telem[:, 14] = telem[:, 13] <= OFFICE_TELEM_STALE_SEC
+
+    def _snapshot(self, env, d: int, dt: float) -> np.ndarray:
+        # Lazy import: moving_drone imports this package, so the top level would cycle.
+        from swarm.core.moving_drone import world_to_body
+
+        vel = np.array(env.vel[d], dtype=np.float64)
+        accel = (vel - env._office_prev_vel[d]) / dt + env._office_accel_bias[d]
+        roll, pitch, yaw = (float(v) for v in env.rpy[d])
+        vf, vr, vu = world_to_body(vel, yaw)
+        af, ar, au = world_to_body(accel, yaw)
+        tof = min(float(env._get_altitude_distance(d)), OFFICE_TELEM_TOF_MAX_M)
+        height = float(env.pos[d, 2]) - float(env._office_takeoff_z[d])
+        baro = height + float(env._office_baro_walk[d])
+        return np.array([pitch, roll, yaw, vf, vr, vu, af, ar, au, tof, height, baro])
+
+    def _deliver_packet(self, env, d: int, rng, dt: float) -> None:
+        env._office_baro_walk[d] += rng.normal(0.0, OFFICE_TELEM_BARO_WALK_M)
+        if rng.random() < OFFICE_TELEM_DROP_PROB:
+            return
+        snap = env._office_pending[d]
+        if snap is None:
+            return
+        q = np.round((snap + rng.normal(0.0, _SNAP_NOISE_STD)) / _SNAP_QUANT) * _SNAP_QUANT
+        telem = env._office_telemetry
+        telem[d, 0:2] = q[0:2]
+        telem[d, 2] = math.sin(q[2])
+        telem[d, 3] = math.cos(q[2])
+        telem[d, 4:13] = q[3:12]
+        telem[d, 13] = OFFICE_TELEM_DELAY_STEPS * dt
+
+    def apply_world_physics(self, env) -> None:
+        force = getattr(env, "_office_vps_force", None)
+        if force is None:
+            return
+        cli = env.CLIENT
+        for d in range(env.NUM_DRONES):
+            p.applyExternalForce(
+                int(env.DRONE_IDS[d]), -1, force, env.pos[d].tolist(),
+                p.WORLD_FRAME, physicsClientId=cli,
+            )
 
     # ------------------------------------------------------------------ #
     # scoring (placeholder: reach the target point; replaced when the live

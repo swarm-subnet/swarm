@@ -62,6 +62,12 @@ def rc_sticks_to_world_velocity(rc, yaw, speed):
     )
 
 
+def world_to_body(w, yaw):
+    """World vector to the same stick-aligned body axes (forward, right, up)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return (c * w[0] + s * w[1], s * w[0] - c * w[1], w[2])
+
+
 @functools.lru_cache(maxsize=4096)
 def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
     try:

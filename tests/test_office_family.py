@@ -11,6 +11,8 @@ from swarm.constants import (
     OFFICE_MIN_START_DISTANCE_M,
     OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC,
+    OFFICE_TELEM_DELAY_STEPS,
+    OFFICE_TELEM_PERIOD_STEPS,
 )
 from swarm.core.maps.office import OFFICE_CEILING_M, OFFICE_X_RANGE, OFFICE_Y_RANGE
 from swarm.core.moving_drone import rc_sticks_to_world_velocity
@@ -102,9 +104,9 @@ def test_office_stale_visual_cuts_forward(office_env):
 def test_office_forward_matches_heading(office_env):
     env = office_env
     env.reset(seed=env.task.map_seed)
-    # Climb away from the floor first so ground effect does not skew the run.
+    # Climb clear of ground effect, gently enough to stay under the 3 m ceiling.
     for _ in range(60):
-        env.step(np.array([[0.0, 0.0, 1.0, 0.0]], dtype=np.float32))
+        env.step(np.array([[0.0, 0.0, 0.3, 0.0]], dtype=np.float32))
     start = env.pos[0].copy()
     for _ in range(40):
         env.step(np.array([[0.0, 1.0, 0.0, 0.0]], dtype=np.float32))
@@ -113,6 +115,74 @@ def test_office_forward_matches_heading(office_env):
     # Spawn yaw is 0, so forward stick must move the drone along +X.
     assert abs(delta[0]) > 0.3
     assert abs(heading) < math.radians(20), f"moved at {math.degrees(heading):.1f} deg"
+
+
+def test_office_contract_is_telemetry_only():
+    contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
+    assert contract["observation_assembly"]["state"] == [
+        "tello_attitude", "tello_velocity", "tello_acceleration",
+        "tello_altitude", "action_history",
+    ]
+    channels = contract["observation_space"]["fields"]["state"]["semantic_channels"]
+    # No ground truth in the state vector: everything must exist on the real SDK.
+    assert "position_xyz" not in channels
+    assert "angular_velocity_xyz" not in channels
+    assert "search_clue_offset_xy" not in channels
+
+
+def test_office_telemetry_cadence_and_age(office_env):
+    env = office_env
+    obs, _ = env.reset(seed=env.task.map_seed)
+    telem = obs["state"][:15]
+    assert np.all(telem[:13] == 0.0)
+    assert telem[14] == 0.0, "telemetry must be invalid before the first packet"
+    hover = np.zeros((1, 4), dtype=np.float32)
+    dt = env.CTRL_TIMESTEP
+    for i in range(1, OFFICE_TELEM_PERIOD_STEPS):
+        obs, *_ = env.step(hover)
+        assert obs["state"][14] == 0.0, f"no packet should arrive at step {i}"
+    obs, *_ = env.step(hover)
+    telem = obs["state"][:15]
+    assert telem[14] == 1.0, "first packet must arrive on the period boundary"
+    assert telem[13] == pytest.approx(OFFICE_TELEM_DELAY_STEPS * dt)
+    # Between packets the readings hold while only the age advances.
+    held = telem[:13].copy()
+    obs, *_ = env.step(hover)
+    assert np.array_equal(obs["state"][:13], held)
+    assert obs["state"][13] == pytest.approx(telem[13] + dt)
+
+
+def test_office_telemetry_tracks_flight(office_env):
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    # Gentle climb: a full-stick climb would reach the 3 m ceiling and tumble.
+    for _ in range(60):
+        obs, *_ = env.step(np.array([[0.0, 0.0, 0.3, 0.0]], dtype=np.float32))
+    telem = obs["state"][:15]
+    assert telem[2] ** 2 + telem[3] ** 2 == pytest.approx(1.0, abs=1e-5)
+    assert telem[6] > 0.2, "climb must show as positive body up-velocity"
+    assert telem[10] > 0.5, "ToF must grow as the drone leaves the floor"
+    assert abs(telem[11] - (env.pos[0][2] - 0.05)) < 0.3, "fused height must track altitude"
+    for _ in range(40):
+        obs, *_ = env.step(np.array([[0.0, 1.0, 0.0, 0.0]], dtype=np.float32))
+    telem = obs["state"][:15]
+    assert telem[4] > 0.5, "forward flight must show as positive body forward-velocity"
+    assert abs(telem[5]) < 0.5, "sideways velocity must stay near zero"
+
+
+def test_office_telemetry_deterministic():
+    task = task_gen.random_task(1 / 50, 42, family_id="cf_office_interceptor")
+    streams = []
+    for _ in range(2):
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        states = []
+        for i in range(3 * OFFICE_TELEM_PERIOD_STEPS):
+            obs, *_ = env.step(np.array([[0.2, 0.5, 0.3, 0.1]], dtype=np.float32))
+            states.append(obs["state"].copy())
+        env.close()
+        streams.append(np.stack(states))
+    assert np.array_equal(streams[0], streams[1])
 
 
 def test_office_task_generation_deterministic():

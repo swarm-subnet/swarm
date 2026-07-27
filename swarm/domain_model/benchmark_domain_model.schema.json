@@ -1124,13 +1124,11 @@
             "rank": 1,
             "minimum_length": 16,
             "semantic_channels": [
-              "position_xyz",
-              "orientation_rpy",
-              "linear_velocity_xyz",
-              "angular_velocity_xyz",
-              "action_history",
-              "altitude_norm",
-              "search_clue_offset_xy"
+              "attitude_pitch_roll_sincos_yaw",
+              "body_velocity_xyz",
+              "body_acceleration_xyz",
+              "altitude_tof_height_baro_age_valid",
+              "action_history"
             ]
           }
         }
@@ -1140,13 +1138,11 @@
           "depth_camera_md"
         ],
         "state": [
-          "position",
-          "orientation",
-          "linear_velocity",
-          "angular_velocity",
-          "action_history",
-          "altitude_norm",
-          "search_clue_offset"
+          "tello_attitude",
+          "tello_velocity",
+          "tello_acceleration",
+          "tello_altitude",
+          "action_history"
         ]
       },
       "action_space": {

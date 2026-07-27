@@ -108,6 +108,17 @@ def _search_clue_offset(env, sv, ctx):
     return np.asarray((env._search_area_center - sv[0:3])[:2], dtype=np.float32)
 
 
+def _telemetry_slice(lo, hi):
+    """Compute fn for a slice of the office telemetry packet (zeros before the first packet)."""
+    def compute(env, sv, ctx):
+        packets = getattr(env, "_office_telemetry", None)
+        if packets is None:
+            return np.zeros((hi - lo,), dtype=np.float32)
+        d = int(ctx.get("self_index", 0))
+        return np.asarray(packets[d, lo:hi], dtype=np.float32)
+    return compute
+
+
 def _depth_camera(env, sv, ctx):
     return ctx["depth"]
 
@@ -161,6 +172,24 @@ OBSERVATION_CHANNELS = {
     "search_clue_offset": SensorChannel(
         "search_clue_offset", "search_clue_offset_xy", "vector", _search_clue_offset,
         env_dim=lambda e: 2, param_dim=lambda cf, ad: 2,
+    ),
+    # Simulated Tello state-packet slices for the office family: only what the
+    # physical SDK reports, delivered at packet cadence with noise and delay.
+    "tello_attitude": SensorChannel(
+        "tello_attitude", "attitude_pitch_roll_sincos_yaw", "vector", _telemetry_slice(0, 4),
+        env_dim=lambda e: 4, param_dim=lambda cf, ad: 4,
+    ),
+    "tello_velocity": SensorChannel(
+        "tello_velocity", "body_velocity_xyz", "vector", _telemetry_slice(4, 7),
+        env_dim=lambda e: 3, param_dim=lambda cf, ad: 3,
+    ),
+    "tello_acceleration": SensorChannel(
+        "tello_acceleration", "body_acceleration_xyz", "vector", _telemetry_slice(7, 10),
+        env_dim=lambda e: 3, param_dim=lambda cf, ad: 3,
+    ),
+    "tello_altitude": SensorChannel(
+        "tello_altitude", "altitude_tof_height_baro_age_valid", "vector", _telemetry_slice(10, 15),
+        env_dim=lambda e: 5, param_dim=lambda cf, ad: 5,
     ),
     "depth_camera": SensorChannel(
         "depth_camera", "depth_camera", "image", _depth_camera,

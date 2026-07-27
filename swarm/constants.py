@@ -543,6 +543,25 @@ OFFICE_ACQUIRE_SLACK_SEC = 5.0              # target-time slack for finding the 
 OFFICE_W_SUCCESS = 0.5                      # score weight: interception achieved
 OFFICE_W_TIME = 0.5                         # score weight: time term
 
+# Simulated Tello telemetry link (state packets over UDP at ~10 Hz).
+# Defaults from the SDK docs; the noise/latency figures are placeholders to be
+# recalibrated against real flight logs.
+OFFICE_TELEM_PERIOD_STEPS = 5               # control steps between packets (10 Hz at 50 Hz ctrl)
+OFFICE_TELEM_DELAY_STEPS = 2                # transport delay: packets carry state from N steps ago
+OFFICE_TELEM_DROP_PROB = 0.05               # per-packet loss probability
+OFFICE_TELEM_STALE_SEC = 0.5                # age beyond this flips telemetry_valid to 0
+OFFICE_TELEM_ATTITUDE_NOISE_DEG = 1.0       # IMU attitude noise (std, per packet)
+OFFICE_TELEM_VELOCITY_NOISE = 0.05          # m/s — VPS velocity noise (std)
+OFFICE_TELEM_ACCEL_NOISE = 0.3              # m/s^2 — accelerometer noise (std)
+OFFICE_TELEM_ACCEL_BIAS = 0.15              # m/s^2 — per-episode accelerometer bias (std)
+OFFICE_TELEM_TOF_NOISE_M = 0.02             # m — downward ToF noise (std)
+OFFICE_TELEM_HEIGHT_NOISE_M = 0.03          # m — fused-height noise (std)
+OFFICE_TELEM_BARO_NOISE_M = 0.08            # m — barometer noise (std)
+OFFICE_TELEM_BARO_WALK_M = 0.01             # m — barometer random walk per packet (std)
+OFFICE_TELEM_TOF_MAX_M = 8.0                # m — ToF range limit (reads max beyond it)
+OFFICE_TELEM_SEED_OFFSET = 0x7E110          # decorrelates the telemetry rng from the map seed
+OFFICE_VPS_DRIFT_FORCE_N = 0.002            # N — slow lateral drift force emulating VPS error
+
 if OFFICE_RC_SPEED <= 0.0 or OFFICE_RC_YAW_RATE <= 0.0:
     raise ValueError("OFFICE_RC speed and yaw rate must be positive")
 if not (0.0 <= OFFICE_RC_DEAD_ZONE < 1.0):
@@ -551,6 +570,14 @@ if OFFICE_RC_SLEW_PER_SEC <= 0.0 or OFFICE_RC_YAW_LEAD_RAD <= 0.0:
     raise ValueError("OFFICE_RC slew and yaw lead must be positive")
 if not (0.0 < OFFICE_MIN_START_DISTANCE_M <= OFFICE_MAX_START_DISTANCE_M):
     raise ValueError("OFFICE start-distance bounds invalid")
+if OFFICE_TELEM_PERIOD_STEPS < 1 or OFFICE_TELEM_DELAY_STEPS < 0:
+    raise ValueError("OFFICE telemetry period/delay invalid")
+if OFFICE_TELEM_DELAY_STEPS >= OFFICE_TELEM_PERIOD_STEPS:
+    raise ValueError("OFFICE telemetry delay must be shorter than the packet period")
+if not (0.0 <= OFFICE_TELEM_DROP_PROB < 1.0):
+    raise ValueError("OFFICE_TELEM_DROP_PROB must be in [0, 1)")
+if OFFICE_TELEM_STALE_SEC <= OFFICE_TELEM_PERIOD_STEPS * SIM_DT:
+    raise ValueError("OFFICE_TELEM_STALE_SEC must survive a normal packet gap")
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

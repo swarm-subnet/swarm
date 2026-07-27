@@ -4,7 +4,7 @@
 
 Indoor air-to-air pursuit: hunt a target drone inside a real office, flying like a real Tello.
 
-Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, so a policy trained here can be connected to the real drone unchanged. The family is incubating while its observation contract and target behaviour are finalized.
+Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. The family is incubating while its vision input and target behaviour are finalized.
 
 ---
 
@@ -42,7 +42,7 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
 | `depth` | float32 | (256, 256, 1) | [0, 1] |
-| `state` | float32 | (115) at evaluation settings | `position_xyz` → `orientation_rpy` → `linear_velocity_xyz` → `angular_velocity_xyz` → `action_history` → `altitude_norm` → `search_clue_offset_xy` |
+| `state` | float32 | (115) at evaluation settings | `attitude_pitch_roll_sincos_yaw` → `body_velocity_xyz` → `body_acceleration_xyz` → `altitude_tof_height_baro_age_valid` → `action_history` |
 
 ### Action: float32 tensor, shape (4)
 
@@ -54,6 +54,19 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | 3 | `yaw` | -1 | 1 |
 
 <!-- io-tables:end -->
+
+### State semantics
+
+The 15 telemetry values mirror a Tello state packet: only what the physical SDK reports, never ground truth. Body axes follow the sticks (forward, right, up); heights are metres relative to the takeoff point.
+
+| Slice | Channel | Contents |
+|-------|---------|----------|
+| 0–3 | `attitude_pitch_roll_sincos_yaw` | pitch, roll (rad, 1° steps), sin(yaw), cos(yaw) |
+| 4–6 | `body_velocity_xyz` | forward / right / up velocity (m/s, 0.1 steps) |
+| 7–9 | `body_acceleration_xyz` | forward / right / up acceleration (m/s², gravity removed, with sensor bias) |
+| 10–14 | `altitude_tof_height_baro_age_valid` | downward ToF (m), fused height (m), barometer with drift (m), packet age (s), valid flag |
+
+Packets arrive at ~10 Hz with transport delay, sensor noise, SDK quantization, and occasional loss; between packets the values hold and `age` grows. `valid` drops to 0 when the data is stale (including the first steps of every episode, before any packet has arrived). A small horizontal drift force emulates VPS position error through the physics. The last 25 actions (100 values) complete the state vector.
 
 ### Action semantics
 
