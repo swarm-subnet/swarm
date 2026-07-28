@@ -365,6 +365,13 @@ def _worker_cap_levels(requested_workers: int) -> Tuple[int, ...]:
 
 
 def _initial_worker_cap(max_worker_cap: int) -> int:
+    # Workers are pinned to their own CPUs, so they cannot take CPU from each
+    # other and there is nothing to ramp into.
+    return max(1, int(max_worker_cap))
+
+
+def _backoff_floor_worker_cap(max_worker_cap: int) -> int:
+    """Lowest cap a backoff may fall to; runs start at the maximum instead."""
     worker_cap = max(1, int(max_worker_cap))
     if worker_cap <= 1:
         return 1
@@ -445,6 +452,7 @@ class _AdaptiveBackoffController:
     machine_total_ram_mb: Optional[float] = None
     resource_provider: Optional[Any] = None
     start_worker_cap: int = field(init=False)
+    min_worker_cap: int = field(init=False)
     active_worker_cap: int = field(init=False)
     active_heavy_cap: int = field(init=False)
     worker_cap_levels: Tuple[int, ...] = field(init=False)
@@ -497,9 +505,10 @@ class _AdaptiveBackoffController:
         )
         self.worker_cap_levels = _worker_cap_levels(self.max_worker_cap)
         self.start_worker_cap = _initial_worker_cap(self.max_worker_cap)
+        self.min_worker_cap = _backoff_floor_worker_cap(self.max_worker_cap)
         self.active_worker_cap = self.start_worker_cap
         self.max_heavy_cap = _max_heavy_active(self.max_worker_cap)
-        self.active_heavy_cap = min(1, self.max_heavy_cap)
+        self.active_heavy_cap = self.max_heavy_cap
         for group_name in _GROUP_BASE_RESOURCE_COSTS:
             self.group_profiles.setdefault(group_name, _GroupRuntimeProfile())
 
@@ -695,7 +704,7 @@ class _AdaptiveBackoffController:
         dispatch_count = int(self.group_dispatch_counts.get(str(group_name), 0))
         expected_wall = float(profile.wall_sec_ema) if profile and profile.wall_sec_ema > 0.0 else 0.0
         warmup_penalty = 0
-        if self.active_worker_cap <= self.start_worker_cap and int(cost.heavy_tokens) >= 2:
+        if self.active_worker_cap < self.max_worker_cap and int(cost.heavy_tokens) >= 2:
             warmup_penalty = int(cost.heavy_tokens)
         return (
             int(warmup_penalty),
@@ -875,13 +884,13 @@ class _AdaptiveBackoffController:
         previous_heavy_cap = int(self.active_heavy_cap)
         if severity == "critical":
             next_worker_cap = max(
-                self.start_worker_cap if self.max_worker_cap > 1 else 1,
+                self.min_worker_cap if self.max_worker_cap > 1 else 1,
                 min(self.active_worker_cap - 2, int(self.active_worker_cap * 0.7)),
             )
             next_heavy_cap = max(1, min(self.active_heavy_cap - 1, next_worker_cap))
         else:
             next_worker_cap = max(
-                self.start_worker_cap if self.max_worker_cap > 1 else 1,
+                self.min_worker_cap if self.max_worker_cap > 1 else 1,
                 self.active_worker_cap - 1,
             )
             next_heavy_cap = max(1, min(self.active_heavy_cap, self._default_heavy_cap_for_current_workers(next_worker_cap)))

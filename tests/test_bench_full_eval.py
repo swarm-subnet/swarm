@@ -164,6 +164,7 @@ def test_select_next_batch_index_waits_when_only_extra_heavy_seed_is_pending():
         machine_vcpus=3,
         machine_total_ram_mb=16384,
     )
+    scheduler.active_heavy_cap = 1
 
     selected = bench_full_eval._select_next_batch_index(
         pending_batch_ids=[1],
@@ -188,6 +189,7 @@ def test_select_next_batch_index_allows_heavy_seed_when_capacity_is_available():
         machine_vcpus=3,
         machine_total_ram_mb=16384,
     )
+    scheduler.active_heavy_cap = 1
 
     selected = bench_full_eval._select_next_batch_index(
         pending_batch_ids=[1],
@@ -228,7 +230,7 @@ def test_scheduler_ignores_non_resource_failure_statuses():
         note = controller.observe_seed({"status": status, "map_seed": 10, "challenge_type": 2})
         assert note is None
 
-    assert controller.start_worker_cap == 3
+    assert controller.start_worker_cap == controller.max_worker_cap
     assert controller.active_worker_cap == controller.start_worker_cap
     assert controller.max_worker_cap == 8
 
@@ -288,7 +290,7 @@ def test_scheduler_reduces_cap_on_critical_pressure_and_relaxes_after_recovery()
     assert any(note and "Scheduler relaxed" in note for note in relax_notes)
 
 
-def test_scheduler_cold_starts_low_with_single_heavy_slot():
+def test_scheduler_starts_at_full_width_with_a_backoff_floor():
     controller = bench_full_eval._AdaptiveBackoffController(
         requested_workers=12,
         machine_vcpus=12,
@@ -296,9 +298,10 @@ def test_scheduler_cold_starts_low_with_single_heavy_slot():
     )
 
     assert controller.max_worker_cap == 12
-    assert controller.start_worker_cap == 3
-    assert controller.active_worker_cap == 3
-    assert controller.active_heavy_cap == 1
+    assert controller.start_worker_cap == 12
+    assert controller.active_worker_cap == 12
+    assert controller.active_heavy_cap == controller.max_heavy_cap
+    assert controller.min_worker_cap == 3
 
 
 def test_scheduler_live_status_line_samples_without_mutating_state():
@@ -346,6 +349,8 @@ def test_scheduler_relaxes_faster_and_raises_heavy_cap_earlier():
         machine_vcpus=12,
         machine_total_ram_mb=65536,
     )
+    controller.active_worker_cap = 3
+    controller.active_heavy_cap = 1
     controller.latest_pressure = "healthy"
 
     note = None
@@ -373,6 +378,8 @@ def test_scheduler_neutral_relax_only_allows_early_step():
         machine_vcpus=12,
         machine_total_ram_mb=65536,
     )
+    controller.active_worker_cap = 3
+    controller.active_heavy_cap = 1
     controller.latest_pressure = "neutral"
 
     note = None
@@ -1393,10 +1400,13 @@ def test_pressure_hold_keeps_relax_progress():
     controller = _owner_box_controller(
         lambda: _snapshot(51.0, 1.00, float(next(ticks)))
     )
+    # after a backoff the cap sits below the maximum, where a moderate-pressure
+    # poll can no longer reduce and falls through to a hold
+    controller.active_worker_cap = controller.min_worker_cap
     controller.healthy_completion_streak = 1
 
     notes = [controller.observe_resources([]) for _ in range(4)]
 
-    assert controller.active_worker_cap == controller.start_worker_cap
+    assert controller.active_worker_cap == controller.min_worker_cap
     assert any(note and "pressure hold" in note for note in notes)
     assert controller.healthy_completion_streak == 1
