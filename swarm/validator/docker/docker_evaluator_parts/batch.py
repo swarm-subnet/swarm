@@ -139,6 +139,7 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 _PIP_INSTALL_TIMEOUT_SEC = 120
+_BUILD_CACHE_PRUNE_FREE_GB = 25.0
 
 
 def model_image_tag(model_hash: str) -> str:
@@ -303,6 +304,29 @@ def prepare_model_image(
     finally:
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def prune_build_cache_if_disk_low() -> None:
+    """Drop the layer cache only when the disk is genuinely tight.
+
+    The cache holds the apt and pip layers of the base image, so clearing it
+    turns the next version bump into a full rebuild that costs the validator
+    its evaluation time. Bound the disk, but not on every cleanup.
+    """
+    try:
+        free_gb = shutil.disk_usage("/").free / (1024 ** 3)
+    except Exception:
+        return
+    if free_gb >= _BUILD_CACHE_PRUNE_FREE_GB:
+        return
+    bt.logging.info(f"Pruning docker build cache: {free_gb:.1f}GiB free")
+    try:
+        subprocess.run(
+            ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
+            capture_output=True, timeout=120,
+        )
+    except Exception:
+        pass
 
 
 def remove_model_image(image_tag: str) -> None:
@@ -1559,10 +1583,7 @@ def cleanup(self):
 
         subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
         subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-        subprocess.run(
-            ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
-            capture_output=True,
-        )
+        prune_build_cache_if_disk_low()
 
     except Exception as e:
         bt.logging.warning(f"Container cleanup failed: {e}")

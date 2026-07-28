@@ -255,10 +255,6 @@ def _setup_base_container(self):
             remove_all_model_images()
             subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
             subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-            subprocess.run(
-                ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
-                capture_output=True,
-            )
         except Exception:
             pass
 
