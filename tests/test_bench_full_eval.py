@@ -1359,3 +1359,44 @@ def test_process_mode_polls_pressure_while_waiting(monkeypatch, tmp_path):
     assert launched == 1
     assert len(recorded) == 1
     assert len(observe_calls) >= 2
+
+
+def _owner_box_controller(provider):
+    """Controller shaped like the owner validator: 12 vCPU, 47 GiB, 6 workers."""
+    return bench_full_eval._AdaptiveBackoffController(
+        requested_workers=6,
+        machine_vcpus=12,
+        machine_total_ram_mb=48128,
+        resource_provider=provider,
+    )
+
+
+def _snapshot(cpu, load, ts):
+    return {
+        "cpu_percent": cpu,
+        "load_ratio": load,
+        "mem_available_mb": 43926.0,
+        "mem_total_mb": 48128.0,
+        "ts": ts,
+    }
+
+
+def test_pressure_hold_keeps_relax_progress():
+    """A hold changes no cap, so it must not erase the relax streak.
+
+    The cap cold-starts below the maximum, so a moderate-pressure poll cannot
+    reduce anything and falls through to a hold. Holds arrive every couple of
+    seconds while a seed takes minutes, so wiping the streak here means the
+    streak can never reach the threshold the relax path needs.
+    """
+    ticks = iter(range(1, 500))
+    controller = _owner_box_controller(
+        lambda: _snapshot(51.0, 1.00, float(next(ticks)))
+    )
+    controller.healthy_completion_streak = 1
+
+    notes = [controller.observe_resources([]) for _ in range(4)]
+
+    assert controller.active_worker_cap == controller.start_worker_cap
+    assert any(note and "pressure hold" in note for note in notes)
+    assert controller.healthy_completion_streak == 1

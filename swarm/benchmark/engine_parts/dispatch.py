@@ -829,7 +829,7 @@ class _AdaptiveBackoffController:
         return time.monotonic()
 
     def _hold_caps(self, *, reason: str) -> str:
-        self.healthy_completion_streak = 0
+        # A hold changes no cap, so it must not spend the relax streak.
         return (
             f"Scheduler pressure hold: workers {self.active_worker_cap}/{self.max_worker_cap}, "
             f"heavy {self.active_heavy_cap}/{self.max_heavy_cap} ({reason})"
