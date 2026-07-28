@@ -268,12 +268,13 @@ class MovingDroneAviary(BaseRLAviary):
             )
             self._rgb_dirty = False
 
-        # RC state (office only); _visual_stale=True cuts forward motion
+        # RC state (office only); _visual_stale=True cuts forward motion.
+        # Starts stale: the rig has seen nothing until the detector's first frame.
         if self._office_rc_enabled:
             self._rc_command = np.zeros((self.NUM_DRONES, 4), dtype=np.float64)
             self._rc_target_yaw = np.zeros(self.NUM_DRONES, dtype=np.float64)
             self._rc_max_step = OFFICE_RC_SLEW_PER_SEC * self.CTRL_TIMESTEP
-            self._visual_stale = False
+            self._visual_stale = True
 
         self._clue_dim = int(self.family_runtime.state_clue_dim(task))
         self._obs_layout = self.family_runtime.observation_assembly(task)
@@ -1228,7 +1229,7 @@ class MovingDroneAviary(BaseRLAviary):
         if getattr(self, "_office_rc_enabled", False):
             self._rc_command.fill(0.0)
             self._rc_target_yaw.fill(0.0)
-            self._visual_stale = False
+            self._visual_stale = True
 
         # Fresh episode, fresh controllers: PID integrators must not leak across resets.
         for ctrl in getattr(self, "ctrl", []):

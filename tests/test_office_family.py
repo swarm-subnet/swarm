@@ -123,13 +123,14 @@ def test_office_contract_is_telemetry_only():
     contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
     assert contract["observation_assembly"]["state"] == [
         "tello_attitude", "tello_velocity", "tello_acceleration",
-        "tello_altitude", "action_history",
+        "tello_altitude", "tello_detection", "action_history",
     ]
     channels = contract["observation_space"]["fields"]["state"]["semantic_channels"]
-    # No ground truth in the state vector: everything must exist on the real SDK.
+    # No ground truth in the state vector: everything must exist on the real rig.
     assert "position_xyz" not in channels
     assert "angular_velocity_xyz" not in channels
     assert "search_clue_offset_xy" not in channels
+    assert contract["smoke_test_observation"]["state"]["shape"] == [127]
 
 
 def test_office_telemetry_cadence_and_age(office_env):
@@ -282,6 +283,111 @@ def test_office_catch_is_physical_contact(office_env):
     )
     assert metrics["success_term"] == 1.0
     assert metrics["final_score"] > 0.6
+
+
+def test_office_detector_no_sight_no_boxes(office_env):
+    """Facing away from the target, the emulator must stay silent and go stale."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    # Target spawns toward +x from the chaser on this seed; turn the camera away.
+    for _ in range(45):
+        env.step(np.array([[0.0, 0.0, 0.3, 1.0]], dtype=np.float32))
+    away = np.zeros((1, 4), dtype=np.float32)
+    boxes_seen = 0
+    for _ in range(60):
+        obs, *_ = env.step(away)
+        rel = env._office_target_pos - env.pos[0]
+        yaw = math.atan2(rel[1], rel[0]) - env.rpy[0][2]
+        # Only count frames where the target truly sits behind the camera.
+        if abs(math.remainder(yaw, 2 * math.pi)) > 2.0 and obs["state"][15] > 0:
+            boxes_seen += 1
+    fp_budget = 3  # rare false positives are allowed, sightings are not
+    assert boxes_seen <= fp_budget
+    assert env._visual_stale or obs["state"][16] <= 0.8
+
+
+def test_office_detector_sees_and_unstales(office_env):
+    env = office_env
+    obs, _ = env.reset(seed=env.task.map_seed)
+    assert env._visual_stale, "the rig must boot blind"
+    hits = 0
+    for _ in range(100):
+        obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
+        if obs["state"][15] > 0:
+            hits += 1
+    # Target starts inside the camera frame on this seed: recall must show up.
+    assert hits > 10
+    assert not env._visual_stale
+    d = obs["state"][15:27]
+    assert 0.0 <= d[2] <= 1.0 and 0.0 <= d[3] <= 1.0
+    assert d[6] >= 0.25 or d[0] == 0
+
+
+def test_office_detector_recall_emerges(office_env):
+    """The documented ~0.956 marginal recall must emerge in good conditions,
+    streaks included (this catches the streak-chain bias that once capped it)."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    fam = env.family_runtime
+    frames = hits = 0
+    for i in range(3000):
+        obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
+        if env._office_telem_step % 5 == 0:
+            truth = env._office_det_pending
+            if truth is not None and truth["vis"] >= 0.8 and truth["dist"] <= 8.0:
+                frames += 1
+                if obs["state"][15] > 0:
+                    hits += 1
+    assert frames > 100, "test setup must produce clearly-visible frames"
+    recall = hits / frames
+    assert 0.90 < recall <= 1.0, f"marginal recall {recall:.3f} off the ~0.956 spec"
+
+
+def test_office_detector_confidence_not_an_oracle():
+    """Real and ghost confidences must overlap: no single threshold may separate
+    them, or 'tracking is the policy's job' dies."""
+    from swarm.challenge_families.office_interceptor import _det_fp_box, _det_true_conf
+
+    rng = np.random.default_rng(0)
+    far_real = [_det_true_conf(rng, 0.9, 8.0) for _ in range(400)]    # small far box
+    near_real = [_det_true_conf(rng, 1.0, 60.0) for _ in range(400)]  # big close box
+    fps = [_det_fp_box(rng, [(480.0, 360.0)])[4] for _ in range(400)]
+    assert min(far_real) < max(fps), "far real boxes must dip into the FP range"
+    assert max(fps) > 0.5, "ghosts must sometimes look confident"
+    assert max(near_real) > 0.9, "close clean boxes must still look strong"
+
+
+def test_office_detector_occluded_means_silent(office_env):
+    """A target parked behind the column must be invisible to the emulator."""
+    import pybullet as p
+
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    cpos = np.array([12.5, 5.96, 1.5])
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), cpos.tolist(),
+                                      [0, 0, 0, 1], physicsClientId=env.CLIENT)
+    tpos = np.array([15.5, 5.96, 1.5])  # the column at x=14.065 stands between
+    p.resetBasePositionAndOrientation(env._office_target_uid, tpos.tolist(),
+                                      [0, 0, 0, 1], physicsClientId=env.CLIENT)
+    env._office_target_pos = tpos.copy()
+    env._updateAndStoreKinematicInformation()
+    truth = env.family_runtime._detector_capture(env)
+    assert truth is None, "fully occluded target must produce no capture at all"
+
+
+def test_office_detector_deterministic():
+    task = task_gen.random_task(1 / 50, 88, family_id="cf_office_interceptor")
+    streams = []
+    for _ in range(2):
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        rows = []
+        for _ in range(150):
+            obs, *_ = env.step(np.array([[0.1, 0.0, 0.2, 0.3]], dtype=np.float32))
+            rows.append(obs["state"][15:27].copy())
+        env.close()
+        streams.append(np.stack(rows))
+    assert np.array_equal(streams[0], streams[1])
 
 
 def test_office_crash_pays_participation(office_env):

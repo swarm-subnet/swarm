@@ -575,6 +575,23 @@ OFFICE_KILL_RADIUS_M = 0.15                 # deep-overlap anti-tunnel guard; th
 OFFICE_TARGET_SELFCRASH_FORCE = 3.0         # N — world-contact force that counts as a target crash
 OFFICE_TARGET_SEED_OFFSET = 0x0FF1CE        # decorrelates the target rng from map + telemetry
 
+# Detector emulator: statistical stand-in for the real YOLO drone detector
+# (mAP50 0.97, P 0.991, R 0.956). Marginals are measured; the bin shapes are
+# placeholders until the calibration recordings land.
+OFFICE_DET_PERIOD_STEPS = 5                 # detector frames every N control steps (~10 Hz rig)
+OFFICE_DET_DELAY_STEPS = 2                  # inference latency: boxes describe a frame N steps old
+OFFICE_DET_FRAME_W = 960                    # px — real Tello stream the detector runs on
+OFFICE_DET_FRAME_H = 720
+OFFICE_DET_FOV_DIAG_DEG = 82.6              # real Tello camera diagonal FOV
+OFFICE_DET_RECALL = 0.956                   # measured marginal detection rate on visible targets
+OFFICE_DET_MISS_PERSIST = 0.5               # chance a miss continues next frame (streaks, not coin flips)
+OFFICE_DET_FP_RATE = 0.009                  # per-frame false-positive probability (precision emerges)
+OFFICE_DET_CONF_FLOOR = 0.25                # the real rig never emits boxes below this confidence
+OFFICE_DET_JITTER_SIZE = 0.12               # box size noise (relative std)
+OFFICE_DET_STALE_SEC = 0.8                  # no detection this long => visual stale (forward cut)
+OFFICE_DET_MAX_BOXES = 2                    # contract slots: the target + a rare false positive
+OFFICE_DET_SEED_OFFSET = 0xDE7EC7           # decorrelates the detector rng from the other streams
+
 if OFFICE_RC_SPEED <= 0.0 or OFFICE_RC_YAW_RATE <= 0.0:
     raise ValueError("OFFICE_RC speed and yaw rate must be positive")
 if not (0.0 <= OFFICE_RC_DEAD_ZONE < 1.0):
@@ -599,6 +616,12 @@ if not (0.0 <= OFFICE_TARGET_PAUSE_MIN_SEC <= OFFICE_TARGET_PAUSE_MAX_SEC):
     raise ValueError("OFFICE_TARGET pause bounds invalid")
 if OFFICE_TARGET_MIN_LEG_M <= OFFICE_TARGET_ARRIVE_M:
     raise ValueError("OFFICE_TARGET_MIN_LEG_M must exceed the arrival radius")
+if OFFICE_DET_PERIOD_STEPS < 1 or not (0 <= OFFICE_DET_DELAY_STEPS < OFFICE_DET_PERIOD_STEPS):
+    raise ValueError("OFFICE_DET period/delay invalid")
+if not (0.0 < OFFICE_DET_RECALL <= 1.0) or not (0.0 <= OFFICE_DET_FP_RATE < 1.0):
+    raise ValueError("OFFICE_DET recall/false-positive rates invalid")
+if OFFICE_DET_STALE_SEC <= OFFICE_DET_PERIOD_STEPS * SIM_DT:
+    raise ValueError("OFFICE_DET_STALE_SEC must survive a normal frame gap")
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

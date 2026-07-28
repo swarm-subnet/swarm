@@ -26,6 +26,19 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
     OFFICE_CHALLENGE_TYPE,
+    OFFICE_DET_CONF_FLOOR,
+    OFFICE_DET_DELAY_STEPS,
+    OFFICE_DET_FOV_DIAG_DEG,
+    OFFICE_DET_FP_RATE,
+    OFFICE_DET_FRAME_H,
+    OFFICE_DET_FRAME_W,
+    OFFICE_DET_JITTER_SIZE,
+    OFFICE_DET_MAX_BOXES,
+    OFFICE_DET_MISS_PERSIST,
+    OFFICE_DET_PERIOD_STEPS,
+    OFFICE_DET_RECALL,
+    OFFICE_DET_SEED_OFFSET,
+    OFFICE_DET_STALE_SEC,
     OFFICE_KILL_RADIUS_M,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
@@ -89,6 +102,58 @@ _tello_assets_ready = False
 _GUARD_EVERY_STEPS = 2
 _GUARD_RANGE_M = 0.6
 _RECHECK_EVERY_STEPS = 10
+
+# Detector frame geometry, derived once from the real Tello optics: focal length
+# in pixels from the diagonal FOV, so box sizes fall out of true target size.
+_DET_DIAG_PX = math.hypot(OFFICE_DET_FRAME_W, OFFICE_DET_FRAME_H)
+_DET_FOCAL_PX = (_DET_DIAG_PX / 2.0) / math.tan(math.radians(OFFICE_DET_FOV_DIAG_DEG) / 2.0)
+_DET_TARGET_W_M = 0.18   # Tello body width seen by the camera
+_DET_TARGET_H_M = 0.08   # body + guards height
+# Detection block layout: [n_boxes, age, (cx, cy, w, h, conf) x MAX_BOXES], normalized.
+_DET_DIM = 2 + 5 * OFFICE_DET_MAX_BOXES
+# Placeholder bin shapes (visibility, distance, edge) until the calibration
+# recordings; only the marginal recall/precision are measured numbers. Good
+# conditions carry no penalty so the documented marginal actually emerges.
+_DET_VIS_BINS = ((0.7, 1.0), (0.3, 0.6), (0.0, 0.15))   # (min visible fraction, factor)
+_DET_DIST_BINS = ((8.0, 1.0), (99.0, 0.8))               # (max distance m, factor)
+_DET_EDGE_MARGIN = 0.1   # the outer frame band where detection weakens...
+_DET_EDGE_FACTOR = 0.85  # ...by this factor
+_DET_CONF_TOP = 0.97     # ceiling of sampled confidences
+_DET_FP_ANCHOR_P = 0.7   # false positives favor fixed scene spots, like real YOLO ghosts
+_DET_CENTER_JITTER_FRAC = 0.15  # center noise as a fraction of box size, like real YOLO
+
+
+def _det_marginal_to_eval_p(marginal: float, persist: float) -> float:
+    """Per-evaluation detect probability whose miss-streak chain has the given
+    stationary detection rate (misses persist outright with prob `persist`)."""
+    miss = 1.0 - marginal
+    return 1.0 - miss * (1.0 - persist) / (1.0 - miss * persist)
+
+
+def _det_true_conf(rng, vis: float, w_px: float) -> float:
+    """Confidence degrades with visibility AND apparent size: small far boxes
+    sink toward the rig's threshold, overlapping the false-positive range."""
+    quality = (0.3 + 0.7 * vis) * float(np.clip(w_px / 40.0, 0.2, 1.0))
+    return OFFICE_DET_CONF_FLOOR + (_DET_CONF_TOP - OFFICE_DET_CONF_FLOOR) * (
+        quality * rng.uniform(0.6, 1.0)
+    )
+
+
+def _det_fp_box(rng, anchors) -> tuple:
+    """A drone-plausible ghost box: sized like the target at a fake distance,
+    usually at one of the episode's persistent anchor spots."""
+    if anchors and rng.random() < _DET_FP_ANCHOR_P:
+        u, v = anchors[int(rng.integers(len(anchors)))]
+        cx = u + rng.normal(0.0, 15.0)
+        cy = v + rng.normal(0.0, 12.0)
+    else:
+        cx = rng.uniform(0.0, OFFICE_DET_FRAME_W)
+        cy = rng.uniform(0.0, OFFICE_DET_FRAME_H)
+    fake_dist = rng.uniform(2.0, 12.0)
+    w = abs(_DET_FOCAL_PX * _DET_TARGET_W_M / fake_dist * (1.0 + rng.normal(0.0, 0.2)))
+    h = abs(_DET_FOCAL_PX * _DET_TARGET_H_M / fake_dist * (1.0 + rng.normal(0.0, 0.2)))
+    conf = OFFICE_DET_CONF_FLOOR + (0.75 - OFFICE_DET_CONF_FLOOR) * rng.random() ** 2
+    return cx, cy, w, h, conf
 
 # Telemetry packet layout: [pitch, roll, sin_yaw, cos_yaw, vf, vr, vd, af, ar, ad,
 # tof, height, baro, age, valid]. Velocity/accel use the SDK body frame
@@ -232,6 +297,20 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         )
         env._office_baro_walk = np.zeros(n, dtype=np.float64)
         env._office_takeoff_z = np.array(env.pos[:, 2], dtype=np.float64)
+        env._office_detection = np.zeros(_DET_DIM, dtype=np.float32)
+        # No frame seen yet: stale from the first step, like the real rig booting.
+        env._office_detection[1] = 2.0 * OFFICE_DET_STALE_SEC
+        env._office_det_rng = np.random.default_rng(seed ^ OFFICE_DET_SEED_OFFSET)
+        env._office_det_pending = None
+        env._office_det_missed = False
+        # Steps since the TARGET was last detected; drives the forward cut. Kept
+        # env-side only — putting it in the obs would label which boxes are real.
+        env._office_det_real_steps = 10 * OFFICE_DET_PERIOD_STEPS
+        env._office_det_fp_anchors = [
+            (env._office_det_rng.uniform(0.0, OFFICE_DET_FRAME_W),
+             env._office_det_rng.uniform(0.0, OFFICE_DET_FRAME_H))
+            for _ in range(2)
+        ]
         angle = env._office_telem_rng.uniform(0.0, 2.0 * math.pi)
         env._office_vps_force = [
             OFFICE_VPS_DRIFT_FORCE_N * math.cos(angle),
@@ -482,6 +561,88 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                         env._failure_reason = FailureReason.INFEASIBLE.value
                     break
 
+    # ------------------------------------------------------------------ #
+    # detector emulator: what the YOLO rig would say, nothing more
+    # ------------------------------------------------------------------ #
+    def _detector_capture(self, env) -> dict | None:
+        """Project the target into the real Tello camera frame and measure how
+        visible it is. Pure geometry + 5 rays; the frame is never rendered."""
+        cpos = np.array(env.pos[0], dtype=float)
+        rot = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
+        fwd, left, up = rot[:, 0], rot[:, 1], rot[:, 2]
+        rel = env._office_target_pos - cpos
+        depth = float(np.dot(rel, fwd))
+        if depth < 0.2:
+            return None
+        px = _DET_FOCAL_PX * float(np.dot(rel, -left)) / depth + OFFICE_DET_FRAME_W / 2.0
+        py = _DET_FOCAL_PX * float(np.dot(rel, -up)) / depth + OFFICE_DET_FRAME_H / 2.0
+        if not (0.0 <= px <= OFFICE_DET_FRAME_W and 0.0 <= py <= OFFICE_DET_FRAME_H):
+            return None
+        w_px = _DET_FOCAL_PX * _DET_TARGET_W_M / depth
+        h_px = _DET_FOCAL_PX * _DET_TARGET_H_M / depth
+        tpos = env._office_target_pos
+        offs = (np.zeros(3), 0.09 * -left, 0.09 * left, 0.045 * up, 0.045 * -up)
+        froms = [cpos.tolist()] * len(offs)
+        tos = [(tpos + off).tolist() for off in offs]
+        ignore = {int(env.DRONE_IDS[0]), int(env._office_target_uid), -1}
+        hits = p.rayTestBatch(froms, tos, physicsClientId=env.CLIENT)
+        vis = sum(1 for h in hits if int(h[0]) in ignore) / len(hits)
+        if vis == 0.0:
+            return None
+        return {"px": px, "py": py, "w": w_px, "h": h_px, "dist": depth, "vis": vis}
+
+    def _detector_deliver(self, env, rng, dt: float) -> None:
+        det = env._office_detection
+        det[2:] = 0.0
+        truth = env._office_det_pending
+        boxes = []
+        if truth is None:
+            env._office_det_missed = False  # a streak must not survive a visibility gap
+        else:
+            if env._office_det_missed and rng.random() < OFFICE_DET_MISS_PERSIST:
+                detected = False  # real detectors lose a target for streaks of frames
+            else:
+                marginal = OFFICE_DET_RECALL
+                for lo, factor in _DET_VIS_BINS:
+                    if truth["vis"] >= lo:
+                        marginal *= factor
+                        break
+                for hi, factor in _DET_DIST_BINS:
+                    if truth["dist"] <= hi:
+                        marginal *= factor
+                        break
+                margin_x = min(truth["px"], OFFICE_DET_FRAME_W - truth["px"]) / OFFICE_DET_FRAME_W
+                margin_y = min(truth["py"], OFFICE_DET_FRAME_H - truth["py"]) / OFFICE_DET_FRAME_H
+                if min(margin_x, margin_y) < _DET_EDGE_MARGIN:
+                    marginal *= _DET_EDGE_FACTOR
+                # Convert the target marginal to a per-eval p the streak chain lands on.
+                prob = _det_marginal_to_eval_p(marginal, OFFICE_DET_MISS_PERSIST)
+                detected = rng.random() < prob
+            env._office_det_missed = not detected
+            if detected:
+                cx = truth["px"] + rng.normal(0.0, _DET_CENTER_JITTER_FRAC * truth["w"])
+                cy = truth["py"] + rng.normal(0.0, _DET_CENTER_JITTER_FRAC * truth["h"])
+                w = truth["w"] * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
+                h = truth["h"] * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
+                conf = _det_true_conf(rng, truth["vis"], truth["w"])
+                boxes.append((cx, cy, w, h, conf))
+                env._office_det_real_steps = OFFICE_DET_DELAY_STEPS
+        if rng.random() < OFFICE_DET_FP_RATE:
+            boxes.append(_det_fp_box(rng, env._office_det_fp_anchors))
+        # The real rig sorts by confidence; slot order must not reveal which is real.
+        boxes.sort(key=lambda b: b[4], reverse=True)
+        boxes = boxes[:OFFICE_DET_MAX_BOXES]
+        for i, (cx, cy, w, h, conf) in enumerate(boxes):
+            base = 2 + 5 * i
+            det[base] = np.clip(cx / OFFICE_DET_FRAME_W, 0.0, 1.0)
+            det[base + 1] = np.clip(cy / OFFICE_DET_FRAME_H, 0.0, 1.0)
+            det[base + 2] = np.clip(w / OFFICE_DET_FRAME_W, 0.0, 1.0)
+            det[base + 3] = np.clip(h / OFFICE_DET_FRAME_H, 0.0, 1.0)
+            det[base + 4] = conf
+        det[0] = float(len(boxes))
+        if boxes:
+            det[1] = OFFICE_DET_DELAY_STEPS * dt
+
     def post_step_update(self, env) -> None:
         self._update_target(env)
         rng = getattr(env, "_office_telem_rng", None)
@@ -501,6 +662,17 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             for d in range(env.NUM_DRONES):
                 self._deliver_packet(env, d, rng, dt)
         telem[:, 14] = telem[:, 13] <= OFFICE_TELEM_STALE_SEC
+
+        det = env._office_detection
+        det[1] = min(det[1] + dt, 2.0 * OFFICE_DET_STALE_SEC)
+        env._office_det_real_steps += 1
+        if (step + OFFICE_DET_DELAY_STEPS) % OFFICE_DET_PERIOD_STEPS == 0:
+            env._office_det_pending = self._detector_capture(env)
+        if step % OFFICE_DET_PERIOD_STEPS == 0:
+            self._detector_deliver(env, env._office_det_rng, dt)
+        # The forward cut keys on real-target sightings, not the obs age: a ghost
+        # box must not re-arm a blind charge.
+        env._visual_stale = bool(env._office_det_real_steps * dt > OFFICE_DET_STALE_SEC)
 
     def _snapshot(self, env, d: int, dt: float) -> np.ndarray:
         # Lazy import: moving_drone imports this package, so the top level would cycle.

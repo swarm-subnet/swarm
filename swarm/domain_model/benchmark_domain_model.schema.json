@@ -1128,6 +1128,7 @@
               "body_velocity_xyz",
               "body_acceleration_xyz",
               "altitude_tof_height_baro_age_valid",
+              "detection_n_age_boxes2x5",
               "action_history"
             ]
           }
@@ -1142,6 +1143,7 @@
           "tello_velocity",
           "tello_acceleration",
           "tello_altitude",
+          "tello_detection",
           "action_history"
         ]
       },
@@ -1181,7 +1183,7 @@
         },
         "state": {
           "shape": [
-            115
+            127
           ],
           "fill": 0.0
         }
