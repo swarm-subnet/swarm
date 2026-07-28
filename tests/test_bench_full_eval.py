@@ -445,7 +445,7 @@ def test_scheduler_poll_driven_recovery_reopens_capacity_after_healthy_window():
     note = controller.observe_resources([])
     assert note is not None and "Scheduler relaxed" in note
     assert controller.active_worker_cap == 7
-    assert controller.active_heavy_cap == 2
+    assert controller.active_heavy_cap == 3
 
 
 def test_scheduler_promotes_light_group_when_observed_runtime_is_expensive():
@@ -972,6 +972,8 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
             task_offset=0,
             task_total=None,
             runtime_profile_payload=None,
+            host_speed_factor=None,
+            model_image=None,
         ):
             _ = uid, model_path, worker_id, task_offset, task_total, runtime_profile_payload
             for task in tasks:
