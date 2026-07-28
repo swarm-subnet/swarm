@@ -99,6 +99,9 @@ _BACKOFF_ACTIVE_WORKERS = 2
 _BACKOFF_COOLDOWN_COMPLETIONS = 4
 _BACKOFF_DWELL_SEC = 10.0
 _COLD_START_WORKERS = 3
+# Each worker owns its own CPUs, so one seed cannot starve another. Runs hold
+# the width the host was sized for instead of shedding workers under load.
+_FIXED_FULL_WIDTH = True
 _PRESSURE_HIGH_CPU_PERCENT = 78.0
 _PRESSURE_CRITICAL_CPU_PERCENT = 88.0
 _PRESSURE_HEALTHY_CPU_PERCENT = 72.0
@@ -880,6 +883,8 @@ class _AdaptiveBackoffController:
         severity: str,
         now_ts: Optional[float] = None,
     ) -> Optional[str]:
+        if _FIXED_FULL_WIDTH:
+            return None
         previous_worker_cap = int(self.active_worker_cap)
         previous_heavy_cap = int(self.active_heavy_cap)
         if severity == "critical":
@@ -1143,7 +1148,11 @@ class _AdaptiveBackoffController:
             and (snapshot.mem_available_mb - self.ram_reserve_mb) < float(cost.ram_mb)
         ):
             return False
-        if self.latest_pressure == "critical" and class_name != "light":
+        if (
+            not _FIXED_FULL_WIDTH
+            and self.latest_pressure == "critical"
+            and class_name != "light"
+        ):
             return False
         return True
 

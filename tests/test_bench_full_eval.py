@@ -235,61 +235,6 @@ def test_scheduler_ignores_non_resource_failure_statuses():
     assert controller.max_worker_cap == 8
 
 
-def test_scheduler_reduces_cap_on_critical_pressure_and_relaxes_after_recovery():
-    snapshots = deque(
-        [
-            {"cpu_percent": 95.0, "load_ratio": 1.20, "mem_available_mb": 24000.0, "mem_total_mb": 65536.0, "ts": 1.0},
-            {"cpu_percent": 96.0, "load_ratio": 1.18, "mem_available_mb": 23500.0, "mem_total_mb": 65536.0, "ts": 2.0},
-            {"cpu_percent": 40.0, "load_ratio": 0.40, "mem_available_mb": 36000.0, "mem_total_mb": 65536.0, "ts": 3.0},
-        ]
-    )
-
-    def _provider():
-        if snapshots:
-            return snapshots.popleft()
-        return {
-            "cpu_percent": 38.0,
-            "load_ratio": 0.35,
-            "mem_available_mb": 36500.0,
-            "mem_total_mb": 65536.0,
-            "ts": time.time(),
-        }
-
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=8,
-        machine_vcpus=8,
-        machine_total_ram_mb=65536,
-        resource_provider=_provider,
-    )
-    controller.active_worker_cap = 8
-    controller.active_heavy_cap = 3
-
-    note_one = controller.observe_resources([])
-    note_two = controller.observe_resources([])
-
-    assert note_one is None
-    assert "Scheduler pressure backoff" in str(note_two)
-    assert controller.worker_cap_levels == (8, 6, 5, 4, 3, 2)
-    assert controller.active_worker_cap == 5
-    assert controller.active_heavy_cap == 2
-
-    relax_notes = []
-    for idx in range(8):
-        controller.observe_resources([])
-        relax_notes.append(
-            controller.observe_seed(
-                {
-                    "status": "seed_done",
-                    "map_seed": 600 + idx,
-                    "challenge_type": 2,
-                }
-            )
-        )
-
-    assert controller.active_worker_cap > 5
-    assert any(note and "Scheduler relaxed" in note for note in relax_notes)
-
-
 def test_scheduler_starts_at_full_width_with_a_backoff_floor():
     controller = bench_full_eval._AdaptiveBackoffController(
         requested_workers=12,
@@ -466,46 +411,6 @@ def test_scheduler_requires_healthy_for_7_to_9_relaxation():
     assert any(note and "Scheduler relaxed" in note for note in notes)
     assert controller.active_worker_cap == 9
     assert controller.active_heavy_cap == 3
-
-
-def test_scheduler_waits_between_pressure_backoffs_and_hold_does_not_refresh_cooldown():
-    snapshots = deque(
-        [
-            {"cpu_percent": 95.0, "load_ratio": 1.20, "mem_available_mb": 24000.0, "mem_total_mb": 65536.0, "ts": 1.0},
-            {"cpu_percent": 96.0, "load_ratio": 1.18, "mem_available_mb": 23500.0, "mem_total_mb": 65536.0, "ts": 2.0},
-            {"cpu_percent": 98.0, "load_ratio": 1.16, "mem_available_mb": 23600.0, "mem_total_mb": 65536.0, "ts": 5.0},
-            {"cpu_percent": 99.0, "load_ratio": 1.15, "mem_available_mb": 23600.0, "mem_total_mb": 65536.0, "ts": 6.0},
-            {"cpu_percent": 99.0, "load_ratio": 1.14, "mem_available_mb": 23800.0, "mem_total_mb": 65536.0, "ts": 18.0},
-        ]
-    )
-
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-        resource_provider=lambda: snapshots.popleft(),
-    )
-    controller.active_worker_cap = 9
-    controller.active_heavy_cap = 3
-
-    assert controller.observe_resources([]) is None
-    note = controller.observe_resources([])
-    assert note is not None and "Scheduler pressure backoff" in note
-    assert controller.active_worker_cap == 6
-    assert controller.active_heavy_cap == 2
-    cooldown_after_backoff = controller.cooldown_remaining
-
-    controller.observe_resources([])
-    hold_note = controller.observe_resources([])
-    assert hold_note is not None and "Scheduler pressure hold" in hold_note
-    assert controller.active_worker_cap == 6
-    assert controller.active_heavy_cap == 2
-    assert controller.cooldown_remaining == cooldown_after_backoff
-
-    note = controller.observe_resources([])
-    assert note is not None and "Scheduler pressure backoff" in note
-    assert controller.active_worker_cap == 4
-    assert controller.active_heavy_cap == 1
 
 
 def test_scheduler_poll_driven_recovery_reopens_capacity_after_healthy_window():
@@ -1410,3 +1315,19 @@ def test_pressure_hold_keeps_relax_progress():
     assert controller.active_worker_cap == controller.min_worker_cap
     assert any(note and "pressure hold" in note for note in notes)
     assert controller.healthy_completion_streak == 1
+
+
+def test_scheduler_holds_full_width_under_sustained_critical_pressure():
+    """Pinned workers keep their width; load must not shrink the dispatch."""
+    ticks = iter(range(1, 500))
+    controller = _owner_box_controller(
+        lambda: _snapshot(99.5, 1.40, float(next(ticks)))
+    )
+
+    for _ in range(10):
+        controller.observe_resources([])
+
+    assert controller.latest_pressure == "critical"
+    assert controller.active_worker_cap == controller.max_worker_cap == 6
+    assert controller.active_heavy_cap == controller.max_heavy_cap == 5
+    assert controller.can_admit_group("type3_mountain", [])
