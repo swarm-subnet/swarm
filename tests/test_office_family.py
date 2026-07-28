@@ -160,7 +160,8 @@ def test_office_telemetry_tracks_flight(office_env):
         obs, *_ = env.step(np.array([[0.0, 0.0, 0.3, 0.0]], dtype=np.float32))
     telem = obs["state"][:15]
     assert telem[2] ** 2 + telem[3] ** 2 == pytest.approx(1.0, abs=1e-5)
-    assert telem[6] > 0.2, "climb must show as positive body up-velocity"
+    # SDK body frame is z-down: climbing shows as NEGATIVE vertical velocity.
+    assert telem[6] < -0.2, "climb must show as negative body down-velocity"
     assert telem[10] > 0.5, "ToF must grow as the drone leaves the floor"
     assert abs(telem[11] - (env.pos[0][2] - 0.05)) < 0.3, "fused height must track altitude"
     for _ in range(40):
@@ -168,6 +169,30 @@ def test_office_telemetry_tracks_flight(office_env):
     telem = obs["state"][:15]
     assert telem[4] > 0.5, "forward flight must show as positive body forward-velocity"
     assert abs(telem[5]) < 0.5, "sideways velocity must stay near zero"
+
+
+def test_office_telemetry_matches_calibration(office_env):
+    """Sim telemetry must stay inside the ranges measured on the SecureLink dataset
+    (docs/families/securelink_calibration_summary.json)."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    hover = np.zeros((1, 4), dtype=np.float32)
+    packets, prev = [], None
+    for _ in range(600):
+        obs, *_ = env.step(hover)
+        t = obs["state"][:15]
+        if prev is None or not np.array_equal(t[:13], prev):
+            packets.append(t.copy())
+            prev = t[:13].copy()
+    packets = np.stack(packets)
+    expected = 600 // OFFICE_TELEM_PERIOD_STEPS
+    loss = 1.0 - len(packets) / expected
+    assert 0.0 <= loss < 0.12, f"packet loss {loss:.2%} outside the measured range"
+    agz = packets[:, 9]
+    assert -10.5 < agz.mean() < -9.1, "hover must read ~-1g on the down axis like the real IMU"
+    baro_std = float(np.std(packets[:, 12]))
+    assert 0.08 < baro_std < 0.30, f"baro std {baro_std:.3f} outside the measured 0.12-0.16 band"
+    assert float(np.abs(packets[:, 4:7]).max()) < 0.5, "hover velocities must stay near zero"
 
 
 def test_office_telemetry_deterministic():

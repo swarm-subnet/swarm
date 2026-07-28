@@ -544,8 +544,8 @@ OFFICE_W_SUCCESS = 0.5                      # score weight: interception achieve
 OFFICE_W_TIME = 0.5                         # score weight: time term
 
 # Simulated Tello telemetry link (state packets over UDP at ~10 Hz).
-# Defaults from the SDK docs; the noise/latency figures are placeholders to be
-# recalibrated against real flight logs.
+# Units from the SDK docs; noise figures calibrated against the SecureLink
+# Tello dataset (see docs/families/securelink_calibration_summary.json).
 OFFICE_TELEM_PERIOD_STEPS = 5               # control steps between packets (10 Hz at 50 Hz ctrl)
 OFFICE_TELEM_DELAY_STEPS = 2                # transport delay: packets carry state from N steps ago
 OFFICE_TELEM_DROP_PROB = 0.05               # per-packet loss probability
@@ -554,10 +554,10 @@ OFFICE_TELEM_ATTITUDE_NOISE_DEG = 1.0       # IMU attitude noise (std, per packe
 OFFICE_TELEM_VELOCITY_NOISE = 0.05          # m/s — VPS velocity noise (std)
 OFFICE_TELEM_ACCEL_NOISE = 0.3              # m/s^2 — accelerometer noise (std)
 OFFICE_TELEM_ACCEL_BIAS = 0.15              # m/s^2 — per-episode accelerometer bias (std)
-OFFICE_TELEM_TOF_NOISE_M = 0.02             # m — downward ToF noise (std)
+OFFICE_TELEM_TOF_NOISE_M = 0.03             # m — downward ToF noise (std)
 OFFICE_TELEM_HEIGHT_NOISE_M = 0.03          # m — fused-height noise (std)
-OFFICE_TELEM_BARO_NOISE_M = 0.08            # m — barometer noise (std)
-OFFICE_TELEM_BARO_WALK_M = 0.01             # m — barometer random walk per packet (std)
+OFFICE_TELEM_BARO_NOISE_M = 0.15            # m — barometer noise (std, measured 0.12-0.16)
+OFFICE_TELEM_BARO_WALK_M = 0.005            # m — barometer random walk per packet (std)
 OFFICE_TELEM_TOF_MAX_M = 8.0                # m — ToF range limit (reads max beyond it)
 OFFICE_TELEM_SEED_OFFSET = 0x7E110          # decorrelates the telemetry rng from the map seed
 OFFICE_VPS_DRIFT_FORCE_N = 0.002            # N — slow lateral drift force emulating VPS error

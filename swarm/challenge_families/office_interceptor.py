@@ -73,8 +73,10 @@ _TEMPLATE_SLOT = {
 
 _tello_assets_ready = False
 
-# Telemetry packet layout: [pitch, roll, sin_yaw, cos_yaw, vf, vr, vu, af, ar, au,
-# tof, height, baro, age, valid]. Body axes follow the sticks: forward, right, up.
+# Telemetry packet layout: [pitch, roll, sin_yaw, cos_yaw, vf, vr, vd, af, ar, ad,
+# tof, height, baro, age, valid]. Velocity/accel use the SDK body frame
+# (forward, right, DOWN — vgz is positive when descending), and acceleration is
+# the raw specific force: hover reads -g on the down axis, like the real IMU.
 # Snapshots hold the raw yaw (index 2) that delivery expands into sin/cos.
 _TELEM_DIM = 15
 _ATT_Q = math.radians(1.0)  # the SDK reports attitude in whole degrees
@@ -242,14 +244,17 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         from swarm.core.moving_drone import world_to_body
 
         vel = np.array(env.vel[d], dtype=np.float64)
-        accel = (vel - env._office_prev_vel[d]) / dt + env._office_accel_bias[d]
+        accel = (vel - env._office_prev_vel[d]) / dt
+        accel[2] += float(env.G)  # specific force, not linear accel: hover is not zero
         roll, pitch, yaw = (float(v) for v in env.rpy[d])
         vf, vr, vu = world_to_body(vel, yaw)
         af, ar, au = world_to_body(accel, yaw)
+        bias = env._office_accel_bias[d]  # sensor-fixed, so applied in the body frame
         tof = min(float(env._get_altitude_distance(d)), OFFICE_TELEM_TOF_MAX_M)
         height = float(env.pos[d, 2]) - float(env._office_takeoff_z[d])
         baro = height + float(env._office_baro_walk[d])
-        return np.array([pitch, roll, yaw, vf, vr, vu, af, ar, au, tof, height, baro])
+        return np.array([pitch, roll, yaw, vf, vr, -vu,
+                         af + bias[0], ar + bias[1], -au + bias[2], tof, height, baro])
 
     def _deliver_packet(self, env, d: int, rng, dt: float) -> None:
         env._office_baro_walk[d] += rng.normal(0.0, OFFICE_TELEM_BARO_WALK_M)

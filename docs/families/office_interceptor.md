@@ -57,16 +57,16 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 
 ### State semantics
 
-The 15 telemetry values mirror a Tello state packet: only what the physical SDK reports, never ground truth. Body axes follow the sticks (forward, right, up); heights are metres relative to the takeoff point.
+The 15 telemetry values mirror a Tello state packet: only what the physical SDK reports, never ground truth. Velocity and acceleration use the SDK body frame — forward, right, **down** (positive vertical velocity means descending, exactly like `vgz` on the real drone). Heights are metres relative to the takeoff point. Noise levels are calibrated against the SecureLink Tello dataset (see `securelink_calibration_summary.json`).
 
 | Slice | Channel | Contents |
 |-------|---------|----------|
 | 0–3 | `attitude_pitch_roll_sincos_yaw` | pitch, roll (rad, 1° steps), sin(yaw), cos(yaw) |
-| 4–6 | `body_velocity_xyz` | forward / right / up velocity (m/s, 0.1 steps) |
-| 7–9 | `body_acceleration_xyz` | forward / right / up acceleration (m/s², gravity removed, with sensor bias) |
+| 4–6 | `body_velocity_xyz` | forward / right / down velocity (m/s, 0.1 steps = the SDK's dm/s) |
+| 7–9 | `body_acceleration_xyz` | forward / right / down specific force (m/s², with sensor bias) — **gravity included**: a hovering drone reads ≈ −9.8 on the down axis, like the real IMU |
 | 10–14 | `altitude_tof_height_baro_age_valid` | downward ToF (m), fused height (m), barometer with drift (m), packet age (s), valid flag |
 
-Packets arrive at ~10 Hz with transport delay, sensor noise, SDK quantization, and occasional loss; between packets the values hold and `age` grows. `valid` drops to 0 when the data is stale (including the first steps of every episode, before any packet has arrived). A small horizontal drift force emulates VPS position error through the physics. The last 25 actions (100 values) complete the state vector.
+Note the deliberate asymmetry, inherited from the real drone: the `ud` action stick is positive-up, while telemetry `vgz` is positive-down. Packets arrive at ~10 Hz with transport delay, sensor noise, SDK quantization, and occasional loss; between packets the values hold and `age` grows. `valid` drops to 0 when the data is stale (including the first steps of every episode, before any packet has arrived). A small horizontal drift force emulates VPS position error through the physics. The last 25 actions (100 values) complete the state vector.
 
 ### Action semantics
 
