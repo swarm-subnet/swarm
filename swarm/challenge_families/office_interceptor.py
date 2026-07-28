@@ -84,6 +84,12 @@ _TEMPLATE_SLOT = {
 
 _tello_assets_ready = False
 
+# Target in-flight reflexes: the short forward guard runs often (it must beat the
+# ~0.3 m stopping distance from cruise), the full-leg recheck reroutes early.
+_GUARD_EVERY_STEPS = 2
+_GUARD_RANGE_M = 0.6
+_RECHECK_EVERY_STEPS = 10
+
 # Telemetry packet layout: [pitch, roll, sin_yaw, cos_yaw, vf, vr, vd, af, ar, ad,
 # tof, height, baro, age, valid]. Velocity/accel use the SDK body frame
 # (forward, right, DOWN — vgz is positive when descending), and acceleration is
@@ -208,6 +214,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_target_forces = [0.0, 0.0, 0.0, 0.0]
         env._office_target_ztorque = 0.0
         env._office_target_pos = np.zeros(3, dtype=float)
+        env._office_target_step = 0
+        env._office_target_brakes = 0
         env._office_target_crashed = False
         env._collision_exempt_uids = frozenset()
         if getattr(env, "_office_target_ctrl", None) is not None:
@@ -340,11 +348,14 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     # ------------------------------------------------------------------ #
     # target flight: seeded person-style waypoint legs with hover pauses
     # ------------------------------------------------------------------ #
-    def _leg_is_clear(self, env, start: np.ndarray, end: np.ndarray) -> bool:
+    def _leg_is_clear(self, env, start: np.ndarray, end: np.ndarray,
+                      ignore_chaser: bool = False) -> bool:
         """Ray-check the leg with side offsets so the body radius clears too.
 
-        The chaser counts as an obstacle: a person would steer around a parked
-        drone, and it stops a park-in-the-flight-path free catch."""
+        At planning time the chaser counts as an obstacle: a person would steer
+        around a parked drone, and it stops a park-in-the-flight-path free catch.
+        The in-flight guards ignore the chaser — dodging an approaching miner
+        would be escape logic, which this target deliberately has none of."""
         cli = env.CLIENT
         d = end - start
         n = float(np.linalg.norm(d))
@@ -361,6 +372,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             froms.append((start + off).tolist())
             tos.append((end + off).tolist())
         ignore = {int(env._office_target_uid), -1}
+        if ignore_chaser:
+            ignore.add(int(env.DRONE_IDS[0]))
         for hit in p.rayTestBatch(froms, tos, physicsClientId=cli):
             if int(hit[0]) not in ignore:
                 return False
@@ -404,7 +417,23 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         tpos, tquat = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
         tvel, tang = p.getBaseVelocity(uid, physicsClientId=cli)
         tpos = np.asarray(tpos, dtype=float)
+        env._office_target_step += 1
         anchor, moving = self._target_waypoint(env, tpos)
+        # In-flight reflexes: legs are planned clear, but the PID can drift off the
+        # line, so the flight is re-checked from where the drone ACTUALLY is.
+        if moving and env._office_target_step % _RECHECK_EVERY_STEPS == 0:
+            if not self._leg_is_clear(env, tpos, anchor, ignore_chaser=True):
+                env._office_target_wp = None  # reroute smoothly, no stop
+                anchor, moving = self._target_waypoint(env, tpos)
+        if moving and env._office_target_step % _GUARD_EVERY_STEPS == 0:
+            direction = anchor - tpos
+            n = float(np.linalg.norm(direction))
+            ahead = tpos + direction / n * min(_GUARD_RANGE_M, n) if n > 1e-6 else anchor
+            if not self._leg_is_clear(env, tpos, ahead, ignore_chaser=True):
+                # Something inside braking distance: stop now, replan next step.
+                env._office_target_wp = None
+                env._office_target_brakes += 1
+                anchor, moving = tpos.copy(), False
         if moving:
             direction = anchor - tpos
             n = float(np.linalg.norm(direction))
