@@ -4,7 +4,7 @@
 
 Indoor air-to-air pursuit: hunt a target drone inside a real office, flying like a real Tello.
 
-Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. The family is incubating while its vision input and target behaviour are finalized.
+Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. The target is a second Tello flown by the validator: seeded person-style waypoint legs with hover pauses, cruising at 1.2 m/s in a 1.3–2.6 m band above the furniture. **The catch is a literal hit** — the episode succeeds only on physical contact with the target's 17.6 cm body, not proximity. The family is incubating while its vision input is finalized.
 
 ---
 

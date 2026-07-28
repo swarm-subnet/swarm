@@ -18,6 +18,8 @@ from swarm.constants import (
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MIN_START_DISTANCE_M,
     OFFICE_SPAWN_Z,
+    OFFICE_TARGET_ALT_MAX_M,
+    OFFICE_TARGET_ALT_MIN_M,
     SWARM_COUNT_SEED_OFFSET,
     SWARM_LAYOUT_SEED_OFFSET,
     SWARM_MAX_DRONES,
@@ -120,9 +122,10 @@ TYPE_PARAMS = {
         'horizon': TYPE_6_HORIZON,
     },
     OFFICE_CHALLENGE_TYPE: {
-        # fixed indoor map: office-scale distances, heights under the 3 m ceiling
+        # fixed indoor map: office-scale distances; goal = the target's spawn,
+        # inside its flight band
         'r_min': OFFICE_MIN_START_DISTANCE_M, 'r_max': OFFICE_MAX_START_DISTANCE_M,
-        'h_min': 0.8, 'h_max': 2.2,
+        'h_min': OFFICE_TARGET_ALT_MIN_M, 'h_max': OFFICE_TARGET_ALT_MAX_M,
         'start_h_min': OFFICE_SPAWN_Z, 'start_h_max': OFFICE_SPAWN_Z,
         'horizon': OFFICE_HORIZON_SEC,
     },

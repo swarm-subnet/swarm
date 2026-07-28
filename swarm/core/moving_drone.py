@@ -1230,6 +1230,10 @@ class MovingDroneAviary(BaseRLAviary):
             self._rc_target_yaw.fill(0.0)
             self._visual_stale = False
 
+        # Fresh episode, fresh controllers: PID integrators must not leak across resets.
+        for ctrl in getattr(self, "ctrl", []):
+            ctrl.reset()
+
         self._reset_action_buffer()
 
         if self.NUM_DRONES > 1:

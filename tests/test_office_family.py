@@ -11,6 +11,8 @@ from swarm.constants import (
     OFFICE_MIN_START_DISTANCE_M,
     OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC,
+    OFFICE_TARGET_ALT_MAX_M,
+    OFFICE_TARGET_ALT_MIN_M,
     OFFICE_TELEM_DELAY_STEPS,
     OFFICE_TELEM_PERIOD_STEPS,
 )
@@ -208,6 +210,97 @@ def test_office_telemetry_deterministic():
         env.close()
         streams.append(np.stack(states))
     assert np.array_equal(streams[0], streams[1])
+
+
+def test_office_target_spawns_in_band(office_env):
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    uid = env._office_target_uid
+    assert uid is not None and uid != int(env.DRONE_IDS[0])
+    pos = env._office_target_pos
+    assert OFFICE_TARGET_ALT_MIN_M <= pos[2] <= OFFICE_TARGET_ALT_MAX_M
+    assert OFFICE_X_RANGE[0] < pos[0] < OFFICE_X_RANGE[1]
+    assert OFFICE_Y_RANGE[0] < pos[1] < OFFICE_Y_RANGE[1]
+    assert uid in env._collision_exempt_uids
+    assert uid in env.family_runtime.protected_body_uids(env)
+
+
+def test_office_target_flight_deterministic_and_clear():
+    task = task_gen.random_task(1 / 50, 55, family_id="cf_office_interceptor")
+    trajs = []
+    for _ in range(2):
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        hover = np.zeros((1, 4), dtype=np.float32)
+        pts = []
+        for _ in range(400):
+            env.step(hover)
+            pts.append(env._office_target_pos.copy())
+        assert not env._office_target_crashed
+        trajs.append(np.stack(pts))
+        env.close()
+    assert np.array_equal(trajs[0], trajs[1])
+    moved = float(np.linalg.norm(np.diff(trajs[0], axis=0), axis=1).sum())
+    assert moved > 3.0, "target must actually fly its legs"
+    assert trajs[0][:, 2].min() > 0.5, "target must stay well above the floor"
+
+
+def test_office_catch_is_physical_contact(office_env):
+    """A scripted pursuit must end with a real ram: success, no chaser collision."""
+    from swarm.core.moving_drone import world_to_body
+
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    # Fixed route around the tall cabinet on this seed's line, then home in.
+    route = [np.array([4.8, 2.6, 1.8]), np.array([8.0, 2.6, 1.8]), np.array([10.0, 3.5, 1.8])]
+    leg = 0
+    for _ in range(1200):
+        cpos = env.pos[0].copy()
+        if cpos[2] < 1.2 and env._time_alive < 2.0:
+            act = [0.0, 0.0, 0.5, 0.0]
+        else:
+            if leg < len(route) and np.linalg.norm(cpos - route[leg]) < 0.45:
+                leg += 1
+            aim = route[leg] if leg < len(route) else env._office_target_pos
+            rel = aim - cpos
+            yaw = float(env.rpy[0][2])
+            f, r, _ = world_to_body(rel, yaw)
+            act = [np.clip(r, -0.6, 0.6), np.clip(f, -0.6, 0.6), np.clip(rel[2] * 1.5, -0.6, 0.5), 0.0]
+        _, _, term, trunc, _ = env.step(np.array([act], dtype=np.float32))
+        if term or trunc:
+            break
+    assert env._success, "the pursuit must end in a catch"
+    assert not env._collision, "ramming the target must not count as a chaser crash"
+    assert env._t_to_goal is not None and env._t_to_goal < 30.0
+    metrics = env.family_runtime.normalize_rollout_metrics(
+        task=env.task,
+        metrics=env.family_runtime.build_rollout_metrics(
+            task=env.task, success=True, t=env._t_to_goal, horizon=env.EP_LEN_SEC,
+            min_clearance=env._min_clearance_episode, collision=False,
+            failure_reason=env._failure_reason,
+        ),
+    )
+    assert metrics["success_term"] == 1.0
+    assert metrics["final_score"] > 0.6
+
+
+def test_office_crash_pays_participation(office_env):
+    from swarm.challenge_families import evaluate_rollout
+    from swarm.protocol import FailureReason
+
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    # Full forward from the floor plows into furniture within a few seconds.
+    for _ in range(400):
+        _, _, term, trunc, _ = env.step(np.array([[0.0, 1.0, 0.3, 0.0]], dtype=np.float32))
+        if term or trunc:
+            break
+    assert env._collision
+    assert env._failure_reason == FailureReason.OBSTACLE_COLLISION.value
+    res = evaluate_rollout(task=env.task, success=env._success, t=env._time_alive,
+                           horizon=env.EP_LEN_SEC, min_clearance=env._min_clearance_episode,
+                           collision=env._collision, failure_reason=env._failure_reason)
+    assert res.score == pytest.approx(0.01)
 
 
 def test_office_task_generation_deterministic():

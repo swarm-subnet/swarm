@@ -4,10 +4,10 @@ The miner flies a Tello-class drone inside the fixed office map and must
 intercept a target drone. Actions are the four Tello RC sticks
 [lr, fb, ud, yaw]; there is no GPS-style world-frame control.
 
-This module carries the family skeleton: map spawn, the Tello asset plumbing,
-task generation over the office bounds, and a placeholder score (distance to
-the target point). The detector emulator, the telemetry observation contract,
-and the live target behaviour land in their own follow-up cards.
+The validator flies the target: a second Tello doing seeded person-style
+waypoint legs above the furniture. The catch is a real physical hit —
+chaser-target contact ends the episode as a success. The detector emulator
+and the visual-input decision land in their own follow-up cards.
 """
 
 from __future__ import annotations
@@ -22,13 +22,24 @@ import numpy as np
 import pybullet as p
 
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
-from gym_pybullet_drones.utils.enums import DroneModel
+from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
     OFFICE_CHALLENGE_TYPE,
+    OFFICE_KILL_RADIUS_M,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
     OFFICE_MIN_START_DISTANCE_M,
+    OFFICE_TARGET_ALT_MAX_M,
+    OFFICE_TARGET_ALT_MIN_M,
+    OFFICE_TARGET_ARRIVE_M,
+    OFFICE_TARGET_CLEAR_M,
+    OFFICE_TARGET_MIN_LEG_M,
+    OFFICE_TARGET_PAUSE_MAX_SEC,
+    OFFICE_TARGET_PAUSE_MIN_SEC,
+    OFFICE_TARGET_SEED_OFFSET,
+    OFFICE_TARGET_SELFCRASH_FORCE,
+    OFFICE_TARGET_SPEED,
     OFFICE_TELEM_ACCEL_BIAS,
     OFFICE_TELEM_ACCEL_NOISE,
     OFFICE_TELEM_ATTITUDE_NOISE_DEG,
@@ -185,10 +196,22 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     def initialise_env_state(self, env, *, requested_mode: bool = False) -> None:
         env.sar_mode = False
         env.MAX_TILT_RAD = math.radians(OFFICE_MAX_TILT_DEG)
+        env._office_target_uid = None
+        env._office_target_ctrl = None
 
     def reset_env_state(self, env) -> None:
         n = env.NUM_DRONES
         seed = int(getattr(env.task, "map_seed", 0))
+        env._office_target_rng = random.Random((seed ^ OFFICE_TARGET_SEED_OFFSET) & 0xFFFFFFFF)
+        env._office_target_wp = None
+        env._office_target_pause = 0.0
+        env._office_target_forces = [0.0, 0.0, 0.0, 0.0]
+        env._office_target_ztorque = 0.0
+        env._office_target_pos = np.zeros(3, dtype=float)
+        env._office_target_crashed = False
+        env._collision_exempt_uids = frozenset()
+        if getattr(env, "_office_target_ctrl", None) is not None:
+            env._office_target_ctrl.reset()
         env._office_telemetry = np.zeros((n, _TELEM_DIM), dtype=np.float32)
         # Age starts beyond the stale threshold: no packet has arrived yet.
         env._office_telemetry[:, 13] = 2.0 * OFFICE_TELEM_STALE_SEC
@@ -208,8 +231,105 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             0.0,
         ]
 
+    def _rays_clear(self, env, froms: list, tos: list, extra_ignore: tuple = ()) -> bool:
+        ignore = {int(env._office_target_uid), -1, *extra_ignore}
+        return all(int(h[0]) in ignore
+                   for h in p.rayTestBatch(froms, tos, physicsClientId=env.CLIENT))
+
+    def _point_is_clear(self, env, pos: np.ndarray, *, floor: bool) -> bool:
+        """No geometry within a body length of the point (task points only respect
+        wall margins, so an unlucky seed can land inside furniture)."""
+        origin = pos + np.array([0.0, 0.0, 0.15 if floor else 0.0])
+        dirs = [(0.4, 0, 0), (-0.4, 0, 0), (0, 0.4, 0), (0, -0.4, 0)]
+        if floor:
+            # Long up-ray: a takeoff column blocked by a furniture overhang is no spawn.
+            dirs.append((0, 0, 1.2))
+        else:
+            dirs += [(0, 0, 0.4), (0, 0, -0.4)]
+        froms = [origin.tolist()] * len(dirs)
+        tos = [(origin + np.asarray(d)).tolist() for d in dirs]
+        return self._rays_clear(env, froms, tos, extra_ignore=(int(env.DRONE_IDS[0]),))
+
+    def _clear_spawn(self, env, pos: np.ndarray, *, floor: bool, rng,
+                     anchor: np.ndarray) -> np.ndarray:
+        """First clear point, preferring candidates that keep the task's start-goal
+        separation band; falls back to any clear point rather than none."""
+        z_range = (pos[2], pos[2]) if floor else (OFFICE_TARGET_ALT_MIN_M, OFFICE_TARGET_ALT_MAX_M)
+        fallback = None
+        for i in range(65):
+            if self._point_is_clear(env, pos, floor=floor):
+                gap = float(np.linalg.norm(pos[:2] - anchor[:2]))
+                if OFFICE_MIN_START_DISTANCE_M <= gap <= OFFICE_MAX_START_DISTANCE_M:
+                    return pos
+                if fallback is None:
+                    fallback = pos
+            if i < 64:
+                pos = np.array(office_point(rng, z_range), dtype=float)
+        return fallback if fallback is not None else pos
+
     def spawn_task_world(self, env) -> None:
-        build_office_map(seed=env.task.map_seed, cli=env.getPyBulletClient())
+        cli = env.getPyBulletClient()
+        env.task.start = env._original_start
+        env.task.goal = env._original_goal
+        seed = int(env.task.map_seed)
+
+        urdf = ensure_tello_assets_in_gym_assets()
+        urdf_path = str(_pkg_files("gym_pybullet_drones").joinpath("assets", urdf))
+        uid = int(p.loadURDF(
+            urdf_path, [0.0, 0.0, -1000.0], p.getQuaternionFromEuler([0, 0, 0]),
+            flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli,
+        ))
+        env._office_target_uid = uid
+        # Ramming the target is the catch, not a chaser crash.
+        env._collision_exempt_uids = frozenset({uid})
+
+        build_office_map(seed=seed, cli=cli)
+
+        place_rng = random.Random((seed ^ OFFICE_TARGET_SEED_OFFSET ^ 0x9A7C) & 0xFFFFFFFF)
+        start = self._clear_spawn(env, np.array(env.task.start, dtype=float),
+                                  floor=True, rng=place_rng,
+                                  anchor=np.array(env.task.goal, dtype=float))
+        env.task.start = tuple(float(v) for v in start)
+        p.resetBasePositionAndOrientation(
+            int(env.DRONE_IDS[0]), start.tolist(),
+            p.getQuaternionFromEuler([0, 0, 0]), physicsClientId=cli,
+        )
+        p.resetBaseVelocity(int(env.DRONE_IDS[0]), [0, 0, 0], [0, 0, 0], physicsClientId=cli)
+
+        goal = self._clear_spawn(env, np.array(env.task.goal, dtype=float),
+                                 floor=False, rng=place_rng, anchor=start)
+        env.task.goal = tuple(float(v) for v in goal)
+        env.GOAL_POS = goal.copy()
+        p.resetBasePositionAndOrientation(
+            uid, goal.tolist(), p.getQuaternionFromEuler([0, 0, 0]), physicsClientId=cli,
+        )
+        p.resetBaseVelocity(uid, [0, 0, 0], [0, 0, 0], physicsClientId=cli)
+        env._office_target_pos = goal.copy()
+        env._office_target_ctrl = make_office_control(env)
+
+    def protected_body_uids(self, env) -> set:
+        uid = getattr(env, "_office_target_uid", None)
+        return {int(uid)} if uid is not None else set()
+
+    def compute_terminated(self, env) -> bool:
+        # A self-crashed target ends the seed as infeasible, like the outdoor family.
+        if getattr(env, "_office_target_crashed", False) and not env._success:
+            return True
+        if env._collision and not env._success:
+            if env._failure_reason == FailureReason.NONE.value:
+                env._failure_reason = FailureReason.OBSTACLE_COLLISION.value
+        return False
+
+    def compute_truncated(self, env, *, terminal_already: bool, roll: float, pitch: float) -> bool:
+        if abs(float(roll)) > float(env.MAX_TILT_RAD) or abs(float(pitch)) > float(env.MAX_TILT_RAD):
+            if not terminal_already:
+                env._failure_reason = FailureReason.TILT.value
+            return True
+        if env._time_alive >= env.EP_LEN_SEC:
+            if not terminal_already:
+                env._failure_reason = FailureReason.TIMEOUT.value
+            return True
+        return False
 
     def build_info(self, env) -> dict:
         return {
@@ -218,9 +338,123 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         }
 
     # ------------------------------------------------------------------ #
-    # telemetry link: noisy delayed packets at ~10 Hz, like the real SDK
+    # target flight: seeded person-style waypoint legs with hover pauses
     # ------------------------------------------------------------------ #
+    def _leg_is_clear(self, env, start: np.ndarray, end: np.ndarray) -> bool:
+        """Ray-check the leg with side offsets so the body radius clears too.
+
+        The chaser counts as an obstacle: a person would steer around a parked
+        drone, and it stops a park-in-the-flight-path free catch."""
+        cli = env.CLIENT
+        d = end - start
+        n = float(np.linalg.norm(d))
+        if n < 1e-6:
+            return False
+        d = d / n
+        side = np.cross(d, [0.0, 0.0, 1.0])
+        sn = float(np.linalg.norm(side))
+        side = side / sn if sn > 1e-6 else np.array([1.0, 0.0, 0.0])
+        up = np.cross(side, d)
+        froms, tos = [], []
+        for off in (np.zeros(3), OFFICE_TARGET_CLEAR_M * side, -OFFICE_TARGET_CLEAR_M * side,
+                    OFFICE_TARGET_CLEAR_M * up, -OFFICE_TARGET_CLEAR_M * up):
+            froms.append((start + off).tolist())
+            tos.append((end + off).tolist())
+        ignore = {int(env._office_target_uid), -1}
+        for hit in p.rayTestBatch(froms, tos, physicsClientId=cli):
+            if int(hit[0]) not in ignore:
+                return False
+        return True
+
+    def _target_waypoint(self, env, tpos: np.ndarray) -> tuple:
+        """Advance the waypoint state machine. Returns (anchor, moving): the point
+        to track and whether to fly toward it (False = hover at it)."""
+        wp = env._office_target_wp
+        if wp is not None:
+            if env._office_target_pause > 0.0:
+                env._office_target_pause -= env._sim_dt
+                if env._office_target_pause <= 0.0:
+                    env._office_target_wp = None  # pick a fresh leg next step
+                return wp, False
+            if float(np.linalg.norm(tpos - wp)) < OFFICE_TARGET_ARRIVE_M:
+                env._office_target_pause = env._office_target_rng.uniform(
+                    OFFICE_TARGET_PAUSE_MIN_SEC, OFFICE_TARGET_PAUSE_MAX_SEC
+                )
+                return wp, False
+            return wp, True
+        rng = env._office_target_rng
+        for _ in range(64):
+            cand = np.array(
+                office_point(rng, (OFFICE_TARGET_ALT_MIN_M, OFFICE_TARGET_ALT_MAX_M)),
+                dtype=float,
+            )
+            if float(np.linalg.norm(cand - tpos)) < OFFICE_TARGET_MIN_LEG_M:
+                continue
+            if self._leg_is_clear(env, tpos, cand):
+                env._office_target_wp = cand
+                return cand, True
+        return tpos.copy(), False  # boxed in this step: hover and retry next step
+
+    def advance_world(self, env) -> None:
+        uid = getattr(env, "_office_target_uid", None)
+        if uid is None or getattr(env, "_office_target_ctrl", None) is None:
+            return
+        cli = env.CLIENT
+        dt = env._sim_dt
+        tpos, tquat = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
+        tvel, tang = p.getBaseVelocity(uid, physicsClientId=cli)
+        tpos = np.asarray(tpos, dtype=float)
+        anchor, moving = self._target_waypoint(env, tpos)
+        if moving:
+            direction = anchor - tpos
+            n = float(np.linalg.norm(direction))
+            desired = direction / n * min(OFFICE_TARGET_SPEED, n / dt) if n > 1e-6 else np.zeros(3)
+            look = tpos + desired * dt * 5.0
+        else:
+            desired, look = np.zeros(3), anchor
+        rpm, _, _ = env._office_target_ctrl.computeControl(
+            control_timestep=dt, cur_pos=tpos, cur_quat=np.asarray(tquat, dtype=float),
+            cur_vel=np.asarray(tvel, dtype=float), cur_ang_vel=np.asarray(tang, dtype=float),
+            target_pos=look, target_vel=desired,
+        )
+        # Thrust changes at control rate; cache plain floats for the 5x-rate substep hook.
+        forces = np.square(np.asarray(rpm, dtype=float)) * float(env.KF)
+        torques = np.square(np.asarray(rpm, dtype=float)) * float(env.KM)
+        env._office_target_forces = [float(f) for f in forces]
+        env._office_target_ztorque = float(-torques[0] + torques[1] - torques[2] + torques[3])
+
+    # ------------------------------------------------------------------ #
+    # post-physics: catch on real contact, target self-crash, telemetry
+    # ------------------------------------------------------------------ #
+    def _update_target(self, env) -> None:
+        uid = getattr(env, "_office_target_uid", None)
+        if uid is None:
+            return
+        cli = env.CLIENT
+        tpos, _ = p.getBasePositionAndOrientation(uid, physicsClientId=cli)
+        env._office_target_pos = np.asarray(tpos, dtype=float)
+
+        if env._success:
+            return
+        chaser_uid = int(env.DRONE_IDS[0])
+        contacts = p.getContactPoints(bodyA=uid, physicsClientId=cli)
+        others = [(int(c[2]) if int(c[1]) == uid else int(c[1]), c[9]) for c in contacts]
+        dist = float(np.linalg.norm(env.pos[0] - env._office_target_pos))
+        if dist <= OFFICE_KILL_RADIUS_M or any(o == chaser_uid for o, _ in others):
+            env._success = True
+            env._t_to_goal = env._time_alive
+            env._failure_reason = FailureReason.NONE.value
+            return
+        if not env._office_target_crashed:
+            for other, force in others:
+                if other != chaser_uid and force > OFFICE_TARGET_SELFCRASH_FORCE:
+                    env._office_target_crashed = True
+                    if env._failure_reason == FailureReason.NONE.value:
+                        env._failure_reason = FailureReason.INFEASIBLE.value
+                    break
+
     def post_step_update(self, env) -> None:
+        self._update_target(env)
         rng = getattr(env, "_office_telem_rng", None)
         if rng is None:
             return
@@ -272,19 +506,26 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         telem[d, 13] = OFFICE_TELEM_DELAY_STEPS * dt
 
     def apply_world_physics(self, env) -> None:
-        force = getattr(env, "_office_vps_force", None)
-        if force is None:
-            return
         cli = env.CLIENT
-        for d in range(env.NUM_DRONES):
-            p.applyExternalForce(
-                int(env.DRONE_IDS[d]), -1, force, env.pos[d].tolist(),
-                p.WORLD_FRAME, physicsClientId=cli,
-            )
+        force = getattr(env, "_office_vps_force", None)
+        if force is not None:
+            for d in range(env.NUM_DRONES):
+                p.applyExternalForce(
+                    int(env.DRONE_IDS[d]), -1, force, env.pos[d].tolist(),
+                    p.WORLD_FRAME, physicsClientId=cli,
+                )
+        uid = getattr(env, "_office_target_uid", None)
+        if uid is None or getattr(env, "PHYSICS", None) == Physics.DYN:
+            return
+        forces = env._office_target_forces
+        for i in range(4):
+            p.applyExternalForce(uid, i, [0.0, 0.0, forces[i]], [0.0, 0.0, 0.0],
+                                 p.LINK_FRAME, physicsClientId=cli)
+        p.applyExternalTorque(uid, 4, [0.0, 0.0, env._office_target_ztorque],
+                              p.LINK_FRAME, physicsClientId=cli)
 
     # ------------------------------------------------------------------ #
-    # scoring (placeholder: reach the target point; replaced when the live
-    # target behaviour card lands)
+    # scoring
     # ------------------------------------------------------------------ #
     def build_rollout_metrics(self, *, task, success, t, horizon,
                               min_clearance, collision, failure_reason) -> dict:
@@ -297,7 +538,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             "time_sec": float(t),
             "horizon_sec": float(horizon),
             "target_time_sec": _calculate_office_target_time(task),
-            "min_clearance": float(min_clearance),
+            "min_clearance": None if min_clearance is None else float(min_clearance),
             "collision": bool(collision),
             "failure_reason": failure_reason,
             "success": bool(success),
