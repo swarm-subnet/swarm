@@ -42,6 +42,11 @@ async def run_task(
     seeds_to_raw = task.get("seeds_to")
     seeds_to = int(seeds_to_raw) if seeds_to_raw is not None else None
     batch_id = task.get("batch_id")
+    flow = str(task.get("flow") or "")
+    if flow == "seed":
+        # Seed flow has no window: the full seed list is built and the backend feeds indexes.
+        seeds_from = 0
+        seeds_to = None
     epoch = int(
         task.get("epoch_number")
         or self.seed_manager.epoch_number
@@ -74,6 +79,22 @@ async def run_task(
         bt.logging.warning(f"run_task: model hash mismatch for UID {uid}")
         return
 
+    seed_feeder = None
+    if flow == "seed":
+        async def seed_feeder(free_slots: int):
+            resp = await self.backend_api.claim_seeds(
+                int(task_id), count=max(1, int(free_slots)),
+            )
+            if not resp:
+                return [], False
+            granted = [int(i) for i in resp.get("granted", [])]
+            drained = (
+                not granted
+                and int(resp.get("pending", 0)) == 0
+                and int(resp.get("leased_other", 0)) == 0
+            )
+            return granted, drained
+
     if phase == "SCREENING":
         result = await _run_screening(
             self,
@@ -86,6 +107,7 @@ async def run_task(
             seeds_to=seeds_to,
             cancel_flag=cancel_flag,
             batch_id=batch_id,
+            seed_feeder=seed_feeder,
         )
         avg, all_scores, per_type_raw, cancel_reason, early_failed = result
         per_type_avgs = _per_type_means(per_type_raw)
@@ -103,6 +125,7 @@ async def run_task(
             seeds_from=seeds_from,
             seeds_to=seeds_to,
             batch_id=batch_id,
+            seed_feeder=seed_feeder,
         )
         avg, per_type_avgs, all_scores, _per_type_raw, cancel_reason = result
         seeds_evaluated = seeds_from + len(all_scores)
@@ -112,11 +135,31 @@ async def run_task(
         bt.logging.warning(f"run_task: unsupported phase {phase}")
         return
 
-    if cancel_reason and "cancel_flag" in cancel_reason:
+    if flow == "seed" and not all_scores:
         bt.logging.info(
-            f"run_task: aborted by SSE for UID {uid} ({cancel_reason})"
+            f"run_task: no seeds flown for UID {uid} under seed flow; nothing to submit"
         )
         return
+
+    if cancel_reason and "cancel_flag" in cancel_reason:
+        # A finalize broadcast means wrap up and still submit, never abort:
+        # every participating validator must land its ValidatorScore row.
+        listener = getattr(self, "_sse_listener", None)
+        finalize_wrapup = (
+            flow == "seed"
+            and all_scores
+            and listener is not None
+            and getattr(listener, "last_cancel_type", None)
+            in ("benchmark_done", "screening_failed")
+        )
+        if not finalize_wrapup:
+            bt.logging.info(
+                f"run_task: aborted by SSE for UID {uid} ({cancel_reason})"
+            )
+            return
+        bt.logging.info(
+            f"run_task: model finalized elsewhere; submitting wrap-up result for UID {uid}"
+        )
     if cancel_reason and not early_failed:
         bt.logging.warning(
             f"run_task: phase ended with cancel_reason={cancel_reason}; "

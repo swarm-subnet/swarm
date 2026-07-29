@@ -23,6 +23,7 @@ from swarm.constants import (
     GLOBAL_EVAL_PER_SEED_SEC,
     MODEL_DIR,
     SIM_DT,
+    SPEED_FACTOR_MAX_ELIGIBLE,
 )
 from swarm.core.faults import ReasonCode
 from swarm.core.submission_lane import is_model_graph_artifact
@@ -412,6 +413,8 @@ class _BatchContext:
     runtime_profile: Optional[Any] = None
 
     connected: bool = False
+    container_started_at: Optional[float] = None
+    container_startup_sec: Optional[float] = None
 
     # Closure bundle (built in _init_batch_state)
     helpers: Optional[_BatchHelpers] = None
@@ -1062,7 +1065,10 @@ async def _run_host_baseline_calibration(self, worker_count: int):
         proc.start()
 
     payloads: list[dict[str, Any]] = []
-    deadline = time.monotonic() + max(180.0, 90.0 + (requested * 30.0))
+    # A host at the eligibility ceiling needs proportionally longer than the reference.
+    deadline = time.monotonic() + SPEED_FACTOR_MAX_ELIGIBLE * max(
+        180.0, 90.0 + (requested * 30.0)
+    )
     while len(payloads) < requested and time.monotonic() < deadline:
         try:
             payload = result_queue.get(timeout=0.5)
@@ -1329,6 +1335,7 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
         cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
     cmd.extend([ctx.run_image, "python", "/workspace/submission/main.py"])
+    ctx.container_started_at = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         ctx.helpers.notify_all_failed(status=ReasonCode.INFRA_DOCKER.value, error=result.stderr[:300])
@@ -1350,6 +1357,13 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
     while time.monotonic() < deadline:
         if ctx.self._check_rpc_ready(ctx.host_port):
             ctx.connected = True
+            started_at = getattr(ctx, "container_started_at", None)
+            if started_at is not None:
+                startup_sec = time.monotonic() - started_at
+                ctx.container_startup_sec = startup_sec
+                bt.logging.debug(
+                    f"[Worker {ctx.worker_id}] container ready in {startup_sec:.1f}s"
+                )
             return None
         await asyncio.sleep(0.1)
     gone = _container_is_gone(ctx.container_name)

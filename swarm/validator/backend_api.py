@@ -514,6 +514,17 @@ class BackendApiClient:
     # Task lease and seed upload endpoints
     # ──────────────────────────────────────────────────────────────────────
 
+    async def claim_seeds(self, task_id: int, count: int = 1) -> Optional[Dict[str, Any]]:
+        """Lease up to ``count`` seeds for the task; None on transport failure."""
+        try:
+            return await self._post_signed(
+                f"/validators/tasks/{int(task_id)}/claim-seeds",
+                {"count": int(count)},
+            )
+        except Exception as exc:
+            bt.logging.warning(f"claim_seeds failed for task {task_id}: {exc}")
+            return None
+
     async def next_task(self) -> Optional[Dict[str, Any]]:
         """Long-poll for the next task; None if the window times out."""
         endpoint = "/validators/next-task"

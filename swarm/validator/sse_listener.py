@@ -46,6 +46,7 @@ class SseListener:
         self._initial_backoff = initial_backoff
         self._max_backoff = max_backoff
         self._last_event_id: Optional[int] = None
+        self.last_cancel_type: Optional[str] = None
 
     async def run_forever(self) -> None:
         backoff = self._initial_backoff
@@ -100,6 +101,7 @@ class SseListener:
 
         event_type = event.get("type")
         if event_type in _CANCEL_TYPES:
+            self.last_cancel_type = str(event_type)
             self.cancel_flag.set()
             self.wake_flag.set()
         elif event_type in _RESYNC_TYPES:

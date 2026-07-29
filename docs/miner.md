@@ -414,7 +414,7 @@ The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no 
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
-Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each batch (earliest report per seed counts: re-runs never double-count).
+Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each seed (earliest report per seed counts: re-runs never double-count).
 
 ### CONFIRMED Requirements (Search and Rescue)
 
@@ -465,12 +465,12 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 1. **Miner** commits the GitHub URL on-chain, then goes offline
 2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. It verifies the README hash, downloads the manifest and the declared artifact, checks its SHA-256, and creates one **Pending Benchmark** row
 3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
-4. **Validators** lease the model's seed range in 50-seed batches and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
-5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed batches), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+4. **Validators** lease the model's seeds individually from a shared pool and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
+5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
 
 Every submission runs the full 1,100-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
 
-A batch that fails 3 times marks the model **Evaluation Failed**: a dead RPC server or a crashing agent wastes the attempt, so smoke-test with `swarm model verify` before committing.
+A seed that fails on 3 different attempts is closed as an environment failure and excluded from the score; a dead RPC server or a crashing agent wastes everyone's time, so smoke-test with `swarm model verify` before committing.
 
 ### Epoch Rotation
 

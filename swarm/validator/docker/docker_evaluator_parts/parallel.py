@@ -197,6 +197,8 @@ async def _run_process_parallel(
     retry_budget: Optional[dict[str, int]] = None,
     host_speed_factor: Optional[float] = None,
     model_image: Optional[str] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[list[int]] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -209,7 +211,13 @@ async def _run_process_parallel(
     worker_started_at: dict[int, float] = {}
     results: list[Optional[ValidationResult]] = [None] * len(all_tasks)
     scheduler = bench_engine._RamWorkerScheduler(requested_workers=effective_workers)
-    pending_batch_ids = list(range(len(batch_plan)))
+    feeder_active = seed_feeder is not None
+    feeder_done = not feeder_active
+    feeder_next_call_at = 0.0
+    if feeder_active:
+        pending_batch_ids = [int(i) for i in (initial_pending or [])]
+    else:
+        pending_batch_ids = list(range(len(batch_plan)))
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
     batch_retry_counts: dict[int, int] = {}
     rpc_transport_retry_counts: dict[int, int] = {}
@@ -590,14 +598,22 @@ async def _run_process_parallel(
         _maybe_poll_scheduler(force=True)
         _dispatch_available_batches()
 
+        def _more_work_expected(done_count: int) -> bool:
+            if feeder_active:
+                return bool(
+                    pending_batch_ids or worker_active_requests or not feeder_done
+                )
+            return done_count < len(batch_plan)
+
         completed_batches = 0
-        while completed_batches < len(batch_plan):
+        while _more_work_expected(completed_batches):
             if stop_reason is None and should_stop is not None:
                 reason = should_stop()
                 if reason:
                     stop_reason = str(reason)
                     dropped = len(pending_batch_ids)
                     pending_batch_ids.clear()
+                    feeder_done = True
                     bt.logging.warning(
                         f"[Validator eval] stop requested for UID {uid} ({stop_reason}); "
                         f"dropping {dropped} pending seeds, finishing "
@@ -607,9 +623,31 @@ async def _run_process_parallel(
                 break
             _drain_progress_events()
             _maybe_poll_scheduler()
+            if (
+                feeder_active
+                and not feeder_done
+                and stop_reason is None
+                and not pending_batch_ids
+                and len(worker_active_requests) < scheduler.active_worker_cap
+                and time.time() >= feeder_next_call_at
+            ):
+                free_slots = scheduler.active_worker_cap - len(worker_active_requests)
+                granted, drained = await seed_feeder(free_slots)
+                for task_index in granted:
+                    task_index = int(task_index)
+                    if (
+                        0 <= task_index < len(results)
+                        and results[task_index] is None
+                        and task_index not in pending_batch_ids
+                    ):
+                        pending_batch_ids.append(task_index)
+                if drained:
+                    feeder_done = True
+                elif not granted:
+                    feeder_next_call_at = time.time() + 15.0
             _dispatch_available_batches()
             completed_batches += _check_for_stalled_workers()
-            if completed_batches >= len(batch_plan):
+            if not _more_work_expected(completed_batches):
                 break
 
             try:
@@ -798,7 +836,8 @@ async def _run_process_parallel(
 
         _drain_progress_events()
         _log_summary()
-        if stop_reason is not None:
+        if stop_reason is not None or feeder_active:
+            # Feeder mode: None entries are seeds this validator never claimed.
             return results
         return [
             result if result is not None else ValidationResult(
@@ -840,6 +879,8 @@ async def evaluate_seeds_parallel(
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
     retry_budget: Optional[dict[str, int]] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[list[int]] = None,
 ) -> list:
     """Evaluate validator seeds using the benchmark-grade process scheduler."""
     if not tasks:
@@ -871,6 +912,9 @@ async def evaluate_seeds_parallel(
                 else f"host speed factor {speed.factor:.2f}x is not eligible to score"
             )
             bt.logging.warning(detail)
+            if seed_feeder is not None:
+                # Seed flow: claim nothing and retry later instead of emitting INFRA rows.
+                return [None] * len(tasks)
             for task in tasks:
                 _emit_seed_complete(
                     on_seed_complete,
@@ -888,6 +932,11 @@ async def evaluate_seeds_parallel(
                 )
                 for _ in tasks
             ]
+        if seed_feeder is not None:
+            bt.logging.warning(
+                "Seed-flow eval requires the parallel scheduler; base not ready, retrying later"
+            )
+            return [None] * len(tasks)
         return await self.evaluate_seeds_batch(
             tasks,
             uid,
@@ -986,6 +1035,8 @@ async def evaluate_seeds_parallel(
         retry_budget=retry_budget,
         host_speed_factor=speed.factor,
         model_image=model_image,
+        seed_feeder=seed_feeder,
+        initial_pending=initial_pending,
     )
 
 

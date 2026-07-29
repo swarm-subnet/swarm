@@ -176,6 +176,7 @@ async def _ensure_components(self) -> None:
             self._cancel_flag,
             self._wake_flag,
         )
+        self._sse_listener = listener
         self._sse_task = asyncio.create_task(listener.run_forever())
         self._sse_task.add_done_callback(
             lambda task: _record_sse_listener_exit(self, task)
@@ -226,15 +227,21 @@ async def _host_may_score(self) -> bool:
         return False
     speed = await _ensure_host_speed_factor(self.docker_evaluator, N_DOCKER_WORKERS)
     if speed is None:
-        bt.logging.warning(
-            "Host has no valid reference calibration; "
+        bt.logging.error(
+            "HOST EXCLUDED FROM SCORING: no valid reference calibration; "
             "not polling for scoring tasks until calibration succeeds"
+        )
+        tracker_call(
+            self, "mark_forward_failed", error="host_excluded_no_calibration",
         )
         return False
     if not speed.eligible:
-        bt.logging.warning(
-            f"Host speed factor {speed.factor:.2f}x exceeds the eligibility limit; "
-            "not polling for scoring tasks until recalibration passes"
+        bt.logging.error(
+            f"HOST EXCLUDED FROM SCORING: speed factor {speed.factor:.2f}x exceeds "
+            "the eligibility limit; not polling for scoring tasks until recalibration passes"
+        )
+        tracker_call(
+            self, "mark_forward_failed", error=f"host_excluded_speed_{speed.factor:.2f}x",
         )
         return False
     return True

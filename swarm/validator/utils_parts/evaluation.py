@@ -109,6 +109,8 @@ async def _evaluate_seeds(
     prior_avg: float = 0.0,
     pre_built_tasks: Optional[List] = None,
     retry_budget: Optional[Dict[str, int]] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[List[int]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
     """Evaluate a model on multiple seeds using parallel Docker containers.
 
@@ -175,6 +177,25 @@ async def _evaluate_seeds(
             },
         )
 
+    engine_feeder = None
+    engine_initial: Optional[List[int]] = None
+    if seed_feeder is not None:
+        # The feeder speaks absolute seed indexes; the engine indexes valid_tasks.
+        abs_to_valid = {pos: vi for vi, pos in enumerate(valid_positions)}
+
+        async def engine_feeder(free_slots: int):
+            granted, drained = await seed_feeder(free_slots)
+            return (
+                [abs_to_valid[int(i)] for i in granted if int(i) in abs_to_valid],
+                drained,
+            )
+
+        engine_initial = [
+            abs_to_valid[int(i)]
+            for i in (initial_pending or [])
+            if int(i) in abs_to_valid
+        ]
+
     phase = "screening" if "screening" in description.lower() else "benchmark"
     results = await self.docker_evaluator.evaluate_seeds_parallel(
         tasks=valid_tasks,
@@ -188,6 +209,8 @@ async def _evaluate_seeds(
         prior_total_seeds=prior_total_seeds,
         prior_avg=prior_avg,
         retry_budget=retry_budget,
+        seed_feeder=engine_feeder,
+        initial_pending=engine_initial,
     )
 
     seed_details = []
@@ -276,6 +299,8 @@ async def _run_streaming_phase(
     evaluator_prior_done: int = 0,
     evaluator_total_seeds: Optional[int] = None,
     re_auth_interval_sec: float = RE_AUTH_INTERVAL_SEC,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[List[int]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict], Optional[str]]:
     """Evaluate the full seed range as one rolling queue with streamed uploads.
 
@@ -300,19 +325,22 @@ async def _run_streaming_phase(
     provenance = _seed_upload_provenance(self, model_path)
 
     async def _safe_upload(batch: List[dict]) -> None:
-        try:
-            result = await self.backend_api.post_seed_scores_batch(
-                model_uid=uid, epoch_number=epoch_number, scores=batch,
-                task_id=task_id,
-                family_id=family_id,
-                provenance=provenance,
-            )
-        except Exception as exc:
-            bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
-            failed_batches.append(batch)
-            return
-        if not result or not result.get("recorded"):
-            failed_batches.append(batch)
+        for delay in (0.0, 2.0, 4.0):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                result = await self.backend_api.post_seed_scores_batch(
+                    model_uid=uid, epoch_number=epoch_number, scores=batch,
+                    task_id=task_id,
+                    family_id=family_id,
+                    provenance=provenance,
+                )
+            except Exception as exc:
+                bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
+                continue
+            if result and result.get("recorded"):
+                return
+        failed_batches.append(batch)
 
     async def _wait_for_slot() -> None:
         while len(inflight) >= max_inflight:
@@ -457,6 +485,8 @@ async def _run_streaming_phase(
             prior_avg=0.0,
             pre_built_tasks=pre_built_tasks,
             retry_budget=retry_budget,
+            seed_feeder=seed_feeder,
+            initial_pending=initial_pending,
         )
         _fire_chunk_complete()
     finally:
@@ -525,6 +555,7 @@ async def _run_screening(
     seeds_to: Optional[int] = None,
     cancel_flag: Optional[asyncio.Event] = None,
     batch_id: Optional[int] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
 ) -> Tuple[float, List[float], Dict[str, List[float]], Optional[str], bool]:
     """Run screening seeds and stream per-seed scores.
 
@@ -631,6 +662,9 @@ async def _run_screening(
             pre_built_tasks=screening_tasks,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
+            chunk_size=2 if seed_feeder is not None else UNIFIED_CHUNK_SIZE,
+            seed_feeder=seed_feeder,
+            initial_pending=[] if seed_feeder is not None else None,
         )
     finally:
         hb.finish()
@@ -666,6 +700,7 @@ async def _run_full_benchmark(
     seeds_from: Optional[int] = None,
     seeds_to: Optional[int] = None,
     batch_id: Optional[int] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]], Optional[str]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
@@ -811,6 +846,9 @@ async def _run_full_benchmark(
             pre_built_tasks=pre_built_tasks,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
+            chunk_size=2 if seed_feeder is not None else UNIFIED_CHUNK_SIZE,
+            seed_feeder=seed_feeder,
+            initial_pending=[] if seed_feeder is not None else None,
         )
     finally:
         hb.finish()
