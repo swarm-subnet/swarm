@@ -93,50 +93,125 @@ def test_build_worker_stall_seed_meta_marks_failure():
     assert meta["seed_wall_sec"] == pytest.approx(91.5)
 
 
-def test_resource_class_assignments_match_expected_groups():
-    assert bench_full_eval._resource_class_for_group("type1_city") == "light"
-    assert bench_full_eval._resource_class_for_group("type2_open") == "medium"
-    assert bench_full_eval._resource_class_for_group("type5_warehouse") == "medium"
-    assert bench_full_eval._resource_class_for_group("type4_village") == "heavy"
-    assert bench_full_eval._resource_class_for_group("type3_mountain") == "heavy"
-    assert bench_full_eval._resource_class_for_group("type6_forest") == "heavy"
+def test_ram_estimates_are_defined_per_group():
+    rows = bench_full_eval._resource_model_rows()
+
+    assert [row["group"] for row in rows] == list(bench_full_eval.BENCH_GROUP_ORDER)
+    assert {row["group"]: row["ram_mb"] for row in rows} == {
+        "type1_city": 1400.0,
+        "type2_open": 1800.0,
+        "type5_warehouse": 1900.0,
+        "type4_village": 2200.0,
+        "type3_mountain": 2300.0,
+        "type6_forest": 2400.0,
+    }
 
 
-def test_select_next_batch_index_prefers_light_when_heavy_is_already_active():
-    batch_plan = [[0], [1], [2]]
-    task_meta = [
-        {"group": "type3_mountain"},
-        {"group": "type2_open"},
-        {"group": "type1_city"},
-    ]
-    scheduler = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=2,
-        machine_vcpus=2,
-        machine_total_ram_mb=8192,
-    )
-
-    selected = bench_full_eval._select_next_batch_index(
-        pending_batch_ids=[1, 2],
-        batch_plan=batch_plan,
-        task_meta=task_meta,
-        active_batch_ids=[0],
-        active_worker_cap=2,
-        scheduler=scheduler,
-    )
-
-    assert selected == 2
-
-
-def test_select_next_batch_index_mixes_groups_before_draining_first_group():
-    batch_plan = [[0], [1], [2]]
-    task_meta = [
-        {"group": "type1_city"},
-        {"group": "type1_city"},
-        {"group": "type2_open"},
-    ]
-    scheduler = bench_full_eval._AdaptiveBackoffController(
+def test_scheduler_starts_at_configured_worker_width():
+    scheduler = bench_full_eval._RamWorkerScheduler(
         requested_workers=12,
-        machine_vcpus=12,
+        machine_vcpus=32,
+        machine_total_ram_mb=65536,
+    )
+
+    assert scheduler.active_worker_cap == scheduler.max_worker_cap == 12
+
+
+def test_scheduler_does_not_limit_concurrency_by_map_type():
+    scheduler = bench_full_eval._RamWorkerScheduler(
+        requested_workers=8,
+        machine_vcpus=16,
+        machine_total_ram_mb=65536,
+    )
+    active_groups = ["type6_forest"] * 7
+
+    assert scheduler.can_admit_group("type6_forest", active_groups)
+
+
+def test_scheduler_reserves_ram_for_active_workers():
+    scheduler = bench_full_eval._RamWorkerScheduler(
+        requested_workers=12,
+        machine_vcpus=32,
+        machine_total_ram_mb=32000,
+        resource_provider=lambda: {
+            "cpu_percent": 100.0,
+            "load_ratio": 2.0,
+            "mem_available_mb": 30000.0,
+            "mem_total_mb": 32000.0,
+            "ts": 1.0,
+        },
+    )
+    scheduler.refresh_resources()
+
+    assert scheduler.can_admit_group("type6_forest", ["type6_forest"] * 10)
+    assert not scheduler.can_admit_group("type6_forest", ["type6_forest"] * 11)
+
+
+def test_scheduler_uses_live_available_memory_as_emergency_guard():
+    samples = iter(
+        [
+            {
+                "cpu_percent": 99.0,
+                "load_ratio": 2.0,
+                "mem_available_mb": 9000.0,
+                "mem_total_mb": 32000.0,
+                "ts": 1.0,
+            },
+            {
+                "cpu_percent": 10.0,
+                "load_ratio": 0.1,
+                "mem_available_mb": 5000.0,
+                "mem_total_mb": 32000.0,
+                "ts": 2.0,
+            },
+        ]
+    )
+    scheduler = bench_full_eval._RamWorkerScheduler(
+        requested_workers=8,
+        machine_vcpus=16,
+        machine_total_ram_mb=32000,
+        resource_provider=lambda: next(samples),
+    )
+
+    scheduler.refresh_resources()
+    assert scheduler.can_admit_group("type6_forest", [])
+
+    scheduler.refresh_resources()
+    assert not scheduler.can_admit_group("type6_forest", [])
+
+
+def test_scheduler_live_status_is_telemetry_only():
+    scheduler = bench_full_eval._RamWorkerScheduler(
+        requested_workers=8,
+        machine_vcpus=16,
+        machine_total_ram_mb=65536,
+        resource_provider=lambda: {
+            "cpu_percent": 99.0,
+            "load_ratio": 2.0,
+            "mem_available_mb": 50000.0,
+            "mem_total_mb": 65536.0,
+            "ts": 1.0,
+        },
+    )
+
+    scheduler.refresh_resources()
+
+    assert scheduler.active_worker_cap == 8
+    assert scheduler.can_admit_group("type3_mountain", [])
+    assert "cpu=99.0%" in scheduler.format_status_line()
+    assert "load=2.00" in scheduler.format_status_line()
+
+
+def test_select_next_batch_index_mixes_groups_fairly():
+    batch_plan = [[0], [1], [2]]
+    task_meta = [
+        {"group": "type1_city"},
+        {"group": "type1_city"},
+        {"group": "type6_forest"},
+    ]
+    scheduler = bench_full_eval._RamWorkerScheduler(
+        requested_workers=8,
+        machine_vcpus=16,
         machine_total_ram_mb=65536,
     )
     scheduler.note_group_dispatched("type1_city")
@@ -146,358 +221,11 @@ def test_select_next_batch_index_mixes_groups_before_draining_first_group():
         batch_plan=batch_plan,
         task_meta=task_meta,
         active_batch_ids=[],
-        active_worker_cap=3,
+        active_worker_cap=8,
         scheduler=scheduler,
     )
 
     assert selected == 2
-
-
-def test_select_next_batch_index_waits_when_only_extra_heavy_seed_is_pending():
-    batch_plan = [[0], [1]]
-    task_meta = [
-        {"group": "type6_forest"},
-        {"group": "type3_mountain"},
-    ]
-    scheduler = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=3,
-        machine_vcpus=3,
-        machine_total_ram_mb=16384,
-    )
-    scheduler.active_heavy_cap = 1
-
-    selected = bench_full_eval._select_next_batch_index(
-        pending_batch_ids=[1],
-        batch_plan=batch_plan,
-        task_meta=task_meta,
-        active_batch_ids=[0],
-        active_worker_cap=3,
-        scheduler=scheduler,
-    )
-
-    assert selected is None
-
-
-def test_select_next_batch_index_allows_heavy_seed_when_capacity_is_available():
-    batch_plan = [[0], [1]]
-    task_meta = [
-        {"group": "type1_city"},
-        {"group": "type6_forest"},
-    ]
-    scheduler = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=3,
-        machine_vcpus=3,
-        machine_total_ram_mb=16384,
-    )
-    scheduler.active_heavy_cap = 1
-
-    selected = bench_full_eval._select_next_batch_index(
-        pending_batch_ids=[1],
-        batch_plan=batch_plan,
-        task_meta=task_meta,
-        active_batch_ids=[0],
-        active_worker_cap=3,
-        scheduler=scheduler,
-    )
-
-    assert selected == 1
-
-
-def test_max_heavy_active_scales_with_worker_count():
-    assert bench_full_eval._max_heavy_active(1) == 1
-    assert bench_full_eval._max_heavy_active(2) == 1
-    assert bench_full_eval._max_heavy_active(3) == 2
-    assert bench_full_eval._max_heavy_active(4) == 3
-    assert bench_full_eval._max_heavy_active(6) == 5
-    assert bench_full_eval._max_heavy_active(8) == 7
-    assert bench_full_eval._max_heavy_active(12) == 11
-
-
-def test_scheduler_ignores_non_resource_failure_statuses():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=8,
-        machine_vcpus=8,
-        machine_total_ram_mb=65536,
-    )
-
-    for status in (
-        "container_start_failed",
-        "pip_install_failed",
-        "network_lockdown_failed",
-        "submission_start_failed",
-        "rpc_connection_failed",
-    ):
-        note = controller.observe_seed({"status": status, "map_seed": 10, "challenge_type": 2})
-        assert note is None
-
-    assert controller.start_worker_cap == controller.max_worker_cap
-    assert controller.active_worker_cap == controller.start_worker_cap
-    assert controller.max_worker_cap == 8
-
-
-def test_scheduler_starts_at_full_width_with_a_backoff_floor():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-    )
-
-    assert controller.max_worker_cap == 12
-    assert controller.start_worker_cap == 12
-    assert controller.active_worker_cap == 12
-    assert controller.active_heavy_cap == controller.max_heavy_cap
-    assert controller.min_worker_cap == 3
-
-
-def test_scheduler_live_status_line_samples_without_mutating_state():
-    samples = iter(
-        [
-            {
-                "cpu_percent": 12.5,
-                "load_ratio": 0.18,
-                "mem_available_mb": 30000.0,
-                "mem_total_mb": 65536.0,
-                "ts": 1.0,
-            },
-            {
-                "cpu_percent": 44.0,
-                "load_ratio": 0.52,
-                "mem_available_mb": 28000.0,
-                "mem_total_mb": 65536.0,
-                "ts": 2.0,
-            },
-        ]
-    )
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=8,
-        machine_vcpus=8,
-        machine_total_ram_mb=65536,
-        resource_provider=lambda: next(samples),
-    )
-
-    controller.observe_resources([])
-    baseline = controller.status_dict()
-    recent_samples = len(controller.recent_snapshots)
-
-    live_line = controller.format_live_status_line()
-
-    assert "cpu=44.0%" in live_line
-    assert "load=0.52" in live_line
-    assert "mem_avail=28000MiB" in live_line
-    assert controller.status_dict() == baseline
-    assert len(controller.recent_snapshots) == recent_samples
-
-
-def test_scheduler_relaxes_faster_and_raises_heavy_cap_earlier():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-    )
-    controller.active_worker_cap = 3
-    controller.active_heavy_cap = 1
-    controller.latest_pressure = "healthy"
-
-    note = None
-    for idx in range(2):
-        note = controller.observe_seed(
-            {
-                "status": "seed_done",
-                "map_seed": 3000 + idx,
-                "challenge_type": 1,
-                "sim_time_sec": 12.0,
-                "seed_wall_sec": 48.0,
-                "horizon_sec": 60.0,
-            },
-            group_name="type1_city",
-        )
-
-    assert note is not None and "Scheduler relaxed" in note
-    assert controller.active_worker_cap == 5
-    assert controller.active_heavy_cap == 2
-
-
-def test_scheduler_neutral_relax_only_allows_early_step():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-    )
-    controller.active_worker_cap = 3
-    controller.active_heavy_cap = 1
-    controller.latest_pressure = "neutral"
-
-    note = None
-    for idx in range(2):
-        note = controller.observe_seed(
-            {
-                "status": "seed_done",
-                "map_seed": 4000 + idx,
-                "challenge_type": 1,
-                "sim_time_sec": 12.0,
-                "seed_wall_sec": 48.0,
-                "horizon_sec": 60.0,
-            },
-            group_name="type1_city",
-        )
-
-    assert note is not None and "Scheduler relaxed" in note
-    assert controller.active_worker_cap == 5
-    assert controller.active_heavy_cap == 2
-
-    note = None
-    for idx in range(2):
-        note = controller.observe_seed(
-            {
-                "status": "seed_done",
-                "map_seed": 4100 + idx,
-                "challenge_type": 1,
-                "sim_time_sec": 12.0,
-                "seed_wall_sec": 48.0,
-                "horizon_sec": 60.0,
-            },
-            group_name="type1_city",
-        )
-
-    assert note is None
-    assert controller.active_worker_cap == 5
-    assert controller.active_heavy_cap == 2
-
-
-def test_scheduler_requires_healthy_for_7_to_9_relaxation():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-    )
-    controller.active_worker_cap = 7
-    controller.active_heavy_cap = 2
-    controller.latest_pressure = "neutral"
-
-    for idx in range(2):
-        note = controller.observe_seed(
-            {
-                "status": "seed_done",
-                "map_seed": 4200 + idx,
-                "challenge_type": 1,
-                "sim_time_sec": 12.0,
-                "seed_wall_sec": 48.0,
-                "horizon_sec": 60.0,
-            },
-            group_name="type1_city",
-        )
-        assert note is None
-
-    assert controller.active_worker_cap == 7
-    assert controller.active_heavy_cap == 2
-
-    controller.latest_pressure = "healthy"
-    notes = []
-    for idx in range(2):
-        notes.append(
-            controller.observe_seed(
-                {
-                    "status": "seed_done",
-                    "map_seed": 4300 + idx,
-                    "challenge_type": 1,
-                    "sim_time_sec": 12.0,
-                "seed_wall_sec": 48.0,
-                    "horizon_sec": 60.0,
-                },
-                group_name="type1_city",
-            )
-        )
-
-    assert any(note and "Scheduler relaxed" in note for note in notes)
-    assert controller.active_worker_cap == 9
-    assert controller.active_heavy_cap == 3
-
-
-def test_scheduler_poll_driven_recovery_reopens_capacity_after_healthy_window():
-    snapshots = deque(
-        [
-            {"cpu_percent": 32.0, "load_ratio": 0.42, "mem_available_mb": 38000.0, "mem_total_mb": 65536.0, "ts": 1.0},
-            {"cpu_percent": 31.0, "load_ratio": 0.40, "mem_available_mb": 38100.0, "mem_total_mb": 65536.0, "ts": 7.0},
-            {"cpu_percent": 29.0, "load_ratio": 0.38, "mem_available_mb": 38200.0, "mem_total_mb": 65536.0, "ts": 13.0},
-            {"cpu_percent": 28.0, "load_ratio": 0.36, "mem_available_mb": 38300.0, "mem_total_mb": 65536.0, "ts": 19.0},
-            {"cpu_percent": 27.0, "load_ratio": 0.34, "mem_available_mb": 38400.0, "mem_total_mb": 65536.0, "ts": 25.0},
-        ]
-    )
-
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-        resource_provider=lambda: snapshots.popleft(),
-    )
-    controller.active_worker_cap = 3
-    controller.active_heavy_cap = 1
-    controller.cooldown_remaining = 99
-
-    assert controller.observe_resources([]) is None
-    assert controller.observe_resources([]) is None
-    note = controller.observe_resources([])
-    assert note is not None and "Scheduler relaxed" in note
-    assert controller.active_worker_cap == 5
-    assert controller.active_heavy_cap == 2
-
-    assert controller.observe_resources([]) is None
-    note = controller.observe_resources([])
-    assert note is not None and "Scheduler relaxed" in note
-    assert controller.active_worker_cap == 7
-    assert controller.active_heavy_cap == 3
-
-
-def test_scheduler_promotes_light_group_when_observed_runtime_is_expensive():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-    )
-    controller.latest_pressure = "healthy"
-
-    for idx in range(4):
-        controller.observe_seed(
-            {
-                "status": "seed_done",
-                "map_seed": 1000 + idx,
-                "challenge_type": 1,
-                "sim_time_sec": 20.0,
-                "seed_wall_sec": 190.0,
-                "horizon_sec": 60.0,
-            },
-            group_name="type1_city",
-        )
-
-    learned = controller._cost_for_group("type1_city")
-    assert learned.resource_class == "heavy"
-    assert learned.heavy_tokens == 2
-
-
-def test_scheduler_can_demote_heavy_group_one_step_after_consistent_healthy_samples():
-    controller = bench_full_eval._AdaptiveBackoffController(
-        requested_workers=12,
-        machine_vcpus=12,
-        machine_total_ram_mb=65536,
-    )
-    controller.latest_pressure = "healthy"
-
-    for idx in range(5):
-        controller.observe_seed(
-            {
-                "status": "seed_done",
-                "map_seed": 2000 + idx,
-                "challenge_type": 3,
-                "sim_time_sec": 20.0,
-                "seed_wall_sec": 36.0,
-                "horizon_sec": 60.0,
-            },
-            group_name="type3_mountain",
-        )
-
-    learned = controller._cost_for_group("type3_mountain")
-    assert learned.resource_class == "medium"
-    assert learned.heavy_tokens == 1
 
 
 def test_save_and_load_type_seeds(tmp_path):
@@ -902,7 +630,7 @@ def test_run_benchmark_heartbeat_uses_process_scheduler_status_provider(
 
     async def _fake_process_mode(**kwargs):
         kwargs["set_heartbeat_status_provider"](
-            lambda: "cap=3/3 heavy=1/1 pressure=healthy cpu=12.3% load=0.45 mem_avail=12345MiB"
+            lambda: "cap=3/3 cpu=12.3% load=0.45 mem_avail=12345MiB"
         )
         await asyncio.sleep(0.03)
         kwargs["on_seed_done"](
@@ -1163,24 +891,24 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
     assert seed_events[0]["status"] == "worker_stall_timeout"
 
 
-def test_process_mode_polls_pressure_while_waiting(monkeypatch, tmp_path):
+def test_process_mode_refreshes_resources_while_waiting(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
-    observe_calls = []
-    original_observe_resources = bench_full_eval._AdaptiveBackoffController.observe_resources
+    refresh_calls = []
+    original_refresh_resources = bench_full_eval._RamWorkerScheduler.refresh_resources
 
-    def _counting_observe_resources(self, active_groups):
-        observe_calls.append(list(active_groups))
-        return original_observe_resources(self, active_groups)
+    def _counting_refresh_resources(self):
+        refresh_calls.append(True)
+        return original_refresh_resources(self)
 
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
-        "observe_resources",
-        _counting_observe_resources,
+        bench_full_eval._RamWorkerScheduler,
+        "refresh_resources",
+        _counting_refresh_resources,
     )
     monkeypatch.setattr(
         bench_full_eval,
-        "_PRESSURE_POLL_INTERVAL_SEC",
+        "_RESOURCE_POLL_INTERVAL_SEC",
         0.05,
         raising=False,
     )
@@ -1272,64 +1000,4 @@ def test_process_mode_polls_pressure_while_waiting(monkeypatch, tmp_path):
 
     assert launched == 1
     assert len(recorded) == 1
-    assert len(observe_calls) >= 2
-
-
-def _owner_box_controller(provider):
-    """Controller shaped like the owner validator: 12 vCPU, 47 GiB, 6 workers."""
-    return bench_full_eval._AdaptiveBackoffController(
-        requested_workers=6,
-        machine_vcpus=12,
-        machine_total_ram_mb=48128,
-        resource_provider=provider,
-    )
-
-
-def _snapshot(cpu, load, ts):
-    return {
-        "cpu_percent": cpu,
-        "load_ratio": load,
-        "mem_available_mb": 43926.0,
-        "mem_total_mb": 48128.0,
-        "ts": ts,
-    }
-
-
-def test_pressure_hold_keeps_relax_progress():
-    """A hold changes no cap, so it must not erase the relax streak.
-
-    The cap cold-starts below the maximum, so a moderate-pressure poll cannot
-    reduce anything and falls through to a hold. Holds arrive every couple of
-    seconds while a seed takes minutes, so wiping the streak here means the
-    streak can never reach the threshold the relax path needs.
-    """
-    ticks = iter(range(1, 500))
-    controller = _owner_box_controller(
-        lambda: _snapshot(51.0, 1.00, float(next(ticks)))
-    )
-    # after a backoff the cap sits below the maximum, where a moderate-pressure
-    # poll can no longer reduce and falls through to a hold
-    controller.active_worker_cap = controller.min_worker_cap
-    controller.healthy_completion_streak = 1
-
-    notes = [controller.observe_resources([]) for _ in range(4)]
-
-    assert controller.active_worker_cap == controller.min_worker_cap
-    assert any(note and "pressure hold" in note for note in notes)
-    assert controller.healthy_completion_streak == 1
-
-
-def test_scheduler_holds_full_width_under_sustained_critical_pressure():
-    """Pinned workers keep their width; load must not shrink the dispatch."""
-    ticks = iter(range(1, 500))
-    controller = _owner_box_controller(
-        lambda: _snapshot(99.5, 1.40, float(next(ticks)))
-    )
-
-    for _ in range(10):
-        controller.observe_resources([])
-
-    assert controller.latest_pressure == "critical"
-    assert controller.active_worker_cap == controller.max_worker_cap == 6
-    assert controller.active_heavy_cap == controller.max_heavy_cap == 5
-    assert controller.can_admit_group("type3_mountain", [])
+    assert len(refresh_calls) >= 2

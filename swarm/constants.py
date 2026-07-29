@@ -109,15 +109,30 @@ def cpus_per_docker_worker() -> int:
         return 1
 
 
-def default_docker_worker_count(*, maximum: int = 12) -> int:
-    """Number of docker workers that fit on this host without CPU oversubscription."""
-    return max(1, min(int(maximum), available_vcpu_count() // cpus_per_docker_worker()))
+def default_docker_worker_count(*, maximum: int | None = None) -> int:
+    """Number of CPU-pinned workers that fit, optionally capped by configuration."""
+    cpu_capacity = max(
+        1,
+        available_vcpu_count() // cpus_per_docker_worker(),
+    )
+    configured_maximum = maximum
+    if configured_maximum is None:
+        raw_maximum = os.getenv("SWARM_MAX_DOCKER_WORKERS")
+        if raw_maximum not in (None, ""):
+            try:
+                configured_maximum = max(1, int(raw_maximum))
+            except (TypeError, ValueError):
+                configured_maximum = None
+    if configured_maximum is None:
+        return cpu_capacity
+    return max(1, min(int(configured_maximum), cpu_capacity))
 
 
 # Docker parallel workers for validator and benchmark evaluation.
 # One worker per `DOCKER_WORKER_CPUS` vCPUs so each worker can be pinned to a
-# dedicated CPU group; capped at 12 workers.
-N_DOCKER_WORKERS = default_docker_worker_count(maximum=12)
+# dedicated CPU group. SWARM_MAX_DOCKER_WORKERS can impose an operator ceiling;
+# otherwise every complete CPU group becomes a worker slot.
+N_DOCKER_WORKERS = default_docker_worker_count()
 
 # Docker pip package whitelist (approved packages for miner requirements.txt)
 DOCKER_PIP_WHITELIST = {

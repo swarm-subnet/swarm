@@ -15,7 +15,6 @@ from ._shared import (
 )
 from .dispatch import (
     _is_clean_execution_status,
-    _resource_class_for_group,
     _resource_cost_dict_for_group,
     _resource_model_rows,
 )
@@ -117,8 +116,6 @@ def _print_results(
         else:
             processing_wall = 0.0
         wall = float(full_wall_by_key.get(seed_key, processing_wall))
-        resource_class = _resource_class_for_group(group)
-
         group_results[group].append(
             {
                 "group": group,
@@ -132,7 +129,6 @@ def _print_results(
                 "execution_status": execution_status,
                 "execution_ok": execution_ok,
                 "timeout_zero": wall < 0.5 and i > 0,
-                "resource_class": resource_class,
                 "estimated_resource_cost": _resource_cost_dict_for_group(group),
                 "wall_per_sim_ratio": (wall / sim_time) if sim_time > 0.0 else 0.0,
             }
@@ -231,13 +227,10 @@ def _print_results(
 
     resource_cost_model = _resource_model_rows()
     group_summary: Dict[str, Dict[str, Any]] = {}
-    resource_class_summary: Dict[str, Dict[str, Any]] = {}
-    print("  Scheduler cost model (initial prior):")
+    print("  Scheduler RAM model:")
     for row in resource_cost_model:
         print(
-            f"    {row['resource_class']:<6} groups={','.join(row['groups'])} "
-            f"cpu={row['cpu_units']:.2f} ram={row['ram_mb']:.0f}MiB "
-            f"heavy_tokens={row['heavy_tokens']}"
+            f"    {row['group']:<18} ram={row['ram_mb']:.0f}MiB"
         )
     print()
 
@@ -253,7 +246,7 @@ def _print_results(
             **summary,
         }
         print(
-            f"    {group_name:<18} prior={estimated_cost['resource_class']:<6} "
+            f"    {group_name:<18} ram={estimated_cost['ram_mb']:.0f}MiB "
             f"seeds={summary['seed_count']:<3} "
             f"success={summary['success_count']}/{summary['seed_count']} "
             f"clean={summary['execution_success_count']}/{summary['seed_count']} "
@@ -264,28 +257,6 @@ def _print_results(
             f"wall/sim={summary['avg_wall_per_sim_ratio']:.2f}x"
         )
     print()
-
-    for resource_class in ("light", "medium", "heavy"):
-        class_rows = [row for row in all_rows if str(row["resource_class"]) == resource_class]
-        if not class_rows:
-            continue
-        summary = _rows_summary(class_rows)
-        resource_class_summary[resource_class] = {
-            "groups": [
-                group_name
-                for group_name in BENCH_GROUP_ORDER
-                if _resource_class_for_group(group_name) == resource_class
-            ],
-            "estimated_cost": next(
-                (
-                    row
-                    for row in resource_cost_model
-                    if str(row["resource_class"]) == resource_class
-                ),
-                {},
-            ),
-            **summary,
-        }
 
     expensive_seed_rows = sorted(
         all_rows,
@@ -301,7 +272,7 @@ def _print_results(
         for row in expensive_seed_rows:
             print(
                 f"    {row['group']:<18} seed={int(row['seed'])} "
-                f"class={row['resource_class']} wall={float(row['wall_time']):.1f}s "
+                f"wall={float(row['wall_time']):.1f}s "
                 f"proc={float(row['processing_wall_time']):.1f}s "
                 f"sim={float(row['sim_time']):.1f}s "
                 f"status={row['execution_status']} score={float(row['score']):.4f}"
@@ -392,7 +363,6 @@ def _print_results(
         "execution_status_counts": dict(sorted(execution_status_counts.items())),
         "resource_cost_model_estimate": resource_cost_model,
         "group_summary": group_summary,
-        "resource_class_summary": resource_class_summary,
         "top_expensive_seeds": expensive_seed_rows,
         "group_results": {g: rs for g, rs in group_results.items()},
         "batch_stats": [asdict(stat) for stat in batch_stats],

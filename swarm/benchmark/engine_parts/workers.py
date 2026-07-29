@@ -28,9 +28,8 @@ from ._shared import (
 )
 from .config import _build_progress_bar, _temporary_env, _ts
 from .dispatch import (
-    _AdaptiveBackoffController,
+    _RamWorkerScheduler,
     _build_worker_stall_seed_meta,
-    _max_heavy_active,
     _select_next_batch_index,
 )
 from swarm.config import HostWorkerRuntimeSettings
@@ -250,7 +249,7 @@ async def _run_benchmark_process_mode(
     result_queue = ctx.Queue()
     progress_queue = ctx.Queue()
     workers: Dict[int, Any] = {}
-    scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
+    scheduler = _RamWorkerScheduler(requested_workers=effective_workers)
     if callable(set_heartbeat_status_provider):
         try:
             set_heartbeat_status_provider(scheduler.format_live_status_line)
@@ -265,18 +264,11 @@ async def _run_benchmark_process_mode(
         engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(getattr(run_opts, "heartbeat_sec", 0.0))) * 2.0,
     )
-    pressure_poll_interval_sec = max(
+    resource_poll_interval_sec = max(
         0.0,
-        float(getattr(engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+        float(getattr(engine, "_RESOURCE_POLL_INTERVAL_SEC", 2.0)),
     )
-    last_pressure_poll_at = 0.0
-
-    def _active_group_names() -> List[str]:
-        return [
-            str(task_meta[batch_plan[batch_id][0]]["group"])
-            for batch_id in inflight_batches.keys()
-            if batch_plan[batch_id]
-        ]
+    last_resource_poll_at = 0.0
 
     def _spawn_worker(worker_slot: int) -> Any:
         worker = ctx.Process(
@@ -290,36 +282,29 @@ async def _run_benchmark_process_mode(
         return worker
 
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
-        nonlocal last_pressure_poll_at
+        nonlocal last_resource_poll_at
         now = time.monotonic()
         if (
             not force
-            and pressure_poll_interval_sec > 0.0
-            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+            and resource_poll_interval_sec > 0.0
+            and (now - last_resource_poll_at) < resource_poll_interval_sec
         ):
             return
-        last_pressure_poll_at = now
-        note = scheduler.observe_resources(_active_group_names())
-        if note:
-            print(f"[{_ts()}] {note}", flush=True)
+        last_resource_poll_at = now
+        scheduler.refresh_resources()
 
     for line in scheduler.describe_configuration_lines():
         print(f"[{_ts()}] {line}", flush=True)
     print(
-        f"[{_ts()}] Dispatch policy: cold-start ramp enabled "
-        f"(light_groups=city; medium_groups=open,warehouse; heavy_groups=village,mountain,forest; "
-        f"mountain<=1, scheduler_heavy_cap={scheduler.active_heavy_cap}/"
-        f"{_max_heavy_active(scheduler.active_worker_cap)})"
+        f"[{_ts()}] Dispatch policy: configured worker slots + RAM admission"
     )
     if scheduler.enabled:
         print(
-            f"[{_ts()}] Adaptive scheduler: enabled "
-            f"(cold_start={scheduler.start_worker_cap}/{scheduler.max_worker_cap}, "
-            f"heavy_start={scheduler.active_heavy_cap}/{scheduler.max_heavy_cap}, "
-            f"backoff_levels={scheduler.worker_cap_levels})"
+            f"[{_ts()}] RAM scheduler: enabled "
+            f"(workers={scheduler.active_worker_cap}/{scheduler.max_worker_cap})"
         )
     else:
-        print(f"[{_ts()}] Adaptive scheduler: disabled (single-worker run)")
+        print(f"[{_ts()}] RAM scheduler: single-worker run")
     print(
         f"[{_ts()}] Parent worker stall watchdog: "
         f"{stall_timeout_sec:.1f}s without worker heartbeat -> discard seed and replace worker"
@@ -339,16 +324,6 @@ async def _run_benchmark_process_mode(
                 continue
             seed_meta = getattr(event, "seed_meta", None)
             on_seed_done(seed_meta)
-            group_name: Optional[str] = None
-            try:
-                batch_index = int(getattr(event, "batch_index", -1))
-                if batch_index >= 0 and batch_plan[batch_index]:
-                    group_name = str(task_meta[batch_plan[batch_index][0]]["group"])
-            except Exception:
-                group_name = None
-            note = scheduler.observe_seed(seed_meta, group_name=group_name)
-            if note:
-                print(f"[{_ts()}] {note}", flush=True)
 
     def _restart_worker(worker_slot: int) -> None:
         worker = workers.get(worker_slot)
@@ -383,7 +358,6 @@ async def _run_benchmark_process_mode(
                 f"worker=queued | group={group_name} | seeds={len(batch_indices)} | "
                 f"first_seed={seed_list[0]} | last_seed={seed_list[-1]} | "
                 f"active_limit={scheduler.active_worker_cap} | "
-                f"heavy_limit={scheduler.active_heavy_cap} | "
                 f"{scheduler.format_status_line()}",
                 flush=True,
             )
@@ -431,9 +405,6 @@ async def _run_benchmark_process_mode(
                     error=stall_error,
                 )
                 on_seed_done(seed_meta)
-                note = scheduler.observe_seed(seed_meta)
-                if note:
-                    print(f"[{_ts()}] {note}", flush=True)
 
             from swarm.protocol import ValidationResult
 

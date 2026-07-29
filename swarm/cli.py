@@ -1151,7 +1151,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--workers",
         type=int,
         default=N_DOCKER_WORKERS,
-        help="Parallel workers for benchmark (default: available vCPUs, capped at 12).",
+        help="Parallel workers for benchmark (default: one per CPU group; optionally capped by SWARM_MAX_DOCKER_WORKERS).",
     )
     benchmark_parser.add_argument(
         "--log-out",

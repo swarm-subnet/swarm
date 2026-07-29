@@ -22,9 +22,7 @@ from .docker_evaluator_parts import (
     submission,
 )
 from .docker_evaluator_parts._shared import (
-    _HEAVY_CHALLENGE_TYPES,
     _cleanup_env_quietly,
-    _heavy_aware_chunk,
     _run_multi_seed_rpc_sync_isolated_payload,
     _submission_template_dir,
 )
@@ -93,9 +91,7 @@ __all__ = [
     "CALIBRATION_TIMEOUT_SEC",
     "MINER_COMPUTE_BUDGET_SEC",
     "RPC_STEP_TIMEOUT_SEC",
-    "_HEAVY_CHALLENGE_TYPES",
     "_cleanup_env_quietly",
-    "_heavy_aware_chunk",
     "_run_multi_seed_rpc_sync_isolated_payload",
     "_submission_template_dir",
     "batch",

@@ -40,7 +40,6 @@ from swarm.constants import (
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env
 
-_HEAVY_CHALLENGE_TYPES = frozenset({3, 4, 5, 6})
 
 _THREAD_CAP_ENV_VARS = (
     "OMP_NUM_THREADS",
@@ -94,41 +93,6 @@ def _docker_evaluator_facade():
     from swarm.validator.docker import docker_evaluator as docker_evaluator_mod
 
     return docker_evaluator_mod
-
-
-def _heavy_aware_chunk(
-    tasks: list, num_chunks: int,
-) -> tuple[list[list], list[list[int]]]:
-    """Distribute tasks into chunks with heavy maps spread evenly.
-
-    Returns (chunks, index_map) where index_map[i][j] is the original
-    position of chunks[i][j] in the input *tasks* list.
-    """
-    heavy = [
-        (i, t)
-        for i, t in enumerate(tasks)
-        if getattr(t, "challenge_type", 0) in _HEAVY_CHALLENGE_TYPES
-    ]
-    light = [
-        (i, t)
-        for i, t in enumerate(tasks)
-        if getattr(t, "challenge_type", 0) not in _HEAVY_CHALLENGE_TYPES
-    ]
-
-    buckets: list[list[tuple[int, object]]] = [[] for _ in range(num_chunks)]
-
-    for k, item in enumerate(heavy):
-        buckets[k % num_chunks].append(item)
-
-    for item in light:
-        target = min(range(num_chunks), key=lambda w: len(buckets[w]))
-        buckets[target].append(item)
-
-    buckets = [b for b in buckets if b]
-
-    chunks = [[t for _, t in bucket] for bucket in buckets]
-    index_map = [[idx for idx, _ in bucket] for bucket in buckets]
-    return chunks, index_map
 
 
 def _cleanup_env_quietly(env: object) -> None:

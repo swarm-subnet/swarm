@@ -2,8 +2,7 @@
 
 This mirrors the benchmark scheduler:
 - one seed per batch
-- resource-aware dispatch with class-based admission
-- host-pressure-driven cap adjustments
+- configured worker slots with RAM-aware admission
 - parent-side worker stall detection and replacement
 
 The main difference is that validator evaluation degrades failed batches into
@@ -102,26 +101,6 @@ def _failure_seed_meta(
     }
 
 
-_last_hold_caps: Optional[str] = None
-
-
-def _log_scheduler_note(note: str) -> None:
-    global _last_hold_caps
-    if "Scheduler pressure hold" in note:
-        # The scheduler re-emits the hold every poll; only report cap changes.
-        caps = note.split(" (")[0]
-        if caps == _last_hold_caps:
-            return
-        _last_hold_caps = caps
-        bt.logging.warning(note)
-        return
-    _last_hold_caps = None
-    if "Scheduler pressure backoff" in note:
-        bt.logging.warning(note)
-    else:
-        bt.logging.info(note)
-
-
 def _seed_status(seed_meta: Optional[Dict[str, Any]]) -> str:
     if not isinstance(seed_meta, dict):
         return ""
@@ -160,9 +139,9 @@ def _summary_bucket_for_result(
         return "slow_act"
     if status == "seed_env_failure":
         return "runtime"
-    if bench_engine._is_backoff_timeout_status(status):
+    if bench_engine._is_timeout_retry_status(status):
         return "timeout"
-    if is_infra_failure or bench_engine._is_backoff_infra_status(status):
+    if is_infra_failure or bench_engine._is_infra_failure_status(status):
         return "runtime"
     if result_obj is not None and bool(result_obj.success):
         return "ok"
@@ -229,7 +208,7 @@ async def _run_process_parallel(
     worker_last_heartbeat: dict[int, float] = {}
     worker_started_at: dict[int, float] = {}
     results: list[Optional[ValidationResult]] = [None] * len(all_tasks)
-    scheduler = bench_engine._AdaptiveBackoffController(requested_workers=effective_workers)
+    scheduler = bench_engine._RamWorkerScheduler(requested_workers=effective_workers)
     pending_batch_ids = list(range(len(batch_plan)))
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
     batch_retry_counts: dict[int, int] = {}
@@ -240,11 +219,11 @@ async def _run_process_parallel(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
     )
-    pressure_poll_interval_sec = max(
+    resource_poll_interval_sec = max(
         0.0,
-        float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+        float(getattr(bench_engine, "_RESOURCE_POLL_INTERVAL_SEC", 2.0)),
     )
-    last_pressure_poll_at = 0.0
+    last_resource_poll_at = 0.0
     stop_reason: Optional[str] = None
 
     def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
@@ -327,37 +306,17 @@ async def _run_process_parallel(
         _spawn_worker(worker_slot)
         tracker_call(runtime_tracker, "mark_docker_worker_restart", worker_slot=int(worker_slot))
 
-    def _active_group_names() -> list[str]:
-        active_groups: list[str] = []
-        for request in worker_active_requests.values():
-            try:
-                if not request.batch_indices:
-                    continue
-                first_idx = int(request.batch_indices[0])
-                active_groups.append(str(task_meta[first_idx]["group"]))
-            except Exception:
-                continue
-        return active_groups
-
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
-        nonlocal last_pressure_poll_at
+        nonlocal last_resource_poll_at
         now = time.monotonic()
         if (
             not force
-            and pressure_poll_interval_sec > 0.0
-            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+            and resource_poll_interval_sec > 0.0
+            and (now - last_resource_poll_at) < resource_poll_interval_sec
         ):
             return
-        last_pressure_poll_at = now
-        note = scheduler.observe_resources(_active_group_names())
-        if note:
-            _log_scheduler_note(note)
-            tracker_call(
-                runtime_tracker,
-                "mark_docker_backoff",
-                active_worker_cap=int(scheduler.active_worker_cap),
-                note=str(note),
-            )
+        last_resource_poll_at = now
+        scheduler.refresh_resources()
 
     def _dispatch_available_batches() -> None:
         if stop_reason is not None:
@@ -420,21 +379,6 @@ async def _run_process_parallel(
         if isinstance(seed_meta, dict):
             batch_seed_meta[int(batch_index)] = dict(seed_meta)
 
-    def _observe_final_seed(
-        meta: Optional[dict[str, Any]],
-        seed_meta: Optional[Dict[str, Any]],
-    ) -> None:
-        group_name = str(meta.get("group", "")) if isinstance(meta, dict) else None
-        note = scheduler.observe_seed(seed_meta, group_name=group_name)
-        if note:
-            _log_scheduler_note(note)
-            tracker_call(
-                runtime_tracker,
-                "mark_docker_backoff",
-                active_worker_cap=int(scheduler.active_worker_cap),
-                note=str(note),
-            )
-
     def _drain_progress_events() -> None:
         while True:
             try:
@@ -488,7 +432,6 @@ async def _run_process_parallel(
                     elapsed_sec=elapsed_sec,
                 )
             meta = task_meta[int(idx)] if 0 <= int(idx) < len(task_meta) else None
-            _observe_final_seed(meta, seed_meta)
             _emit_seed_complete(on_seed_complete, seed_meta)
 
         for idx in request.batch_indices:
@@ -761,7 +704,7 @@ async def _run_process_parallel(
                 prior_retries = int(batch_retry_counts.get(int(request.batch_index), 0))
                 if (
                     (
-                        bench_engine._is_backoff_timeout_status(final_status)
+                        bench_engine._is_timeout_retry_status(final_status)
                         # transient (e.g. host port briefly taken) -> retry, don't score 0
                         or final_status in ("container_start_failed", "INFRA_DOCKER")
                     )
@@ -791,7 +734,6 @@ async def _run_process_parallel(
                     and prior_transport_retries < 1
                     and retry_budget["rpc_transport"] < _MAX_RPC_TRANSPORT_RETRIES
                 ):
-                    _observe_final_seed(meta, final_seed_meta)
                     retry_budget["rpc_transport"] += 1
                     rpc_transport_retry_counts[int(request.batch_index)] = (
                         prior_transport_retries + 1
@@ -826,9 +768,9 @@ async def _run_process_parallel(
                     )
                 seed_status = _seed_status(final_seed_meta)
                 if vr is not None and (
-                    bench_engine._is_backoff_timeout_status(seed_status)
+                    bench_engine._is_timeout_retry_status(seed_status)
                     or bench_engine._is_rpc_transport_status(seed_status)
-                    or bench_engine._is_backoff_infra_status(seed_status)
+                    or bench_engine._is_infra_failure_status(seed_status)
                     or seed_status in (
                         "container_start_failed",
                         "stopped_during_connect",
@@ -838,7 +780,6 @@ async def _run_process_parallel(
                     # Infra failure, not a real 0 — flag it so the upload skips it
                     # and the seed is re-dispatched on resume instead of scored 0.
                     vr.failure_reason = FailureReason.INFRA.value
-                _observe_final_seed(meta, final_seed_meta)
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(vr, meta, status=seed_status)
                 _emit_seed_result(idx, vr, seed_status)

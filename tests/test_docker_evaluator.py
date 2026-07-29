@@ -1355,12 +1355,12 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
     monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
     monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
+        bench_full_eval._RamWorkerScheduler,
         "format_status_line",
         lambda self: "stale-status",
     )
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
+        bench_full_eval._RamWorkerScheduler,
         "format_live_status_line",
         lambda self: "live-status",
     )
@@ -1394,24 +1394,24 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
 
 
 @pytest.mark.full
-def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path):
+def test_run_process_parallel_refreshes_resources_while_waiting(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
-    observe_calls = []
-    original_observe_resources = bench_full_eval._AdaptiveBackoffController.observe_resources
+    refresh_calls = []
+    original_refresh_resources = bench_full_eval._RamWorkerScheduler.refresh_resources
 
-    def _counting_observe_resources(self, active_groups):
-        observe_calls.append(list(active_groups))
-        return original_observe_resources(self, active_groups)
+    def _counting_refresh_resources(self):
+        refresh_calls.append(True)
+        return original_refresh_resources(self)
 
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
-        "observe_resources",
-        _counting_observe_resources,
+        bench_full_eval._RamWorkerScheduler,
+        "refresh_resources",
+        _counting_refresh_resources,
     )
     monkeypatch.setattr(
         bench_full_eval,
-        "_PRESSURE_POLL_INTERVAL_SEC",
+        "_RESOURCE_POLL_INTERVAL_SEC",
         0.05,
         raising=False,
     )
@@ -1521,32 +1521,7 @@ def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path
 
     assert len(results) == 1
     assert results[0].success is True
-    assert len(observe_calls) >= 2
-
-
-def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
-    tasks = [
-        SimpleNamespace(challenge_type=3),
-        SimpleNamespace(challenge_type=5),
-        SimpleNamespace(challenge_type=3),
-        SimpleNamespace(challenge_type=1),
-        SimpleNamespace(challenge_type=2),
-        SimpleNamespace(challenge_type=1),
-        SimpleNamespace(challenge_type=2),
-        SimpleNamespace(challenge_type=4),
-    ]
-
-    chunks, index_map = de._heavy_aware_chunk(tasks, 4)
-
-    assert len(chunks) == 4
-    assert sum(len(c) for c in chunks) == 8
-    assert set(idx for indices in index_map for idx in indices) == set(range(8))
-
-    for chunk in chunks:
-        heavy_count = sum(
-            1 for t in chunk if t.challenge_type in de._HEAVY_CHALLENGE_TYPES
-        )
-        assert heavy_count <= 1
+    assert len(refresh_calls) >= 2
 
 
 def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monkeypatch, tmp_path):
