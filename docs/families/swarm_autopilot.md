@@ -221,7 +221,7 @@ Your model runs in Docker as a Cap'n Proto RPC server; the validator calls `rese
 | `ping` | 2.0 s |
 | `reset()` | 5.0 s |
 | First `act()` of a seed | 2.0 s guaranteed compute (3.0 ref-sec hard cap) |
-| Every later `act()` | 0.5 s guaranteed compute (1.25 ref-sec + 0.05 margin hard cap) |
+| Every later `act()` | 1.5 s baseline-equivalent guaranteed compute (2.0 ref-sec + measured RPC overhead + 0.05 s margin hard cap) |
 
 A timed-out step substitutes a zero action and counts a strike; **15 strikes** or **3 hard-cap timeouts** fail the seed with score 0.
 

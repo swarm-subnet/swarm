@@ -92,7 +92,7 @@ The forward depth camera is the long-range HD variant, tuned so a 36 cm drone is
 
 Actions run through the VEL controller: commanded velocity = `6.0 × |speed| × unit(dir_xyz)`, so `speed` is a fraction of the 6.0 m/s family cap. The `yaw` component is an absolute target yaw (`clip(yaw, −1, 1) × π`), rate-limited to 3.141 rad/s per control step; a PID converts the command to rotor RPMs.
 
-Each control step has a guaranteed pure-compute budget of **0.600 s**; separate wall-clock timeouts allow 2.0 s for the first step and 5.0 s for `reset()`, with up to 15 timeout strikes tolerated per seed before the episode is scrapped.
+Each control step has a guaranteed baseline-equivalent pure-compute budget of **1.500 s**. The normal per-action liveness cap is **2.0 reference-seconds** plus measured RPC overhead and a 50 ms margin. Separate wall-clock limits allow a 2.0 s compute budget with a 3.0 reference-second hard cap for the first step and 5.0 s for `reset()`. Up to 15 slow-action strikes are tolerated per seed before the episode is scrapped.
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>
 

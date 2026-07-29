@@ -154,7 +154,7 @@ DOCKER_PIP_WHITELIST = {
 }
 
 # Per-step RPC timing (miner inference fairness)
-RPC_STEP_TIMEOUT_SEC = 0.500            # Per agent.act() call fallback (seconds)
+RPC_STEP_TIMEOUT_SEC = 1.500            # Per agent.act() call fallback (seconds)
 RPC_FIRST_STEP_TIMEOUT_SEC = 2.0        # First step grace for model warmup/JIT (seconds)
 RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() between seeds (seconds)
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
@@ -166,7 +166,7 @@ GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeo
 GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker timeout (seconds)
 
 # Hardware-fair calibrated timing
-MINER_COMPUTE_BUDGET_SEC = 0.600        # Guaranteed pure-compute budget per step (seconds)
+MINER_COMPUTE_BUDGET_SEC = 1.500        # Guaranteed pure-compute budget per step (seconds)
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
@@ -180,7 +180,7 @@ EVAL_SUMMARY_INTERVAL_SEC = 60          # Periodic evaluation progress summary i
 # Reference-time normalization (baseline-relative, hardware-fair per-act scoring)
 SPEED_FACTOR_MIN = 1.0                   # Scoring floor: a fast host never shrinks the guaranteed per-step budget
 SPEED_FACTOR_MAX_ELIGIBLE = 3.0          # Beyond this the host is too slow to score fairly; it self-excludes
-HARD_CAP_REF_SEC = 1.25                  # Per-act ceiling in baseline-equivalent seconds before a hard timeout
+HARD_CAP_REF_SEC = 2.0                   # Per-act liveness ceiling; must remain above the normal compute budget
 HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the per-act hard cap (seconds)
 HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before failing the seed
 FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
