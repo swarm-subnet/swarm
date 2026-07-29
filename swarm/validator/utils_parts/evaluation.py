@@ -144,7 +144,7 @@ async def _evaluate_seeds(
                 )
                 tasks.append(task)
             except Exception as e:
-                bt.logging.warning(f"Failed to create task for seed {seed}: {e}")
+                bt.logging.warning(f"Failed to create a seed task: {e}")
                 tasks.append(None)
 
     valid_tasks = [t for t in tasks if t is not None]
@@ -773,7 +773,7 @@ async def _run_full_benchmark(
                     )[0]
             except Exception as e:
                 bt.logging.warning(
-                    f"Failed to create benchmark task for seed {seed} idx {abs_idx}: {e}"
+                    f"Failed to create benchmark task idx {abs_idx}: {e}"
                 )
                 task = None
             pre_built_tasks.append(task)

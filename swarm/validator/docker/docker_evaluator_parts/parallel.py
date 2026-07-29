@@ -372,14 +372,13 @@ async def _run_process_parallel(
             worker_last_heartbeat[worker_slot] = now
             worker_queues[worker_slot].put(request)
             group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
-            seed_list = [int(meta["seed"]) for meta in batch_meta]
             tracker_call(
                 runtime_tracker,
                 "mark_docker_dispatch",
                 worker_slot=int(worker_slot),
                 batch_index=int(batch_index),
                 group=str(group_name),
-                seed=int(seed_list[0]),
+                seed=int(batch_meta[0].get("index", -1)) if batch_meta else -1,
                 active_worker_cap=int(scheduler.active_worker_cap),
             )
 
@@ -502,8 +501,8 @@ async def _run_process_parallel(
         return _TYPE_PREFIX.sub("", raw)
 
     def _seed_label(meta: Optional[dict]) -> str:
-        seed_id = meta.get("seed", "?") if meta else "?"
-        return f"{_type_name(meta)}:{seed_id}"
+        seed_index = meta.get("index", "?") if meta else "?"
+        return f"{_type_name(meta)}:#{seed_index}"
 
     def _record_seed_result(
         result_obj: Any,
@@ -984,6 +983,7 @@ async def evaluate_seeds_parallel(
         {
             "group": _task_group_name(task, index),
             "seed": _task_seed(task, index),
+            "index": index,
             "challenge_type": _task_challenge_type(task),
             "horizon": float(getattr(task, "horizon", 0.0)),
         }
