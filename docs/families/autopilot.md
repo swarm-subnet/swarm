@@ -210,7 +210,7 @@ Your zip runs inside a Docker container as a Cap'n Proto RPC server; the validat
 | Budget | Value |
 |---|---|
 | First `act()` of a seed | 2.0 s (hardware-fair hard cap: 3.0 reference-seconds) |
-| Every later `act()` | 1.5 s baseline-equivalent pure compute (hard cap 2.0 reference-seconds + measured RPC overhead + 50 ms margin) |
+| Every later `act()` | 0.6 s baseline-equivalent pure compute (hard cap 2.0 reference-seconds + measured RPC overhead + 50 ms margin) |
 | `reset()` between seeds | 5.0 s |
 | Connect budget | 60 s to answer the first ping |
 | Strikes | 15 timeouts or 3 hard-cap hits fail the seed; each timed-out step substitutes a zero action |

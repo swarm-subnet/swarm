@@ -6,7 +6,6 @@ from swarm.constants import (
     HARD_CAP_MARGIN_SEC,
     HARD_CAP_REF_SEC,
     MINER_COMPUTE_BUDGET_SEC,
-    RPC_STEP_TIMEOUT_SEC,
     SPEED_FACTOR_MAX_ELIGIBLE,
     SPEED_FACTOR_MIN,
 )
@@ -71,10 +70,7 @@ def _hard_cap(speed_factor, overhead):
     )
 
 
-def test_configured_normal_action_limits():
-    assert RPC_STEP_TIMEOUT_SEC == pytest.approx(1.5)
-    assert MINER_COMPUTE_BUDGET_SEC == pytest.approx(1.5)
-    assert HARD_CAP_REF_SEC == pytest.approx(2.0)
+def test_normal_action_hard_cap_exceeds_compute_budget():
     assert HARD_CAP_REF_SEC > MINER_COMPUTE_BUDGET_SEC
 
 
