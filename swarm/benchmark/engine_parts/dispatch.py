@@ -50,29 +50,29 @@ _RESOURCE_COSTS = {
     "light": _SeedResourceCost(
         resource_class="light",
         cpu_units=0.90,
-        ram_mb=2200.0,
+        ram_mb=1400.0,
         heavy_tokens=0,
     ),
     "medium": _SeedResourceCost(
         resource_class="medium",
         cpu_units=1.15,
-        ram_mb=2850.0,
+        ram_mb=1850.0,
         heavy_tokens=1,
     ),
     "heavy": _SeedResourceCost(
         resource_class="heavy",
         cpu_units=1.35,
-        ram_mb=3600.0,
+        ram_mb=2400.0,
         heavy_tokens=2,
     ),
 }
 _GROUP_BASE_RESOURCE_COSTS = {
-    "type1_city": _SeedResourceCost("light", 0.90, 2200.0, 0),
-    "type2_open": _SeedResourceCost("medium", 1.05, 2550.0, 1),
-    "type5_warehouse": _SeedResourceCost("medium", 1.05, 2650.0, 1),
-    "type4_village": _SeedResourceCost("heavy", 1.20, 3150.0, 2),
-    "type3_mountain": _SeedResourceCost("heavy", 1.25, 3300.0, 2),
-    "type6_forest": _SeedResourceCost("heavy", 1.35, 3600.0, 2),
+    "type1_city": _SeedResourceCost("light", 0.90, 1400.0, 0),
+    "type2_open": _SeedResourceCost("medium", 1.05, 1800.0, 1),
+    "type5_warehouse": _SeedResourceCost("medium", 1.05, 1900.0, 1),
+    "type4_village": _SeedResourceCost("heavy", 1.20, 2200.0, 2),
+    "type3_mountain": _SeedResourceCost("heavy", 1.25, 2300.0, 2),
+    "type6_forest": _SeedResourceCost("heavy", 1.35, 2400.0, 2),
 }
 _GROUP_RESOURCE_CLASS = {
     group_name: cost.resource_class
