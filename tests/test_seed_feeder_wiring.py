@@ -67,3 +67,11 @@ async def test_sparse_feeder_results_score_nothing():
     )
     assert all_scores == []
     assert details == []
+
+
+def test_pool_drained_ignores_seeds_flying_elsewhere():
+    from swarm.validator.utils_parts.run_task import _pool_drained
+
+    assert _pool_drained([], 0) is True
+    assert _pool_drained([], 5) is False
+    assert _pool_drained([7], 0) is False
