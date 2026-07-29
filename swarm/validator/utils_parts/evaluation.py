@@ -837,7 +837,7 @@ async def _run_full_benchmark(
             uid,
             model_path,
             benchmark_seeds,
-            phase_description="full benchmark",
+            phase_description="seed-flow benchmark" if seed_feeder is not None else "full benchmark",
             family_id=family_id,
             seed_offset=seed_offset,
             epoch_number=epoch,

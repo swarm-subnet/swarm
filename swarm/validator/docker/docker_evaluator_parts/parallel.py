@@ -564,8 +564,13 @@ async def _run_process_parallel(
             f"{seed_stats['retried_timeout']} retried_timeout, "
             f"{seed_stats['retried_rpc_transport']} retried_rpc_transport"
         )
+        if feeder_active:
+            # Pool mode: the phase total is not this validator's workload.
+            progress = f"[seed-flow] mine: {overall_done} done, {active} flying · avg={overall_avg:.4f}"
+        else:
+            progress = f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f}"
         line = (
-            f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
+            f"{progress} | "
             f"{counts} | {type_parts} | {active}/{effective_workers} workers "
             f"({scheduler.format_live_status_line()})"
         )

@@ -1361,7 +1361,7 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
             if started_at is not None:
                 startup_sec = time.monotonic() - started_at
                 ctx.container_startup_sec = startup_sec
-                bt.logging.debug(
+                bt.logging.info(
                     f"[Worker {ctx.worker_id}] container ready in {startup_sec:.1f}s"
                 )
             return None

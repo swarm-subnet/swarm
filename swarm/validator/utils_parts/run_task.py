@@ -81,6 +81,9 @@ async def run_task(
 
     seed_feeder = None
     if flow == "seed":
+        bt.logging.info(f"[seed-flow] UID {uid}: joined the {phase.lower()} pool")
+        wait_state: Dict[str, Any] = {"last": None}
+
         async def seed_feeder(free_slots: int):
             resp = await self.backend_api.claim_seeds(
                 int(task_id), count=max(1, int(free_slots)),
@@ -88,11 +91,22 @@ async def run_task(
             if not resp:
                 return [], False
             granted = [int(i) for i in resp.get("granted", [])]
-            drained = (
-                not granted
-                and int(resp.get("pending", 0)) == 0
-                and int(resp.get("leased_other", 0)) == 0
-            )
+            pending = int(resp.get("pending", 0))
+            others = int(resp.get("leased_other", 0))
+            drained = not granted and pending == 0 and others == 0
+            if granted:
+                shown = ",".join(map(str, granted[:6])) + ("…" if len(granted) > 6 else "")
+                bt.logging.info(
+                    f"[seed-flow] claimed {len(granted)} seed(s) [{shown}] · pool {pending} open"
+                )
+                wait_state["last"] = None
+            elif drained:
+                bt.logging.info("[seed-flow] pool drained · wrapping up")
+            elif wait_state["last"] != (pending, others):
+                bt.logging.info(
+                    f"[seed-flow] pool empty · {others} seed(s) flying on other validators · waiting"
+                )
+                wait_state["last"] = (pending, others)
             return granted, drained
 
     if phase == "SCREENING":
