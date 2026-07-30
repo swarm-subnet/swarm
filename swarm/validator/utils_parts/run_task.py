@@ -27,6 +27,11 @@ from .evaluation import _run_full_benchmark, _run_screening
 from .model_fetch import _ensure_models_from_backend
 
 
+def _pool_drained(granted: list, pending: int) -> bool:
+    """An empty pool ends the run even while other validators fly trailing seeds."""
+    return not granted and pending == 0
+
+
 async def run_task(
     self,
     task: Dict[str, Any],
@@ -82,7 +87,6 @@ async def run_task(
     seed_feeder = None
     if flow == "seed":
         bt.logging.info(f"[seed-flow] UID {uid}: joined the {phase.lower()} pool")
-        wait_state: Dict[str, Any] = {"last": None}
 
         async def seed_feeder(free_slots: int):
             resp = await self.backend_api.claim_seeds(
@@ -93,20 +97,18 @@ async def run_task(
             granted = [int(i) for i in resp.get("granted", [])]
             pending = int(resp.get("pending", 0))
             others = int(resp.get("leased_other", 0))
-            drained = not granted and pending == 0 and others == 0
+            drained = _pool_drained(granted, pending)
             if granted:
                 shown = ",".join(map(str, granted[:6])) + ("…" if len(granted) > 6 else "")
                 bt.logging.info(
                     f"[seed-flow] claimed {len(granted)} seed(s) [{shown}] · pool {pending} open"
                 )
-                wait_state["last"] = None
+            elif drained and others:
+                bt.logging.info(
+                    f"[seed-flow] pool drained ({others} seed(s) finishing on other validators) · moving on"
+                )
             elif drained:
                 bt.logging.info("[seed-flow] pool drained · wrapping up")
-            elif wait_state["last"] != (pending, others):
-                bt.logging.info(
-                    f"[seed-flow] pool empty · {others} seed(s) flying on other validators · waiting"
-                )
-                wait_state["last"] = (pending, others)
             return granted, drained
 
     if phase == "SCREENING":

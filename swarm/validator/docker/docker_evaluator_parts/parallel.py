@@ -12,6 +12,7 @@ per-seed failures and keeps going, instead of aborting the full run.
 from __future__ import annotations
 
 import asyncio
+import os
 import queue as queue_mod
 import re
 import time
@@ -19,6 +20,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import bittensor as bt
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
@@ -30,6 +36,12 @@ from ._shared import _docker_evaluator_facade, _runtime_profile_from_payload
 
 _MAX_TIMEOUT_RETRIES = 10
 _MAX_RPC_TRANSPORT_RETRIES = 15
+
+# Long-lived host workers accumulate simulator memory across seeds, so idle
+# workers are replaced once they grow past an RSS threshold or a seed budget.
+_WORKER_RECYCLE_RSS_MB = float(os.getenv("SWARM_WORKER_RECYCLE_RSS_MB", "2500"))
+_WORKER_RECYCLE_SEED_BUDGET = int(os.getenv("SWARM_WORKER_RECYCLE_SEEDS", "25"))
+_WORKER_RECYCLE_MIN_SEEDS = 3
 
 
 def _benchmark_engine():
@@ -209,6 +221,7 @@ async def _run_process_parallel(
     worker_active_requests: dict[int, Any] = {}
     worker_last_heartbeat: dict[int, float] = {}
     worker_started_at: dict[int, float] = {}
+    worker_seeds_dispatched: dict[int, int] = {}
     results: list[Optional[ValidationResult]] = [None] * len(all_tasks)
     scheduler = bench_engine._RamWorkerScheduler(requested_workers=effective_workers)
     feeder_active = seed_feeder is not None
@@ -311,8 +324,56 @@ async def _run_process_parallel(
         worker_last_heartbeat.pop(worker_slot, None)
         worker_started_at.pop(worker_slot, None)
         worker_active_requests.pop(worker_slot, None)
+        worker_seeds_dispatched.pop(worker_slot, None)
         _spawn_worker(worker_slot)
         tracker_call(runtime_tracker, "mark_docker_worker_restart", worker_slot=int(worker_slot))
+
+    def _worker_rss_mb(worker: Any) -> Optional[float]:
+        if psutil is None:
+            return None
+        try:
+            return float(psutil.Process(worker.pid).memory_info().rss) / (1024.0 * 1024.0)
+        except Exception:
+            return None
+
+    def _worker_recycle_seed_budget(worker_slot: int) -> int:
+        # Stagger budgets across slots so workers do not recycle in lockstep.
+        if effective_workers <= 1:
+            return _WORKER_RECYCLE_SEED_BUDGET
+        spread = 0.9 + 0.2 * (worker_slot / float(effective_workers - 1))
+        return max(_WORKER_RECYCLE_MIN_SEEDS, round(_WORKER_RECYCLE_SEED_BUDGET * spread))
+
+    def _maybe_recycle_idle_workers() -> None:
+        if stop_reason is not None:
+            return
+        for worker_slot in range(effective_workers):
+            if worker_slot in worker_active_requests:
+                continue
+            worker = workers.get(worker_slot)
+            if worker is None or not worker.is_alive():
+                continue
+            served = worker_seeds_dispatched.get(worker_slot, 0)
+            if served < _WORKER_RECYCLE_MIN_SEEDS:
+                continue
+            reason = None
+            if served >= _worker_recycle_seed_budget(worker_slot):
+                reason = f"{served} seeds served"
+            else:
+                rss_mb = _worker_rss_mb(worker)
+                if rss_mb is not None and rss_mb >= _WORKER_RECYCLE_RSS_MB:
+                    reason = f"rss {rss_mb:.0f} MiB after {served} seeds"
+            if reason is None:
+                continue
+            bt.logging.info(f"[Validator eval] recycling idle worker {worker_slot} ({reason})")
+            try:
+                worker_queues[worker_slot].put(None)
+            except Exception:
+                pass
+            try:
+                worker.join(timeout=2.0)
+            except Exception:
+                pass
+            _restart_worker(worker_slot)
 
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
         nonlocal last_resource_poll_at
@@ -329,6 +390,7 @@ async def _run_process_parallel(
     def _dispatch_available_batches() -> None:
         if stop_reason is not None:
             return
+        _maybe_recycle_idle_workers()
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
             idle_worker_slots = [
                 slot
@@ -370,6 +432,9 @@ async def _run_process_parallel(
             now = time.time()
             worker_started_at[worker_slot] = now
             worker_last_heartbeat[worker_slot] = now
+            worker_seeds_dispatched[worker_slot] = (
+                worker_seeds_dispatched.get(worker_slot, 0) + len(batch_indices)
+            )
             worker_queues[worker_slot].put(request)
             group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
             tracker_call(
