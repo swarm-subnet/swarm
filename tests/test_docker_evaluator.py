@@ -1736,3 +1736,12 @@ def test_run_process_parallel_no_recycle_below_thresholds(monkeypatch, tmp_path)
     assert not any("recycling idle worker" in line for line in log_lines)
     assert len(results) == 4
     assert all(r.success for r in results)
+
+
+def test_release_freed_memory_is_safe_and_wired():
+    from swarm.benchmark.engine_parts import workers
+
+    assert workers._release_freed_memory() is None
+    import inspect
+    body = inspect.getsource(workers._benchmark_worker_main)
+    assert "_release_freed_memory()" in body

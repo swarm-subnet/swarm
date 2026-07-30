@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 
 from ._shared import (
@@ -34,6 +35,21 @@ from .dispatch import (
 )
 from swarm.config import HostWorkerRuntimeSettings
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except Exception:  # pragma: no cover - non-glibc platform
+    _libc = None
+
+
+def _release_freed_memory() -> None:
+    """Return freed allocator pages to the OS; glibc hoards them otherwise."""
+    if _libc is None:
+        return
+    try:
+        _libc.malloc_trim(0)
+    except Exception:
+        pass
 
 
 def _engine_facade():
@@ -225,6 +241,7 @@ def _benchmark_worker_main(
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)
                 gc.collect()
+                _release_freed_memory()
     finally:
         asyncio.set_event_loop(None)
         loop.close()
