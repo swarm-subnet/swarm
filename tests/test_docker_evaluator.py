@@ -1769,3 +1769,28 @@ def test_resolve_worker_limits_keeps_explicit_quota_when_pinned(monkeypatch):
     limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
     assert limits["cpuset_cpus"] == "6,7"
     assert limits["cpus"] == "1.5"
+
+
+def test_die_with_parent_survives_missing_libc(monkeypatch):
+    from swarm.benchmark.engine_parts import workers
+
+    monkeypatch.setattr(workers, "_libc", None)
+    assert workers._die_with_parent() is None
+
+
+def test_die_with_parent_requests_kill_signal(monkeypatch):
+    import signal as signal_mod
+
+    from swarm.benchmark.engine_parts import workers
+
+    calls = []
+
+    class _FakeLibc:
+        def prctl(self, *args):
+            calls.append(args)
+            return 0
+
+    monkeypatch.setattr(workers, "_libc", _FakeLibc())
+    workers._die_with_parent()
+    assert calls and calls[0][0] == workers._PR_SET_PDEATHSIG
+    assert calls[0][1] == signal_mod.SIGKILL

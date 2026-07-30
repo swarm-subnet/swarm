@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import signal
 
 from ._shared import (
     BENCH_GROUP_TO_TYPE,
@@ -40,6 +41,8 @@ try:
     _libc = ctypes.CDLL("libc.so.6")
 except Exception:  # pragma: no cover - non-glibc platform
     _libc = None
+
+_PR_SET_PDEATHSIG = 1
 
 
 def _release_freed_memory() -> None:
@@ -141,12 +144,31 @@ def _apply_host_worker_limits(process_slot: int) -> None:
             pass
 
 
+def _die_with_parent() -> None:
+    """Ask the kernel to kill this worker when the validator goes away.
+
+    ``daemon=True`` only reaps children when the parent exits cleanly, so a
+    force-killed validator used to leave its workers running forever.
+    """
+    if _libc is None:
+        return
+    try:
+        parent = os.getppid()
+        _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent:
+            # The parent died during the call; the signal would never arrive.
+            os._exit(0)
+    except Exception:
+        pass
+
+
 def _benchmark_worker_main(
     process_slot: int,
     task_queue: Any,
     result_queue: Any,
     progress_queue: Any,
 ) -> None:
+    _die_with_parent()
     _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
