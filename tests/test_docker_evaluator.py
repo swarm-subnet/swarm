@@ -988,6 +988,7 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
                 {
                     "group": "type4_village",
                     "seed": 3101,
+                    "index": 0,
                     "challenge_type": 4,
                     "horizon": 60.0,
                 }
@@ -1006,7 +1007,7 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
     assert results[0].success is True
     assert results[0].score == pytest.approx(0.8)
     assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
-    assert any("retrying timed-out seed village:3101" in line for line in log_lines)
+    assert any("retrying timed-out seed village:#0" in line for line in log_lines)
     assert any("1 retried_timeout" in line for line in log_lines)
 
 
@@ -1058,6 +1059,7 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
                 {
                     "group": "type3_mountain",
                     "seed": 3201,
+                    "index": 0,
                     "challenge_type": 3,
                     "horizon": 60.0,
                 }
@@ -1076,12 +1078,12 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
     assert results[0].success is False
     assert results[0].score == pytest.approx(0.0)
     assert [payload["status"] for payload in callback_payloads] == ["seed_timeout_strikes"]
-    assert not any("retrying timed-out seed mountain:3201" in line for line in log_lines)
+    assert not any("retrying timed-out seed mountain:#0" in line for line in log_lines)
     assert any(
         "0 failed, 1 slow_act, 0 timeout, 0 runtime, 0 retried_timeout" in line
         for line in log_lines
     )
-    assert any("slow_act_failures: mountain:3201" in line for line in log_lines)
+    assert any("slow_act_failures: mountain:#0" in line for line in log_lines)
 
 
 def test_is_rpc_transport_status_classifies_transport_failures():
@@ -1159,6 +1161,7 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
                 {
                     "group": "type4_village",
                     "seed": 3401,
+                    "index": 0,
                     "challenge_type": 4,
                     "horizon": 60.0,
                 }
@@ -1177,7 +1180,7 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
     assert results[0].success is True
     assert results[0].score == pytest.approx(0.8)
     assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
-    assert any("retrying RPC-transport seed village:3401" in line for line in log_lines)
+    assert any("retrying RPC-transport seed village:#0" in line for line in log_lines)
     assert any("1 retried_rpc_transport" in line for line in log_lines)
 
 
@@ -1507,6 +1510,7 @@ def test_run_process_parallel_refreshes_resources_while_waiting(monkeypatch, tmp
                 {
                     "group": "type5_warehouse",
                     "seed": 3401,
+                    "index": 0,
                     "challenge_type": 5,
                     "horizon": 60.0,
                 }
