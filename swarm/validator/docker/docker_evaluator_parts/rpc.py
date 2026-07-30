@@ -675,20 +675,21 @@ def _run_multi_seed_rpc_sync(
                             )
 
                             t_sim += SIM_DT
-                            _emit_rollout_event(
-                                "step",
-                                task=task,
-                                env=env,
-                                uid=int(uid),
-                                task_label=task_label,
-                                step_idx=step_idx,
-                                sim_time_sec=float(t_sim),
-                                terminated=bool(terminated),
-                                truncated=bool(truncated),
-                                info=dict(info),
-                                action=act.tolist(),
-                                act_ms=float(act_ms),
-                            )
+                            if rollout_observer is not None:
+                                _emit_rollout_event(
+                                    "step",
+                                    task=task,
+                                    env=env,
+                                    uid=int(uid),
+                                    task_label=task_label,
+                                    step_idx=step_idx,
+                                    sim_time_sec=float(t_sim),
+                                    terminated=bool(terminated),
+                                    truncated=bool(truncated),
+                                    info=dict(info),
+                                    action=act.tolist(),
+                                    act_ms=float(act_ms),
+                                )
                             if terminated or truncated:
                                 success = info.get("success", False)
                                 _trace(
