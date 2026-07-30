@@ -79,6 +79,7 @@ class _ScriptedProcess:
         self._args = args
         self.exitcode = None
         self._alive = False
+        self.pid = 4242
 
     def start(self):
         self._alive = True
@@ -1644,3 +1645,90 @@ def test_constructor_uses_class_state_without_module_global(monkeypatch):
 
     assert evaluator.base_ready is False
     assert de.DockerSecureEvaluator._base_ready is False
+
+
+def _recycle_scripted_run(monkeypatch, tmp_path, *, seeds, log_lines):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [
+        SimpleNamespace(challenge_type=1, map_seed=5200 + i, horizon=60.0)
+        for i in range(seeds)
+    ]
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            i: [{"results": [(51, True, 1.0, 0.5)], "elapsed_sec": 0.1}]
+            for i in range(seeds)
+        },
+    )
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=tasks,
+            task_meta=[
+                {"group": "type1_city", "seed": int(t.map_seed), "challenge_type": 1, "horizon": 60.0}
+                for t in tasks
+            ],
+            batch_plan=[[i] for i in range(seeds)],
+            uid=51,
+            model_path=model_path,
+            effective_workers=1,
+            phase_label="eval",
+        )
+    )
+    return results, scripted_context
+
+
+@pytest.mark.full
+def test_run_process_parallel_recycles_worker_after_seed_budget(monkeypatch, tmp_path):
+    monkeypatch.setattr(de.parallel, "_WORKER_RECYCLE_SEED_BUDGET", 3)
+    monkeypatch.setattr(de.parallel, "_WORKER_RECYCLE_MIN_SEEDS", 3)
+    log_lines = []
+
+    results, _ = _recycle_scripted_run(monkeypatch, tmp_path, seeds=5, log_lines=log_lines)
+
+    recycle_lines = [line for line in log_lines if "recycling idle worker" in line]
+    assert recycle_lines and "seeds served" in recycle_lines[0]
+    assert len(results) == 5
+    assert all(r.success for r in results)
+    assert not any("crashed" in line for line in log_lines)
+
+
+@pytest.mark.full
+def test_run_process_parallel_recycles_worker_on_rss_threshold(monkeypatch, tmp_path):
+    monkeypatch.setattr(de.parallel, "_WORKER_RECYCLE_MIN_SEEDS", 1)
+
+    class _FakeMem:
+        rss = 3000 * 1024 * 1024
+
+    class _FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def memory_info(self):
+            return _FakeMem()
+
+    monkeypatch.setattr(de.parallel, "psutil", SimpleNamespace(Process=_FakeProc))
+    log_lines = []
+
+    results, _ = _recycle_scripted_run(monkeypatch, tmp_path, seeds=3, log_lines=log_lines)
+
+    recycle_lines = [line for line in log_lines if "recycling idle worker" in line]
+    assert recycle_lines and "rss 3000" in recycle_lines[0]
+    assert len(results) == 3
+    assert all(r.success for r in results)
+    assert not any("crashed" in line for line in log_lines)
+
+
+@pytest.mark.full
+def test_run_process_parallel_no_recycle_below_thresholds(monkeypatch, tmp_path):
+    log_lines = []
+
+    results, _ = _recycle_scripted_run(monkeypatch, tmp_path, seeds=4, log_lines=log_lines)
+
+    assert not any("recycling idle worker" in line for line in log_lines)
+    assert len(results) == 4
+    assert all(r.success for r in results)
