@@ -1745,3 +1745,27 @@ def test_release_freed_memory_is_safe_and_wired():
     import inspect
     body = inspect.getsource(workers._benchmark_worker_main)
     assert "_release_freed_memory()" in body
+
+
+def test_resolve_worker_limits_drops_quota_for_pinned_workers(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_1", "6,7")
+    monkeypatch.delenv("SWARM_DOCKER_KEEP_CPU_QUOTA", raising=False)
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
+    assert limits["cpuset_cpus"] == "6,7"
+    assert limits["cpus"] is None
+
+
+def test_resolve_worker_limits_keeps_quota_when_requested(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_1", "6,7")
+    monkeypatch.setenv("SWARM_DOCKER_KEEP_CPU_QUOTA", "1")
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
+    assert limits["cpus"] == de.batch.DOCKER_WORKER_CPUS
+
+
+def test_resolve_worker_limits_keeps_explicit_quota_when_pinned(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_1", "6,7")
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUS_OVERRIDE", "1.5")
+    monkeypatch.delenv("SWARM_DOCKER_KEEP_CPU_QUOTA", raising=False)
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
+    assert limits["cpuset_cpus"] == "6,7"
+    assert limits["cpus"] == "1.5"

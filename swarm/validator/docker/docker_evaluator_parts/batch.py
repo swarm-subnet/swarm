@@ -18,6 +18,7 @@ import bittensor as bt
 from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
+    DOCKER_WORKER_CPUS,
     GLOBAL_EVAL_BASE_SEC,
     GLOBAL_EVAL_CAP_SEC,
     GLOBAL_EVAL_PER_SEED_SEC,
@@ -236,7 +237,7 @@ def prepare_model_image(
             "--name", container_name,
             "--user", f"{current_uid}:{current_gid}",
             f"--memory={worker_limits['memory']}",
-            f"--cpus={worker_limits['cpus']}",
+            f"--cpus={worker_limits['cpus'] or DOCKER_WORKER_CPUS}",
             "--pids-limit=50",
             "--ulimit", "nofile=256:256",
             "--ulimit", "fsize=524288000:524288000",
@@ -1319,7 +1320,6 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         "docker", "run", "--rm", "-d", "--name", ctx.container_name,
         "--user", f"{ctx.current_uid}:{ctx.current_gid}",
         f"--memory={ctx.worker_limits['memory']}",
-        f"--cpus={ctx.worker_limits['cpus']}",
         "--pids-limit=50", "--ulimit", "nofile=256:256",
         "--ulimit", "fsize=52428800:52428800", "--security-opt", "no-new-privileges",
         "--cap-drop", "ALL", "--network", "bridge", "--read-only",
@@ -1327,6 +1327,8 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         "-p", f"127.0.0.1:{ctx.host_port}:8000",
         "-v", f"{ctx.submission_dir}:/workspace/submission:rw",
     ]
+    if ctx.worker_limits["cpus"]:
+        cmd.append(f"--cpus={ctx.worker_limits['cpus']}")
     if ctx.worker_limits["cpuset_cpus"]:
         cmd.extend(["--cpuset-cpus", str(ctx.worker_limits["cpuset_cpus"])])
     for key, value in ctx.docker_envs.items():

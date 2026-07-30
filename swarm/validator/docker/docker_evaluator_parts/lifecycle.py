@@ -106,7 +106,9 @@ def _resolve_worker_limits(
     runtime_profile: Optional[Any] = None,
 ) -> dict[str, Optional[str]]:
     profile = cls._coerce_runtime_profile(runtime_profile)
-    limits = DockerRuntimeSettings.from_env().resolve_worker_limits(worker_id)
+    settings = DockerRuntimeSettings.from_env()
+    limits = settings.resolve_worker_limits(worker_id)
+    cpus_requested = settings.cpus_override not in (None, "")
     resolved = {
         "cpus": limits.cpus if limits.cpus not in (None, "") else DOCKER_WORKER_CPUS,
         "memory": limits.memory if limits.memory not in (None, "") else DOCKER_WORKER_MEMORY,
@@ -115,8 +117,18 @@ def _resolve_worker_limits(
     if profile is not None:
         if profile.docker_worker_cpus not in (None, ""):
             resolved["cpus"] = str(profile.docker_worker_cpus)
+            cpus_requested = True
         if profile.docker_worker_memory not in (None, ""):
             resolved["memory"] = str(profile.docker_worker_memory)
+    drop_default_quota = (
+        resolved["cpuset_cpus"]
+        and not cpus_requested
+        and not env_bool("SWARM_DOCKER_KEEP_CPU_QUOTA", False)
+    )
+    if drop_default_quota:
+        # Pinned cores already bound the container; a quota on top only adds
+        # mid-step throttling stalls.
+        resolved["cpus"] = None
     return resolved
 
 
