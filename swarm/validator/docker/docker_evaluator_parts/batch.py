@@ -1463,19 +1463,30 @@ async def evaluate_seeds_batch(
     _setup_pretry_state(ctx)
 
     try:
+        t0 = time.monotonic()
         early = _setup_workspace(ctx)
         if early is not None:
             return early
 
+        t1 = time.monotonic()
         early = _launch_container(ctx)
         if early is not None:
             return early
 
+        t2 = time.monotonic()
         early = await _prepare_network_and_rpc(ctx)
         if early is not None:
             return early
 
-        return await _run_rpc_phase(ctx)
+        t3 = time.monotonic()
+        results = await _run_rpc_phase(ctx)
+        t4 = time.monotonic()
+        bt.logging.info(
+            f"[Worker {ctx.worker_id}] seed timing: setup {t1 - t0:.1f}s · "
+            f"container {t2 - t1:.1f}s · rpc {t3 - t2:.1f}s · "
+            f"mission {t4 - t3:.1f}s · total {t4 - t0:.1f}s"
+        )
+        return results
 
     except Exception as e:
         bt.logging.warning(f"[Worker {ctx.worker_id}] Batch evaluation failed: {e}")
