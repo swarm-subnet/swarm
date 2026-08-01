@@ -287,6 +287,10 @@ SEED_SCORE_BATCH_MAX = 300              # Backend max per POST /validators/seed-
 # Epoch system — seeds rotate every 7 days (Monday 16:00 UTC)
 EPOCH_DURATION_SECONDS = 7 * 86400
 EPOCH_ANCHOR_UTC = datetime(2026, 3, 30, 16, 0, 0, tzinfo=timezone.utc)
+# Piecewise so past epochs keep their numbers; must match the backend schedule exactly.
+EPOCH_SWITCH_NUMBER = 19
+EPOCH_DURATION_LONG_SECONDS = 14 * 86400
+EPOCH_SWITCH_TS = EPOCH_ANCHOR_UTC.timestamp() + (EPOCH_SWITCH_NUMBER - 1) * EPOCH_DURATION_SECONDS
 SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this margin to pass
 
 # Early screening termination — abort screening when outcome is statistically certain

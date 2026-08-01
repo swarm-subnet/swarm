@@ -86,8 +86,11 @@ def _empty_per_type() -> Dict[str, List[float]]:
     return {name: [] for name in _EMPTY_PER_TYPE}
 
 
-def _seed_manager_call(seed_manager, method_name: str, family_id: str):
+def _seed_manager_call(seed_manager, method_name: str, family_id: str, epoch: Optional[int] = None):
     method = getattr(seed_manager, method_name)
+    if epoch is not None and epoch > getattr(seed_manager, "epoch_number", 0):
+        # A pre-evaluation task is scored on its own epoch's seeds, not today's.
+        return method(family_id=family_id, epoch=epoch)
     try:
         return method(family_id=family_id)
     except TypeError:
@@ -701,6 +704,7 @@ async def _run_full_benchmark(
     seeds_to: Optional[int] = None,
     batch_id: Optional[int] = None,
     seed_feeder: Optional[Callable[[int], Any]] = None,
+    epoch_number: Optional[int] = None,
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]], Optional[str]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
@@ -714,7 +718,7 @@ async def _run_full_benchmark(
         # A range starting below the screening boundary (REEVAL, or BENCHMARK when the backend runs without screening) spans the full seed list.
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
             all_family_seeds = _seed_manager_call(
-                self.seed_manager, "get_all_seeds", family_id
+                self.seed_manager, "get_all_seeds", family_id, epoch_number
             )
             benchmark_seeds = all_family_seeds[seeds_from:]
             seed_offset = seeds_from
@@ -722,7 +726,7 @@ async def _run_full_benchmark(
             progress_offset = seeds_from
         elif seeds_from is not None and seeds_from > BENCHMARK_SCREENING_SEED_COUNT:
             full_benchmark = _seed_manager_call(
-                self.seed_manager, "get_benchmark_seeds", family_id
+                self.seed_manager, "get_benchmark_seeds", family_id, epoch_number
             )
             offset = seeds_from - BENCHMARK_SCREENING_SEED_COUNT
             benchmark_seeds = full_benchmark[offset:]
@@ -731,7 +735,7 @@ async def _run_full_benchmark(
             progress_offset = offset
         else:
             benchmark_seeds = _seed_manager_call(
-                self.seed_manager, "get_benchmark_seeds", family_id
+                self.seed_manager, "get_benchmark_seeds", family_id, epoch_number
             )
             seed_offset = BENCHMARK_SCREENING_SEED_COUNT
             heartbeat_total = len(benchmark_seeds)
@@ -759,7 +763,7 @@ async def _run_full_benchmark(
                 if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
                     if full_screening_seeds is None:
                         full_screening_seeds = _seed_manager_call(
-                            self.seed_manager, "get_screening_seeds", family_id
+                            self.seed_manager, "get_screening_seeds", family_id, epoch_number
                         )
                     task = build_screening_tasks(
                         sim_dt=SIM_DT, seeds=[seed], family_id=family_id,

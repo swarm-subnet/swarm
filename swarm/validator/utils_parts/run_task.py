@@ -142,6 +142,7 @@ async def run_task(
             seeds_to=seeds_to,
             batch_id=batch_id,
             seed_feeder=seed_feeder,
+            epoch_number=epoch,
         )
         avg, per_type_avgs, all_scores, _per_type_raw, cancel_reason = result
         seeds_evaluated = seeds_from + len(all_scores)
