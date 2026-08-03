@@ -11,7 +11,8 @@ from .sar_types import BodyCategory
 NORMAL_Z_FLAT = 0.85
 NORMAL_Z_SLOPE = 0.70
 AABB_TOP_TOLERANCE = 0.20
-RAYCAST_TOP_Z = 60.0
+# Clears the tallest mountain peak; a lower start drops the ray inside the rock.
+RAYCAST_TOP_Z = 250.0
 RAYCAST_BOTTOM_Z = -5.0
 
 
@@ -53,9 +54,9 @@ def resolve_surface(
             return None
         hit_pos = raw[3]
         hit_normal = raw[4]
-        valid = _classify_hit(cli, uid, hit_pos, hit_normal, body_tags, accepted)
-        if valid is not None:
-            return valid
+        if body_tags.get(uid) in accepted:
+            # Below standable ground is the inside of the world, never a surface.
+            return _classify_hit(cli, uid, hit_pos, hit_normal, body_tags, accepted)
         next_top = float(hit_pos[2]) - 1e-3
         if next_top <= RAYCAST_BOTTOM_Z:
             return None
