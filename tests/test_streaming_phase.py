@@ -1918,3 +1918,57 @@ def test_run_streaming_phase_uploads_family_local_seed_indices(monkeypatch):
 
     asyncio.run(_run())
     assert uploads == [[205, 206, 207, 208, 209]]
+
+
+def test_a_scored_seed_stays_in_flight_until_the_backend_acks_it(monkeypatch):
+    """The engine lets a seed go the moment it finishes, but its score is only
+    queued here; reporting it idle would hand the seed back before it lands."""
+    validator = _make_validator()
+    reported: list = []
+    monkeypatch.setattr(
+        HeartbeatManager,
+        "set_in_flight",
+        lambda _self, indexes: reported.append(list(indexes)),
+    )
+
+    detail = {
+        "score": 0.9, "map_type": "city", "metric_key": "city",
+        "failure_reason": "NONE",
+    }
+
+    async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        on_held = kwargs["on_held_seeds"]
+        on_held([0])
+        kwargs["on_seed_result"](0, dict(detail))
+        on_held([])
+        return [detail["score"]], {"city": [detail["score"]]}, [dict(detail)]
+
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
+
+    async def _feeder(_free_slots):
+        return [], True
+
+    async def _run():
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=_FAKE_MODEL_ZIP,
+                seeds=[0],
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=2,
+                seed_feeder=_feeder,
+                initial_pending=[],
+            )
+        finally:
+            hb.finish()
+
+    asyncio.run(_run())
+
+    assert reported[0] == [0]
+    assert reported[1] == [0], "seed dropped from the report while its score was unsent"
+    assert reported[-1] == []

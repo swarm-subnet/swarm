@@ -211,6 +211,7 @@ async def _run_process_parallel(
     model_image: Optional[str] = None,
     seed_feeder: Optional[Callable[[int], Any]] = None,
     initial_pending: Optional[list[int]] = None,
+    on_held_seeds: Optional[Callable[[list[int]], None]] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -231,6 +232,7 @@ async def _run_process_parallel(
         pending_batch_ids = [int(i) for i in (initial_pending or [])]
     else:
         pending_batch_ids = list(range(len(batch_plan)))
+    last_held_report: tuple[int, ...] = ()
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
     batch_retry_counts: dict[int, int] = {}
     rpc_transport_retry_counts: dict[int, int] = {}
@@ -386,6 +388,23 @@ async def _run_process_parallel(
             return
         last_resource_poll_at = now
         scheduler.refresh_resources()
+
+    def _report_held_seeds() -> None:
+        """Publish the seeds still queued or in the air, so the backend can hand
+        back anything this run stopped working on."""
+        nonlocal last_held_report
+        if on_held_seeds is None:
+            return
+        held: set[int] = set()
+        for batch_index in pending_batch_ids:
+            held.update(int(index) for index in batch_plan[batch_index])
+        for request in worker_active_requests.values():
+            held.update(int(index) for index in request.batch_indices)
+        snapshot = tuple(sorted(held))
+        if snapshot == last_held_report:
+            return
+        last_held_report = snapshot
+        on_held_seeds(list(snapshot))
 
     def _dispatch_available_batches() -> None:
         if stop_reason is not None:
@@ -715,6 +734,7 @@ async def _run_process_parallel(
                 elif not granted:
                     feeder_next_call_at = time.time() + 15.0
             _dispatch_available_batches()
+            _report_held_seeds()
             completed_batches += _check_for_stalled_workers()
             if not _more_work_expected(completed_batches):
                 break
@@ -950,6 +970,7 @@ async def evaluate_seeds_parallel(
     retry_budget: Optional[dict[str, int]] = None,
     seed_feeder: Optional[Callable[[int], Any]] = None,
     initial_pending: Optional[list[int]] = None,
+    on_held_seeds: Optional[Callable[[list[int]], None]] = None,
 ) -> list:
     """Evaluate validator seeds using the benchmark-grade process scheduler."""
     if not tasks:
@@ -1107,6 +1128,7 @@ async def evaluate_seeds_parallel(
         model_image=model_image,
         seed_feeder=seed_feeder,
         initial_pending=initial_pending,
+        on_held_seeds=on_held_seeds,
     )
 
 

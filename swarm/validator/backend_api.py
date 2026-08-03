@@ -413,6 +413,7 @@ class BackendApiClient:
         blocked_queue: Optional[list] = None,
         active_task: Optional[dict] = None,
         backend_decision_version: Optional[int] = None,
+        in_flight_seeds: Optional[list] = None,
     ) -> Dict[str, Any]:
         data: Dict[str, Any] = {"status": status}
         if current_uid is not None:
@@ -429,6 +430,8 @@ class BackendApiClient:
             data["active_task"] = active_task
         if backend_decision_version is not None:
             data["backend_decision_version"] = backend_decision_version
+        if in_flight_seeds is not None:
+            data["in_flight_seeds"] = [int(index) for index in in_flight_seeds]
         name = os.environ.get("VALIDATOR_NAME")
         if name:
             data["name"] = name[:32]

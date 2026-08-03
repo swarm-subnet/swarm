@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 import multiprocessing as mp
 import os
@@ -70,6 +71,81 @@ class HostSpeedCalibration:
 
 
 _HOST_SPEED_CALIBRATION: Optional[HostSpeedCalibration] = None
+_CALIBRATION_CACHE_PATH = (
+    Path(__file__).resolve().parents[4] / "state" / "host_speed_factor.json"
+)
+
+
+def _calibration_host_fingerprint() -> str:
+    """A measurement is only reusable on the machine that produced it, and only
+    until it reboots: a box that came back different must measure itself again."""
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except Exception:
+        boot_id = ""
+    return f"{os.cpu_count() or 0}:{boot_id}"
+
+
+def _write_calibration_cache(calibration: HostSpeedCalibration) -> None:
+    """Persist an eligible measurement so a restart does not repay for it.
+
+    Only eligible factors are kept: a host that failed the limit must re-measure
+    rather than sit out the whole cache window on one bad reading."""
+    if not calibration.speed.eligible:
+        return
+    try:
+        _CALIBRATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "host": _calibration_host_fingerprint(),
+            "calibration_version": calibration.calibration_version,
+            "worker_count": int(calibration.worker_count),
+            "computed_at": float(calibration.computed_at),
+            "local_p90_ms": float(calibration.speed.local_p90_ms),
+            "worker_local_p90_ms": [
+                float(speed.local_p90_ms) for speed in calibration.worker_speeds
+            ],
+        }
+        temp_path = _CALIBRATION_CACHE_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, sort_keys=True))
+        temp_path.replace(_CALIBRATION_CACHE_PATH)
+    except Exception as e:
+        bt.logging.warning(f"Could not cache the host calibration: {e}")
+
+
+def _read_calibration_cache(
+    *, worker_count: int, calibration_version: str
+) -> Optional[HostSpeedCalibration]:
+    """Load a cached measurement, or None if it does not describe this host now."""
+    try:
+        payload = json.loads(_CALIBRATION_CACHE_PATH.read_text())
+    except Exception:
+        return None
+    try:
+        if payload["host"] != _calibration_host_fingerprint():
+            return None
+        if payload["calibration_version"] != str(calibration_version):
+            return None
+        if int(payload["worker_count"]) < int(worker_count):
+            return None
+        computed_at = float(payload["computed_at"])
+        if (time.time() - computed_at) > _CALIBRATION_MAX_AGE_SEC:
+            return None
+        speed = normalize_speed_factor(float(payload["local_p90_ms"]))
+        worker_speeds = tuple(
+            normalize_speed_factor(float(value))
+            for value in payload["worker_local_p90_ms"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not speed.eligible:
+        return None
+    return HostSpeedCalibration(
+        speed=speed,
+        worker_count=int(payload["worker_count"]),
+        worker_speeds=worker_speeds,
+        calibration_version=str(calibration_version),
+        computed_at=computed_at,
+    )
 
 
 def _calibration_mp_context() -> mp.context.BaseContext:
@@ -1142,6 +1218,7 @@ async def _run_host_baseline_calibration(self, worker_count: int):
         calibration_version=str(manifest["calibration_version"]),
         computed_at=time.time(),
     )
+    _write_calibration_cache(_HOST_SPEED_CALIBRATION)
     per_worker = ", ".join(
         f"w{i}={speed.factor:.2f}x/{speed.local_p90_ms:.1f}ms"
         for i, speed in enumerate(worker_speeds)
@@ -1162,19 +1239,42 @@ async def _run_host_baseline_calibration(self, worker_count: int):
     return host_speed
 
 
+def host_speed_factor_is_fresh(worker_count: int) -> bool:
+    """True when scoring can start without stopping to measure the host first."""
+    global _HOST_SPEED_CALIBRATION
+
+    try:
+        manifest = load_baseline_manifest()
+    except Exception:
+        return False
+    requested = max(1, int(worker_count))
+    version = str(manifest["calibration_version"])
+    if _host_calibration_is_valid(
+        _HOST_SPEED_CALIBRATION, worker_count=requested, calibration_version=version,
+    ):
+        return True
+    cached = _read_calibration_cache(
+        worker_count=requested, calibration_version=version,
+    )
+    if cached is None:
+        return False
+    _HOST_SPEED_CALIBRATION = cached
+    bt.logging.info(
+        f"Reusing the cached host calibration: speed_factor={cached.speed.factor:.2f}x "
+        f"(measured {(time.time() - cached.computed_at) / 60.0:.0f} min ago, "
+        f"workers={cached.worker_count})"
+    )
+    return True
+
+
 async def _ensure_host_speed_factor(self, worker_count: int):
     """Return the in-memory host speed factor, calibrated under concurrent load."""
     global _HOST_SPEED_CALIBRATION
 
     if not baseline_model_available():
         return None
-    manifest = load_baseline_manifest()
     requested = max(1, int(worker_count))
-    if _host_calibration_is_valid(
-        _HOST_SPEED_CALIBRATION,
-        worker_count=requested,
-        calibration_version=str(manifest["calibration_version"]),
-    ):
+    if host_speed_factor_is_fresh(requested):
         return _HOST_SPEED_CALIBRATION.speed
     return await _run_host_baseline_calibration(self, requested)
 

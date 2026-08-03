@@ -114,6 +114,7 @@ async def _evaluate_seeds(
     retry_budget: Optional[Dict[str, int]] = None,
     seed_feeder: Optional[Callable[[int], Any]] = None,
     initial_pending: Optional[List[int]] = None,
+    on_held_seeds: Optional[Callable[[List[int]], None]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
     """Evaluate a model on multiple seeds using parallel Docker containers.
 
@@ -182,9 +183,18 @@ async def _evaluate_seeds(
 
     engine_feeder = None
     engine_initial: Optional[List[int]] = None
+    engine_held: Optional[Callable[[List[int]], None]] = None
     if seed_feeder is not None:
         # The feeder speaks absolute seed indexes; the engine indexes valid_tasks.
         abs_to_valid = {pos: vi for vi, pos in enumerate(valid_positions)}
+
+        if on_held_seeds is not None:
+            def engine_held(valid_indexes: List[int]) -> None:
+                on_held_seeds([
+                    valid_positions[int(i)]
+                    for i in valid_indexes
+                    if 0 <= int(i) < len(valid_positions)
+                ])
 
         async def engine_feeder(free_slots: int):
             granted, drained = await seed_feeder(free_slots)
@@ -214,6 +224,7 @@ async def _evaluate_seeds(
         retry_budget=retry_budget,
         seed_feeder=engine_feeder,
         initial_pending=engine_initial,
+        on_held_seeds=engine_held,
     )
 
     seed_details = []
@@ -321,6 +332,8 @@ async def _run_streaming_phase(
     all_details: List[dict] = []
     inflight: List[asyncio.Task] = []
     failed_batches: List[List[dict]] = []
+    # Scored here but not yet acknowledged by the backend; still ours to hold.
+    unacked: set = set()
     retry_budget: Dict[str, int] = {"timeout": 0, "rpc_transport": 0}
     total_for_evaluator = (
         evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
@@ -342,6 +355,7 @@ async def _run_streaming_phase(
                 bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
                 continue
             if result and result.get("recorded"):
+                unacked.difference_update(int(row["seed_index"]) for row in batch)
                 return
         failed_batches.append(batch)
 
@@ -428,6 +442,7 @@ async def _run_streaming_phase(
             }
         )
         if type_name != "unknown" and not _is_infra_failure(reason):
+            unacked.add(seed_offset + idx)
             upload_queue.put_nowait(
                 {
                     "seed_index": seed_offset + idx,
@@ -490,6 +505,12 @@ async def _run_streaming_phase(
             retry_budget=retry_budget,
             seed_feeder=seed_feeder,
             initial_pending=initial_pending,
+            on_held_seeds=(
+                None if seed_feeder is None
+                else lambda held: hb.set_in_flight(sorted(
+                    {seed_offset + int(position) for position in held} | unacked
+                ))
+            ),
         )
         _fire_chunk_complete()
     finally:
@@ -543,6 +564,9 @@ async def _run_streaming_phase(
                     bt.logging.warning(
                         f"Final retry of {len(batch)} seed scores not recorded for UID {uid}"
                     )
+        if seed_feeder is not None:
+            # Every score is uploaded by now, so anything still leased was dropped.
+            hb.set_in_flight([])
 
     if stop_state["raise"] is not None:
         raise stop_state["raise"]

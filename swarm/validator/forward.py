@@ -18,6 +18,7 @@ import traceback
 import bittensor as bt
 
 from swarm.constants import FORWARD_SLEEP_SEC, N_DOCKER_WORKERS
+from swarm.validator.calibration import baseline_model_available
 
 from .backend_api import (
     BackendApiClient,
@@ -25,7 +26,10 @@ from .backend_api import (
     BackendTransportError,
 )
 from .docker.docker_evaluator import DockerSecureEvaluator
-from .docker.docker_evaluator_parts.batch import _ensure_host_speed_factor
+from .docker.docker_evaluator_parts.batch import (
+    _ensure_host_speed_factor,
+    host_speed_factor_is_fresh,
+)
 from .runtime_telemetry import tracker_call
 from .seed_manager import BenchmarkSeedManager
 from .sse_listener import SseListener
@@ -225,6 +229,8 @@ async def _host_may_score(self) -> bool:
     must not score miners with unnormalized timing."""
     if not _image_provenance_ok(self):
         return False
+    if baseline_model_available() and not host_speed_factor_is_fresh(N_DOCKER_WORKERS):
+        await _announce_calibrating(self)
     speed = await _ensure_host_speed_factor(self.docker_evaluator, N_DOCKER_WORKERS)
     if speed is None:
         bt.logging.error(
@@ -245,6 +251,16 @@ async def _host_may_score(self) -> bool:
         )
         return False
     return True
+
+
+async def _announce_calibrating(self) -> None:
+    """Tell the backend this host is about to measure itself, so its seeds go
+    back to the pool instead of waiting out a calibration it cannot interrupt."""
+    bt.logging.info("Host calibration due; standing down from the pool while it runs")
+    try:
+        await self.backend_api.post_heartbeat(status="calibrating", in_flight_seeds=[])
+    except Exception as exc:
+        bt.logging.warning(f"Could not announce calibration: {exc}")
 
 
 async def _idle_until_wake(self, timeout: float) -> None:

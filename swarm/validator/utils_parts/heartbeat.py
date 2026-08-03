@@ -45,12 +45,18 @@ class HeartbeatManager:
         self._backend_decision_version: Optional[int] = None
         self._stop_required = False
         self._stop_reason: Optional[str] = None
+        self._in_flight: Optional[list] = None
         self._timer_stop = threading.Event()
         self._timer_thread: Optional[threading.Thread] = None
 
     def set_queue(self, queue: list) -> None:
         with self._lock:
             self._queue = queue
+
+    def set_in_flight(self, seed_indexes: list) -> None:
+        """Name the seeds still queued or in the air; the backend hands back the rest."""
+        with self._lock:
+            self._in_flight = [int(index) for index in seed_indexes]
 
     def start(
         self,
@@ -73,6 +79,7 @@ class HeartbeatManager:
             self._active = True
             self._stop_required = False
             self._stop_reason = None
+            self._in_flight = None
             if queue is not None:
                 self._queue = queue
             if active_task is not None:
@@ -177,6 +184,7 @@ class HeartbeatManager:
             queue = list(self._queue) if self._queue is not None else None
             active_task = dict(self._active_task) if self._active_task is not None else None
             decision_version = self._backend_decision_version
+            in_flight = list(self._in_flight) if self._in_flight is not None else None
 
         try:
             response = await asyncio.wait_for(
@@ -188,6 +196,7 @@ class HeartbeatManager:
                     queue=queue,
                     active_task=active_task,
                     backend_decision_version=decision_version,
+                    in_flight_seeds=in_flight,
                 ),
                 timeout=10.0
             )
