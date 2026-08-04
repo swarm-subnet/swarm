@@ -435,8 +435,7 @@ The first evaluated model in a family becomes champion unconditionally. After th
 
 | Families | Floor (champion ≤ 0.5) | Floor minimum (champion → 1.0) |
 |----------|------------------------|--------------------------------|
-| Autopilot, Swarm Autopilot, Interceptor | +0.015 | +0.005 |
-| Search and Rescue, Swarm SAR | +0.02 | +0.007 |
+| All families | +0.015 | +0.005 |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 

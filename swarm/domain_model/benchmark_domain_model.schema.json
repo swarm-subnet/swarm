@@ -273,19 +273,19 @@
         "submission_zip.v1"
       ],
       "screening_policy": {
-        "bootstrap_threshold": 0.02,
-        "min_improvement": 0.02,
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
         "early_fail_checkpoints": {
           "50": 0.45,
           "100": 0.65,
           "150": 0.8
         },
-        "min_improvement_floor": 0.007,
+        "min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
       "benchmark_admission_policy": {
-        "champion_min_improvement": 0.02,
-        "champion_min_improvement_floor": 0.007,
+        "champion_min_improvement": 0.015,
+        "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.15
@@ -368,19 +368,19 @@
         "submission_zip.v1"
       ],
       "screening_policy": {
-        "bootstrap_threshold": 0.02,
-        "min_improvement": 0.02,
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
         "early_fail_checkpoints": {
           "50": 0.45,
           "100": 0.65,
           "150": 0.8
         },
-        "min_improvement_floor": 0.007,
+        "min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
       "benchmark_admission_policy": {
-        "champion_min_improvement": 0.02,
-        "champion_min_improvement_floor": 0.007,
+        "champion_min_improvement": 0.015,
+        "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.2
