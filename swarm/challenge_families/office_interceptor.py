@@ -321,9 +321,6 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_det_focal = (float(OFFICE_CAMERA_RES) / 2.0) / math.tan(
             math.radians(float(env._fov)) / 2.0
         )
-        # Steps since the TARGET was last detected; drives the crawl interlock.
-        # Env-side only — putting it in the obs would label which boxes are real.
-        env._office_det_real_steps = 10 * OFFICE_DET_PERIOD_STEPS
         env._office_det_fp_anchors = [
             (env._office_det_rng.uniform(0.0, float(OFFICE_CAMERA_RES)),
              env._office_det_rng.uniform(0.0, float(OFFICE_CAMERA_RES)))
@@ -671,7 +668,6 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                 h = truth["h"] * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
                 conf = _det_true_conf(rng, truth["vis"], truth["w"])
                 boxes.append((cx, cy, w, h, conf))
-                env._office_det_real_steps = OFFICE_DET_DELAY_STEPS
         if rng.random() < OFFICE_DET_FP_RATE:
             boxes.append(_det_fp_box(rng, env._office_det_fp_anchors, env._office_det_focal))
         # The real rig sorts by confidence; slot order must not reveal which is real.
@@ -711,14 +707,10 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
 
         det = env._office_detection
         det[1] = min(det[1] + dt, 2.0 * OFFICE_DET_STALE_SEC)
-        env._office_det_real_steps += 1
         if (step + OFFICE_DET_DELAY_STEPS) % OFFICE_DET_PERIOD_STEPS == 0:
             env._office_det_pending = self._detector_capture(env)
         if step % OFFICE_DET_PERIOD_STEPS == 0:
             self._detector_deliver(env, env._office_det_rng, dt)
-        # The forward cut keys on real-target sightings, not the obs age: a ghost
-        # box must not re-arm a blind charge.
-        env._visual_stale = bool(env._office_det_real_steps * dt > OFFICE_DET_STALE_SEC)
 
     def _snapshot(self, env, d: int, dt: float) -> np.ndarray:
         # Lazy import: moving_drone imports this package, so the top level would cycle.

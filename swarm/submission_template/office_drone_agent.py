@@ -28,9 +28,7 @@ Action:
     - fb: backward (-1) / forward (+1) along the camera heading
     - ud: descend (-1) / ascend (+1)
     - yaw: turn rate, counterclockwise (-1) / clockwise (+1)
-    [0, 0, 0, 0] hovers. While the detector has not truly seen the target for
-    0.8 s, the safety interlock slows forward flight and strafing to a crawl
-    (backing off stays full speed) — search with yaw and altitude, then commit.
+    [0, 0, 0, 0] hovers.
 
 Mission: find the target drone and physically hit it. Contact ends the episode
 as a success; crashing into the office ends it as a failure.

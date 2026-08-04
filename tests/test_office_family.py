@@ -12,7 +12,6 @@ from swarm.constants import (
     OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC,
     OFFICE_DET_PERIOD_STEPS,
-    OFFICE_STALE_SPEED_FACTOR,
     OFFICE_TARGET_ALT_MAX_M,
     OFFICE_TARGET_ALT_MIN_M,
     OFFICE_TELEM_DELAY_STEPS,
@@ -95,19 +94,6 @@ def test_office_dead_zone_and_slew(office_env):
     env.step(np.ones((1, 4), dtype=np.float32))
     max_step = OFFICE_RC_SLEW_PER_SEC * env.CTRL_TIMESTEP
     assert np.all(np.abs(env._rc_command) <= max_step + 1e-9)
-
-
-def test_office_stale_visual_slows_horizontal(office_env):
-    env = office_env
-    env.reset(seed=env.task.map_seed)
-    # Boot-blind is the natural stale state; full sticks must crawl, not charge.
-    # Only 4 steps: the first detector frame lands at step 5 and can un-stale.
-    for i in range(4):
-        assert env._visual_stale, f"no sighting yet at step {i}: still blind"
-        env.step(np.array([[1.0, 1.0, 0.0, 0.0]], dtype=np.float32))
-    cap = OFFICE_STALE_SPEED_FACTOR + 1e-6
-    assert env._rc_command[0, 1] <= cap, "blind forward must crawl"
-    assert abs(env._rc_command[0, 0]) <= cap, "blind strafe must crawl too"
 
 
 def test_office_forward_matches_heading(office_env):
@@ -315,13 +301,11 @@ def test_office_detector_no_sight_no_boxes(office_env):
             boxes_seen += 1
     fp_budget = 3  # rare false positives are allowed, sightings are not
     assert boxes_seen <= fp_budget
-    assert env._visual_stale or obs["state"][16] <= 0.8
 
 
-def test_office_detector_sees_and_unstales(office_env):
+def test_office_detector_sees_target(office_env):
     env = office_env
     obs, _ = env.reset(seed=env.task.map_seed)
-    assert env._visual_stale, "the rig must boot blind"
     hits = 0
     for _ in range(100):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
@@ -329,7 +313,6 @@ def test_office_detector_sees_and_unstales(office_env):
             hits += 1
     # Target starts inside the camera frame on this seed: recall must show up.
     assert hits > 10
-    assert not env._visual_stale
     d = obs["state"][15:27]
     assert 0.0 <= d[2] <= 1.0 and 0.0 <= d[3] <= 1.0
     assert d[6] >= 0.25 or d[0] == 0

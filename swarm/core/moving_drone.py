@@ -22,7 +22,7 @@ from swarm.constants import (
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
     OFFICE_APPEARANCE_SEED_OFFSET, OFFICE_CAMERA_RES, OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD, OFFICE_RGB_NOISE_STD,
-    OFFICE_RGB_PERIOD_STEPS, OFFICE_STALE_SPEED_FACTOR,
+    OFFICE_RGB_PERIOD_STEPS,
     SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE, CAMERA_EYE_FWD_M, CAMERA_EYE_UP_M,
     LIGHT_RANDOMIZATION_ENABLED,
@@ -272,13 +272,11 @@ class MovingDroneAviary(BaseRLAviary):
             )
             self._rgb_dirty = False
 
-        # RC state (office only); _visual_stale=True cuts forward motion.
-        # Starts stale: the rig has seen nothing until the detector's first frame.
+        # RC state (office only).
         if self._office_rc_enabled:
             self._rc_command = np.zeros((self.NUM_DRONES, 4), dtype=np.float64)
             self._rc_target_yaw = np.zeros(self.NUM_DRONES, dtype=np.float64)
             self._rc_max_step = OFFICE_RC_SLEW_PER_SEC * self.CTRL_TIMESTEP
-            self._visual_stale = True
 
         self._clue_dim = int(self.family_runtime.state_clue_dim(task))
         self._obs_layout = self.family_runtime.observation_assembly(task)
@@ -375,12 +373,6 @@ class MovingDroneAviary(BaseRLAviary):
         for k in range(self.NUM_DRONES):
             rc = action[k].astype(np.float64)
             rc[np.abs(rc) < OFFICE_RC_DEAD_ZONE] = 0.0
-            if self._visual_stale:
-                # The rig's safety interlock, softened: blind horizontal motion
-                # crawls instead of charging; climb and yaw stay free to search.
-                if rc[1] > 0.0:
-                    rc[1] *= OFFICE_STALE_SPEED_FACTOR
-                rc[0] *= OFFICE_STALE_SPEED_FACTOR
             prev = self._rc_command[k]
             rc = prev + np.clip(rc - prev, -self._rc_max_step, self._rc_max_step)
             self._rc_command[k] = rc
@@ -1244,7 +1236,6 @@ class MovingDroneAviary(BaseRLAviary):
         if getattr(self, "_office_rc_enabled", False):
             self._rc_command.fill(0.0)
             self._rc_target_yaw.fill(0.0)
-            self._visual_stale = True
 
         # Fresh episode, fresh controllers: PID integrators must not leak across resets.
         for ctrl in getattr(self, "ctrl", []):

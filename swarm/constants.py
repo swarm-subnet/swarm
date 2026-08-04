@@ -598,8 +598,7 @@ OFFICE_DET_MISS_PERSIST = 0.5               # chance a miss continues next frame
 OFFICE_DET_FP_RATE = 0.009                  # per-frame false-positive probability (precision emerges)
 OFFICE_DET_CONF_FLOOR = 0.25                # the real rig never emits boxes below this confidence
 OFFICE_DET_JITTER_SIZE = 0.12               # box size noise (relative std)
-OFFICE_DET_STALE_SEC = 0.8                  # no real-target sighting this long => visual stale
-OFFICE_STALE_SPEED_FACTOR = 0.3             # blind horizontal sticks crawl at this fraction
+OFFICE_DET_STALE_SEC = 0.8                  # obs detection age saturates at twice this
 OFFICE_DET_MAX_BOXES = 2                    # contract slots: the target + a rare false positive
 OFFICE_DET_SEED_OFFSET = 0xDE7EC7           # decorrelates the detector rng from the other streams
 
@@ -641,8 +640,6 @@ if OFFICE_RGB_NOISE_STD < 0.0:
     raise ValueError("OFFICE_RGB_NOISE_STD must be non-negative")
 if OFFICE_RGB_PERIOD_STEPS < 1:
     raise ValueError("OFFICE_RGB_PERIOD_STEPS must be at least 1")
-if not (0.0 <= OFFICE_STALE_SPEED_FACTOR < 1.0):
-    raise ValueError("OFFICE_STALE_SPEED_FACTOR must be in [0, 1)")
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2
