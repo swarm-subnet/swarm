@@ -11,6 +11,8 @@ from swarm.constants import (
     OFFICE_MIN_START_DISTANCE_M,
     OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC,
+    OFFICE_DET_PERIOD_STEPS,
+    OFFICE_STALE_SPEED_FACTOR,
     OFFICE_TARGET_ALT_MAX_M,
     OFFICE_TARGET_ALT_MIN_M,
     OFFICE_TELEM_DELAY_STEPS,
@@ -95,14 +97,17 @@ def test_office_dead_zone_and_slew(office_env):
     assert np.all(np.abs(env._rc_command) <= max_step + 1e-9)
 
 
-def test_office_stale_visual_cuts_forward(office_env):
+def test_office_stale_visual_slows_horizontal(office_env):
     env = office_env
     env.reset(seed=env.task.map_seed)
-    env._visual_stale = True
-    for _ in range(5):
-        env.step(np.array([[0.0, 1.0, 0.0, 0.0]], dtype=np.float32))
-    assert env._rc_command[0, 1] <= 0.0
-    env._visual_stale = False
+    # Boot-blind is the natural stale state; full sticks must crawl, not charge.
+    # Only 4 steps: the first detector frame lands at step 5 and can un-stale.
+    for i in range(4):
+        assert env._visual_stale, f"no sighting yet at step {i}: still blind"
+        env.step(np.array([[1.0, 1.0, 0.0, 0.0]], dtype=np.float32))
+    cap = OFFICE_STALE_SPEED_FACTOR + 1e-6
+    assert env._rc_command[0, 1] <= cap, "blind forward must crawl"
+    assert abs(env._rc_command[0, 0]) <= cap, "blind strafe must crawl too"
 
 
 def test_office_forward_matches_heading(office_env):
@@ -121,7 +126,7 @@ def test_office_forward_matches_heading(office_env):
     assert abs(heading) < math.radians(20), f"moved at {math.degrees(heading):.1f} deg"
 
 
-def test_office_contract_is_telemetry_only():
+def test_office_contract_matches_the_rig():
     contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
     assert contract["observation_assembly"]["state"] == [
         "tello_attitude", "tello_velocity", "tello_acceleration",
@@ -339,7 +344,7 @@ def test_office_detector_recall_emerges(office_env):
     frames = hits = 0
     for i in range(3000):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
-        if env._office_telem_step % 5 == 0:
+        if env._office_telem_step % OFFICE_DET_PERIOD_STEPS == 0:
             truth = env._office_det_pending
             if truth is not None and truth["vis"] >= 0.8 and truth["dist"] <= 8.0:
                 frames += 1
@@ -356,9 +361,10 @@ def test_office_detector_confidence_not_an_oracle():
     from swarm.challenge_families.office_interceptor import _det_fp_box, _det_true_conf
 
     rng = np.random.default_rng(0)
-    far_real = [_det_true_conf(rng, 0.9, 8.0) for _ in range(400)]    # small far box
-    near_real = [_det_true_conf(rng, 1.0, 60.0) for _ in range(400)]  # big close box
-    fps = [_det_fp_box(rng, [(480.0, 360.0)])[4] for _ in range(400)]
+    # obs-camera scale (focal ~128 px): ~3 px = far target, ~15 px = close target
+    far_real = [_det_true_conf(rng, 0.9, 3.0) for _ in range(400)]
+    near_real = [_det_true_conf(rng, 1.0, 15.0) for _ in range(400)]
+    fps = [_det_fp_box(rng, [(128.0, 128.0)], 128.0)[4] for _ in range(400)]
     assert min(far_real) < max(fps), "far real boxes must dip into the FP range"
     assert max(fps) > 0.5, "ghosts must sometimes look confident"
     assert max(near_real) > 0.9, "close clean boxes must still look strong"

@@ -22,9 +22,9 @@ from swarm.constants import (
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
     OFFICE_APPEARANCE_SEED_OFFSET, OFFICE_CAMERA_RES, OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD, OFFICE_RGB_NOISE_STD,
-    OFFICE_RGB_PERIOD_STEPS,
+    OFFICE_RGB_PERIOD_STEPS, OFFICE_STALE_SPEED_FACTOR,
     SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
-    CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
+    CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE, CAMERA_EYE_FWD_M, CAMERA_EYE_UP_M,
     LIGHT_RANDOMIZATION_ENABLED,
     SAFETY_DISTANCE_SAFE,
     SAFETY_DISTANCE_SAFE_BY_TYPE,
@@ -375,8 +375,12 @@ class MovingDroneAviary(BaseRLAviary):
         for k in range(self.NUM_DRONES):
             rc = action[k].astype(np.float64)
             rc[np.abs(rc) < OFFICE_RC_DEAD_ZONE] = 0.0
-            if self._visual_stale and rc[1] > 0.0:
-                rc[1] = 0.0
+            if self._visual_stale:
+                # The rig's safety interlock, softened: blind horizontal motion
+                # crawls instead of charging; climb and yaw stay free to search.
+                if rc[1] > 0.0:
+                    rc[1] *= OFFICE_STALE_SPEED_FACTOR
+                rc[0] *= OFFICE_STALE_SPEED_FACTOR
             prev = self._rc_command[k]
             rc = prev + np.clip(rc - prev, -self._rc_max_step, self._rc_max_step)
             self._rc_command[k] = rc
@@ -725,8 +729,7 @@ class MovingDroneAviary(BaseRLAviary):
         forward = forward / np.linalg.norm(forward)
         up = rot_mat @ np.array([0.0, 0.0, 1.0])
 
-        camera_offset = 0.13
-        camera_pos = drone_pos + forward * camera_offset + up * 0.05
+        camera_pos = drone_pos + forward * CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
 
         target = camera_pos + forward * 20.0
 
@@ -1636,7 +1639,7 @@ class MovingDroneAviary(BaseRLAviary):
         rgb = rgb_raw[:, :, :3].astype(np.float32) / 255.0
         rgb *= self._office_rgb_bright
         noise_rng = np.random.default_rng(
-            (int(self.task.map_seed) ^ OFFICE_APPEARANCE_SEED_OFFSET) + capture
+            (int(self.task.map_seed) ^ OFFICE_APPEARANCE_SEED_OFFSET, capture)
         )
         rgb += noise_rng.standard_normal(rgb.shape, dtype=np.float32) * OFFICE_RGB_NOISE_STD
         np.clip(rgb, 0.0, 1.0, out=rgb)
@@ -1655,7 +1658,7 @@ class MovingDroneAviary(BaseRLAviary):
         forward = rot_mat @ np.array([1.0, 0.0, 0.0])
         forward = forward / np.linalg.norm(forward)
         up = rot_mat @ np.array([0.0, 0.0, 1.0])
-        camera_pos = drone_pos + forward * 0.13 + up * 0.05
+        camera_pos = drone_pos + forward * CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
         target = camera_pos + forward * 20.0
         view = p.computeViewMatrix(
             cameraEyePosition=camera_pos,

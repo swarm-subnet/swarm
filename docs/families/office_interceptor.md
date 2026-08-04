@@ -4,7 +4,7 @@
 
 Indoor air-to-air pursuit: hunt a target drone inside a real office, flying like a real Tello.
 
-Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. Vision is the drone's forward RGB camera (the real Tello has no depth sensor), **domain-randomized every episode**: wall and furniture colors, lighting, and camera imperfections all change with the seed, so colors are unreliable and geometry is the only stable signal. The target is a second Tello flown by the validator: seeded person-style waypoint legs with hover pauses, cruising at 1.2 m/s in a 1.3–2.6 m band above the furniture. **The catch is a literal hit** — the episode succeeds only on physical contact with the target's 17.6 cm body, not proximity.
+Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. Vision is the drone's forward RGB camera (the real Tello has no depth sensor), **domain-randomized every episode**: wall and furniture colors, lighting, and camera imperfections all change with the seed, so colors are unreliable and geometry is the only stable signal. The target is a second Tello flown by the validator: seeded person-style waypoint legs with hover pauses, cruising at 1.2 m/s in a 1.3–2.6 m band above the furniture. **The catch is a literal hit** — the episode succeeds on physical contact with the target's 17.6 cm body (plus a 0.15 m deep-overlap guard so a fast ram cannot tunnel through between physics steps), never on proximity.
 
 ---
 
@@ -33,7 +33,7 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | | |
 |---|---|
 | Interface version | `submission_zip.v1` |
-| Entry point | `drone_agent.DroneFlightController` |
+| Entry point | `drone_agent.DroneFlightController` — start from `swarm/submission_template/office_drone_agent.py` |
 | Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | office |
 
@@ -69,11 +69,11 @@ The 15 telemetry values mirror a Tello state packet: only what the physical SDK 
 | 4–6 | `body_velocity_xyz` | forward / right / down velocity (m/s, 0.1 steps = the SDK's dm/s) |
 | 7–9 | `body_acceleration_xyz` | forward / right / down specific force (m/s², with sensor bias) — **gravity included**: a hovering drone reads ≈ −9.8 on the down axis, like the real IMU |
 | 10–14 | `altitude_tof_height_baro_age_valid` | downward ToF (m), fused height (m), barometer with drift (m), packet age (s), valid flag |
-| 15–26 | `detection_n_age_boxes2x5` | emulated YOLO output: box count, age since last detection (s), then two `[cx, cy, w, h, confidence]` slots normalized to the 960×720 camera frame |
+| 15–26 | `detection_n_age_boxes2x5` | emulated YOLO output: box count, age since last detection (s), then two `[cx, cy, w, h, confidence]` slots normalized to the `rgb` frame — the detector looks through the same camera the policy sees, so boxes overlay `obs["rgb"]` directly |
 
 Note the deliberate asymmetry, inherited from the real drone: the `ud` action stick is positive-up, while telemetry `vgz` is positive-down. Packets arrive at ~10 Hz with transport delay, sensor noise, SDK quantization, and occasional loss; between packets the values hold and `age` grows. `valid` drops to 0 when the data is stale (including the first steps of every episode, before any packet has arrived). A small horizontal drift force emulates VPS position error through the physics. The last 25 actions (100 values) complete the state vector.
 
-The detection block mirrors the real YOLO drone-detector rig, statistically: frames at ~10 Hz with inference delay, misses in streaks (marginal recall ≈ 0.956 in good conditions), box jitter proportional to box size, and confidence that sinks toward the 0.25 threshold for small far boxes. Rare false positives (precision ≈ 0.991) look like drones, overlap real confidences, and favor a couple of persistent scene spots per episode, like real YOLO ghosts — so no single confidence threshold separates real from fake. Occlusion is real, computed against the office geometry, so the boxes flicker when the target passes behind furniture. **No real sighting for 0.8 s cuts the forward stick** (a real interceptor does not blind-charge; a ghost cannot re-arm it), and every episode starts blind until the first frame. Tracking and target confirmation are the policy's job, exactly as on the physical rig.
+The detection block mirrors the real YOLO drone-detector rig, statistically: frames at ~10 Hz with inference delay, misses in streaks (marginal recall ≈ 0.956 in good conditions), box jitter proportional to box size, and confidence that sinks toward the 0.25 threshold for small far boxes. Rare false positives (precision ≈ 0.991) look like drones, overlap real confidences, and favor a couple of persistent scene spots per episode, like real YOLO ghosts — so no single confidence threshold separates real from fake. Occlusion is real, computed against the office geometry, so the boxes flicker when the target passes behind furniture. Boxes describe a frame ~2 control steps old — inference latency, exactly as on the rig, so a fast-moving target sits slightly ahead of its box. **No real sighting for 0.8 s slows blind horizontal motion to a crawl** — forward and strafe drop to 30% speed (backing off stays full speed) while climb and yaw stay free for searching (the real rig's safety interlock refuses blind charges; a ghost cannot re-arm full speed), and every episode starts blind until the first frame. Tracking and target confirmation are the policy's job, exactly as on the physical rig.
 
 ### Action semantics
 
@@ -86,6 +86,6 @@ The four values mirror the Tello SDK's `rc a b c d` sticks, in the drone's own b
 | 2 | `ud` | descend (-1) / ascend (+1) |
 | 3 | `yaw` | rotate counterclockwise (-1) / clockwise (+1) — a turn *rate*, not a heading |
 
-`[0, 0, 0, 0]` always commands a hover. Missing, non-finite, or wrong-shaped actions are canonicalized to hover. Commands pass through a dead zone and a slew limiter so they behave like physical RC input, and forward motion is cut while the drone's visual target information is stale.
+`[0, 0, 0, 0]` always commands a hover. Missing, non-finite, or wrong-shaped actions are canonicalized to hover. Commands pass through a dead zone and a slew limiter so they behave like physical RC input, and forward flight and strafing slow to a crawl while the drone's visual target information is stale.
 
 <p align="right">(<a href="#office-interceptor-top">back to top</a>)</p>

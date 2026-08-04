@@ -6,8 +6,10 @@ intercept a target drone. Actions are the four Tello RC sticks
 
 The validator flies the target: a second Tello doing seeded person-style
 waypoint legs above the furniture. The catch is a real physical hit —
-chaser-target contact ends the episode as a success. The detector emulator
-and the visual-input decision land in their own follow-up cards.
+chaser-target contact ends the episode as a success. The miner senses the
+world exactly as the physical rig does: SDK telemetry packets, an emulated
+YOLO detector, and a domain-randomized RGB camera — all seeded, all
+bit-identical across validators.
 """
 
 from __future__ import annotations
@@ -25,13 +27,12 @@ from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
+    CAMERA_EYE_FWD_M,
+    CAMERA_EYE_UP_M,
     OFFICE_CHALLENGE_TYPE,
     OFFICE_DET_CONF_FLOOR,
     OFFICE_DET_DELAY_STEPS,
-    OFFICE_DET_FOV_DIAG_DEG,
     OFFICE_DET_FP_RATE,
-    OFFICE_DET_FRAME_H,
-    OFFICE_DET_FRAME_W,
     OFFICE_DET_JITTER_SIZE,
     OFFICE_DET_MAX_BOXES,
     OFFICE_DET_MISS_PERSIST,
@@ -39,6 +40,7 @@ from swarm.constants import (
     OFFICE_DET_RECALL,
     OFFICE_DET_SEED_OFFSET,
     OFFICE_DET_STALE_SEC,
+    OFFICE_DRIFT_SEED_OFFSET,
     OFFICE_KILL_RADIUS_M,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
@@ -51,6 +53,7 @@ from swarm.constants import (
     OFFICE_TARGET_PAUSE_MAX_SEC,
     OFFICE_TARGET_PAUSE_MIN_SEC,
     OFFICE_APPEARANCE_SEED_OFFSET,
+    OFFICE_CAMERA_RES,
     OFFICE_RGB_BRIGHT_HIGH,
     OFFICE_RGB_BRIGHT_LOW,
     OFFICE_TARGET_SEED_OFFSET,
@@ -107,10 +110,7 @@ _GUARD_EVERY_STEPS = 2
 _GUARD_RANGE_M = 0.6
 _RECHECK_EVERY_STEPS = 10
 
-# Detector frame geometry, derived once from the real Tello optics: focal length
-# in pixels from the diagonal FOV, so box sizes fall out of true target size.
-_DET_DIAG_PX = math.hypot(OFFICE_DET_FRAME_W, OFFICE_DET_FRAME_H)
-_DET_FOCAL_PX = (_DET_DIAG_PX / 2.0) / math.tan(math.radians(OFFICE_DET_FOV_DIAG_DEG) / 2.0)
+# Physical target dimensions: box sizes fall out of these and the camera focal.
 _DET_TARGET_W_M = 0.18   # Tello body width seen by the camera
 _DET_TARGET_H_M = 0.08   # body + guards height
 # Detection block layout: [n_boxes, age, (cx, cy, w, h, conf) x MAX_BOXES], normalized.
@@ -136,26 +136,29 @@ def _det_marginal_to_eval_p(marginal: float, persist: float) -> float:
 
 def _det_true_conf(rng, vis: float, w_px: float) -> float:
     """Confidence degrades with visibility AND apparent size: small far boxes
-    sink toward the rig's threshold, overlapping the false-positive range."""
-    quality = (0.3 + 0.7 * vis) * float(np.clip(w_px / 40.0, 0.2, 1.0))
+    sink toward the rig's threshold, overlapping the false-positive range.
+    The size scale matches the obs camera (~128 px focal): a box under ~8 px
+    is a hard detection."""
+    quality = (0.3 + 0.7 * vis) * float(np.clip(w_px / 8.0, 0.2, 1.0))
     return OFFICE_DET_CONF_FLOOR + (_DET_CONF_TOP - OFFICE_DET_CONF_FLOOR) * (
         quality * rng.uniform(0.6, 1.0)
     )
 
 
-def _det_fp_box(rng, anchors) -> tuple:
-    """A drone-plausible ghost box: sized like the target at a fake distance,
-    usually at one of the episode's persistent anchor spots."""
+def _det_fp_box(rng, anchors, focal: float) -> tuple:
+    """A drone-plausible ghost box in the obs camera frame: sized like the
+    target at a fake distance, usually at a persistent anchor spot."""
+    res = float(OFFICE_CAMERA_RES)
     if anchors and rng.random() < _DET_FP_ANCHOR_P:
         u, v = anchors[int(rng.integers(len(anchors)))]
-        cx = u + rng.normal(0.0, 15.0)
-        cy = v + rng.normal(0.0, 12.0)
+        cx = u + rng.normal(0.0, 0.015 * res)
+        cy = v + rng.normal(0.0, 0.012 * res)
     else:
-        cx = rng.uniform(0.0, OFFICE_DET_FRAME_W)
-        cy = rng.uniform(0.0, OFFICE_DET_FRAME_H)
+        cx = rng.uniform(0.0, res)
+        cy = rng.uniform(0.0, res)
     fake_dist = rng.uniform(2.0, 12.0)
-    w = abs(_DET_FOCAL_PX * _DET_TARGET_W_M / fake_dist * (1.0 + rng.normal(0.0, 0.2)))
-    h = abs(_DET_FOCAL_PX * _DET_TARGET_H_M / fake_dist * (1.0 + rng.normal(0.0, 0.2)))
+    w = abs(focal * _DET_TARGET_W_M / fake_dist * (1.0 + rng.normal(0.0, 0.2)))
+    h = abs(focal * _DET_TARGET_H_M / fake_dist * (1.0 + rng.normal(0.0, 0.2)))
     conf = OFFICE_DET_CONF_FLOOR + (0.75 - OFFICE_DET_CONF_FLOOR) * rng.random() ** 2
     return cx, cy, w, h, conf
 
@@ -260,6 +263,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                 "SWARM_RUNTIME_IMAGE_KEY": "base",
                 "SWARM_RUNTIME_ENV_BOOTSTRAP": "sar_mode=false",
             },
+            # RGB rendering makes this the heaviest family per step (~91 ms);
+            # budgets mirror the outdoor interceptor's, which shares the horizon.
+            batch_timeout_multiplier=1.3,
+            global_eval_base_sec=600.0,
+            global_eval_per_seed_sec=300.0,
+            global_eval_cap_sec=3600.0,
         )
 
     def env_kwargs_for_task(self, task) -> dict:
@@ -289,8 +298,6 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_target_brakes = 0
         env._office_target_crashed = False
         env._collision_exempt_uids = frozenset()
-        if getattr(env, "_office_target_ctrl", None) is not None:
-            env._office_target_ctrl.reset()
         env._office_telemetry = np.zeros((n, _TELEM_DIM), dtype=np.float32)
         # Age starts beyond the stale threshold: no packet has arrived yet.
         env._office_telemetry[:, 13] = 2.0 * OFFICE_TELEM_STALE_SEC
@@ -309,16 +316,22 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_det_rng = np.random.default_rng(seed ^ OFFICE_DET_SEED_OFFSET)
         env._office_det_pending = None
         env._office_det_missed = False
-        # Steps since the TARGET was last detected; drives the forward cut. Kept
-        # env-side only — putting it in the obs would label which boxes are real.
         env._office_rgb_capture = None  # the held video frame never crosses episodes
+        # The one camera's focal length (px); env._fov is fixed per env at __init__.
+        env._office_det_focal = (float(OFFICE_CAMERA_RES) / 2.0) / math.tan(
+            math.radians(float(env._fov)) / 2.0
+        )
+        # Steps since the TARGET was last detected; drives the crawl interlock.
+        # Env-side only — putting it in the obs would label which boxes are real.
         env._office_det_real_steps = 10 * OFFICE_DET_PERIOD_STEPS
         env._office_det_fp_anchors = [
-            (env._office_det_rng.uniform(0.0, OFFICE_DET_FRAME_W),
-             env._office_det_rng.uniform(0.0, OFFICE_DET_FRAME_H))
+            (env._office_det_rng.uniform(0.0, float(OFFICE_CAMERA_RES)),
+             env._office_det_rng.uniform(0.0, float(OFFICE_CAMERA_RES)))
             for _ in range(2)
         ]
-        angle = env._office_telem_rng.uniform(0.0, 2.0 * math.pi)
+        # Own stream: the drift direction must not shift when telemetry draws change.
+        drift_rng = np.random.default_rng(seed ^ OFFICE_DRIFT_SEED_OFFSET)
+        angle = drift_rng.uniform(0.0, 2.0 * math.pi)
         env._office_vps_force = [
             OFFICE_VPS_DRIFT_FORCE_N * math.cos(angle),
             OFFICE_VPS_DRIFT_FORCE_N * math.sin(angle),
@@ -591,24 +604,29 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     # detector emulator: what the YOLO rig would say, nothing more
     # ------------------------------------------------------------------ #
     def _detector_capture(self, env) -> dict | None:
-        """Project the target into the real Tello camera frame and measure how
-        visible it is. Pure geometry + 5 rays; the frame is never rendered."""
+        """Project the target into the SAME camera the rgb observation renders
+        through (eye offset, seeded FOV, square frame) and measure visibility.
+        One camera, like the real rig: boxes land exactly on obs["rgb"].
+        Pure geometry + 5 rays; the frame is never rendered."""
         cpos = np.array(env.pos[0], dtype=float)
         rot = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
         fwd, left, up = rot[:, 0], rot[:, 1], rot[:, 2]
-        rel = env._office_target_pos - cpos
+        eye = cpos + fwd * CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
+        rel = env._office_target_pos - eye
         depth = float(np.dot(rel, fwd))
         if depth < 0.2:
             return None
-        px = _DET_FOCAL_PX * float(np.dot(rel, -left)) / depth + OFFICE_DET_FRAME_W / 2.0
-        py = _DET_FOCAL_PX * float(np.dot(rel, -up)) / depth + OFFICE_DET_FRAME_H / 2.0
-        if not (0.0 <= px <= OFFICE_DET_FRAME_W and 0.0 <= py <= OFFICE_DET_FRAME_H):
+        res = float(OFFICE_CAMERA_RES)
+        focal = env._office_det_focal
+        px = focal * float(np.dot(rel, -left)) / depth + res / 2.0
+        py = focal * float(np.dot(rel, -up)) / depth + res / 2.0
+        if not (0.0 <= px <= res and 0.0 <= py <= res):
             return None
-        w_px = _DET_FOCAL_PX * _DET_TARGET_W_M / depth
-        h_px = _DET_FOCAL_PX * _DET_TARGET_H_M / depth
+        w_px = focal * _DET_TARGET_W_M / depth
+        h_px = focal * _DET_TARGET_H_M / depth
         tpos = env._office_target_pos
         offs = (np.zeros(3), 0.09 * -left, 0.09 * left, 0.045 * up, 0.045 * -up)
-        froms = [cpos.tolist()] * len(offs)
+        froms = [eye.tolist()] * len(offs)
         tos = [(tpos + off).tolist() for off in offs]
         ignore = {int(env.DRONE_IDS[0]), int(env._office_target_uid), -1}
         hits = p.rayTestBatch(froms, tos, physicsClientId=env.CLIENT)
@@ -637,8 +655,9 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                     if truth["dist"] <= hi:
                         marginal *= factor
                         break
-                margin_x = min(truth["px"], OFFICE_DET_FRAME_W - truth["px"]) / OFFICE_DET_FRAME_W
-                margin_y = min(truth["py"], OFFICE_DET_FRAME_H - truth["py"]) / OFFICE_DET_FRAME_H
+                res = float(OFFICE_CAMERA_RES)
+                margin_x = min(truth["px"], res - truth["px"]) / res
+                margin_y = min(truth["py"], res - truth["py"]) / res
                 if min(margin_x, margin_y) < _DET_EDGE_MARGIN:
                     marginal *= _DET_EDGE_FACTOR
                 # Convert the target marginal to a per-eval p the streak chain lands on.
@@ -654,16 +673,17 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                 boxes.append((cx, cy, w, h, conf))
                 env._office_det_real_steps = OFFICE_DET_DELAY_STEPS
         if rng.random() < OFFICE_DET_FP_RATE:
-            boxes.append(_det_fp_box(rng, env._office_det_fp_anchors))
+            boxes.append(_det_fp_box(rng, env._office_det_fp_anchors, env._office_det_focal))
         # The real rig sorts by confidence; slot order must not reveal which is real.
         boxes.sort(key=lambda b: b[4], reverse=True)
         boxes = boxes[:OFFICE_DET_MAX_BOXES]
+        res = float(OFFICE_CAMERA_RES)
         for i, (cx, cy, w, h, conf) in enumerate(boxes):
             base = 2 + 5 * i
-            det[base] = np.clip(cx / OFFICE_DET_FRAME_W, 0.0, 1.0)
-            det[base + 1] = np.clip(cy / OFFICE_DET_FRAME_H, 0.0, 1.0)
-            det[base + 2] = np.clip(w / OFFICE_DET_FRAME_W, 0.0, 1.0)
-            det[base + 3] = np.clip(h / OFFICE_DET_FRAME_H, 0.0, 1.0)
+            det[base] = np.clip(cx / res, 0.0, 1.0)
+            det[base + 1] = np.clip(cy / res, 0.0, 1.0)
+            det[base + 2] = np.clip(w / res, 0.0, 1.0)
+            det[base + 3] = np.clip(h / res, 0.0, 1.0)
             det[base + 4] = conf
         det[0] = float(len(boxes))
         if boxes:

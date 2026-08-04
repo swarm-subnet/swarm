@@ -39,6 +39,8 @@ RANDOM_START = True                     # Toggle random starting point generatio
 # Camera and rendering settings
 CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
 CAMERA_FOV_VARIANCE = 2.0               # FOV randomization range (±degrees)
+CAMERA_EYE_FWD_M = 0.13                 # Camera eye offset ahead of the body center (meters)
+CAMERA_EYE_UP_M = 0.05                  # Camera eye offset above the body center (meters)
 # Depth sensor parameters
 DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
 DEPTH_FAR = 30.0                        # PyBullet camera far plane (meters)
@@ -560,6 +562,7 @@ OFFICE_TELEM_BARO_NOISE_M = 0.15            # m — barometer noise (std, measur
 OFFICE_TELEM_BARO_WALK_M = 0.005            # m — barometer random walk per packet (std)
 OFFICE_TELEM_TOF_MAX_M = 8.0                # m — ToF range limit (reads max beyond it)
 OFFICE_TELEM_SEED_OFFSET = 0x7E110          # decorrelates the telemetry rng from the map seed
+OFFICE_DRIFT_SEED_OFFSET = 0xD41F7          # decorrelates the VPS drift direction stream
 OFFICE_VPS_DRIFT_FORCE_N = 0.002            # N — slow lateral drift force emulating VPS error
 
 # Target drone: validator-flown Tello doing person-style waypoint flights.
@@ -590,15 +593,13 @@ OFFICE_APPEARANCE_SEED_OFFSET = 0xC0102     # decorrelates the appearance rng fr
 # placeholders until the calibration recordings land.
 OFFICE_DET_PERIOD_STEPS = 5                 # detector frames every N control steps (~10 Hz rig)
 OFFICE_DET_DELAY_STEPS = 2                  # inference latency: boxes describe a frame N steps old
-OFFICE_DET_FRAME_W = 960                    # px — real Tello stream the detector runs on
-OFFICE_DET_FRAME_H = 720
-OFFICE_DET_FOV_DIAG_DEG = 82.6              # real Tello camera diagonal FOV
 OFFICE_DET_RECALL = 0.956                   # measured marginal detection rate on visible targets
 OFFICE_DET_MISS_PERSIST = 0.5               # chance a miss continues next frame (streaks, not coin flips)
 OFFICE_DET_FP_RATE = 0.009                  # per-frame false-positive probability (precision emerges)
 OFFICE_DET_CONF_FLOOR = 0.25                # the real rig never emits boxes below this confidence
 OFFICE_DET_JITTER_SIZE = 0.12               # box size noise (relative std)
-OFFICE_DET_STALE_SEC = 0.8                  # no detection this long => visual stale (forward cut)
+OFFICE_DET_STALE_SEC = 0.8                  # no real-target sighting this long => visual stale
+OFFICE_STALE_SPEED_FACTOR = 0.3             # blind horizontal sticks crawl at this fraction
 OFFICE_DET_MAX_BOXES = 2                    # contract slots: the target + a rare false positive
 OFFICE_DET_SEED_OFFSET = 0xDE7EC7           # decorrelates the detector rng from the other streams
 
@@ -640,6 +641,8 @@ if OFFICE_RGB_NOISE_STD < 0.0:
     raise ValueError("OFFICE_RGB_NOISE_STD must be non-negative")
 if OFFICE_RGB_PERIOD_STEPS < 1:
     raise ValueError("OFFICE_RGB_PERIOD_STEPS must be at least 1")
+if not (0.0 <= OFFICE_STALE_SPEED_FACTOR < 1.0):
+    raise ValueError("OFFICE_STALE_SPEED_FACTOR must be in [0, 1)")
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

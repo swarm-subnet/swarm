@@ -73,7 +73,8 @@ _GROUP_BASE_RESOURCE_COSTS = {
     "type4_village": _SeedResourceCost("heavy", 1.20, 3150.0, 2),
     "type3_mountain": _SeedResourceCost("heavy", 1.25, 3300.0, 2),
     "type6_forest": _SeedResourceCost("heavy", 1.35, 3600.0, 2),
-    "type7_office": _SeedResourceCost("light", 0.85, 2000.0, 0),
+    # RGB rendering makes office the heaviest per step; costed like type2_open.
+    "type7_office": _SeedResourceCost("medium", 1.05, 2550.0, 1),
 }
 _GROUP_RESOURCE_CLASS = {
     group_name: cost.resource_class
