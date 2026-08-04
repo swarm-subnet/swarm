@@ -68,7 +68,9 @@ def test_office_env_action_space_and_state(office_env):
     obs, _ = env.reset(seed=env.task.map_seed)
     contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
     assert obs["state"].shape == tuple(contract["smoke_test_observation"]["state"]["shape"])
-    assert obs["depth"].shape == (256, 256, 1)
+    assert obs["rgb"].shape == (256, 256, 3)
+    assert obs["rgb"].dtype == np.float32
+    assert 0.0 <= float(obs["rgb"].min()) and float(obs["rgb"].max()) <= 1.0
     assert all(a.shape == (1, 4) for a in env.action_buffer)
 
 
@@ -131,6 +133,11 @@ def test_office_contract_is_telemetry_only():
     assert "angular_velocity_xyz" not in channels
     assert "search_clue_offset_xy" not in channels
     assert contract["smoke_test_observation"]["state"]["shape"] == [127]
+    # Vision is the real drone's camera: RGB, no depth sensor anywhere.
+    assert contract["observation_space"]["required_keys"] == ["rgb", "state"]
+    assert contract["observation_assembly"]["rgb"] == ["rgb_camera_office"]
+    assert contract["smoke_test_observation"]["rgb"]["shape"] == [256, 256, 3]
+    assert "depth" not in contract["observation_space"]["fields"]
 
 
 def test_office_telemetry_cadence_and_age(office_env):
@@ -388,6 +395,73 @@ def test_office_detector_deterministic():
         env.close()
         streams.append(np.stack(rows))
     assert np.array_equal(streams[0], streams[1])
+
+
+def test_office_rgb_deterministic_and_isolated():
+    """Same seed => bit-identical frames across envs AND across resets."""
+    task = task_gen.random_task(1 / 50, 91, family_id="cf_office_interceptor")
+    streams = []
+    for _ in range(2):
+        env = make_env(task)
+        obs, _ = env.reset(seed=task.map_seed)
+        rows = [obs["rgb"].copy()]
+        for _ in range(10):
+            obs, *_ = env.step(np.array([[0.0, 0.0, 0.3, 0.2]], dtype=np.float32))
+            rows.append(obs["rgb"].copy())
+        # a second reset must reproduce frame 0 exactly (held-frame cache cleared)
+        obs2, _ = env.reset(seed=task.map_seed)
+        assert np.array_equal(obs2["rgb"], rows[0])
+        env.close()
+        streams.append(np.stack(rows))
+    assert np.array_equal(streams[0], streams[1])
+
+
+def test_office_rgb_appearance_varies_by_seed():
+    frames = []
+    for seed in (91, 92):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_office_interceptor")
+        env = make_env(task)
+        obs, _ = env.reset(seed=task.map_seed)
+        frames.append(obs["rgb"].copy())
+        env.close()
+    diff = float(np.abs(frames[0] - frames[1]).mean())
+    assert diff > 0.02, f"different seeds must look different (mean diff {diff:.4f})"
+
+
+def test_office_rgb_stream_cadence_and_noise(office_env):
+    """Held frames repeat exactly; fresh captures differ (sensor noise at least)."""
+    env = office_env
+    obs, _ = env.reset(seed=env.task.map_seed)
+    hover = np.zeros((1, 4), dtype=np.float32)
+    frames = [obs["rgb"].copy()]
+    for _ in range(4):
+        obs, *_ = env.step(hover)
+        frames.append(obs["rgb"].copy())
+    # capture layout with period 2: [reset, s1, s2] share capture 0; s3 fresh; s4 holds s3
+    assert np.array_equal(frames[0], frames[1]), "reset and step 1 share the first capture"
+    assert np.array_equal(frames[1], frames[2]), "held frame must repeat byte-exact"
+    assert not np.array_equal(frames[2], frames[3]), "fresh capture must differ"
+    assert np.array_equal(frames[3], frames[4]), "the fresh capture is then held"
+
+
+def test_office_world_is_randomized(office_env):
+    import pybullet as p
+
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    plane = getattr(env, "PLANE_ID", None)
+    assert plane is not None
+    vis = p.getVisualShapeData(plane, physicsClientId=env.CLIENT)
+    assert vis and vis[0][7][3] == 0.0, "the gym plane visual must be hidden"
+    tinted = 0
+    for uid in range(p.getNumBodies(physicsClientId=env.CLIENT)):
+        body = p.getBodyUniqueId(uid, physicsClientId=env.CLIENT)
+        for shape in p.getVisualShapeData(body, physicsClientId=env.CLIENT):
+            rgba = shape[7]
+            if rgba[3] == 1.0 and any(abs(c - 1.0) > 0.01 for c in rgba[:3]):
+                tinted += 1
+                break
+    assert tinted >= 5, f"map bodies must carry per-episode tints (found {tinted})"
 
 
 def test_office_crash_pays_participation(office_env):

@@ -20,7 +20,9 @@ from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
-    OFFICE_DEPTH_RES, OFFICE_RC_DEAD_ZONE, OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD,
+    OFFICE_APPEARANCE_SEED_OFFSET, OFFICE_CAMERA_RES, OFFICE_RC_DEAD_ZONE,
+    OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD, OFFICE_RGB_NOISE_STD,
+    OFFICE_RGB_PERIOD_STEPS,
     SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE,
     LIGHT_RANDOMIZATION_ENABLED,
@@ -207,6 +209,8 @@ class MovingDroneAviary(BaseRLAviary):
             ]
         else:
             self._light_direction = [0, 0, 1]
+        # Neutral light tint; the office family overwrites it per episode.
+        self._light_color = [1.0, 1.0, 1.0]
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -246,7 +250,7 @@ class MovingDroneAviary(BaseRLAviary):
         elif self._office_rc_enabled:
             from swarm.challenge_families.office_interceptor import make_office_control
             self.ctrl = [make_office_control(self) for _ in range(self.NUM_DRONES)]
-            enhanced_width = enhanced_height = int(OFFICE_DEPTH_RES)
+            enhanced_width = enhanced_height = int(OFFICE_CAMERA_RES)
         elif self._sar_rgb_enabled:
             self._depth_far_m = float(SAR_DEPTH_MAX_M)
             self._depth_max_m = float(SAR_DEPTH_MAX_M)
@@ -759,11 +763,18 @@ class MovingDroneAviary(BaseRLAviary):
         DRONE_CAM_VIEW = self._drone_camera_view(nth_drone)
         DRONE_CAM_PRO = self._drone_proj_matrix()
 
+        # The office contract observes COLOR: keep the shaded output and pass the
+        # episode's randomized light color. Everyone else renders depth-only.
+        office = getattr(self, "_office_rc_enabled", False)
         seg_flag = p.ER_NO_SEGMENTATION_MASK
-        depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
-        if depth_only_flag is not None:
-            seg_flag |= depth_only_flag
-        [w, h, _rgb, dep, _seg] = p.getCameraImage(
+        extra_kwargs = {}
+        if office:
+            extra_kwargs["lightColor"] = self._light_color
+        else:
+            depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
+            if depth_only_flag is not None:
+                seg_flag |= depth_only_flag
+        [w, h, rgb, dep, _seg] = p.getCameraImage(
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
             shadow=0,
@@ -772,11 +783,12 @@ class MovingDroneAviary(BaseRLAviary):
             projectionMatrix=DRONE_CAM_PRO,
             lightDirection=self._light_direction,
             flags=seg_flag,
-            physicsClientId=cli
+            physicsClientId=cli,
+            **extra_kwargs
         )
-        
+
         dep = np.reshape(dep, (h, w))
-        return None, dep, None
+        return (np.reshape(rgb, (h, w, 4)) if office else None), dep, None
 
     def _get_altitude_distance(self, nth_drone: int = 0) -> float:
         """Cast single ray downward for ground/altitude detection."""
@@ -1590,6 +1602,12 @@ class MovingDroneAviary(BaseRLAviary):
         """Build the observation declared by this challenge's input contract."""
         if self.NUM_DRONES > 1:
             return self._compute_obs_multi()
+
+        if getattr(self, "_office_rc_enabled", False):
+            # The rgb channel pulls its frame from the env's held-frame stream.
+            state_vec = self._getDroneStateVector(0)
+            return assemble(self._obs_layout, self, state_vec, {})
+
         _, depth_raw, _ = self._getDroneImages(0)
 
         if depth_raw is None:
@@ -1600,10 +1618,31 @@ class MovingDroneAviary(BaseRLAviary):
 
         if self.RECORD or self.GUI:
             self.dep[0] = depth_raw
-        depth = self._process_depth(depth_raw)
         state_vec = self._getDroneStateVector(0)
-
+        depth = self._process_depth(depth_raw)
         return assemble(self._obs_layout, self, state_vec, {"depth": depth})
+
+    def _office_rgb_frame(self) -> np.ndarray:
+        """The office camera stream: a fresh frame at the stream cadence (the real
+        Tello video runs 30 fps against 50 Hz control), held between captures like
+        a real video feed. Fresh frames get the contract's imperfection layer —
+        the episode's brightness plus sensor noise keyed by the capture index, so
+        recomputing any step yields identical bytes."""
+        step_index = int(self.step_counter) // int(self.PYB_STEPS_PER_CTRL)
+        capture = step_index // OFFICE_RGB_PERIOD_STEPS
+        if getattr(self, "_office_rgb_capture", None) == capture:
+            return self._office_rgb_last
+        rgb_raw, _, _ = self._getDroneImages(0)
+        rgb = rgb_raw[:, :, :3].astype(np.float32) / 255.0
+        rgb *= self._office_rgb_bright
+        noise_rng = np.random.default_rng(
+            (int(self.task.map_seed) ^ OFFICE_APPEARANCE_SEED_OFFSET) + capture
+        )
+        rgb += noise_rng.standard_normal(rgb.shape, dtype=np.float32) * OFFICE_RGB_NOISE_STD
+        np.clip(rgb, 0.0, 1.0, out=rgb)
+        self._office_rgb_last = rgb
+        self._office_rgb_capture = capture
+        return rgb
 
     # -------- on-demand RGB (SAR families) ------------------------------- #
     def _render_onboard_rgb(self, nth_drone: int) -> np.ndarray:

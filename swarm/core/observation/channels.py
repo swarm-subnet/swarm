@@ -8,6 +8,7 @@ import numpy as np
 from swarm.constants import (
     INTERCEPTOR_DEPTH_RES,
     MAX_RAY_DISTANCE,
+    OFFICE_CAMERA_RES,
     OFFICE_DET_MAX_BOXES,
     SAR_DEPTH_RES,
     SAR_RGB_RES,
@@ -133,6 +134,11 @@ def _depth_camera(env, sv, ctx):
     return ctx["depth"]
 
 
+def _office_rgb(env, sv, ctx):
+    # Lazy: held steps return the cached frame, fresh steps render in place.
+    return env._office_rgb_frame()
+
+
 def _rgb_camera(env, sv, ctx):
     """On-demand RGB for SAR: the drone's frame if it requested one this step (and is under
     its budget), otherwise a zero frame. Populated by the env before the obs is assembled."""
@@ -231,5 +237,12 @@ OBSERVATION_CHANNELS = {
         "rgb_camera", "rgb_camera", "image", _rgb_camera,
         image_shape=lambda e: (SAR_RGB_RES, SAR_RGB_RES, 3),
         param_image_shape=(SAR_RGB_RES, SAR_RGB_RES, 3),
+    ),
+    # Held-frame colour stream for the office family (its real Tello has no depth
+    # sensor); the appearance-randomized, jittered contract observation.
+    "rgb_camera_office": SensorChannel(
+        "rgb_camera_office", "rgb_camera", "image", _office_rgb,
+        image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 3),
+        param_image_shape=(OFFICE_CAMERA_RES, OFFICE_CAMERA_RES, 3),
     ),
 }

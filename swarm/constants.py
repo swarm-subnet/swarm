@@ -534,7 +534,7 @@ OFFICE_RC_DEAD_ZONE = 0.05                  # |stick| below this counts as zero
 OFFICE_RC_SLEW_PER_SEC = 4.0                # max stick-units/s of command change (RC feel)
 OFFICE_RC_YAW_LEAD_RAD = 0.6                # max angle the yaw setpoint may lead the true yaw
 OFFICE_MAX_TILT_DEG = 60.0                  # deg — safety cutoff for the indoor drone
-OFFICE_DEPTH_RES = 256                      # env-local depth resolution (placeholder until the obs contract card)
+OFFICE_CAMERA_RES = 256                     # env-local camera resolution (the RGB observation)
 OFFICE_HORIZON_SEC = 60.0                   # episode horizon
 OFFICE_SPAWN_Z = 0.05                       # floor spawn height (no platform indoors)
 OFFICE_MIN_START_DISTANCE_M = 4.0           # min chaser-to-target spawn separation
@@ -574,6 +574,16 @@ OFFICE_TARGET_CLEAR_M = 0.15                # leg clearance radius for the ray c
 OFFICE_KILL_RADIUS_M = 0.15                 # deep-overlap anti-tunnel guard; the catch is a real hit
 OFFICE_TARGET_SELFCRASH_FORCE = 3.0         # N — world-contact force that counts as a target crash
 OFFICE_TARGET_SEED_OFFSET = 0x0FF1CE        # decorrelates the target rng from map + telemetry
+
+# Appearance randomization: every episode the office wears a different seeded
+# skin (tints, light, camera jitter) so policies learn geometry, not color.
+OFFICE_TINT_LOW = 0.35                      # per-channel body tint drawn from [low, 1.0]
+OFFICE_RGB_BRIGHT_LOW = 0.8                 # per-episode camera brightness factor range
+OFFICE_RGB_BRIGHT_HIGH = 1.1
+OFFICE_RGB_NOISE_STD = 0.02                 # per-frame sensor noise std, [0,1] units
+OFFICE_RGB_PERIOD_STEPS = 2                 # fresh camera frame every N control steps (~25 Hz;
+                                            # the real stream is 30 fps, held frames between)
+OFFICE_APPEARANCE_SEED_OFFSET = 0xC0102     # decorrelates the appearance rng from the other streams
 
 # Detector emulator: statistical stand-in for the real YOLO drone detector
 # (mAP50 0.97, P 0.991, R 0.956). Marginals are measured; the bin shapes are
@@ -622,6 +632,14 @@ if not (0.0 < OFFICE_DET_RECALL <= 1.0) or not (0.0 <= OFFICE_DET_FP_RATE < 1.0)
     raise ValueError("OFFICE_DET recall/false-positive rates invalid")
 if OFFICE_DET_STALE_SEC <= OFFICE_DET_PERIOD_STEPS * SIM_DT:
     raise ValueError("OFFICE_DET_STALE_SEC must survive a normal frame gap")
+if not (0.0 < OFFICE_TINT_LOW < 1.0):
+    raise ValueError("OFFICE_TINT_LOW must be in (0, 1)")
+if not (0.0 < OFFICE_RGB_BRIGHT_LOW <= OFFICE_RGB_BRIGHT_HIGH):
+    raise ValueError("OFFICE_RGB brightness bounds invalid")
+if OFFICE_RGB_NOISE_STD < 0.0:
+    raise ValueError("OFFICE_RGB_NOISE_STD must be non-negative")
+if OFFICE_RGB_PERIOD_STEPS < 1:
+    raise ValueError("OFFICE_RGB_PERIOD_STEPS must be at least 1")
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

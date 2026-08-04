@@ -1100,17 +1100,17 @@
       "observation_space": {
         "type": "dict",
         "required_keys": [
-          "depth",
+          "rgb",
           "state"
         ],
         "fields": {
-          "depth": {
+          "rgb": {
             "type": "tensor",
             "dtype": "float32",
             "shape": [
               256,
               256,
-              1
+              3
             ],
             "minimum": 0.0,
             "maximum": 1.0
@@ -1135,8 +1135,8 @@
         }
       },
       "observation_assembly": {
-        "depth": [
-          "depth_camera_md"
+        "rgb": [
+          "rgb_camera_office"
         ],
         "state": [
           "tello_attitude",
@@ -1173,11 +1173,11 @@
         ]
       },
       "smoke_test_observation": {
-        "depth": {
+        "rgb": {
           "shape": [
             256,
             256,
-            1
+            3
           ],
           "fill": 0.25
         },

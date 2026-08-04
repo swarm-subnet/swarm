@@ -50,9 +50,13 @@ from swarm.constants import (
     OFFICE_TARGET_MIN_LEG_M,
     OFFICE_TARGET_PAUSE_MAX_SEC,
     OFFICE_TARGET_PAUSE_MIN_SEC,
+    OFFICE_APPEARANCE_SEED_OFFSET,
+    OFFICE_RGB_BRIGHT_HIGH,
+    OFFICE_RGB_BRIGHT_LOW,
     OFFICE_TARGET_SEED_OFFSET,
     OFFICE_TARGET_SELFCRASH_FORCE,
     OFFICE_TARGET_SPEED,
+    OFFICE_TINT_LOW,
     OFFICE_TELEM_ACCEL_BIAS,
     OFFICE_TELEM_ACCEL_NOISE,
     OFFICE_TELEM_ATTITUDE_NOISE_DEG,
@@ -269,6 +273,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env.MAX_TILT_RAD = math.radians(OFFICE_MAX_TILT_DEG)
         env._office_target_uid = None
         env._office_target_ctrl = None
+        # Safe default so the obs path works before the first spawn.
+        env._office_rgb_bright = 1.0
 
     def reset_env_state(self, env) -> None:
         n = env.NUM_DRONES
@@ -305,6 +311,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_det_missed = False
         # Steps since the TARGET was last detected; drives the forward cut. Kept
         # env-side only — putting it in the obs would label which boxes are real.
+        env._office_rgb_capture = None  # the held video frame never crosses episodes
         env._office_det_real_steps = 10 * OFFICE_DET_PERIOD_STEPS
         env._office_det_fp_anchors = [
             (env._office_det_rng.uniform(0.0, OFFICE_DET_FRAME_W),
@@ -370,7 +377,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         # Ramming the target is the catch, not a chaser crash.
         env._collision_exempt_uids = frozenset({uid})
 
-        build_office_map(seed=seed, cli=cli)
+        map_info = build_office_map(seed=seed, cli=cli)
+        self._apply_appearance(env, map_info, seed)
 
         place_rng = random.Random((seed ^ OFFICE_TARGET_SEED_OFFSET ^ 0x9A7C) & 0xFFFFFFFF)
         start = self._clear_spawn(env, np.array(env.task.start, dtype=float),
@@ -393,6 +401,24 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         p.resetBaseVelocity(uid, [0, 0, 0], [0, 0, 0], physicsClientId=cli)
         env._office_target_pos = goal.copy()
         env._office_target_ctrl = make_office_control(env)
+
+    def _apply_appearance(self, env, map_info: dict, seed: int) -> None:
+        """Per-episode seeded skin: the policy must learn geometry, not color.
+        Draw order is fixed — reordering changes every episode's look."""
+        rng = random.Random((seed ^ OFFICE_APPEARANCE_SEED_OFFSET) & 0xFFFFFFFF)
+        cli = env.CLIENT
+        plane = getattr(env, "PLANE_ID", None)
+        if plane is not None:
+            # The gym plane z-fights the office floor in color renders.
+            p.changeVisualShape(plane, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli)
+        for name in sorted(map_info["bodies"]):
+            tint = [rng.uniform(OFFICE_TINT_LOW, 1.0) for _ in range(3)] + [1.0]
+            p.changeVisualShape(map_info["bodies"][name], -1, rgbaColor=tint,
+                                physicsClientId=cli)
+        env._light_direction = [rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0),
+                                rng.uniform(0.35, 1.0)]
+        env._light_color = [rng.uniform(0.55, 1.0) for _ in range(3)]
+        env._office_rgb_bright = rng.uniform(OFFICE_RGB_BRIGHT_LOW, OFFICE_RGB_BRIGHT_HIGH)
 
     def protected_body_uids(self, env) -> set:
         uid = getattr(env, "_office_target_uid", None)

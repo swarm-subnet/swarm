@@ -1,8 +1,9 @@
 """Builder for the office indoor map (Tello interceptor family).
 
 Loads the baked office digital twin: 7 mesh groups whose lighting is
-pre-baked into texture atlases, so the map renders identically on every
-validator with plain ambient light and zero run-time light computation.
+pre-baked into texture atlases. The family layers seeded per-episode
+appearance on top (body tints and render light), so identical rendering
+across validators comes from the shared seed, not a fixed look.
 
 The map is fully static and deterministic: no RNG is consumed, every body
 is spawned at mass 0 from committed assets.

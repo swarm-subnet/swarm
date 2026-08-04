@@ -4,7 +4,7 @@
 
 Indoor air-to-air pursuit: hunt a target drone inside a real office, flying like a real Tello.
 
-Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. The target is a second Tello flown by the validator: seeded person-style waypoint legs with hover pauses, cruising at 1.2 m/s in a 1.3–2.6 m band above the furniture. **The catch is a literal hit** — the episode succeeds only on physical contact with the target's 17.6 cm body, not proximity. The family is incubating while its vision input is finalized.
+Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m office digital twin. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. Vision is the drone's forward RGB camera (the real Tello has no depth sensor), **domain-randomized every episode**: wall and furniture colors, lighting, and camera imperfections all change with the seed, so colors are unreliable and geometry is the only stable signal. The target is a second Tello flown by the validator: seeded person-style waypoint legs with hover pauses, cruising at 1.2 m/s in a 1.3–2.6 m band above the furniture. **The catch is a literal hit** — the episode succeeds only on physical contact with the target's 17.6 cm body, not proximity.
 
 ---
 
@@ -37,11 +37,11 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | office |
 
-### Observation: `dict` with keys `depth`, `state`
+### Observation: `dict` with keys `rgb`, `state`
 
 | Key | Dtype | Shape | Range / layout |
 |---|---|---|---|
-| `depth` | float32 | (256, 256, 1) | [0, 1] |
+| `rgb` | float32 | (256, 256, 3) | [0, 1] |
 | `state` | float32 | (127) at evaluation settings | `attitude_pitch_roll_sincos_yaw` → `body_velocity_xyz` → `body_acceleration_xyz` → `altitude_tof_height_baro_age_valid` → `detection_n_age_boxes2x5` → `action_history` |
 
 ### Action: float32 tensor, shape (4)
@@ -54,6 +54,10 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | 3 | `yaw` | -1 | 1 |
 
 <!-- io-tables:end -->
+
+### RGB camera semantics
+
+`rgb` is the drone's forward camera, 256×256×3 in [0, 1]. Fresh frames arrive at ~25 Hz (the real Tello stream runs 30 fps against 50 Hz control) and are held between captures like a real video feed. Every episode the office wears a different seeded skin — per-group color tints, light direction and color — and every frame carries the camera's imperfection layer: a per-episode brightness shift plus per-frame sensor noise. Appearance is derived from the map seed, so all validators render bit-identical frames; scoring never reads the image, so the randomization cannot change a result.
 
 ### State semantics
 
