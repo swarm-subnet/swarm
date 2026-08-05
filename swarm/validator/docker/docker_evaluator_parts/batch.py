@@ -1279,11 +1279,6 @@ async def _ensure_host_speed_factor(self, worker_count: int):
     return await _run_host_baseline_calibration(self, requested)
 
 
-async def _ensure_worker_speed_factor(self, worker_id: int):
-    """Compatibility wrapper; scoring uses the host-level factor."""
-    return await _ensure_host_speed_factor(self, max(1, int(worker_id) + 1))
-
-
 def _extract_submission(model_path: Path, submission_dir: Path) -> None:
     """Extract the miner's zip, flattening a single wrapping directory if present."""
     with zipfile.ZipFile(model_path, "r") as zf:

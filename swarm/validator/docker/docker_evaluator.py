@@ -42,7 +42,6 @@ class DockerSecureEvaluator:
 
 DockerSecureEvaluator.__init__ = lifecycle.__init__
 DockerSecureEvaluator._check_docker_available = lifecycle._check_docker_available
-DockerSecureEvaluator._env_truthy = staticmethod(lifecycle._env_truthy)
 DockerSecureEvaluator._docker_env_overrides = classmethod(
     lifecycle._docker_env_overrides
 )
