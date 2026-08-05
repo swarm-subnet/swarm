@@ -41,11 +41,6 @@ def profile_digest() -> str:
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
-STRUCTURE_FAILURE_REASON_PREFIXES: tuple[str, ...] = (
-    "missing_required_file:",
-    "forbidden_suffix:",
-)
-
 
 def check_safety(
     zip_path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES

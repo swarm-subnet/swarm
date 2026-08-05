@@ -130,14 +130,9 @@ def classify_model_validity(inspection_results: Dict) -> Tuple[str, str]:
             "Missing drone_agent.py - RPC agent submission required",
         )
 
-    if "malicious_findings" in inspection_results:
-        return "fake", "Security violation: Malicious code detected"
-
     if "error" in inspection_results:
         if "Security violation" in inspection_results["error"]:
             return "fake", inspection_results["error"]
-        if "Missing drone_agent.py" in inspection_results["error"]:
-            return "missing_drone_agent", inspection_results["error"]
         if "Dangerous executable" in inspection_results["error"]:
             return "fake", inspection_results["error"]
         return "fake", f"Inspection error: {inspection_results['error']}"

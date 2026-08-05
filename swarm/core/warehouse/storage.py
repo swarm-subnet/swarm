@@ -171,7 +171,6 @@ def build_storage_racks(
         barrel_layout_profile_cache=barrel_layout_profile_cache,
         box_layout_profile_cache=box_layout_profile_cache,
     )
-    _yaw_key = _layout_helpers.yaw_key
     _oriented_xy_cached = _layout_helpers.oriented_xy_cached
     _barrel_layout_profile_for_slot_yaw = (
         _layout_helpers.barrel_layout_profile_for_slot_yaw
@@ -605,7 +604,6 @@ def build_storage_racks(
 
     rack_yaw = float(main_rack_yaw)
 
-    _cluster_level_area = _support_helpers.cluster_level_area
     _rack_support_surface_levels_m = _support_helpers.rack_support_surface_levels_m
 
     level_count = max(1, int(STORAGE_RACK_PALLET_LEVELS))

@@ -39,7 +39,7 @@ from .helpers_parts.geometry import clear_build_caches
 from .layout import build_area_layout_markers
 from .loading import build_loading_staging, build_loading_trucks, build_overhead_cranes
 from .office import build_embedded_office
-from .operations import (
+from .operations_parts import (
     build_forklift_parking,
     build_loading_operation_forklifts,
     build_machining_cell_layout,
@@ -48,9 +48,6 @@ from .operations import (
 from .shared import (
     MeshKitLoader,
     normalize_mtl_texture_paths,
-)
-from .shared import (
-    first_existing_path as first_existing_path,
 )
 from .storage import build_storage_racks
 from .structure import (
