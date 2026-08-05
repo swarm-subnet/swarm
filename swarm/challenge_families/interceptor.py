@@ -439,9 +439,6 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
             return True
         return False
 
-    def clue_offset(self, env: Any, state_vec: Any) -> Any:
-        return env._search_area_center - state_vec[0:3]
-
     def build_info(self, env: Any) -> dict[str, Any]:
         return {
             "intercept_caught": bool(getattr(env, "_intercept_caught", False)),

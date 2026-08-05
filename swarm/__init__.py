@@ -29,11 +29,6 @@ __spec_version__ = (
     + (1 * int(version_split[2]))
 )
 
-src_path = Path(__file__).resolve().parent / "src"
-
-if src_path.is_dir() and str(src_path) not in sys.path:
-    sys.path.append(str(src_path))
-
 try:
     import pkg_resources  # noqa: F401
 except ImportError:

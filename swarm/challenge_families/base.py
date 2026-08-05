@@ -249,9 +249,6 @@ class ChallengeFamilyRuntime:
         _ = env
         return {}
 
-    def clue_offset(self, env: Any, state_vec: Any) -> Any:
-        return env.GOAL_POS - state_vec[0:3]
-
     def screening_template(self) -> tuple[dict[str, Any], ...]:
         return ()
 
