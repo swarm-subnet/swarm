@@ -183,13 +183,18 @@ def _calculate_interceptor_target_time(task: "MapTask") -> float:
 
 def _calculate_office_target_time(task) -> float:
     """Par time for the office interceptor: cross the spawn gap at the RC speed
-    cap plus a fixed slack for locating the target, capped under the horizon."""
+    cap plus a fixed slack for locating the target, capped under the horizon.
+    A seed whose target flees closes slower, so its par stretches to match."""
     from swarm.constants import OFFICE_ACQUIRE_SLACK_SEC, OFFICE_RC_SPEED
+    from swarm.challenge_families.office_interceptor import office_target_profile
 
+    profile = office_target_profile(int(task.map_seed))
+    evasive = profile["flee_frac"] if profile["react_range"] > 0.0 else 0.0
+    closing = OFFICE_RC_SPEED * (1.0 - 0.5 * evasive)
     sx, sy, _ = task.start
     gx, gy, _ = task.goal
     gap = math.hypot(gx - sx, gy - sy)
-    par = gap / OFFICE_RC_SPEED + OFFICE_ACQUIRE_SLACK_SEC
+    par = gap / closing + OFFICE_ACQUIRE_SLACK_SEC
     return min(par, 0.95 * float(task.horizon))
 
 

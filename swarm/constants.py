@@ -565,13 +565,25 @@ OFFICE_TELEM_SEED_OFFSET = 0x7E110          # decorrelates the telemetry rng fro
 OFFICE_DRIFT_SEED_OFFSET = 0xD41F7          # decorrelates the VPS drift direction stream
 OFFICE_VPS_DRIFT_FORCE_N = 0.002            # N — slow lateral drift force emulating VPS error
 
-# Target drone: validator-flown Tello doing person-style waypoint flights.
-OFFICE_TARGET_SPEED = 1.2                   # m/s — casual pilot; chaser stick-full is 3.0
+# Target drone: validator-flown Tello with a seeded per-episode personality.
+OFFICE_TARGET_SPEED_MIN = 0.7               # m/s — lazy pilot; chaser stick-full is 3.0
+OFFICE_TARGET_SPEED_MAX = 1.8               # m/s — brisk pilot
 OFFICE_TARGET_ALT_MIN_M = 1.3               # flight band above the furniture, below the ceiling
 OFFICE_TARGET_ALT_MAX_M = 2.6
-OFFICE_TARGET_PAUSE_MIN_SEC = 0.5           # hover pause at each waypoint, like released sticks
+OFFICE_TARGET_PAUSE_MIN_SEC = 0.5           # hover pause at a waypoint, like released sticks
 OFFICE_TARGET_PAUSE_MAX_SEC = 1.5
-OFFICE_TARGET_MIN_LEG_M = 2.0               # min waypoint hop so flight reads as legs, not jitter
+OFFICE_TARGET_LEG_MIN_LOW = 1.2             # m — profile min-leg range: jittery short hops...
+OFFICE_TARGET_LEG_MIN_HIGH = 3.0            # m — ...to long cruising legs
+OFFICE_TARGET_AWARE_PROB = 0.65             # fraction of seeds whose target reacts to the chaser
+OFFICE_TARGET_REACT_MIN_M = 1.5             # chaser distance that spooks an aware target
+OFFICE_TARGET_REACT_MAX_M = 5.0
+OFFICE_TARGET_FLEE_MIN = 0.55               # flee speed as a fraction of OFFICE_RC_SPEED
+OFFICE_TARGET_FLEE_MAX = 0.65               # -> 1.65-1.95 m/s, always under the chaser's 3.0
+OFFICE_TARGET_BRAKE_DECEL = 2.4             # m/s^2 — calibrated PID braking (0.3 m from 1.2 m/s)
+OFFICE_TARGET_GUARD_SAFETY = 2.0            # brake guard = this x physical stopping distance
+OFFICE_TARGET_TURN_SPEED = 0.5              # m/s — corner entry speed: turn overshoot stays inside
+OFFICE_TARGET_ACCEL = 2.0                   # m/s^2 — speed build after each corner
+OFFICE_TARGET_DODGE_REPLAN_STEPS = 25       # >= 0.5 s between dodge replans (human reaction)
 OFFICE_TARGET_ARRIVE_M = 0.25               # waypoint arrival radius
 OFFICE_TARGET_CLEAR_M = 0.15                # leg clearance radius for the ray checks
 OFFICE_KILL_RADIUS_M = 0.15                 # deep-overlap anti-tunnel guard; the catch is a real hit
@@ -618,14 +630,26 @@ if not (0.0 <= OFFICE_TELEM_DROP_PROB < 1.0):
     raise ValueError("OFFICE_TELEM_DROP_PROB must be in [0, 1)")
 if OFFICE_TELEM_STALE_SEC <= OFFICE_TELEM_PERIOD_STEPS * SIM_DT:
     raise ValueError("OFFICE_TELEM_STALE_SEC must survive a normal packet gap")
-if not (0.0 < OFFICE_TARGET_SPEED < OFFICE_RC_SPEED):
-    raise ValueError("OFFICE_TARGET_SPEED must be positive and below the chaser cap")
+if not (0.0 < OFFICE_TARGET_SPEED_MIN <= OFFICE_TARGET_SPEED_MAX < OFFICE_RC_SPEED):
+    raise ValueError("OFFICE_TARGET cruise band must be positive and below the chaser cap")
+if not (0.0 < OFFICE_TARGET_FLEE_MIN <= OFFICE_TARGET_FLEE_MAX < 1.0):
+    raise ValueError("OFFICE_TARGET flee fractions must keep flee speed below the chaser cap")
+if not (0.0 <= OFFICE_TARGET_AWARE_PROB <= 1.0):
+    raise ValueError("OFFICE_TARGET_AWARE_PROB must be in [0, 1]")
+if not (0.0 < OFFICE_TARGET_REACT_MIN_M <= OFFICE_TARGET_REACT_MAX_M):
+    raise ValueError("OFFICE_TARGET react range bounds invalid")
+if OFFICE_TARGET_BRAKE_DECEL <= 0.0 or OFFICE_TARGET_GUARD_SAFETY < 1.5:
+    raise ValueError("OFFICE_TARGET brake guard must keep at least a 1.5x stopping margin")
+if OFFICE_TARGET_DODGE_REPLAN_STEPS < 1:
+    raise ValueError("OFFICE_TARGET_DODGE_REPLAN_STEPS must be at least 1")
+if not (0.0 < OFFICE_TARGET_TURN_SPEED <= OFFICE_TARGET_SPEED_MIN) or OFFICE_TARGET_ACCEL <= 0.0:
+    raise ValueError("OFFICE_TARGET corner ramp must start at or below the slowest cruise")
 if not (0.0 < OFFICE_TARGET_ALT_MIN_M < OFFICE_TARGET_ALT_MAX_M):
     raise ValueError("OFFICE_TARGET altitude band invalid")
 if not (0.0 <= OFFICE_TARGET_PAUSE_MIN_SEC <= OFFICE_TARGET_PAUSE_MAX_SEC):
     raise ValueError("OFFICE_TARGET pause bounds invalid")
-if OFFICE_TARGET_MIN_LEG_M <= OFFICE_TARGET_ARRIVE_M:
-    raise ValueError("OFFICE_TARGET_MIN_LEG_M must exceed the arrival radius")
+if not (OFFICE_TARGET_ARRIVE_M < OFFICE_TARGET_LEG_MIN_LOW <= OFFICE_TARGET_LEG_MIN_HIGH):
+    raise ValueError("OFFICE_TARGET min-leg range must exceed the arrival radius")
 if OFFICE_DET_PERIOD_STEPS < 1 or not (0 <= OFFICE_DET_DELAY_STEPS < OFFICE_DET_PERIOD_STEPS):
     raise ValueError("OFFICE_DET period/delay invalid")
 if not (0.0 < OFFICE_DET_RECALL <= 1.0) or not (0.0 <= OFFICE_DET_FP_RATE < 1.0):

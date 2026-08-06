@@ -3,6 +3,7 @@
 import math
 
 import numpy as np
+import pybullet as p
 import pytest
 
 from swarm.constants import (
@@ -244,6 +245,118 @@ def test_office_target_flight_deterministic_and_clear():
     assert trajs[0][:, 2].min() > 0.5, "target must stay well above the floor"
 
 
+def test_office_target_profile_deterministic_and_varied():
+    from swarm.challenge_families.office_interceptor import office_target_profile
+
+    from swarm.constants import OFFICE_TARGET_FLEE_MAX, OFFICE_TARGET_FLEE_MIN
+
+    assert office_target_profile(55) == office_target_profile(55)
+    profiles = [office_target_profile(s) for s in range(40)]
+    cruises = [prof["cruise"] for prof in profiles]
+    assert max(cruises) - min(cruises) > 0.6, "seeds must deal a real speed spread"
+    assert any(prof["react_range"] == 0.0 for prof in profiles), "some stay oblivious"
+    assert any(prof["react_range"] > 0.0 for prof in profiles), "some get spooked"
+    pauses = [prof["pause_prob"] for prof in profiles]
+    assert max(pauses) - min(pauses) > 0.5
+    for prof in profiles:
+        assert OFFICE_TARGET_FLEE_MIN <= prof["flee_frac"] <= OFFICE_TARGET_FLEE_MAX
+
+
+def test_office_target_flees_when_approached(office_env):
+    from swarm.constants import OFFICE_TARGET_DODGE_REPLAN_STEPS
+
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    env._office_target_profile = dict(env._office_target_profile,
+                                      react_range=4.0, flee_frac=0.65, pause_prob=1.0)
+    hover = np.zeros((1, 4), dtype=np.float32)
+    for _ in range(30):
+        env.step(hover)  # let the flight settle before the scare
+    # Park the chaser body right next to the target, inside the spook range.
+    tpos = env._office_target_pos.copy()
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]),
+                                      (tpos + np.array([0.8, 0.0, 0.0])).tolist(),
+                                      [0, 0, 0, 1], physicsClientId=env.CLIENT)
+    fled = False
+    for _ in range(2 * OFFICE_TARGET_DODGE_REPLAN_STEPS):
+        env.step(hover)
+        wp = env._office_target_wp
+        cpos = np.asarray(env.pos[0], dtype=float)
+        tpos = env._office_target_pos
+        if wp is not None and float(np.dot(wp[:2] - tpos[:2], tpos[:2] - cpos[:2])) > 0.0:
+            fled = True
+            break
+    assert fled, "a spooked target must pick a waypoint away from the chaser"
+
+
+def test_office_target_oblivious_ignores_chaser(office_env):
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    env._office_target_profile = dict(env._office_target_profile, react_range=0.0)
+    hover = np.zeros((1, 4), dtype=np.float32)
+    for _ in range(30):
+        env.step(hover)
+    tpos = env._office_target_pos.copy()
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]),
+                                      (tpos + np.array([0.8, 0.0, 0.0])).tolist(),
+                                      [0, 0, 0, 1], physicsClientId=env.CLIENT)
+    before = env._office_target_last_dodge
+    for _ in range(60):
+        env.step(hover)
+    assert env._office_target_last_dodge == before, "oblivious targets never dodge"
+
+
+def test_office_target_pause_prob_respected(office_env):
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    env._office_target_profile = dict(env._office_target_profile,
+                                      pause_prob=0.0, react_range=0.0)
+    hover = np.zeros((1, 4), dtype=np.float32)
+    paused = 0
+    for _ in range(600):
+        env.step(hover)
+        if env._office_target_pause > 0.0:
+            paused += 1
+    assert paused == 0, "pause_prob 0 must never hover at a waypoint"
+    env.reset(seed=env.task.map_seed)
+    env._office_target_profile = dict(env._office_target_profile,
+                                      pause_prob=1.0, react_range=0.0)
+    paused = 0
+    for _ in range(600):
+        env.step(hover)
+        if env._office_target_pause > 0.0:
+            paused += 1
+    assert paused > 0, "pause_prob 1 must pause at reached waypoints"
+
+
+def test_office_target_brake_guard_scales():
+    """The production guard must cover the physical stopping distance with the
+    full safety factor at every legal speed, cadence travel included."""
+    from swarm.challenge_families.office_interceptor import _brake_guard_range
+    from swarm.constants import (
+        OFFICE_TARGET_BRAKE_DECEL, OFFICE_TARGET_GUARD_SAFETY, SIM_DT,
+    )
+
+    for v in (0.7, 1.2, 1.8, 1.95):
+        guard = _brake_guard_range(v, SIM_DT)
+        stop = v * v / (2.0 * OFFICE_TARGET_BRAKE_DECEL)
+        cadence_travel = v * 2 * SIM_DT
+        assert guard - cadence_travel >= OFFICE_TARGET_GUARD_SAFETY * stop - 1e-9
+
+
+def test_office_spawn_rejects_sealed_room_and_floor_objects(office_env):
+    """The two placement traps found in batch testing: the sealed corridor room
+    (no flight path in or out) and flat floor objects under a spawn point."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    fam = env.family_runtime
+    # Sealed corridor along the north wall vs the open middle of the room.
+    assert not fam._nav_in_main(env, np.array([8.0, 6.2, 1.4]))
+    assert fam._nav_in_main(env, np.array([8.0, 3.0, 1.4]))
+    # A floor point on top of a flat object: only the narrowphase probe sees it.
+    assert not fam._point_is_clear(env, np.array([8.23, 4.15, 0.05]), floor=True)
+
+
 def test_office_catch_is_physical_contact(office_env):
     """A scripted pursuit must end with a real ram: success, no chaser collision."""
     from swarm.core.moving_drone import world_to_body
@@ -251,9 +364,10 @@ def test_office_catch_is_physical_contact(office_env):
     env = office_env
     env.reset(seed=env.task.map_seed)
     # Fixed route around the tall cabinet on this seed's line, then home in.
+    # Full sticks (3.0 m/s) outrun every legal target profile (flee tops at 1.95).
     route = [np.array([4.8, 2.6, 1.8]), np.array([8.0, 2.6, 1.8]), np.array([10.0, 3.5, 1.8])]
     leg = 0
-    for _ in range(1200):
+    for _ in range(3000):
         cpos = env.pos[0].copy()
         if cpos[2] < 1.2 and env._time_alive < 2.0:
             act = [0.0, 0.0, 0.5, 0.0]
@@ -264,7 +378,7 @@ def test_office_catch_is_physical_contact(office_env):
             rel = aim - cpos
             yaw = float(env.rpy[0][2])
             f, r, _ = world_to_body(rel, yaw)
-            act = [np.clip(r, -0.6, 0.6), np.clip(f, -0.6, 0.6), np.clip(rel[2] * 1.5, -0.6, 0.5), 0.0]
+            act = [np.clip(r, -1.0, 1.0), np.clip(f, -1.0, 1.0), np.clip(rel[2] * 1.5, -0.6, 0.5), 0.0]
         _, _, term, trunc, _ = env.step(np.array([act], dtype=np.float32))
         if term or trunc:
             break
@@ -323,13 +437,14 @@ def test_office_detector_recall_emerges(office_env):
     streaks included (this catches the streak-chain bias that once capped it)."""
     env = office_env
     env.reset(seed=env.task.map_seed)
-    fam = env.family_runtime
     frames = hits = 0
     for i in range(3000):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
         if env._office_telem_step % OFFICE_DET_PERIOD_STEPS == 0:
             truth = env._office_det_pending
-            if truth is not None and truth["vis"] >= 0.8 and truth["dist"] <= 8.0:
+            if (truth is not None and truth["vis"] >= 0.8 and truth["dist"] <= 5.0
+                    and min(truth["px"], 256 - truth["px"],
+                            truth["py"], 256 - truth["py"]) / 256.0 >= 0.1):
                 frames += 1
                 if obs["state"][15] > 0:
                     hits += 1
@@ -355,7 +470,6 @@ def test_office_detector_confidence_not_an_oracle():
 
 def test_office_detector_occluded_means_silent(office_env):
     """A target parked behind the column must be invisible to the emulator."""
-    import pybullet as p
 
     env = office_env
     env.reset(seed=env.task.map_seed)
@@ -434,7 +548,6 @@ def test_office_rgb_stream_cadence_and_noise(office_env):
 
 
 def test_office_world_is_randomized(office_env):
-    import pybullet as p
 
     env = office_env
     env.reset(seed=env.task.map_seed)

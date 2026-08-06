@@ -4,8 +4,9 @@ The miner flies a Tello-class drone inside the fixed office map and must
 intercept a target drone. Actions are the four Tello RC sticks
 [lr, fb, ud, yaw]; there is no GPS-style world-frame control.
 
-The validator flies the target: a second Tello doing seeded person-style
-waypoint legs above the furniture. The catch is a real physical hit —
+The validator flies the target: a second Tello whose personality — cruise
+speed, pause habits, leg style, and on most seeds a spook range it flees
+from — is dealt by the seed. The catch is a real physical hit —
 chaser-target contact ends the episode as a success. The miner senses the
 world exactly as the physical rig does: SDK telemetry packets, an emulated
 YOLO detector, and a domain-randomized RGB camera — all seeded, all
@@ -45,20 +46,33 @@ from swarm.constants import (
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
     OFFICE_MIN_START_DISTANCE_M,
+    OFFICE_RC_SPEED,
+    OFFICE_TARGET_ACCEL,
     OFFICE_TARGET_ALT_MAX_M,
     OFFICE_TARGET_ALT_MIN_M,
     OFFICE_TARGET_ARRIVE_M,
+    OFFICE_TARGET_AWARE_PROB,
+    OFFICE_TARGET_BRAKE_DECEL,
     OFFICE_TARGET_CLEAR_M,
-    OFFICE_TARGET_MIN_LEG_M,
+    OFFICE_TARGET_DODGE_REPLAN_STEPS,
+    OFFICE_TARGET_FLEE_MAX,
+    OFFICE_TARGET_FLEE_MIN,
+    OFFICE_TARGET_GUARD_SAFETY,
+    OFFICE_TARGET_LEG_MIN_HIGH,
+    OFFICE_TARGET_LEG_MIN_LOW,
     OFFICE_TARGET_PAUSE_MAX_SEC,
     OFFICE_TARGET_PAUSE_MIN_SEC,
+    OFFICE_TARGET_REACT_MAX_M,
+    OFFICE_TARGET_REACT_MIN_M,
+    OFFICE_TARGET_SPEED_MAX,
+    OFFICE_TARGET_SPEED_MIN,
+    OFFICE_TARGET_TURN_SPEED,
     OFFICE_APPEARANCE_SEED_OFFSET,
     OFFICE_CAMERA_RES,
     OFFICE_RGB_BRIGHT_HIGH,
     OFFICE_RGB_BRIGHT_LOW,
     OFFICE_TARGET_SEED_OFFSET,
     OFFICE_TARGET_SELFCRASH_FORCE,
-    OFFICE_TARGET_SPEED,
     OFFICE_TINT_LOW,
     OFFICE_TELEM_ACCEL_BIAS,
     OFFICE_TELEM_ACCEL_NOISE,
@@ -104,11 +118,18 @@ _TEMPLATE_SLOT = {
 
 _tello_assets_ready = False
 
-# Target in-flight reflexes: the short forward guard runs often (it must beat the
-# ~0.3 m stopping distance from cruise), the full-leg recheck reroutes early.
+# Target reflexes: the guard range grows as v^2/2a, the full-leg recheck reroutes early.
 _GUARD_EVERY_STEPS = 2
-_GUARD_RANGE_M = 0.6
 _RECHECK_EVERY_STEPS = 10
+
+# Placement navigation grid (fixed map => computed once per process).
+_NAV_PITCH = 0.45
+_NAV_Z_LEVELS = (1.4, 2.0)
+_NAV_MAIN = None
+
+# Waypoint sampling: flee candidates first, then any clear exit so a cornered target moves.
+_WP_FLEE_TRIES = 64
+_WP_ANY_TRIES = 32
 
 # Physical target dimensions: box sizes fall out of these and the camera focal.
 _DET_TARGET_W_M = 0.18   # Tello body width seen by the camera
@@ -240,6 +261,28 @@ def office_point(rng: random.Random, z_range: tuple) -> tuple:
     return (x, y, rng.uniform(*z_range))
 
 
+def _brake_guard_range(speed: float, dt: float) -> float:
+    """Guard distance: safety x v^2/2a stopping distance + travel between checks."""
+    return (OFFICE_TARGET_GUARD_SAFETY * speed * speed
+            / (2.0 * OFFICE_TARGET_BRAKE_DECEL) + speed * _GUARD_EVERY_STEPS * dt)
+
+
+def office_target_profile(map_seed: int) -> dict:
+    """The seed deals the target its personality for the episode. Pure function of
+    the seed so the reward side can rebuild it without an env; own salt so the
+    draw is independent of the flight and placement streams."""
+    rng = random.Random((int(map_seed) ^ OFFICE_TARGET_SEED_OFFSET ^ 0x9E12) & 0xFFFFFFFF)
+    aware = rng.random() < OFFICE_TARGET_AWARE_PROB
+    return {
+        "cruise": rng.uniform(OFFICE_TARGET_SPEED_MIN, OFFICE_TARGET_SPEED_MAX),
+        "pause_prob": rng.uniform(0.0, 1.0),
+        "leg_min": rng.uniform(OFFICE_TARGET_LEG_MIN_LOW, OFFICE_TARGET_LEG_MIN_HIGH),
+        "react_range": rng.uniform(OFFICE_TARGET_REACT_MIN_M, OFFICE_TARGET_REACT_MAX_M)
+        if aware else 0.0,
+        "flee_frac": rng.uniform(OFFICE_TARGET_FLEE_MIN, OFFICE_TARGET_FLEE_MAX),
+    }
+
+
 class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     """Indoor Tello interceptor inside the fixed office map."""
 
@@ -282,6 +325,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env.MAX_TILT_RAD = math.radians(OFFICE_MAX_TILT_DEG)
         env._office_target_uid = None
         env._office_target_ctrl = None
+        env._office_map_uids = ()
         # Safe default so the obs path works before the first spawn.
         env._office_rgb_bright = 1.0
 
@@ -289,6 +333,9 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         n = env.NUM_DRONES
         seed = int(getattr(env.task, "map_seed", 0))
         env._office_target_rng = random.Random((seed ^ OFFICE_TARGET_SEED_OFFSET) & 0xFFFFFFFF)
+        env._office_target_profile = office_target_profile(seed)
+        env._office_target_last_dodge = -(10 ** 9)
+        env._office_target_leg_step = 0
         env._office_target_wp = None
         env._office_target_pause = 0.0
         env._office_target_forces = [0.0, 0.0, 0.0, 0.0]
@@ -345,28 +392,103 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         wall margins, so an unlucky seed can land inside furniture)."""
         origin = pos + np.array([0.0, 0.0, 0.15 if floor else 0.0])
         dirs = [(0.4, 0, 0), (-0.4, 0, 0), (0, 0.4, 0), (0, -0.4, 0)]
+        froms = [origin.tolist()] * len(dirs)
         if floor:
-            # Long up-ray: a takeoff column blocked by a furniture overhang is no spawn.
-            dirs.append((0, 0, 1.2))
-        else:
-            dirs += [(0, 0, 0.4), (0, 0, -0.4)]
+            # Drone-width up-ray ring: the whole takeoff column must clear overhangs.
+            for ox, oy in ((0, 0), (0.15, 0), (-0.15, 0), (0, 0.15), (0, -0.15)):
+                froms.append([origin[0] + ox, origin[1] + oy, origin[2]])
+                dirs.append((0, 0, 1.2))
+            # Low ring at body height: furniture feet sit below the main rays.
+            low = pos + np.array([0.0, 0.0, 0.03])
+            for d in ((0.4, 0, 0), (-0.4, 0, 0), (0, 0.4, 0), (0, -0.4, 0)):
+                froms.append(low.tolist())
+                dirs.append(d)
+            tos = [(np.asarray(f) + np.asarray(d)).tolist() for f, d in zip(froms, dirs)]
+            if not self._rays_clear(env, froms, tos,
+                                    extra_ignore=(int(env.DRONE_IDS[0]),)):
+                return False
+            # Rays cannot see a flat floor object under the point; probe with the body.
+            cli = env.CLIENT
+            cid = int(env.DRONE_IDS[0])
+            keep_pos, keep_quat = p.getBasePositionAndOrientation(cid, physicsClientId=cli)
+            p.resetBasePositionAndOrientation(cid, pos.tolist(), keep_quat,
+                                              physicsClientId=cli)
+            touching = any(
+                p.getClosestPoints(cid, uid, 0.02, physicsClientId=cli)
+                for uid in getattr(env, "_office_map_uids", ())
+            )
+            p.resetBasePositionAndOrientation(cid, keep_pos, keep_quat,
+                                              physicsClientId=cli)
+            return not touching
+        dirs += [(0, 0, 0.4), (0, 0, -0.4)]
         froms = [origin.tolist()] * len(dirs)
         tos = [(origin + np.asarray(d)).tolist() for d in dirs]
         return self._rays_clear(env, froms, tos, extra_ignore=(int(env.DRONE_IDS[0]),))
 
+    def _nav_main_component(self, env) -> tuple:
+        """Grid the flight volume once and label its connected components with the
+        family's own leg clearance. The office is fixed geometry, so the result is
+        cached for the process and identical on every validator. Placement uses it
+        to keep tasks out of sealed rooms (the office has a closed corridor)."""
+        global _NAV_MAIN
+        if _NAV_MAIN is not None:
+            return _NAV_MAIN
+        xs = np.arange(OFFICE_X_RANGE[0] + 0.5, OFFICE_X_RANGE[1] - 0.5, _NAV_PITCH)
+        ys = np.arange(OFFICE_Y_RANGE[0] + 0.5, OFFICE_Y_RANGE[1] - 0.5, _NAV_PITCH)
+        cells = [(ix, iy, iz) for ix in range(len(xs)) for iy in range(len(ys))
+                 for iz in range(len(_NAV_Z_LEVELS))]
+        index = {c: i for i, c in enumerate(cells)}
+        nodes = [(float(xs[ix]), float(ys[iy]), float(_NAV_Z_LEVELS[iz]))
+                 for ix, iy, iz in cells]
+        parent = list(range(len(cells)))
+
+        def find(a):
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        for (ix, iy, iz), i in index.items():
+            for nb in ((ix + 1, iy, iz), (ix, iy + 1, iz), (ix, iy, iz + 1)):
+                j = index.get(nb)
+                if j is not None and self._leg_is_clear(
+                        env, np.array(nodes[i]), np.array(nodes[j]), ignore_chaser=True):
+                    parent[find(i)] = find(j)
+        comps: dict = {}
+        for i in range(len(nodes)):
+            comps.setdefault(find(i), []).append(i)
+        main = max(comps.values(), key=len)
+        _NAV_MAIN = (nodes, frozenset(main))
+        return _NAV_MAIN
+
+    def _nav_in_main(self, env, pos: np.ndarray) -> bool:
+        """True when a clear leg connects pos to a main-component nav node
+        among the nearest few grid cells."""
+        nodes, main = self._nav_main_component(env)
+        order = sorted(range(len(nodes)),
+                       key=lambda i: float(np.linalg.norm(np.array(nodes[i]) - pos)))
+        for i in order[:8]:
+            if i in main and self._leg_is_clear(env, pos, np.array(nodes[i]),
+                                                ignore_chaser=True):
+                return True
+        return False
+
     def _clear_spawn(self, env, pos: np.ndarray, *, floor: bool, rng,
                      anchor: np.ndarray) -> np.ndarray:
-        """First clear point, preferring candidates that keep the task's start-goal
-        separation band; falls back to any clear point rather than none."""
+        """First clear point in the main open component, preferring candidates that
+        keep the task's start-goal separation band; falls back to any clear point."""
         z_range = (pos[2], pos[2]) if floor else (OFFICE_TARGET_ALT_MIN_M, OFFICE_TARGET_ALT_MAX_M)
         fallback = None
         for i in range(65):
             if self._point_is_clear(env, pos, floor=floor):
-                gap = float(np.linalg.norm(pos[:2] - anchor[:2]))
-                if OFFICE_MIN_START_DISTANCE_M <= gap <= OFFICE_MAX_START_DISTANCE_M:
-                    return pos
-                if fallback is None:
-                    fallback = pos
+                # A drone placed in a sealed room makes the task impossible.
+                probe = np.array([pos[0], pos[1], _NAV_Z_LEVELS[0]]) if floor else pos
+                if self._nav_in_main(env, probe):
+                    gap = float(np.linalg.norm(pos[:2] - anchor[:2]))
+                    if OFFICE_MIN_START_DISTANCE_M <= gap <= OFFICE_MAX_START_DISTANCE_M:
+                        return pos
+                    if fallback is None:
+                        fallback = pos
             if i < 64:
                 pos = np.array(office_point(rng, z_range), dtype=float)
         return fallback if fallback is not None else pos
@@ -388,6 +510,9 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._collision_exempt_uids = frozenset({uid})
 
         map_info = build_office_map(seed=seed, cli=cli)
+        # Spawn-probe obstacles: every map body except the floor the drone rests on.
+        env._office_map_uids = tuple(int(u) for name, u in sorted(map_info["bodies"].items())
+                                     if name != "floor") + (int(map_info["window_plug"]),)
         self._apply_appearance(env, map_info, seed)
 
         place_rng = random.Random((seed ^ OFFICE_TARGET_SEED_OFFSET ^ 0x9A7C) & 0xFFFFFFFF)
@@ -461,7 +586,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         }
 
     # ------------------------------------------------------------------ #
-    # target flight: seeded person-style waypoint legs with hover pauses
+    # target flight: seeded personality — waypoint legs, pauses, spook response
     # ------------------------------------------------------------------ #
     def _leg_is_clear(self, env, start: np.ndarray, end: np.ndarray,
                       ignore_chaser: bool = False) -> bool:
@@ -469,8 +594,9 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
 
         At planning time the chaser counts as an obstacle: a person would steer
         around a parked drone, and it stops a park-in-the-flight-path free catch.
-        The in-flight guards ignore the chaser — dodging an approaching miner
-        would be escape logic, which this target deliberately has none of."""
+        The in-flight guards ignore the chaser — escape behavior lives in the
+        seeded spook response, never in the clearance checks, so parking in the
+        flight path stays a valid catch tactic."""
         cli = env.CLIENT
         d = end - start
         n = float(np.linalg.norm(d))
@@ -494,9 +620,13 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                 return False
         return True
 
-    def _target_waypoint(self, env, tpos: np.ndarray) -> tuple:
+    def _target_waypoint(self, env, tpos: np.ndarray,
+                         flee_from: np.ndarray | None = None) -> tuple:
         """Advance the waypoint state machine. Returns (anchor, moving): the point
-        to track and whether to fly toward it (False = hover at it)."""
+        to track and whether to fly toward it (False = hover at it). A spooked
+        target passes flee_from: legs away from it are preferred, but a cornered
+        target takes any clear exit rather than freezing."""
+        profile = env._office_target_profile
         wp = env._office_target_wp
         if wp is not None:
             if env._office_target_pause > 0.0:
@@ -505,21 +635,28 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                     env._office_target_wp = None  # pick a fresh leg next step
                 return wp, False
             if float(np.linalg.norm(tpos - wp)) < OFFICE_TARGET_ARRIVE_M:
-                env._office_target_pause = env._office_target_rng.uniform(
-                    OFFICE_TARGET_PAUSE_MIN_SEC, OFFICE_TARGET_PAUSE_MAX_SEC
-                )
-                return wp, False
-            return wp, True
+                if env._office_target_rng.random() < profile["pause_prob"]:
+                    env._office_target_pause = env._office_target_rng.uniform(
+                        OFFICE_TARGET_PAUSE_MIN_SEC, OFFICE_TARGET_PAUSE_MAX_SEC
+                    )
+                    return wp, False
+                env._office_target_wp = None  # restless pilot: straight to a new leg
+            else:
+                return wp, True
         rng = env._office_target_rng
-        for _ in range(64):
+        for i in range(_WP_FLEE_TRIES + _WP_ANY_TRIES):
             cand = np.array(
                 office_point(rng, (OFFICE_TARGET_ALT_MIN_M, OFFICE_TARGET_ALT_MAX_M)),
                 dtype=float,
             )
-            if float(np.linalg.norm(cand - tpos)) < OFFICE_TARGET_MIN_LEG_M:
+            if float(np.linalg.norm(cand - tpos)) < profile["leg_min"]:
                 continue
+            if flee_from is not None and i < _WP_FLEE_TRIES:
+                if float(np.dot(cand[:2] - tpos[:2], tpos[:2] - flee_from[:2])) <= 0.0:
+                    continue
             if self._leg_is_clear(env, tpos, cand):
                 env._office_target_wp = cand
+                env._office_target_leg_step = env._office_target_step
                 return cand, True
         return tpos.copy(), False  # boxed in this step: hover and retry next step
 
@@ -533,18 +670,53 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         tvel, tang = p.getBaseVelocity(uid, physicsClientId=cli)
         tpos = np.asarray(tpos, dtype=float)
         env._office_target_step += 1
-        anchor, moving = self._target_waypoint(env, tpos)
+        profile = env._office_target_profile
+        cpos = np.asarray(env.pos[0], dtype=float)
+        spooked = (profile["react_range"] > 0.0
+                   and float(np.linalg.norm(cpos - tpos)) < profile["react_range"])
+        # A spooked brisk pilot never slows down to flee.
+        speed = (max(profile["flee_frac"] * OFFICE_RC_SPEED, profile["cruise"])
+                 if spooked else profile["cruise"])
+        flee_from = cpos if spooked else None
+        if spooked and (env._office_target_step - env._office_target_last_dodge
+                        >= OFFICE_TARGET_DODGE_REPLAN_STEPS):
+            wp = env._office_target_wp
+            # Rebuilding a still-good flee leg would reset the ramp and cap the flee speed.
+            if (env._office_target_pause > 0.0 or wp is None
+                    or float(np.dot(wp[:2] - tpos[:2], tpos[:2] - cpos[:2])) <= 0.0):
+                # Spooked pilot: drop any hover and bolt away from the chaser.
+                env._office_target_last_dodge = env._office_target_step
+                env._office_target_pause = 0.0
+                env._office_target_wp = None
+        anchor, moving = self._target_waypoint(env, tpos, flee_from)
+        # Corner ramp: slow into turns, keep the speed component already down the leg.
+        leg_age = (env._office_target_step - env._office_target_leg_step) * dt
+        leg_vec = anchor - tpos
+        n0 = float(np.linalg.norm(leg_vec))
+        carry = max(0.0, float(np.dot(np.asarray(tvel, dtype=float),
+                                      leg_vec / n0))) if n0 > 1e-6 else 0.0
+        speed = min(speed, max(OFFICE_TARGET_TURN_SPEED, carry)
+                    + OFFICE_TARGET_ACCEL * leg_age)
         # In-flight reflexes: legs are planned clear, but the PID can drift off the
         # line, so the flight is re-checked from where the drone ACTUALLY is.
         if moving and env._office_target_step % _RECHECK_EVERY_STEPS == 0:
             if not self._leg_is_clear(env, tpos, anchor, ignore_chaser=True):
                 env._office_target_wp = None  # reroute smoothly, no stop
-                anchor, moving = self._target_waypoint(env, tpos)
+                anchor, moving = self._target_waypoint(env, tpos, flee_from)
         if moving and env._office_target_step % _GUARD_EVERY_STEPS == 0:
+            guard = _brake_guard_range(speed, dt)
             direction = anchor - tpos
             n = float(np.linalg.norm(direction))
-            ahead = tpos + direction / n * min(_GUARD_RANGE_M, n) if n > 1e-6 else anchor
-            if not self._leg_is_clear(env, tpos, ahead, ignore_chaser=True):
+            ahead = tpos + direction / n * min(guard, n) if n > 1e-6 else anchor
+            blocked = not self._leg_is_clear(env, tpos, ahead, ignore_chaser=True)
+            # Guard along actual motion too: a clear plan can still clip a door frame.
+            v = np.asarray(tvel, dtype=float)
+            vn = float(np.linalg.norm(v))
+            if not blocked and vn > 0.2:
+                blocked = not self._leg_is_clear(
+                    env, tpos, tpos + v / vn * _brake_guard_range(vn, dt),
+                    ignore_chaser=True)
+            if blocked:
                 # Something inside braking distance: stop now, replan next step.
                 env._office_target_wp = None
                 env._office_target_brakes += 1
@@ -552,7 +724,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         if moving:
             direction = anchor - tpos
             n = float(np.linalg.norm(direction))
-            desired = direction / n * min(OFFICE_TARGET_SPEED, n / dt) if n > 1e-6 else np.zeros(3)
+            desired = direction / n * min(speed, n / dt) if n > 1e-6 else np.zeros(3)
             look = tpos + desired * dt * 5.0
         else:
             desired, look = np.zeros(3), anchor
