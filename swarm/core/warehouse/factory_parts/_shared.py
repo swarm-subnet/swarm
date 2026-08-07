@@ -38,7 +38,6 @@ from ..shared import MeshKitLoader, first_existing_path
 # ---------------------------------------------------------------------------
 FACTORY_SIZE_X = 40.0
 FACTORY_SIZE_Y = 20.0
-FLOOR_HALF_Z = 0.03
 CONVEYOR_SCALE = 0.95
 CONVEYOR_ELEVATION_M = 0.62
 EDGE_MARGIN_M = 3.0
@@ -131,7 +130,6 @@ SWARM_DRONE_SCALE_MULT = 1.38
 # Path generation tuning
 # ---------------------------------------------------------------------------
 PATH_MIN_SEG_CELLS = 2
-PATH_MAX_SEG_CELLS = 8
 PATH_MIN_TURNS = 10
 PATH_MIN_CELLS = 95
 PATH_BUILD_ATTEMPTS = 320
@@ -147,8 +145,6 @@ PATH_FALLBACK_EMPTY_BINS_MAX = 3
 LANE_EMPTY_GAP_CHOICES = (2, 2, 3, 3, 4)
 TOP_PHASE_EDGE_INSET_MAX_CELLS = 0
 VERTICAL_PHASE_EXTRA_SKIP_CHANCE = 0.30
-
-FLOOR_RGBA = (0.64, 0.67, 0.75, 1.0)
 
 # ---------------------------------------------------------------------------
 # Module-level caches

@@ -138,10 +138,6 @@ class MeshKitLoader:
             )
         return self.texture_id
 
-    def model_min_z(self, model_name, scale):
-        min_v, _ = self._bounds(model_name, scale)
-        return min_v[2]
-
     def _spawn_basis(self, model_name, scale):
         sxyz = self._scale_xyz(scale)
         key = (model_name, sxyz)

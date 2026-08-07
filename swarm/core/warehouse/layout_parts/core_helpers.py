@@ -29,8 +29,6 @@ def make_core_layout_helpers(
     personnel_span,
     personnel_along,
     opposite_personnel_side,
-    critical_zone_keepout_rect,
-    critical_door_blocking_zones,
     rng,
 ):
     def _scaled_dims_for_zone(name, base_sx, base_sy, shrink):
@@ -109,38 +107,6 @@ def make_core_layout_helpers(
         if hi < lo:
             return None
         return float(lo), float(hi)
-
-    def _is_at_preferred_opposite_end(candidate):
-        if opposite_personnel_side not in WALL_SLOTS:
-            return True
-        attached_wall = _candidate_attached_wall(candidate)
-        if attached_wall != opposite_personnel_side:
-            return False
-        if attached_wall in ("north", "south"):
-            along_val = float(candidate.get("cx", 0.0))
-        else:
-            along_val = float(candidate.get("cy", 0.0))
-        targets = _opposite_wall_end_targets(
-            attached_wall,
-            float(candidate.get("sx", 0.0)),
-            float(candidate.get("sy", 0.0)),
-        )
-        if targets is None:
-            return False
-        lo, hi = targets
-        if abs(hi - lo) <= 1e-6:
-            return True
-        target_along = hi if personnel_along <= 0.0 else lo
-        tol = max(
-            0.6,
-            0.10
-            * (
-                float(candidate.get("sx", 0.0))
-                if attached_wall in ("north", "south")
-                else float(candidate.get("sy", 0.0))
-            ),
-        )
-        return abs(along_val - target_along) <= tol
 
     def _is_at_wall_end(candidate, end_tol_factor=0.16):
         attached_wall = _candidate_attached_wall(candidate)
@@ -388,25 +354,16 @@ def make_core_layout_helpers(
                 return cand
         return None
 
-    def _loading_zone_covers_doors(candidate):
-        if critical_zone_keepout_rect is None:
-            return False
-        if str(candidate.get("name", "")).upper() not in critical_door_blocking_zones:
-            return False
-        return _rects_overlap(candidate, critical_zone_keepout_rect, 0.0)
-
     return SimpleNamespace(
         scaled_dims_for_zone=_scaled_dims_for_zone,
         candidate_attached_wall=_candidate_attached_wall,
         make_candidate=_make_candidate,
         is_far_from_personnel_door_on_same_wall=_is_far_from_personnel_door_on_same_wall,
         opposite_wall_end_targets=_opposite_wall_end_targets,
-        is_at_preferred_opposite_end=_is_at_preferred_opposite_end,
         is_at_wall_end=_is_at_wall_end,
         can_place_static=_can_place_static,
         can_place=_can_place,
         place_on_wall=_place_on_wall,
         place_anywhere=_place_anywhere,
         force_place_zone=_force_place_zone,
-        loading_zone_covers_doors=_loading_zone_covers_doors,
     )

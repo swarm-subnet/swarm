@@ -15,55 +15,6 @@ from swarm.validator.runtime_telemetry import (
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 
 
-def _queue_item(model_path: Path, model_hash: str = "hash1", uid: int = 1) -> dict:
-    return {
-        "uid": uid,
-        "model_hash": model_hash,
-        "model_path": str(model_path),
-        "status": "pending",
-        "registered": False,
-        "screening_recorded": False,
-        "score_recorded": False,
-        "retry_attempts": 0,
-        "next_retry_at": 0,
-        "last_error": "",
-        "created_at": 0,
-        "updated_at": 0,
-    }
-
-
-def _validator(epoch: int = 7) -> SimpleNamespace:
-    async def _post_heartbeat(**kwargs):
-        _ = kwargs
-        return {"ok": True}
-
-    async def _post_seed_scores_batch(**kwargs):
-        _ = kwargs
-        return {"recorded": True}
-
-    async def _authorize_task(*args, **kwargs):
-        _ = args, kwargs
-        return {
-            "authorized": True,
-            "reason": "ok",
-            "task_id": 1,
-            "decision_version": 1,
-        }
-
-    return SimpleNamespace(
-        seed_manager=SimpleNamespace(
-            epoch_number=epoch,
-            get_benchmark_seeds=lambda: [700001],
-        ),
-        backend_api=SimpleNamespace(
-            post_heartbeat=_post_heartbeat,
-            post_seed_scores_batch=_post_seed_scores_batch,
-            authorize_task=_authorize_task,
-        ),
-        metagraph=SimpleNamespace(hotkeys=["hotkey0", "hotkey1", "hotkey2"]),
-    )
-
-
 def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
     model_path = tmp_path / "UID_9.zip"
     model_path.write_bytes(b"zip-bytes")

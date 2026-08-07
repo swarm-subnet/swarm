@@ -56,6 +56,5 @@ _MESH_COLLISION_SHAPE_CACHE = {}
 _RESOLVED_MESH_PATH_CACHE = {}
 _ORIENTED_XY_SIZE_CACHE = {}
 _MODEL_BOUNDS_CACHE = {}
-_STORAGE_RACK_SUPPORT_LEVELS_CACHE = {}
 
 __all__ = [name for name in globals() if not name.startswith('__')]

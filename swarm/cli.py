@@ -16,9 +16,7 @@ from typing import Any, Optional, Sequence
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.domain_model import (
-    BENCHMARK_GROUP_TO_CHALLENGE_TYPE,
     CHALLENGE_FAMILY_IDS,
-    CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
     get_challenge_family_definition,
 )
 from swarm.core.submission_policy import validate_submission_zip
@@ -101,9 +99,6 @@ REPORT_FIELD_PATTERNS = {
 }
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-BENCH_GROUP_ORDER = list(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
-BENCH_GROUP_TO_TYPE = dict(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
-TYPE_LABELS = dict(CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE)
 
 
 @dataclass
@@ -440,13 +435,6 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"Benchmark failed: {exc}", file=sys.stderr)
         return 1
-
-
-def _group_label(group_name: str) -> str:
-    challenge_type = BENCH_GROUP_TO_TYPE.get(str(group_name))
-    if challenge_type is None:
-        return str(group_name)
-    return TYPE_LABELS.get(int(challenge_type), str(group_name))
 
 
 def _collect_packable_files(source_dir: Path) -> list[Path]:

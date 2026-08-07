@@ -106,7 +106,6 @@ def find_spawn_xy(
     challenge_type: int,
     body_tags,
     bounds: Optional[float] = None,
-    on_attempt=None,
     near: Optional[Tuple[float, float]] = None,
     max_dist: Optional[float] = None,
 ) -> Tuple[float, float, SurfaceHit]:
@@ -131,8 +130,6 @@ def find_spawn_xy(
                 if loose is not None:
                     any_support = (x, y, loose)
             last_reason = "no_support_hit"
-            if on_attempt is not None:
-                on_attempt(attempt, "no_support_hit", x, y)
             continue
         if grounded is None:
             grounded = (x, y, hit)
@@ -141,16 +138,12 @@ def find_spawn_xy(
             top_z=HOVER_COLUMN_TOP_Z * column_scale,
         ):
             last_reason = "hover_column_blocked"
-            if on_attempt is not None:
-                on_attempt(attempt, "hover_column_blocked", x, y)
             continue
         if not _sphere_obstacle_clear(
             cli, x, y, hit.surface_z, body_tags=body_tags, support_uid=hit.support_uid,
             radius=NO_TOUCH_SPHERE_RADIUS * sphere_scale,
         ):
             last_reason = "no_touch_sphere_blocked"
-            if on_attempt is not None:
-                on_attempt(attempt, "no_touch_sphere_blocked", x, y)
             continue
         slope = max(
             terrain_slope_deg(cli, x, y, hit.surface_z, radius=0.4),
@@ -161,8 +154,6 @@ def find_spawn_xy(
             if flattest is None or slope < flattest[0]:
                 flattest = (slope, (x, y, hit))
             last_reason = "too_steep"
-            if on_attempt is not None:
-                on_attempt(attempt, "too_steep", x, y)
             continue
         if near is not None and max_dist is not None:
             dist = ((x - near[0]) ** 2 + (y - near[1]) ** 2) ** 0.5
@@ -170,11 +161,7 @@ def find_spawn_xy(
                 if fallback is None or dist < fallback[0]:
                     fallback = (dist, (x, y, hit))
                 last_reason = "beyond_max_dist"
-                if on_attempt is not None:
-                    on_attempt(attempt, "beyond_max_dist", x, y)
                 continue
-        if on_attempt is not None:
-            on_attempt(attempt, "accept", x, y)
         return x, y, hit
     if fallback is not None:
         return fallback[1]

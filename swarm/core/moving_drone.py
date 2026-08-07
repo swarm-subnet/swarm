@@ -1331,10 +1331,6 @@ class MovingDroneAviary(BaseRLAviary):
                 np.zeros((self.NUM_DRONES, action_dim), dtype=np.float32)
             )
 
-    def _spawn_task_world(self):
-        """Backward-compatible SAR wrapper retained for legacy tests."""
-        self.family_runtime.spawn_task_world(self)
-
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """Compute incremental reward based on current state."""
@@ -1400,9 +1396,6 @@ class MovingDroneAviary(BaseRLAviary):
             roll=float(roll),
             pitch=float(pitch),
         )
-
-    def _sar_infeasible(self) -> bool:
-        return self._legacy_sar_runtime().legacy_sar_infeasible(self)
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):

@@ -245,15 +245,6 @@ class _RamWorkerScheduler:
     def enabled(self) -> bool:
         return self.max_worker_cap > 1
 
-    def machine_summary(self) -> Dict[str, Any]:
-        return {
-            "requested_workers": int(self.requested_workers),
-            "machine_vcpus": int(self.machine_vcpus),
-            "machine_total_ram_mb": float(self.machine_total_ram_mb),
-            "ram_reserve_mb": float(self.ram_reserve_mb),
-            "max_worker_cap": int(self.max_worker_cap),
-        }
-
     def cost_model(self) -> List[Dict[str, Any]]:
         return _resource_model_rows()
 

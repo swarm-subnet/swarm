@@ -166,47 +166,6 @@ class AssetLoader:
         self.shelf_levels_cache[key] = row_levels
         return row_levels
 
-    def _create_urdf(self, filename, scale):
-        key = (filename, scale)
-        if key in self.urdf_cache:
-            return self.urdf_cache[key]
-        mesh_path = self._asset_path(filename).replace("\\", "/")
-        name = os.path.splitext(filename)[0]
-        urdf_path = os.path.join(
-            self.temp_dir, f"{name}_s{str(scale).replace('.', '_')}.urdf"
-        )
-        roll, pitch, yaw = MESH_UP_FIX_RPY
-        urdf = f"""<?xml version="1.0" ?>
-<robot name="{name}">
-  <link name="baseLink">
-    <contact>
-      <lateral_friction value="1.0"/>
-    </contact>
-    <inertial>
-      <origin rpy="0 0 0" xyz="0 0 0"/>
-      <mass value="0.0"/>
-      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
-    </inertial>
-    <visual>
-      <origin rpy="{roll} {pitch} {yaw}" xyz="0 0 0"/>
-      <geometry>
-        <mesh filename="{mesh_path}" scale="{scale} {scale} {scale}"/>
-      </geometry>
-    </visual>
-    <collision>
-      <origin rpy="{roll} {pitch} {yaw}" xyz="0 0 0"/>
-      <geometry>
-        <mesh filename="{mesh_path}" scale="{scale} {scale} {scale}"/>
-      </geometry>
-    </collision>
-  </link>
-</robot>
-"""
-        with open(urdf_path, "w", encoding="utf-8") as f:
-            f.write(urdf)
-        self.urdf_cache[key] = urdf_path
-        return urdf_path
-
     def _create_urdf_for_mesh(self, mesh_path, mesh_tag, scale, rgba):
         scale_xyz = self._normalize_scale(scale)
         mesh_key = mesh_path.replace("\\", "/")
@@ -552,22 +511,6 @@ class AssetLoader:
                 mesh_tag=f"{mesh_tag_base}_flat",
                 scale=scale_xyz,
                 rgba=OFFICE_WALL_FLAT_RGBA[:3],
-            )
-            return p.loadURDF(
-                urdf_path,
-                [spawn_x, spawn_y, spawn_z],
-                quat,
-                useFixedBase=True,
-                physicsClientId=self.cli,
-            )
-        if OFFICE_FLOOR_FORCE_FLAT_COLOR and filename == ASSETS["floor_tile"]:
-            mesh_path = self._asset_path(filename).replace("\\", "/")
-            mesh_tag_base = self._sanitize_name(os.path.splitext(filename)[0])
-            urdf_path = self._create_urdf_for_mesh(
-                mesh_path=mesh_path,
-                mesh_tag=f"{mesh_tag_base}_flat",
-                scale=scale_xyz,
-                rgba=OFFICE_FLOOR_FLAT_RGBA[:3],
             )
             return p.loadURDF(
                 urdf_path,

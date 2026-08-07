@@ -461,9 +461,6 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
             "task_version": str(getattr(env.task, "version", "")),
         }
 
-    def clue_offset(self, env: Any, state_vec: Any) -> Any:
-        return env._search_area_center - state_vec[0:3]
-
     def legacy_sar_drone_state(self, env: Any) -> tuple[Any, Any]:
         return _sar_drone_state(env)
 
