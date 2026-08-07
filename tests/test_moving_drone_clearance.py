@@ -259,6 +259,7 @@ def test_update_min_clearance_skips_floor_body(monkeypatch) -> None:
     env._start_platform_uids = []
     env._collision = False
     env._min_clearance_episode = SAFETY_DISTANCE_SAFE
+    env._takeoff_cleared = None
     env.pos = np.array([[0.0, 0.0, 0.7]], dtype=float)
 
     floor_aabb = ((-50.0, -50.0, -0.002), (50.0, 50.0, 0.102))
@@ -311,6 +312,7 @@ def test_update_min_clearance_counts_floor_outside_eligible_type(monkeypatch) ->
     env._start_platform_uids = []
     env._collision = False
     env._min_clearance_episode = SAFETY_DISTANCE_SAFE
+    env._takeoff_cleared = None
     env.pos = np.array([[0.0, 0.0, 0.7]], dtype=float)
 
     def _fake_aabb(uid, physicsClientId=None):
