@@ -76,6 +76,8 @@ class _ProcessBatchRequest:
     task_total: int
     runtime_profile: Optional[Dict[str, Any]] = None
     host_speed_factor: Optional[float] = None
+    # Workers are separate processes, so both measurements travel with the request.
+    host_reference_cpu_ms_per_act: Optional[float] = None
     model_image: Optional[str] = None
 
 
@@ -84,7 +86,7 @@ class _ProcessBatchResult:
     worker_id: int
     batch_index: int
     batch_indices: List[int]
-    results: List[Tuple[int, bool, float, float, str]]
+    results: List[Tuple[int, bool, float, float, str, Dict[str, Any]]]
     elapsed_sec: float
     error: Optional[str] = None
     traceback_text: Optional[str] = None

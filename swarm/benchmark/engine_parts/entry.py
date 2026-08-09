@@ -78,6 +78,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         if args.relax_timeouts:
             overrides = _apply_relaxed_overrides()
+            print(
+                f"[{_ts()}] Relaxed timeouts: worker sizing and act budgets are wider "
+                f"than a validator's, so the compute column does not reflect scoring"
+            )
 
         print(f"[{_ts()}] === FULL EVALUATION BENCHMARK ===")
         print(f"[{_ts()}] Model: {model_path}")

@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from swarm.protocol import MapTask
 
 from swarm.constants import (
+    COMPUTE_FULL_UNITS,
+    COMPUTE_WEIGHT,
+    COMPUTE_ZERO_UNITS,
     HOVER_SEC,
     INTERCEPTOR_ACQUIRE_SLACK_SEC,
     INTERCEPTOR_MINER_SPEED,
@@ -53,6 +56,8 @@ from swarm.constants import (
 __all__ = [
     "PARTICIPATION_REASONS",
     "PARTICIPATION_REWARD",
+    "apply_compute_multiplier",
+    "compute_multiplier",
     "_calculate_interceptor_target_time",
     "_calculate_safety_term",
     "_calculate_sar_target_time",
@@ -75,6 +80,47 @@ PARTICIPATION_REASONS = frozenset({
     "TIMEOUT",
 })
 PARTICIPATION_REWARD = 0.01
+
+
+def compute_multiplier(compute_units: Optional[float]) -> float:
+    """How much of an earned score survives the compute it cost.
+
+    ``compute_units`` is the CPU the miner burned per act over the seed divided
+    by the same figure for the baseline model on that host, so the hardware
+    cancels and every validator reaches the same verdict. The curve is
+    logarithmic on purpose: each halving of compute returns the same slice of
+    score, so a model that is already lean still gains by getting leaner.
+    ``None`` means the seed was never metered and must not be charged.
+    """
+    if compute_units is None:
+        return 1.0
+    units = float(compute_units)
+    # An unmeasured cost is not a free model; an infinite one hits the floor.
+    if math.isnan(units) or units <= 0.0:
+        return 1.0
+    if units <= COMPUTE_FULL_UNITS:
+        efficiency = 1.0
+    elif units >= COMPUTE_ZERO_UNITS:
+        efficiency = 0.0
+    else:
+        span = math.log(COMPUTE_ZERO_UNITS) - math.log(COMPUTE_FULL_UNITS)
+        efficiency = (math.log(COMPUTE_ZERO_UNITS) - math.log(units)) / span
+    return 1.0 - COMPUTE_WEIGHT + COMPUTE_WEIGHT * efficiency
+
+
+def apply_compute_multiplier(score: float, compute_units: Optional[float]) -> float:
+    """Charge compute against what the flight earned, never against the floor.
+
+    A seed that only ever earned ``PARTICIPATION_REWARD`` has nothing to give
+    back, so failures are left exactly as they were; scaling the earned portion
+    also stops a swarm model dodging the term by letting one drone fail.
+    """
+    value = float(score)
+    if value <= PARTICIPATION_REWARD:
+        return value
+    return PARTICIPATION_REWARD + (value - PARTICIPATION_REWARD) * compute_multiplier(
+        compute_units
+    )
 
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:

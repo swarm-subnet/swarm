@@ -1549,6 +1549,7 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
         task_total=None,
         runtime_profile_payload=None,
         host_speed_factor=None,
+        host_reference_cpu_ms_per_act=None,
         model_image=None,
     ):
         captured["chunk"] = list(chunk)
@@ -1557,6 +1558,7 @@ def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monke
         captured["task_total"] = task_total
         captured["runtime_profile_payload"] = dict(runtime_profile_payload or {})
         captured["host_speed_factor"] = host_speed_factor
+        captured["host_reference_cpu_ms_per_act"] = host_reference_cpu_ms_per_act
         _ = model_path, on_seed_complete
         return [ValidationResult(uid, False, 0.0, 0.0) for _ in chunk]
 

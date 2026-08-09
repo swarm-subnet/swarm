@@ -182,6 +182,15 @@ HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before fail
 FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
 FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in baseline-equivalent seconds
 
+# Compute efficiency (priced, not capped): cost is container CPU per act relative to the baseline model
+COMPUTE_FULL_UNITS = 0.05                # Full credit at or below this share of the baseline model's compute
+COMPUTE_ZERO_UNITS = 2.00                # No credit at or above this multiple of it
+COMPUTE_WEIGHT = 0.20                    # Share of the earned score compute can take away
+COMPUTE_MIN_ACTS = 50                    # Fewer scored acts than this and the seed carries no compute term
+COMPUTE_SEED_WAIT_BUDGET_SEC = GLOBAL_EVAL_CAP_SEC  # Total wait on one seed's acts; past it the model owns the zero, not us
+COMPUTE_STALL_BUSY_MIN = 0.25            # CPU per wall second below this while over budget means stalling, not computing
+COMPUTE_STARTUP_BUDGET_SEC = 2.0         # reset() plus the first act stay unmetered; champions measure ~1.0s, so this bounds it with headroom
+
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
 BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file

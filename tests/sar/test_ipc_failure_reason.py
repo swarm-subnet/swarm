@@ -9,13 +9,13 @@ from swarm.benchmark.engine_parts.workers import (
 )
 
 
-def test_pack_widens_to_five_tuple():
+def test_pack_carries_the_failure_reason():
     vr = ValidationResult(
         uid=3, success=False, time_sec=11.2, score=0.01,
         failure_reason=FailureReason.SPAWN_FAILURE.value,
     )
     packed = _pack_validation_result(vr)
-    assert len(packed) == 5
+    assert len(packed) >= 5
     assert packed[4] == "SPAWN_FAILURE"
 
 

@@ -208,6 +208,7 @@ async def _run_process_parallel(
     runtime_profile: Optional[dict[str, Any]] = None,
     retry_budget: Optional[dict[str, int]] = None,
     host_speed_factor: Optional[float] = None,
+    host_reference_cpu_ms_per_act: Optional[float] = None,
     model_image: Optional[str] = None,
     seed_feeder: Optional[Callable[[int], Any]] = None,
     initial_pending: Optional[list[int]] = None,
@@ -445,6 +446,7 @@ async def _run_process_parallel(
                 task_total=len(all_tasks),
                 runtime_profile=resolved_runtime_profile.as_dict(),
                 host_speed_factor=host_speed_factor,
+                host_reference_cpu_ms_per_act=host_reference_cpu_ms_per_act,
                 model_image=model_image,
             )
             worker_active_requests[worker_slot] = request
@@ -992,7 +994,7 @@ async def evaluate_seeds_parallel(
     from .batch import check_task_versions, prepare_model_image
 
     if not _docker_evaluator_facade().DockerSecureEvaluator._base_ready:
-        from .batch import _ensure_host_speed_factor
+        from .batch import _ensure_host_speed_factor, current_reference_cpu_ms_per_act
 
         speed = await _ensure_host_speed_factor(self, 1)
         if speed is None or not speed.eligible:
@@ -1037,6 +1039,7 @@ async def evaluate_seeds_parallel(
             task_total=len(tasks),
             runtime_profile_payload=runtime_profile.as_dict(),
             host_speed_factor=speed.factor,
+            host_reference_cpu_ms_per_act=current_reference_cpu_ms_per_act(),
             model_image=await asyncio.to_thread(
                 prepare_model_image,
                 self,
@@ -1076,7 +1079,7 @@ async def evaluate_seeds_parallel(
         for index, task in enumerate(tasks)
     ]
     batch_plan = _benchmark_engine()._batch_indices(len(tasks))
-    from .batch import _ensure_host_speed_factor
+    from .batch import _ensure_host_speed_factor, current_reference_cpu_ms_per_act
 
     speed = await _ensure_host_speed_factor(self, effective_workers)
     if speed is None or not speed.eligible:
@@ -1125,6 +1128,7 @@ async def evaluate_seeds_parallel(
         runtime_profile=runtime_profile.as_dict(),
         retry_budget=retry_budget,
         host_speed_factor=speed.factor,
+        host_reference_cpu_ms_per_act=current_reference_cpu_ms_per_act(),
         model_image=model_image,
         seed_feeder=seed_feeder,
         initial_pending=initial_pending,

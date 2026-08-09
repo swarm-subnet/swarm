@@ -414,7 +414,48 @@ The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no 
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
+Whatever the seed earns above that 0.01 floor is then scaled by how much compute it cost — see [Compute Efficiency](#compute-efficiency) below.
+
 Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each seed (earliest report per seed counts: re-runs never double-count).
+
+### Compute Efficiency
+
+> **Every time you halve your model's compute, you gain about 3.8% of your score — up to 20% in total.**
+
+Compute is priced, not capped. A heavy model is no longer disqualified; it scores, and it pays.
+
+**How the cost is measured.** For each seed the validator records the CPU your container burned, divided by the number of acts it served. It then divides that by the same figure for a reference model measured on the same machine. The result is your cost in **reference models**:
+
+| Your compute vs the reference model | You keep |
+|-------------------------------------|----------|
+| 2× or more | **80%** |
+| the same as it | 83.8% |
+| half of it | 87.5% |
+| a quarter | 91.3% |
+| an eighth | 95.0% |
+| a sixteenth | 98.8% |
+| a twentieth or less | **100%** |
+
+Between any two rows the scale is continuous, and each halving is worth the same amount — a lean model still gains by getting leaner.
+
+**What this means in practice:**
+
+- **CPU is what counts, not latency.** Work done on a background thread between `act()` calls is charged exactly like work done inside it, so there is nothing to gain by moving computation off the critical path. Sleeping inside `act()` earns nothing either.
+- **It applies to successful seeds only.** A failed seed keeps its 0.01 participation untouched.
+- **Your first act is free.** Model loading, JIT and warm-up are excluded; only the acts after the first are metered. Seeds shorter than 50 acts carry no compute term at all.
+- **The measurement is a ratio taken on one machine.** A slow validator measures both your model and its own reference as slow, so the ratio — and your score — comes out the same everywhere.
+- **If a validator cannot read its own CPU counter, no compute term is applied.** You are never charged for something we could not measure.
+
+**The per-act deadline is gone.** Earlier versions discarded any act over a normalized 600 ms and failed the seed after 15 of them. That rule has been removed: a slow act now flies the action it returned and is paid for in the score instead. Two limits remain, and both are liveness rules rather than scoring ones:
+
+| Limit | What happens |
+|-------|--------------|
+| A single act exceeding roughly 2 s | Counted as a timeout; three of them end the seed |
+| A seed sustaining more than 4× the reference model's compute, or averaging over 1 s of wall time per act | The seed is ended and scores 0.0 (`COMPUTE_CEILING`) |
+
+The ceiling is checked on a running average, starting at act 100 and only after two consecutive breaches, so a transient spike cannot end a healthy run. For scale: the heaviest legitimate seed we have measured runs at about 2.4× the reference.
+
+**Check it before you submit.** `swarm benchmark` prints the compute cost and the multiplier for every seed it runs, plus a group average. It measures your model exactly as a validator does, against a reference calibrated on your own machine — so the figure is comparable even though your hardware is not. The one exception is `--relax-timeouts`, which widens the runtime limits for debugging; the compute column is not meaningful in that mode and the run says so.
 
 ### CONFIRMED Requirements (Search and Rescue)
 

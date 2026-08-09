@@ -106,15 +106,34 @@ async def _precalibrate_host(worker_count: int) -> None:
         )
 
 
-def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
+_PACKED_METRIC_KEYS = (
+    "act_count",
+    "cpu_ms_per_act",
+    "reference_cpu_ms_per_act",
+    "compute_units",
+    "compute_multiplier",
+    "act_wall_ms_mean",
+)
+
+
+def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str, dict]:
     reason = getattr(result, "failure_reason", "NONE")
     reason_str = reason.value if hasattr(reason, "value") else str(reason)
+    metrics = dict(getattr(result, "metrics", {}) or {})
+    # Only the compute numbers cross the process boundary: the rest of metrics is
+    # unused upstream and some of it does not pickle.
+    packed_metrics = {
+        key: metrics[key]
+        for key in _PACKED_METRIC_KEYS
+        if metrics.get(key) is not None
+    }
     return (
         int(getattr(result, "uid")),
         bool(getattr(result, "success")),
         float(getattr(result, "time_sec")),
         float(getattr(result, "score")),
         reason_str,
+        packed_metrics,
     )
 
 
@@ -127,6 +146,7 @@ def _unpack_validation_result(packed):
             float(packed[2]),
             float(packed[3]),
             failure_reason=str(packed[4]),
+            metrics=dict(packed[5]) if len(packed) >= 6 else {},
         )
     return ValidationResult(*packed)
 
@@ -259,6 +279,9 @@ def _benchmark_worker_main(
                         task_total=request.task_total,
                         runtime_profile_payload=getattr(request, "runtime_profile", None),
                         host_speed_factor=getattr(request, "host_speed_factor", None),
+                        host_reference_cpu_ms_per_act=getattr(
+                            request, "host_reference_cpu_ms_per_act", None
+                        ),
                         model_image=getattr(request, "model_image", None),
                     )
                 )

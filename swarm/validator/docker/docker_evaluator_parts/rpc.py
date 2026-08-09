@@ -4,6 +4,7 @@ import os
 import statistics
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 import bittensor as bt
@@ -14,7 +15,10 @@ from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_RECAL_INTERVAL,
-    FIRST_STEP_BUDGET_REF_SEC,
+    COMPUTE_MIN_ACTS,
+    COMPUTE_SEED_WAIT_BUDGET_SEC,
+    COMPUTE_STALL_BUSY_MIN,
+    COMPUTE_STARTUP_BUDGET_SEC,
     FIRST_STEP_HARD_CAP_REF_SEC,
     HARD_CAP_MARGIN_SEC,
     HARD_CAP_REF_SEC,
@@ -30,8 +34,10 @@ from swarm.constants import (
 )
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
-from swarm.validator.calibration import act_hard_cap_sec, judge_act
+from swarm.validator.calibration import act_hard_cap_sec
+from swarm.validator.reward import apply_compute_multiplier, compute_multiplier
 from swarm.core.action import canonicalize_action
+from .cpu_meter import read_cpu_seconds
 
 from ._shared import (
     _cleanup_env_quietly,
@@ -63,6 +69,8 @@ def _run_multi_seed_rpc_sync(
     task_total: Optional[int] = None,
     runtime_profile_payload: Optional[dict] = None,
     speed_factor: Optional[float] = None,
+    cpu_counter: Optional[Path] = None,
+    reference_cpu_ms_per_act: Optional[float] = None,
 ) -> list:
     """Run multiple seeds through the same RPC connection.
 
@@ -70,8 +78,14 @@ def _run_multi_seed_rpc_sync(
     Much faster than creating a new container per seed.
 
     When ``speed_factor`` is provided and reference calibration is enabled, each
-    act() is judged in baseline-equivalent time (hardware-fair scoring); otherwise
-    the legacy per-step calibrated timeout is used.
+    act() is held to a baseline-equivalent liveness cap; otherwise the legacy
+    per-step calibrated timeout is used.
+
+    ``cpu_counter`` is the container's cgroup CPU file. When it is readable the
+    seed reports how much CPU the miner burned per act, and dividing that by
+    ``reference_cpu_ms_per_act`` — the same figure for the baseline model on this
+    host — gives the compute units the score is scaled by. Without either one the
+    seed is scored with no compute term rather than with a guessed one.
     """
     use_ref = speed_factor is not None
     schema_file = _submission_template_dir() / "agent.capnp"
@@ -132,6 +146,8 @@ def _run_multi_seed_rpc_sync(
         calibration_overhead_sec: Optional[float] = None,
         calibration_cpu_factor: Optional[float] = None,
         calibrated_timeout_sec: Optional[float] = None,
+        cpu_ms_per_act: Optional[float] = None,
+        compute_units: Optional[float] = None,
     ) -> None:
         if on_seed_complete is None:
             return
@@ -163,6 +179,12 @@ def _run_multi_seed_rpc_sync(
                     None
                     if calibrated_timeout_sec is None
                     else float(calibrated_timeout_sec)
+                ),
+                "cpu_ms_per_act": (
+                    None if cpu_ms_per_act is None else float(cpu_ms_per_act)
+                ),
+                "compute_units": (
+                    None if compute_units is None else float(compute_units)
                 ),
             }
         try:
@@ -238,6 +260,29 @@ def _run_multi_seed_rpc_sync(
                 f"heartbeat phase={phase} task={task} step={step} "
                 f"sim_t={sim_t:.2f}s idle={idle_for:.1f}s"
             )
+
+    def _cpu_ms_per_act(start_cpu: Optional[float], acts: int) -> Optional[float]:
+        """CPU the container burned per metered act, or None if unmeasurable.
+
+        None is not zero: it means this host could not read the counter, and the
+        caller must score the seed without a compute term rather than treat the
+        model as free.
+        """
+        if start_cpu is None or acts <= 0:
+            return None
+        end_cpu = read_cpu_seconds(cpu_counter)
+        if end_cpu is None or end_cpu < start_cpu:
+            return None
+        return (end_cpu - start_cpu) * 1000.0 / acts
+
+    def _compute_units(cpu_ms: Optional[float]) -> Optional[float]:
+        """Cost in baseline models: the same measurement, taken on the same host."""
+        if cpu_ms is None or not reference_cpu_ms_per_act:
+            return None
+        reference = float(reference_cpu_ms_per_act)
+        if reference <= 0.0:
+            return None
+        return cpu_ms / reference
 
     async def run_all_seeds():
         results = []
@@ -503,6 +548,11 @@ def _run_multi_seed_rpc_sync(
                         is_first_step = True
                         step_idx = 0
                         rpc_disconnected = False
+                        # Starts after the first act: warm-up is never charged.
+                        cpu_at_meter_start: Optional[float] = None
+                        metered_acts = 0
+                        metered_wall_ms = 0.0
+                        compute_ceiling_hit = False
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
                         act_dim = int(env.action_space.shape[-1])
@@ -551,36 +601,7 @@ def _run_multi_seed_rpc_sync(
                                         action_response.action.data,
                                         dtype=np.dtype(action_response.action.dtype),
                                     ).reshape(tuple(action_response.action.shape))
-                                    if use_ref:
-                                        budget = (
-                                            FIRST_STEP_BUDGET_REF_SEC
-                                            if is_first_step
-                                            else MINER_COMPUTE_BUDGET_SEC
-                                        )
-                                        if judge_act(
-                                            act_ms / 1000.0,
-                                            overhead_sec=rpc_overhead_sec,
-                                            speed_factor=speed_factor,
-                                            budget_sec=budget,
-                                            hard_cap_sec=step_timeout,
-                                        ).strike:
-                                            if not step_striked:
-                                                step_striked = True
-                                                strikes += 1
-                                            _trace(
-                                                f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
-                                                f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) "
-                                                f"attempt {act_attempt + 1}/2 "
-                                                f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
-                                            )
-                                            if strikes >= RPC_MAX_STRIKES_PER_SEED:
-                                                bt.logging.warning(
-                                                    f"UID {uid} seed {task_idx}: {strikes} slow-act strikes, failing seed"
-                                                )
-                                                break
-                                            if act_attempt == 0:
-                                                continue
-                                            break
+                                    # No longer discarded: it is paid for in the score.
                                     action = candidate
                                     if trace_rpc and (
                                         step_idx == 1 or step_idx % trace_every == 0
@@ -657,6 +678,45 @@ def _run_multi_seed_rpc_sync(
                                 action = _strike_zero_action(n_drones, act_dim)
                             if rpc_disconnected or strikes >= RPC_MAX_STRIKES_PER_SEED:
                                 break
+
+                            if is_first_step:
+                                cpu_at_meter_start = read_cpu_seconds(cpu_counter)
+                                # reset() and this act are never charged, so the
+                                # window they hide in is bounded instead.
+                                startup_sec = time.time() - t_reset_start
+                                if startup_sec > COMPUTE_STARTUP_BUDGET_SEC:
+                                    compute_ceiling_hit = True
+                                    bt.logging.warning(
+                                        f"UID {uid} seed {task_idx}: startup took "
+                                        f"{startup_sec:.2f}s "
+                                        f"(budget {COMPUTE_STARTUP_BUDGET_SEC:.2f}s); ending seed"
+                                    )
+                                    break
+                            else:
+                                metered_acts += 1
+                                metered_wall_ms += act_ms
+                                # Only a stalling model is ended here. One that is
+                                # genuinely computing is priced by the score and
+                                # bounded by the existing batch timeout.
+                                if (
+                                    metered_wall_ms / 1000.0
+                                ) > COMPUTE_SEED_WAIT_BUDGET_SEC:
+                                    stall_cpu = _cpu_ms_per_act(
+                                        cpu_at_meter_start, metered_acts
+                                    )
+                                    busy = (
+                                        None
+                                        if stall_cpu is None
+                                        else (stall_cpu * metered_acts) / metered_wall_ms
+                                    )
+                                    if busy is not None and busy < COMPUTE_STALL_BUSY_MIN:
+                                        compute_ceiling_hit = True
+                                        bt.logging.warning(
+                                            f"UID {uid} seed {task_idx}: {metered_wall_ms / 1000.0:.0f}s "
+                                            f"of act wait over {metered_acts} acts but only "
+                                            f"{busy:.2f} CPU per wall second; ending seed"
+                                        )
+                                        break
 
                             is_first_step = False
 
@@ -753,6 +813,37 @@ def _run_multi_seed_rpc_sync(
                                 calibration_cpu_factor=cpu_factor,
                                 calibrated_timeout_sec=calibrated_timeout,
                             )
+                        elif compute_ceiling_hit:
+                            # The model's own cost ended this seed, so it owns the zero.
+                            _set_phase(
+                                "seed_failed_compute_ceiling",
+                                task=task_label,
+                                step=step_idx,
+                                sim_t=t_sim,
+                            )
+                            ceiling_cpu_ms = _cpu_ms_per_act(
+                                cpu_at_meter_start, metered_acts
+                            )
+                            _trace(f"{task_label} ended by the compute ceiling")
+                            results.append(
+                                ValidationResult(
+                                    uid, False, t_sim, 0.0,
+                                    failure_reason=FailureReason.COMPUTE_CEILING.value,
+                                )
+                            )
+                            _emit_seed_complete(
+                                task,
+                                status="seed_compute_ceiling",
+                                success=False,
+                                sim_t=t_sim,
+                                seed_wall_sec=time.time() - seed_wall_start,
+                                step_idx=step_idx,
+                                calibration_overhead_sec=rpc_overhead_sec,
+                                calibration_cpu_factor=cpu_factor,
+                                calibrated_timeout_sec=calibrated_timeout,
+                                cpu_ms_per_act=ceiling_cpu_ms,
+                                compute_units=_compute_units(ceiling_cpu_ms),
+                            )
                         elif strikes >= RPC_MAX_STRIKES_PER_SEED:
                             _set_phase(
                                 "seed_failed_timeout_strikes",
@@ -781,10 +872,22 @@ def _run_multi_seed_rpc_sync(
                                 calibrated_timeout_sec=calibrated_timeout,
                             )
                         else:
+                            seed_cpu_ms = _cpu_ms_per_act(
+                                cpu_at_meter_start, metered_acts
+                            )
+                            # Too few acts to average honestly.
+                            seed_units = (
+                                _compute_units(seed_cpu_ms)
+                                if metered_acts >= COMPUTE_MIN_ACTS
+                                else None
+                            )
                             if n_drones > 1:
                                 family = runtime_family_for_task(task)
                                 swarm = family.score_swarm(task, info)
-                                score = float(swarm["final_score"])
+                                # act() serves the whole swarm: one stream, charged once.
+                                score = apply_compute_multiplier(
+                                    float(swarm["final_score"]), seed_units
+                                )
                                 per_succ = info.get("per_drone_success", [])
                                 success = bool(swarm.get("success", bool(per_succ) and all(per_succ)))
                                 per_fr = info.get("per_drone_failure_reason", [])
@@ -811,9 +914,24 @@ def _run_multi_seed_rpc_sync(
                                     min_clearance=min_clearance,
                                     collision=collision,
                                     failure_reason=failure_reason,
+                                    compute_units=seed_units,
                                 )
                                 score = evaluation.score
                                 result_metrics = dict(evaluation.metrics)
+                            result_metrics["act_count"] = int(metered_acts)
+                            result_metrics["cpu_ms_per_act"] = seed_cpu_ms
+                            result_metrics["reference_cpu_ms_per_act"] = (
+                                None
+                                if reference_cpu_ms_per_act is None
+                                else float(reference_cpu_ms_per_act)
+                            )
+                            result_metrics["compute_units"] = seed_units
+                            result_metrics["compute_multiplier"] = compute_multiplier(
+                                seed_units
+                            )
+                            result_metrics["act_wall_ms_mean"] = (
+                                metered_wall_ms / metered_acts if metered_acts else None
+                            )
                             _trace(
                                 f"{task_label} result success={success} "
                                 f"score={score:.4f} t_sim={t_sim:.2f}s"
@@ -850,6 +968,8 @@ def _run_multi_seed_rpc_sync(
                                 sim_t=t_sim,
                                 seed_wall_sec=time.time() - seed_wall_start,
                                 step_idx=step_idx,
+                                cpu_ms_per_act=seed_cpu_ms,
+                                compute_units=seed_units,
                                 calibration_overhead_sec=rpc_overhead_sec,
                                 calibration_cpu_factor=cpu_factor,
                                 calibrated_timeout_sec=calibrated_timeout,

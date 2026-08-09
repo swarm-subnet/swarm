@@ -1,5 +1,5 @@
 {
-  "calibration_version": "swarm-ref-v1",
+  "calibration_version": "swarm-ref-v2",
   "scope": "all_challenge_families",
   "baseline_model": {
     "artifact": "baseline_model.zip",

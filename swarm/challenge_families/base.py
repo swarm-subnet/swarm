@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
 
 from swarm.constants import BENCHMARK_FULL_SEED_COUNT, SWARM_MAX_DRONES, SWARM_MIN_DRONES
+from swarm.validator.reward import apply_compute_multiplier, compute_multiplier
 from swarm.domain_model import (
     get_family_benchmark_admission_policy,
     get_family_screening_policy,
@@ -344,6 +345,7 @@ class ChallengeFamilyRuntime:
         min_clearance: Optional[float],
         collision: bool,
         failure_reason: str,
+        compute_units: Optional[float] = None,
     ) -> ChallengeFamilyEvaluation:
         metrics = self.build_rollout_metrics(
             task=task,
@@ -356,6 +358,13 @@ class ChallengeFamilyRuntime:
         )
         normalized_metrics = self.normalize_rollout_metrics(task=task, metrics=metrics)
         score = float(normalized_metrics.get("final_score", 0.0))
+        # Charged once here so that no family can miss it.
+        if compute_units is not None:
+            score = apply_compute_multiplier(score, compute_units)
+            normalized_metrics = dict(normalized_metrics)
+            normalized_metrics["compute_units"] = float(compute_units)
+            normalized_metrics["compute_multiplier"] = compute_multiplier(compute_units)
+            normalized_metrics["final_score"] = score
         return ChallengeFamilyEvaluation(
             family_id=self.family_id,
             success=bool(success),

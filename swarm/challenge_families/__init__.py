@@ -137,6 +137,7 @@ def evaluate_rollout(
     min_clearance: Optional[float],
     collision: bool,
     failure_reason: str,
+    compute_units: Optional[float] = None,
 ) -> ChallengeFamilyEvaluation:
     family = runtime_family_for_task(task)
     return family.evaluate_rollout(
@@ -147,6 +148,7 @@ def evaluate_rollout(
         min_clearance=min_clearance,
         collision=collision,
         failure_reason=failure_reason,
+        compute_units=compute_units,
     )
 
 

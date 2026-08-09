@@ -103,6 +103,8 @@ def _print_results(
         score = float(result.score) if result else 0.0
         success = bool(result.success) if result else False
         sim_time = float(result.time_sec) if result else 0.0
+        result_metrics = dict(getattr(result, "metrics", {}) or {}) if result else {}
+        compute_units = result_metrics.get("compute_units")
 
         seed_key = (int(meta["seed"]), int(meta["challenge_type"]))
         status_q = seed_status_queues.get(seed_key)
@@ -131,27 +133,48 @@ def _print_results(
                 "timeout_zero": wall < 0.5 and i > 0,
                 "estimated_resource_cost": _resource_cost_dict_for_group(group),
                 "wall_per_sim_ratio": (wall / sim_time) if sim_time > 0.0 else 0.0,
+                "compute_units": compute_units,
+                "compute_multiplier": result_metrics.get("compute_multiplier"),
             }
         )
 
     print()
-    print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}")
-    print(f"  {'-'*18} {'-'*8} {'-'*7} {'-'*5} {'-'*7} {'-'*7}")
+    print(
+        f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7} "
+        f"{'Compute':>8} {'Keeps':>7}"
+    )
+    print(
+        f"  {'-'*18} {'-'*8} {'-'*7} {'-'*5} {'-'*7} {'-'*7} {'-'*8} {'-'*7}"
+    )
 
     for group in group_order:
         if group not in group_results:
             continue
         for row in group_results[group]:
             ok = "Y" if row["success"] else "N"
+            units = row["compute_units"]
+            mult = row["compute_multiplier"]
+            units_text = f"{units:>7.3f}x" if units is not None else f"{'-':>8}"
+            mult_text = f"{mult * 100:>6.1f}%" if mult is not None else f"{'-':>7}"
             print(
                 f"  {group:<18} {row['seed']:>8} {row['score']:>7.4f} {ok:>5} "
-                f"{row['sim_time']:>6.2f}s {row['wall_time']:>6.1f}s"
+                f"{row['sim_time']:>6.2f}s {row['wall_time']:>6.1f}s "
+                f"{units_text} {mult_text}"
             )
         walls = [float(row["wall_time"]) for row in group_results[group]]
         scores = [float(row["score"]) for row in group_results[group]]
+        unit_values = [
+            float(row["compute_units"])
+            for row in group_results[group]
+            if row["compute_units"] is not None
+        ]
         avg_w = _mean(walls)
         avg_s = _mean(scores)
-        print(f"  {'  -> AVG':<18} {'':>8} {avg_s:>7.4f} {'':>5} {'':>6} {avg_w:>6.1f}s")
+        avg_u = f"{_mean(unit_values):>7.3f}x" if unit_values else f"{'-':>8}"
+        print(
+            f"  {'  -> AVG':<18} {'':>8} {avg_s:>7.4f} {'':>5} {'':>6} {avg_w:>6.1f}s "
+            f"{avg_u}"
+        )
         print()
 
     all_rows = [

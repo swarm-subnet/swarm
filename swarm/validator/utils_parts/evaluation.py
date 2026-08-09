@@ -47,6 +47,27 @@ def _is_infra_failure(reason) -> bool:
     return reason in _INFRA_FAILURE_REASONS
 
 
+_COMPUTE_AUDIT_KEYS = (
+    "act_count",
+    "cpu_ms_per_act",
+    "reference_cpu_ms_per_act",
+    "compute_units",
+    "compute_multiplier",
+    "act_wall_ms_mean",
+)
+
+
+def _compute_runtime_details(metrics) -> dict:
+    """The compute numbers behind a seed's score, kept so it can be audited later."""
+    if not isinstance(metrics, dict):
+        return {}
+    return {
+        key: metrics[key]
+        for key in _COMPUTE_AUDIT_KEYS
+        if metrics.get(key) is not None
+    }
+
+
 def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
     """Provenance fields the backend seed-score schema requires on every upload.
 
@@ -178,6 +199,7 @@ async def _evaluate_seeds(
                     getattr(result, "failure_reason", "NONE") or "NONE"
                 ),
                 "moving_platform": bool(getattr(task, "moving_platform", False)),
+                "metrics": dict(getattr(result, "metrics", {}) or {}),
             },
         )
 
@@ -443,15 +465,17 @@ async def _run_streaming_phase(
         )
         if type_name != "unknown" and not _is_infra_failure(reason):
             unacked.add(seed_offset + idx)
-            upload_queue.put_nowait(
-                {
-                    "seed_index": seed_offset + idx,
-                    "score": score,
-                    "metric_key": type_name,
-                    "map_type": type_name,
-                    "failure_reason": reason,
-                }
-            )
+            row = {
+                "seed_index": seed_offset + idx,
+                "score": score,
+                "metric_key": type_name,
+                "map_type": type_name,
+                "failure_reason": reason,
+            }
+            runtime_details = _compute_runtime_details(detail.get("metrics"))
+            if runtime_details:
+                row["runtime_details"] = runtime_details
+            upload_queue.put_nowait(row)
         if len(completed_scores) % chunk_size == 0:
             _fire_chunk_complete()
 
@@ -533,6 +557,13 @@ async def _run_streaming_phase(
                     "metric_key": detail.get("metric_key") or detail["map_type"],
                     "map_type": detail["map_type"],
                     "failure_reason": detail.get("failure_reason", "NONE"),
+                    **(
+                        {"runtime_details": compute_details}
+                        if (compute_details := _compute_runtime_details(
+                            detail.get("metrics")
+                        ))
+                        else {}
+                    ),
                 }
                 for j, detail in enumerate(all_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"

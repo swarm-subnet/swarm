@@ -55,6 +55,7 @@ from ._shared import (
     _runtime_profile_from_payload,
     _submission_template_dir,
 )
+from .cpu_meter import resolve_cpu_counter
 
 _CALIBRATION_MAX_AGE_SEC = 6 * 3600  # re-measure the host speed factor at least this often
 
@@ -68,6 +69,8 @@ class HostSpeedCalibration:
     worker_speeds: tuple[SpeedFactor, ...]
     calibration_version: str
     computed_at: float
+    # The denominator every miner's compute is divided by; must survive a restart.
+    cpu_ms_per_act: Optional[float] = None
 
 
 _HOST_SPEED_CALIBRATION: Optional[HostSpeedCalibration] = None
@@ -104,6 +107,11 @@ def _write_calibration_cache(calibration: HostSpeedCalibration) -> None:
             "worker_local_p90_ms": [
                 float(speed.local_p90_ms) for speed in calibration.worker_speeds
             ],
+            "cpu_ms_per_act": (
+                None
+                if calibration.cpu_ms_per_act is None
+                else float(calibration.cpu_ms_per_act)
+            ),
         }
         temp_path = _CALIBRATION_CACHE_PATH.with_suffix(".tmp")
         temp_path.write_text(json.dumps(payload, sort_keys=True))
@@ -135,6 +143,8 @@ def _read_calibration_cache(
             normalize_speed_factor(float(value))
             for value in payload["worker_local_p90_ms"]
         )
+        raw_cpu = payload.get("cpu_ms_per_act")
+        cpu_ms_per_act = None if raw_cpu is None else float(raw_cpu)
     except (KeyError, TypeError, ValueError):
         return None
     if not speed.eligible:
@@ -145,6 +155,7 @@ def _read_calibration_cache(
         worker_speeds=worker_speeds,
         calibration_version=str(calibration_version),
         computed_at=computed_at,
+        cpu_ms_per_act=cpu_ms_per_act,
     )
 
 
@@ -178,7 +189,9 @@ def _host_calibration_worker_main(worker_id: int, base_image: str, result_queue:
     asyncio.set_event_loop(loop)
     try:
         evaluator = _prepared_calibration_evaluator(base_image)
-        speed = loop.run_until_complete(_run_baseline_calibration(evaluator, int(worker_id)))
+        speed, cpu_ms_per_act = loop.run_until_complete(
+            _run_baseline_calibration(evaluator, int(worker_id))
+        )
         if speed is None:
             result_queue.put(
                 {
@@ -191,6 +204,7 @@ def _host_calibration_worker_main(worker_id: int, base_image: str, result_queue:
             {
                 "worker_id": int(worker_id),
                 "speed": speed,
+                "cpu_ms_per_act": cpu_ms_per_act,
             }
         )
     except Exception as exc:
@@ -465,6 +479,8 @@ class _BatchContext:
     task_total: Optional[int] = None
     runtime_profile_payload: Optional[dict[str, Any]] = None
     speed_factor: Optional[float] = None
+    reference_cpu_ms_per_act: Optional[float] = None
+    cpu_counter: Optional[Path] = None
 
     # Trace + sync primitives (built in _init_batch_state)
     trace_rpc: bool = False
@@ -819,6 +835,8 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                     task_total,
                     runtime_profile.as_dict() if runtime_profile is not None else None,
                     ctx.speed_factor,
+                    ctx.cpu_counter,
+                    ctx.reference_cpu_ms_per_act,
                 )
             except Exception as e:
                 rpc_payload["error"] = e
@@ -1036,6 +1054,7 @@ async def _run_baseline_calibration(self, worker_id: int):
 
     act_ms: list[float] = []
     overhead = {"ms": 0.0}
+    cpu_samples: list[float] = []
 
     def _observer(event: dict) -> None:
         if event.get("event") != "step":
@@ -1046,8 +1065,13 @@ async def _run_baseline_calibration(self, worker_id: int):
                 act_ms.append(value)
 
     def _on_seed(meta=None) -> None:
-        if isinstance(meta, dict) and meta.get("calibration_overhead_sec") is not None:
+        if not isinstance(meta, dict):
+            return
+        if meta.get("calibration_overhead_sec") is not None:
             overhead["ms"] = float(meta["calibration_overhead_sec"]) * 1000.0
+        # Measured the same way, on the same host, as every miner it is compared against.
+        if meta.get("cpu_ms_per_act") is not None:
+            cpu_samples.append(float(meta["cpu_ms_per_act"]))
 
     try:
         await evaluate_seeds_batch(
@@ -1062,7 +1086,7 @@ async def _run_baseline_calibration(self, worker_id: int):
         )
     except Exception as e:
         bt.logging.warning(f"[Worker {worker_id}] baseline calibration failed: {e}")
-        return None
+        return None, None
 
     compute = [a - overhead["ms"] for a in act_ms if a - overhead["ms"] > 0.0]
     if len(compute) < 100:
@@ -1070,24 +1094,32 @@ async def _run_baseline_calibration(self, worker_id: int):
             f"[Worker {worker_id}] baseline calibration produced {len(compute)} samples; "
             f"falling back to legacy timing"
         )
-        return None
+        return None, None
 
     local_p90 = percentile(compute, 90)
     try:
         speed = normalize_speed_factor(local_p90)
     except ValueError as e:
         bt.logging.warning(f"[Worker {worker_id}] invalid speed factor: {e}")
-        return None
+        return None, None
 
+    cpu_ms_per_act = (
+        math.fsum(cpu_samples) / len(cpu_samples) if cpu_samples else None
+    )
     summary = (
         f"[Worker {worker_id}] reference calibration: speed_factor={speed.factor:.2f}x "
-        f"(local_p90={local_p90:.0f}ms / owner_p90={speed.owner_p90_ms:.0f}ms, n={len(compute)})"
+        f"(local_p90={local_p90:.0f}ms / owner_p90={speed.owner_p90_ms:.0f}ms, n={len(compute)}"
+        + (
+            f", cpu={cpu_ms_per_act:.0f}ms/act)"
+            if cpu_ms_per_act is not None
+            else ", cpu=unmeasurable)"
+        )
     )
     if speed.eligible:
         bt.logging.info(summary)
     else:
         bt.logging.warning(summary + " — host slower than the eligibility limit; it will not score miners")
-    return speed
+    return speed, cpu_ms_per_act
 
 
 def _host_calibration_is_valid(
@@ -1168,6 +1200,7 @@ async def _run_host_baseline_calibration(self, worker_count: int):
         pass
 
     speeds_by_worker: dict[int, SpeedFactor] = {}
+    cpu_by_worker: dict[int, float] = {}
     seen_workers: set[int] = set()
     for payload in payloads:
         worker_id = int(payload.get("worker_id", -1))
@@ -1181,6 +1214,9 @@ async def _run_host_baseline_calibration(self, worker_count: int):
         speed = payload.get("speed")
         if isinstance(speed, SpeedFactor):
             speeds_by_worker[worker_id] = speed
+        cpu_value = payload.get("cpu_ms_per_act")
+        if cpu_value is not None:
+            cpu_by_worker[worker_id] = float(cpu_value)
 
     missing = sorted(set(range(requested)) - seen_workers)
     for worker_id in missing:
@@ -1211,12 +1247,19 @@ async def _run_host_baseline_calibration(self, worker_count: int):
     max_local_p90 = max(local_p90s)
     spread = max_local_p90 / min_local_p90 if min_local_p90 > 0.0 else float("inf")
 
+    # Averaged so the reference carries the same concurrent load as the miners.
+    host_cpu_ms_per_act = (
+        math.fsum(cpu_by_worker.values()) / len(cpu_by_worker)
+        if cpu_by_worker
+        else None
+    )
     _HOST_SPEED_CALIBRATION = HostSpeedCalibration(
         speed=host_speed,
         worker_count=requested,
         worker_speeds=tuple(worker_speeds),
         calibration_version=str(manifest["calibration_version"]),
         computed_at=time.time(),
+        cpu_ms_per_act=host_cpu_ms_per_act,
     )
     _write_calibration_cache(_HOST_SPEED_CALIBRATION)
     per_worker = ", ".join(
@@ -1237,6 +1280,25 @@ async def _run_host_baseline_calibration(self, worker_count: int):
             summary + " — host slower than the eligibility limit; it will not score miners"
         )
     return host_speed
+
+
+def current_reference_cpu_ms_per_act() -> Optional[float]:
+    """The CPU the baseline model costs on this host, or None if unmeasured.
+
+    Falls back to the on-disk cache because evaluation workers run in their own
+    processes, where the in-memory calibration was never populated. None means
+    seeds carry no compute term: an unmeasured reference must never be guessed,
+    because every miner's cost is expressed relative to it.
+    """
+    calibration = _HOST_SPEED_CALIBRATION
+    if calibration is not None and calibration.cpu_ms_per_act is not None:
+        return calibration.cpu_ms_per_act
+    try:
+        version = str(load_baseline_manifest()["calibration_version"])
+    except Exception:
+        return None
+    cached = _read_calibration_cache(worker_count=1, calibration_version=version)
+    return None if cached is None else cached.cpu_ms_per_act
 
 
 def host_speed_factor_is_fresh(worker_count: int) -> bool:
@@ -1442,6 +1504,13 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
 
 async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
     container_pid = ctx.self._get_container_pid(ctx.container_name)
+    # Resolved once per container, from the PID the lockdown already needed.
+    ctx.cpu_counter = resolve_cpu_counter(container_pid)
+    if ctx.cpu_counter is None:
+        bt.logging.warning(
+            f"[Worker {ctx.worker_id}] container CPU counter unreadable; "
+            f"seeds in this batch will be scored with no compute term"
+        )
     if (
         not container_pid
         or not ctx.self._apply_network_lockdown(container_pid, ctx.validator_ip)
@@ -1483,6 +1552,7 @@ async def evaluate_seeds_batch(
     runtime_profile_payload: Optional[dict[str, Any]] = None,
     is_calibration_run: bool = False,
     host_speed_factor: Optional[float] = None,
+    host_reference_cpu_ms_per_act: Optional[float] = None,
     model_image: Optional[str] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
@@ -1513,7 +1583,6 @@ async def evaluate_seeds_batch(
         runtime_profile_payload=runtime_profile_payload,
         model_image=model_image,
     )
-
     _init_batch_state(ctx)
 
     early = _validate_inputs(ctx)
@@ -1556,6 +1625,18 @@ async def evaluate_seeds_batch(
                 )
                 for _ in tasks
             ]
+
+        # Only now: read before the calibration above and it captures nothing.
+        ctx.reference_cpu_ms_per_act = (
+            host_reference_cpu_ms_per_act
+            if host_reference_cpu_ms_per_act is not None
+            else current_reference_cpu_ms_per_act()
+        )
+        if ctx.reference_cpu_ms_per_act is None:
+            bt.logging.warning(
+                f"[Worker {worker_id}] no baseline compute reference; seeds for "
+                f"UID {uid} will be scored with no compute term"
+            )
 
     _setup_pretry_state(ctx)
 
