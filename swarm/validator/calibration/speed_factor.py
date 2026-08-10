@@ -143,11 +143,5 @@ class CalibrationState:
             self._by_worker[int(worker_id)] = entry
         return entry
 
-    def is_stale(self, worker_id: int, *, max_age_sec: float) -> bool:
-        entry = self.get(worker_id)
-        if entry is None:
-            return True
-        return (time.time() - entry.computed_at) > max_age_sec
-
 
 CALIBRATION_STATE = CalibrationState()

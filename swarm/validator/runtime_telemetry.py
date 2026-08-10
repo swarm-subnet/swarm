@@ -203,11 +203,6 @@ class ValidatorRuntimeTracker:
         with self._lock:
             self._persist_snapshot_locked(force=True)
 
-    def increment_counter(self, counter: str, amount: int = 1) -> None:
-        with self._lock:
-            self._record_counter(counter, amount=amount)
-            self._persist_snapshot_locked(force=False)
-
     def _record_counter(self, counter: str, amount: int = 1) -> None:
         counters = self.snapshot["counters"]
         counters[counter] = int(counters.get(counter, 0)) + amount
@@ -303,35 +298,6 @@ class ValidatorRuntimeTracker:
                 force_snapshot=True,
             )
 
-    def mark_epoch_state(
-        self,
-        *,
-        epoch_number: int,
-        seconds_until_end: float,
-        freeze_active: bool,
-    ) -> None:
-        with self._lock:
-            epoch = self.snapshot["epoch"]
-            epoch["epoch_number"] = int(epoch_number)
-            epoch["seconds_until_end"] = float(seconds_until_end)
-            epoch["freeze_active"] = bool(freeze_active)
-            self._persist_snapshot_locked(force=False)
-
-    def mark_epoch_transition(self, *, old_epoch: int, new_epoch: int) -> None:
-        now = time.time()
-        with self._lock:
-            epoch = self.snapshot["epoch"]
-            epoch["last_transition_at"] = now
-            epoch["last_transition_old"] = int(old_epoch)
-            epoch["last_transition_new"] = int(new_epoch)
-            epoch["epoch_number"] = int(new_epoch)
-            self._record_event_locked(
-                "epoch_transition",
-                old_epoch=int(old_epoch),
-                new_epoch=int(new_epoch),
-                force_snapshot=True,
-            )
-
     def mark_backend_sync_started(self) -> None:
         now = time.time()
         with self._lock:
@@ -394,74 +360,6 @@ class ValidatorRuntimeTracker:
             self.snapshot["koth"]["active_window"] = list(kings)
             self.snapshot["koth"]["last_updated_at"] = now
             self._persist_snapshot_locked(force=False)
-
-    def mark_reeval_started(
-        self,
-        *,
-        uid: int,
-        reason: str,
-        model_hash: str = "",
-    ) -> None:
-        now = time.time()
-        with self._lock:
-            reeval = self.snapshot["reeval"]
-            started_key = f"{uid}:{model_hash}:{reason}"
-            if reeval.get("last_started_key") == started_key:
-                reeval["repeat_count"] = int(reeval.get("repeat_count", 0)) + 1
-            else:
-                reeval["repeat_count"] = 1
-                reeval["last_started_key"] = started_key
-            reeval["active"] = True
-            reeval["active_uid"] = int(uid)
-            reeval["active_reason"] = str(reason)
-            reeval["active_model_hash"] = str(model_hash)
-            reeval["active_started_at"] = now
-            reeval["last_error"] = ""
-            self._record_counter("reeval_started_total")
-            self._record_event_locked(
-                "reeval_started",
-                uid=int(uid),
-                reason=str(reason),
-                model_hash=str(model_hash),
-            )
-
-    def mark_reeval_completed(
-        self,
-        *,
-        uid: int,
-        reason: str,
-        success: bool,
-        total_score: float | None = None,
-        error: str = "",
-    ) -> None:
-        now = time.time()
-        with self._lock:
-            reeval = self.snapshot["reeval"]
-            reeval["active"] = False
-            reeval["last_completed_uid"] = int(uid)
-            reeval["last_completed_reason"] = str(reason)
-            reeval["last_completed_at"] = now
-            reeval["last_error"] = str(error)
-            if success:
-                self._record_counter("reeval_completed_total")
-            self._record_event_locked(
-                "reeval_completed" if success else "reeval_failed",
-                severity="warning" if not success else "info",
-                uid=int(uid),
-                reason=str(reason),
-                total_score=total_score,
-                error=str(error),
-                force_snapshot=True,
-            )
-
-    def mark_reeval_missing_model(self, *, uid: int, reason: str) -> None:
-        with self._lock:
-            self._record_event_locked(
-                "reeval_missing_model",
-                severity="warning",
-                uid=int(uid),
-                reason=str(reason),
-            )
 
     def mark_chain_sync_started(self, *, context: str) -> None:
         now = time.time()
@@ -689,51 +587,6 @@ class ValidatorRuntimeTracker:
                 force_snapshot=True,
             )
 
-    def mark_submission_started(
-        self,
-        *,
-        stage: str,
-        uid: int,
-        model_hash: str = "",
-    ) -> None:
-        with self._lock:
-            counter = "score_submit_started_total" if stage == "score" else "screening_submit_started_total"
-            self._record_counter(counter)
-            self._record_event_locked(
-                f"{stage}_submit_started",
-                uid=int(uid),
-                model_hash=str(model_hash),
-            )
-
-    def mark_submission_result(
-        self,
-        *,
-        stage: str,
-        uid: int,
-        success: bool,
-        terminal: bool,
-        reason: str = "",
-        model_hash: str = "",
-    ) -> None:
-        with self._lock:
-            if stage == "score":
-                counter = "score_submit_success_total" if success else "score_submit_failure_total"
-            else:
-                counter = (
-                    "screening_submit_success_total" if success else "screening_submit_failure_total"
-                )
-            self._record_counter(counter)
-            severity = "info" if success else ("error" if terminal else "warning")
-            self._record_event_locked(
-                f"{stage}_submit_success" if success else f"{stage}_submit_failed",
-                severity=severity,
-                uid=int(uid),
-                terminal=bool(terminal),
-                reason=str(reason),
-                model_hash=str(model_hash),
-                force_snapshot=not success,
-            )
-
     def mark_queue_item_stage(
         self,
         *,
@@ -769,11 +622,6 @@ class ValidatorRuntimeTracker:
                 retry_attempts=int(item.get("retry_attempts", 0) or 0),
                 note=str(note),
             )
-
-    def update_queue_state(self, queue: dict) -> None:
-        with self._lock:
-            self._update_queue_state_locked(queue)
-            self._persist_snapshot_locked(force=False)
 
     def _update_queue_state_locked(self, queue: dict) -> None:
         items = dict(queue.get("items", {}))
@@ -876,20 +724,6 @@ class ValidatorRuntimeTracker:
                 active_worker_cap=int(active_worker_cap),
             )
 
-    def mark_docker_backoff(self, *, active_worker_cap: int, note: str) -> None:
-        now = time.time()
-        with self._lock:
-            docker = self.snapshot["docker"]
-            docker["active_worker_cap"] = int(active_worker_cap)
-            docker["last_backoff_note"] = str(note)
-            docker["last_backoff_at"] = now
-            self._record_event_locked(
-                "docker_backoff",
-                severity="warning",
-                active_worker_cap=int(active_worker_cap),
-                note=str(note),
-            )
-
     def mark_docker_worker_failure(
         self,
         *,
@@ -918,19 +752,6 @@ class ValidatorRuntimeTracker:
             self._record_event_locked(
                 "docker_worker_restart",
                 worker_slot=int(worker_slot),
-            )
-
-    def mark_docker_cleanup(self, *, duration_sec: float, reason: str) -> None:
-        with self._lock:
-            docker = self.snapshot["docker"]
-            docker["cleanup_count"] = int(docker.get("cleanup_count", 0)) + 1
-            docker["last_cleanup_duration_sec"] = float(duration_sec)
-            docker["last_cleanup_reason"] = str(reason)
-            self._record_event_locked(
-                "docker_cleanup",
-                duration_sec=float(duration_sec),
-                reason=str(reason),
-                force_snapshot=True,
             )
 
     def snapshot_copy(self) -> dict[str, Any]:

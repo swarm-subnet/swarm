@@ -199,7 +199,6 @@ def build_loading_staging(
         gate_position = "min" if gate_bias < 0.0 else "max"
 
     goods_range = None
-    container_range = None
 
     if (
         gate_position == "center"
@@ -215,10 +214,8 @@ def build_loading_staging(
         left_mid = 0.5 * (left_range[0] + left_range[1])
         right_mid = 0.5 * (right_range[0] + right_range[1])
         if abs(left_mid - office_along) >= abs(right_mid - office_along):
-            container_range = left_range
             goods_range = right_range
         else:
-            container_range = right_range
             goods_range = left_range
     elif gate_position == "min":
         base = (
@@ -248,20 +245,7 @@ def build_loading_staging(
         goods_range = (
             fallback_ranges[0] if fallback_ranges else (along_start, along_end)
         )
-        container_range = fallback_ranges[1] if len(fallback_ranges) > 1 else None
 
-    if not _valid_range(container_range, min_len=4.0):
-        container_range = None
-
-    if _valid_range(left_range, min_len=4.0) or _valid_range(right_range, min_len=4.0):
-        if _range_len(left_range) >= _range_len(right_range):
-            container_range = (
-                left_range if _valid_range(left_range, min_len=4.0) else right_range
-            )
-        else:
-            container_range = (
-                right_range if _valid_range(right_range, min_len=4.0) else left_range
-            )
     truck_mid = 0.5 * (truck_min + truck_max)
 
     counts = {"box": 0, "barrel": 0, "pallet": 0, "container": 0}

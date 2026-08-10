@@ -1,6 +1,5 @@
 from ._shared import *
 from .geometry import (
-    build_floor,
     corner_points,
     desk_lr_along_offsets,
     nearest_corner_index,

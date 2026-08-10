@@ -31,12 +31,9 @@ from .constants import (
     WAREHOUSE_SIZE_Y,
 )
 from .helpers import (
-    _attached_wall_from_area_bounds,
-    _candidate_rect_bounds,
     _floor_spawn_half_extents,
     _loading_marker_xy_size,
     _orient_dims_long_side_on_wall,
-    _rect_bounds,
     _rects_overlap,
     _sample_random_center,
     _size_fits_half_span,
@@ -86,26 +83,6 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
             "cx": clear_cx, "cy": clear_cy,
             "rgba": (0.0, 0.0, 0.0, 0.0),
         }
-    critical_zone_keepout_rect = None
-    if personnel_clear_rect is not None:
-        critical_zone_clear_depth = max(PERSONNEL_DOOR_CLEAR_DEPTH + 3.5, 9.5)
-        critical_zone_extra_along = PERSONNEL_DOOR_CLEAR_EXTRA_ALONG + 2.2
-        if personnel_side in ("north", "south"):
-            kz_sx = personnel_span + (2.0 * critical_zone_extra_along)
-            kz_sy = critical_zone_clear_depth
-        else:
-            kz_sx = critical_zone_clear_depth
-            kz_sy = personnel_span + (2.0 * critical_zone_extra_along)
-        kz_cx, kz_cy = _wall_attached_center(
-            personnel_side, personnel_along, kz_sx, kz_sy,
-            attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
-        critical_zone_keepout_rect = {
-            "name": "_PERSONNEL_CRITICAL_KEEPOUT",
-            "sx": kz_sx, "sy": kz_sy,
-            "cx": kz_cx, "cy": kz_cy,
-            "rgba": (0.0, 0.0, 0.0, 0.0),
-        }
     office_passage_keepout_rect = None
     if personnel_clear_rect is not None:
         office_clear_depth = max(PERSONNEL_DOOR_CLEAR_DEPTH + 5.0, 11.0)
@@ -127,7 +104,6 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
             "rgba": (0.0, 0.0, 0.0, 0.0),
         }
 
-    critical_door_blocking_zones = {"LOADING", "STORAGE", "FACTORY"}
     major_zone_fixed_short_side_m = {
         zone_name: float(min(area_defs[zone_name]["size_m"]))
         for zone_name in ("LOADING", "STORAGE", "FACTORY")
@@ -150,35 +126,6 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
     else:
         longitudinal_side_walls = tuple(WALL_SLOTS)
     longitudinal_side_walls = tuple(w for w in longitudinal_side_walls if w in WALL_SLOTS)
-    transverse_end_only_strip = None
-    if opposite_personnel_side in WALL_SLOTS:
-        strip_depth = max(22.5, min(26.0, max(major_zone_fixed_short_side_m.values(), default=22.5)))
-        if opposite_personnel_side == "north":
-            strip_sx = max(1.0, attach_half_x * 2.0)
-            strip_sy = strip_depth
-            strip_cx = 0.0
-            strip_cy = attach_half_y - (strip_sy * 0.5)
-        elif opposite_personnel_side == "south":
-            strip_sx = max(1.0, attach_half_x * 2.0)
-            strip_sy = strip_depth
-            strip_cx = 0.0
-            strip_cy = -attach_half_y + (strip_sy * 0.5)
-        elif opposite_personnel_side == "east":
-            strip_sx = strip_depth
-            strip_sy = max(1.0, attach_half_y * 2.0)
-            strip_cx = attach_half_x - (strip_sx * 0.5)
-            strip_cy = 0.0
-        else:
-            strip_sx = strip_depth
-            strip_sy = max(1.0, attach_half_y * 2.0)
-            strip_cx = -attach_half_x + (strip_sx * 0.5)
-            strip_cy = 0.0
-        transverse_end_only_strip = {
-            "name": "_TRANSVERSE_END_ONLY_STRIP",
-            "sx": strip_sx, "sy": strip_sy,
-            "cx": strip_cx, "cy": strip_cy,
-            "rgba": (0.0, 0.0, 0.0, 0.0),
-        }
 
     _core_helpers = make_core_layout_helpers(
         area_defs=area_defs,
@@ -190,8 +137,6 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         personnel_span=personnel_span,
         personnel_along=personnel_along,
         opposite_personnel_side=opposite_personnel_side,
-        critical_zone_keepout_rect=critical_zone_keepout_rect,
-        critical_door_blocking_zones=critical_door_blocking_zones,
         rng=rng,
     )
     _scaled_dims_for_zone = _core_helpers.scaled_dims_for_zone
@@ -201,14 +146,12 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         _core_helpers.is_far_from_personnel_door_on_same_wall
     )
     _opposite_wall_end_targets = _core_helpers.opposite_wall_end_targets
-    _is_at_preferred_opposite_end = _core_helpers.is_at_preferred_opposite_end
     _is_at_wall_end = _core_helpers.is_at_wall_end
     _can_place_static = _core_helpers.can_place_static
     _can_place = _core_helpers.can_place
     _place_on_wall = _core_helpers.place_on_wall
     _place_anywhere = _core_helpers.place_anywhere
     _force_place_zone = _core_helpers.force_place_zone
-    _loading_zone_covers_doors = _core_helpers.loading_zone_covers_doors
 
     # --- LOADING zone placement ---
     loading_def = area_defs["LOADING"]
@@ -883,106 +826,6 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
 
     for zone_name in ("STORAGE", "FACTORY", "LOADING", "FORKLIFT_PARK", "MACHINING_CELL"):
         _try_center_zone_if_isolated_on_wall(zone_name)
-
-    # --- Post-processing: corner snapping for longitudinal zones ---
-    def _try_relocate_longitudinal_zone_to_corner(zone_name):
-        zone_idx = next((i for i, a in enumerate(placed) if str(a.get("name", "")) == str(zone_name)), None)
-        if zone_idx is None:
-            return False
-        current = placed[zone_idx]
-        current_wall = _candidate_attached_wall(current)
-        if current_wall not in longitudinal_side_walls:
-            return False
-        placed.pop(zone_idx)
-        base_sx = float(current.get("sx", 0.0))
-        base_sy = float(current.get("sy", 0.0))
-        color = current.get("rgba", (0.7, 0.7, 0.7, 0.7))
-        wall_order = [current_wall] + [w for w in longitudinal_side_walls if w != current_wall]
-        if str(zone_name).upper() == "FACTORY":
-            shrink_steps = (1.0, 0.95, 0.90, 0.85, 0.80)
-        else:
-            shrink_steps = (1.0, 0.95, 0.90, 0.85)
-
-        for shrink in shrink_steps:
-            sx_try, sy_try = _scaled_dims_for_zone(zone_name, base_sx, base_sy, shrink)
-            for gap in (AREA_LAYOUT_MIN_GAP, 0.0):
-                for wall in wall_order:
-                    sx_on_wall, sy_on_wall = _orient_dims_long_side_on_wall(wall, sx_try, sy_try)
-                    lo, hi = _wall_along_limits(
-                        wall, sx_on_wall, sy_on_wall,
-                        attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-                    )
-                if hi < lo:
-                    continue
-                span = max(0.0, hi - lo)
-                end_band = max(1.2, min(span, 6.5))
-                if wall in ("north", "south"):
-                    current_along = float(current.get("cx", 0.0))
-                else:
-                    current_along = float(current.get("cy", 0.0))
-                if abs(current_along - lo) <= abs(current_along - hi):
-                    end_first, end_second = lo, hi
-                else:
-                    end_first, end_second = hi, lo
-                along_prefs = (
-                    end_first,
-                    end_second,
-                    end_first + (0.5 * end_band) if end_first <= end_second else end_first - (0.5 * end_band),
-                    end_second - (0.5 * end_band) if end_first <= end_second else end_second + (0.5 * end_band),
-                )
-                for along_pref in along_prefs:
-                    cand = _place_on_wall(
-                        name=str(zone_name), sx=sx_try, sy=sy_try,
-                        wall=wall, color=color, along_pref=along_pref,
-                        tries=0, gap=gap, deterministic_first=True,
-                    )
-                    if cand is None:
-                        continue
-                    if not _is_at_wall_end(cand):
-                        continue
-                    placed.append(cand)
-                    return True
-
-        placed.insert(zone_idx, current)
-        return False
-
-    def _snap_longitudinal_zone_to_exact_end(zone_name):
-        zone_idx = next((i for i, a in enumerate(placed) if str(a.get("name", "")) == str(zone_name)), None)
-        if zone_idx is None:
-            return False
-        current = placed[zone_idx]
-        current_wall = _candidate_attached_wall(current)
-        if current_wall not in longitudinal_side_walls:
-            return False
-        sx = float(current.get("sx", 0.0))
-        sy = float(current.get("sy", 0.0))
-        lo, hi = _wall_along_limits(
-            current_wall, sx, sy,
-            attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-        )
-        if hi < lo:
-            return False
-        if current_wall in ("north", "south"):
-            current_along = float(current.get("cx", 0.0))
-        else:
-            current_along = float(current.get("cy", 0.0))
-        end_targets = [lo, hi]
-        end_targets.sort(key=lambda v: abs(float(v) - current_along))
-        placed.pop(zone_idx)
-        color = current.get("rgba", (0.7, 0.7, 0.7, 0.7))
-        for gap in (AREA_LAYOUT_MIN_GAP, 0.0):
-            for along in end_targets:
-                cx, cy = _wall_attached_center(
-                    current_wall, along, sx, sy,
-                    attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
-                )
-                cand = _make_candidate(str(zone_name), sx, sy, cx, cy, color)
-                if not _can_place(cand, gap):
-                    continue
-                placed.append(cand)
-                return True
-        placed.insert(zone_idx, current)
-        return False
 
     # --- Build result layout dict ---
     layout = {

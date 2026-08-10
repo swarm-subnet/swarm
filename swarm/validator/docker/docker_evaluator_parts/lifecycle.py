@@ -75,10 +75,6 @@ def _check_docker_available(self):
         )
         return False
 
-@staticmethod
-def _env_truthy(name: str) -> bool:
-    return env_bool(name, False)
-
 @classmethod
 def _docker_env_overrides(cls) -> dict[str, str]:
     settings = DockerRuntimeSettings.from_env()

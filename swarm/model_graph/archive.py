@@ -31,9 +31,6 @@ class ArchiveContents:
     manifest_bytes: bytes
     files: dict[str, bytes]
 
-    def sha256(self, name: str) -> str:
-        return hashlib.sha256(self.files[name]).hexdigest()
-
 
 def _rejected(detail: str) -> ModelGraphError:
     return ModelGraphError(ReasonCode.ARCHIVE_REJECTED, detail)

@@ -1,26 +1,6 @@
 from ._shared import *
 
 
-def build_floor(loader):
-    tile_model = ASSETS["floor_tile"]
-    tile_x, tile_y, _ = loader.model_size(tile_model)
-    nx = round(FLOOR_SIZE[0] / tile_x)
-    ny = round(FLOOR_SIZE[0] / tile_y)
-    if abs(nx * tile_x - FLOOR_SIZE[0]) > 1e-6 or abs(ny * tile_y - FLOOR_SIZE[0]) > 1e-6:
-        raise ValueError(
-            f"Uniform scale {UNIFORM_SCALE} does not tile {FLOOR_SIZE[0]}x{FLOOR_SIZE[0]} exactly "
-            f"with {tile_model} (tile {tile_x:.3f}x{tile_y:.3f})."
-        )
-    start_x = -FLOOR_SIZE[0] / 2.0 + tile_x / 2.0
-    start_y = -FLOOR_SIZE[0] / 2.0 + tile_y / 2.0
-    for ix in range(nx):
-        for iy in range(ny):
-            x = start_x + ix * tile_x
-            y = start_y + iy * tile_y
-            loader.spawn(tile_model, x, y, yaw_deg=0, floor_z=0.0)
-    return loader.top_height_from_floor(tile_model)
-
-
 def slot_config(slot):
     if slot == "north":
         return {"normal": (0.0, -1.0), "tangent": (1.0, 0.0), "wall_yaw": 0.0}
@@ -39,17 +19,6 @@ def snap_cardinal(yaw_deg):
 
 def snap_octant(yaw_deg):
     return (round(yaw_deg / 45.0) * 45.0) % 360.0
-
-
-def inward_facing_yaw(loader, model_name, x, y, diagonal=False):
-    raw_yaw = loader.yaw_to_face_point(model_name, x, y, ROOM_CENTER[0], ROOM_CENTER[1])
-    return snap_octant(raw_yaw) if diagonal else snap_cardinal(raw_yaw)
-
-
-def slot_inward_wall_yaw(loader, model_name, slot):
-    _ = loader
-    _ = model_name
-    return float(wall_face_yaw(slot))
 
 
 def wall_face_yaw(slot):
@@ -171,23 +140,6 @@ def _wall_segment_plan(loader):
     return [(start + i * seg_len, along_scale) for i in range(int(nseg))]
 
 
-def spawn_walls(loader, floor_top_z):
-    seg_plan = _wall_segment_plan(loader)
-    for slot in WALL_SLOTS:
-        wall_yaw = slot_inward_wall_yaw(loader, ASSETS["wall"], slot)
-        for along, along_scale in seg_plan:
-            x, y = slot_xy(slot, along, inward=0.0)
-            loader.spawn(
-                ASSETS["wall"],
-                x,
-                y,
-                yaw_deg=wall_yaw,
-                floor_z=floor_top_z,
-                scale=(UNIFORM_SCALE * along_scale, UNIFORM_SCALE, UNIFORM_SCALE),
-            )
-    spawn_wall_corners(loader, floor_top_z)
-
-
 def spawn_wall_corners(loader, floor_top_z):
     if not ENABLE_PERIMETER_WALL_CORNERS:
         return
@@ -242,12 +194,8 @@ def spawn_walls_with_entry(
     use_gap = str(open_mode).lower() == "gap"
     slot_yaw_cache = {}
     for slot in WALL_SLOTS:
-        slot_yaw_cache[(slot, ASSETS["wall"])] = slot_inward_wall_yaw(
-            loader, ASSETS["wall"], slot
-        )
-        slot_yaw_cache[(slot, ASSETS["wall_door"])] = slot_inward_wall_yaw(
-            loader, ASSETS["wall_door"], slot
-        )
+        slot_yaw_cache[(slot, ASSETS["wall"])] = float(wall_face_yaw(slot))
+        slot_yaw_cache[(slot, ASSETS["wall_door"])] = float(wall_face_yaw(slot))
         for i, (along, along_scale) in enumerate(seg_plan):
             if slot == entry_slot and i == door_idx:
                 if use_gap:

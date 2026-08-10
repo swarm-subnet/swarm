@@ -36,6 +36,11 @@ from .dispatch import (
 )
 from swarm.config import HostWorkerRuntimeSettings
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.validator.calibration.speed_factor import baseline_model_available
+from swarm.validator.docker.docker_evaluator_parts.batch import (
+    _ensure_host_speed_factor,
+    host_speed_factor_is_fresh,
+)
 
 try:
     _libc = ctypes.CDLL("libc.so.6")
@@ -79,6 +84,26 @@ def _create_prepared_benchmark_evaluator():
     evaluator.base_ready = True
     DockerSecureEvaluator._base_ready = True
     return evaluator
+
+
+async def _precalibrate_host(worker_count: int) -> None:
+    """Measure the host before any worker exists.
+
+    Workers run as daemons and a daemon cannot start processes of its own, so a
+    calibration deferred to the first batch dies inside the worker. Measuring here
+    leaves a cache the workers can read, which is what the validator already does.
+    """
+    requested = max(1, int(worker_count))
+    if not baseline_model_available() or host_speed_factor_is_fresh(requested):
+        return
+    print(f"[{_ts()}] Calibrating host speed across {requested} worker(s)...", flush=True)
+    speed = await _ensure_host_speed_factor(
+        _create_prepared_benchmark_evaluator(), requested
+    )
+    if speed is None:
+        raise RuntimeError(
+            "Host speed calibration failed; benchmark timings would be unnormalized"
+        )
 
 
 def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
@@ -283,6 +308,7 @@ async def _run_benchmark_process_mode(
     set_heartbeat_status_provider: Optional[Any] = None,
 ) -> int:
     engine = _engine_facade()
+    await _precalibrate_host(effective_workers)
     ctx = engine._benchmark_mp_context()
     task_queue = ctx.Queue()
     result_queue = ctx.Queue()

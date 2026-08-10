@@ -5,40 +5,6 @@ def resolve_swarm_drone_urdf():
     return first_existing_path(SWARM_DRONE_URDF_CANDIDATES)
 
 
-def _spawn_box(center_xyz, size_xyz, rgba, cli, with_collision=True):
-    hx = float(size_xyz[0]) * 0.5
-    hy = float(size_xyz[1]) * 0.5
-    hz = float(size_xyz[2]) * 0.5
-    vid = p.createVisualShape(
-        p.GEOM_BOX,
-        halfExtents=[hx, hy, hz],
-        rgbaColor=list(rgba),
-        physicsClientId=cli,
-    )
-    cid = (
-        p.createCollisionShape(
-            p.GEOM_BOX, halfExtents=[hx, hy, hz], physicsClientId=cli
-        )
-        if with_collision
-        else -1
-    )
-    body_id = p.createMultiBody(
-        baseMass=0.0,
-        baseCollisionShapeIndex=cid,
-        baseVisualShapeIndex=vid,
-        basePosition=list(center_xyz),
-        useMaximalCoordinates=True,
-        physicsClientId=cli,
-    )
-    p.changeVisualShape(
-        body_id,
-        -1,
-        textureUniqueId=-1,
-        specularColor=list(UNIFORM_SPECULAR_COLOR),
-        physicsClientId=cli,
-    )
-
-
 def _spawn_swarm_drone_urdf(
     urdf_path, x, y, z, yaw_deg, global_scale, cli, target_bottom_z=None
 ):

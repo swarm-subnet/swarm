@@ -124,20 +124,3 @@ def probe_artifact_subprocess(
             node_id=record.get("node_id"),
             model_id=record.get("model_id"),
         )
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Probe an admitted model-graph artifact")
-    parser.add_argument("artifact", type=Path)
-    args = parser.parse_args(argv)
-    try:
-        runner = GraphRunner.from_artifact(args.artifact)
-        probe_runner(runner)
-    except ModelGraphError as exc:
-        print(json.dumps(exc.to_record(), sort_keys=True), file=sys.stderr)
-        return 1
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
