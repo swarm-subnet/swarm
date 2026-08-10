@@ -808,7 +808,10 @@ async def _run_full_benchmark(
 
     total_seeds = len(benchmark_seeds)
     note = "full benchmark" if seeds is None else "custom seeds"
-    epoch = self.seed_manager.epoch_number
+    # The epoch that leased these seeds, not today's, or the leases never complete.
+    epoch = int(
+        epoch_number if epoch_number is not None else self.seed_manager.epoch_number
+    )
 
     tracker_call(
         self,
