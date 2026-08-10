@@ -1,7 +1,6 @@
 """Compute is priced into the seed score, and only where it was measured."""
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pytest
@@ -59,18 +58,27 @@ def test_expensive_models_lose_the_whole_weight():
     assert compute_multiplier(COMPUTE_ZERO_UNITS * 100.0) == pytest.approx(floor)
 
 
-def test_every_halving_is_worth_the_same():
-    """The point of the log curve: a lean model still gains by getting leaner."""
-    steps = [
-        compute_multiplier(units) - compute_multiplier(units * 2.0)
-        for units in (0.1, 0.2, 0.4, 0.8)
+def test_the_decay_is_linear_between_the_thresholds():
+    """Equal steps of extra compute cost equal slices of score across the ramp."""
+    span = COMPUTE_ZERO_UNITS - COMPUTE_FULL_UNITS
+    quarter = span / 4.0
+    edges = [COMPUTE_FULL_UNITS + quarter * i for i in range(5)]
+    drops = [
+        compute_multiplier(a) - compute_multiplier(b)
+        for a, b in zip(edges, edges[1:])
     ]
-    for step in steps[1:]:
-        assert step == pytest.approx(steps[0])
-    expected = COMPUTE_WEIGHT * math.log(2.0) / math.log(
-        COMPUTE_ZERO_UNITS / COMPUTE_FULL_UNITS
-    )
-    assert steps[0] == pytest.approx(expected)
+    for drop in drops[1:]:
+        assert drop == pytest.approx(drops[0])
+    assert sum(drops) == pytest.approx(COMPUTE_WEIGHT)
+
+
+@pytest.mark.parametrize(
+    "units,retained",
+    [(1.0, 1.000), (1.25, 0.975), (1.5, 0.950), (1.75, 0.925), (2.0, 0.900)],
+)
+def test_the_published_table_is_what_the_code_does(units, retained):
+    """These five rows are the rule as miners are told it; they must not drift."""
+    assert compute_multiplier(units) == pytest.approx(retained)
 
 
 def test_the_curve_never_rises_with_cost():

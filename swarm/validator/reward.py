@@ -87,10 +87,10 @@ def compute_multiplier(compute_units: Optional[float]) -> float:
 
     ``compute_units`` is the CPU the miner burned per act over the seed divided
     by the same figure for the baseline model on that host, so the hardware
-    cancels and every validator reaches the same verdict. The curve is
-    logarithmic on purpose: each halving of compute returns the same slice of
-    score, so a model that is already lean still gains by getting leaner.
-    ``None`` means the seed was never metered and must not be charged.
+    cancels and every validator reaches the same verdict. Costing no more than
+    the baseline model is free; from there the credit falls away linearly and is
+    gone at twice its cost. ``None`` means the seed was never metered and must
+    not be charged.
     """
     if compute_units is None:
         return 1.0
@@ -98,13 +98,8 @@ def compute_multiplier(compute_units: Optional[float]) -> float:
     # An unmeasured cost is not a free model; an infinite one hits the floor.
     if math.isnan(units) or units <= 0.0:
         return 1.0
-    if units <= COMPUTE_FULL_UNITS:
-        efficiency = 1.0
-    elif units >= COMPUTE_ZERO_UNITS:
-        efficiency = 0.0
-    else:
-        span = math.log(COMPUTE_ZERO_UNITS) - math.log(COMPUTE_FULL_UNITS)
-        efficiency = (math.log(COMPUTE_ZERO_UNITS) - math.log(units)) / span
+    span = COMPUTE_ZERO_UNITS - COMPUTE_FULL_UNITS
+    efficiency = _clamp((COMPUTE_ZERO_UNITS - units) / span)
     return 1.0 - COMPUTE_WEIGHT + COMPUTE_WEIGHT * efficiency
 
 
