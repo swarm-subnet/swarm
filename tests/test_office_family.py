@@ -344,6 +344,71 @@ def test_office_target_brake_guard_scales():
         assert guard - cadence_travel >= OFFICE_TARGET_GUARD_SAFETY * stop - 1e-9
 
 
+def test_office_target_invisible_in_rgb(office_env):
+    """The detector must stay the only sighting channel: moving the target
+    through the camera's view cannot change a single rendered pixel."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    uid = int(env._office_target_uid)
+    cpos = env.pos[0].copy()
+    rot = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
+    fwd = rot[:, 0]
+    away = (cpos - fwd * 5.0).tolist()
+    for dist in (0.5, 1.5):  # large on screen and mid-range, wall behind both
+        p.resetBasePositionAndOrientation(uid, (cpos + fwd * dist).tolist(),
+                                          [0, 0, 0, 1], physicsClientId=env.CLIENT)
+        with_target, _, _ = env._getDroneImages(0)
+        p.resetBasePositionAndOrientation(uid, away, [0, 0, 0, 1],
+                                          physicsClientId=env.CLIENT)
+        without_target, _, _ = env._getDroneImages(0)
+        assert np.array_equal(with_target, without_target), f"target visible at {dist} m"
+    # Positive control: an opaque body at the same spot MUST change the render.
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.1] * 3,
+                              rgbaColor=[1, 0, 0, 1], physicsClientId=env.CLIENT)
+    box = p.createMultiBody(baseVisualShapeIndex=vis,
+                            basePosition=(cpos + fwd * 1.5).tolist(),
+                            physicsClientId=env.CLIENT)
+    control, _, _ = env._getDroneImages(0)
+    p.removeBody(box, physicsClientId=env.CLIENT)
+    assert not np.array_equal(without_target, control), "the check cannot fail"
+
+
+def test_office_tof_never_ranges_target(office_env):
+    """A target under the chaser must not echo in the ToF, upright or tilted
+    with the ray clipping its edge (the case a naive recast re-hits)."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    fam = env.family_runtime
+    uid = int(env._office_target_uid)
+    cpos = env.pos[0].copy()
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]),
+                                      [cpos[0], cpos[1], 2.5], [0, 0, 0, 1],
+                                      physicsClientId=env.CLIENT)
+    env._updateAndStoreKinematicInformation()
+    hover = env.pos[0]
+    away = [cpos[0] + 4.0, cpos[1], 1.5]
+    tilt = p.getQuaternionFromEuler([0.52, 0.0, 0.0])  # ~30 degrees
+    cases = (([hover[0], hover[1], 1.4], [0, 0, 0, 1]),
+             ([hover[0] + 0.06, hover[1], 1.4], tilt))  # ray clips the edge
+    # No target in the ray: bit-identical to the generic helper, or every
+    # episode's telemetry silently changes.
+    p.resetBasePositionAndOrientation(uid, away, [0, 0, 0, 1],
+                                      physicsClientId=env.CLIENT)
+    assert fam._office_tof(env, 0) == env._get_altitude_distance(0)
+    baseline = fam._snapshot(env, 0, env.CTRL_TIMESTEP)[9]
+    for tpos, tquat in cases:
+        p.resetBasePositionAndOrientation(uid, tpos, tquat, physicsClientId=env.CLIENT)
+        raw = p.rayTest([hover[0], hover[1], hover[2] - 0.03],
+                        [hover[0], hover[1], hover[2] - 20.0],
+                        physicsClientId=env.CLIENT)[0]
+        assert int(raw[0]) == uid, "case must actually put the target in the ray"
+        # Through the real telemetry path: a reversion to the unfiltered helper
+        # in _snapshot must fail here, not only in the unit call.
+        with_target = fam._snapshot(env, 0, env.CTRL_TIMESTEP)[9]
+        assert with_target == pytest.approx(baseline, abs=1e-6), \
+            "ToF must read the floor, not the target"
+
+
 def test_office_spawn_rejects_sealed_room_and_floor_objects(office_env):
     """The two placement traps found in batch testing: the sealed corridor room
     (no flight path in or out) and flat floor objects under a spawn point."""

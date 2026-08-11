@@ -8,9 +8,10 @@ The validator flies the target: a second Tello whose personality — cruise
 speed, pause habits, leg style, and on most seeds a spook range it flees
 from — is dealt by the seed. The catch is a real physical hit —
 chaser-target contact ends the episode as a success. The miner senses the
-world exactly as the physical rig does: SDK telemetry packets, an emulated
-YOLO detector, and a domain-randomized RGB camera — all seeded, all
-bit-identical across validators.
+world through the physical rig's channels — SDK telemetry packets, an
+emulated YOLO detector, and a domain-randomized RGB camera — all seeded, all
+bit-identical across validators. One deliberate deviation: the target is
+invisible to camera and ToF, so the detector is the only sighting channel.
 """
 
 from __future__ import annotations
@@ -28,8 +29,11 @@ from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
+    ALTITUDE_RAY_INSET,
     CAMERA_EYE_FWD_M,
     CAMERA_EYE_UP_M,
+    DRONE_HULL_RADIUS,
+    MAX_RAY_DISTANCE,
     OFFICE_CHALLENGE_TYPE,
     OFFICE_DET_CONF_FLOOR,
     OFFICE_DET_DELAY_STEPS,
@@ -506,6 +510,10 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli,
         ))
         env._office_target_uid = uid
+        # The detector is the only sighting channel: the target never appears on camera.
+        for shape in p.getVisualShapeData(uid, physicsClientId=cli):
+            p.changeVisualShape(uid, shape[1], rgbaColor=[0, 0, 0, 0],
+                                physicsClientId=cli)
         # Ramming the target is the catch, not a chaser crash.
         env._collision_exempt_uids = frozenset({uid})
 
@@ -884,6 +892,32 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         if step % OFFICE_DET_PERIOD_STEPS == 0:
             self._detector_deliver(env, env._office_det_rng, dt)
 
+    def _office_tof(self, env, d: int) -> float:
+        """Downward ToF that never returns the target — the detector must stay
+        the only sighting channel, so a target underneath reads as the floor.
+        Same geometry and body-center distance as _get_altitude_distance."""
+        cli = env.CLIENT
+        pos = env.pos[d]
+        offset = getattr(env, "_alt_ray_origin_offset",
+                         DRONE_HULL_RADIUS - ALTITUDE_RAY_INSET)
+        start = [float(pos[0]), float(pos[1]), float(pos[2]) - offset]
+        end = [float(pos[0]), float(pos[1]), float(pos[2]) - MAX_RAY_DISTANCE]
+        hit_uid, _, hit_frac, hit_pos, _ = p.rayTest(start, end, physicsClientId=cli)[0]
+        tuid = getattr(env, "_office_target_uid", None)
+        if tuid is None or int(hit_uid) != int(tuid):
+            # Bit-identical to _get_altitude_distance when no target is in the ray.
+            if int(hit_uid) != -1:
+                seg_len = MAX_RAY_DISTANCE - offset
+                return min(MAX_RAY_DISTANCE, offset + float(hit_frac) * seg_len)
+            return MAX_RAY_DISTANCE
+        # Re-cast from below the target's live AABB: at any attitude the ray
+        # cannot hit it again, so the reading is what the floor would give.
+        start[2] = p.getAABB(int(tuid), physicsClientId=cli)[0][2] - 1e-3
+        hit_uid, _, _, hit_pos, _ = p.rayTest(start, end, physicsClientId=cli)[0]
+        if int(hit_uid) == -1:
+            return MAX_RAY_DISTANCE
+        return min(MAX_RAY_DISTANCE, float(pos[2]) - float(hit_pos[2]))
+
     def _snapshot(self, env, d: int, dt: float) -> np.ndarray:
         # Lazy import: moving_drone imports this package, so the top level would cycle.
         from swarm.core.moving_drone import world_to_body
@@ -895,7 +929,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         vf, vr, vu = world_to_body(vel, yaw)
         af, ar, au = world_to_body(accel, yaw)
         bias = env._office_accel_bias[d]  # sensor-fixed, so applied in the body frame
-        tof = min(float(env._get_altitude_distance(d)), OFFICE_TELEM_TOF_MAX_M)
+        tof = min(self._office_tof(env, d), OFFICE_TELEM_TOF_MAX_M)
         height = float(env.pos[d, 2]) - float(env._office_takeoff_z[d])
         baro = height + float(env._office_baro_walk[d])
         return np.array([pitch, roll, yaw, vf, vr, -vu,

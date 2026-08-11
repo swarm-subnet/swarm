@@ -8,6 +8,8 @@ Observation (dict):
       camera. Fresh frames arrive at ~25 Hz and are held between captures, like
       the real Tello's 30 fps stream. Colors, lighting and camera imperfections
       are randomized every episode: geometry is the reliable signal, not color.
+      The TARGET IS NOT VISIBLE in the image (and the ToF never returns it) —
+      use the camera for navigating, the detector block for finding the target.
     - "state": numpy array (127,), float32. Index ranges:
         0:4    attitude — pitch, roll (rad), sin(yaw), cos(yaw)
         4:7    body velocity — forward, right, down (m/s, SDK convention)
@@ -18,8 +20,10 @@ Observation (dict):
         15:27  detector — box count, age since the last frame that reported any
                box (s; false positives reset it too), then two
                [cx, cy, w, h, confidence] slots normalized to the rgb frame
-               (boxes overlay obs["rgb"] directly); telling real boxes from
-               ghosts and tracking the target are YOUR job
+               (same camera projection: a box marks where the invisible target
+               would appear in obs["rgb"]); telling real boxes from ghosts and
+               tracking the target are YOUR job — this block is the ONLY
+               sighting channel
         27:127 action history — the last 25 actions, 4 values each
 
 Action:
