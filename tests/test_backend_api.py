@@ -121,6 +121,7 @@ def test_sign_request_with_wallet_contains_expected_fields(monkeypatch, tmp_path
         assert headers["X-Validator-Signature"] == "0102"
         assert "X-Validator-Nonce" in headers
         assert "X-Validator-Timestamp" in headers
+        assert headers["X-Validator-Session"] == client.session_id
         assert headers["X-Swarm-Validator-Contract"] == "agent_rpc.v1"
     finally:
         _run(client.close())
@@ -167,6 +168,28 @@ def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
         assert captured["data"]["active_task"]["assignment_id"] == 9
         assert captured["data"]["active_task"]["family_id"] == "cf_autopilot"
         assert captured["data"]["backend_decision_version"] == 12
+        assert captured["data"]["session_id"] == client.session_id
+    finally:
+        _run(client.close())
+
+
+def test_duplicate_session_response_exits_process(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _FakeAsyncClient()
+    response = httpx.Response(
+        status_code=409,
+        json={"detail": "DUPLICATE_VALIDATOR_INSTANCE"},
+        request=httpx.Request("POST", "http://backend.local/validators/heartbeat"),
+    )
+    fake_http.post_response = response
+    client.client = fake_http
+
+    try:
+        try:
+            _run(client._post_signed("/validators/heartbeat", {"status": "idle"}))
+            assert False, "duplicate session must terminate the validator"
+        except SystemExit as exc:
+            assert exc.code == 1
     finally:
         _run(client.close())
 
