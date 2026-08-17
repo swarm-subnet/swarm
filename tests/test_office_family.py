@@ -97,6 +97,43 @@ def test_office_dead_zone_and_slew(office_env):
     assert np.all(np.abs(env._rc_command) <= max_step + 1e-9)
 
 
+def test_office_never_scans_clearance(office_env):
+    """The clearance scan segfaults pybullet against the office meshes (seed 53)
+    and office scoring never reads it — it must stay gated off."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    for _ in range(10):
+        env.step(np.zeros((1, 4), dtype=np.float32))
+    assert env._min_clearance_episode is None
+
+
+def test_office_cannot_escape_the_room(office_env):
+    """A full-stick climb tunnels the thin ceiling sheet between substeps; the
+    out-of-bounds failsafe must end the episode as a collision, not an escape."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    for i in range(900):
+        _, _, term, trunc, _ = env.step(np.array([[0, 0, 1, 0]], dtype=np.float32))
+        if term or trunc:
+            break
+    assert env._collision and not env._success
+    assert env.pos[0][2] < OFFICE_CEILING_M + 0.7, "must be caught right past the shell"
+
+
+def test_office_malformed_actions_canonicalize_to_hover(office_env):
+    """The contract promises hover for garbage input, never an exception."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    for a in (np.full((1, 4), np.nan, dtype=np.float32),
+              np.full((1, 4), np.inf, dtype=np.float32),
+              np.zeros((1, 8), dtype=np.float32),
+              np.zeros((1, 2), dtype=np.float32),
+              np.zeros((3,), dtype=np.float32)):
+        obs, *_ = env.step(a)
+        assert np.all(np.isfinite(obs["state"]))
+        assert np.allclose(env._rc_command, 0.0), "garbage input must command hover"
+
+
 def test_office_forward_matches_heading(office_env):
     env = office_env
     env.reset(seed=env.task.map_seed)

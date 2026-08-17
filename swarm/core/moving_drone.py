@@ -367,7 +367,11 @@ class MovingDroneAviary(BaseRLAviary):
         The raw sticks enter the action-history buffer (that is all the real
         controller would know); zero sticks command a hover.
         """
-        action = np.asarray(action, dtype=np.float32).reshape(self.NUM_DRONES, 4)
+        # Contract: missing, non-finite, or wrong-shaped input canonicalizes to hover.
+        arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        if arr.size != self.NUM_DRONES * 4 or not np.all(np.isfinite(arr)):
+            arr = np.zeros(self.NUM_DRONES * 4, dtype=np.float32)
+        action = arr.reshape(self.NUM_DRONES, 4)
         self.action_buffer.append(action.copy())
         rpm = np.zeros((self.NUM_DRONES, 4))
         for k in range(self.NUM_DRONES):
@@ -1011,6 +1015,10 @@ class MovingDroneAviary(BaseRLAviary):
 
     def _update_min_clearance(self) -> None:
         """Update minimum obstacle clearance for the episode."""
+        if getattr(self, "_office_rc_enabled", False):
+            # Office scoring never reads clearance, and getClosestPoints against
+            # the office's concave meshes can segfault the process (seed 53).
+            return
         if self.NUM_DRONES > 1:
             self._update_min_clearance_multi()
             return

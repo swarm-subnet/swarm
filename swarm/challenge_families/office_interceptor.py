@@ -96,7 +96,12 @@ from swarm.constants import (
     OFFICE_W_SUCCESS,
     OFFICE_W_TIME,
 )
-from swarm.core.maps.office import OFFICE_X_RANGE, OFFICE_Y_RANGE, build_office_map
+from swarm.core.maps.office import (
+    OFFICE_CEILING_M,
+    OFFICE_X_RANGE,
+    OFFICE_Y_RANGE,
+    build_office_map,
+)
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import FailureReason, SCHEMA_VERSION
 from swarm.validator.reward import (
@@ -368,6 +373,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_det_pending = None
         env._office_det_missed = False
         env._office_rgb_capture = None  # the held video frame never crosses episodes
+        env._min_clearance_episode = None  # clearance is never scanned here (audit: None)
         # The one camera's focal length (px); env._fov is fixed per env at __init__.
         env._office_det_focal = (float(OFFICE_CAMERA_RES) / 2.0) / math.tan(
             math.radians(float(env._fov)) / 2.0
@@ -866,6 +872,16 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             det[1] = OFFICE_DET_DELAY_STEPS * dt
 
     def post_step_update(self, env) -> None:
+        # A full-speed drone can tunnel through the thin ceiling sheet between
+        # substeps; leaving the room is hitting the shell, whatever physics missed.
+        pos = env.pos[0]
+        if (not env._collision
+                and (pos[2] > OFFICE_CEILING_M + 0.3 or pos[2] < -0.3
+                     or not (OFFICE_X_RANGE[0] - 0.3 < pos[0] < OFFICE_X_RANGE[1] + 0.3)
+                     or not (OFFICE_Y_RANGE[0] - 0.3 < pos[1] < OFFICE_Y_RANGE[1] + 0.3))):
+            env._collision = True
+            if env._failure_reason == FailureReason.NONE.value:
+                env._failure_reason = FailureReason.OBSTACLE_COLLISION.value
         self._update_target(env)
         rng = getattr(env, "_office_telem_rng", None)
         if rng is None:
