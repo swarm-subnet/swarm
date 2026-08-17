@@ -15,8 +15,23 @@ import pybullet as p
 from swarm import constants as C
 from .body_tagger import BodyTagger
 from .sar_types import BodyCategory
+from .surface_resolver import resolve_surface
 
 _TAO_TEX: dict[int, int] = {}
+
+# Launch volume probed for a warehouse start pad, measured from the resolved floor.
+PAD_PROBE_RADIUS = C.START_PLATFORM_RADIUS + 0.05
+PAD_PROBE_BOTTOM = 0.05
+PAD_PROBE_TOP = 0.45
+# Decide on a real margin; branching on exact tangency can differ between Bullet builds.
+PAD_CLEARANCE_EPS = 0.02
+_PAD_LEGACY_RINGS = ((2.0, 8), (4.0, 8), (6.0, 8), (8.0, 8))
+_PAD_EXTRA_RINGS = ((1.0, 12), (1.5, 12), (3.0, 12), (5.0, 12), (10.0, 12), (12.0, 12))
+# The victim is placed near the original start, so a distant pad turns a solvable seed
+# into an infeasible one; past this the placement fails instead.
+PAD_MAX_RELOCATION = 12.0
+_PAD_SWEEP_STEP = 1.0
+_PAD_PARK = (0.0, 0.0, 1.0e4)
 
 
 def _tao_texture(cli: int) -> int:
@@ -82,6 +97,100 @@ def clear_pad_spot(cli: int, sx: float, sy: float, exclude):
             if blocking_top(cli, nx, ny, exclude) is None:
                 return nx, ny
     return sx, sy
+
+
+def _pad_candidates(sx: float, sy: float, legacy_xy, bounds, keep_out):
+    """Pad positions to try, nearest-first: the legacy pick, the original spot, the
+    legacy rings, wider rings, then a lattice sweep within the relocation limit."""
+    bx, by = bounds
+    seen: set = set()
+
+    def _emit(x, y):
+        if abs(x) > bx or abs(y) > by:
+            return None
+        if math.hypot(x - sx, y - sy) > PAD_MAX_RELOCATION:
+            return None
+        if keep_out is not None and math.hypot(x - keep_out[0], y - keep_out[1]) < keep_out[2]:
+            return None
+        key = (round(x, 4), round(y, 4))
+        if key in seen:
+            return None
+        seen.add(key)
+        return (x, y)
+
+    ordered = []
+    if legacy_xy is not None:
+        ordered.append((float(legacy_xy[0]), float(legacy_xy[1])))
+    ordered.append((sx, sy))
+    for r, n in _PAD_LEGACY_RINGS + _PAD_EXTRA_RINGS:
+        for k in range(n):
+            a = k * 2.0 * math.pi / n
+            ordered.append((sx + r * math.cos(a), sy + r * math.sin(a)))
+
+    sweep = []
+    steps = int(PAD_MAX_RELOCATION / _PAD_SWEEP_STEP)
+    for i in range(-steps, steps + 1):
+        for j in range(-steps, steps + 1):
+            x, y = sx + i * _PAD_SWEEP_STEP, sy + j * _PAD_SWEEP_STEP
+            sweep.append(((x - sx) ** 2 + (y - sy) ** 2, x, y))
+    sweep.sort()
+    ordered.extend((x, y) for _d, x, y in sweep)
+
+    for x, y in ordered:
+        spot = _emit(x, y)
+        if spot is not None:
+            yield spot
+
+
+def _launch_volume_blocked(cli: int, probe: int, x: float, y: float,
+                           surface_z: float, exclude) -> bool:
+    """True when the volume the drone will occupy is within PAD_CLEARANCE_EPS of a solid."""
+    mid = surface_z + (PAD_PROBE_BOTTOM + PAD_PROBE_TOP) / 2.0
+    p.resetBasePositionAndOrientation(probe, [x, y, mid], [0.0, 0.0, 0.0, 1.0],
+                                      physicsClientId=cli)
+    mn, mx = p.getAABB(probe, physicsClientId=cli)
+    e = PAD_CLEARANCE_EPS
+    near = p.getOverlappingObjects([mn[0] - e, mn[1] - e, mn[2] - e],
+                                   [mx[0] + e, mx[1] + e, mx[2] + e],
+                                   physicsClientId=cli) or ()
+    for uid in sorted({int(item[0]) for item in near}):
+        if uid == probe or uid in exclude:
+            continue
+        if p.getClosestPoints(probe, uid, distance=e, physicsClientId=cli):
+            return True
+    return False
+
+
+def resolve_warehouse_pad_spot(cli: int, sx: float, sy: float, *, body_tags,
+                               accepted_categories, exclude, bounds, legacy_xy=None,
+                               keep_out=None):
+    """Nearest start-pad spot with a real floor under it and an empty launch volume.
+
+    Returns (x, y, surface_z), or None when no candidate qualifies. An AABB test cannot
+    see a warehouse pallet stack because every body in it is 0.30 m tall, so the volume
+    is put to the collision engine instead. ``keep_out`` is an (x, y, radius) disc the
+    pad must stay outside, so relocating never lands on the victim.
+    """
+    col = p.createCollisionShape(p.GEOM_CYLINDER, radius=PAD_PROBE_RADIUS,
+                                 height=PAD_PROBE_TOP - PAD_PROBE_BOTTOM,
+                                 physicsClientId=cli)
+    probe = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col,
+                              basePosition=list(_PAD_PARK), physicsClientId=cli)
+    try:
+        for x, y in _pad_candidates(sx, sy, legacy_xy, bounds, keep_out):
+            # Park the probe first: left over a candidate it blocks the surface ray.
+            p.resetBasePositionAndOrientation(probe, list(_PAD_PARK), [0.0, 0.0, 0.0, 1.0],
+                                              physicsClientId=cli)
+            hit = resolve_surface(cli, x, y, body_tags, accepted_categories)
+            if hit is None:
+                continue
+            surface_z = float(hit.surface_z)
+            skip = set(exclude) | {int(hit.support_uid)}
+            if not _launch_volume_blocked(cli, probe, x, y, surface_z, skip):
+                return x, y, surface_z
+    finally:
+        p.removeBody(probe, physicsClientId=cli)
+    return None
 
 
 def build_start_platform(tagger: BodyTagger, cli: int, sx: float, sy: float,

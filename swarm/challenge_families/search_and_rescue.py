@@ -19,16 +19,18 @@ from swarm.constants import (
     SPEED_LIMIT,
     START_PLATFORM_RADIUS,
     START_PLATFORM_TAKEOFF_BUFFER,
+    TYPE_4_WORLD_RANGE_X,
+    TYPE_4_WORLD_RANGE_Y,
 )
 from swarm.core.env_builder.body_tagger import BodyTagger
 from swarm.core.env_builder.platform import (
     build_start_platform,
     clear_pad_spot,
+    resolve_warehouse_pad_spot,
     surface_z_max_at,
 )
 from swarm.core.env_builder.sar_world import build_sar_world
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError
-from swarm.core.env_builder.surface_resolver import resolve_surface
 from swarm.core.env_builder.victim import accepted_categories_for
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import FailureReason, SCHEMA_VERSION
@@ -42,6 +44,19 @@ from swarm.validator.reward import (
 )
 
 from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool, interleave
+
+
+# A failed placement parks the drone in open air so the first step cannot add a collision.
+SPAWN_FAILURE_PARK_Z = 200.0
+
+
+def _warn(message: str) -> None:
+    try:
+        import bittensor as _bt
+
+        _bt.logging.warning(message)
+    except Exception:
+        pass
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -274,22 +289,47 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         env._platform_uids = frozenset()
         if env.sar_world is not None:
             sx, sy = float(env.task.start[0]), float(env.task.start[1])
+            surf = None
             if int(env.task.challenge_type) == 5:
-                # Indoor map: a top-down ray hits the roof, so nudge clear of
-                # the racks and resolve the floor instead.
-                sx, sy = clear_pad_spot(cli, sx, sy, set(env.sar_world.victim_uids))
-                hit = resolve_surface(
-                    cli, sx, sy, env.sar_world.body_tags,
-                    accepted_categories_for(5),
+                # Indoor map: a top-down ray hits the roof, so resolve the floor and
+                # clear the launch volume against the collision engine, which sees the
+                # stacked low props an AABB test misses.
+                # The victim is an obstacle here, not an exemption: landing inside its
+                # no-touch sphere ends the episode on the first step.
+                exclude = {int(uid) for uid in env.DRONE_IDS}
+                plane_id = getattr(env, "PLANE_ID", None)
+                if plane_id is not None:
+                    exclude.add(int(plane_id))
+                vc = env.sar_world.victim_centre
+                spot = resolve_warehouse_pad_spot(
+                    cli, sx, sy,
+                    body_tags=env.sar_world.body_tags,
+                    accepted_categories=accepted_categories_for(5),
+                    exclude=exclude,
+                    bounds=(TYPE_4_WORLD_RANGE_X, TYPE_4_WORLD_RANGE_Y),
+                    legacy_xy=clear_pad_spot(
+                        cli, sx, sy, set(env.sar_world.victim_uids)),
+                    keep_out=(float(vc[0]), float(vc[1]),
+                              SAR_NO_TOUCH_RADIUS + START_PLATFORM_RADIUS),
                 )
-                surf = float(hit.surface_z) if hit is not None else 0.0
+                if spot is None:
+                    _warn(
+                        f"SAR warehouse pad placement found no clear spot for seed "
+                        f"{env.task.map_seed}"
+                    )
+                    env._sar_spawn_failed = True
+                    env._failure_reason = FailureReason.SPAWN_FAILURE.value
+                    env.task.start = (sx, sy, SPAWN_FAILURE_PARK_Z)
+                else:
+                    sx, sy, surf = spot
             else:
                 surf = surface_z_max_at(cli, sx, sy, START_PLATFORM_RADIUS * 1.2)
-            pad_uids, pad_top = build_start_platform(
-                BodyTagger(cli), cli, sx, sy, surf, int(env.task.challenge_type),
-            )
-            env._platform_uids = frozenset(pad_uids)
-            env.task.start = (sx, sy, pad_top + START_PLATFORM_TAKEOFF_BUFFER)
+            if surf is not None:
+                pad_uids, pad_top = build_start_platform(
+                    BodyTagger(cli), cli, sx, sy, surf, int(env.task.challenge_type),
+                )
+                env._platform_uids = frozenset(pad_uids)
+                env.task.start = (sx, sy, pad_top + START_PLATFORM_TAKEOFF_BUFFER)
 
         start_xyz = np.array(env.task.start, dtype=float)
         start_quat = p.getQuaternionFromEuler([0.0, 0.0, 0.0])
