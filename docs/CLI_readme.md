@@ -26,7 +26,7 @@ python -m swarm <command>
 
 ## Challenge families
 
-Family-aware commands (`swarm model package`, `swarm repo package`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
+Family-aware commands (`swarm model package`, `swarm repo package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
 
 | Family ID | Environment types |
 | --- | --- |
@@ -75,6 +75,72 @@ Useful options:
 - `--log-out <path>`: benchmark log output path.
 - `--relax-timeouts`: timeout overrides for slow machines.
 - `--rpc-verbosity low|mid|high`: RPC tracing verbosity (default: mid).
+
+### `swarm visualize`
+
+Opens an interactive window and lets you fly a map by hand, so you can see what a seed actually looks like. Useful for inspecting a map before training against it, and for reviewing a seed your model failed.
+
+```bash
+# Fly a specific map type (random valid seed)
+swarm visualize --type 5 --family-id cf_search_and_rescue
+
+# Fly one exact seed
+swarm visualize --type 1 --seed 12345
+
+# List the seeds your model failed, then open one
+swarm visualize --summary-json bench_summary.json --failed
+swarm visualize --summary-json bench_summary.json --failed-index 3
+```
+
+Controls: `W`/`S` forward/back, `A`/`D` strafe, `Up`/`Down` climb/descend, `Q`/`E` yaw, `Shift` boost, `R` reset to start, `Esc` quit.
+
+Omit `--type` and the challenge type is inferred from `--summary-json`, `--seed-file`, or the seed's own deterministic benchmark assignment. Passing a `--type` that contradicts the inferred one is rejected rather than silently honoured.
+
+Useful options:
+
+- `--family-id <id>`: challenge family to build the world for (default: `cf_autopilot`). The family decides what is in the map — search-and-rescue spawns a victim, interceptor flies at its own speed limit.
+- `--speed <m/s>` / `--boost <x>`: base flight speed and the `Shift` multiplier.
+- `--camera follow|fixed`: viewer camera mode.
+- `--width` / `--height`: window size (default 960x540).
+- `--render-scale` / `--render-distance` / `--render-fps` / `--sim-fps`: rendering and simulation limits. Defaults depend on map type.
+- `--gpu`: use Bullet EGL hardware rendering if available. Without it the viewer renders on CPU, which is slower.
+
+### `swarm video`
+
+Renders `.mp4` flight videos of a model flying a seed. Takes either a single `--seed` + `--type`, or a `--seed-file` produced by `swarm benchmark --save-seed-file`.
+
+```bash
+# One seed, chase camera
+swarm video --model Submission/submission.zip --seed 42 --type 1 --backend local
+
+# Every camera mode for a search-and-rescue seed
+swarm video --model Submission/submission.zip --seed 42 --type 5 \
+  --family-id cf_search_and_rescue --mode all --out ./videos
+
+# Replay a whole saved benchmark seed set
+swarm video --model Submission/submission.zip --seed-file bench_seeds.json --backend local
+```
+
+Camera modes (`--mode`, comma-separated, or `all`):
+
+- `chase`: cinematic third-person follow camera.
+- `fpv`: first-person RGB from the drone's nose.
+- `depth`: the onboard depth sensor the model actually sees, colour-mapped.
+- `overview`: slowly orbiting bird's-eye view.
+
+Useful options:
+
+- `--family-id <id>`: challenge family to fly (default: `cf_autopilot`). Must match the family the model was trained for, or it will be scored against the wrong task.
+- `--backend local|benchmark`: `local` runs a fast in-process replay. `benchmark` reruns the exact Docker/RPC path the validator uses, which is slower and requires Docker, but reproduces validator results exactly.
+- `--summary-json <path>`: a benchmark summary to check the replay against; the run fails if the replayed result differs from the recorded one.
+- `--width` / `--height` / `--fps`: output resolution and frame rate (default 1280x720 @ 25).
+- `--out <dir>`: output directory.
+- `--skip-existing`: skip a seed whose outputs already exist.
+- `--save-actions <dir>` / `--replay-actions <dir>`: record the action stream for a seed, or replay a recorded one instead of running the policy.
+- `--progress-file <path>`: write JSON progress for a single-seed render, for driving a progress bar elsewhere.
+- Camera tuning: `--chase-back` / `--chase-up` / `--chase-fov` frame the chase camera, `--fpv-fov` and `--overview-fov` set the field of view for the other two.
+
+Rendering is CPU-bound and slower than real time — expect several minutes of wall clock per simulated minute at 720p.
 
 ### `swarm model verify`
 
@@ -204,4 +270,4 @@ The download includes SHA-256 integrity verification against the hash reported b
 
 ## Tests
 
-CLI behavior is covered in `tests/test_cli.py`: doctor, benchmark delegation, model verify/package/test, and report parsing.
+CLI behavior is covered in `tests/test_cli.py`: doctor, benchmark delegation, model verify/package/test, and report parsing. `tests/test_cli_visualize_video.py` covers `swarm visualize` and `swarm video`: dispatch, seed/type resolution, the failed-seed review flow, and family-aware task construction.

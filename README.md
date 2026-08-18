@@ -196,6 +196,7 @@ Everything happens from the terminal, with no dashboards to wrangle. Train, pack
 swarm doctor                                   # check your setup
 swarm model package --source my_model/         # package your agent
 swarm benchmark --model submission.zip --workers 4   # score it locally
+swarm visualize --type 1                       # fly a map yourself to see it
 swarm report                                   # see how it did
 ```
 
