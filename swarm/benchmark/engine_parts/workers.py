@@ -36,6 +36,7 @@ from .dispatch import (
 )
 from swarm.config import HostWorkerRuntimeSettings
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.constants import MINER_COMPUTE_BUDGET_SEC
 from swarm.validator.calibration.speed_factor import baseline_model_available
 from swarm.validator.docker.docker_evaluator_parts.batch import (
     _ensure_host_speed_factor,
@@ -86,24 +87,39 @@ def _create_prepared_benchmark_evaluator():
     return evaluator
 
 
-async def _precalibrate_host(worker_count: int) -> None:
+# Read by the reporter so an unnormalized run is never mistaken for a comparable one.
+host_timings_normalized = True
+
+
+async def _precalibrate_host(worker_count: int) -> bool:
     """Measure the host before any worker exists.
 
     Workers run as daemons and a daemon cannot start processes of its own, so a
     calibration deferred to the first batch dies inside the worker. Measuring here
     leaves a cache the workers can read, which is what the validator already does.
+
+    Returns whether the timings that follow are baseline-normalized. Nothing is at
+    stake in a local run, so an unmeasurable host still gets its scores and its raw
+    act times; only the comparison against the validator's budget is withheld.
     """
+    global host_timings_normalized
     requested = max(1, int(worker_count))
     if not baseline_model_available() or host_speed_factor_is_fresh(requested):
-        return
+        return True
     print(f"[{_ts()}] Calibrating host speed across {requested} worker(s)...", flush=True)
     speed = await _ensure_host_speed_factor(
         _create_prepared_benchmark_evaluator(), requested
     )
     if speed is None:
-        raise RuntimeError(
-            "Host speed calibration failed; benchmark timings would be unnormalized"
+        host_timings_normalized = False
+        print(
+            f"[{_ts()}] WARNING: host speed calibration failed. Scores are unaffected, "
+            f"but act times below are raw and cannot be compared to the "
+            f"{MINER_COMPUTE_BUDGET_SEC * 1000:.0f}ms validator budget.",
+            flush=True,
         )
+        return False
+    return True
 
 
 def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:

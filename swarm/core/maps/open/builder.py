@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import random
+from contextlib import contextmanager
 from typing import Optional, Tuple
 
 import pybullet as p
@@ -89,13 +90,30 @@ def _terrain_obj_path(seed: int, size: float = _TERRAIN_SIZE) -> str:
     return os.path.join(_TERRAIN_CACHE_DIR, f"open_terrain_v{_TERRAIN_MESH_VERSION}_s{seed}{suffix}.obj")
 
 
+@contextmanager
+def _atomic_write(path: str, mode: str = "w"):
+    """Publish a cache file only once it is complete.
+
+    Workers race on the same seed, and a reader that finds a half-written file
+    hands PyBullet a mesh it cannot parse.
+    """
+    tmp = f"{path}.{os.getpid()}.part"
+    try:
+        with open(tmp, mode) as handle:
+            yield handle
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
 def _generate_terrain_obj(seed: int, size: float = _TERRAIN_SIZE) -> str:
     path = _terrain_obj_path(seed, size)
     if os.path.exists(path):
         return path
 
     step = size / _TERRAIN_RES
-    with open(path, "w") as f:
+    with _atomic_write(path) as f:
         for i in range(_TERRAIN_RES + 1):
             for j in range(_TERRAIN_RES + 1):
                 x = -size / 2 + j * step
@@ -184,7 +202,7 @@ def _write_bmp24(path: str, width: int, height: int, rgb_data: bytearray) -> Non
     row_pad = (4 - (row_stride % 4)) % 4
     image_size = (row_stride + row_pad) * height
     file_size = 54 + image_size
-    with open(path, "wb") as f:
+    with _atomic_write(path, "wb") as f:
         f.write(b"BM")
         f.write(file_size.to_bytes(4, "little"))
         f.write((0).to_bytes(4, "little"))
