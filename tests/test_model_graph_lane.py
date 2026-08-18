@@ -158,7 +158,9 @@ def _staged(tmp_path, artifact):
             _resolve_worker_limits=lambda *_a, **_k: {
                 "memory": "2g", "cpus": "1", "cpuset_cpus": None,
             },
-            _docker_env_overrides=lambda: {},
+            _docker_env_overrides=lambda **kwargs: {
+                "SWARM_INFERENCE_THREADS": str(kwargs["thread_cap"]),
+            },
             _resolve_base_image_for_key=lambda _k: "swarm_evaluator_base:latest",
             _get_docker_host_ip=lambda: "127.0.0.1",
             last_selected_runtime_profile=None,
@@ -202,5 +204,12 @@ def test_code_agent_lane_still_unpacks_and_stages_the_rpc_server(tmp_path):
     ctx = _staged(tmp_path, agent)
 
     staged = {p.name for p in ctx.submission_dir.iterdir()}
-    assert {"drone_agent.py", "main.py", "agent_server.py", "agent.capnp"} <= staged
+    assert {
+        "drone_agent.py",
+        "main.py",
+        "runtime_caps.py",
+        "agent_server.py",
+        "agent.capnp",
+    } <= staged
     assert "SWARM_MODEL_GRAPH_ARTIFACT" not in ctx.docker_envs
+    assert ctx.docker_envs["SWARM_INFERENCE_THREADS"] == "1"

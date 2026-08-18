@@ -76,9 +76,12 @@ def _check_docker_available(self):
         return False
 
 @classmethod
-def _docker_env_overrides(cls) -> dict[str, str]:
+def _docker_env_overrides(cls, thread_cap: Optional[int] = None) -> dict[str, str]:
     settings = DockerRuntimeSettings.from_env()
-    return settings.docker_env_overrides(_THREAD_CAP_ENV_VARS)
+    return settings.docker_env_overrides(
+        _THREAD_CAP_ENV_VARS,
+        thread_cap=thread_cap,
+    )
 
 
 @staticmethod

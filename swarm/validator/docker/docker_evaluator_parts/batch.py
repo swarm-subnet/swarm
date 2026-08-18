@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 
 import bittensor as bt
 
-from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
+from swarm.config import DockerBatchTimeoutSettings, DockerRuntimeSettings, RpcTraceSettings
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
     DOCKER_WORKER_CPUS,
@@ -1302,7 +1302,8 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     """Extract the submission and stage the RPC server next to the miner's agent."""
     runtime_profile = _runtime_profile_from_payload(ctx.runtime_profile_payload, ctx.tasks)
     worker_limits = ctx.self._resolve_worker_limits(ctx.worker_id, runtime_profile=runtime_profile)
-    docker_envs = ctx.self._docker_env_overrides()
+    thread_cap = DockerRuntimeSettings.worker_thread_cap(worker_limits)
+    docker_envs = ctx.self._docker_env_overrides(thread_cap=thread_cap)
     docker_envs.update(_runtime_profile_env(runtime_profile))
     docker_envs.update({
         "SWARM_AGENT_PORT": "8000",
@@ -1346,7 +1347,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
             f"/workspace/submission/{_GRAPH_ARTIFACT_NAME}"
         )
     else:
-        for name in ("agent.capnp", "agent_server.py", "main.py"):
+        for name in ("agent.capnp", "agent_server.py", "main.py", "runtime_caps.py"):
             shutil.copy(template_dir / name, submission_dir)
 
     for f in submission_dir.iterdir():

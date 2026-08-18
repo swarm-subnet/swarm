@@ -532,12 +532,50 @@ def test_apply_network_lockdown_tolerates_ipv6_disabled_host(monkeypatch):
     assert calls["count"] == 5  # remaining IPv6 rules skipped
 
 
-def test_docker_env_overrides_enable_thread_caps(monkeypatch):
-    monkeypatch.setenv("SWARM_DOCKER_THREAD_CAPS", "1")
-    envs = de.DockerSecureEvaluator._docker_env_overrides()
-    assert envs["OMP_NUM_THREADS"] == "1"
-    assert envs["SWARM_TORCH_NUM_THREADS"] == "1"
+def test_docker_env_overrides_enable_thread_caps_by_default(monkeypatch):
+    monkeypatch.delenv("SWARM_DOCKER_THREAD_CAPS", raising=False)
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    envs = de.DockerSecureEvaluator._docker_env_overrides(thread_cap=2)
+    assert envs["OMP_NUM_THREADS"] == "2"
+    assert envs["SWARM_INFERENCE_THREADS"] == "2"
+    assert envs["SWARM_ORT_INTRA_OP_THREADS"] == "2"
+    assert envs["SWARM_TORCH_NUM_THREADS"] == "2"
+    assert envs["SWARM_TORCH_THREADS"] == "2"
     assert envs["SWARM_TORCH_INTEROP_THREADS"] == "1"
+
+
+def test_docker_env_overrides_clamp_operator_values_to_worker_cap(monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "64")
+    monkeypatch.setenv("SWARM_TORCH_THREADS", "32")
+    monkeypatch.delenv("SWARM_TORCH_NUM_THREADS", raising=False)
+
+    envs = de.DockerSecureEvaluator._docker_env_overrides(thread_cap=2)
+
+    assert envs["OMP_NUM_THREADS"] == "2"
+    assert envs["SWARM_TORCH_NUM_THREADS"] == "2"
+    assert envs["SWARM_TORCH_THREADS"] == "2"
+
+
+def test_worker_thread_cap_uses_narrowest_cpu_limit():
+    from swarm.config import DockerRuntimeSettings
+
+    assert DockerRuntimeSettings.worker_thread_cap(
+        {"cpus": None, "cpuset_cpus": "4-5"}
+    ) == 2
+    assert DockerRuntimeSettings.worker_thread_cap(
+        {"cpus": "1.5", "cpuset_cpus": "4-7"}
+    ) == 2
+    assert DockerRuntimeSettings.worker_thread_cap(
+        {"cpus": "1", "cpuset_cpus": "4-5"}
+    ) == 1
 
 
 def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
