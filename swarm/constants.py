@@ -541,7 +541,7 @@ OFFICE_HORIZON_SEC = 60.0                   # episode horizon
 OFFICE_SPAWN_Z = 0.05                       # floor spawn height (no platform indoors)
 OFFICE_MIN_START_DISTANCE_M = 4.0           # min chaser-to-target spawn separation
 OFFICE_MAX_START_DISTANCE_M = 14.0          # max chaser-to-target spawn separation
-OFFICE_ACQUIRE_SLACK_SEC = 5.0              # target-time slack for finding the target indoors
+OFFICE_ACQUIRE_SLACK_SEC = 6.5              # slack: locating the target + motor spool-up + drag
 OFFICE_W_SUCCESS = 0.5                      # score weight: interception achieved
 OFFICE_W_TIME = 0.5                         # score weight: time term
 
@@ -581,6 +581,10 @@ OFFICE_TARGET_FLEE_MIN = 0.55               # flee speed as a fraction of OFFICE
 OFFICE_TARGET_FLEE_MAX = 0.65               # -> 1.65-1.95 m/s, always under the chaser's 3.0
 OFFICE_TARGET_BRAKE_DECEL = 2.4             # m/s^2 — calibrated PID braking (0.3 m from 1.2 m/s)
 OFFICE_TARGET_GUARD_SAFETY = 2.0            # brake guard = this x physical stopping distance
+OFFICE_MOTOR_TAU_SEC = 0.040                # s — brushed 8520 motor lag (30-60 ms); tune from real logs
+OFFICE_DRAG_COEF = 0.004                    # N/(m/s)^2 — from CdA ~0.006 m^2 x Cd 1.2; tune from real logs
+OFFICE_GROUND_EFFECT_COEF = 4.0             # thrust gain x (prop_r/4z)^2: ~25% at prop height
+OFFICE_PROP_RADIUS_M = 0.038                # 3-inch prop radius
 OFFICE_TARGET_TURN_SPEED = 0.5              # m/s — corner entry speed: turn overshoot stays inside
 OFFICE_TARGET_ACCEL = 2.0                   # m/s^2 — speed build after each corner
 OFFICE_TARGET_DODGE_REPLAN_STEPS = 25       # >= 0.5 s between dodge replans (human reaction)

@@ -34,6 +34,9 @@ from swarm.constants import (
     CAMERA_EYE_UP_M,
     DRONE_HULL_RADIUS,
     MAX_RAY_DISTANCE,
+    OFFICE_DRAG_COEF,
+    OFFICE_GROUND_EFFECT_COEF,
+    OFFICE_PROP_RADIUS_M,
     OFFICE_CHALLENGE_TYPE,
     OFFICE_DET_CONF_FLOOR,
     OFFICE_DET_DELAY_STEPS,
@@ -975,6 +978,22 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                     int(env.DRONE_IDS[d]), -1, force, env.pos[d].tolist(),
                     p.WORLD_FRAME, physicsClientId=cli,
                 )
+        for d in range(env.NUM_DRONES):
+            pos = env.pos[d]
+            v = np.asarray(env.vel[d], dtype=float)
+            vn = float(np.linalg.norm(v))
+            if vn > 1e-3:
+                # Quadratic body drag; the velocity PID must now fight the air.
+                drag = (-OFFICE_DRAG_COEF * vn * v).tolist()
+                p.applyExternalForce(int(env.DRONE_IDS[d]), -1, drag,
+                                     pos.tolist(), p.WORLD_FRAME, physicsClientId=cli)
+            z = max(float(pos[2]), OFFICE_PROP_RADIUS_M)
+            if z < 8.0 * OFFICE_PROP_RADIUS_M:
+                # Ground cushion: extra lift grows as (prop_r/4z)^2 close to the floor.
+                lift = (OFFICE_GROUND_EFFECT_COEF * float(env.M) * float(env.G)
+                        * (OFFICE_PROP_RADIUS_M / (4.0 * z)) ** 2)
+                p.applyExternalForce(int(env.DRONE_IDS[d]), -1, [0.0, 0.0, lift],
+                                     pos.tolist(), p.WORLD_FRAME, physicsClientId=cli)
         uid = getattr(env, "_office_target_uid", None)
         if uid is None or getattr(env, "PHYSICS", None) == Physics.DYN:
             return

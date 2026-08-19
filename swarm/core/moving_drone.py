@@ -22,7 +22,7 @@ from swarm.constants import (
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
     OFFICE_APPEARANCE_SEED_OFFSET, OFFICE_CAMERA_RES, OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD, OFFICE_RGB_NOISE_STD,
-    OFFICE_RGB_PERIOD_STEPS,
+    OFFICE_MOTOR_TAU_SEC, OFFICE_RGB_PERIOD_STEPS,
     SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
     CAMERA_FOV_BASE, CAMERA_FOV_VARIANCE, CAMERA_EYE_FWD_M, CAMERA_EYE_UP_M,
     LIGHT_RANDOMIZATION_ENABLED,
@@ -277,6 +277,11 @@ class MovingDroneAviary(BaseRLAviary):
             self._rc_command = np.zeros((self.NUM_DRONES, 4), dtype=np.float64)
             self._rc_target_yaw = np.zeros(self.NUM_DRONES, dtype=np.float64)
             self._rc_max_step = OFFICE_RC_SLEW_PER_SEC * self.CTRL_TIMESTEP
+            # First-order motor lag: rotors chase commanded RPM with tau ~ ESC+prop.
+            self._office_rpm = np.full((self.NUM_DRONES, 4), self.HOVER_RPM)
+            self._office_motor_alpha = 1.0 - float(
+                np.exp(-self.PYB_TIMESTEP / OFFICE_MOTOR_TAU_SEC)
+            )
 
         self._clue_dim = int(self.family_runtime.state_clue_dim(task))
         self._obs_layout = self.family_runtime.observation_assembly(task)
@@ -1244,6 +1249,7 @@ class MovingDroneAviary(BaseRLAviary):
         if getattr(self, "_office_rc_enabled", False):
             self._rc_command.fill(0.0)
             self._rc_target_yaw.fill(0.0)
+            self._office_rpm.fill(self.HOVER_RPM)
 
         # Fresh episode, fresh controllers: PID integrators must not leak across resets.
         for ctrl in getattr(self, "ctrl", []):
@@ -1367,20 +1373,30 @@ class MovingDroneAviary(BaseRLAviary):
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if (
                 self.PYB_STEPS_PER_CTRL > 1
-                and self.PHYSICS in [
-                    Physics.DYN,
-                    Physics.PYB_GND,
-                    Physics.PYB_DRAG,
-                    Physics.PYB_DW,
-                    Physics.PYB_GND_DRAG_DW,
-                ]
+                and (
+                    # Office substep forces read live kinematics; plain PYB elsewhere is untouched.
+                    self._office_rc_enabled
+                    or self.PHYSICS in [
+                        Physics.DYN,
+                        Physics.PYB_GND,
+                        Physics.PYB_DRAG,
+                        Physics.PYB_DW,
+                        Physics.PYB_GND_DRAG_DW,
+                    ]
+                )
             ):
                 self._updateAndStoreKinematicInformation()
             for i in range(self.NUM_DRONES):
                 if self.NUM_DRONES > 1 and self._frozen[i]:
                     continue
                 if self.PHYSICS == Physics.PYB:
-                    self._physics(clipped_action[i, :], i)
+                    if self._office_rc_enabled:
+                        self._office_rpm[i] += self._office_motor_alpha * (
+                            clipped_action[i, :] - self._office_rpm[i]
+                        )
+                        self._physics(self._office_rpm[i], i)
+                    else:
+                        self._physics(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.DYN:
                     self._dynamics(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.PYB_GND:

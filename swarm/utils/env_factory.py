@@ -88,12 +88,14 @@ def make_env_with_initial_obs(
     """Create an env and return the observation produced by its initial reset."""
     ctrl_freq = int(round(1.0 / task.sim_dt))
     runtime_profile = runtime_profile_for_task(task)
+    # Office physics ticks at 250 Hz: a 20 ms tick cannot resolve motor lag (~1% cost).
+    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_office_interceptor" else 1
     common_kwargs = dict(
         gui=gui,
         record=False,
         obs=ObservationType.RGB,
         ctrl_freq=ctrl_freq,
-        pyb_freq=ctrl_freq,
+        pyb_freq=ctrl_freq * pyb_mult,
         **dict(runtime_profile.env_bootstrap),
     )
 

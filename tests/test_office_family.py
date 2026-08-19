@@ -97,6 +97,111 @@ def test_office_dead_zone_and_slew(office_env):
     assert np.all(np.abs(env._rc_command) <= max_step + 1e-9)
 
 
+def test_office_physics_rate_motor_lag_and_scope(office_env):
+    """The realism layer's invariants: office ticks physics at 5x control with a
+    hover-reset ZOH motor lag on the chaser only; other families stay at 1x."""
+    import math as _math
+
+    from swarm.constants import OFFICE_MOTOR_TAU_SEC
+
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    assert env.PYB_FREQ == 5 * env.CTRL_FREQ and env.PYB_STEPS_PER_CTRL == 5
+    assert env._office_motor_alpha == pytest.approx(
+        1.0 - _math.exp(-env.PYB_TIMESTEP / OFFICE_MOTOR_TAU_SEC))
+    assert env._office_rpm.shape == (env.NUM_DRONES, 4), "lag state is chaser-side only"
+    assert np.allclose(env._office_rpm, env.HOVER_RPM), "lag must reset to hover RPM"
+    # Exact five-substep ZOH: rpm = hover + (1 - (1-a)^5)(command - hover).
+    rpm0 = env._office_rpm.copy()
+    env.step(np.array([[0, 0, 1, 0]], dtype=np.float32))
+    alpha = env._office_motor_alpha
+    cmd = np.asarray(env.last_clipped_action, dtype=float)
+    expect = rpm0 + (1.0 - (1.0 - alpha) ** 5) * (cmd - rpm0)
+    assert np.allclose(env._office_rpm, expect, rtol=1e-9), \
+        "the lag filter must run once per physics substep, five per control step"
+    other = task_gen.random_task(1 / 50, 3, family_id="cf_search_and_rescue")
+    other_env = make_env(other)
+    try:
+        assert other_env.PYB_FREQ == other_env.CTRL_FREQ, "only office runs substeps"
+    finally:
+        other_env.close()
+
+
+def test_office_substep_refresh_scoped_to_office(office_env):
+    """Office refreshes cached kinematics inside the substep loop (five plus the
+    end-of-step one); a plain-PYB env with substeps but no office flag must not."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    calls = {"n": 0}
+    orig = env._updateAndStoreKinematicInformation
+
+    def counting():
+        calls["n"] += 1
+        return orig()
+
+    env._updateAndStoreKinematicInformation = counting
+    try:
+        env.step(np.zeros((1, 4), dtype=np.float32))
+    finally:
+        env._updateAndStoreKinematicInformation = orig
+    assert calls["n"] == env.PYB_STEPS_PER_CTRL + 1
+
+    # A real non-office env forced to the same 5x substeps must NOT refresh in-loop.
+    from swarm.core.moving_drone import MovingDroneAviary
+    from swarm.utils.env_factory import runtime_profile_for_task
+    from gym_pybullet_drones.utils.enums import ActionType, ObservationType
+
+    task = task_gen.random_task(1 / 50, 3, family_id="cf_search_and_rescue")
+    prof = runtime_profile_for_task(task)
+    env2 = MovingDroneAviary(task, act=ActionType.VEL, gui=False, record=False,
+                             obs=ObservationType.RGB, ctrl_freq=50, pyb_freq=250,
+                             **dict(prof.env_bootstrap))
+    env2.SPEED_LIMIT, env2.MAX_YAW_RATE, env2.ACT_TYPE = 3.0, 3.141, ActionType.VEL
+    env2.reset(seed=task.map_seed)
+    calls2 = {"n": 0}
+    orig2 = env2._updateAndStoreKinematicInformation
+
+    def counting2():
+        calls2["n"] += 1
+        return orig2()
+
+    env2._updateAndStoreKinematicInformation = counting2
+    try:
+        env2.step(np.zeros(env2.action_space.shape, dtype=np.float32))
+    finally:
+        env2._updateAndStoreKinematicInformation = orig2
+        env2.close()
+    assert calls2["n"] == 1, "plain PYB without the office flag must keep library behavior"
+
+
+def test_office_aero_forces_hit_chaser_only(office_env):
+    """Drag and ground effect apply to the chaser base; the target body receives
+    only its own vertical rotor thrust — its speeds are behavioral spec."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    for _ in range(30):
+        env.step(np.array([[0, 1, 0.4, 0]], dtype=np.float32))  # moving: drag active
+    calls = []
+    orig = p.applyExternalForce
+
+    def spy(uid, link, force, pos, flags, physicsClientId=0):
+        calls.append((int(uid), int(link), tuple(float(f) for f in force)))
+        return orig(uid, link, force, pos, flags, physicsClientId=physicsClientId)
+
+    p.applyExternalForce = spy
+    try:
+        env.family_runtime.apply_world_physics(env)
+    finally:
+        p.applyExternalForce = orig
+    chaser, target = int(env.DRONE_IDS[0]), int(env._office_target_uid)
+    target_calls = [c for c in calls if c[0] == target]
+    assert target_calls and all(
+        c[1] in (0, 1, 2, 3) and c[2][0] == 0.0 and c[2][1] == 0.0 for c in target_calls
+    ), "the target gets rotor thrust only, never drag or ground effect"
+    chaser_base = [c for c in calls if c[0] == chaser and c[1] == -1]
+    assert len(chaser_base) >= 2, "chaser base must receive drift plus aero forces"
+
+
 def test_office_never_scans_clearance(office_env):
     """The clearance scan segfaults pybullet against the office meshes (seed 53)
     and office scoring never reads it — it must stay gated off."""
