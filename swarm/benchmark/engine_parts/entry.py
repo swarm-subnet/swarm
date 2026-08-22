@@ -178,6 +178,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     sys.stderr = final_err_stream
     try:
         print(f"\n[{_ts()}] === RESULTS ===", flush=True)
+        from swarm.benchmark.engine_parts import workers as _workers
+
+        if not _workers.host_timings_normalized:
+            print(
+                f"[{_ts()}] Timings are UNNORMALIZED — host calibration did not run. "
+                f"Scores are valid; act times are raw and not comparable to the "
+                f"validator budget.",
+                flush=True,
+            )
         if task_meta and results:
             if run_error is not None:
                 print(f"[{_ts()}] Printing partial results collected before failure.", flush=True)

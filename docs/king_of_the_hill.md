@@ -141,15 +141,17 @@ s > 0.5      floor = floor_min + (floor_max − floor_min) × (1 − t²),   t =
 
 The decay is convex: the floor stays near `floor_max` just past `0.5` and falls off toward `floor_min` as the champion approaches `1.0`, since every point near the top is hard-won. So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster.
 
-The global defaults are `floor_max = 0.015` and `floor_min = 0.005`; the registry overrides them per family:
+The values are `floor_max = 0.015` and `floor_min = 0.005`, and every family carries them:
 
 | Family | floor_max (champion ≤ 0.5) | floor_min (champion → 1.0) |
 |---|---|---|
 | Autopilot | 0.015 | 0.005 |
-| Search-and-Rescue | 0.02 | 0.007 |
+| Search-and-Rescue | 0.015 | 0.005 |
 | Swarm Autopilot | 0.015 | 0.005 |
-| Swarm SAR | 0.02 | 0.007 |
+| Swarm SAR | 0.015 | 0.005 |
 | Interceptor | 0.015 | 0.005 |
+
+The registry can still override them per family; nothing does today.
 
 When a family has no champion at all, the first evaluated model takes the throne with no floor to clear: see [The first king ever](#the-first-king-ever).
 
@@ -178,13 +180,13 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Autopilot | 0.10 |
-| Search-and-Rescue | 0.10 |
-| Swarm Autopilot | 0.10 |
-| Swarm SAR | 0.10 |
-| Interceptor | 0.10 |
+| Interceptor | 0.30 |
+| Swarm Autopilot | 0.20 |
+| Swarm SAR | 0.20 |
+| Autopilot | 0.15 |
+| Search-and-Rescue | 0.15 |
 
-Allocations are **absolute**, never normalised: each family pays out exactly its own slice, and any share of the pool not allocated to a family burns. The table above sums to `0.50`, so `0.50` of emissions burn by design during the rollout; allocations will be raised by governance as the tasks prove themselves. A family's **emissions state** then decides whether it participates at all:
+Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
 ```
 emissions state                              weight
@@ -204,7 +206,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: four families payable, Interceptor has no king yet — the other four keep exactly `0.10` each and Interceptor's `0.10` burns on top of the unallocated remainder. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: four families payable, Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Interceptor's `0.30` burns. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 ### Stale tasks burn
 
@@ -268,7 +270,7 @@ Their seat stops paying. A seat is only payable while its repo is intact and acc
 
 ### Why is there a minimum jump to take the throne?
 
-The crowning floor is an anti-noise threshold: without it, the network would re-elect a "new" champion every time a benchmark produced a 0.0001 score variance. It is **dynamic**: flat while the champion is at or below `0.5`, then shrinking as the score approaches 1.0, and per-family: `0.015 → 0.005` for most families, `0.02 → 0.007` for the two SAR families (see [Taking the throne](#taking-the-throne--the-dynamic-floor)).
+The crowning floor is an anti-noise threshold: without it, the network would re-elect a "new" champion every time a benchmark produced a 0.0001 score variance. It is **dynamic**: flat while the champion is at or below `0.5`, then shrinking as the score approaches 1.0, and the same for every family: `0.015 → 0.005` (see [Taking the throne](#taking-the-throne--the-dynamic-floor)).
 
 ### Can I earn from more than one family?
 
@@ -278,7 +280,7 @@ Yes, with separate hotkeys. Every hotkey competes in exactly one family, so ente
 
 Yes, it can. Every family is allocated a percentage of the subnet's total emissions, and all the family slices add up to 100%. When a new family is added, it takes its own percentage out of that same total, so the existing families each end up with a little less.
 
-For now there are only five families and their slices are already fixed, so nothing is changing today.
+The five slices are set by the team, not derived automatically, so a new family does not silently dilute yours: the split is re-decided and announced when it changes.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -301,7 +303,7 @@ For now there are only five families and their slices are already fixed, so noth
 | **Rank weighting** | `0.7^rank × (1 + 0.3 × min(gain, 1.0))`; the champion holds the top seat and each older king keeps 70% of the seat above. Ranks run over the payable seats by crowning recency. |
 | **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
-| **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` by default, `0.02 → 0.007` for the SAR families. |
+| **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` for every family. |
 | **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived after 7 days, its slice burning from then on. |
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>

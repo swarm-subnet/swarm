@@ -86,8 +86,11 @@ def _empty_per_type() -> Dict[str, List[float]]:
     return {name: [] for name in _EMPTY_PER_TYPE}
 
 
-def _seed_manager_call(seed_manager, method_name: str, family_id: str):
+def _seed_manager_call(seed_manager, method_name: str, family_id: str, epoch: Optional[int] = None):
     method = getattr(seed_manager, method_name)
+    if epoch is not None and epoch > getattr(seed_manager, "epoch_number", 0):
+        # A pre-evaluation task is scored on its own epoch's seeds, not today's.
+        return method(family_id=family_id, epoch=epoch)
     try:
         return method(family_id=family_id)
     except TypeError:
@@ -109,6 +112,9 @@ async def _evaluate_seeds(
     prior_avg: float = 0.0,
     pre_built_tasks: Optional[List] = None,
     retry_budget: Optional[Dict[str, int]] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[List[int]] = None,
+    on_held_seeds: Optional[Callable[[List[int]], None]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict]]:
     """Evaluate a model on multiple seeds using parallel Docker containers.
 
@@ -142,7 +148,7 @@ async def _evaluate_seeds(
                 )
                 tasks.append(task)
             except Exception as e:
-                bt.logging.warning(f"Failed to create task for seed {seed}: {e}")
+                bt.logging.warning(f"Failed to create a seed task: {e}")
                 tasks.append(None)
 
     valid_tasks = [t for t in tasks if t is not None]
@@ -175,6 +181,34 @@ async def _evaluate_seeds(
             },
         )
 
+    engine_feeder = None
+    engine_initial: Optional[List[int]] = None
+    engine_held: Optional[Callable[[List[int]], None]] = None
+    if seed_feeder is not None:
+        # The feeder speaks absolute seed indexes; the engine indexes valid_tasks.
+        abs_to_valid = {pos: vi for vi, pos in enumerate(valid_positions)}
+
+        if on_held_seeds is not None:
+            def engine_held(valid_indexes: List[int]) -> None:
+                on_held_seeds([
+                    valid_positions[int(i)]
+                    for i in valid_indexes
+                    if 0 <= int(i) < len(valid_positions)
+                ])
+
+        async def engine_feeder(free_slots: int):
+            granted, drained = await seed_feeder(free_slots)
+            return (
+                [abs_to_valid[int(i)] for i in granted if int(i) in abs_to_valid],
+                drained,
+            )
+
+        engine_initial = [
+            abs_to_valid[int(i)]
+            for i in (initial_pending or [])
+            if int(i) in abs_to_valid
+        ]
+
     phase = "screening" if "screening" in description.lower() else "benchmark"
     results = await self.docker_evaluator.evaluate_seeds_parallel(
         tasks=valid_tasks,
@@ -188,6 +222,9 @@ async def _evaluate_seeds(
         prior_total_seeds=prior_total_seeds,
         prior_avg=prior_avg,
         retry_budget=retry_budget,
+        seed_feeder=engine_feeder,
+        initial_pending=engine_initial,
+        on_held_seeds=engine_held,
     )
 
     seed_details = []
@@ -276,6 +313,8 @@ async def _run_streaming_phase(
     evaluator_prior_done: int = 0,
     evaluator_total_seeds: Optional[int] = None,
     re_auth_interval_sec: float = RE_AUTH_INTERVAL_SEC,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[List[int]] = None,
 ) -> Tuple[List[float], Dict[str, List[float]], List[dict], Optional[str]]:
     """Evaluate the full seed range as one rolling queue with streamed uploads.
 
@@ -293,6 +332,8 @@ async def _run_streaming_phase(
     all_details: List[dict] = []
     inflight: List[asyncio.Task] = []
     failed_batches: List[List[dict]] = []
+    # Scored here but not yet acknowledged by the backend; still ours to hold.
+    unacked: set = set()
     retry_budget: Dict[str, int] = {"timeout": 0, "rpc_transport": 0}
     total_for_evaluator = (
         evaluator_total_seeds if evaluator_total_seeds is not None else len(seeds)
@@ -300,19 +341,23 @@ async def _run_streaming_phase(
     provenance = _seed_upload_provenance(self, model_path)
 
     async def _safe_upload(batch: List[dict]) -> None:
-        try:
-            result = await self.backend_api.post_seed_scores_batch(
-                model_uid=uid, epoch_number=epoch_number, scores=batch,
-                task_id=task_id,
-                family_id=family_id,
-                provenance=provenance,
-            )
-        except Exception as exc:
-            bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
-            failed_batches.append(batch)
-            return
-        if not result or not result.get("recorded"):
-            failed_batches.append(batch)
+        for delay in (0.0, 2.0, 4.0):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                result = await self.backend_api.post_seed_scores_batch(
+                    model_uid=uid, epoch_number=epoch_number, scores=batch,
+                    task_id=task_id,
+                    family_id=family_id,
+                    provenance=provenance,
+                )
+            except Exception as exc:
+                bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
+                continue
+            if result and result.get("recorded"):
+                unacked.difference_update(int(row["seed_index"]) for row in batch)
+                return
+        failed_batches.append(batch)
 
     async def _wait_for_slot() -> None:
         while len(inflight) >= max_inflight:
@@ -397,6 +442,7 @@ async def _run_streaming_phase(
             }
         )
         if type_name != "unknown" and not _is_infra_failure(reason):
+            unacked.add(seed_offset + idx)
             upload_queue.put_nowait(
                 {
                     "seed_index": seed_offset + idx,
@@ -457,6 +503,14 @@ async def _run_streaming_phase(
             prior_avg=0.0,
             pre_built_tasks=pre_built_tasks,
             retry_budget=retry_budget,
+            seed_feeder=seed_feeder,
+            initial_pending=initial_pending,
+            on_held_seeds=(
+                None if seed_feeder is None
+                else lambda held: hb.set_in_flight(sorted(
+                    {seed_offset + int(position) for position in held} | unacked
+                ))
+            ),
         )
         _fire_chunk_complete()
     finally:
@@ -510,6 +564,9 @@ async def _run_streaming_phase(
                     bt.logging.warning(
                         f"Final retry of {len(batch)} seed scores not recorded for UID {uid}"
                     )
+        if seed_feeder is not None:
+            # Every score is uploaded by now, so anything still leased was dropped.
+            hb.set_in_flight([])
 
     if stop_state["raise"] is not None:
         raise stop_state["raise"]
@@ -525,6 +582,7 @@ async def _run_screening(
     seeds_to: Optional[int] = None,
     cancel_flag: Optional[asyncio.Event] = None,
     batch_id: Optional[int] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
 ) -> Tuple[float, List[float], Dict[str, List[float]], Optional[str], bool]:
     """Run screening seeds and stream per-seed scores.
 
@@ -631,6 +689,9 @@ async def _run_screening(
             pre_built_tasks=screening_tasks,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
+            chunk_size=2 if seed_feeder is not None else UNIFIED_CHUNK_SIZE,
+            seed_feeder=seed_feeder,
+            initial_pending=[] if seed_feeder is not None else None,
         )
     finally:
         hb.finish()
@@ -666,6 +727,8 @@ async def _run_full_benchmark(
     seeds_from: Optional[int] = None,
     seeds_to: Optional[int] = None,
     batch_id: Optional[int] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    epoch_number: Optional[int] = None,
 ) -> Tuple[float, Dict[str, float], List[float], Dict[str, List[float]], Optional[str]]:
     """Run full benchmark. Uses benchmark seeds by default, or custom seeds if provided.
 
@@ -679,7 +742,7 @@ async def _run_full_benchmark(
         # A range starting below the screening boundary (REEVAL, or BENCHMARK when the backend runs without screening) spans the full seed list.
         if seeds_from is not None and seeds_from < BENCHMARK_SCREENING_SEED_COUNT:
             all_family_seeds = _seed_manager_call(
-                self.seed_manager, "get_all_seeds", family_id
+                self.seed_manager, "get_all_seeds", family_id, epoch_number
             )
             benchmark_seeds = all_family_seeds[seeds_from:]
             seed_offset = seeds_from
@@ -687,7 +750,7 @@ async def _run_full_benchmark(
             progress_offset = seeds_from
         elif seeds_from is not None and seeds_from > BENCHMARK_SCREENING_SEED_COUNT:
             full_benchmark = _seed_manager_call(
-                self.seed_manager, "get_benchmark_seeds", family_id
+                self.seed_manager, "get_benchmark_seeds", family_id, epoch_number
             )
             offset = seeds_from - BENCHMARK_SCREENING_SEED_COUNT
             benchmark_seeds = full_benchmark[offset:]
@@ -696,7 +759,7 @@ async def _run_full_benchmark(
             progress_offset = offset
         else:
             benchmark_seeds = _seed_manager_call(
-                self.seed_manager, "get_benchmark_seeds", family_id
+                self.seed_manager, "get_benchmark_seeds", family_id, epoch_number
             )
             seed_offset = BENCHMARK_SCREENING_SEED_COUNT
             heartbeat_total = len(benchmark_seeds)
@@ -724,7 +787,7 @@ async def _run_full_benchmark(
                 if abs_idx < BENCHMARK_SCREENING_SEED_COUNT:
                     if full_screening_seeds is None:
                         full_screening_seeds = _seed_manager_call(
-                            self.seed_manager, "get_screening_seeds", family_id
+                            self.seed_manager, "get_screening_seeds", family_id, epoch_number
                         )
                     task = build_screening_tasks(
                         sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
@@ -738,14 +801,17 @@ async def _run_full_benchmark(
                     )[0]
             except Exception as e:
                 bt.logging.warning(
-                    f"Failed to create benchmark task for seed {seed} idx {abs_idx}: {e}"
+                    f"Failed to create benchmark task idx {abs_idx}: {e}"
                 )
                 task = None
             pre_built_tasks.append(task)
 
     total_seeds = len(benchmark_seeds)
     note = "full benchmark" if seeds is None else "custom seeds"
-    epoch = self.seed_manager.epoch_number
+    # The epoch that leased these seeds, not today's, or the leases never complete.
+    epoch = int(
+        epoch_number if epoch_number is not None else self.seed_manager.epoch_number
+    )
 
     tracker_call(
         self,
@@ -802,7 +868,7 @@ async def _run_full_benchmark(
             uid,
             model_path,
             benchmark_seeds,
-            phase_description="full benchmark",
+            phase_description="seed-flow benchmark" if seed_feeder is not None else "full benchmark",
             family_id=family_id,
             seed_offset=seed_offset,
             epoch_number=epoch,
@@ -811,6 +877,9 @@ async def _run_full_benchmark(
             pre_built_tasks=pre_built_tasks,
             should_stop=_should_stop,
             on_chunk_complete=_on_chunk,
+            chunk_size=2 if seed_feeder is not None else UNIFIED_CHUNK_SIZE,
+            seed_feeder=seed_feeder,
+            initial_pending=[] if seed_feeder is not None else None,
         )
     finally:
         hb.finish()

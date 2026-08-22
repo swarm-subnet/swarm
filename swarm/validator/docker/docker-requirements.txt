@@ -1,6 +1,6 @@
 numpy
 pycapnp
-torch
+onnx
 onnxruntime
 stable-baselines3
 gymnasium

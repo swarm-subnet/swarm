@@ -26,7 +26,7 @@ Fly a Crazyflie across a procedurally generated world, find the landing pad insi
 
 One drone, one goal pad, 60 seconds. Your policy pilots a single CF2X Crazyflie from a start platform to a landing platform placed somewhere in the world: behind buildings, over mountain ridges, between trees. You never get the pad's exact position: the state vector carries a **noisy search-area centre**, so the drone has to fly to the area, find the pad with its depth camera, and land on it. On some maps the pad is **moving**.
 
-Scoring rewards landing, landing fast, and flying with clearance from obstacles. Autopilot is active with a **0.1 emission allocation** and runs its own [King of the Hill](../king_of_the_hill.md) lineage.
+Scoring rewards landing, landing fast, and flying with clearance from obstacles. Autopilot is active with a **0.15 emission allocation** and runs its own [King of the Hill](../king_of_the_hill.md) lineage.
 
 <p align="right">(<a href="#autopilot-top">back to top</a>)</p>
 
@@ -210,7 +210,7 @@ Your zip runs inside a Docker container as a Cap'n Proto RPC server; the validat
 | Budget | Value |
 |---|---|
 | First `act()` of a seed | 2.0 s (hardware-fair hard cap: 3.0 reference-seconds) |
-| Every later `act()` | 0.5 s pure compute (hard cap 1.25 reference-seconds + 50 ms margin) |
+| Every later `act()` | 0.6 s baseline-equivalent pure compute (hard cap 2.0 reference-seconds + measured RPC overhead + 50 ms margin) |
 | `reset()` between seeds | 5.0 s |
 | Connect budget | 60 s to answer the first ping |
 | Strikes | 15 timeouts or 3 hard-cap hits fail the seed; each timed-out step substitutes a zero action |

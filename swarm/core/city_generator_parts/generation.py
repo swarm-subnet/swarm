@@ -615,13 +615,6 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
         squeeze_center_gap = 0
         ultra_road_margin = 1.5
         ultra_center_gap = 0
-    elif difficulty == 2:
-        base_road_margin = 3
-        base_center_gap = 0
-        squeeze_road_margin = 3
-        squeeze_center_gap = 0
-        ultra_road_margin = 3
-        ultra_center_gap = 0
     else:
         base_road_margin = 3
         base_center_gap = 0

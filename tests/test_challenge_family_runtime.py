@@ -79,15 +79,15 @@ def test_family_screening_and_admission_policies_are_runtime_scoped():
         "100": 0.7,
         "150": 0.85,
     }
-    assert sar_screening["bootstrap_threshold"] == pytest.approx(0.02)
-    assert sar_screening["min_improvement"] == pytest.approx(0.02)
+    assert sar_screening["bootstrap_threshold"] == pytest.approx(0.01)
+    assert sar_screening["min_improvement"] == pytest.approx(0.015)
     assert sar_screening["early_fail_checkpoints"] == {
         "50": 0.45,
         "100": 0.65,
         "150": 0.8,
     }
     assert autopilot_admission["champion_min_improvement"] == pytest.approx(0.015)
-    assert sar_admission["champion_min_improvement"] == pytest.approx(0.02)
+    assert sar_admission["champion_min_improvement"] == pytest.approx(0.015)
 
 
 def test_infer_task_family_id_uses_legacy_version_fallback():

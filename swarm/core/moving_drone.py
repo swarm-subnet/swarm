@@ -157,6 +157,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._prev_score = 0.0
         self._step_processed = False
         self._min_clearance_episode = SAFETY_DISTANCE_SAFE
+        self._takeoff_origins = None
+        self._takeoff_cleared = None
 
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
@@ -1018,6 +1020,31 @@ class MovingDroneAviary(BaseRLAviary):
         self._cull_phys_disabled.clear()
 
 
+    def _record_takeoff_origins(self) -> None:
+        """Remember where each drone was placed, so the spawn cannot seed the episode minimum."""
+        self._takeoff_origins = np.array(self.pos[:, :3], dtype=float)
+        self._takeoff_cleared = np.zeros(self.NUM_DRONES, dtype=bool)
+
+    def _in_takeoff_grace(self, nth_drone: int) -> bool:
+        """Whether the drone is still inside the sphere it was placed in.
+
+        The spawn sits below SAFETY_DISTANCE_DANGER of its own pad and the episode keeps
+        the minimum, so scoring there would make our placement permanent. Grace ends once
+        the drone has flown the distance this map calls fully safe, which is the point the
+        launch surface stops costing anything. The latch is one-way.
+        """
+        if self._takeoff_cleared is None or self._takeoff_cleared[nth_drone]:
+            return False
+        challenge_type = int(getattr(self.task, "challenge_type", 0))
+        clear_at = SAFETY_DISTANCE_SAFE_BY_TYPE.get(challenge_type, SAFETY_DISTANCE_SAFE)
+        travelled = float(np.linalg.norm(
+            self.pos[nth_drone, :3] - self._takeoff_origins[nth_drone]
+        ))
+        if travelled < clear_at:
+            return True
+        self._takeoff_cleared[nth_drone] = True
+        return False
+
     def _update_min_clearance(self) -> None:
         """Update minimum obstacle clearance for the episode."""
         if getattr(self, "_office_rc_enabled", False):
@@ -1029,6 +1056,8 @@ class MovingDroneAviary(BaseRLAviary):
             return
         if self._collision:
             self._min_clearance_episode = 0.0
+            return
+        if self._in_takeoff_grace(0):
             return
 
         cli = getattr(self, "CLIENT", 0)
@@ -1137,6 +1166,8 @@ class MovingDroneAviary(BaseRLAviary):
                 continue
             if self._d_collision[i]:
                 self._d_min_clearance[i] = 0.0
+                continue
+            if self._in_takeoff_grace(i):
                 continue
             drone_id = self.DRONE_IDS[i]
             drone_pos = self.pos[i, :]
@@ -1272,6 +1303,7 @@ class MovingDroneAviary(BaseRLAviary):
 
         self.family_runtime.spawn_task_world(self)
         self._updateAndStoreKinematicInformation()
+        self._record_takeoff_origins()
 
         cli = getattr(self, "CLIENT", 0)
         p.setPhysicsEngineParameter(
@@ -1467,10 +1499,6 @@ class MovingDroneAviary(BaseRLAviary):
                 np.zeros((self.NUM_DRONES, action_dim), dtype=np.float32)
             )
 
-    def _spawn_task_world(self):
-        """Backward-compatible SAR wrapper retained for legacy tests."""
-        self.family_runtime.spawn_task_world(self)
-
     # -------- reward ----------------------------------------------------- #
     def _computeReward(self) -> float:
         """Compute incremental reward based on current state."""
@@ -1536,9 +1564,6 @@ class MovingDroneAviary(BaseRLAviary):
             roll=float(roll),
             pitch=float(pitch),
         )
-
-    def _sar_infeasible(self) -> bool:
-        return self._legacy_sar_runtime().legacy_sar_infeasible(self)
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):

@@ -78,3 +78,41 @@ def test_terrain_obj_path_uses_state_cache_dir() -> None:
         / "open_terrain_v3_s123.obj"
     )
 
+
+
+def test_terrain_cache_is_never_visible_half_written(tmp_path, monkeypatch):
+    """Workers race on the same seed; a reader must never see a partial mesh."""
+    import os
+    import threading
+
+    monkeypatch.setattr(open_builder, "_TERRAIN_CACHE_DIR", str(tmp_path))
+    path = open_builder._terrain_obj_path(4242)
+    seen: list[bool] = []
+    stop = threading.Event()
+
+    def _watch() -> None:
+        # Anything published under the final name must already parse as a whole mesh.
+        while not stop.is_set():
+            if os.path.exists(path):
+                text = Path(path).read_text()
+                seen.append(text.endswith("\n") and text.count("v ") > 0 and "f " in text)
+                return
+
+    watcher = threading.Thread(target=_watch, daemon=True)
+    watcher.start()
+    open_builder._generate_terrain_obj(4242)
+    stop.set()
+    watcher.join(timeout=5)
+
+    assert Path(path).exists()
+    assert all(seen), "a partially written terrain mesh became visible under its final name"
+    assert not list(tmp_path.glob("*.part")), "temp file left behind"
+
+
+def test_terrain_cache_reuses_a_completed_mesh(tmp_path, monkeypatch):
+    monkeypatch.setattr(open_builder, "_TERRAIN_CACHE_DIR", str(tmp_path))
+    first = open_builder._generate_terrain_obj(99)
+    stamp = Path(first).stat().st_mtime_ns
+    second = open_builder._generate_terrain_obj(99)
+    assert first == second
+    assert Path(second).stat().st_mtime_ns == stamp, "cached mesh was rewritten"

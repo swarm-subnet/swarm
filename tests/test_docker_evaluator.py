@@ -79,6 +79,7 @@ class _ScriptedProcess:
         self._args = args
         self.exitcode = None
         self._alive = False
+        self.pid = 4242
 
     def start(self):
         self._alive = True
@@ -531,12 +532,50 @@ def test_apply_network_lockdown_tolerates_ipv6_disabled_host(monkeypatch):
     assert calls["count"] == 5  # remaining IPv6 rules skipped
 
 
-def test_docker_env_overrides_enable_thread_caps(monkeypatch):
-    monkeypatch.setenv("SWARM_DOCKER_THREAD_CAPS", "1")
-    envs = de.DockerSecureEvaluator._docker_env_overrides()
-    assert envs["OMP_NUM_THREADS"] == "1"
-    assert envs["SWARM_TORCH_NUM_THREADS"] == "1"
+def test_docker_env_overrides_enable_thread_caps_by_default(monkeypatch):
+    monkeypatch.delenv("SWARM_DOCKER_THREAD_CAPS", raising=False)
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    envs = de.DockerSecureEvaluator._docker_env_overrides(thread_cap=2)
+    assert envs["OMP_NUM_THREADS"] == "2"
+    assert envs["SWARM_INFERENCE_THREADS"] == "2"
+    assert envs["SWARM_ORT_INTRA_OP_THREADS"] == "2"
+    assert envs["SWARM_TORCH_NUM_THREADS"] == "2"
+    assert envs["SWARM_TORCH_THREADS"] == "2"
     assert envs["SWARM_TORCH_INTEROP_THREADS"] == "1"
+
+
+def test_docker_env_overrides_clamp_operator_values_to_worker_cap(monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "64")
+    monkeypatch.setenv("SWARM_TORCH_THREADS", "32")
+    monkeypatch.delenv("SWARM_TORCH_NUM_THREADS", raising=False)
+
+    envs = de.DockerSecureEvaluator._docker_env_overrides(thread_cap=2)
+
+    assert envs["OMP_NUM_THREADS"] == "2"
+    assert envs["SWARM_TORCH_NUM_THREADS"] == "2"
+    assert envs["SWARM_TORCH_THREADS"] == "2"
+
+
+def test_worker_thread_cap_uses_narrowest_cpu_limit():
+    from swarm.config import DockerRuntimeSettings
+
+    assert DockerRuntimeSettings.worker_thread_cap(
+        {"cpus": None, "cpuset_cpus": "4-5"}
+    ) == 2
+    assert DockerRuntimeSettings.worker_thread_cap(
+        {"cpus": "1.5", "cpuset_cpus": "4-7"}
+    ) == 2
+    assert DockerRuntimeSettings.worker_thread_cap(
+        {"cpus": "1", "cpuset_cpus": "4-5"}
+    ) == 1
 
 
 def test_resolve_worker_limits_uses_env_overrides(monkeypatch):
@@ -987,6 +1026,7 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
                 {
                     "group": "type4_village",
                     "seed": 3101,
+                    "index": 0,
                     "challenge_type": 4,
                     "horizon": 60.0,
                 }
@@ -1005,7 +1045,7 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
     assert results[0].success is True
     assert results[0].score == pytest.approx(0.8)
     assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
-    assert any("retrying timed-out seed village:3101" in line for line in log_lines)
+    assert any("retrying timed-out seed village:#0" in line for line in log_lines)
     assert any("1 retried_timeout" in line for line in log_lines)
 
 
@@ -1057,6 +1097,7 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
                 {
                     "group": "type3_mountain",
                     "seed": 3201,
+                    "index": 0,
                     "challenge_type": 3,
                     "horizon": 60.0,
                 }
@@ -1075,12 +1116,12 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
     assert results[0].success is False
     assert results[0].score == pytest.approx(0.0)
     assert [payload["status"] for payload in callback_payloads] == ["seed_timeout_strikes"]
-    assert not any("retrying timed-out seed mountain:3201" in line for line in log_lines)
+    assert not any("retrying timed-out seed mountain:#0" in line for line in log_lines)
     assert any(
         "0 failed, 1 slow_act, 0 timeout, 0 runtime, 0 retried_timeout" in line
         for line in log_lines
     )
-    assert any("slow_act_failures: mountain:3201" in line for line in log_lines)
+    assert any("slow_act_failures: mountain:#0" in line for line in log_lines)
 
 
 def test_is_rpc_transport_status_classifies_transport_failures():
@@ -1158,6 +1199,7 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
                 {
                     "group": "type4_village",
                     "seed": 3401,
+                    "index": 0,
                     "challenge_type": 4,
                     "horizon": 60.0,
                 }
@@ -1176,7 +1218,7 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
     assert results[0].success is True
     assert results[0].score == pytest.approx(0.8)
     assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
-    assert any("retrying RPC-transport seed village:3401" in line for line in log_lines)
+    assert any("retrying RPC-transport seed village:#0" in line for line in log_lines)
     assert any("1 retried_rpc_transport" in line for line in log_lines)
 
 
@@ -1355,12 +1397,12 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
     monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
     monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
+        bench_full_eval._RamWorkerScheduler,
         "format_status_line",
         lambda self: "stale-status",
     )
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
+        bench_full_eval._RamWorkerScheduler,
         "format_live_status_line",
         lambda self: "live-status",
     )
@@ -1394,24 +1436,24 @@ def test_run_process_parallel_summary_uses_live_scheduler_status(monkeypatch, tm
 
 
 @pytest.mark.full
-def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path):
+def test_run_process_parallel_refreshes_resources_while_waiting(monkeypatch, tmp_path):
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
-    observe_calls = []
-    original_observe_resources = bench_full_eval._AdaptiveBackoffController.observe_resources
+    refresh_calls = []
+    original_refresh_resources = bench_full_eval._RamWorkerScheduler.refresh_resources
 
-    def _counting_observe_resources(self, active_groups):
-        observe_calls.append(list(active_groups))
-        return original_observe_resources(self, active_groups)
+    def _counting_refresh_resources(self):
+        refresh_calls.append(True)
+        return original_refresh_resources(self)
 
     monkeypatch.setattr(
-        bench_full_eval._AdaptiveBackoffController,
-        "observe_resources",
-        _counting_observe_resources,
+        bench_full_eval._RamWorkerScheduler,
+        "refresh_resources",
+        _counting_refresh_resources,
     )
     monkeypatch.setattr(
         bench_full_eval,
-        "_PRESSURE_POLL_INTERVAL_SEC",
+        "_RESOURCE_POLL_INTERVAL_SEC",
         0.05,
         raising=False,
     )
@@ -1506,6 +1548,7 @@ def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path
                 {
                     "group": "type5_warehouse",
                     "seed": 3401,
+                    "index": 0,
                     "challenge_type": 5,
                     "horizon": 60.0,
                 }
@@ -1521,32 +1564,7 @@ def test_run_process_parallel_polls_pressure_while_waiting(monkeypatch, tmp_path
 
     assert len(results) == 1
     assert results[0].success is True
-    assert len(observe_calls) >= 2
-
-
-def test_heavy_aware_chunk_distributes_heavy_maps_evenly():
-    tasks = [
-        SimpleNamespace(challenge_type=3),
-        SimpleNamespace(challenge_type=5),
-        SimpleNamespace(challenge_type=3),
-        SimpleNamespace(challenge_type=1),
-        SimpleNamespace(challenge_type=2),
-        SimpleNamespace(challenge_type=1),
-        SimpleNamespace(challenge_type=2),
-        SimpleNamespace(challenge_type=4),
-    ]
-
-    chunks, index_map = de._heavy_aware_chunk(tasks, 4)
-
-    assert len(chunks) == 4
-    assert sum(len(c) for c in chunks) == 8
-    assert set(idx for indices in index_map for idx in indices) == set(range(8))
-
-    for chunk in chunks:
-        heavy_count = sum(
-            1 for t in chunk if t.challenge_type in de._HEAVY_CHALLENGE_TYPES
-        )
-        assert heavy_count <= 1
+    assert len(refresh_calls) >= 2
 
 
 def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monkeypatch, tmp_path):
@@ -1669,3 +1687,148 @@ def test_constructor_uses_class_state_without_module_global(monkeypatch):
 
     assert evaluator.base_ready is False
     assert de.DockerSecureEvaluator._base_ready is False
+
+
+def _recycle_scripted_run(monkeypatch, tmp_path, *, seeds, log_lines):
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [
+        SimpleNamespace(challenge_type=1, map_seed=5200 + i, horizon=60.0)
+        for i in range(seeds)
+    ]
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            i: [{"results": [(51, True, 1.0, 0.5)], "elapsed_sec": 0.1}]
+            for i in range(seeds)
+        },
+    )
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=tasks,
+            task_meta=[
+                {"group": "type1_city", "seed": int(t.map_seed), "challenge_type": 1, "horizon": 60.0}
+                for t in tasks
+            ],
+            batch_plan=[[i] for i in range(seeds)],
+            uid=51,
+            model_path=model_path,
+            effective_workers=1,
+            phase_label="eval",
+        )
+    )
+    return results, scripted_context
+
+
+@pytest.mark.full
+def test_run_process_parallel_recycles_worker_after_seed_budget(monkeypatch, tmp_path):
+    monkeypatch.setattr(de.parallel, "_WORKER_RECYCLE_SEED_BUDGET", 3)
+    monkeypatch.setattr(de.parallel, "_WORKER_RECYCLE_MIN_SEEDS", 3)
+    log_lines = []
+
+    results, _ = _recycle_scripted_run(monkeypatch, tmp_path, seeds=5, log_lines=log_lines)
+
+    recycle_lines = [line for line in log_lines if "recycling idle worker" in line]
+    assert recycle_lines and "seeds served" in recycle_lines[0]
+    assert len(results) == 5
+    assert all(r.success for r in results)
+    assert not any("crashed" in line for line in log_lines)
+
+
+@pytest.mark.full
+def test_run_process_parallel_recycles_worker_on_rss_threshold(monkeypatch, tmp_path):
+    monkeypatch.setattr(de.parallel, "_WORKER_RECYCLE_MIN_SEEDS", 1)
+
+    class _FakeMem:
+        rss = 3000 * 1024 * 1024
+
+    class _FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def memory_info(self):
+            return _FakeMem()
+
+    monkeypatch.setattr(de.parallel, "psutil", SimpleNamespace(Process=_FakeProc))
+    log_lines = []
+
+    results, _ = _recycle_scripted_run(monkeypatch, tmp_path, seeds=3, log_lines=log_lines)
+
+    recycle_lines = [line for line in log_lines if "recycling idle worker" in line]
+    assert recycle_lines and "rss 3000" in recycle_lines[0]
+    assert len(results) == 3
+    assert all(r.success for r in results)
+    assert not any("crashed" in line for line in log_lines)
+
+
+@pytest.mark.full
+def test_run_process_parallel_no_recycle_below_thresholds(monkeypatch, tmp_path):
+    log_lines = []
+
+    results, _ = _recycle_scripted_run(monkeypatch, tmp_path, seeds=4, log_lines=log_lines)
+
+    assert not any("recycling idle worker" in line for line in log_lines)
+    assert len(results) == 4
+    assert all(r.success for r in results)
+
+
+def test_release_freed_memory_is_safe_and_wired():
+    from swarm.benchmark.engine_parts import workers
+
+    assert workers._release_freed_memory() is None
+    import inspect
+    body = inspect.getsource(workers._benchmark_worker_main)
+    assert "_release_freed_memory()" in body
+
+
+def test_resolve_worker_limits_drops_quota_for_pinned_workers(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_1", "6,7")
+    monkeypatch.delenv("SWARM_DOCKER_KEEP_CPU_QUOTA", raising=False)
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
+    assert limits["cpuset_cpus"] == "6,7"
+    assert limits["cpus"] is None
+
+
+def test_resolve_worker_limits_keeps_quota_when_requested(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_1", "6,7")
+    monkeypatch.setenv("SWARM_DOCKER_KEEP_CPU_QUOTA", "1")
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
+    assert limits["cpus"] == de.batch.DOCKER_WORKER_CPUS
+
+
+def test_resolve_worker_limits_keeps_explicit_quota_when_pinned(monkeypatch):
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUSET_CPUS_1", "6,7")
+    monkeypatch.setenv("SWARM_DOCKER_WORKER_CPUS_OVERRIDE", "1.5")
+    monkeypatch.delenv("SWARM_DOCKER_KEEP_CPU_QUOTA", raising=False)
+    limits = de.DockerSecureEvaluator._resolve_worker_limits(1)
+    assert limits["cpuset_cpus"] == "6,7"
+    assert limits["cpus"] == "1.5"
+
+
+def test_die_with_parent_survives_missing_libc(monkeypatch):
+    from swarm.benchmark.engine_parts import workers
+
+    monkeypatch.setattr(workers, "_libc", None)
+    assert workers._die_with_parent() is None
+
+
+def test_die_with_parent_requests_kill_signal(monkeypatch):
+    import signal as signal_mod
+
+    from swarm.benchmark.engine_parts import workers
+
+    calls = []
+
+    class _FakeLibc:
+        def prctl(self, *args):
+            calls.append(args)
+            return 0
+
+    monkeypatch.setattr(workers, "_libc", _FakeLibc())
+    workers._die_with_parent()
+    assert calls and calls[0][0] == workers._PR_SET_PDEATHSIG
+    assert calls[0][1] == signal_mod.SIGKILL

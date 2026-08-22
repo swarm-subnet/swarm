@@ -156,9 +156,11 @@ class BackendApiClient:
         self.base_url = self.base_url.rstrip("/")
         self.timeout = timeout
         self.wallet = wallet
+        self.session_id = uuid.uuid4().hex
         self.client = httpx.AsyncClient(timeout=timeout)
         self._whitelist_warned = False
         self._upgrade_warned = False
+        self._duplicate_instance_logged = False
 
         self._runtime_state = _load_runtime_state()
         bt.logging.info("BackendApiClient initialized")
@@ -208,9 +210,30 @@ class BackendApiClient:
             "X-Validator-Signature": signature,
             "X-Validator-Nonce": nonce,
             "X-Validator-Timestamp": timestamp,
+            "X-Validator-Session": self.session_id,
             "X-Swarm-Validator-Contract": VALIDATOR_CONTRACT_VERSION,
             "X-Code-Version": CODE_VERSION,
         }
+
+    async def _fence_duplicate_instance(self, response: httpx.Response) -> None:
+        if response.status_code != 409:
+            return
+        try:
+            await response.aread()
+        except (AttributeError, httpx.ResponseNotRead):
+            pass
+        try:
+            payload = response.json()
+        except (ValueError, RuntimeError, httpx.ResponseNotRead):
+            return
+        if not isinstance(payload, dict) or payload.get("detail") != "DUPLICATE_VALIDATOR_INSTANCE":
+            return
+        if not self._duplicate_instance_logged:
+            bt.logging.error(
+                "Duplicate validator instance detected: another process holds this hotkey; exiting"
+            )
+            self._duplicate_instance_logged = True
+        raise SystemExit(1)
 
     async def _post_signed(self, endpoint: str, data: dict) -> Dict[str, Any]:
         """Make a signed POST request to the backend."""
@@ -222,6 +245,7 @@ class BackendApiClient:
             resp = await self.client.post(
                 f"{self.base_url}{endpoint}", content=body, headers=headers
             )
+            await self._fence_duplicate_instance(resp)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
@@ -257,6 +281,7 @@ class BackendApiClient:
 
         try:
             resp = await self.client.get(f"{self.base_url}{endpoint}", headers=headers)
+            await self._fence_duplicate_instance(resp)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
@@ -413,8 +438,9 @@ class BackendApiClient:
         blocked_queue: Optional[list] = None,
         active_task: Optional[dict] = None,
         backend_decision_version: Optional[int] = None,
+        in_flight_seeds: Optional[list] = None,
     ) -> Dict[str, Any]:
-        data: Dict[str, Any] = {"status": status}
+        data: Dict[str, Any] = {"status": status, "session_id": self.session_id}
         if current_uid is not None:
             data["current_uid"] = current_uid
         if progress is not None:
@@ -429,6 +455,8 @@ class BackendApiClient:
             data["active_task"] = active_task
         if backend_decision_version is not None:
             data["backend_decision_version"] = backend_decision_version
+        if in_flight_seeds is not None:
+            data["in_flight_seeds"] = [int(index) for index in in_flight_seeds]
         name = os.environ.get("VALIDATOR_NAME")
         if name:
             data["name"] = name[:32]
@@ -514,6 +542,17 @@ class BackendApiClient:
     # Task lease and seed upload endpoints
     # ──────────────────────────────────────────────────────────────────────
 
+    async def claim_seeds(self, task_id: int, count: int = 1) -> Optional[Dict[str, Any]]:
+        """Lease up to ``count`` seeds for the task; None on transport failure."""
+        try:
+            return await self._post_signed(
+                f"/validators/tasks/{int(task_id)}/claim-seeds",
+                {"count": int(count)},
+            )
+        except Exception as exc:
+            bt.logging.warning(f"claim_seeds failed for task {task_id}: {exc}")
+            return None
+
     async def next_task(self) -> Optional[Dict[str, Any]]:
         """Long-poll for the next task; None if the window times out."""
         endpoint = "/validators/next-task"
@@ -529,6 +568,8 @@ class BackendApiClient:
             raise BackendTransportError(
                 f"transport failure on {endpoint}: {_scrub_url(exc)}"
             ) from exc
+
+        await self._fence_duplicate_instance(resp)
 
         if resp.status_code in (404, 405):
             raise BackendProtocolMismatchError(
@@ -577,6 +618,7 @@ class BackendApiClient:
             async with self.client.stream(
                 "GET", f"{self.base_url}{endpoint}", headers=headers,
             ) as resp:
+                await self._fence_duplicate_instance(resp)
                 if resp.status_code != 200:
                     bt.logging.warning(
                         f"private-artifact fetch rejected: {resp.status_code}"
@@ -643,6 +685,7 @@ class BackendApiClient:
             async with self.client.stream(
                 "GET", f"{self.base_url}{endpoint}", headers=headers,
             ) as resp:
+                await self._fence_duplicate_instance(resp)
                 if resp.status_code in (404, 405):
                     raise BackendProtocolMismatchError(
                         f"Backend does not implement {endpoint}; upgrade the "

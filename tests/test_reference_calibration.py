@@ -70,6 +70,22 @@ def _hard_cap(speed_factor, overhead):
     )
 
 
+def test_normal_action_hard_cap_exceeds_compute_budget():
+    assert HARD_CAP_REF_SEC > MINER_COMPUTE_BUDGET_SEC
+
+
+def test_action_at_compute_budget_is_accepted():
+    overhead = 0.03
+    v = judge_act(
+        MINER_COMPUTE_BUDGET_SEC + overhead,
+        overhead_sec=overhead,
+        speed_factor=1.0,
+        budget_sec=MINER_COMPUTE_BUDGET_SEC,
+        hard_cap_sec=_hard_cap(1.0, overhead),
+    )
+    assert not v.strike and not v.hard_cap_hit
+
+
 def test_in_budget_action_accepted():
     v = judge_act(
         0.20, overhead_sec=0.03, speed_factor=1.0,
@@ -79,20 +95,22 @@ def test_in_budget_action_accepted():
 
 
 def test_slow_returned_action_is_discarded():
+    elapsed = MINER_COMPUTE_BUDGET_SEC * 1.2 + 0.03
     v = judge_act(
-        0.60, overhead_sec=0.03, speed_factor=1.0,
+        elapsed, overhead_sec=0.03, speed_factor=1.0,
         budget_sec=MINER_COMPUTE_BUDGET_SEC, hard_cap_sec=_hard_cap(1.0, 0.03),
     )
     assert v.strike and not v.hard_cap_hit
 
 
 def test_fast_host_is_judged_strictly():
-    # 0.45s on a 0.8x host = 0.525s owner-equivalent -> over the 0.5s budget.
+    # A fast host shrinks nothing: the same compute still has to fit the budget.
+    elapsed = MINER_COMPUTE_BUDGET_SEC * 0.8 * 1.1
     v = judge_act(
-        0.45, overhead_sec=0.0, speed_factor=0.8,
+        elapsed, overhead_sec=0.0, speed_factor=0.8,
         budget_sec=MINER_COMPUTE_BUDGET_SEC, hard_cap_sec=_hard_cap(0.8, 0.0),
     )
-    assert v.normalized_sec == pytest.approx(0.5625, abs=1e-6)
+    assert v.normalized_sec == pytest.approx(MINER_COMPUTE_BUDGET_SEC * 1.1, abs=1e-6)
     assert v.strike
 
 

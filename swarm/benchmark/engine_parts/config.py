@@ -177,7 +177,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--workers", type=int, default=N_DOCKER_WORKERS,
-        help="Number of parallel Docker workers (default: available vCPUs, capped at 12).",
+        help="Parallel Docker workers (default: one per CPU group; optionally capped by SWARM_MAX_DOCKER_WORKERS).",
     )
     parser.add_argument(
         "--log-out", type=Path, default=None,

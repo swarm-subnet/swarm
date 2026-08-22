@@ -2,8 +2,7 @@
 
 This mirrors the benchmark scheduler:
 - one seed per batch
-- resource-aware dispatch with class-based admission
-- host-pressure-driven cap adjustments
+- configured worker slots with RAM-aware admission
 - parent-side worker stall detection and replacement
 
 The main difference is that validator evaluation degrades failed batches into
@@ -13,6 +12,7 @@ per-seed failures and keeps going, instead of aborting the full run.
 from __future__ import annotations
 
 import asyncio
+import os
 import queue as queue_mod
 import re
 import time
@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import bittensor as bt
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None
 
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
@@ -31,6 +36,12 @@ from ._shared import _docker_evaluator_facade, _runtime_profile_from_payload
 
 _MAX_TIMEOUT_RETRIES = 10
 _MAX_RPC_TRANSPORT_RETRIES = 15
+
+# Long-lived host workers accumulate simulator memory across seeds, so idle
+# workers are replaced once they grow past an RSS threshold or a seed budget.
+_WORKER_RECYCLE_RSS_MB = float(os.getenv("SWARM_WORKER_RECYCLE_RSS_MB", "2500"))
+_WORKER_RECYCLE_SEED_BUDGET = int(os.getenv("SWARM_WORKER_RECYCLE_SEEDS", "25"))
+_WORKER_RECYCLE_MIN_SEEDS = 3
 
 
 def _benchmark_engine():
@@ -102,26 +113,6 @@ def _failure_seed_meta(
     }
 
 
-_last_hold_caps: Optional[str] = None
-
-
-def _log_scheduler_note(note: str) -> None:
-    global _last_hold_caps
-    if "Scheduler pressure hold" in note:
-        # The scheduler re-emits the hold every poll; only report cap changes.
-        caps = note.split(" (")[0]
-        if caps == _last_hold_caps:
-            return
-        _last_hold_caps = caps
-        bt.logging.warning(note)
-        return
-    _last_hold_caps = None
-    if "Scheduler pressure backoff" in note:
-        bt.logging.warning(note)
-    else:
-        bt.logging.info(note)
-
-
 def _seed_status(seed_meta: Optional[Dict[str, Any]]) -> str:
     if not isinstance(seed_meta, dict):
         return ""
@@ -160,9 +151,9 @@ def _summary_bucket_for_result(
         return "slow_act"
     if status == "seed_env_failure":
         return "runtime"
-    if bench_engine._is_backoff_timeout_status(status):
+    if bench_engine._is_timeout_retry_status(status):
         return "timeout"
-    if is_infra_failure or bench_engine._is_backoff_infra_status(status):
+    if is_infra_failure or bench_engine._is_infra_failure_status(status):
         return "runtime"
     if result_obj is not None and bool(result_obj.success):
         return "ok"
@@ -218,6 +209,9 @@ async def _run_process_parallel(
     retry_budget: Optional[dict[str, int]] = None,
     host_speed_factor: Optional[float] = None,
     model_image: Optional[str] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[list[int]] = None,
+    on_held_seeds: Optional[Callable[[list[int]], None]] = None,
 ) -> list:
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
@@ -228,9 +222,17 @@ async def _run_process_parallel(
     worker_active_requests: dict[int, Any] = {}
     worker_last_heartbeat: dict[int, float] = {}
     worker_started_at: dict[int, float] = {}
+    worker_seeds_dispatched: dict[int, int] = {}
     results: list[Optional[ValidationResult]] = [None] * len(all_tasks)
-    scheduler = bench_engine._AdaptiveBackoffController(requested_workers=effective_workers)
-    pending_batch_ids = list(range(len(batch_plan)))
+    scheduler = bench_engine._RamWorkerScheduler(requested_workers=effective_workers)
+    feeder_active = seed_feeder is not None
+    feeder_done = not feeder_active
+    feeder_next_call_at = 0.0
+    if feeder_active:
+        pending_batch_ids = [int(i) for i in (initial_pending or [])]
+    else:
+        pending_batch_ids = list(range(len(batch_plan)))
+    last_held_report: tuple[int, ...] = ()
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
     batch_retry_counts: dict[int, int] = {}
     rpc_transport_retry_counts: dict[int, int] = {}
@@ -240,11 +242,11 @@ async def _run_process_parallel(
         bench_engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(heartbeat_sec)) * 2.0,
     )
-    pressure_poll_interval_sec = max(
+    resource_poll_interval_sec = max(
         0.0,
-        float(getattr(bench_engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+        float(getattr(bench_engine, "_RESOURCE_POLL_INTERVAL_SEC", 2.0)),
     )
-    last_pressure_poll_at = 0.0
+    last_resource_poll_at = 0.0
     stop_reason: Optional[str] = None
 
     def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
@@ -324,44 +326,90 @@ async def _run_process_parallel(
         worker_last_heartbeat.pop(worker_slot, None)
         worker_started_at.pop(worker_slot, None)
         worker_active_requests.pop(worker_slot, None)
+        worker_seeds_dispatched.pop(worker_slot, None)
         _spawn_worker(worker_slot)
         tracker_call(runtime_tracker, "mark_docker_worker_restart", worker_slot=int(worker_slot))
 
-    def _active_group_names() -> list[str]:
-        active_groups: list[str] = []
-        for request in worker_active_requests.values():
-            try:
-                if not request.batch_indices:
-                    continue
-                first_idx = int(request.batch_indices[0])
-                active_groups.append(str(task_meta[first_idx]["group"]))
-            except Exception:
+    def _worker_rss_mb(worker: Any) -> Optional[float]:
+        if psutil is None:
+            return None
+        try:
+            return float(psutil.Process(worker.pid).memory_info().rss) / (1024.0 * 1024.0)
+        except Exception:
+            return None
+
+    def _worker_recycle_seed_budget(worker_slot: int) -> int:
+        # Stagger budgets across slots so workers do not recycle in lockstep.
+        if effective_workers <= 1:
+            return _WORKER_RECYCLE_SEED_BUDGET
+        spread = 0.9 + 0.2 * (worker_slot / float(effective_workers - 1))
+        return max(_WORKER_RECYCLE_MIN_SEEDS, round(_WORKER_RECYCLE_SEED_BUDGET * spread))
+
+    def _maybe_recycle_idle_workers() -> None:
+        if stop_reason is not None:
+            return
+        for worker_slot in range(effective_workers):
+            if worker_slot in worker_active_requests:
                 continue
-        return active_groups
+            worker = workers.get(worker_slot)
+            if worker is None or not worker.is_alive():
+                continue
+            served = worker_seeds_dispatched.get(worker_slot, 0)
+            if served < _WORKER_RECYCLE_MIN_SEEDS:
+                continue
+            reason = None
+            if served >= _worker_recycle_seed_budget(worker_slot):
+                reason = f"{served} seeds served"
+            else:
+                rss_mb = _worker_rss_mb(worker)
+                if rss_mb is not None and rss_mb >= _WORKER_RECYCLE_RSS_MB:
+                    reason = f"rss {rss_mb:.0f} MiB after {served} seeds"
+            if reason is None:
+                continue
+            bt.logging.info(f"[Validator eval] recycling idle worker {worker_slot} ({reason})")
+            try:
+                worker_queues[worker_slot].put(None)
+            except Exception:
+                pass
+            try:
+                worker.join(timeout=2.0)
+            except Exception:
+                pass
+            _restart_worker(worker_slot)
 
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
-        nonlocal last_pressure_poll_at
+        nonlocal last_resource_poll_at
         now = time.monotonic()
         if (
             not force
-            and pressure_poll_interval_sec > 0.0
-            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+            and resource_poll_interval_sec > 0.0
+            and (now - last_resource_poll_at) < resource_poll_interval_sec
         ):
             return
-        last_pressure_poll_at = now
-        note = scheduler.observe_resources(_active_group_names())
-        if note:
-            _log_scheduler_note(note)
-            tracker_call(
-                runtime_tracker,
-                "mark_docker_backoff",
-                active_worker_cap=int(scheduler.active_worker_cap),
-                note=str(note),
-            )
+        last_resource_poll_at = now
+        scheduler.refresh_resources()
+
+    def _report_held_seeds() -> None:
+        """Publish the seeds still queued or in the air, so the backend can hand
+        back anything this run stopped working on."""
+        nonlocal last_held_report
+        if on_held_seeds is None:
+            return
+        held: set[int] = set()
+        for batch_index in pending_batch_ids:
+            held.update(int(index) for index in batch_plan[batch_index])
+        for request in worker_active_requests.values():
+            held.update(int(index) for index in request.batch_indices)
+        snapshot = tuple(sorted(held))
+        if snapshot == last_held_report:
+            return
+        last_held_report = snapshot
+        on_held_seeds(list(snapshot))
 
     def _dispatch_available_batches() -> None:
         if stop_reason is not None:
             return
+        _maybe_recycle_idle_workers()
         while pending_batch_ids and len(worker_active_requests) < scheduler.active_worker_cap:
             idle_worker_slots = [
                 slot
@@ -403,37 +451,24 @@ async def _run_process_parallel(
             now = time.time()
             worker_started_at[worker_slot] = now
             worker_last_heartbeat[worker_slot] = now
+            worker_seeds_dispatched[worker_slot] = (
+                worker_seeds_dispatched.get(worker_slot, 0) + len(batch_indices)
+            )
             worker_queues[worker_slot].put(request)
             group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
-            seed_list = [int(meta["seed"]) for meta in batch_meta]
             tracker_call(
                 runtime_tracker,
                 "mark_docker_dispatch",
                 worker_slot=int(worker_slot),
                 batch_index=int(batch_index),
                 group=str(group_name),
-                seed=int(seed_list[0]),
+                seed=int(batch_meta[0].get("index", -1)) if batch_meta else -1,
                 active_worker_cap=int(scheduler.active_worker_cap),
             )
 
     def _remember_seed_meta(batch_index: int, seed_meta: Optional[Dict[str, Any]]) -> None:
         if isinstance(seed_meta, dict):
             batch_seed_meta[int(batch_index)] = dict(seed_meta)
-
-    def _observe_final_seed(
-        meta: Optional[dict[str, Any]],
-        seed_meta: Optional[Dict[str, Any]],
-    ) -> None:
-        group_name = str(meta.get("group", "")) if isinstance(meta, dict) else None
-        note = scheduler.observe_seed(seed_meta, group_name=group_name)
-        if note:
-            _log_scheduler_note(note)
-            tracker_call(
-                runtime_tracker,
-                "mark_docker_backoff",
-                active_worker_cap=int(scheduler.active_worker_cap),
-                note=str(note),
-            )
 
     def _drain_progress_events() -> None:
         while True:
@@ -488,7 +523,6 @@ async def _run_process_parallel(
                     elapsed_sec=elapsed_sec,
                 )
             meta = task_meta[int(idx)] if 0 <= int(idx) < len(task_meta) else None
-            _observe_final_seed(meta, seed_meta)
             _emit_seed_complete(on_seed_complete, seed_meta)
 
         for idx in request.batch_indices:
@@ -551,8 +585,8 @@ async def _run_process_parallel(
         return _TYPE_PREFIX.sub("", raw)
 
     def _seed_label(meta: Optional[dict]) -> str:
-        seed_id = meta.get("seed", "?") if meta else "?"
-        return f"{_type_name(meta)}:{seed_id}"
+        seed_index = meta.get("index", "?") if meta else "?"
+        return f"{_type_name(meta)}:#{seed_index}"
 
     def _record_seed_result(
         result_obj: Any,
@@ -613,8 +647,13 @@ async def _run_process_parallel(
             f"{seed_stats['retried_timeout']} retried_timeout, "
             f"{seed_stats['retried_rpc_transport']} retried_rpc_transport"
         )
+        if feeder_active:
+            # Pool mode: the phase total is not this validator's workload.
+            progress = f"[seed-flow] mine: {overall_done} done, {active} flying · avg={overall_avg:.4f}"
+        else:
+            progress = f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f}"
         line = (
-            f"[{phase_label} {overall_done}/{overall_total}] avg={overall_avg:.4f} | "
+            f"{progress} | "
             f"{counts} | {type_parts} | {active}/{effective_workers} workers "
             f"({scheduler.format_live_status_line()})"
         )
@@ -647,14 +686,22 @@ async def _run_process_parallel(
         _maybe_poll_scheduler(force=True)
         _dispatch_available_batches()
 
+        def _more_work_expected(done_count: int) -> bool:
+            if feeder_active:
+                return bool(
+                    pending_batch_ids or worker_active_requests or not feeder_done
+                )
+            return done_count < len(batch_plan)
+
         completed_batches = 0
-        while completed_batches < len(batch_plan):
+        while _more_work_expected(completed_batches):
             if stop_reason is None and should_stop is not None:
                 reason = should_stop()
                 if reason:
                     stop_reason = str(reason)
                     dropped = len(pending_batch_ids)
                     pending_batch_ids.clear()
+                    feeder_done = True
                     bt.logging.warning(
                         f"[Validator eval] stop requested for UID {uid} ({stop_reason}); "
                         f"dropping {dropped} pending seeds, finishing "
@@ -664,9 +711,32 @@ async def _run_process_parallel(
                 break
             _drain_progress_events()
             _maybe_poll_scheduler()
+            if (
+                feeder_active
+                and not feeder_done
+                and stop_reason is None
+                and not pending_batch_ids
+                and len(worker_active_requests) < scheduler.active_worker_cap
+                and time.time() >= feeder_next_call_at
+            ):
+                free_slots = scheduler.active_worker_cap - len(worker_active_requests)
+                granted, drained = await seed_feeder(free_slots)
+                for task_index in granted:
+                    task_index = int(task_index)
+                    if (
+                        0 <= task_index < len(results)
+                        and results[task_index] is None
+                        and task_index not in pending_batch_ids
+                    ):
+                        pending_batch_ids.append(task_index)
+                if drained:
+                    feeder_done = True
+                elif not granted:
+                    feeder_next_call_at = time.time() + 15.0
             _dispatch_available_batches()
+            _report_held_seeds()
             completed_batches += _check_for_stalled_workers()
-            if completed_batches >= len(batch_plan):
+            if not _more_work_expected(completed_batches):
                 break
 
             try:
@@ -761,7 +831,7 @@ async def _run_process_parallel(
                 prior_retries = int(batch_retry_counts.get(int(request.batch_index), 0))
                 if (
                     (
-                        bench_engine._is_backoff_timeout_status(final_status)
+                        bench_engine._is_timeout_retry_status(final_status)
                         # transient (e.g. host port briefly taken) -> retry, don't score 0
                         or final_status in ("container_start_failed", "INFRA_DOCKER")
                     )
@@ -791,7 +861,6 @@ async def _run_process_parallel(
                     and prior_transport_retries < 1
                     and retry_budget["rpc_transport"] < _MAX_RPC_TRANSPORT_RETRIES
                 ):
-                    _observe_final_seed(meta, final_seed_meta)
                     retry_budget["rpc_transport"] += 1
                     rpc_transport_retry_counts[int(request.batch_index)] = (
                         prior_transport_retries + 1
@@ -826,9 +895,9 @@ async def _run_process_parallel(
                     )
                 seed_status = _seed_status(final_seed_meta)
                 if vr is not None and (
-                    bench_engine._is_backoff_timeout_status(seed_status)
+                    bench_engine._is_timeout_retry_status(seed_status)
                     or bench_engine._is_rpc_transport_status(seed_status)
-                    or bench_engine._is_backoff_infra_status(seed_status)
+                    or bench_engine._is_infra_failure_status(seed_status)
                     or seed_status in (
                         "container_start_failed",
                         "stopped_during_connect",
@@ -838,7 +907,6 @@ async def _run_process_parallel(
                     # Infra failure, not a real 0 — flag it so the upload skips it
                     # and the seed is re-dispatched on resume instead of scored 0.
                     vr.failure_reason = FailureReason.INFRA.value
-                _observe_final_seed(meta, final_seed_meta)
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(vr, meta, status=seed_status)
                 _emit_seed_result(idx, vr, seed_status)
@@ -857,7 +925,8 @@ async def _run_process_parallel(
 
         _drain_progress_events()
         _log_summary()
-        if stop_reason is not None:
+        if stop_reason is not None or feeder_active:
+            # Feeder mode: None entries are seeds this validator never claimed.
             return results
         return [
             result if result is not None else ValidationResult(
@@ -899,6 +968,9 @@ async def evaluate_seeds_parallel(
     prior_total_seeds: int = 0,
     prior_avg: float = 0.0,
     retry_budget: Optional[dict[str, int]] = None,
+    seed_feeder: Optional[Callable[[int], Any]] = None,
+    initial_pending: Optional[list[int]] = None,
+    on_held_seeds: Optional[Callable[[list[int]], None]] = None,
 ) -> list:
     """Evaluate validator seeds using the benchmark-grade process scheduler."""
     if not tasks:
@@ -930,6 +1002,9 @@ async def evaluate_seeds_parallel(
                 else f"host speed factor {speed.factor:.2f}x is not eligible to score"
             )
             bt.logging.warning(detail)
+            if seed_feeder is not None:
+                # Seed flow: claim nothing and retry later instead of emitting INFRA rows.
+                return [None] * len(tasks)
             for task in tasks:
                 _emit_seed_complete(
                     on_seed_complete,
@@ -947,6 +1022,11 @@ async def evaluate_seeds_parallel(
                 )
                 for _ in tasks
             ]
+        if seed_feeder is not None:
+            bt.logging.warning(
+                "Seed-flow eval requires the parallel scheduler; base not ready, retrying later"
+            )
+            return [None] * len(tasks)
         return await self.evaluate_seeds_batch(
             tasks,
             uid,
@@ -989,6 +1069,7 @@ async def evaluate_seeds_parallel(
         {
             "group": _task_group_name(task, index),
             "seed": _task_seed(task, index),
+            "index": index,
             "challenge_type": _task_challenge_type(task),
             "horizon": float(getattr(task, "horizon", 0.0)),
         }
@@ -1045,6 +1126,9 @@ async def evaluate_seeds_parallel(
         retry_budget=retry_budget,
         host_speed_factor=speed.factor,
         model_image=model_image,
+        seed_feeder=seed_feeder,
+        initial_pending=initial_pending,
+        on_held_seeds=on_held_seeds,
     )
 
 

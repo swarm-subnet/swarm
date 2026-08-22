@@ -4,7 +4,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import bittensor as bt
 
@@ -14,14 +14,20 @@ from swarm.constants import (
     BENCHMARK_TOTAL_SEED_COUNT,
     BENCHMARK_VERSION,
     EPOCH_ANCHOR_UTC,
+    EPOCH_DURATION_LONG_SECONDS,
     EPOCH_DURATION_SECONDS,
+    EPOCH_SWITCH_NUMBER,
+    EPOCH_SWITCH_TS,
 )
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
+# Kept out of the epoch_*.json namespace so a restart cannot read it as the rollover having happened.
+PREEVAL_SEEDS_DIR = STATE_DIR / "preeval_seeds"
 
 _MAX_SEED = 2**32 - 1
 _EPOCH_FILE_RE = re.compile(r"^epoch_(\d+)(?:__(.+))?\.json$")
+_PREEVAL_FILE_RE = re.compile(r"^preeval_(\d+)(?:__(.+))?\.json$")
 
 
 def _generate_random_seeds(count: int) -> List[int]:
@@ -67,13 +73,12 @@ class BenchmarkSeedManager:
                 best = candidate
         return best
 
-    def _epoch_to_raw(self, epoch: int) -> int:
-        return epoch - 1
+    def _seed_file(self, directory: Path, prefix: str, epoch: int, family_id: str) -> Path:
+        suffix = "" if family_id == DEFAULT_RUNTIME_FAMILY_ID else f"__{family_id}"
+        return directory / f"{prefix}_{epoch}{suffix}.json"
 
     def _epoch_file(self, epoch: int, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> Path:
-        if family_id == DEFAULT_RUNTIME_FAMILY_ID:
-            return EPOCH_SEEDS_DIR / f"epoch_{epoch}.json"
-        return EPOCH_SEEDS_DIR / f"epoch_{epoch}__{family_id}.json"
+        return self._seed_file(EPOCH_SEEDS_DIR, "epoch", epoch, family_id)
 
     def _parse_epoch_file_path(self, path: Path) -> Tuple[int, str] | None:
         match = _EPOCH_FILE_RE.match(path.name)
@@ -107,6 +112,22 @@ class BenchmarkSeedManager:
         normalized["family_id"] = family_id
         self._pending_publications.append(normalized)
 
+    def _read_seed_file(self, path: Path, epoch: int, family_id: str) -> List[int] | None:
+        """Seeds from a stored file, or None when it is absent, corrupt or for another scope."""
+        if not path.exists():
+            return None
+        try:
+            data = self._load_epoch_payload(path)
+            if (
+                data.get("epoch_number") == epoch
+                and str(data.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID) == family_id
+                and len(data.get("seeds", [])) == BENCHMARK_TOTAL_SEED_COUNT
+            ):
+                return [int(seed) for seed in data["seeds"]]
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            bt.logging.warning(f"Corrupt epoch file {path.name}, regenerating")
+        return None
+
     def _ensure_epoch_family_seeds(
         self,
         epoch: int,
@@ -115,23 +136,14 @@ class BenchmarkSeedManager:
         invalidate_local_state_on_regenerate: bool,
     ) -> List[int]:
         path = self._epoch_file(epoch, family_id)
-        if path.exists():
-            try:
-                data = self._load_epoch_payload(path)
-                if (
-                    data.get("epoch_number") == epoch
-                    and str(data.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID) == family_id
-                    and len(data.get("seeds", [])) == BENCHMARK_TOTAL_SEED_COUNT
-                ):
-                    seeds = [int(seed) for seed in data["seeds"]]
-                    self._family_seeds[family_id] = seeds
-                    if family_id == DEFAULT_RUNTIME_FAMILY_ID:
-                        self.seeds = list(seeds)
-                        self.current_epoch_requires_state_invalidation = False
-                    bt.logging.info(f"Loaded seeds from {path.name}")
-                    return seeds
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-                bt.logging.warning(f"Corrupt epoch file {path.name}, regenerating")
+        seeds = self._read_seed_file(path, epoch, family_id)
+        if seeds is not None:
+            self._family_seeds[family_id] = seeds
+            if family_id == DEFAULT_RUNTIME_FAMILY_ID:
+                self.seeds = list(seeds)
+                self.current_epoch_requires_state_invalidation = False
+            bt.logging.info(f"Loaded seeds from {path.name}")
+            return seeds
 
         seeds = _generate_random_seeds(BENCHMARK_TOTAL_SEED_COUNT)
         self._family_seeds[family_id] = seeds
@@ -163,6 +175,7 @@ class BenchmarkSeedManager:
         family_id: str,
         seeds: List[int],
         published: bool,
+        path: Path | None = None,
     ) -> None:
         start, end = self.epoch_time_range(epoch)
         data = {
@@ -176,7 +189,8 @@ class BenchmarkSeedManager:
             "published": published,
             "seeds": seeds,
         }
-        path = self._epoch_file(epoch, family_id)
+        path = path or self._epoch_file(epoch, family_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, separators=(",", ":")))
         tmp.replace(path)
@@ -260,6 +274,7 @@ class BenchmarkSeedManager:
         self.epoch_number = epoch
         self._family_seeds = {}
         self.seeds = []
+        self._promote_preeval_seeds(epoch)
         self._publish_unpublished_epochs()
         self._load_or_generate_seeds(invalidate_local_state_on_regenerate=False)
         bt.logging.info(
@@ -267,13 +282,14 @@ class BenchmarkSeedManager:
         )
         return old_epoch
 
+    def _epoch_start_ts(self, epoch: int) -> float:
+        if epoch < EPOCH_SWITCH_NUMBER:
+            return EPOCH_ANCHOR_UTC.timestamp() + (epoch - 1) * EPOCH_DURATION_SECONDS
+        return EPOCH_SWITCH_TS + (epoch - EPOCH_SWITCH_NUMBER) * EPOCH_DURATION_LONG_SECONDS
+
     def epoch_time_range(self, epoch: int) -> tuple[datetime, datetime]:
-        raw = self._epoch_to_raw(epoch)
-        anchor_ts = EPOCH_ANCHOR_UTC.timestamp()
-        start_ts = anchor_ts + raw * EPOCH_DURATION_SECONDS
-        end_ts = start_ts + EPOCH_DURATION_SECONDS
-        start = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-        end = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        start = datetime.fromtimestamp(self._epoch_start_ts(epoch), tz=timezone.utc)
+        end = datetime.fromtimestamp(self._epoch_start_ts(epoch + 1), tz=timezone.utc)
         return start, end
 
     def seconds_until_epoch_end(self) -> float:
@@ -295,20 +311,71 @@ class BenchmarkSeedManager:
             invalidate_local_state_on_regenerate=False,
         )
 
+    def _seeds_for(self, family_id: str, epoch: Optional[int]) -> List[int]:
+        if epoch is None or epoch == self.epoch_number:
+            return self._ensure_current_family_seeds(family_id)
+        return self.seeds_for_epoch(epoch, family_id)
+
     def get_screening_seeds(
         self,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+        epoch: Optional[int] = None,
     ) -> List[int]:
-        return self._ensure_current_family_seeds(family_id)[:BENCHMARK_SCREENING_SEED_COUNT]
+        return self._seeds_for(family_id, epoch)[:BENCHMARK_SCREENING_SEED_COUNT]
 
     def get_benchmark_seeds(
         self,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+        epoch: Optional[int] = None,
     ) -> List[int]:
-        return self._ensure_current_family_seeds(family_id)[BENCHMARK_SCREENING_SEED_COUNT:]
+        return self._seeds_for(family_id, epoch)[BENCHMARK_SCREENING_SEED_COUNT:]
 
     def get_all_seeds(
         self,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+        epoch: Optional[int] = None,
     ) -> List[int]:
-        return list(self._ensure_current_family_seeds(family_id))
+        return list(self._seeds_for(family_id, epoch))
+
+    def _preeval_file(self, epoch: int, family_id: str) -> Path:
+        return self._seed_file(PREEVAL_SEEDS_DIR, "preeval", epoch, family_id)
+
+    def _promote_preeval_seeds(self, epoch: int) -> None:
+        """Adopt the seeds already flown for this epoch so they publish like any other."""
+        for path in PREEVAL_SEEDS_DIR.glob("preeval_*.json"):
+            match = _PREEVAL_FILE_RE.match(path.name)
+            if match is None:
+                continue
+            file_epoch = int(match.group(1))
+            if file_epoch < epoch:
+                # An epoch the backend skipped past; its seeds can never be flown.
+                path.unlink()
+                continue
+            if file_epoch > epoch:
+                continue
+            family_id = match.group(2) or DEFAULT_RUNTIME_FAMILY_ID
+            target = self._epoch_file(epoch, family_id)
+            if target.exists():
+                path.unlink()
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            path.replace(target)
+            bt.logging.info(f"Promoted pre-eval seeds for epoch {epoch} family {family_id}")
+
+    def seeds_for_epoch(
+        self,
+        epoch: int,
+        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+    ) -> List[int]:
+        """Seeds for any epoch; a future epoch is generated and kept out of the published set."""
+        if epoch <= self.epoch_number:
+            return list(self._ensure_epoch_family_seeds(
+                epoch, family_id, invalidate_local_state_on_regenerate=False,
+            ))
+        path = self._preeval_file(epoch, family_id)
+        seeds = self._read_seed_file(path, epoch, family_id)
+        if seeds is None:
+            seeds = _generate_random_seeds(BENCHMARK_TOTAL_SEED_COUNT)
+            self._save_epoch_file(epoch, family_id, seeds, published=False, path=path)
+            bt.logging.info(f"Generated pre-eval seeds for epoch {epoch} family {family_id}")
+        return seeds

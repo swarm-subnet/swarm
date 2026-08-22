@@ -20,7 +20,6 @@ EPOCH_FREEZE_SECONDS = 5400                # 1.5 hours before epoch end — no n
 # =============================================================================
 
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
-FORWARD_IDLE_SEC = 300                  # Pause when no models to evaluate (seconds)
 BACKEND_GRACE_PERIOD_SEC = 3600         # Use cached weights for 1h after last successful sync
 WANDB_IDLE_RESTART_SEC = 5 * 3600      # Restart W&B run every 5h when idle
 
@@ -34,7 +33,6 @@ SOLVER_ITERATIONS = 4                   # PyBullet constraint solver iterations 
 SOLVER_MIN_ISLAND_SIZE = 128            # Minimum solver island size (reduces per-island overhead)
 HORIZON_SEC = 60                       # Maximum simulated flight duration (seconds)
 # World generation parameters
-HEIGHT_SCALE = 1.5                      # Obstacle height scale factor
 RANDOM_START = True                     # Toggle random starting point generation
 # Camera and rendering settings
 CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
@@ -68,7 +66,6 @@ SEARCH_FEASIBILITY_MARGIN_SEC = 1.0     # Keep target time this far under the ho
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
 # Propulsion efficiency
-PROP_EFF = 0.60                         # Propeller efficiency coefficient
 
 # =============================================================================
 # MODEL & AI EVALUATION
@@ -79,7 +76,6 @@ PROP_EFF = 0.60                         # Propeller efficiency coefficient
 from swarm.core.submission_policy import MAX_UNCOMPRESSED_BYTES as _POLICY_MAX_BYTES
 
 MAX_MODEL_BYTES = _POLICY_MAX_BYTES
-EVAL_TIMEOUT_SEC = 120.0                # Model evaluation subprocess timeout (seconds)
 
 # Docker worker auto-sizing
 DOCKER_WORKER_MEMORY = "6g"             # Memory limit per Docker worker container
@@ -111,15 +107,30 @@ def cpus_per_docker_worker() -> int:
         return 1
 
 
-def default_docker_worker_count(*, maximum: int = 12) -> int:
-    """Number of docker workers that fit on this host without CPU oversubscription."""
-    return max(1, min(int(maximum), available_vcpu_count() // cpus_per_docker_worker()))
+def default_docker_worker_count(*, maximum: int | None = None) -> int:
+    """Number of CPU-pinned workers that fit, optionally capped by configuration."""
+    cpu_capacity = max(
+        1,
+        available_vcpu_count() // cpus_per_docker_worker(),
+    )
+    configured_maximum = maximum
+    if configured_maximum is None:
+        raw_maximum = os.getenv("SWARM_MAX_DOCKER_WORKERS")
+        if raw_maximum not in (None, ""):
+            try:
+                configured_maximum = max(1, int(raw_maximum))
+            except (TypeError, ValueError):
+                configured_maximum = None
+    if configured_maximum is None:
+        return cpu_capacity
+    return max(1, min(int(configured_maximum), cpu_capacity))
 
 
 # Docker parallel workers for validator and benchmark evaluation.
 # One worker per `DOCKER_WORKER_CPUS` vCPUs so each worker can be pinned to a
-# dedicated CPU group; capped at 12 workers.
-N_DOCKER_WORKERS = default_docker_worker_count(maximum=12)
+# dedicated CPU group. SWARM_MAX_DOCKER_WORKERS can impose an operator ceiling;
+# otherwise every complete CPU group becomes a worker slot.
+N_DOCKER_WORKERS = default_docker_worker_count()
 
 # Docker pip package whitelist (approved packages for miner requirements.txt)
 DOCKER_PIP_WHITELIST = {
@@ -153,7 +164,7 @@ GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeo
 GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker timeout (seconds)
 
 # Hardware-fair calibrated timing
-MINER_COMPUTE_BUDGET_SEC = 0.500        # Guaranteed pure-compute budget per step (seconds)
+MINER_COMPUTE_BUDGET_SEC = 0.600        # Guaranteed pure-compute budget per step (seconds)
 CALIBRATION_ROUNDS = 10                 # Number of round-trips to measure RPC overhead
 CALIBRATION_OVERHEAD_CAP_SEC = 0.100    # Max acceptable pipeline overhead (seconds)
 CALIBRATION_TIMEOUT_SEC = 5.0           # Per-round calibration timeout (seconds)
@@ -167,7 +178,7 @@ EVAL_SUMMARY_INTERVAL_SEC = 60          # Periodic evaluation progress summary i
 # Reference-time normalization (baseline-relative, hardware-fair per-act scoring)
 SPEED_FACTOR_MIN = 1.0                   # Scoring floor: a fast host never shrinks the guaranteed per-step budget
 SPEED_FACTOR_MAX_ELIGIBLE = 3.0          # Beyond this the host is too slow to score fairly; it self-excludes
-HARD_CAP_REF_SEC = 1.25                  # Per-act ceiling in baseline-equivalent seconds before a hard timeout
+HARD_CAP_REF_SEC = 2.0                   # Per-act liveness ceiling; must remain above the normal compute budget
 HARD_CAP_MARGIN_SEC = 0.050              # Transport-jitter margin added to the per-act hard cap (seconds)
 HARD_CAP_STRIKES_PER_SEED = 3            # Hard-cap timeouts allowed before failing the seed
 FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget for the first act (warmup/JIT)
@@ -176,7 +187,6 @@ FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in
 # Model storage and processing
 MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
 BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file
-CHUNK_SIZE = 2 * 1024 * 1024            # File transfer chunk size (2 MiB)
 SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess (MB)
 
 # =============================================================================
@@ -184,7 +194,6 @@ SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess
 # =============================================================================
 
 # Drone physical specifications
-DRONE_MASS = 0.027                          # Drone mass (kg) - CF2X Crazyflie
 DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to edge (meters)
 ALTITUDE_RAY_INSET = 0.09                   # Inset from hull edge for altitude ray origin (meters)
 MAX_RAY_DISTANCE = 20.0                     # Downward LiDAR maximum detection range (meters)
@@ -193,7 +202,6 @@ MAX_RAY_DISTANCE = 20.0                     # Downward LiDAR maximum detection r
 START_PLATFORM_TAKEOFF_BUFFER = 0.121   # Initial clearance above the surface (meters)
 
 # Start / goal platform geometry
-PLATFORM = True                         # Enable goal/landing platform rendering (autopilot)
 START_PLATFORM = True                   # Enable solid start platform spawn
 START_PLATFORM_RADIUS = 0.6
 START_PLATFORM_HEIGHT = 0.2             # Physical height of the start platform (meters)
@@ -202,7 +210,6 @@ START_PLATFORM_RANDOMIZE = True         # Randomize platform height when a rando
 START_PLATFORM_MIN_Z = 0.2              # Min platform surface height when randomizing (meters)
 START_PLATFORM_MAX_Z = 10               # Max platform surface height when randomizing (meters)
 LANDING_PLATFORM_RADIUS = 0.6           # Landing platform acceptance radius (meters)
-GOAL_TOL = LANDING_PLATFORM_RADIUS * 0.8 * 1.06  # TAO badge radius for precision landing (0.5088m)
 
 # Landing detection parameters
 LANDING_MAX_VZ = 0.5                    # Max vertical velocity for a valid landing (m/s)
@@ -214,7 +221,6 @@ LANDING_COLUMN_PADDING = 0.10           # XY padding around landing radius (mete
 LANDING_ALTITUDE_BUFFER = 0.10          # Vertical slack above safe distance (meters)
 
 HOVER_SEC = 0                           # Legacy field kept until reward.py drops it
-SAFE_Z = 3                              # Default cruise altitude (meters)
 SPEED_LIMIT = 3.0                       # Maximum drone velocity limit (m/s)
 MAX_YAW_RATE = 3.141                    # Maximum yaw rotation rate (rad/s)
 ACTION_QUANT_STEP = 2.0 ** -20          # Action quantisation so validators agree bit-for-bit
@@ -248,7 +254,6 @@ assert abs(sum(CITY_VARIANT_DISTRIBUTION.values()) - 1.0) < 0.001, "City variant
 # =============================================================================
 
 # Miner sampling and evaluation
-SAMPLE_K = 256                          # Number of miners sampled per forward pass
 # Emission burning
 UID_ZERO = 0                            # Burn UID: receives every emission slice not paid to a miner
 
@@ -269,30 +274,24 @@ BENCHMARK_TOTAL_SEED_COUNT = 1100       # Total seeds per epoch
 BENCHMARK_SCREENING_SEED_COUNT = 300    # Seeds used for screening phase
 BENCHMARK_FULL_SEED_COUNT = 800         # Seeds used for full benchmark phase
 SCREENING_BOOTSTRAP_THRESHOLD = 0.01    # Minimum score threshold during bootstrap
-SEED_SCORE_BATCH_MAX = 300              # Backend max per POST /validators/seed-scores
 
 # Epoch system — seeds rotate every 7 days (Monday 16:00 UTC)
 EPOCH_DURATION_SECONDS = 7 * 86400
 EPOCH_ANCHOR_UTC = datetime(2026, 3, 30, 16, 0, 0, tzinfo=timezone.utc)
-SCREENING_MIN_IMPROVEMENT = 0.015       # Must score above top model + this margin to pass
+# Piecewise so past epochs keep their numbers; must match the backend schedule exactly.
+EPOCH_SWITCH_NUMBER = 19
+EPOCH_DURATION_LONG_SECONDS = 14 * 86400
+EPOCH_SWITCH_TS = EPOCH_ANCHOR_UTC.timestamp() + (EPOCH_SWITCH_NUMBER - 1) * EPOCH_DURATION_SECONDS
 
 # Early screening termination — abort screening when outcome is statistically certain
-SCREENING_CHECKPOINT_SIZE = 50                              # Seeds evaluated per checkpoint
-SCREENING_EARLY_FAIL_FACTORS = {50: 0.50, 100: 0.70, 150: 0.85}
 
 # Fair screening early-stop: reject a candidate only when an optimistic one-sided
 # bound on its mean still cannot reach the champion bar. Checkpoint -> z value
 # (family-wise across the expected per-epoch model count). The 50 look is gentle
 # (catches only clearly-hopeless models); 100 and 150 tighten as evidence grows.
-SCREENING_EARLY_STOP_Z = {50: 4.2, 100: 3.9, 150: 3.4}
-SCREENING_EARLY_STOP_SIGMA_FLOOR = 0.22    # Lower bound on the per-seed score SD
 
 # Champion-copy detection on shared seeds. Metrics are logged on every check; the
 # hard-stop fires only for near-identical clones (calibrate before tightening).
-COPY_MIN_SEEDS = 100
-COPY_CORR_MIN = 0.995
-COPY_SD_MAX = 0.03
-COPY_MEAN_MAX = 0.002
 
 # Upload group size for streamed seed scores across screening, benchmark, and
 # reeval; smaller groups give fresher UI updates at the cost of more uploads.
@@ -366,7 +365,6 @@ assert abs(sum(CHALLENGE_TYPE_DISTRIBUTION.values()) - 1.0) < 0.001, "Challenge 
 
 # Type 1: City Navigation
 TYPE_1_WORLD_RANGE = 75
-TYPE_1_SAFE_ZONE = 1.0
 TYPE_1_R_MIN, TYPE_1_R_MAX = 22, 45
 TYPE_1_H_MIN, TYPE_1_H_MAX = 0.2, 1
 TYPE_1_START_H_MIN, TYPE_1_START_H_MAX = 0.2, 5
@@ -383,7 +381,6 @@ TYPE_2_START_H_MIN, TYPE_2_START_H_MAX = 0.05, 10
 TYPE_2_HORIZON = HORIZON_SEC
 
 # Type 3: Mountain Navigation
-TYPE_3_SAFE_ZONE = 1.0
 TYPE_3_R_MIN, TYPE_3_R_MAX = 65, 100
 TYPE_3_H_MIN, TYPE_3_H_MAX = 0, 0
 TYPE_3_START_H_MIN, TYPE_3_START_H_MAX = 0, 0
@@ -414,7 +411,6 @@ TYPE_4_START_H_MIN, TYPE_4_START_H_MAX = 0.2, 10.0
 TYPE_4_HORIZON = HORIZON_SEC
 TYPE_4_PLATFORM_CLEARANCE = 1.0                     # Minimum clearance from warehouse structures (meters)
 TYPE_4_PLATFORM_MAX_ATTEMPTS = 200                  # Max attempts to find collision-free platform position
-TYPE_4_MIN_PLATFORM_DISTANCE = 10.0                 # Minimum 3D distance between start and goal platforms (meters)
 
 # Type 6: Forest Navigation (100×100m ground, 96×96m playable with 2m edge margin)
 TYPE_6_WORLD_RANGE = 42                             # ±42m playable XY (96m total with margin)
@@ -467,7 +463,6 @@ SWARM_COUNT_SEED_OFFSET = 246810          # distinct from layout / moving-platfo
 SWARM_LAYOUT_SEED_OFFSET = 313131         # distinct from MOVING_PLATFORM_SEED_OFFSET
 SWARM_PAD_MIN_SPACING = 4.0               # min XY metres between any two start (or goal) pads
 SWARM_PAD_MAX_ATTEMPTS = 100              # deterministic rejection-sampling cap per pad
-SWARM_CONGESTION_RADIUS_M = 2.0           # a teammate goal within this of mine counts as congested
 SWARM_CONGESTION_PER_NEIGHBOR_SEC = 1.0   # time-target slack per congested neighbour
 SWARM_SEARCH_RADIUS = 30.0                # m — shared search-clue radius (bigger than autopilot's 10)
 SWARM_SAR_SEARCH_RADIUS = 80.0            # m — shared SAR search-clue radius for the swarm (vs single-drone 30)

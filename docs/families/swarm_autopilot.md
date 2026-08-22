@@ -4,7 +4,7 @@
 
 One policy, up to eight drones, one shared pool of landing pads.
 
-Swarm Autopilot (`cf_swarm_autopilot`) is the team version of Autopilot: each seed spawns **2–8 drones**, all flown by one policy that sees every drone at once. The team gets one shared, noisy clue about where the goal pads are, and the pads are a common pool: any drone may land on any pad that a teammate has not already claimed. Land every drone cleanly, fast, and without hitting the world or each other. The family is active and carries **0.10** of subnet emissions.
+Swarm Autopilot (`cf_swarm_autopilot`) is the team version of Autopilot: each seed spawns **2–8 drones**, all flown by one policy that sees every drone at once. The team gets one shared, noisy clue about where the goal pads are, and the pads are a common pool: any drone may land on any pad that a teammate has not already claimed. Land every drone cleanly, fast, and without hitting the world or each other. The family is active and carries **0.20** of subnet emissions.
 
 ---
 
@@ -221,7 +221,7 @@ Your model runs in Docker as a Cap'n Proto RPC server; the validator calls `rese
 | `ping` | 2.0 s |
 | `reset()` | 5.0 s |
 | First `act()` of a seed | 2.0 s guaranteed compute (3.0 ref-sec hard cap) |
-| Every later `act()` | 0.5 s guaranteed compute (1.25 ref-sec + 0.05 margin hard cap) |
+| Every later `act()` | 0.6 s baseline-equivalent guaranteed compute (2.0 ref-sec + measured RPC overhead + 0.05 s margin hard cap) |
 
 A timed-out step substitutes a zero action and counts a strike; **15 strikes** or **3 hard-cap timeouts** fail the seed with score 0.
 

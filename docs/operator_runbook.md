@@ -47,10 +47,11 @@ The registry that defines the families, their states, policies, and emission all
 **Sync is manual.** After editing the schema in the swarm repo, run:
 
 ```bash
-python3 swarm/scripts/sync_family_registry.py
+python3 swarm/scripts/sync_family_registry.py \
+  --backend swarm-backend --website Swarm-Website
 ```
 
-The script reads the swarm-repo schema and overwrites both copies. It assumes the three repos are sibling directories under one workspace root. There is no CI hook: the only automated guard is the backend test `test_registry_copies_are_in_sync_across_repos`, and it **skips** when the sibling checkouts are absent, so divergence is only caught when backend tests run in a full three-repo workspace.
+The script reads the swarm-repo schema and overwrites both copies. Both checkouts must be named: a workspace can hold several worktrees of the same repo on different branches, and a directory name cannot tell them apart, so pointing at the wrong one would write the registry into an unrelated branch. Add `--check` to report drift without writing (non-zero exit when a mirror is stale) — useful before a release. There is no CI hook: the only other automated guard is the backend test `test_registry_copies_are_in_sync_across_code_repos`, and it **skips** when the sibling checkouts are absent, so divergence is only caught when backend tests run in a full three-repo workspace.
 
 Divergence matters: the backend derives `CHALLENGE_FAMILY_IDS`, `FAMILY_STATES`, and `EMISSIONS_STATES` from **its** copy at import time, DB `challenge_family` rows are seeded and repaired from that copy, and the chain scanner rejects any submission naming a family the backend copy doesn't know.
 
@@ -60,13 +61,13 @@ Five families, all `family_state='active'` and `emissions_state='active'`:
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_autopilot` | 0.10 |
-| `cf_search_and_rescue` | 0.10 |
-| `cf_swarm_autopilot` | 0.10 |
-| `cf_swarm_sar` | 0.10 |
-| `cf_interceptor` | 0.10 |
+| `cf_interceptor` | 0.30 |
+| `cf_swarm_autopilot` | 0.20 |
+| `cf_swarm_sar` | 0.20 |
+| `cf_autopilot` | 0.15 |
+| `cf_search_and_rescue` | 0.15 |
 
-Allocations sum to 0.50: the unallocated half of the pool burns during the rollout and is raised manually as the tasks prove out.
+Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, no crowning for 7 days, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first.
 
 State enums: `family_state` ∈ {incubating, active, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 
@@ -214,7 +215,7 @@ The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../
 
 `swarm/.env.example` lists exactly the first three.
 
-Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_CAPS` (default false), `SWARM_TORCH_NUM_THREADS`, `SWARM_TORCH_INTEROP_THREADS`, `SWARM_DOCKER_WORKER_CPUS_OVERRIDE`, `SWARM_DOCKER_WORKER_MEMORY_OVERRIDE`, `SWARM_DOCKER_WORKER_CPUSETS`, `SWARM_DOCKER_WORKER_CPUSET_CPUS_{i}`, `SWARM_HOST_WORKER_MEMORY_MB`, `SWARM_HOST_WORKER_CPUSETS`, `SWARM_BATCH_TIMEOUT_MULT` (1.0), `SWARM_BATCH_TIMEOUT_HARD_CAP_SEC` (0), `SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS` (false), `SWARM_BATCH_TIMEOUT_EXTEND_SEC` (30), `SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC` (0), `SWARM_LOG_RPC_TRACE` (false), `SWARM_TERRAIN_CACHE_DIR`; burn validator: `BURN_VALIDATOR_HEARTBEAT_SEC` (5), `BURN_VALIDATOR_STALL_TIMEOUT_SEC` (900).
+Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_MAX_DOCKER_WORKERS` (default: every complete CPU group), `SWARM_DOCKER_THREAD_CAPS` (default false), `SWARM_TORCH_NUM_THREADS`, `SWARM_TORCH_INTEROP_THREADS`, `SWARM_DOCKER_WORKER_CPUS_OVERRIDE`, `SWARM_DOCKER_WORKER_MEMORY_OVERRIDE`, `SWARM_DOCKER_WORKER_CPUSETS`, `SWARM_DOCKER_WORKER_CPUSET_CPUS_{i}`, `SWARM_HOST_WORKER_MEMORY_MB`, `SWARM_HOST_WORKER_CPUSETS`, `SWARM_BATCH_TIMEOUT_MULT` (1.0), `SWARM_BATCH_TIMEOUT_HARD_CAP_SEC` (0), `SWARM_BATCH_TIMEOUT_EXTEND_ON_PROGRESS` (false), `SWARM_BATCH_TIMEOUT_EXTEND_SEC` (30), `SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC` (0), `SWARM_LOG_RPC_TRACE` (false), `SWARM_TERRAIN_CACHE_DIR`; burn validator: `BURN_VALIDATOR_HEARTBEAT_SEC` (5), `BURN_VALIDATOR_STALL_TIMEOUT_SEC` (900).
 
 ---
 
@@ -223,7 +224,7 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_DOCKER_THREAD_
 | I want to… | Do this |
 |------------|---------|
 | Keep out validators on the old contract | Nothing to do — only `agent_rpc.v1` validators are ever authorized |
-| Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py`, commit all three copies |
+| Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py --backend swarm-backend --website Swarm-Website`, commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |

@@ -10,11 +10,11 @@ Swarm runs **five challenge families**, all active. Evaluation is family-scoped:
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
-| [Autopilot](families/autopilot.md) | `cf_autopilot` | One drone crosses a generated world and lands on a pad inside a noisy search area | 10% |
-| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 10% |
-| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 10% |
-| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 10% |
-| [Interceptor](families/interceptor.md) | `cf_interceptor` | One drone hunts down and rams a validator-flown target over open terrain | 10% |
+| [Autopilot](families/autopilot.md) | `cf_autopilot` | One drone crosses a generated world and lands on a pad inside a noisy search area | 15% |
+| [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 15% |
+| [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 20% |
+| [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 20% |
+| [Interceptor](families/interceptor.md) | `cf_interceptor` | One drone hunts down and rams a validator-flown target over open terrain | 30% |
 
 ## 🖥️ System Requirements
 
@@ -311,13 +311,13 @@ pm2 start --name auto_update_validator \
 ## 🧩 What the Validator Does
 
 1. **Sync with the backend**
-   `GET /validators/sync` returns the current epoch, the per-family King of the Hill windows and family shares, the champions, and the latest weight map. Runs once per forward cycle. Evaluation work arrives separately via the `GET /validators/next-task` long-poll, which leases the next 50-seed batch.
+   `GET /validators/sync` returns the current epoch, the per-family King of the Hill windows and family shares, the champions, and the latest weight map. Runs once per forward cycle. Evaluation work arrives separately via the `GET /validators/next-task` long-poll, which assigns the model under evaluation; individual seeds are then leased on demand through `POST /validators/tasks/{id}/claim-seeds` as workers free up.
 
 2. **Fetch the model**
    Download `submission.zip` from the miner's GitHub repo and verify the SHA-256 hash against the backend record (the README hash is checked at submission time by the backend).
 
 3. **Full benchmark (1,100 seeds)**
-   Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers, leased from the backend in 50-seed batches. The task metadata carries the family, phase, and seed range, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
+   Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers. Seeds are leased one at a time: whenever a worker frees, the validator claims the next pending seed from the backend's shared pool, so validators of different speeds share one model with no idle tails. The task metadata carries the family and phase, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
 
 4. **Report scores**
    Per-seed and aggregate scores are submitted to the backend as they are computed.

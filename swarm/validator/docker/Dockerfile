@@ -23,6 +23,9 @@ RUN pip install --upgrade pip setuptools wheel
 COPY swarm/validator/docker/docker-requirements.txt /tmp/docker-requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/docker-requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 import multiprocessing as mp
 import os
@@ -15,17 +16,20 @@ from typing import Any, Callable, Optional
 
 import bittensor as bt
 
-from swarm.config import DockerBatchTimeoutSettings, RpcTraceSettings
+from swarm.config import DockerBatchTimeoutSettings, DockerRuntimeSettings, RpcTraceSettings
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
+    DOCKER_WORKER_CPUS,
     GLOBAL_EVAL_BASE_SEC,
     GLOBAL_EVAL_CAP_SEC,
     GLOBAL_EVAL_PER_SEED_SEC,
     MODEL_DIR,
     SIM_DT,
+    SPEED_FACTOR_MAX_ELIGIBLE,
 )
 from swarm.core.faults import ReasonCode
-from swarm.core.submission_policy import validate_submission_zip
+from swarm.core.submission_lane import is_model_graph_artifact
+from swarm.core.submission_policy import check_safety, validate_submission_zip
 from swarm.utils.hash import sha256sum
 from swarm.protocol import (
     FailureReason,
@@ -46,6 +50,7 @@ from swarm.validator.task_gen import task_for_seed_and_type
 
 from ._shared import (
     _docker_evaluator_facade,
+    _graph_runtime_template_dir,
     _runtime_profile_env,
     _runtime_profile_from_payload,
     _submission_template_dir,
@@ -66,6 +71,81 @@ class HostSpeedCalibration:
 
 
 _HOST_SPEED_CALIBRATION: Optional[HostSpeedCalibration] = None
+_CALIBRATION_CACHE_PATH = (
+    Path(__file__).resolve().parents[4] / "state" / "host_speed_factor.json"
+)
+
+
+def _calibration_host_fingerprint() -> str:
+    """A measurement is only reusable on the machine that produced it, and only
+    until it reboots: a box that came back different must measure itself again."""
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except Exception:
+        boot_id = ""
+    return f"{os.cpu_count() or 0}:{boot_id}"
+
+
+def _write_calibration_cache(calibration: HostSpeedCalibration) -> None:
+    """Persist an eligible measurement so a restart does not repay for it.
+
+    Only eligible factors are kept: a host that failed the limit must re-measure
+    rather than sit out the whole cache window on one bad reading."""
+    if not calibration.speed.eligible:
+        return
+    try:
+        _CALIBRATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "host": _calibration_host_fingerprint(),
+            "calibration_version": calibration.calibration_version,
+            "worker_count": int(calibration.worker_count),
+            "computed_at": float(calibration.computed_at),
+            "local_p90_ms": float(calibration.speed.local_p90_ms),
+            "worker_local_p90_ms": [
+                float(speed.local_p90_ms) for speed in calibration.worker_speeds
+            ],
+        }
+        temp_path = _CALIBRATION_CACHE_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, sort_keys=True))
+        temp_path.replace(_CALIBRATION_CACHE_PATH)
+    except Exception as e:
+        bt.logging.warning(f"Could not cache the host calibration: {e}")
+
+
+def _read_calibration_cache(
+    *, worker_count: int, calibration_version: str
+) -> Optional[HostSpeedCalibration]:
+    """Load a cached measurement, or None if it does not describe this host now."""
+    try:
+        payload = json.loads(_CALIBRATION_CACHE_PATH.read_text())
+    except Exception:
+        return None
+    try:
+        if payload["host"] != _calibration_host_fingerprint():
+            return None
+        if payload["calibration_version"] != str(calibration_version):
+            return None
+        if int(payload["worker_count"]) < int(worker_count):
+            return None
+        computed_at = float(payload["computed_at"])
+        if (time.time() - computed_at) > _CALIBRATION_MAX_AGE_SEC:
+            return None
+        speed = normalize_speed_factor(float(payload["local_p90_ms"]))
+        worker_speeds = tuple(
+            normalize_speed_factor(float(value))
+            for value in payload["worker_local_p90_ms"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not speed.eligible:
+        return None
+    return HostSpeedCalibration(
+        speed=speed,
+        worker_count=int(payload["worker_count"]),
+        worker_speeds=worker_speeds,
+        calibration_version=str(calibration_version),
+        computed_at=computed_at,
+    )
 
 
 def _calibration_mp_context() -> mp.context.BaseContext:
@@ -137,6 +217,7 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 _PIP_INSTALL_TIMEOUT_SEC = 120
+_BUILD_CACHE_PRUNE_FREE_GB = 25.0
 
 
 def model_image_tag(model_hash: str) -> str:
@@ -169,6 +250,10 @@ def prepare_model_image(
     the model zip is gone.
     """
     if not model_path.is_file():
+        return None
+    if is_model_graph_artifact(model_path):
+        # the graph runner ships with the image; a legacy artifact never
+        # contributes dependencies of its own
         return None
     image_tag = model_image_tag(sha256sum(model_path))
     if not model_path.with_suffix(".private").exists() and _image_exists(image_tag):
@@ -228,7 +313,7 @@ def prepare_model_image(
             "--name", container_name,
             "--user", f"{current_uid}:{current_gid}",
             f"--memory={worker_limits['memory']}",
-            f"--cpus={worker_limits['cpus']}",
+            f"--cpus={worker_limits['cpus'] or DOCKER_WORKER_CPUS}",
             "--pids-limit=50",
             "--ulimit", "nofile=256:256",
             "--ulimit", "fsize=524288000:524288000",
@@ -297,6 +382,29 @@ def prepare_model_image(
     finally:
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def prune_build_cache_if_disk_low() -> None:
+    """Drop the layer cache only when the disk is genuinely tight.
+
+    The cache holds the apt and pip layers of the base image, so clearing it
+    turns the next version bump into a full rebuild that costs the validator
+    its evaluation time. Bound the disk, but not on every cleanup.
+    """
+    try:
+        free_gb = shutil.disk_usage("/").free / (1024 ** 3)
+    except Exception:
+        return
+    if free_gb >= _BUILD_CACHE_PRUNE_FREE_GB:
+        return
+    bt.logging.info(f"Pruning docker build cache: {free_gb:.1f}GiB free")
+    try:
+        subprocess.run(
+            ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
+            capture_output=True, timeout=120,
+        )
+    except Exception:
+        pass
 
 
 def remove_model_image(image_tag: str) -> None:
@@ -370,6 +478,7 @@ class _BatchContext:
     tmpdir: Optional[str] = None
 
     # Agent runner state
+    is_model_graph: bool = False
     submission_dir: Optional[Path] = None
     model_image: Optional[str] = None
     run_image: Optional[str] = None
@@ -381,6 +490,8 @@ class _BatchContext:
     runtime_profile: Optional[Any] = None
 
     connected: bool = False
+    container_started_at: Optional[float] = None
+    container_startup_sec: Optional[float] = None
 
     # Closure bundle (built in _init_batch_state)
     helpers: Optional[_BatchHelpers] = None
@@ -392,6 +503,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
     tasks = ctx.tasks
     on_seed_complete = ctx.on_seed_complete
 
+    ctx.is_model_graph = is_model_graph_artifact(ctx.model_path)
     ctx.trace_rpc = RpcTraceSettings.from_env().enabled
     ctx.stop_event = threading.Event()
     ctx.progress_state = {
@@ -561,7 +673,12 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
             for _ in tasks
         ]
 
-    accepted, detail = validate_submission_zip(model_path)
+    # a legacy graph artifact carries no drone_agent.py; the runner admits it
+    # inside the container, where the ONNX rules are enforced
+    if ctx.is_model_graph:
+        accepted, detail = check_safety(model_path)
+    else:
+        accepted, detail = validate_submission_zip(model_path)
     if not accepted:
         bt.logging.warning(
             f"[Worker {worker_id}] UID {uid} submission rejected: {detail}"
@@ -1025,7 +1142,10 @@ async def _run_host_baseline_calibration(self, worker_count: int):
         proc.start()
 
     payloads: list[dict[str, Any]] = []
-    deadline = time.monotonic() + max(180.0, 90.0 + (requested * 30.0))
+    # A host at the eligibility ceiling needs proportionally longer than the reference.
+    deadline = time.monotonic() + SPEED_FACTOR_MAX_ELIGIBLE * max(
+        180.0, 90.0 + (requested * 30.0)
+    )
     while len(payloads) < requested and time.monotonic() < deadline:
         try:
             payload = result_queue.get(timeout=0.5)
@@ -1098,6 +1218,7 @@ async def _run_host_baseline_calibration(self, worker_count: int):
         calibration_version=str(manifest["calibration_version"]),
         computed_at=time.time(),
     )
+    _write_calibration_cache(_HOST_SPEED_CALIBRATION)
     per_worker = ", ".join(
         f"w{i}={speed.factor:.2f}x/{speed.local_p90_ms:.1f}ms"
         for i, speed in enumerate(worker_speeds)
@@ -1118,26 +1239,44 @@ async def _run_host_baseline_calibration(self, worker_count: int):
     return host_speed
 
 
+def host_speed_factor_is_fresh(worker_count: int) -> bool:
+    """True when scoring can start without stopping to measure the host first."""
+    global _HOST_SPEED_CALIBRATION
+
+    try:
+        manifest = load_baseline_manifest()
+    except Exception:
+        return False
+    requested = max(1, int(worker_count))
+    version = str(manifest["calibration_version"])
+    if _host_calibration_is_valid(
+        _HOST_SPEED_CALIBRATION, worker_count=requested, calibration_version=version,
+    ):
+        return True
+    cached = _read_calibration_cache(
+        worker_count=requested, calibration_version=version,
+    )
+    if cached is None:
+        return False
+    _HOST_SPEED_CALIBRATION = cached
+    bt.logging.info(
+        f"Reusing the cached host calibration: speed_factor={cached.speed.factor:.2f}x "
+        f"(measured {(time.time() - cached.computed_at) / 60.0:.0f} min ago, "
+        f"workers={cached.worker_count})"
+    )
+    return True
+
+
 async def _ensure_host_speed_factor(self, worker_count: int):
     """Return the in-memory host speed factor, calibrated under concurrent load."""
     global _HOST_SPEED_CALIBRATION
 
     if not baseline_model_available():
         return None
-    manifest = load_baseline_manifest()
     requested = max(1, int(worker_count))
-    if _host_calibration_is_valid(
-        _HOST_SPEED_CALIBRATION,
-        worker_count=requested,
-        calibration_version=str(manifest["calibration_version"]),
-    ):
+    if host_speed_factor_is_fresh(requested):
         return _HOST_SPEED_CALIBRATION.speed
     return await _run_host_baseline_calibration(self, requested)
-
-
-async def _ensure_worker_speed_factor(self, worker_id: int):
-    """Compatibility wrapper; scoring uses the host-level factor."""
-    return await _ensure_host_speed_factor(self, max(1, int(worker_id) + 1))
 
 
 def _extract_submission(model_path: Path, submission_dir: Path) -> None:
@@ -1163,7 +1302,8 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     """Extract the submission and stage the RPC server next to the miner's agent."""
     runtime_profile = _runtime_profile_from_payload(ctx.runtime_profile_payload, ctx.tasks)
     worker_limits = ctx.self._resolve_worker_limits(ctx.worker_id, runtime_profile=runtime_profile)
-    docker_envs = ctx.self._docker_env_overrides()
+    thread_cap = DockerRuntimeSettings.worker_thread_cap(worker_limits)
+    docker_envs = ctx.self._docker_env_overrides(thread_cap=thread_cap)
     docker_envs.update(_runtime_profile_env(runtime_profile))
     docker_envs.update({
         "SWARM_AGENT_PORT": "8000",
@@ -1184,7 +1324,12 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     os.chmod(submission_dir, 0o755)
 
     try:
-        _extract_submission(ctx.model_path, submission_dir)
+        if ctx.is_model_graph:
+            # the graph runner reads the archive itself, so nothing is unpacked
+            # and no file from it can shadow the bootstrap we stage below
+            shutil.copy(ctx.model_path, submission_dir / _GRAPH_ARTIFACT_NAME)
+        else:
+            _extract_submission(ctx.model_path, submission_dir)
     except Exception as exc:
         ctx.helpers.notify_all_failed(
             status=ReasonCode.LOAD_FAILED.value, error=f"extract failed: {exc}"
@@ -1195,8 +1340,15 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
         ]
 
     template_dir = _submission_template_dir()
-    for name in ("agent.capnp", "agent_server.py", "main.py"):
-        shutil.copy(template_dir / name, submission_dir)
+    if ctx.is_model_graph:
+        shutil.copy(template_dir / "agent.capnp", submission_dir)
+        shutil.copy(_graph_runtime_template_dir() / "main.py", submission_dir)
+        docker_envs["SWARM_MODEL_GRAPH_ARTIFACT"] = (
+            f"/workspace/submission/{_GRAPH_ARTIFACT_NAME}"
+        )
+    else:
+        for name in ("agent.capnp", "agent_server.py", "main.py", "runtime_caps.py"):
+            shutil.copy(template_dir / name, submission_dir)
 
     for f in submission_dir.iterdir():
         if f.is_file():
@@ -1220,6 +1372,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     return None
 
 
+_GRAPH_ARTIFACT_NAME = "model_graph.zip"
 _START_GATE_PATH = "/tmp/swarm_start.gate"
 
 
@@ -1263,7 +1416,6 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         "docker", "run", "--rm", "-d", "--name", ctx.container_name,
         "--user", f"{ctx.current_uid}:{ctx.current_gid}",
         f"--memory={ctx.worker_limits['memory']}",
-        f"--cpus={ctx.worker_limits['cpus']}",
         "--pids-limit=50", "--ulimit", "nofile=256:256",
         "--ulimit", "fsize=52428800:52428800", "--security-opt", "no-new-privileges",
         "--cap-drop", "ALL", "--network", "bridge", "--read-only",
@@ -1271,6 +1423,8 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         "-p", f"127.0.0.1:{ctx.host_port}:8000",
         "-v", f"{ctx.submission_dir}:/workspace/submission:rw",
     ]
+    if ctx.worker_limits["cpus"]:
+        cmd.append(f"--cpus={ctx.worker_limits['cpus']}")
     if ctx.worker_limits["cpuset_cpus"]:
         cmd.extend(["--cpuset-cpus", str(ctx.worker_limits["cpuset_cpus"])])
     for key, value in ctx.docker_envs.items():
@@ -1279,6 +1433,7 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
         cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
     cmd.extend([ctx.run_image, "python", "/workspace/submission/main.py"])
+    ctx.container_started_at = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         ctx.helpers.notify_all_failed(status=ReasonCode.INFRA_DOCKER.value, error=result.stderr[:300])
@@ -1300,6 +1455,13 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
     while time.monotonic() < deadline:
         if ctx.self._check_rpc_ready(ctx.host_port):
             ctx.connected = True
+            started_at = getattr(ctx, "container_started_at", None)
+            if started_at is not None:
+                startup_sec = time.monotonic() - started_at
+                ctx.container_startup_sec = startup_sec
+                bt.logging.info(
+                    f"[Worker {ctx.worker_id}] container ready in {startup_sec:.1f}s"
+                )
             return None
         await asyncio.sleep(0.1)
     gone = _container_is_gone(ctx.container_name)
@@ -1399,19 +1561,30 @@ async def evaluate_seeds_batch(
     _setup_pretry_state(ctx)
 
     try:
+        t0 = time.monotonic()
         early = _setup_workspace(ctx)
         if early is not None:
             return early
 
+        t1 = time.monotonic()
         early = _launch_container(ctx)
         if early is not None:
             return early
 
+        t2 = time.monotonic()
         early = await _prepare_network_and_rpc(ctx)
         if early is not None:
             return early
 
-        return await _run_rpc_phase(ctx)
+        t3 = time.monotonic()
+        results = await _run_rpc_phase(ctx)
+        t4 = time.monotonic()
+        bt.logging.info(
+            f"[Worker {ctx.worker_id}] seed timing: setup {t1 - t0:.1f}s · "
+            f"container {t2 - t1:.1f}s · rpc {t3 - t2:.1f}s · "
+            f"mission {t4 - t3:.1f}s · total {t4 - t0:.1f}s"
+        )
+        return results
 
     except Exception as e:
         bt.logging.warning(f"[Worker {ctx.worker_id}] Batch evaluation failed: {e}")
@@ -1533,10 +1706,7 @@ def cleanup(self):
 
         subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
         subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-        subprocess.run(
-            ["docker", "builder", "prune", "-f", "--keep-storage", "5GB"],
-            capture_output=True,
-        )
+        prune_build_cache_if_disk_low()
 
     except Exception as e:
         bt.logging.warning(f"Container cleanup failed: {e}")

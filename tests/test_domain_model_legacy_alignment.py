@@ -14,6 +14,5 @@ def test_seed_group_inference_uses_domain_model_mappings():
     assert observed == dict(CHALLENGE_TYPE_TO_BENCHMARK_GROUP)
 
 
-def test_dispatch_resource_profiles_cover_all_benchmark_groups():
-    assert set(dispatch._GROUP_BASE_RESOURCE_COSTS) == set(BENCHMARK_GROUP_ORDER)
-    assert set(dispatch._GROUP_RESOURCE_CLASS) == set(BENCHMARK_GROUP_ORDER)
+def test_dispatch_ram_estimates_cover_all_benchmark_groups():
+    assert set(dispatch._GROUP_RAM_ESTIMATES_MB) == set(BENCHMARK_GROUP_ORDER)

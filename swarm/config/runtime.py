@@ -6,6 +6,7 @@ the same rules and defaults.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -149,8 +150,11 @@ class DockerRuntimeSettings:
         if cpuset_map is None:
             cpuset_map = auto_worker_cpuset_map()
         return cls(
-            thread_caps_enabled=env_bool("SWARM_DOCKER_THREAD_CAPS", False),
-            torch_num_threads=env_str("SWARM_TORCH_NUM_THREADS"),
+            thread_caps_enabled=env_bool("SWARM_DOCKER_THREAD_CAPS", True),
+            torch_num_threads=(
+                env_str("SWARM_TORCH_NUM_THREADS")
+                or env_str("SWARM_TORCH_THREADS")
+            ),
             torch_interop_threads=env_str("SWARM_TORCH_INTEROP_THREADS"),
             cpus_override=env_str("SWARM_DOCKER_WORKER_CPUS_OVERRIDE"),
             memory_override=env_str("SWARM_DOCKER_WORKER_MEMORY_OVERRIDE"),
@@ -161,16 +165,74 @@ class DockerRuntimeSettings:
     def split_cpuset_map(raw: str) -> list[str]:
         return [entry.strip() for entry in re.split(r"[;|]", raw) if entry.strip()]
 
-    def docker_env_overrides(self, thread_cap_env_vars: tuple[str, ...]) -> dict[str, str]:
+    @staticmethod
+    def worker_thread_cap(limits: DockerWorkerLimits | dict[str, Optional[str]]) -> int:
+        """Return the integer thread ceiling supported by a worker's CPU limits."""
+        if isinstance(limits, dict):
+            cpus = limits.get("cpus")
+            cpuset = limits.get("cpuset_cpus")
+        else:
+            cpus = limits.cpus
+            cpuset = limits.cpuset_cpus
+
+        ceilings: list[int] = []
+        if cpus not in (None, ""):
+            try:
+                value = float(str(cpus))
+                if value > 0:
+                    ceilings.append(max(1, math.ceil(value)))
+            except (TypeError, ValueError):
+                pass
+
+        if cpuset not in (None, ""):
+            try:
+                cpu_ids = HostWorkerRuntimeSettings.parse_cpuset_spec(str(cpuset))
+                if cpu_ids:
+                    ceilings.append(len(cpu_ids))
+            except (TypeError, ValueError):
+                pass
+
+        return min(ceilings) if ceilings else cpus_per_docker_worker()
+
+    @staticmethod
+    def _bounded_thread_value(raw: Optional[str], ceiling: int, default: int) -> str:
+        if raw not in (None, ""):
+            try:
+                return str(max(1, min(int(str(raw)), ceiling)))
+            except (TypeError, ValueError):
+                pass
+        return str(max(1, min(default, ceiling)))
+
+    def docker_env_overrides(
+        self,
+        thread_cap_env_vars: tuple[str, ...],
+        *,
+        thread_cap: Optional[int] = None,
+    ) -> dict[str, str]:
         envs: dict[str, str] = {}
+        cap = max(1, int(thread_cap or cpus_per_docker_worker()))
         if self.thread_caps_enabled:
             for key in thread_cap_env_vars:
-                envs[key] = "1"
-            envs["SWARM_TORCH_NUM_THREADS"] = "1"
-            envs["SWARM_TORCH_INTEROP_THREADS"] = "1"
+                envs[key] = self._bounded_thread_value(env_str(key), cap, cap)
+            torch_threads = self._bounded_thread_value(self.torch_num_threads, cap, cap)
+            interop_threads = self._bounded_thread_value(
+                self.torch_interop_threads, cap, 1
+            )
+            envs.update(
+                {
+                    "SWARM_INFERENCE_THREADS": str(cap),
+                    "SWARM_ORT_INTRA_OP_THREADS": str(cap),
+                    "SWARM_ORT_INTER_OP_THREADS": "1",
+                    "SWARM_TORCH_NUM_THREADS": torch_threads,
+                    "SWARM_TORCH_THREADS": torch_threads,
+                    "SWARM_TORCH_INTEROP_THREADS": interop_threads,
+                }
+            )
+            return envs
 
         if self.torch_num_threads is not None:
             envs["SWARM_TORCH_NUM_THREADS"] = self.torch_num_threads
+            envs["SWARM_TORCH_THREADS"] = self.torch_num_threads
         if self.torch_interop_threads is not None:
             envs["SWARM_TORCH_INTEROP_THREADS"] = self.torch_interop_threads
 

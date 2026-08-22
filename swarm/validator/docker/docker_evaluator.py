@@ -22,9 +22,7 @@ from .docker_evaluator_parts import (
     submission,
 )
 from .docker_evaluator_parts._shared import (
-    _HEAVY_CHALLENGE_TYPES,
     _cleanup_env_quietly,
-    _heavy_aware_chunk,
     _run_multi_seed_rpc_sync_isolated_payload,
     _submission_template_dir,
 )
@@ -44,7 +42,6 @@ class DockerSecureEvaluator:
 
 DockerSecureEvaluator.__init__ = lifecycle.__init__
 DockerSecureEvaluator._check_docker_available = lifecycle._check_docker_available
-DockerSecureEvaluator._env_truthy = staticmethod(lifecycle._env_truthy)
 DockerSecureEvaluator._docker_env_overrides = classmethod(
     lifecycle._docker_env_overrides
 )
@@ -93,9 +90,7 @@ __all__ = [
     "CALIBRATION_TIMEOUT_SEC",
     "MINER_COMPUTE_BUDGET_SEC",
     "RPC_STEP_TIMEOUT_SEC",
-    "_HEAVY_CHALLENGE_TYPES",
     "_cleanup_env_quietly",
-    "_heavy_aware_chunk",
     "_run_multi_seed_rpc_sync_isolated_payload",
     "_submission_template_dir",
     "batch",

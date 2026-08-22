@@ -14,7 +14,7 @@ A victim is down somewhere in the world. Your drone lifts off from a start pad w
 | Drones | 1 |
 | Control / physics rate | 50 Hz (`sim_dt` = 1/50 s) |
 | Episode horizon | 60 s (3,000 control steps) |
-| Emission allocation | 0.1 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Emission allocation | 0.15 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
 | Benchmark | 1,100 seeds per weekly epoch, all 6 environment types |
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
@@ -209,10 +209,10 @@ Models run inside a sandboxed Docker container (6 GB RAM, 2 CPUs) as a Cap'n Pro
 
 | Limit | Value |
 |---|---|
-| Per-step `act` timeout | 0.5 s (first step: 2.0 s) |
+| Per-step `act` budget | 0.6 baseline-equivalent s (first step: 2.0 s) |
 | `reset` timeout | 5.0 s |
 | Strikes per seed | 15 |
-| Calibrated compute budget | 0.5 baseline-equivalent s per `act`, hard cap 1.25 ref-s |
+| Calibrated compute budget | 0.6 baseline-equivalent s per `act`, hard cap 2.0 ref-s + measured RPC overhead + 0.05 s margin |
 
 Compute is hardware-fair: a calibration pass converts your wall-clock into baseline-equivalent seconds, so a fast validator host does not buy you a bigger model.
 

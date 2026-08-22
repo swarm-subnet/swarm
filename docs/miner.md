@@ -64,14 +64,15 @@ Swarm runs **five challenge families**, all active and all public. Each family i
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
-| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/autopilot.md](families/autopilot.md) |
-| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 10% | [families/search_and_rescue.md](families/search_and_rescue.md) |
-| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
-| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](families/swarm_sar.md) |
-| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 10% | [families/interceptor.md](families/interceptor.md) |
+| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/autopilot.md](families/autopilot.md) |
+| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](families/search_and_rescue.md) |
+| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
+| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](families/swarm_sar.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 30% | [families/interceptor.md](families/interceptor.md) |
 | Office Interceptor | `cf_office_interceptor` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 0% (incubating) | [families/office_interceptor.md](families/office_interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions; the remainder that no family claims is burned. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+
+The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions, and the five slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, no crowning for 7 days, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -415,7 +416,7 @@ The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no 
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
-Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each batch (earliest report per seed counts: re-runs never double-count).
+Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each seed (earliest report per seed counts: re-runs never double-count).
 
 ### CONFIRMED Requirements (Search and Rescue)
 
@@ -436,8 +437,7 @@ The first evaluated model in a family becomes champion unconditionally. After th
 
 | Families | Floor (champion ≤ 0.5) | Floor minimum (champion → 1.0) |
 |----------|------------------------|--------------------------------|
-| Autopilot, Swarm Autopilot, Interceptor | +0.015 | +0.005 |
-| Search and Rescue, Swarm SAR | +0.02 | +0.007 |
+| All families | +0.015 | +0.005 |
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -466,12 +466,12 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 1. **Miner** commits the GitHub URL on-chain, then goes offline
 2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. It verifies the README hash, downloads the manifest and the declared artifact, checks its SHA-256, and creates one **Pending Benchmark** row
 3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
-4. **Validators** lease the model's seed range in 50-seed batches and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
-5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed batches), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+4. **Validators** lease the model's seeds individually from a shared pool and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
+5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
 
 Every submission runs the full 1,100-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
 
-A batch that fails 3 times marks the model **Evaluation Failed**: a dead RPC server or a crashing agent wastes the attempt, so smoke-test with `swarm model verify` before committing.
+A seed that fails on 3 different attempts is closed as an environment failure and excluded from the score; a dead RPC server or a crashing agent wastes everyone's time, so smoke-test with `swarm model verify` before committing.
 
 ### Epoch Rotation
 

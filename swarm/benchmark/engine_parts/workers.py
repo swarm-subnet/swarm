@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 import os
+import signal
 
 from ._shared import (
     BENCH_GROUP_TO_TYPE,
@@ -28,13 +30,35 @@ from ._shared import (
 )
 from .config import _build_progress_bar, _temporary_env, _ts
 from .dispatch import (
-    _AdaptiveBackoffController,
+    _RamWorkerScheduler,
     _build_worker_stall_seed_meta,
-    _max_heavy_active,
     _select_next_batch_index,
 )
 from swarm.config import HostWorkerRuntimeSettings
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.constants import MINER_COMPUTE_BUDGET_SEC
+from swarm.validator.calibration.speed_factor import baseline_model_available
+from swarm.validator.docker.docker_evaluator_parts.batch import (
+    _ensure_host_speed_factor,
+    host_speed_factor_is_fresh,
+)
+
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except Exception:  # pragma: no cover - non-glibc platform
+    _libc = None
+
+_PR_SET_PDEATHSIG = 1
+
+
+def _release_freed_memory() -> None:
+    """Return freed allocator pages to the OS; glibc hoards them otherwise."""
+    if _libc is None:
+        return
+    try:
+        _libc.malloc_trim(0)
+    except Exception:
+        pass
 
 
 def _engine_facade():
@@ -61,6 +85,41 @@ def _create_prepared_benchmark_evaluator():
     evaluator.base_ready = True
     DockerSecureEvaluator._base_ready = True
     return evaluator
+
+
+# Read by the reporter so an unnormalized run is never mistaken for a comparable one.
+host_timings_normalized = True
+
+
+async def _precalibrate_host(worker_count: int) -> bool:
+    """Measure the host before any worker exists.
+
+    Workers run as daemons and a daemon cannot start processes of its own, so a
+    calibration deferred to the first batch dies inside the worker. Measuring here
+    leaves a cache the workers can read, which is what the validator already does.
+
+    Returns whether the timings that follow are baseline-normalized. Nothing is at
+    stake in a local run, so an unmeasurable host still gets its scores and its raw
+    act times; only the comparison against the validator's budget is withheld.
+    """
+    global host_timings_normalized
+    requested = max(1, int(worker_count))
+    if not baseline_model_available() or host_speed_factor_is_fresh(requested):
+        return True
+    print(f"[{_ts()}] Calibrating host speed across {requested} worker(s)...", flush=True)
+    speed = await _ensure_host_speed_factor(
+        _create_prepared_benchmark_evaluator(), requested
+    )
+    if speed is None:
+        host_timings_normalized = False
+        print(
+            f"[{_ts()}] WARNING: host speed calibration failed. Scores are unaffected, "
+            f"but act times below are raw and cannot be compared to the "
+            f"{MINER_COMPUTE_BUDGET_SEC * 1000:.0f}ms validator budget.",
+            flush=True,
+        )
+        return False
+    return True
 
 
 def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
@@ -126,12 +185,31 @@ def _apply_host_worker_limits(process_slot: int) -> None:
             pass
 
 
+def _die_with_parent() -> None:
+    """Ask the kernel to kill this worker when the validator goes away.
+
+    ``daemon=True`` only reaps children when the parent exits cleanly, so a
+    force-killed validator used to leave its workers running forever.
+    """
+    if _libc is None:
+        return
+    try:
+        parent = os.getppid()
+        _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent:
+            # The parent died during the call; the signal would never arrive.
+            os._exit(0)
+    except Exception:
+        pass
+
+
 def _benchmark_worker_main(
     process_slot: int,
     task_queue: Any,
     result_queue: Any,
     progress_queue: Any,
 ) -> None:
+    _die_with_parent()
     _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -226,6 +304,7 @@ def _benchmark_worker_main(
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)
                 gc.collect()
+                _release_freed_memory()
     finally:
         asyncio.set_event_loop(None)
         loop.close()
@@ -245,12 +324,13 @@ async def _run_benchmark_process_mode(
     set_heartbeat_status_provider: Optional[Any] = None,
 ) -> int:
     engine = _engine_facade()
+    await _precalibrate_host(effective_workers)
     ctx = engine._benchmark_mp_context()
     task_queue = ctx.Queue()
     result_queue = ctx.Queue()
     progress_queue = ctx.Queue()
     workers: Dict[int, Any] = {}
-    scheduler = _AdaptiveBackoffController(requested_workers=effective_workers)
+    scheduler = _RamWorkerScheduler(requested_workers=effective_workers)
     if callable(set_heartbeat_status_provider):
         try:
             set_heartbeat_status_provider(scheduler.format_live_status_line)
@@ -265,18 +345,11 @@ async def _run_benchmark_process_mode(
         engine._PARENT_WORKER_STALL_TIMEOUT_SEC,
         max(0.0, float(getattr(run_opts, "heartbeat_sec", 0.0))) * 2.0,
     )
-    pressure_poll_interval_sec = max(
+    resource_poll_interval_sec = max(
         0.0,
-        float(getattr(engine, "_PRESSURE_POLL_INTERVAL_SEC", 2.0)),
+        float(getattr(engine, "_RESOURCE_POLL_INTERVAL_SEC", 2.0)),
     )
-    last_pressure_poll_at = 0.0
-
-    def _active_group_names() -> List[str]:
-        return [
-            str(task_meta[batch_plan[batch_id][0]]["group"])
-            for batch_id in inflight_batches.keys()
-            if batch_plan[batch_id]
-        ]
+    last_resource_poll_at = 0.0
 
     def _spawn_worker(worker_slot: int) -> Any:
         worker = ctx.Process(
@@ -290,36 +363,29 @@ async def _run_benchmark_process_mode(
         return worker
 
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
-        nonlocal last_pressure_poll_at
+        nonlocal last_resource_poll_at
         now = time.monotonic()
         if (
             not force
-            and pressure_poll_interval_sec > 0.0
-            and (now - last_pressure_poll_at) < pressure_poll_interval_sec
+            and resource_poll_interval_sec > 0.0
+            and (now - last_resource_poll_at) < resource_poll_interval_sec
         ):
             return
-        last_pressure_poll_at = now
-        note = scheduler.observe_resources(_active_group_names())
-        if note:
-            print(f"[{_ts()}] {note}", flush=True)
+        last_resource_poll_at = now
+        scheduler.refresh_resources()
 
     for line in scheduler.describe_configuration_lines():
         print(f"[{_ts()}] {line}", flush=True)
     print(
-        f"[{_ts()}] Dispatch policy: cold-start ramp enabled "
-        f"(light_groups=city; medium_groups=open,warehouse; heavy_groups=village,mountain,forest; "
-        f"mountain<=1, scheduler_heavy_cap={scheduler.active_heavy_cap}/"
-        f"{_max_heavy_active(scheduler.active_worker_cap)})"
+        f"[{_ts()}] Dispatch policy: configured worker slots + RAM admission"
     )
     if scheduler.enabled:
         print(
-            f"[{_ts()}] Adaptive scheduler: enabled "
-            f"(cold_start={scheduler.start_worker_cap}/{scheduler.max_worker_cap}, "
-            f"heavy_start={scheduler.active_heavy_cap}/{scheduler.max_heavy_cap}, "
-            f"backoff_levels={scheduler.worker_cap_levels})"
+            f"[{_ts()}] RAM scheduler: enabled "
+            f"(workers={scheduler.active_worker_cap}/{scheduler.max_worker_cap})"
         )
     else:
-        print(f"[{_ts()}] Adaptive scheduler: disabled (single-worker run)")
+        print(f"[{_ts()}] RAM scheduler: single-worker run")
     print(
         f"[{_ts()}] Parent worker stall watchdog: "
         f"{stall_timeout_sec:.1f}s without worker heartbeat -> discard seed and replace worker"
@@ -339,16 +405,6 @@ async def _run_benchmark_process_mode(
                 continue
             seed_meta = getattr(event, "seed_meta", None)
             on_seed_done(seed_meta)
-            group_name: Optional[str] = None
-            try:
-                batch_index = int(getattr(event, "batch_index", -1))
-                if batch_index >= 0 and batch_plan[batch_index]:
-                    group_name = str(task_meta[batch_plan[batch_index][0]]["group"])
-            except Exception:
-                group_name = None
-            note = scheduler.observe_seed(seed_meta, group_name=group_name)
-            if note:
-                print(f"[{_ts()}] {note}", flush=True)
 
     def _restart_worker(worker_slot: int) -> None:
         worker = workers.get(worker_slot)
@@ -383,7 +439,6 @@ async def _run_benchmark_process_mode(
                 f"worker=queued | group={group_name} | seeds={len(batch_indices)} | "
                 f"first_seed={seed_list[0]} | last_seed={seed_list[-1]} | "
                 f"active_limit={scheduler.active_worker_cap} | "
-                f"heavy_limit={scheduler.active_heavy_cap} | "
                 f"{scheduler.format_status_line()}",
                 flush=True,
             )
@@ -431,9 +486,6 @@ async def _run_benchmark_process_mode(
                     error=stall_error,
                 )
                 on_seed_done(seed_meta)
-                note = scheduler.observe_seed(seed_meta)
-                if note:
-                    print(f"[{_ts()}] {note}", flush=True)
 
             from swarm.protocol import ValidationResult
 

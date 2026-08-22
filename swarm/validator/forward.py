@@ -18,6 +18,7 @@ import traceback
 import bittensor as bt
 
 from swarm.constants import FORWARD_SLEEP_SEC, N_DOCKER_WORKERS
+from swarm.validator.calibration import baseline_model_available
 
 from .backend_api import (
     BackendApiClient,
@@ -25,7 +26,10 @@ from .backend_api import (
     BackendTransportError,
 )
 from .docker.docker_evaluator import DockerSecureEvaluator
-from .docker.docker_evaluator_parts.batch import _ensure_host_speed_factor
+from .docker.docker_evaluator_parts.batch import (
+    _ensure_host_speed_factor,
+    host_speed_factor_is_fresh,
+)
 from .runtime_telemetry import tracker_call
 from .seed_manager import BenchmarkSeedManager
 from .sse_listener import SseListener
@@ -176,6 +180,7 @@ async def _ensure_components(self) -> None:
             self._cancel_flag,
             self._wake_flag,
         )
+        self._sse_listener = listener
         self._sse_task = asyncio.create_task(listener.run_forever())
         self._sse_task.add_done_callback(
             lambda task: _record_sse_listener_exit(self, task)
@@ -224,20 +229,38 @@ async def _host_may_score(self) -> bool:
     must not score miners with unnormalized timing."""
     if not _image_provenance_ok(self):
         return False
+    if baseline_model_available() and not host_speed_factor_is_fresh(N_DOCKER_WORKERS):
+        await _announce_calibrating(self)
     speed = await _ensure_host_speed_factor(self.docker_evaluator, N_DOCKER_WORKERS)
     if speed is None:
-        bt.logging.warning(
-            "Host has no valid reference calibration; "
+        bt.logging.error(
+            "HOST EXCLUDED FROM SCORING: no valid reference calibration; "
             "not polling for scoring tasks until calibration succeeds"
+        )
+        tracker_call(
+            self, "mark_forward_failed", error="host_excluded_no_calibration",
         )
         return False
     if not speed.eligible:
-        bt.logging.warning(
-            f"Host speed factor {speed.factor:.2f}x exceeds the eligibility limit; "
-            "not polling for scoring tasks until recalibration passes"
+        bt.logging.error(
+            f"HOST EXCLUDED FROM SCORING: speed factor {speed.factor:.2f}x exceeds "
+            "the eligibility limit; not polling for scoring tasks until recalibration passes"
+        )
+        tracker_call(
+            self, "mark_forward_failed", error=f"host_excluded_speed_{speed.factor:.2f}x",
         )
         return False
     return True
+
+
+async def _announce_calibrating(self) -> None:
+    """Tell the backend this host is about to measure itself, so its seeds go
+    back to the pool instead of waiting out a calibration it cannot interrupt."""
+    bt.logging.info("Host calibration due; standing down from the pool while it runs")
+    try:
+        await self.backend_api.post_heartbeat(status="calibrating", in_flight_seeds=[])
+    except Exception as exc:
+        bt.logging.warning(f"Could not announce calibration: {exc}")
 
 
 async def _idle_until_wake(self, timeout: float) -> None:

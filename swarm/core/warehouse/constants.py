@@ -19,7 +19,6 @@ OTHER_SOURCES_DIR = os.path.join(ASSETS_DIR, "other_sources")
 CONVEYOR_KIT_OBJ_DIR = os.path.join(KENNEY_DIR, "kenney_conveyor-kit", "Models", "OBJ format")
 CONVEYOR_KIT_TEXTURE = os.path.join(CONVEYOR_KIT_OBJ_DIR, "Textures", "colormap.png")
 FURNITURE_KIT_OBJ_DIR = os.path.join(KENNEY_DIR, "kenney_furniture-kit", "Models", "OBJ format")
-FURNITURE_KIT_TEXTURE = os.path.join(FURNITURE_KIT_OBJ_DIR, "Textures", "colormap.png")
 
 VEHICLE_DIR = os.path.join(OTHER_SOURCES_DIR, "vehicles")
 LOADING_KIT_DIR = os.path.join(OTHER_SOURCES_DIR, "loading_kit")
@@ -43,7 +42,6 @@ UNIFORM_SCALE = 4.0
 # Structure
 # ---------------------------------------------------------------------------
 WALL_TIERS = 1
-CURVED_ROOF_RISE = 3.2
 ENABLE_CORNER_COLUMNS = False
 
 WALL_UNIFORM_COLOR = (0.60, 0.64, 0.72, 1.0)
@@ -182,7 +180,6 @@ STORAGE_RACK_SCALE_UNIFORM = 1.00
 STORAGE_RACK_EDGE_MARGIN_M = 0.35
 STORAGE_RACK_ROW_GAP_M = 1.4
 STORAGE_RACK_SLOT_GAP_M = 0.45
-STORAGE_RACK_MAIN_AISLE_M = 2.6
 STORAGE_RACK_MAX_COUNT = 0
 STORAGE_RACK_RGBA = (0.64, 0.67, 0.72, 1.0)
 STORAGE_RACK_BARREL_RACK_PROBABILITY = 0.196
@@ -201,12 +198,10 @@ STORAGE_RACK_CENTER_AISLE_TARGET_M = 2.0
 STORAGE_RACK_ENABLE_ENDCAP_ROWS = True
 STORAGE_RACK_NO_TOP_LEVEL_PROBABILITY = 0.25
 STORAGE_RACK_LAYOUT_FIXED_SEED = None
-STORAGE_RACK_CARGO_FIXED_SEED = 0
 STORAGE_RACK_LEVEL_DENSITY = (1.00, 0.82, 0.62)
 STORAGE_RACK_GLOBAL_YAW_OFFSET_DEG = 0.0
 STORAGE_RACK_FORCE_ALONG_AXIS = "auto"
 STORAGE_RACK_GROUP_ROTATE_DEG = 0.0
-STORAGE_RACK_LAYOUT_SHIFT_MAX_M = 1.2
 
 # ---------------------------------------------------------------------------
 # Forklifts

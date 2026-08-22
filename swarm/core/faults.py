@@ -11,8 +11,6 @@ from enum import Enum
 
 
 class ReasonCode(str, Enum):
-    OK = "OK"
-
     LOAD_FAILED = "LOAD_FAILED"
 
     INFRA_DOCKER = "INFRA_DOCKER"
