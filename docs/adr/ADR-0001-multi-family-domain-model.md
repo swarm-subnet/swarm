@@ -30,6 +30,10 @@ The top-level benchmark product line.
 - Initial challenge family IDs:
   - `cf_autopilot`
   - `cf_search_and_rescue`
+  - `cf_swarm_autopilot`
+  - `cf_swarm_sar`
+  - `cf_interceptor`
+  - `cf_office_interceptor`
 
 ### `challenge_instance`
 
@@ -69,6 +73,7 @@ The concrete environment category evaluated within a challenge family.
   - `village`
   - `warehouse`
   - `forest`
+  - `office`
 - `environment_type` replaces older map-centric benchmark-doc wording.
 
 ### `family_state`
@@ -78,6 +83,7 @@ Lifecycle state for a challenge family definition.
 - Enum values:
   - `incubating`
   - `active`
+  - `completed`
   - `archived`
 
 ### `emissions_state`
@@ -104,7 +110,7 @@ details for now, but they map to the canonical model above.
 ## Consequences
 
 - Benchmark architecture docs should use `challenge_family` for the top-level grouping
-  and `environment_type` for city/open/mountain/village/warehouse/forest.
+  and `environment_type` for city/open/mountain/village/warehouse/forest/office.
 - New abstractions should be challenge-family-aware instead of SAR-only or
   environment-type-specific.
 - The machine-readable contract for IDs, enums, and legacy aliases lives in

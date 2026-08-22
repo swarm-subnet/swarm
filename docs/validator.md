@@ -1,12 +1,12 @@
 # 🔐 Swarm Validator Guide
 
-This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models across five challenge families on procedurally generated maps: cities, open terrain, mountains, villages, warehouses, and forests. Miner models run in isolated Docker containers under the subnet-owned runner, while evaluation and scoring execute on the validator host.
+This document shows how to install and operate the Swarm validator. The validator securely evaluates miner models across six challenge families on procedurally generated maps: cities, open terrain, mountains, villages, warehouses, forests, and offices. Miner models run in isolated Docker containers under the subnet-owned runner, while evaluation and scoring execute on the validator host.
 
 Run `swarm doctor` after installation to verify your environment is ready.
 
 ## 🎯 What You Evaluate
 
-Swarm runs **five challenge families**, all active. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
+Swarm runs **six challenge families**: five active and one completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
@@ -14,7 +14,8 @@ Swarm runs **five challenge families**, all active. Evaluation is family-scoped:
 | [Search and Rescue](families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 15% |
 | [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 20% |
 | [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 20% |
-| [Interceptor](families/interceptor.md) | `cf_interceptor` | One drone hunts down and rams a validator-flown target over open terrain | 30% |
+| [Interceptor](families/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
+| [Office Interceptor](families/office_interceptor.md) | `cf_office_interceptor` | One drone hunts down a validator-flown target inside a fixed office | 30% |
 
 ## 🖥️ System Requirements
 
@@ -332,7 +333,7 @@ pm2 start --name auto_update_validator \
 
 Each validator independently generates its own 1,100 random seeds per family per epoch using `random.SystemRandom()`. With 1,100 seeds per validator and per-seed results stitched across validators, statistical variance across validators is negligible.
 
-Seeds rotate every **7 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
+Seeds rotate every **14 days** (Monday 16:00 UTC). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for full transparency.
 
 ## 🔧 Troubleshooting
 

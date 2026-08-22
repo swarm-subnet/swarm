@@ -60,7 +60,7 @@ pip install -e .
 
 ## Challenge Families
 
-Swarm runs **five challenge families**, all active and all public. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
+Swarm runs **six challenge families**. Five are active, public, and paying; Interceptor is completed with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
@@ -68,11 +68,11 @@ Swarm runs **five challenge families**, all active and all public. Each family i
 | Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](families/search_and_rescue.md) |
 | Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
 | Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](families/swarm_sar.md) |
-| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 30% | [families/interceptor.md](families/interceptor.md) |
-| Office Interceptor | `cf_office_interceptor` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 0% (incubating) | [families/office_interceptor.md](families/office_interceptor.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](families/interceptor.md) |
+| Office Interceptor | `cf_office_interceptor` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 30% | [families/office_interceptor.md](families/office_interceptor.md) |
 
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions, and the five slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, no crowning for 7 days, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the five active slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -109,6 +109,19 @@ The full miner workflow, from first install to competing on the leaderboard:
 cp -r swarm/submission_template/ my_agent/
 cd my_agent/
 # Edit drone_agent.py with your controller
+```
+
+For Office Interceptor, copy the office starter to the packaged entry point:
+
+```bash
+mkdir -p my_agent/
+cp swarm/submission_template/office_drone_agent.py my_agent/drone_agent.py
+```
+
+Test an Office Interceptor agent with its required family ID:
+
+```bash
+swarm model test --source my_agent/ --family-id cf_office_interceptor
 ```
 
 ### Agent Structure
@@ -165,6 +178,8 @@ The interface below is the **Search and Rescue** one. Each family defines its ow
 
 The search clue is an offset sampled inside a **30 m** circle around the victim (the swarm SAR family shares one clue over a disk that scales with team size: 80·√(n/8) m, i.e. 40 m for 2 drones up to 80 m for 8). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
 
+For Office Interceptor, the contract is `rgb` (256, 256, 3) plus a 127-float `state` vector, with four RC-stick actions `[lr, fb, ud, yaw]`. Its speed cap is 3 m/s and its episode horizon is 60 seconds. See the [Office Interceptor guide](families/office_interceptor.md) for the full contract.
+
 ### Action Space
 
 | Index | Name | Range | Description |
@@ -201,7 +216,7 @@ Verifies Python version, Docker, required dependencies, writable directories, an
 ### Test Your Agent
 
 ```bash
-swarm model test --source my_agent/
+swarm model test --source my_agent/ --family-id cf_autopilot
 ```
 
 Validates your source folder: checks `drone_agent.py` exists and compiles, `requirements.txt` format, and estimated package size.
@@ -313,6 +328,7 @@ Minimal example:
       "interface_version": "submission_zip.v1",
       "artifact_path": "artifacts/cf_autopilot/submission.zip",
       "sha256": "<artifact sha256>",
+      "size_bytes": 1048576,
       "metadata": {
         "notes": "baseline autopilot agent"
       }
@@ -321,7 +337,7 @@ Minimal example:
 }
 ```
 
-All five families use the `submission_zip.v1` interface. Legacy repos with only a root `submission.zip` and no manifest are still accepted and map to `cf_autopilot`, but new work should use the manifest.
+All six families use the `submission_zip.v1` interface. A hand-written manifest must include `size_bytes`, set to the ZIP byte size; the generated manifest already includes it. For an Office Interceptor submission, the manifest targets `cf_office_interceptor` and its artifact path is under `artifacts/cf_office_interceptor/`. Legacy repos with only a root `submission.zip` and no manifest are still accepted and map to `cf_autopilot`, but new work should use the manifest.
 
 ### 4. Package The Family Artifact Into The Repo
 
@@ -343,7 +359,7 @@ git push
 >
 > Treat every submission as final. Once your model is evaluated, the hotkey's slot is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
 >
-> The slot only reopens on its own if the submission never finished before the weekly rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey.
+> The slot only reopens on its own if the submission never finished before the epoch rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey.
 
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
@@ -412,7 +428,7 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 | **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
 | **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
 
-The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no safety term.
+The Interceptor and Office Interceptor families override the weights to 0.5 success / 0.5 time, with no safety term.
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
@@ -475,7 +491,7 @@ A seed that fails on 3 different attempts is closed as an environment failure an
 
 ### Epoch Rotation
 
-Seeds rotate every **7 days** (Monday 16:00 UTC). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
+Seeds rotate every **14 days** (Monday 16:00 UTC). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
 
 At rollover, models still pending from the previous epoch are marked **Epoch Expired** (re-commit and the expired row is purged, so the hotkey resubmits cleanly), and every champion is queued for re-evaluation on the fresh seeds. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; commit after the rollover instead.
 
@@ -486,7 +502,7 @@ At rollover, models still pending from the previous epoch are marked **Epoch Exp
 | Seeds per family per epoch | 1,100 |
 | Batch size (validator lease) | 50 seeds |
 | Chain scanner interval | 3 minutes |
-| Epoch length | 7 days (Monday 16:00 UTC) |
+| Epoch length | 14 days (Monday 16:00 UTC) |
 | Pre-rollover registration freeze | 1.5 hours |
 | Max artifact size | 50 MiB uncompressed content |
 | Models per hotkey | 1 (one family per hotkey) |
@@ -528,7 +544,7 @@ Registration takes minutes (the scanner polls every 3 minutes). Evaluation time 
 
 **No, once your model has been evaluated.** A hotkey gets one submission. A changed artifact on an evaluated model is ignored, not re-run, so to try a better model you need a new hotkey.
 
-The only exceptions happen before evaluation finishes: a rejected (malformed) zip was never registered, so you can just fix it and re-commit on the same hotkey; and a submission that expired at the weekly rollover, or was retired by a version bump, frees its slot for a fresh commit. Never swap a reigning champion's artifact, though: that reads as tampering and permanently loses payout eligibility.
+The only exceptions happen before evaluation finishes: a rejected (malformed) zip was never registered, so you can just fix it and re-commit on the same hotkey; and a submission that expired at the epoch rollover, or was retired by a version bump, frees its slot for a fresh commit. Never swap a reigning champion's artifact, though: that reads as tampering and permanently loses payout eligibility.
 
 The chain rate-limits commits to roughly one per 20 minutes.
 

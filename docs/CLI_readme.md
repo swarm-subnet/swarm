@@ -34,7 +34,7 @@ Family-aware commands (`swarm model package`, `swarm repo package`, `swarm visua
 | `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest |
 | `cf_swarm_autopilot` | City, Open, Mountain, Village, Forest |
 | `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
-| `cf_interceptor` | Open |
+| `cf_office_interceptor` | Office |
 
 ---
 

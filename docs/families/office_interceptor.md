@@ -20,7 +20,8 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | Speed cap | 3.0 m/s per axis (Tello slow mode) |
 | Airframe | Tello-class: mass 0.087 kg, 118 mm wheelbase, guard cage collision |
 | Actions | Body-frame RC sticks `[lr, fb, ud, yaw]`, each in [-1, 1] |
-| Status | Incubating — zero emissions until launch |
+| Challenge type | 7 |
+| Status | Active, public, 30% emissions |
 
 ---
 
@@ -33,7 +34,7 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | | |
 |---|---|
 | Interface version | `submission_zip.v1` |
-| Entry point | `drone_agent.DroneFlightController` — start from `swarm/submission_template/office_drone_agent.py` |
+| Entry point | `drone_agent.DroneFlightController` — copy `swarm/submission_template/office_drone_agent.py` to `my_agent/drone_agent.py` |
 | Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | office |
 
@@ -87,5 +88,15 @@ The four values mirror the Tello SDK's `rc a b c d` sticks, in the drone's own b
 | 3 | `yaw` | rotate counterclockwise (-1) / clockwise (+1) — a turn *rate*, not a heading |
 
 `[0, 0, 0, 0]` always commands a hover. Missing, non-finite, or wrong-shaped actions are canonicalized to hover. Commands pass through a dead zone and a slew limiter so they behave like physical RC input.
+
+---
+
+## Scoring
+
+```
+score = 0.5 × success + 0.5 × time
+```
+
+There is **no safety term** in this family: closing distance aggressively is the point.
 
 <p align="right">(<a href="#office-interceptor-top">back to top</a>)</p>

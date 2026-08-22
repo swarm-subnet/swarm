@@ -49,13 +49,15 @@
 - Mid-point recharging pads for extended missions.  
 - Magnetometer & barometer sensor noise models.
 
-## Stage 7 – Interceptor
+## Stage 7 – Interceptor (completed)
 **Goal** Intercept another drone 
+
+**Status** The solve threshold was reached, the crown is frozen, and the winning solution is preserved as open source.
 
 - **Objective:** Your miner drone must lock onto and intercept a scripted target path **within the time budget**.  
 - **Reward Terms:**  
   - ⏱️ **Capture-Time:** Faster intercepts score higher.  
-  - 🛡️ **Safety:** Zero collisions—keep it clean and precise.  
+  - **Score:** 0.5 success + 0.5 time, with no safety term.
 
 
 ## Stage 8 – Commercial Partnerships & Services
@@ -78,5 +80,4 @@
 | 2026 H1  | 4                |
 | 2026 H2  | 5                |
 | 2027 H1  | 6                |
-| 2027 H2+ | 7, 8                |
-
+| 2027 H2+ | 8                |

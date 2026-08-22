@@ -68,7 +68,7 @@ Rank        Slot                          Earning
 
 After the next crowning, the king at slot `−4` leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
 
-Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until five newer crownings push it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the weekly epoch re-eval.
+Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until five newer crownings push it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the epoch re-eval.
 
 A seat stops paying before it ages out if it fails the [payout eligibility check](#who-a-seat-can-pay): a dead or unreachable repo, or a missing artifact. An ineligible seat keeps its window slot (no sixth king is backfilled) but it is skipped at payout, so its slice renormalizes onto the family's surviving kings. Taper ranks are assigned among the **payable** kings only, ordered by crowning recency, so the kings behind a skipped seat move up one taper step; the rank badge on the ladder still shows window position, so a badge and its paid share can briefly diverge while a seat is unreachable.
 
@@ -150,6 +150,7 @@ The values are `floor_max = 0.015` and `floor_min = 0.005`, and every family car
 | Swarm Autopilot | 0.015 | 0.005 |
 | Swarm SAR | 0.015 | 0.005 |
 | Interceptor | 0.015 | 0.005 |
+| Office Interceptor | 0.015 | 0.005 |
 
 The registry can still override them per family; nothing does today.
 
@@ -180,7 +181,8 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Interceptor | 0.30 |
+| Interceptor | 0.00 (historical 0.30) |
+| Office Interceptor (`cf_office_interceptor`) | 0.30 |
 | Swarm Autopilot | 0.20 |
 | Swarm SAR | 0.20 |
 | Autopilot | 0.15 |
@@ -195,7 +197,7 @@ active / saturated / incubating / regression   1.0
 archived                                       0.0   (out of payout)
 ```
 
-All five families are currently `active`. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
+Five families are currently `active`; Interceptor is `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
 
 ### Unpaid slices burn
 
@@ -206,13 +208,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: four families payable, Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Interceptor's `0.30` burns. The moment Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
-
-### Stale tasks burn
-
-A family must keep improving to keep earning. If **7 days** pass without a new crowning, the family's whole slice burns — every seat in its window stops earning — until the next crowning resumes payments. Burned time is never back-paid.
-
-The clock only resets on a **real crowning**: the weekly champion re-evaluation does not count, and neither does a re-scored champion keeping its crown. The reigning champion feels this too — to keep the slice alive they must beat their own score from a fresh hotkey, clearing the crowning floor like anyone else. A **solved** family is exempt while its 7-day victory window runs.
+Example: four active families payable, Office Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Office Interceptor's `0.30` burns. The moment Office Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
 ### Who a seat can pay
@@ -223,7 +219,7 @@ Champion status is **not** required: past kings in the window are ordinary evalu
 
 ### Solved families
 
-Each family carries a secret `solve_threshold`. When a champion clears it, the family is **solved**: no new champions are crowned, and the current window keeps earning as-is. Seven days later the family is archived, and its slice burns.
+Each family carries a secret `solve_threshold`. When a champion clears it, the family is **solved**: no new champions are crowned, and the current window keeps earning as-is. The family is archived once its victory window closes, and its slice then stops paying.
 
 ### How weights reach the chain
 
@@ -242,7 +238,7 @@ The final score vector is L1-normalised on chain, so any share not assigned to a
 
 When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. Their gain covers their full score, and they take 100% of **that family's slice** until someone dethrones them.
 
-### The weekly re-eval does not touch the window
+### The epoch re-eval does not touch the window
 
 Every current champion is re-evaluated on the new epoch's seeds each week. The champion keeps the crown with its fresh score **even if the fresh score is lower**: rival scores come from different epoch seeds, so a cross-epoch comparison is invalid. No new lineage row is written and the window seat keeps its original crowning numbers; a champion only falls to a challenger that clears the floor on the same epoch's seeds.
 
@@ -254,7 +250,7 @@ Every current champion is re-evaluated on the new epoch's seeds each week. The c
 
 ### How often is my share recalculated?
 
-Your gain is computed at the moment of crowning and locked: the weekly re-eval never rewrites it. Your share moves when the window changes: a new crowning shifts every rank, changes the rank taper, and eventually ages older kings out. Your seat also stops paying if it fails the eligibility check (dead repo, missing artifact); that share renormalizes onto the family's other kings until the seat is healthy again.
+Your gain is computed at the moment of crowning and locked: the epoch re-eval never rewrites it. Your share moves when the window changes: a new crowning shifts every rank, changes the rank taper, and eventually ages older kings out. Your seat also stops paying if it fails the eligibility check (dead repo, missing artifact); that share renormalizes onto the family's other kings until the seat is healthy again.
 
 ### What if I get dethroned?
 
@@ -280,7 +276,7 @@ Yes, with separate hotkeys. Every hotkey competes in exactly one family, so ente
 
 Yes, it can. Every family is allocated a percentage of the subnet's total emissions, and all the family slices add up to 100%. When a new family is added, it takes its own percentage out of that same total, so the existing families each end up with a little less.
 
-The five slices are set by the team, not derived automatically, so a new family does not silently dilute yours: the split is re-decided and announced when it changes.
+The active family slices are set by the team, not derived automatically, so a new family does not silently dilute yours: the split is re-decided and announced when it changes.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -295,7 +291,6 @@ The five slices are set by the team, not derived automatically, so a new family 
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
-| **Stale task** | A family with no new crowning for 7 days; its whole slice burns until the next crowning. Re-evals never reset the clock. |
 | **Payable seat** | A window seat that passes the eligibility check: an intact and accessible repo. |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
@@ -304,6 +299,6 @@ The five slices are set by the team, not derived automatically, so a new family 
 | **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
 | **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` for every family. |
-| **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived after 7 days, its slice burning from then on. |
+| **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived once its victory window closes, its slice no longer paying from then on. |
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
