@@ -49,7 +49,7 @@ def test_domain_model_schema_snapshot():
         ],
         "family_states": [
             "incubating",
-            "active",
+            "active", "completed",
             "archived",
         ],
         "emissions_states": [
@@ -195,7 +195,8 @@ def test_filter_challenge_family_definitions_handles_incubating_and_archived():
     active_ids = sorted(
         family_id
         for family_id, definition in registry["challenge_families"].items()
-        if definition["family_state"] == "active"
+        # A completed family stays visible: its page celebrates the winner.
+        if definition["family_state"] in ("active", "completed")
     )
 
     filtered_without_incubating = filter_challenge_family_definitions(
