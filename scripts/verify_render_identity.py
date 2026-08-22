@@ -38,7 +38,7 @@ CONFIGS = [
     ("cf_autopilot", 6, 106),
     ("cf_search_and_rescue", 2, 104),
     ("cf_swarm_sar", 2, 1040),
-    ("cf_interceptor", 2, 7),
+    ("cf_office_interceptor", 7, 7),
 ]
 ORBIT_POSES = 40
 EPISODE_STEPS = 60

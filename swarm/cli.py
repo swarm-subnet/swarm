@@ -1703,8 +1703,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest).",
+        choices=[1, 2, 3, 4, 5, 6, 7],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
     )
     visualize_parser.add_argument(
         "--family-id",
@@ -1833,8 +1833,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6],
-        help="Challenge type for single-seed replay.",
+        choices=[1, 2, 3, 4, 5, 6, 7],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
     )
     video_parser.add_argument(
         "--seed-file",

@@ -61,7 +61,7 @@ from swarm.domain_model import CHALLENGE_FAMILY_IDS
 
 
 def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
-    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest"}.get(
+    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office"}.get(
         challenge_type, f"type{challenge_type}"
     )
     return Path(directory) / f"seed{seed}_{label}_actions.json"
@@ -94,6 +94,7 @@ TYPE_LABELS: Dict[int, str] = {
     4: "village",
     5: "warehouse",
     6: "forest",
+    7: "office",
 }
 BENCH_GROUP_ORDER: List[str] = [
     "type1_city",
@@ -102,6 +103,7 @@ BENCH_GROUP_ORDER: List[str] = [
     "type4_village",
     "type5_warehouse",
     "type6_forest",
+    "type7_office",
 ]
 BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type1_city": 1,
@@ -110,6 +112,7 @@ BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type4_village": 4,
     "type5_warehouse": 5,
     "type6_forest": 6,
+    "type7_office": 7,
 }
 
 # --- output defaults ---
@@ -1276,9 +1279,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6],
+        choices=[1, 2, 3, 4, 5, 6, 7],
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest)",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office)",
     )
     req.add_argument(
         "--seed-file",

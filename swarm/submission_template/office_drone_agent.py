@@ -51,7 +51,7 @@ import numpy as np
 
 
 class DroneFlightController:
-    """Minimal correct office agent: climbs off the floor, then yaw-searches."""
+    """Contract smoke-test baseline: climbs off the floor, then yaws without intercepting."""
 
     def __init__(self):
         # Load your trained model here (any framework).
@@ -64,7 +64,7 @@ class DroneFlightController:
         if fused_height < 1.2:
             action[2] = 0.4          # take off gently (full-stick hits the 3 m ceiling)
         else:
-            action[3] = 0.4          # search by turning until the detector reports a box
+            action[3] = 0.4          # turn in place without intercepting
         return action
 
     def reset(self):

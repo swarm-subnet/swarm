@@ -26,28 +26,15 @@ from swarm.benchmark.engine import main as benchmark_main
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_TOTAL_SEED_COUNT,
+    CHALLENGE_TYPE_DISTRIBUTION,
     SIM_DT,
 )
+from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP as TYPE_TO_GROUP
 from swarm.validator.task_gen import random_task
 
 
-BENCH_GROUP_ORDER = [
-    "type1_city",
-    "type2_open",
-    "type3_mountain",
-    "type4_village",
-    "type5_warehouse",
-    "type6_forest",
-]
-
-TYPE_TO_GROUP = {
-    1: "type1_city",
-    2: "type2_open",
-    3: "type3_mountain",
-    4: "type4_village",
-    5: "type5_warehouse",
-    6: "type6_forest",
-}
+# Only the types random_task can draw: a group outside the distribution never fills.
+BENCH_GROUP_ORDER = [TYPE_TO_GROUP[t] for t in sorted(CHALLENGE_TYPE_DISTRIBUTION)]
 
 _MAX_SEED_EXCLUSIVE = 2**32
 
