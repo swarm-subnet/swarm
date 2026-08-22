@@ -40,7 +40,7 @@ https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 </p>
 
 <p align="center">
-  <sub><b>6</b> missions &nbsp;·&nbsp; <b>1,100</b> fresh worlds every epoch &nbsp;·&nbsp; <b>60-second</b> flights &nbsp;·&nbsp; one live leaderboard</sub>
+  <sub><b>5</b> missions &nbsp;·&nbsp; <b>1,100</b> fresh worlds every epoch &nbsp;·&nbsp; <b>60-second</b> flights &nbsp;·&nbsp; one live leaderboard</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -48,13 +48,12 @@ https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 ---
 
 <!-- CHALLENGE FAMILIES -->
-## Six Missions
+## Five Missions
 
-Swarm is six separate competitions, each with its own champion and its own share of the rewards. Master one, or take on all six.
+Swarm is five separate competitions, each with its own champion and its own share of the rewards. Master one, or take on all five.
 
 | Mission | What your drone has to do | Reward share |
 |---------|---------------------------|:------------:|
-| **[Interceptor](docs/families/interceptor.md)** | Chase down a fleeing drone and catch it before time runs out | Completed (crown frozen; solution open source; historical 30%) |
 | **[Office Interceptor](docs/families/office_interceptor.md)** | Hunt a target drone inside a fixed office and catch it before time runs out | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
 | **[Swarm Autopilot](docs/families/swarm_autopilot.md)** | Land a whole team of drones, fast and without collisions | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
 | **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
@@ -62,6 +61,8 @@ Swarm is six separate competitions, each with its own champion and its own share
 | **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
 
 <p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
+
+<p align="center"><sub><b>Solved:</b> <a href="docs/families/interceptor.md">Interceptor</a> — open-terrain pursuit, cleared by its champion and closed. The crown is final and the winning solution is preserved as open source.</sub></p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -110,7 +111,7 @@ Every mission runs the same simple loop:
 </tr>
 </table>
 
-The drone sees the world through a single depth camera and knows its own position and speed. Fifty times a second, your model looks at that and decides where to fly next: a direction, a speed, a turn. No map, no GPS, no list of obstacles. Just like a real pilot, it has to read what is in front of it and react. What changes between the six missions is the goal: land, rescue, coordinate a team, or give chase.
+The drone sees the world through a single depth camera and knows its own position and speed. Fifty times a second, your model looks at that and decides where to fly next: a direction, a speed, a turn. No map, no GPS, no list of obstacles. Just like a real pilot, it has to read what is in front of it and react. What changes between the five missions is the goal: land, rescue, coordinate a team, or give chase.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
