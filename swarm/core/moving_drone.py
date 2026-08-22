@@ -1407,7 +1407,7 @@ class MovingDroneAviary(BaseRLAviary):
                 self.PYB_STEPS_PER_CTRL > 1
                 and (
                     # Office substep forces read live kinematics; plain PYB elsewhere is untouched.
-                    self._office_rc_enabled
+                    getattr(self, "_office_rc_enabled", False)
                     or self.PHYSICS in [
                         Physics.DYN,
                         Physics.PYB_GND,
@@ -1422,7 +1422,7 @@ class MovingDroneAviary(BaseRLAviary):
                 if self.NUM_DRONES > 1 and self._frozen[i]:
                     continue
                 if self.PHYSICS == Physics.PYB:
-                    if self._office_rc_enabled:
+                    if getattr(self, "_office_rc_enabled", False):
                         self._office_rpm[i] += self._office_motor_alpha * (
                             clipped_action[i, :] - self._office_rpm[i]
                         )

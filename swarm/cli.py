@@ -107,6 +107,7 @@ BENCH_GROUP_ORDER = [
     "type4_village",
     "type5_warehouse",
     "type6_forest",
+    "type7_office",
 ]
 BENCH_GROUP_TO_TYPE = {
     "type1_city": 1,
@@ -115,6 +116,7 @@ BENCH_GROUP_TO_TYPE = {
     "type4_village": 4,
     "type5_warehouse": 5,
     "type6_forest": 6,
+    "type7_office": 7,
 }
 TYPE_LABELS = {
     1: "city",
@@ -123,6 +125,7 @@ TYPE_LABELS = {
     4: "village",
     5: "warehouse",
     6: "forest",
+    7: "office",
 }
 
 
