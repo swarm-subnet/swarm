@@ -45,6 +45,7 @@
     "family_state": [
       "incubating",
       "active",
+      "completed",
       "archived"
     ],
     "emissions_state": [
@@ -396,8 +397,8 @@
         "short_label": "Interceptor",
         "slug": "interceptor"
       },
-      "family_state": "active",
-      "emissions_state": "active",
+      "family_state": "completed",
+      "emissions_state": "archived",
       "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"
@@ -439,9 +440,9 @@
         "short_label": "Office",
         "slug": "office-interceptor"
       },
-      "family_state": "incubating",
-      "emissions_state": "incubating",
-      "visibility": "private",
+      "family_state": "active",
+      "emissions_state": "active",
+      "visibility": "public",
       "skill_ids": [
         "sk_autonomous_navigation"
       ],
@@ -471,7 +472,7 @@
         "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
-      "emission_allocation": 0.0
+      "emission_allocation": 0.3
     }
   },
   "policy_interfaces": {
