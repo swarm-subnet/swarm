@@ -1284,10 +1284,27 @@ def parse_benchmark_report_text(text: str) -> dict[str, Any]:
     return output
 
 
+def _latest_bench_log() -> Optional[Path]:
+    """Newest benchmark log this user wrote; the engine stamps uid and pid into the name."""
+    logs = sorted(
+        DEFAULT_BENCH_LOG.parent.glob(f"{DEFAULT_BENCH_LOG.stem}_{os.getuid()}_*.log"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return logs[-1] if logs else None
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
-    input_path = Path(args.input)
+    input_path = Path(args.input) if args.input is not None else (
+        _latest_bench_log() or DEFAULT_BENCH_LOG
+    )
     if not input_path.is_file():
         print(f"Report input file not found: {input_path}", file=sys.stderr)
+        if args.input is None:
+            print(
+                f"No benchmark log found in {DEFAULT_BENCH_LOG.parent}. Run `swarm benchmark` "
+                "first, or pass --input with the path it printed as `Log file:`.",
+                file=sys.stderr,
+            )
         return 1
     text = input_path.read_text()
     results_block = extract_benchmark_results_block(text)
@@ -1490,7 +1507,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-out",
         type=Path,
         default=None,
-        help=f"Output benchmark log path (default in script: {DEFAULT_BENCH_LOG}).",
+        help="Output benchmark log path (default: a per-run /tmp/bench_full_eval_<uid>_<pid>.log).",
     )
     benchmark_parser.add_argument(
         "--seed-file",
@@ -1672,8 +1689,8 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument(
         "--input",
         type=Path,
-        default=DEFAULT_BENCH_LOG,
-        help=f"Benchmark log input path (default: {DEFAULT_BENCH_LOG}).",
+        default=None,
+        help="Benchmark log input path (default: the newest log the last benchmark wrote).",
     )
     report_parser.set_defaults(func=_cmd_report)
 

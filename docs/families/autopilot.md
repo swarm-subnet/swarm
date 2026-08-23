@@ -107,7 +107,7 @@ So the pad can be anywhere within R metres along each axis of where the offset p
 
 ## Maps
 
-Autopilot runs on **all six environment types** with no exclusions. Each weekly epoch (anchored Monday 16:00 UTC) draws **1,100 seeds**: indices 0–299 are templated by a second, 50-slot template (tiled to 300), indices 300–1099 by the 100-slot benchmark template below. Every submission runs all 1,100.
+Autopilot runs on **all six environment types** with no exclusions. Each 14-day epoch (anchored Monday 16:00 UTC; 14 days from epoch 19 onward) draws **1,100 seeds**: indices 0–299 are templated by a second, 50-slot template (tiled to 300), indices 300–1099 by the 100-slot benchmark template below. Every submission runs all 1,100.
 
 The benchmark template (the bulk of your score) is 100 interleaved slots:
 
@@ -227,16 +227,12 @@ Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,100-seed b
 
 ## Local testing
 
-Autopilot is the default family for the local benchmark, so this is all it takes:
-
-```bash
-swarm benchmark --model submission.zip --workers 4
-```
-
-Package first with the family pinned explicitly:
+Package, verify, and benchmark the same artifact with the family pinned explicitly:
 
 ```bash
 swarm model package --source ./my_model --family-id cf_autopilot
+swarm model verify --model Submission/submission.zip
+swarm benchmark --model Submission/submission.zip --family-id cf_autopilot --workers 4
 ```
 
 `--seeds-per-group 1` gives a fast smoke run; see the [CLI reference](../CLI_readme.md) for seed files, timeout relaxation, and report parsing.

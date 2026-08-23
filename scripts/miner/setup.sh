@@ -1,6 +1,5 @@
 #!/bin/bash
 # setup.sh - Setup miner Python environment and dependencies
-# TODO - REVIEW
 set -e
 
 handle_error() {
@@ -86,7 +85,8 @@ show_completion_info() {
   echo "   source miner_env/bin/activate"
   echo "   pm2 start neurons/miner.py --name miner --interpreter python -- \\"
   echo "     --netuid 124 --subtensor.network finney \\"
-  echo "     --wallet.name your_coldkey --wallet.hotkey your_hotkey"
+  echo "     --wallet.name your_coldkey --wallet.hotkey your_hotkey \\"
+  echo "     --github_url https://github.com/YOUR_USER/YOUR_REPO"
 }
 
 main() {

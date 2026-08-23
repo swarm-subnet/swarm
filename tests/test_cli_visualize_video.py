@@ -6,6 +6,7 @@ them again without a test failing first.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -265,3 +266,65 @@ def test_visualizer_env_matches_family_runtime(
         assert env.SPEED_LIMIT == expected
     finally:
         env.close()
+
+
+# --------------------------------------------------------------------------
+# `swarm report` finds the log `swarm benchmark` actually wrote
+# --------------------------------------------------------------------------
+
+
+def _write_bench_log(path, seeds=8):
+    path.write_text(
+        "=== BENCHMARK RESULTS ===\n"
+        f"Seeds evaluated: {seeds}\n"
+        "Workers used: 4\n"
+        "Total wall-clock: 12.0s\n"
+    )
+
+
+def test_report_picks_up_the_per_run_log(tmp_path, monkeypatch, capsys):
+    """The engine stamps uid+pid into the log name, so the fixed default never matched."""
+    monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
+    written = tmp_path / f"bench_full_eval_{os.getuid()}_4242.log"
+    _write_bench_log(written)
+
+    assert cli.main(["report"]) == 0
+    assert str(written) in capsys.readouterr().out
+
+
+def test_report_prefers_the_newest_run(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
+    old = tmp_path / f"bench_full_eval_{os.getuid()}_1.log"
+    new = tmp_path / f"bench_full_eval_{os.getuid()}_2.log"
+    _write_bench_log(old, seeds=4)
+    _write_bench_log(new, seeds=9)
+    os.utime(old, (1_000_000, 1_000_000))
+    os.utime(new, (2_000_000, 2_000_000))
+
+    assert cli.main(["report"]) == 0
+    assert str(new) in capsys.readouterr().out
+
+
+def test_report_explicit_input_still_wins(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
+    _write_bench_log(tmp_path / f"bench_full_eval_{os.getuid()}_9.log")
+    chosen = tmp_path / "mine.log"
+    _write_bench_log(chosen)
+
+    assert cli.main(["report", "--input", str(chosen)]) == 0
+    assert str(chosen) in capsys.readouterr().out
+
+
+def test_report_ignores_another_users_log(tmp_path, monkeypatch, capsys):
+    """/tmp is shared, and the uid in the filename is what keeps runs apart."""
+    monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
+    _write_bench_log(tmp_path / f"bench_full_eval_{os.getuid() + 1}_7.log")
+
+    assert cli.main(["report"]) == 1
+    assert "Run `swarm benchmark` first" in capsys.readouterr().err
+
+
+def test_report_without_any_log_explains_itself(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
+    assert cli.main(["report"]) == 1
+    assert "Run `swarm benchmark` first" in capsys.readouterr().err

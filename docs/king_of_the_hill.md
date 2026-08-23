@@ -225,8 +225,6 @@ Each family carries a secret `solve_threshold`. When a champion clears it, the f
 
 The backend serves the **raw kings** (score + previous score) per family plus the family shares. Validators ignore the backend's advisory weight map and **recompute** the weights locally from those raw numbers and the unchanged formula. A payload without the per-family windows is refused outright. Each validator also checks every king's UID against the live metagraph: if the hotkey no longer matches (a re-registered UID), that share is dropped locally. Because every validator uses the same kings and the same formula, they converge on the same weights without a shared secret.
 
-The final score vector is L1-normalised on chain, so any share not assigned to a live miner spreads pro-rata across the paid miners: no emissions are parked on UID 0.
-
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
 ---
@@ -236,11 +234,11 @@ The final score vector is L1-normalised on chain, so any share not assigned to a
 <a id="the-first-king-ever"></a>
 ### The first king ever
 
-When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. Their gain covers their full score, and they take 100% of **that family's slice** until someone dethrones them.
+When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. A positive score gives it the only positive row weight, so it takes 100% of **that family's slice** until someone dethrones it; a zero-score row leaves the slice unpaid.
 
 ### The epoch re-eval does not touch the window
 
-Every current champion is re-evaluated on the new epoch's seeds each week. The champion keeps the crown with its fresh score **even if the fresh score is lower**: rival scores come from different epoch seeds, so a cross-epoch comparison is invalid. No new lineage row is written and the window seat keeps its original crowning numbers; a champion only falls to a challenger that clears the floor on the same epoch's seeds.
+Every current champion is re-evaluated on each new epoch's seeds. The champion keeps the crown with its fresh score **even if the fresh score is lower**: rival scores come from different epoch seeds, so a cross-epoch comparison is invalid. No new lineage row is written and the window seat keeps its original crowning numbers; a champion only falls to a challenger that clears the floor on the same epoch's seeds.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 

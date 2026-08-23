@@ -235,19 +235,12 @@ The pre-eval smoke test instantiates your controller and calls `reset()` + `act(
 
 ## Local testing
 
-Benchmark your submission against this family locally:
-
-```bash
-python3 -m swarm.benchmark --model submission.zip --family-id cf_swarm_autopilot --workers 4
-```
-
-The `swarm benchmark` CLI wrapper does not expose `--family-id` and defaults to `cf_autopilot`, so use the module form for Swarm Autopilot.
-
-Package and verify with the same family id:
+Package, verify, and benchmark the same artifact with the family selected:
 
 ```bash
 swarm model package --source ./my_model --family-id cf_swarm_autopilot
-swarm model verify --model submission.zip
+swarm model verify --model Submission/submission.zip
+swarm benchmark --model Submission/submission.zip --family-id cf_swarm_autopilot --workers 4
 ```
 
 <p align="right">(<a href="#swarm-autopilot-top">back to top</a>)</p>

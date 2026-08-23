@@ -47,8 +47,9 @@ The registry that defines the families, their states, policies, and emission all
 **Sync is manual.** After editing the schema in the swarm repo, run:
 
 ```bash
-python3 swarm/scripts/sync_family_registry.py \
-  --backend swarm-backend --website Swarm-Website
+python3 scripts/sync_family_registry.py \
+  --backend /path/to/swarm-backend \
+  --website /path/to/Swarm-Website
 ```
 
 The script reads the swarm-repo schema and overwrites both copies. Both checkouts must be named: a workspace can hold several worktrees of the same repo on different branches, and a directory name cannot tell them apart, so pointing at the wrong one would write the registry into an unrelated branch. Add `--check` to report drift without writing (non-zero exit when a mirror is stale) — useful before a release. There is no CI hook: the only other automated guard is the backend test `test_registry_copies_are_in_sync_across_code_repos`, and it **skips** when the sibling checkouts are absent, so divergence is only caught when backend tests run in a full three-repo workspace.
@@ -112,7 +113,7 @@ Two version headers travel on every validator request, gated separately.
 
 ### Code version: `X-Code-Version`
 
-Validators send `swarm.__version__` (currently `5.1.5.0`). The backend dependency `require_current_code_version` rejects with **HTTP 426** `validator_code_version_below_minimum` when the header is missing or below `MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). Private-track endpoints use `require_private_code_version` against `PRIVATE_MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). To cut old validators off after a release: bump these env vars and restart the backend. No code change needed.
+Validators send their full `swarm.__version__`. The backend dependency `require_current_code_version` rejects with **HTTP 426** `validator_code_version_below_minimum` when the header is missing or below `MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). Private-track endpoints use `require_private_code_version` against `PRIVATE_MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). To cut old validators off after a release: bump these env vars and restart the backend. No code change needed.
 
 ### Benchmark version: `X-Benchmark-Version`
 
@@ -147,7 +148,7 @@ Both directions cancel stale-phase tasks/batches, keep already-recorded seed sco
 
 ## Epochs & Freeze
 
-- Epoch anchor: **2026-03-30 16:00:00 UTC** (a Monday); duration 7 × 86400 s. `epoch = floor((now − anchor) / duration) + 1`, derived purely from wall clock (no state to manage). The same anchor/duration constants exist validator-side.
+- Epoch anchor: **2026-03-30 16:00:00 UTC** (a Monday). Epochs 1–18 lasted 7 days; epoch 19 began **2026-08-03 16:00 UTC**, and epochs last 14 days from that point onward. Backend and validator use the same piecewise anchor, switch epoch, and duration constants.
 - `EPOCH_FREEZE_SECONDS = 5400` (1.5 h, hardcoded): `is_in_freeze_window()` is true in the last 5400 s of an epoch. Its only production caller is the **chain scanner**, which skips scanning new chain commitments during the freeze. Commitments made in the window are picked up after rollover. The same constant exists in `swarm/constants.py` but nothing in the validator consumes it.
 - The epoch-transition job runs every 5 minutes; on rollover it carries all `PENDING_SCREENING`/`PENDING_BENCHMARK` models submitted before the new epoch into it (partial results are discarded and evaluation restarts on the fresh seed set, queue position kept) and queues every current champion for re-evaluation on the fresh seeds.
 - Seeds: each validator generates its own 1100 seeds per epoch per family from OS entropy (`random.SystemRandom`), stored under `state/epoch_seeds/`, and publishes them to the backend only **after** the epoch ends (`POST /validators/epoch/publish`, trusted-validator gated).
@@ -225,7 +226,7 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_MAX_DOCKER_WOR
 | I want to… | Do this |
 |------------|---------|
 | Keep out validators on the old contract | Nothing to do — only `agent_rpc.v1` validators are ever authorized |
-| Add/change a family or its policy | Edit `swarm/swarm/domain_model/benchmark_domain_model.schema.json`, run `python3 swarm/scripts/sync_family_registry.py --backend swarm-backend --website Swarm-Website`, commit all three copies |
+| Add/change a family or its policy | Edit `swarm/domain_model/benchmark_domain_model.schema.json`, then from the swarm repo run `python3 scripts/sync_family_registry.py --backend /path/to/swarm-backend --website /path/to/Swarm-Website`; commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |

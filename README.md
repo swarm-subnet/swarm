@@ -40,7 +40,7 @@ https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
 </p>
 
 <p align="center">
-  <sub><b>5</b> missions &nbsp;·&nbsp; <b>1,100</b> fresh worlds every epoch &nbsp;·&nbsp; <b>60-second</b> flights &nbsp;·&nbsp; one live leaderboard</sub>
+  <sub><b>5</b> missions &nbsp;·&nbsp; <b>1,100</b> fresh worlds every 14-day epoch &nbsp;·&nbsp; <b>60-second</b> flights &nbsp;·&nbsp; one live leaderboard</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -120,7 +120,7 @@ The drone sees the world through a single depth camera and knows its own positio
 <!-- ENVIRONMENTS -->
 ## The Worlds
 
-None of these worlds exist until the benchmark builds them. Every epoch, every drone flies **1,100 brand-new ones**, so nothing can be memorized.
+None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives **1,100 fresh seeds** across its supported map types, so nothing can be memorized.
 
 <table>
 <tr>
@@ -197,12 +197,12 @@ Everything happens from the terminal, with no dashboards to wrangle. Train, pack
 ```bash
 swarm doctor                                   # check your setup
 swarm model package --source my_model/         # package your agent
-swarm benchmark --model submission.zip --workers 4   # score it locally
+swarm benchmark --model Submission/submission.zip --workers 4   # score it locally
 swarm visualize --type 1                       # fly a map yourself to see it
 swarm report                                   # see how it did
 ```
 
-The same engine validators use runs on your own machine, so the score you see locally is the score that counts. Full reference in the [CLI docs](docs/CLI_readme.md).
+The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use independently generated epoch seeds, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

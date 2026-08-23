@@ -239,12 +239,14 @@ Every submission goes straight to the full benchmark. (A screening phase with it
 
 ## Local testing
 
-Run the local benchmark engine against this family directly:
+Package, verify, and benchmark the same artifact with the family selected:
 
 ```bash
-python3 -m swarm.benchmark --model submission.zip --family-id cf_swarm_sar --workers 4
+swarm model package --source ./my_model --family-id cf_swarm_sar
+swarm model verify --model Submission/submission.zip
+swarm benchmark --model Submission/submission.zip --family-id cf_swarm_sar --workers 4
 ```
 
-`--seeds-per-group` controls seeds per environment type (default 3). Note the `swarm benchmark` CLI wrapper does not expose `--family-id` and defaults to `cf_autopilot`. Use the module form above for Swarm SAR.
+`--seeds-per-group` controls seeds per environment group (default 3).
 
 <p align="right">(<a href="#swarm-sar-top">back to top</a>)</p>

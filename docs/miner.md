@@ -32,7 +32,7 @@ Train an autonomous drone pilot, benchmark it against 1,100 procedurally generat
 
 ## System Requirements
 
-Mining is extremely lightweight: your miner commits its submission to the chain (a GitHub URL) and goes offline. Any machine with **Python 3.11+** and a network connection will do. Training hardware depends entirely on your approach (your choice of SB3, PyTorch, custom RL).
+The miner process is lightweight: it commits a GitHub repository URL on-chain, then exits. The provided setup scripts target **Ubuntu**, require `sudo`, and install **Python 3.11** specifically. Other platforms can run the CLI after installing the equivalent Python and system dependencies manually. Training hardware depends on your approach (SB3, PyTorch, custom RL, or another compatible stack).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -51,7 +51,6 @@ chmod +x scripts/miner/setup.sh
 ./scripts/miner/setup.sh
 
 source miner_env/bin/activate
-pip install -e .
 ```
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -150,12 +149,15 @@ class DroneFlightController:
 **Required files:**
 - `drone_agent.py`: Your controller class, at the zip root (REQUIRED)
 - `requirements.txt`: Additional pip packages (optional, must be on the [whitelist](#docker-whitelist))
-- Model files: weights, configs, etc.
+- Model artifacts using a supported extension: `.bin`, `.ckpt`, `.h5`, `.json`, `.npy`, `.npz`, `.onnx`, `.pb`, `.pkl`, `.pt`, `.pth`, `.safetensors`, `.tflite`, `.weights`, or `.zip`
+
+`swarm model package` recursively includes only those artifacts plus root-level `drone_agent.py` and `requirements.txt`. Arbitrary helper `.py`, YAML, TOML, and other files are not packaged; keep required logic in `drone_agent.py` and required configuration in a supported model artifact.
 
 **Auto-injected (do not include):**
-- `main.py`, `agent.capnp`, `agent_server.py`: provided by the evaluation system
+- `main.py`, `agent.capnp`, `agent_server.py`, `runtime_caps.py`: provided by the evaluation system
 
 **Hard limits, enforced at intake:**
+- Compressed artifact download ≤ **50 MiB**
 - Total **uncompressed** content ≤ **50 MiB** (summed across zip entries: a zip-bomb guard, so squeezing the archive harder does not help)
 - No `.exe`, `.so`, `.dll`, `.sh`, `.bat`, or `.pyc` entries
 - No path traversal, absolute paths, or symlinks inside the zip
@@ -219,7 +221,7 @@ Verifies Python version, Docker, required dependencies, writable directories, an
 swarm model test --source my_agent/ --family-id cf_autopilot
 ```
 
-Validates your source folder: checks `drone_agent.py` exists and compiles, `requirements.txt` format, and estimated package size.
+Packages the source against the selected family's policy contract, applies the submission ZIP structure/safety checks, and runs the local runtime smoke test. The requirements whitelist is enforced later by the validator, so review it separately before publishing.
 
 ### Package Your Agent
 
@@ -235,7 +237,7 @@ Bundles your `drone_agent.py`, model files, optional `requirements.txt`, and a g
 swarm model verify --model Submission/submission.zip
 ```
 
-Checks structure, file sizes, family policy-contract compatibility, and a local runtime smoke test before uploading.
+Checks the compressed ZIP against the 50 MiB download cap, inspects ZIP safety and structure, verifies the family policy contract, and runs a local runtime smoke test. Its local uncompressed-safety limit defaults to 300 MiB; pass `--max-uncompressed-mb 50` to mirror intake exactly.
 
 ### Build Repo Submission Layout
 
@@ -257,7 +259,7 @@ This writes the family artifact under `artifacts/<family_id>/submission.zip` and
 ### Verify Repo Submission Layout
 
 ```bash
-swarm repo verify --repo-root YOUR_REPO --strict-manifest
+swarm repo verify --repo-root YOUR_REPO
 ```
 
 Checks manifest structure, the artifact hash, policy-contract compatibility, and a local runtime smoke test for the published family artifact in the repo.
@@ -290,7 +292,7 @@ Validators download models from your **public GitHub repository**. You must set 
 
 ### 1. Create Your Repo
 
-Create a public GitHub repository. The URL you commit must be exactly `https://github.com/YOUR_USER/YOUR_REPO`: no subpaths, no other hosts. Files are fetched from the `main` branch (falling back to `master`). Each repo is bound to a single hotkey. A repo URL already registered to a different miner is skipped.
+Create a GitHub repository. Commit its repository-root URL (`https://github.com/YOUR_USER/YOUR_REPO`; a trailing slash or `.git` suffix is normalized, but subpaths and other hosts are rejected). Files are fetched from `main`, falling back to `master`. Keep the repo private only until the chain commitment finalizes, then make it public so the scanner can read it. Each repo is bound to a single hotkey, and a URL already registered to another miner is skipped.
 
 ### 2. The Template README
 
@@ -307,7 +309,7 @@ Repo layout rules for manifest v1:
 - `submission_manifest.json` lives at the repo root.
 - `README.md` lives at the repo root.
 - The family artifact lives under `artifacts/<family_id>/` with a `.zip` extension.
-- The artifact entry declares `family_id`, `interface_version`, `artifact_path`, `sha256`, and `metadata`.
+- The artifact entry declares `family_id`, `interface_version`, `artifact_path`, `sha256`, `size_bytes`, and `metadata`.
 - A repo publishes exactly **one artifact for one family**; a manifest listing more is rejected.
 - The artifact's `sha256` is verified against the downloaded file.
 
@@ -328,7 +330,7 @@ Minimal example:
       "interface_version": "submission_zip.v1",
       "artifact_path": "artifacts/cf_autopilot/submission.zip",
       "sha256": "<artifact sha256>",
-      "size_bytes": 1048576,
+      "size_bytes": 123456,
       "metadata": {
         "notes": "baseline autopilot agent"
       }
@@ -337,7 +339,7 @@ Minimal example:
 }
 ```
 
-All six families use the `submission_zip.v1` interface. A hand-written manifest must include `size_bytes`, set to the ZIP byte size; the generated manifest already includes it. For an Office Interceptor submission, the manifest targets `cf_office_interceptor` and its artifact path is under `artifacts/cf_office_interceptor/`. Legacy repos with only a root `submission.zip` and no manifest are still accepted and map to `cf_autopilot`, but new work should use the manifest.
+All families use the `submission_zip.v1` interface. A hand-written manifest must include `size_bytes`, set to the ZIP byte size; the generated manifest already includes it. For an Office Interceptor submission, the manifest targets `cf_office_interceptor` and its artifact path is under `artifacts/cf_office_interceptor/`. A repo without `submission_manifest.json` is rejected.
 
 ### 4. Package The Family Artifact Into The Repo
 
@@ -346,11 +348,11 @@ swarm repo package \
   --repo-root YOUR_REPO \
   --family-source cf_autopilot=./autopilot_agent
 
-swarm repo verify --repo-root YOUR_REPO --strict-manifest
+swarm repo verify --repo-root YOUR_REPO
 
-git add README.md submission_manifest.json artifacts/
-git commit -m "Add submission"
-git push
+git -C YOUR_REPO add README.md submission_manifest.json artifacts/
+git -C YOUR_REPO commit -m "Add submission"
+git -C YOUR_REPO push
 ```
 
 ### 5. Submit
@@ -359,7 +361,7 @@ git push
 >
 > Treat every submission as final. Once your model is evaluated, the hotkey's slot is **locked**: pushing a new artifact does not replace it and does not re-run the benchmark. To compete again, register a **new hotkey** and submit from it. See the [FAQ](#faq) for more.
 >
-> The slot only reopens on its own if the submission never finished before the epoch rollover, if a benchmark version bump retires it, or if it was rejected for a fixable packaging problem. So benchmark locally and hard before you commit: you get one real shot per hotkey.
+> After the backend accepts a model, that hotkey cannot submit another one. An epoch change, a failed evaluation, or a version update does not free it. If the repository is rejected before the model is accepted, fix the problem and submit again with the same hotkey. Test carefully before committing because an accepted artifact cannot be replaced.
 
 To protect your model from front-running (someone copying your submission before you commit), follow this order:
 
@@ -432,7 +434,7 @@ The Interceptor and Office Interceptor families override the weights to 0.5 succ
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
-Your **model score** is the mean over all 1,100 per-seed scores of the epoch, stitched together from whichever validators ran each seed (earliest report per seed counts: re-runs never double-count).
+Your **model score** is the mean of the eligible recorded seed scores across the 1,100-seed range, stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
 ### CONFIRMED Requirements (Search and Rescue)
 
@@ -443,7 +445,7 @@ All four conditions must hold continuously for 2.0 seconds:
 | Drone speed | < 1.0 m/s |
 | Horizontal distance to victim | ≤ 2.0 m |
 | Height above victim's AABB top | 2.0 – 4.0 m |
-| Distance from 0.8 m no-touch sphere | strictly outside |
+| Distance from victim center | ≥ 0.8 m |
 
 The speed, horizontal-distance, and height-band bounds get a 0.1 m / 0.1 m·s⁻¹ hysteresis grace once the predicate is already active; the 0.8 m no-touch sphere gets no grace.
 
@@ -467,7 +469,7 @@ The practical consequences:
 
 - A copycat that barely clears the floor earns almost nothing; a real jump earns a dominant share and keeps paying through the next several dethronings.
 - Your seat's share is frozen at crowning; champion re-evaluations on fresh seeds don't change it.
-- Payout requires your repo to stay intact and reachable: a deleted, privatized, or tampered repo forfeits the seat.
+- Payout requires your repo to stay intact and reachable. A deleted, private, or changed repo stops the seat paying; restoring the exact accepted repo and artifact restores eligibility while the seat remains in the window.
 
 The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md](king_of_the_hill.md).
 
@@ -487,24 +489,24 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 
 Every submission runs the full 1,100-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
 
-A seed that fails on 3 different attempts is closed as an environment failure and excluded from the score; a dead RPC server or a crashing agent wastes everyone's time, so smoke-test with `swarm model verify` before committing.
+A transient timeout or RPC-transport failure is retried once for that seed, subject to run-wide retry budgets. Deterministic environment failures and validator-infrastructure failures are excluded from the score; failures caused by the submitted agent still count. Smoke-test with `swarm model verify` before committing.
 
 ### Epoch Rotation
 
-Seeds rotate every **14 days** (Monday 16:00 UTC). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
 
-At rollover, models still pending from the previous epoch are marked **Epoch Expired** (re-commit and the expired row is purged, so the hotkey resubmits cleanly), and every champion is queued for re-evaluation on the fresh seeds. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; commit after the rollover instead.
+At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; commitments made then are picked up after rollover.
 
 ### Key Numbers
 
 | Parameter | Value |
 |-----------|-------|
 | Seeds per family per epoch | 1,100 |
-| Batch size (validator lease) | 50 seeds |
+| Seed claim size | Dynamic: up to the validator's free worker slots (API cap 64) |
 | Chain scanner interval | 3 minutes |
-| Epoch length | 14 days (Monday 16:00 UTC) |
+| Epoch length | 14 days from epoch 19 (Monday 16:00 UTC anchor) |
 | Pre-rollover registration freeze | 1.5 hours |
-| Max artifact size | 50 MiB uncompressed content |
+| Max artifact size | 50 MiB compressed download and 50 MiB uncompressed content |
 | Models per hotkey | 1 (one family per hotkey) |
 | Chain commit cooldown | ~20 minutes |
 
@@ -544,7 +546,7 @@ Registration takes minutes (the scanner polls every 3 minutes). Evaluation time 
 
 **No, once your model has been evaluated.** A hotkey gets one submission. A changed artifact on an evaluated model is ignored, not re-run, so to try a better model you need a new hotkey.
 
-The only exceptions happen before evaluation finishes: a rejected (malformed) zip was never registered, so you can just fix it and re-commit on the same hotkey; and a submission that expired at the epoch rollover, or was retired by a version bump, frees its slot for a fresh commit. Never swap a reigning champion's artifact, though: that reads as tampering and permanently loses payout eligibility.
+The only exception is when the backend rejects the repository before accepting the model. In that case, fix the problem and submit again with the same hotkey. Once accepted, the hotkey stays used through epoch changes and version updates. Never replace a champion's artifact; the new artifact is rejected, and payment stops until the exact accepted repository and artifact are restored.
 
 The chain rate-limits commits to roughly one per 20 minutes.
 
@@ -562,10 +564,10 @@ In order of likelihood:
 
 - **README hash mismatch**: the number-one silent killer. `README.md` must be a byte-exact copy of the template; if it isn't, the scanner drops the submission without any visible error. Run `swarm repo verify` to catch it, or `swarm repo package` to rewrite the correct README. Check this first.
 - **Repo still private**: the backend cannot fetch it. Make it public after the chain commit finalizes; the scanner re-reads all commitments every pass.
-- **Wrong URL shape**: the commitment must be exactly `https://github.com/owner/repo`.
+- **Wrong URL shape**: use a repository-root GitHub URL such as `https://github.com/owner/repo`; subpaths and non-GitHub hosts are rejected.
 - **Manifest problems**: artifact path/hash mismatch, the artifact missing from `artifacts/<family_id>/`, or a manifest declaring more than one family.
 - **Freeze window**: commits during the last 1.5 hours of an epoch register after rollover.
-- **Non-whitelisted package or oversized artifact**: see [Docker Whitelist](#docker-whitelist) and the 50 MiB uncompressed cap.
+- **Non-whitelisted package or oversized artifact**: see [Docker Whitelist](#docker-whitelist) and the 50 MiB compressed/uncompressed caps.
 
 If none apply, contact the team on [Discord](https://discord.gg/8dPqPDw7GC).
 
@@ -587,9 +589,9 @@ Model hashes are globally unique: a hash already registered to any miner is reje
 
 **"Dangerous executable files detected"**: Remove `.exe`, `.so`, `.dll`, `.sh`, `.bat`, and `.pyc` files. Only Python code and model files are allowed.
 
-**"Agent too large"**: Total uncompressed content must be ≤ 50 MiB. Compressing harder does not help; shrink the weights.
+**"Agent too large"**: Both the downloaded ZIP and its total uncompressed content must be ≤ 50 MiB. Shrink the weights rather than relying on compression.
 
-**"RPC connection failed"**: Ensure your agent starts correctly and responds to ping requests. Three failed batch attempts mark the model as Evaluation Failed.
+**"RPC connection failed"**: Ensure your agent starts correctly and responds to ping requests. Transient RPC-transport failures are retried once per seed, subject to the run-wide retry budget; persistent agent failures still count against the submission.
 
 **"README hash mismatch"**: Your repo's `README.md` must be the exact template copy. Any edit (including whitespace or line-ending changes) makes the scanner silently ignore your submission. Re-run `swarm repo package` to rewrite the correct file, then `swarm repo verify` to confirm.
 
