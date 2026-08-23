@@ -197,7 +197,7 @@ swarm repo package \
 Validates `submission_manifest.json`, the artifact hash/path, the family policy contract, a runtime smoke test, and the `README.md` hash for the published artifact in a repo layout. A `README.md` that was hand-edited or reformatted fails here, before you commit on-chain.
 
 ```bash
-swarm repo verify --repo-root ./my_submission_repo --strict-manifest
+swarm repo verify --repo-root ./my_submission_repo
 ```
 
 ### `swarm model test`

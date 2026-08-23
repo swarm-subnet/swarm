@@ -240,7 +240,7 @@ This writes the family artifact under `artifacts/<family_id>/submission.zip` and
 ### Verify Repo Submission Layout
 
 ```bash
-swarm repo verify --repo-root YOUR_REPO --strict-manifest
+swarm repo verify --repo-root YOUR_REPO
 ```
 
 Checks manifest structure, the artifact hash, policy-contract compatibility, and a local runtime smoke test for the published family artifact in the repo.
@@ -328,7 +328,7 @@ swarm repo package \
   --repo-root YOUR_REPO \
   --family-source cf_autopilot=./autopilot_agent
 
-swarm repo verify --repo-root YOUR_REPO --strict-manifest
+swarm repo verify --repo-root YOUR_REPO
 
 git add README.md submission_manifest.json artifacts/
 git commit -m "Add submission"
