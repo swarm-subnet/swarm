@@ -213,12 +213,12 @@ Per-episode `info` exposes the chase telemetry you'll want when tuning: `interce
 
 ## Local Testing
 
-Package your model against this family's contract, then run the benchmark engine with the family selected (the plain `swarm benchmark` wrapper does not take a family flag and defaults to Autopilot, so use the module form):
+Package, verify, and benchmark the same artifact with the family selected:
 
 ```bash
 swarm model package --source ./my_model --family-id cf_interceptor
-
-python3 -m swarm.benchmark --model submission.zip --family-id cf_interceptor
+swarm model verify --model Submission/submission.zip
+swarm benchmark --model Submission/submission.zip --family-id cf_interceptor --workers 4
 ```
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>

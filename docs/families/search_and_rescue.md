@@ -15,7 +15,7 @@ A victim is down somewhere in the world. Your drone lifts off from a start pad w
 | Control / physics rate | 50 Hz (`sim_dt` = 1/50 s) |
 | Episode horizon | 60 s (3,000 control steps) |
 | Emission allocation | 0.15 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
-| Benchmark | 1,100 seeds per weekly epoch, all 6 environment types |
+| Benchmark | 1,100 seeds per 14-day epoch, all 6 environment types |
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
 
@@ -125,7 +125,7 @@ Benchmark seeds are built from two templates. Each table's distance column is th
 | Warehouse | 9 | 10–22 m |
 | Forest | 8 | 15–28 m |
 
-Every epoch runs 1,100 seeds: indices below 300 use the screening template, the remaining 800 use the benchmark template. Seeds rotate every 7 days (Monday 16:00 UTC).
+Every epoch runs 1,100 seeds: indices below 300 use the screening template, the remaining 800 use the benchmark template. Epochs run for 14 days from epoch 19 onward, anchored Monday 16:00 UTC.
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
 
@@ -224,17 +224,17 @@ New submissions go straight to the full 1,100-seed benchmark. A champion-gated 3
 
 ## Local testing
 
-Package your model against this family's contract, then benchmark it locally with the engine's family flag:
+Package, verify, and benchmark the same artifact with the family selected:
 
 ```bash
 swarm model package --source ./my_model --family-id cf_search_and_rescue
-
-python -m swarm.benchmark.engine \
-  --model submission.zip \
+swarm model verify --model Submission/submission.zip
+swarm benchmark \
+  --model Submission/submission.zip \
   --family-id cf_search_and_rescue \
   --seeds-per-group 3 --workers 4
 ```
 
-`--seeds-per-group` controls seeds per environment type; validators run the full 1,100. The plain `swarm benchmark` subcommand does not forward a family flag and runs the default family (`cf_autopilot`). Use the engine module directly for SAR.
+`--seeds-per-group` controls seeds per environment group; validators run the full 1,100.
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>

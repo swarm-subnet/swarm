@@ -68,7 +68,7 @@ Rank        Slot                          Earning
 
 After the next crowning, the king at slot `−4` leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
 
-Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until five newer crownings push it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the weekly epoch re-eval.
+Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until five newer crownings push it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the epoch re-eval.
 
 A seat stops paying before it ages out if it fails the [payout eligibility check](#who-a-seat-can-pay): a dead or unreachable repo, or a missing artifact. An ineligible seat keeps its window slot (no sixth king is backfilled) but it is skipped at payout, so its slice renormalizes onto the family's surviving kings. Taper ranks are assigned among the **payable** kings only, ordered by crowning recency, so the kings behind a skipped seat move up one taper step; the rank badge on the ladder still shows window position, so a badge and its paid share can briefly diverge while a seat is unreachable.
 
@@ -212,7 +212,7 @@ Example: four families payable, Interceptor has no king yet — the other four k
 
 A family must keep improving to keep earning. If **7 days** pass without a new crowning, the family's whole slice burns — every seat in its window stops earning — until the next crowning resumes payments. Burned time is never back-paid.
 
-The clock only resets on a **real crowning**: the weekly champion re-evaluation does not count, and neither does a re-scored champion keeping its crown. The reigning champion feels this too — to keep the slice alive they must beat their own score from a fresh hotkey, clearing the crowning floor like anyone else. A **solved** family is exempt while its 7-day victory window runs.
+The clock only resets on a **real crowning**: the epoch champion re-evaluation does not count, and neither does a re-scored champion keeping its crown. The reigning champion feels this too — to keep the slice alive they must beat their own score from a fresh hotkey, clearing the crowning floor like anyone else.
 
 <a id="who-a-seat-can-pay"></a>
 ### Who a seat can pay
@@ -221,15 +221,9 @@ Before shipping a window to validators, the backend checks every seat: a seat is
 
 Champion status is **not** required: past kings in the window are ordinary evaluated models. An ineligible seat is skipped at payout and its slice renormalizes onto the family's surviving kings. UID 0 is reserved and can never hold a seat.
 
-### Solved families
-
-Each family carries a secret `solve_threshold`. When a champion clears it, the family is **solved**: no new champions are crowned, and the current window keeps earning as-is. Seven days later the family is archived, and its slice burns.
-
 ### How weights reach the chain
 
 The backend serves the **raw kings** (score + previous score) per family plus the family shares. Validators ignore the backend's advisory weight map and **recompute** the weights locally from those raw numbers and the unchanged formula. A payload without the per-family windows is refused outright. Each validator also checks every king's UID against the live metagraph: if the hotkey no longer matches (a re-registered UID), that share is dropped locally. Because every validator uses the same kings and the same formula, they converge on the same weights without a shared secret.
-
-The final score vector is L1-normalised on chain, so any share not assigned to a live miner spreads pro-rata across the paid miners: no emissions are parked on UID 0.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -240,11 +234,11 @@ The final score vector is L1-normalised on chain, so any share not assigned to a
 <a id="the-first-king-ever"></a>
 ### The first king ever
 
-When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. Their gain covers their full score, and they take 100% of **that family's slice** until someone dethrones them.
+When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. A positive score gives it the only positive row weight, so it takes 100% of **that family's slice** until someone dethrones it; a zero-score row leaves the slice unpaid.
 
-### The weekly re-eval does not touch the window
+### The epoch re-eval does not touch the window
 
-Every current champion is re-evaluated on the new epoch's seeds each week. The champion keeps the crown with its fresh score **even if the fresh score is lower**: rival scores come from different epoch seeds, so a cross-epoch comparison is invalid. No new lineage row is written and the window seat keeps its original crowning numbers; a champion only falls to a challenger that clears the floor on the same epoch's seeds.
+Every current champion is re-evaluated on each new epoch's seeds. The champion keeps the crown with its fresh score **even if the fresh score is lower**: rival scores come from different epoch seeds, so a cross-epoch comparison is invalid. No new lineage row is written and the window seat keeps its original crowning numbers; a champion only falls to a challenger that clears the floor on the same epoch's seeds.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -254,7 +248,7 @@ Every current champion is re-evaluated on the new epoch's seeds each week. The c
 
 ### How often is my share recalculated?
 
-Your gain is computed at the moment of crowning and locked: the weekly re-eval never rewrites it. Your share moves when the window changes: a new crowning shifts every rank, changes the rank taper, and eventually ages older kings out. Your seat also stops paying if it fails the eligibility check (dead repo, missing artifact); that share renormalizes onto the family's other kings until the seat is healthy again.
+Your gain is computed at the moment of crowning and locked: the epoch re-eval never rewrites it. Your share moves when the window changes: a new crowning shifts every rank, changes the rank taper, and eventually ages older kings out. Your seat also stops paying if it fails the eligibility check (dead repo, missing artifact); that share renormalizes onto the family's other kings until the seat is healthy again.
 
 ### What if I get dethroned?
 
@@ -304,6 +298,5 @@ The five slices are set by the team, not derived automatically, so a new family 
 | **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
 | **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
 | **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` for every family. |
-| **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived after 7 days, its slice burning from then on. |
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>

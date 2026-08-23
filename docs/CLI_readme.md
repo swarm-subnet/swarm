@@ -26,7 +26,7 @@ python -m swarm <command>
 
 ## Challenge families
 
-Family-aware commands (`swarm model package`, `swarm repo package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
+Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm repo package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
 
 | Family ID | Environment types |
 | --- | --- |
@@ -52,10 +52,13 @@ Verifies: Python version (3.11+), Docker (binary + daemon), sandbox lockdown bin
 
 ### `swarm benchmark`
 
-Runs a local benchmark for the `cf_autopilot` family, evaluating a model across its 6 environment types (City, Open, Mountain, Village, Warehouse, Forest). This subcommand has no family flag; it always drives the engine's default family. The `--seeds-per-group` flag controls seeds per environment group (default: 3). Validators run 1,100 seeds per family per epoch.
+Runs a local benchmark for the selected family (`cf_autopilot` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,100 seeds per family per epoch.
 
 ```bash
-# Default benchmark (3 seeds per environment group)
+# Default-family benchmark (3 seeds per environment group)
+swarm benchmark --model Submission/submission.zip --workers 4
+
+# Select another family
 swarm benchmark --model Submission/submission.zip --family-id cf_swarm_sar --workers 4
 
 # Quick test (1 seed per environment group)
@@ -69,7 +72,7 @@ If `--model` is omitted, the current champion (the default-family / cf_autopilot
 
 Useful options:
 
-- `--workers <n>`: parallel Docker workers (default: one worker per 2 vCPUs, capped at 12).
+- `--workers <n>`: parallel Docker workers (default: one worker per configured CPU group; `SWARM_MAX_DOCKER_WORKERS` can impose an operator cap).
 - `--seed-file <path>` / `--save-seed-file <path>`: replay an exact seed set / save the resolved seeds for later replay.
 - `--summary-json-out <path>`: write the benchmark summary as JSON.
 - `--log-out <path>`: benchmark log output path.
@@ -144,7 +147,7 @@ Rendering is CPU-bound and slower than real time — expect several minutes of w
 
 ### `swarm model verify`
 
-Validates a submission ZIP against Swarm rules: checks structure, ZIP safety, and the 50 MiB uncompressed cap that intake enforces (the local `--max-uncompressed-mb` check defaults to 300), family policy-contract compatibility, and a local runtime smoke test that instantiates the family's entry-point controller and exercises its `reset`/`act` methods.
+Validates a submission ZIP against Swarm rules: checks the compressed ZIP against the 50 MiB download cap, inspects ZIP safety and structure, verifies the family policy contract, and runs a local runtime smoke test. The local uncompressed-safety limit defaults to 300 MiB; pass `--max-uncompressed-mb 50` to mirror intake.
 
 ```bash
 swarm model verify --model Submission/submission.zip
@@ -190,7 +193,7 @@ swarm repo package \
   --overwrite
 ```
 
-`--family-source` takes `FAMILY_ID=PATH` or `FAMILY_ID@INTERFACE_VERSION=PATH`; a repo holds exactly one family, so passing two sources, or a family different from the one already in the manifest, is rejected. The `--source` + `--family-id` pair is a single-family shortcut for the same thing.
+`--family-source` takes `FAMILY_ID=PATH` or `FAMILY_ID@INTERFACE_VERSION=PATH`; `PATH` must be a directory containing root-level `drone_agent.py`, not a file under `swarm/challenge_families`. A repo holds exactly one family, so passing two sources, or a family different from the one already in the manifest, is rejected. The `--source` + `--family-id` pair is a single-family shortcut for the same thing.
 
 ### `swarm repo verify`
 
@@ -202,15 +205,15 @@ swarm repo verify --repo-root ./my_submission_repo
 
 ### `swarm model test`
 
-Validates a source folder before packaging: checks that `drone_agent.py` exists and compiles, `requirements.txt` has no blocked patterns, and estimated package size is within limits.
+Packages a source folder against the selected family's policy contract, applies the submission ZIP structure/safety checks, and runs the local runtime smoke test. The validator enforces the requirements whitelist later.
 
 ```bash
-swarm model test --source ./my_agent
+swarm model test --source ./my_agent --family-id cf_autopilot
 ```
 
 ### `swarm report`
 
-Parses benchmark log output and prints a summary. Default input: `/tmp/bench_full_eval.log`.
+Parses benchmark log output and prints a summary. Without `--input`, it selects the newest `/tmp/bench_full_eval_<uid>_<pid>.log` belonging to the current user.
 
 ```bash
 swarm report

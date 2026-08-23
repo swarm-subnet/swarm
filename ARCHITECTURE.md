@@ -16,17 +16,16 @@ The codebase is organized so benchmark orchestration, validator orchestration, m
 - Public entrypoints can be thin facades, but implementation should live in focused submodules.
 
 ## Top-Level Layout
-- [swarm/](/home/miguel/subnets/swarm/swarm_subnet/swarm): main Python package
-- [scripts/](/home/miguel/subnets/swarm/swarm_subnet/scripts): operational scripts and local tooling entrypoints
-- [tests/](/home/miguel/subnets/swarm/swarm_subnet/tests): unit, integration, and opt-in e2e coverage
-- [docs/](/home/miguel/subnets/swarm/swarm_subnet/docs): user and validator documentation
-- [model/](/home/miguel/subnets/swarm/swarm_subnet/model): local benchmark/test model artifacts
+- [swarm/](swarm): main Python package
+- [scripts/](scripts): operational scripts and local tooling entrypoints
+- [tests/](tests): unit, integration, and opt-in e2e coverage
+- [docs/](docs): user and validator documentation
 
 ## Main Package Structure
 ### Benchmark
-- [swarm/benchmark/](/home/miguel/subnets/swarm/swarm_subnet/swarm/benchmark): benchmark orchestration
-- [engine.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/benchmark/engine.py): thin public facade
-- [engine_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/benchmark/engine_parts): implementation split by concern
+- [swarm/benchmark/](swarm/benchmark): benchmark orchestration
+- [engine.py](swarm/benchmark/engine.py): thin public facade
+- [engine_parts/](swarm/benchmark/engine_parts): implementation split by concern
 
 `engine_parts/` responsibilities:
 - `config.py`: run options and runtime configuration assembly
@@ -37,16 +36,16 @@ The codebase is organized so benchmark orchestration, validator orchestration, m
 - `entry.py`: high-level benchmark run entrypoint
 
 ### Validator
-- [swarm/validator/](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator): validator workflow and scoring
-- [utils.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/utils.py): thin compatibility facade
-- [utils_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/utils_parts): validator workflow split by domain
-- [forward.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/forward.py): validator forward loop
-- [backend_api.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/backend_api.py): backend HTTP client
+- [swarm/validator/](swarm/validator): validator workflow and scoring
+- [utils.py](swarm/validator/utils.py): thin compatibility facade
+- [utils_parts/](swarm/validator/utils_parts): validator workflow split by domain
+- [forward.py](swarm/validator/forward.py): validator forward loop
+- [backend_api.py](swarm/validator/backend_api.py): backend HTTP client
 
 `utils_parts/` responsibilities:
 - `model_fetch.py`: fetch/download model artifacts
 - `detection.py`: detect model changes and queue candidates
-- `queue_worker.py`: queue processing and benchmark execution flow
+- `run_task.py`: task execution, seed leasing, and benchmark result flow
 - `backend_submission.py`: backend submission/publication calls
 - `evaluation.py`: benchmark result aggregation and scoring summaries
 - `heartbeat.py`: backend heartbeat coordination
@@ -54,9 +53,9 @@ The codebase is organized so benchmark orchestration, validator orchestration, m
 - `weights.py`: weight calculation helpers
 
 ### Docker Evaluation Runtime
-- [swarm/validator/docker/](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/docker): secure model execution layer
-- [docker_evaluator.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/docker/docker_evaluator.py): public facade and compatibility surface
-- [docker_evaluator_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/docker/docker_evaluator_parts): implementation split by responsibility
+- [swarm/validator/docker/](swarm/validator/docker): secure model execution layer
+- [docker_evaluator.py](swarm/validator/docker/docker_evaluator.py): public facade and compatibility surface
+- [docker_evaluator_parts/](swarm/validator/docker/docker_evaluator_parts): implementation split by responsibility
 
 `docker_evaluator_parts/` responsibilities:
 - `lifecycle.py`: Docker image/container lifecycle and runtime setup
@@ -67,34 +66,34 @@ The codebase is organized so benchmark orchestration, validator orchestration, m
 - `parallel.py`: process-based parallel scheduling for validator evaluation
 
 ### Configuration
-- [swarm/config/](/home/miguel/subnets/swarm/swarm_subnet/swarm/config): typed runtime settings
-- [runtime.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/config/runtime.py): environment-backed settings for benchmark, validator, Docker, and backend runtime
+- [swarm/config/](swarm/config): typed runtime settings
+- [runtime.py](swarm/config/runtime.py): environment-backed settings for benchmark, validator, Docker, and backend runtime
 
 This is the preferred place for new runtime env parsing. Avoid scattering new `os.getenv()` calls across unrelated modules.
 
 ## Core Simulation and Maps
 ### Core Simulation
-- [swarm/core/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core): simulation environment, generators, and map-building logic
-- [moving_drone.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/moving_drone.py): main drone simulation environment
-- [env_builder/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/env_builder): world assembly, generation, and cache helpers
+- [swarm/core/](swarm/core): simulation environment, generators, and map-building logic
+- [moving_drone.py](swarm/core/moving_drone.py): main drone simulation environment
+- [env_builder/](swarm/core/env_builder): world assembly, generation, and cache helpers
 
 ### Environment Type Entry Points
-- [swarm/core/maps/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps): canonical environment-type entrypoints
-- [city/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/city)
-- [open/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/open)
-- [village/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/village)
-- [mountain/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/mountain)
-- [forest/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/forest)
-- [warehouse/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps/warehouse)
+- [swarm/core/maps/](swarm/core/maps): canonical environment-type entrypoints
+- [city/](swarm/core/maps/city)
+- [open/](swarm/core/maps/open)
+- [village/](swarm/core/maps/village)
+- [mountain/](swarm/core/maps/mountain)
+- [forest/](swarm/core/maps/forest)
+- [warehouse/](swarm/core/maps/warehouse)
 
 These packages are the preferred boundary for environment-type-specific logic. If you are adding or changing an environment type, start here.
 
 ### Large Generator Packages
 Legacy public modules still exist as compatibility facades, but their implementations now live in focused packages:
-- [city_generator_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/city_generator_parts)
-- [mountain_generator_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/mountain_generator_parts)
-- [forest_generator_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/forest_generator_parts)
-- [warehouse/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/warehouse) with subpackages:
+- [city_generator_parts/](swarm/core/city_generator_parts)
+- [mountain_generator_parts/](swarm/core/mountain_generator_parts)
+- [forest_generator_parts/](swarm/core/forest_generator_parts)
+- [warehouse/](swarm/core/warehouse) with subpackages:
   - `factory_parts`
   - `helpers_parts`
   - `layout_parts`
@@ -105,9 +104,9 @@ Legacy public modules still exist as compatibility facades, but their implementa
   - `structure_parts`
 
 ## CLI and Scripts
-- [swarm/cli.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/cli.py): public CLI entrypoint exposed as `swarm`
-- [scripts/bench_full_eval.py](/home/miguel/subnets/swarm/swarm_subnet/scripts/bench_full_eval.py): benchmark script entrypoint
-- [scripts/README.md](/home/miguel/subnets/swarm/swarm_subnet/scripts/README.md): script-level usage notes
+- [swarm/cli.py](swarm/cli.py): public CLI entrypoint exposed as `swarm`
+- [scripts/bench_full_eval.py](scripts/bench_full_eval.py): benchmark script entrypoint
+- [scripts/README.md](scripts/README.md): script-level usage notes
 
 Rule:
 - reusable logic belongs in `swarm/...`
@@ -126,10 +125,10 @@ Avoid the reverse flow. In particular:
 - validator orchestration should not contain low-level Docker implementation details
 
 ## State, Assets, and Generated Files
-- [swarm/assets/](/home/miguel/subnets/swarm/swarm_subnet/swarm/assets): committed static assets
-- [state/](/home/miguel/subnets/swarm/swarm_subnet/state): runtime state directory used by tooling
-- [swarm/state/](/home/miguel/subnets/swarm/swarm_subnet/swarm/state): local generated cache/state under the package tree in some flows
-- [bench_logs/](/home/miguel/subnets/swarm/swarm_subnet/bench_logs): local benchmark outputs
+- [swarm/assets/](swarm/assets): committed static assets
+- [swarm/state/](swarm/state): local generated validator telemetry and state
+- `/tmp/bench_full_eval_<uid>_<pid>.log`: per-run local benchmark logs unless `--log-out` selects another path
+- `Submission/submission.zip`: default local packaging output
 
 Rules:
 - generated caches, state files, and logs should not become part of the source architecture
@@ -137,7 +136,7 @@ Rules:
 
 ## Testing Strategy
 - `pytest`: fast default suite
-- `pytest --run-e2e` or `SWARM_RUN_E2E=1 pytest`: opt-in e2e/runtime suite
+- `pytest --run-full` or `SWARM_RUN_FULL=1 pytest`: opt-in e2e/runtime suite
 
 Testing layers:
 - unit and integration tests validate split modules and orchestration logic
@@ -147,25 +146,25 @@ Testing layers:
 ## How To Add New Code
 ### If you are adding benchmark behavior
 Start in:
-- [swarm/benchmark/engine_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/benchmark/engine_parts)
+- [swarm/benchmark/engine_parts/](swarm/benchmark/engine_parts)
 
 ### If you are adding validator workflow behavior
 Start in:
-- [swarm/validator/utils_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/utils_parts)
-- [swarm/validator/forward.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/forward.py)
+- [swarm/validator/utils_parts/](swarm/validator/utils_parts)
+- [swarm/validator/forward.py](swarm/validator/forward.py)
 
 ### If you are changing secure model execution
 Start in:
-- [swarm/validator/docker/docker_evaluator_parts/](/home/miguel/subnets/swarm/swarm_subnet/swarm/validator/docker/docker_evaluator_parts)
+- [swarm/validator/docker/docker_evaluator_parts/](swarm/validator/docker/docker_evaluator_parts)
 
 ### If you are adding/changing map generation
 Start in:
-- [swarm/core/maps/](/home/miguel/subnets/swarm/swarm_subnet/swarm/core/maps)
+- [swarm/core/maps/](swarm/core/maps)
 - then the relevant `*_parts/` implementation package
 
 ### If you need environment/config flags
 Start in:
-- [swarm/config/runtime.py](/home/miguel/subnets/swarm/swarm_subnet/swarm/config/runtime.py)
+- [swarm/config/runtime.py](swarm/config/runtime.py)
 
 Do not add new scattered env parsing unless there is a very strong reason.
 
