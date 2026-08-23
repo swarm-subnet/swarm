@@ -46,6 +46,27 @@ def _make_uid_validator(metagraph: Any):
     return _valid
 
 
+def accept_sync_version(validator: Any, sync_data: Dict[str, Any]) -> bool:
+    """False when this sync payload is older than one already applied.
+
+    Backend weights are absolute, so a response that lost the race would
+    overwrite a newer allocation. A refused payload leaves the validator on the
+    last weights it accepted, which is also what the offline fallback holds.
+    """
+    try:
+        version = int(sync_data.get("leaderboard_version") or 0)
+    except (TypeError, ValueError):
+        version = 0
+    applied = int(getattr(validator, "_applied_leaderboard_version", 0) or 0)
+    if version < applied:
+        bt.logging.info(
+            f"Ignoring stale backend weights: leaderboard v{version} < applied v{applied}"
+        )
+        return False
+    validator._applied_leaderboard_version = version
+    return True
+
+
 def compute_koth_weights_from_sync(
     sync_data: Dict[str, Any], *, metagraph: Any = None
 ) -> Optional[Dict[int, float]]:

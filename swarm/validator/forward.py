@@ -35,6 +35,7 @@ from .seed_manager import BenchmarkSeedManager
 from .sse_listener import SseListener
 from .utils import (
     _apply_backend_weights_to_scores,
+    accept_sync_version,
     _publish_pending_epoch_seeds,
     compute_koth_weights_from_sync,
     stamp_local_weights_on_kings,
@@ -90,7 +91,7 @@ async def _forward_iteration(self) -> None:
         local_koth_weights = compute_koth_weights_from_sync(
             sync_data, metagraph=self.metagraph
         )
-        if local_koth_weights is not None:
+        if local_koth_weights is not None and accept_sync_version(self, sync_data):
             _apply_backend_weights_to_scores(self, local_koth_weights)
 
         kings_payload = sync_data.get("kings") or []
