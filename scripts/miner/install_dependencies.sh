@@ -36,13 +36,13 @@ install_system_dependencies() {
     libnss3 libnss3-dev gnupg curl nodejs 
   )
   
-  # Add version-specific audio package
+  # Ask apt which ALSA runtime exists here; libasound2 is virtual from noble onwards.
   UBUNTU_CODENAME=$(lsb_release -cs)
-  case "$UBUNTU_CODENAME" in
-    jammy)  EXTRA_PACKAGES=(libasound2)   ;;
-    noble)  EXTRA_PACKAGES=(libasound2t64) ;;
-    *)      EXTRA_PACKAGES=(libasound2)   ;;
-  esac
+  if apt-cache show libasound2t64 >/dev/null 2>&1; then
+    EXTRA_PACKAGES=(libasound2t64)
+  else
+    EXTRA_PACKAGES=(libasound2)
+  fi
   
   info_msg "Installing system dependencies for $UBUNTU_CODENAME..."
   sudo apt install -y "${COMMON_PACKAGES[@]}" "${EXTRA_PACKAGES[@]}" \
