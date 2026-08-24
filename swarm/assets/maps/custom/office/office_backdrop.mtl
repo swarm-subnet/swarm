@@ -1,0 +1,5 @@
+newmtl backdrop_white
+Kd 0.93 0.94 0.96
+Ka 1 1 1
+Ks 0 0 0
+illum 1

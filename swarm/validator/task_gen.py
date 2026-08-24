@@ -13,6 +13,13 @@ from swarm.constants import (
     INTERCEPTOR_MIN_START_DISTANCE_M,
     MOVING_PLATFORM_PROB,
     MOVING_PLATFORM_SEED_OFFSET,
+    OFFICE_CHALLENGE_TYPE,
+    OFFICE_HORIZON_SEC,
+    OFFICE_MAX_START_DISTANCE_M,
+    OFFICE_MIN_START_DISTANCE_M,
+    OFFICE_SPAWN_Z,
+    OFFICE_TARGET_ALT_MAX_M,
+    OFFICE_TARGET_ALT_MIN_M,
     SWARM_COUNT_SEED_OFFSET,
     SWARM_LAYOUT_SEED_OFFSET,
     SWARM_MAX_DRONES,
@@ -81,6 +88,7 @@ from swarm.constants import (
     TYPE_6_WORLD_RANGE,
 )
 from swarm.core.mountain_generator import get_global_scale, get_terrain_z
+from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import MapTask, SCHEMA_VERSION
 
 TYPE_PARAMS = {
@@ -112,6 +120,14 @@ TYPE_PARAMS = {
         'h_min': TYPE_6_H_MIN, 'h_max': TYPE_6_H_MAX,
         'start_h_min': TYPE_6_START_H_MIN, 'start_h_max': TYPE_6_START_H_MAX,
         'horizon': TYPE_6_HORIZON,
+    },
+    OFFICE_CHALLENGE_TYPE: {
+        # fixed indoor map: office-scale distances; goal = the target's spawn,
+        # inside its flight band
+        'r_min': OFFICE_MIN_START_DISTANCE_M, 'r_max': OFFICE_MAX_START_DISTANCE_M,
+        'h_min': OFFICE_TARGET_ALT_MIN_M, 'h_max': OFFICE_TARGET_ALT_MAX_M,
+        'start_h_min': OFFICE_SPAWN_Z, 'start_h_max': OFFICE_SPAWN_Z,
+        'horizon': OFFICE_HORIZON_SEC,
     },
 }
 
@@ -241,6 +257,21 @@ def _build_task_with_params(
             family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
         )
 
+    if family_id == "cf_interceptor_office":
+        # floor start and airborne goal, both wall-safe, distance_range apart
+        from swarm.challenge_families.office_interceptor import office_point  # avoids an import cycle
+        rng = random.Random(seed)
+        start = office_point(rng, z_range=(params['start_h_min'], params['start_h_max']))
+        for _ in range(64):
+            goal = office_point(rng, z_range=(params['h_min'], params['h_max']))
+            if params['r_min'] <= math.dist(start[:2], goal[:2]) <= params['r_max']:
+                break
+        return MapTask(
+            map_seed=seed, start=start, goal=goal, sim_dt=sim_dt,
+            horizon=params['horizon'], challenge_type=OFFICE_CHALLENGE_TYPE,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+        )
+
     if family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
         if n_drones is None:
             count_rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
@@ -313,12 +344,16 @@ def _build_task_for_type(
 ) -> MapTask:
     if family_id == "cf_interceptor":
         challenge_type = 2
-    params = _resolve_params(seed, challenge_type)
-    if family_id == "cf_interceptor":
+        params = _resolve_params(seed, challenge_type)
         params['r_min'], params['r_max'] = (
             INTERCEPTOR_MIN_START_DISTANCE_M,
             INTERCEPTOR_MAX_START_DISTANCE_M,
         )
+    elif family_id == "cf_interceptor_office":
+        challenge_type = OFFICE_CHALLENGE_TYPE
+        params = _resolve_params(seed, challenge_type)
+    else:
+        params = _resolve_params(seed, challenge_type)
     resolved = _resolve_moving_platform(seed, challenge_type, family_id, moving_platform)
     return _build_task_with_params(
         sim_dt, seed,
@@ -608,7 +643,7 @@ def task_for_seed_and_type(
     family_id: str = "cf_autopilot",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
-    if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
+    if challenge_type not in CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
     return _build_task_for_type(
         sim_dt=sim_dt,
@@ -631,7 +666,7 @@ def screening_task(
     n_drones: Optional[int] = None,
 ) -> MapTask:
     """Build a task with controlled type and distance range (V5 SAR)."""
-    if challenge_type not in CHALLENGE_TYPE_DISTRIBUTION:
+    if challenge_type not in CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
 
     params = _resolve_params(seed, challenge_type)

@@ -28,7 +28,7 @@ gymnasium==0.29.1
 requests==2.34.2
 httpx==0.28.1
 pycapnp==2.2.2
-swarm-drone-gym==2.0.0.2
+swarm-drone-gym==2.0.0.3
 pygame==2.6.1
 pytest==8.4.2
 pytest-xdist==3.8.0

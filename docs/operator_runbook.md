@@ -58,19 +58,20 @@ Divergence matters: the backend derives `CHALLENGE_FAMILY_IDS`, `FAMILY_STATES`,
 
 ### Current registry state
 
-Five families, all `family_state='active'` and `emissions_state='active'`:
+Six families: five `family_state='active'` and `emissions_state='active'`, plus completed Interceptor with archived emissions:
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_interceptor` | 0.30 |
+| `cf_interceptor` | 0.00 (historical 0.30) |
+| `cf_interceptor_office` | 0.30 |
 | `cf_swarm_autopilot` | 0.20 |
 | `cf_swarm_sar` | 0.20 |
 | `cf_autopilot` | 0.15 |
 | `cf_search_and_rescue` | 0.15 |
 
-Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, no crowning for 7 days, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first.
+Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first.
 
-State enums: `family_state` ∈ {incubating, active, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
+State enums: `family_state` ∈ {incubating, active, completed, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 
 ### Per-family runtime controls
 
@@ -79,7 +80,7 @@ Persisted per-family state lives in the DB table `challenge_family` (`family_sta
 - `GET /admin/families`: lists persisted states plus derived allocation shares.
 - `POST /admin/families/{family_id}`: updates `family_state` / `emissions_state` / `emission_allocation` / `solve_threshold` (admin session required, at least one field, 400 otherwise). Setting `family_state='archived'` implicitly archives emissions unless an explicit `emissions_state` is given. `emission_allocation` and `solve_threshold` must be in [0.0, 1.0].
 
-Allocation semantics are **absolute**: `allocation_share = emission_allocation × status_multiplier`, never normalized. All base weights are 1.0 except archived (0.0). If included shares sum past 1.0 a warning logs, miner weights scale down pro-rata, and the burn share drops to 0.
+Allocation semantics are **absolute**: `allocation_share = emission_allocation × status_multiplier`, never normalized. All base weights are 1.0 except archived (0.0). If included shares sum past 1.0 a warning logs, miner weights scale down pro-rata, and the burn share drops to 0. A solved family keeps paying for `SOLVED_PAYOUT_DURATION` after `solved_at` (3 days in code; the operator sets the effective end by moving `solved_at` or archiving the family by hand), then `archive_expired_solved_families` auto-archives its emissions and the family's slice stops paying from that point on.
 
 ---
 
@@ -116,7 +117,7 @@ Validators send their full `swarm.__version__`. The backend dependency `require_
 
 ### Benchmark version: `X-Benchmark-Version`
 
-Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
+Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `5.1.5`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
 
 When the official version changes, the version-transition job (checked every 5 minutes) expires all pending models to `VERSION_EXPIRED` and queues every champion for re-evaluation. This means **merging a version bump to `main` (or whatever `SWARM_VERSION_REF` points at) is the cutover trigger**: the backend picks it up in up to about 20 minutes (the 15-minute cache TTL plus the next 5-minute transition-job tick), without a deploy.
 

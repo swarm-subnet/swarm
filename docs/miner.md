@@ -59,7 +59,7 @@ source miner_env/bin/activate
 
 ## Challenge Families
 
-Swarm runs **five challenge families**, all active and all public. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
+Swarm runs **six challenge families**. Five are active, public, and paying; Interceptor is completed with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
@@ -67,9 +67,11 @@ Swarm runs **five challenge families**, all active and all public. Each family i
 | Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](families/search_and_rescue.md) |
 | Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
 | Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](families/swarm_sar.md) |
-| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 30% | [families/interceptor.md](families/interceptor.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](families/interceptor.md) |
+| Office Interceptor | `cf_interceptor_office` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 30% | [families/office_interceptor.md](families/office_interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each family holds a fixed slice of subnet emissions, and the five slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, no crowning for 7 days, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+
+The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the five active slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -106,6 +108,19 @@ The full miner workflow, from first install to competing on the leaderboard:
 cp -r swarm/submission_template/ my_agent/
 cd my_agent/
 # Edit drone_agent.py with your controller
+```
+
+For Office Interceptor, copy the office starter to the packaged entry point:
+
+```bash
+mkdir -p my_agent/
+cp swarm/submission_template/office_drone_agent.py my_agent/drone_agent.py
+```
+
+Test an Office Interceptor agent with its required family ID:
+
+```bash
+swarm model test --source my_agent/ --family-id cf_interceptor_office
 ```
 
 ### Agent Structure
@@ -164,6 +179,8 @@ The interface below is the **Search and Rescue** one. Each family defines its ow
 | `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
 
 The search clue is an offset sampled inside a **30 m** circle around the victim (the swarm SAR family shares one clue over a disk that scales with team size: 80·√(n/8) m, i.e. 40 m for 2 drones up to 80 m for 8). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
+
+For Office Interceptor, the contract is `rgb` (256, 256, 3) plus a 127-float `state` vector, with four RC-stick actions `[lr, fb, ud, yaw]`. Its speed cap is 3 m/s and its episode horizon is 60 seconds. See the [Office Interceptor guide](families/office_interceptor.md) for the full contract.
 
 ### Action Space
 
@@ -322,7 +339,7 @@ Minimal example:
 }
 ```
 
-All five families use the `submission_zip.v1` interface. A repo without `submission_manifest.json` is rejected.
+All families use the `submission_zip.v1` interface. A hand-written manifest must include `size_bytes`, set to the ZIP byte size; the generated manifest already includes it. For an Office Interceptor submission, the manifest targets `cf_interceptor_office` and its artifact path is under `artifacts/cf_interceptor_office/`. A repo without `submission_manifest.json` is rejected.
 
 ### 4. Package The Family Artifact Into The Repo
 
@@ -413,7 +430,7 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 | **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
 | **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
 
-The Interceptor family overrides the weights to 0.5 success / 0.5 time, with no safety term.
+The Interceptor and Office Interceptor families override the weights to 0.5 success / 0.5 time, with no safety term.
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 

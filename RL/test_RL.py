@@ -494,7 +494,15 @@ def main() -> None:
         "wall_time_sec": float(elapsed),
     }
 
-    type_name = {1: "city", 2: "open", 3: "mountain"}
+    type_name = {
+        1: "city",
+        2: "open",
+        3: "mountain",
+        4: "village",
+        5: "warehouse",
+        6: "forest",
+        7: "office",
+    }
     by_challenge_type: Dict[str, Dict[str, Any]] = {}
     for challenge_type in sorted({entry["task"]["challenge_type"] for entry in per_seed}):
         rows = [entry for entry in per_seed if entry["task"]["challenge_type"] == challenge_type]

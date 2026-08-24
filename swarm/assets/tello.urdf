@@ -1,0 +1,162 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="tello">
+  <properties arm="0.059" kf="9.49e-10" km="2.37e-11" thrust2weight="2.25" max_speed_kmh="28.8" gnd_eff_coeff="11.36859" prop_radius="3.8e-2" drag_coeff_xy="9.1785e-7" drag_coeff_z="10.311e-7" dw_coeff_1="2267.18" dw_coeff_2=".16" dw_coeff_3="-.11" />
+  <link name="base_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <mass value="0.087" />
+      <inertia ixx="7.42e-5" ixy="0.0" ixz="0.0" iyy="8.18e-5" iyz="0.0" izz="1.317e-4" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.02" />
+      <geometry>
+        <mesh filename="./tello/tello_body_red.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_red">
+        <color rgba="0.74 0.06 0.07 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <geometry>
+        <cylinder radius=".088" length=".042" />
+      </geometry>
+    </collision>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.02" />
+      <geometry>
+        <mesh filename="./tello/tello_body_guard.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_guard">
+        <color rgba="0.62 0.05 0.06 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.02" />
+      <geometry>
+        <mesh filename="./tello/tello_body_dark.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_dark">
+        <color rgba="0.17 0.17 0.19 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.02" />
+      <geometry>
+        <mesh filename="./tello/tello_body_grey.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_grey">
+        <color rgba="0.24 0.24 0.26 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.02" />
+      <geometry>
+        <mesh filename="./tello/tello_body_silver.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_silver">
+        <color rgba="0.75 0.75 0.78 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.02" />
+      <geometry>
+        <mesh filename="./tello/tello_body_lens.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_lens">
+        <color rgba="0.01 0.01 0.012 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="0.043 -0.039 0.0185" />
+      <geometry>
+        <mesh filename="./tello/tello_prop_3.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_prop">
+        <color rgba="0.09 0.09 0.10 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="-0.043 -0.039 0.0185" />
+      <geometry>
+        <mesh filename="./tello/tello_prop_2.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_prop">
+        <color rgba="0.09 0.09 0.10 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="-0.043 0.039 0.0185" />
+      <geometry>
+        <mesh filename="./tello/tello_prop_1.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_prop">
+        <color rgba="0.09 0.09 0.10 1" />
+      </material>
+    </visual>
+    <visual>
+      <origin rpy="0 0 0" xyz="0.043 0.039 0.0185" />
+      <geometry>
+        <mesh filename="./tello/tello_prop_0.obj" scale="1 1 1" />
+      </geometry>
+      <material name="tt_prop">
+        <color rgba="0.09 0.09 0.10 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="prop0_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.043 -0.039 0.0185" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="prop0_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="prop0_link" />
+  </joint>
+  <link name="prop1_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.043 -0.039 0.0185" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="prop1_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="prop1_link" />
+  </joint>
+  <link name="prop2_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.043 0.039 0.0185" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="prop2_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="prop2_link" />
+  </joint>
+  <link name="prop3_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.043 0.039 0.0185" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="prop3_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="prop3_link" />
+  </joint>
+  <link name="center_of_mass_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="center_of_mass_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="center_of_mass_link" />
+  </joint>
+</robot>

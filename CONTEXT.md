@@ -13,9 +13,9 @@ At a high level, the repo supports two main workflows:
 
 Core benchmark assumptions:
 
-- Models receive a depth image (resolution set per challenge family) plus a state vector.
-- Models output 5- or 6-component flight commands per the family contract.
-- Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain.
+- Models receive a camera image (depth or RGB, set per challenge family) plus a state vector.
+- Models output flight commands per the family contract: 5 or 6 components, or 4 RC sticks for Office Interceptor.
+- Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain, plus the fixed office twin.
 
 ## Primary Entrypoints
 

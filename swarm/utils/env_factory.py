@@ -20,7 +20,10 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from swarm.challenge_families import runtime_profile_for_task
 from swarm.core.moving_drone       import MovingDroneAviary
 from swarm.protocol                import MapTask
-from swarm.constants               import SPEED_LIMIT, MAX_YAW_RATE, SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE, INTERCEPTOR_MINER_SPEED
+from swarm.constants               import (
+    SPEED_LIMIT, MAX_YAW_RATE, SOLVER_ITERATIONS, SOLVER_MIN_ISLAND_SIZE,
+    INTERCEPTOR_MINER_SPEED, OFFICE_RC_SPEED, OFFICE_RC_YAW_RATE,
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -85,12 +88,14 @@ def make_env_with_initial_obs(
     """Create an env and return the observation produced by its initial reset."""
     ctrl_freq = int(round(1.0 / task.sim_dt))
     runtime_profile = runtime_profile_for_task(task)
+    # Office physics ticks at 250 Hz: a 20 ms tick cannot resolve motor lag (~1% cost).
+    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_interceptor_office" else 1
     common_kwargs = dict(
         gui=gui,
         record=False,
         obs=ObservationType.RGB,
         ctrl_freq=ctrl_freq,
-        pyb_freq=ctrl_freq,
+        pyb_freq=ctrl_freq * pyb_mult,
         **dict(runtime_profile.env_bootstrap),
     )
 
@@ -101,12 +106,16 @@ def make_env_with_initial_obs(
             **common_kwargs,
         )
 
-    env.SPEED_LIMIT = (
-        INTERCEPTOR_MINER_SPEED
-        if getattr(task, "family_id", "") == "cf_interceptor"
-        else SPEED_LIMIT
+    family_id = getattr(task, "family_id", "")
+    if family_id == "cf_interceptor":
+        env.SPEED_LIMIT = INTERCEPTOR_MINER_SPEED
+    elif family_id == "cf_interceptor_office":
+        env.SPEED_LIMIT = OFFICE_RC_SPEED
+    else:
+        env.SPEED_LIMIT = SPEED_LIMIT
+    env.MAX_YAW_RATE = (
+        OFFICE_RC_YAW_RATE if family_id == "cf_interceptor_office" else MAX_YAW_RATE
     )
-    env.MAX_YAW_RATE = MAX_YAW_RATE
     env.ACT_TYPE = ActionType.VEL
 
     cli = env.getPyBulletClient()

@@ -215,7 +215,8 @@ class ChallengeFamilyRuntime:
 
     def apply_world_physics(self, env: Any) -> None:
         """Per PyBullet substep, before stepSimulation: apply forces to family-owned
-        bodies (e.g. the interceptor target's rotors). No-op by default."""
+        bodies (e.g. the interceptor target's rotors) or disturbance forces on the
+        miner drones (e.g. the office VPS drift). No-op by default."""
         _ = env
 
     def protected_body_uids(self, env: Any) -> set[int]:

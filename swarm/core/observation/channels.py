@@ -8,10 +8,14 @@ import numpy as np
 from swarm.constants import (
     INTERCEPTOR_DEPTH_RES,
     MAX_RAY_DISTANCE,
+    OFFICE_CAMERA_RES,
+    OFFICE_DET_MAX_BOXES,
     SAR_DEPTH_RES,
     SAR_RGB_RES,
     SWARM_NEIGHBOR_K,
 )
+
+_DETECTION_DIM = 2 + 5 * OFFICE_DET_MAX_BOXES
 
 
 def action_buffer_size(ctrl_freq: int) -> int:
@@ -108,8 +112,31 @@ def _search_clue_offset(env, sv, ctx):
     return np.asarray((env._search_area_center - sv[0:3])[:2], dtype=np.float32)
 
 
+def _telemetry_slice(lo, hi):
+    """Compute fn for a slice of the office telemetry packet (zeros before the first packet)."""
+    def compute(env, sv, ctx):
+        packets = getattr(env, "_office_telemetry", None)
+        if packets is None:
+            return np.zeros((hi - lo,), dtype=np.float32)
+        d = int(ctx.get("self_index", 0))
+        return np.asarray(packets[d, lo:hi], dtype=np.float32)
+    return compute
+
+
+def _detection_block(env, sv, ctx):
+    block = getattr(env, "_office_detection", None)
+    if block is None:
+        return np.zeros((_DETECTION_DIM,), dtype=np.float32)
+    return np.asarray(block, dtype=np.float32)
+
+
 def _depth_camera(env, sv, ctx):
     return ctx["depth"]
+
+
+def _office_rgb(env, sv, ctx):
+    # Lazy: held steps return the cached frame, fresh steps render in place.
+    return env._office_rgb_frame()
 
 
 def _rgb_camera(env, sv, ctx):
@@ -162,6 +189,30 @@ OBSERVATION_CHANNELS = {
         "search_clue_offset", "search_clue_offset_xy", "vector", _search_clue_offset,
         env_dim=lambda e: 2, param_dim=lambda cf, ad: 2,
     ),
+    # Simulated Tello state-packet slices for the office family: only what the
+    # physical SDK reports, delivered at packet cadence with noise and delay.
+    "tello_attitude": SensorChannel(
+        "tello_attitude", "attitude_pitch_roll_sincos_yaw", "vector", _telemetry_slice(0, 4),
+        env_dim=lambda e: 4, param_dim=lambda cf, ad: 4,
+    ),
+    "tello_velocity": SensorChannel(
+        "tello_velocity", "body_velocity_xyz", "vector", _telemetry_slice(4, 7),
+        env_dim=lambda e: 3, param_dim=lambda cf, ad: 3,
+    ),
+    "tello_acceleration": SensorChannel(
+        "tello_acceleration", "body_acceleration_xyz", "vector", _telemetry_slice(7, 10),
+        env_dim=lambda e: 3, param_dim=lambda cf, ad: 3,
+    ),
+    "tello_altitude": SensorChannel(
+        "tello_altitude", "altitude_tof_height_baro_age_valid", "vector", _telemetry_slice(10, 15),
+        env_dim=lambda e: 5, param_dim=lambda cf, ad: 5,
+    ),
+    # Emulated YOLO output for the office family: latest frame's boxes + age,
+    # nothing the real detector would not report.
+    "tello_detection": SensorChannel(
+        "tello_detection", "detection_n_age_boxes2x5", "vector", _detection_block,
+        env_dim=lambda e: _DETECTION_DIM, param_dim=lambda cf, ad: _DETECTION_DIM,
+    ),
     "depth_camera": SensorChannel(
         "depth_camera", "depth_camera", "image", _depth_camera,
         image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 1),
@@ -186,5 +237,12 @@ OBSERVATION_CHANNELS = {
         "rgb_camera", "rgb_camera", "image", _rgb_camera,
         image_shape=lambda e: (SAR_RGB_RES, SAR_RGB_RES, 3),
         param_image_shape=(SAR_RGB_RES, SAR_RGB_RES, 3),
+    ),
+    # Held-frame colour stream for the office family (its real Tello has no depth
+    # sensor); the appearance-randomized, jittered contract observation.
+    "rgb_camera_office": SensorChannel(
+        "rgb_camera_office", "rgb_camera", "image", _office_rgb,
+        image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 3),
+        param_image_shape=(OFFICE_CAMERA_RES, OFFICE_CAMERA_RES, 3),
     ),
 }

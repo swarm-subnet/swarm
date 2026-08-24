@@ -6,6 +6,8 @@ Air-to-air pursuit: find a fleeing drone with your depth camera and take it down
 
 Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search area, and hunts a second drone flown by the validator. The target cruises until you get close, then flees and jinks. You win by physically catching it (ram it or close within the kill radius) before the 60-second clock runs out. Both aircraft are the 36 cm interceptor airframe (a cf2x scaled ×3), big enough to show up on the depth sensor at range.
 
+This family is completed: the score reached the 0.999 solve threshold, the crown is frozen, and the winning solution is preserved as open source. Its effective payout is 0%; the 30% allocation is historical.
+
 ---
 
 <details>
@@ -36,7 +38,7 @@ Your drone lifts off from a pad, crosses 60–100 m of open terrain to a search 
 | Airframe | 36 cm interceptor drone: mass 0.729 kg, thrust-to-weight 2.25, max 60 km/h |
 | Catch condition | Contact with the target, or distance ≤ 0.15 m |
 | Score weights | 0.5 success + 0.5 time (no safety term) |
-| Emission allocation | 0.30 |
+| Emission allocation | 0% effective payout (historical 0.30) |
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>
 
@@ -213,12 +215,6 @@ Per-episode `info` exposes the chase telemetry you'll want when tuning: `interce
 
 ## Local Testing
 
-Package, verify, and benchmark the same artifact with the family selected:
-
-```bash
-swarm model package --source ./my_model --family-id cf_interceptor
-swarm model verify --model Submission/submission.zip
-swarm benchmark --model Submission/submission.zip --family-id cf_interceptor --workers 4
-```
+This family is completed and no longer accepts new submissions. New submissions should target [Office Interceptor](office_interceptor.md).
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>

@@ -28,6 +28,7 @@ def test_domain_model_schema_snapshot():
         "challenge_family_ids": [
             "cf_autopilot",
             "cf_interceptor",
+            "cf_interceptor_office",
             "cf_search_and_rescue",
             "cf_swarm_autopilot",
             "cf_swarm_sar",
@@ -48,7 +49,7 @@ def test_domain_model_schema_snapshot():
         ],
         "family_states": [
             "incubating",
-            "active",
+            "active", "completed",
             "archived",
         ],
         "emissions_states": [
@@ -65,6 +66,7 @@ def test_domain_model_schema_snapshot():
             "village",
             "warehouse",
             "forest",
+            "office",
         ],
         "challenge_type_to_environment_type": {
             1: "city",
@@ -73,6 +75,7 @@ def test_domain_model_schema_snapshot():
             4: "village",
             5: "warehouse",
             6: "forest",
+            7: "office",
         },
         "challenge_type_to_benchmark_group": {
             1: "type1_city",
@@ -81,6 +84,7 @@ def test_domain_model_schema_snapshot():
             4: "type4_village",
             5: "type5_warehouse",
             6: "type6_forest",
+            7: "type7_office",
         },
         "benchmark_group_order": [
             "type1_city",
@@ -89,6 +93,7 @@ def test_domain_model_schema_snapshot():
             "type4_village",
             "type5_warehouse",
             "type6_forest",
+            "type7_office",
         ],
     }
 
@@ -146,6 +151,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
     assert CHALLENGE_FAMILY_TO_INTERFACE_VERSIONS == {
         "cf_autopilot": ("submission_zip.v1",),
         "cf_interceptor": ("submission_zip.v1",),
+        "cf_interceptor_office": ("submission_zip.v1",),
         "cf_search_and_rescue": ("submission_zip.v1",),
         "cf_swarm_autopilot": ("submission_zip.v1",),
         "cf_swarm_sar": ("submission_zip.v1",),
@@ -189,7 +195,8 @@ def test_filter_challenge_family_definitions_handles_incubating_and_archived():
     active_ids = sorted(
         family_id
         for family_id, definition in registry["challenge_families"].items()
-        if definition["family_state"] == "active"
+        # A completed family stays visible: its page celebrates the winner.
+        if definition["family_state"] in ("active", "completed")
     )
 
     filtered_without_incubating = filter_challenge_family_definitions(

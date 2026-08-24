@@ -34,7 +34,7 @@ Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm repo pac
 | `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest |
 | `cf_swarm_autopilot` | City, Open, Mountain, Village, Forest |
 | `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
-| `cf_interceptor` | Open |
+| `cf_interceptor_office` | Office |
 
 ---
 
@@ -90,6 +90,9 @@ swarm visualize --type 5 --family-id cf_search_and_rescue
 # Fly one exact seed
 swarm visualize --type 1 --seed 12345
 
+# Walk the office (type 7) in its real colours
+swarm visualize --type 7 --family-id cf_interceptor_office
+
 # List the seeds your model failed, then open one
 swarm visualize --summary-json bench_summary.json --failed
 swarm visualize --summary-json bench_summary.json --failed-index 3
@@ -102,6 +105,7 @@ Omit `--type` and the challenge type is inferred from `--summary-json`, `--seed-
 Useful options:
 
 - `--family-id <id>`: challenge family to build the world for (default: `cf_autopilot`). The family decides what is in the map — search-and-rescue spawns a victim, interceptor flies at its own speed limit.
+- `--randomize-appearance`: office only. Office Interceptor repaints its colours and lighting from the seed on every scored episode; the visualizer shows the room in its real colours instead, so you can read the layout. Pass this flag to see the skin a scored episode actually gets.
 - `--speed <m/s>` / `--boost <x>`: base flight speed and the `Shift` multiplier.
 - `--camera follow|fixed`: viewer camera mode.
 - `--width` / `--height`: window size (default 960x540).

@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v5.1.1.3-F5D400?style=flat-square&labelColor=111111" /></a>
+  <a href="https://github.com/swarm-subnet/swarm/releases"><img alt="Version" src="https://img.shields.io/badge/version-v5.1.5.0-F5D400?style=flat-square&labelColor=111111" /></a>
   <a href="https://discord.gg/8dPqPDw7GC"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
   <a href="https://x.com/SwarmSubnet"><img alt="X" src="https://img.shields.io/badge/X-Follow-111111?style=flat-square&logo=x&logoColor=white" /></a>
   <a href="https://swarm124.com"><img alt="Website" src="https://img.shields.io/badge/swarm124.com-visit-F5D400?style=flat-square&labelColor=111111" /></a>
@@ -54,13 +54,15 @@ Swarm is five separate competitions, each with its own champion and its own shar
 
 | Mission | What your drone has to do | Reward share |
 |---------|---------------------------|:------------:|
-| **[Interceptor](docs/families/interceptor.md)** | Chase down a fleeing drone and catch it before time runs out | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
+| **[Office Interceptor](docs/families/office_interceptor.md)** | Hunt a target drone inside a fixed office and catch it before time runs out | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
 | **[Swarm Autopilot](docs/families/swarm_autopilot.md)** | Land a whole team of drones, fast and without collisions | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
 | **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
 | **[Autopilot](docs/families/autopilot.md)** | Cross the world, find the landing pad, and touch down clean | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
 | **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
 
 <p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
+
+<p align="center"><sub><b>Solved:</b> <a href="docs/families/interceptor.md">Interceptor</a> — open-terrain pursuit, cleared by its champion and closed. The crown is final and the winning solution is preserved as open source.</sub></p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -169,7 +171,7 @@ None of these worlds exist until the benchmark builds them. Every 14-day epoch, 
 <!-- SCORING -->
 ## Scoring &amp; Rewards
 
-Every flight earns a score from 0 to 1, on three things:
+The standard score from 0 to 1 uses three things:
 
 <table align="center">
 <tr>
@@ -179,7 +181,7 @@ Every flight earns a score from 0 to 1, on three things:
 </tr>
 </table>
 
-A drone's rank is its **average across all 1,100 worlds**, so steady skill beats a few lucky runs. (Interceptor is pure pursuit: half success, half speed.)
+A drone's rank is its **average across all 1,100 worlds**, so steady skill beats a few lucky runs. (Interceptor and Office Interceptor use pure pursuit: half success, half speed, with no safety term.)
 
 Rewards run on **King of the Hill**. Each mission pays its **last five champions**, not just the current one, and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
 

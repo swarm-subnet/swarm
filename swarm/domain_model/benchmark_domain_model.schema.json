@@ -7,6 +7,7 @@
       "ids": [
         "cf_autopilot",
         "cf_interceptor",
+        "cf_interceptor_office",
         "cf_search_and_rescue",
         "cf_swarm_autopilot",
         "cf_swarm_sar"
@@ -44,6 +45,7 @@
     "family_state": [
       "incubating",
       "active",
+      "completed",
       "archived"
     ],
     "emissions_state": [
@@ -63,7 +65,8 @@
       "mountain",
       "village",
       "warehouse",
-      "forest"
+      "forest",
+      "office"
     ]
   },
   "skills": {
@@ -394,6 +397,49 @@
         "short_label": "Interceptor",
         "slug": "interceptor"
       },
+      "family_state": "completed",
+      "emissions_state": "archived",
+      "visibility": "public",
+      "skill_ids": [
+        "sk_autonomous_navigation"
+      ],
+      "market_vertical_ids": [
+        "mv_general_autonomy"
+      ],
+      "environment_types": [
+        "open"
+      ],
+      "score_schema_id": "ss_navigation_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
+        "early_fail_checkpoints": {
+          "50": 0.5,
+          "100": 0.7,
+          "150": 0.85
+        },
+        "min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.015,
+        "champion_min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "emission_allocation": 0.3
+    },
+    "cf_interceptor_office": {
+      "family_id": "cf_interceptor_office",
+      "name": "Interceptor Office",
+      "description": "Indoor air-to-air pursuit: a Tello-class drone hunts a target drone inside a fixed office digital twin. Body-frame RC actions (no GPS or world-frame control), built for sim-to-real transfer to a physical Tello.",
+      "display": {
+        "label": "Interceptor Office",
+        "short_label": "Office",
+        "slug": "interceptor-office"
+      },
       "family_state": "active",
       "emissions_state": "active",
       "visibility": "public",
@@ -404,7 +450,7 @@
         "mv_general_autonomy"
       ],
       "environment_types": [
-        "open"
+        "office"
       ],
       "score_schema_id": "ss_navigation_v1",
       "supported_interface_versions": [
@@ -1040,6 +1086,109 @@
           "fill": 0.0
         }
       }
+    },
+    "cf_interceptor_office:submission_zip.v1": {
+      "family_id": "cf_interceptor_office",
+      "interface_version": "submission_zip.v1",
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "rgb",
+          "state"
+        ],
+        "fields": {
+          "rgb": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              256,
+              256,
+              3
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              "dynamic"
+            ],
+            "rank": 1,
+            "minimum_length": 16,
+            "semantic_channels": [
+              "attitude_pitch_roll_sincos_yaw",
+              "body_velocity_xyz",
+              "body_acceleration_xyz",
+              "altitude_tof_height_baro_age_valid",
+              "detection_n_age_boxes2x5",
+              "action_history"
+            ]
+          }
+        }
+      },
+      "observation_assembly": {
+        "rgb": [
+          "rgb_camera_office"
+        ],
+        "state": [
+          "tello_attitude",
+          "tello_velocity",
+          "tello_acceleration",
+          "tello_altitude",
+          "tello_detection",
+          "action_history"
+        ]
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": [
+          4
+        ],
+        "component_names": [
+          "lr",
+          "fb",
+          "ud",
+          "yaw"
+        ],
+        "lower_bound": [
+          -1.0,
+          -1.0,
+          -1.0,
+          -1.0
+        ],
+        "upper_bound": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "smoke_test_observation": {
+        "rgb": {
+          "shape": [
+            256,
+            256,
+            3
+          ],
+          "fill": 0.25
+        },
+        "state": {
+          "shape": [
+            127
+          ],
+          "fill": 0.0
+        }
+      }
     }
   },
   "legacy_aliases": {
@@ -1049,7 +1198,8 @@
       "3": "mountain",
       "4": "village",
       "5": "warehouse",
-      "6": "forest"
+      "6": "forest",
+      "7": "office"
     },
     "benchmark_group_to_environment_type": {
       "type1_city": "city",
@@ -1057,7 +1207,8 @@
       "type3_mountain": "mountain",
       "type4_village": "village",
       "type5_warehouse": "warehouse",
-      "type6_forest": "forest"
+      "type6_forest": "forest",
+      "type7_office": "office"
     },
     "field_renames": {
       "challenge_type": "environment_type",

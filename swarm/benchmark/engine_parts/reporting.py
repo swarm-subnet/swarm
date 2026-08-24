@@ -293,7 +293,7 @@ def _print_results(
             base[order[i % len(order)]] += 1
         return base
 
-    type_counts = _allocate(1000, CHALLENGE_TYPE_DISTRIBUTION, [1, 2, 3, 4, 5, 6])
+    type_counts = _allocate(1000, CHALLENGE_TYPE_DISTRIBUTION, sorted(CHALLENGE_TYPE_TO_BENCHMARK_GROUP))
     dist = {
         group_name: type_counts[challenge_type]
         for challenge_type, group_name in CHALLENGE_TYPE_TO_BENCHMARK_GROUP.items()

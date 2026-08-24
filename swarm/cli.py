@@ -107,6 +107,7 @@ BENCH_GROUP_ORDER = [
     "type4_village",
     "type5_warehouse",
     "type6_forest",
+    "type7_office",
 ]
 BENCH_GROUP_TO_TYPE = {
     "type1_city": 1,
@@ -115,6 +116,7 @@ BENCH_GROUP_TO_TYPE = {
     "type4_village": 4,
     "type5_warehouse": 5,
     "type6_forest": 6,
+    "type7_office": 7,
 }
 TYPE_LABELS = {
     1: "city",
@@ -123,6 +125,7 @@ TYPE_LABELS = {
     4: "village",
     5: "warehouse",
     6: "forest",
+    7: "office",
 }
 
 
@@ -1717,8 +1720,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest).",
+        choices=[1, 2, 3, 4, 5, 6, 7],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
     )
     visualize_parser.add_argument(
         "--family-id",
@@ -1847,8 +1850,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6],
-        help="Challenge type for single-seed replay.",
+        choices=[1, 2, 3, 4, 5, 6, 7],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
     )
     video_parser.add_argument(
         "--seed-file",

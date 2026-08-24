@@ -110,7 +110,8 @@ def _require_benchmark_permissions() -> None:
 def test_default_model_fixed_seed_fixture_has_expected_shape() -> None:
     seed_groups = _load_fixed_seed_groups()
 
-    assert list(seed_groups) == BENCH_GROUP_ORDER
+    # the frozen 2026-04 fixture spans exactly the six outdoor autopilot maps
+    assert list(seed_groups) == list(EXPECTED_GROUP_COUNTS)
     assert {group: len(seeds) for group, seeds in seed_groups.items()} == EXPECTED_GROUP_COUNTS
     assert sum(len(seeds) for seeds in seed_groups.values()) == FIXED_SEED_TOTAL
 

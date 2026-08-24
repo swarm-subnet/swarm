@@ -42,8 +42,11 @@ def _compute_koth_stub(sync_data, *, metagraph=None):
             continue
     return _koth.compute_weights(entries)
 
+from swarm.validator.utils_parts.weights import accept_sync_version
+
 _stub_utils._apply_backend_weights_to_scores = _apply_stub
 _stub_utils.compute_koth_weights_from_sync = _compute_koth_stub
+_stub_utils.accept_sync_version = accept_sync_version
 sys.modules.setdefault("swarm.validator.utils", _stub_utils)
 
 from swarm.base import validator as validator_mod

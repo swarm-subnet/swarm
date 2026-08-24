@@ -146,6 +146,7 @@ class BaseValidatorNeuron(BaseNeuron):
         """
         from swarm.validator.utils import (
             _apply_backend_weights_to_scores,
+            accept_sync_version,
             compute_koth_weights_from_sync,
         )
         while True:
@@ -157,7 +158,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 local_weights = compute_koth_weights_from_sync(
                     data, metagraph=self.metagraph
                 )
-                if local_weights is not None:
+                if local_weights is not None and accept_sync_version(self, data):
                     _apply_backend_weights_to_scores(self, local_weights)
             except asyncio.CancelledError:
                 break

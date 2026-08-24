@@ -37,6 +37,8 @@ RANDOM_START = True                     # Toggle random starting point generatio
 # Camera and rendering settings
 CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
 CAMERA_FOV_VARIANCE = 2.0               # FOV randomization range (±degrees)
+CAMERA_EYE_FWD_M = 0.13                 # Camera eye offset ahead of the body center (meters)
+CAMERA_EYE_UP_M = 0.05                  # Camera eye offset above the body center (meters)
 # Depth sensor parameters
 DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
 DEPTH_FAR = 30.0                        # PyBullet camera far plane (meters)
@@ -515,6 +517,152 @@ if INTERCEPTOR_MINER_SPEED <= 0.0:
     raise ValueError("INTERCEPTOR_MINER_SPEED must be positive")
 if not (0.0 < INTERCEPTOR_MIN_START_DISTANCE_M <= INTERCEPTOR_MAX_START_DISTANCE_M):
     raise ValueError("INTERCEPTOR start-distance bounds invalid")
+
+# =============================================================================
+# OFFICE INTERCEPTOR (indoor Tello family)
+# =============================================================================
+# Body-frame RC contract [lr, fb, ud, yaw] mirroring the Tello SDK sticks.
+# Sim defaults from the official specs; calibration knobs for real-flight logs.
+
+OFFICE_CHALLENGE_TYPE = 7                   # office indoor map (fixed layout, no random terrain)
+OFFICE_RC_SPEED = 3.0                       # m/s — per-axis stick-full speed (Tello slow mode)
+OFFICE_RC_YAW_RATE = 3.141                  # rad/s — stick-full yaw rate
+OFFICE_RC_DEAD_ZONE = 0.05                  # |stick| below this counts as zero
+OFFICE_RC_SLEW_PER_SEC = 4.0                # max stick-units/s of command change (RC feel)
+OFFICE_RC_YAW_LEAD_RAD = 0.6                # max angle the yaw setpoint may lead the true yaw
+OFFICE_MAX_TILT_DEG = 60.0                  # deg — safety cutoff for the indoor drone
+OFFICE_CAMERA_RES = 256                     # env-local camera resolution (the RGB observation)
+OFFICE_HORIZON_SEC = 60.0                   # episode horizon
+OFFICE_SPAWN_Z = 0.05                       # floor spawn height (no platform indoors)
+OFFICE_MIN_START_DISTANCE_M = 4.0           # min chaser-to-target spawn separation
+OFFICE_MAX_START_DISTANCE_M = 14.0          # max chaser-to-target spawn separation
+OFFICE_ACQUIRE_SLACK_SEC = 6.5              # slack: locating the target + motor spool-up + drag
+OFFICE_W_SUCCESS = 0.5                      # score weight: interception achieved
+OFFICE_W_TIME = 0.5                         # score weight: time term
+
+# Simulated Tello telemetry link (state packets over UDP at ~10 Hz).
+# Units from the SDK docs; noise figures calibrated against the SecureLink
+# Tello dataset (see docs/families/securelink_calibration_summary.json).
+OFFICE_TELEM_PERIOD_STEPS = 5               # control steps between packets (10 Hz at 50 Hz ctrl)
+OFFICE_TELEM_DELAY_STEPS = 2                # transport delay: packets carry state from N steps ago
+OFFICE_TELEM_DROP_PROB = 0.05               # per-packet loss probability
+OFFICE_TELEM_STALE_SEC = 0.5                # age beyond this flips telemetry_valid to 0
+OFFICE_TELEM_ATTITUDE_NOISE_DEG = 1.0       # IMU attitude noise (std, per packet)
+OFFICE_TELEM_VELOCITY_NOISE = 0.05          # m/s — VPS velocity noise (std)
+OFFICE_TELEM_ACCEL_NOISE = 0.3              # m/s^2 — accelerometer noise (std)
+OFFICE_TELEM_ACCEL_BIAS = 0.15              # m/s^2 — per-episode accelerometer bias (std)
+OFFICE_TELEM_TOF_NOISE_M = 0.03             # m — downward ToF noise (std)
+OFFICE_TELEM_HEIGHT_NOISE_M = 0.03          # m — fused-height noise (std)
+OFFICE_TELEM_BARO_NOISE_M = 0.15            # m — barometer noise (std, measured 0.12-0.16)
+OFFICE_TELEM_BARO_WALK_M = 0.005            # m — barometer random walk per packet (std)
+OFFICE_TELEM_TOF_MAX_M = 8.0                # m — ToF range limit (reads max beyond it)
+OFFICE_TELEM_SEED_OFFSET = 0x7E110          # decorrelates the telemetry rng from the map seed
+OFFICE_DRIFT_SEED_OFFSET = 0xD41F7          # decorrelates the VPS drift direction stream
+OFFICE_VPS_DRIFT_FORCE_N = 0.002            # N — slow lateral drift force emulating VPS error
+
+# Target drone: validator-flown Tello with a seeded per-episode personality.
+OFFICE_TARGET_SPEED_MIN = 0.7               # m/s — lazy pilot; chaser stick-full is 3.0
+OFFICE_TARGET_SPEED_MAX = 1.8               # m/s — brisk pilot
+OFFICE_TARGET_ALT_MIN_M = 1.3               # flight band above the furniture, below the ceiling
+OFFICE_TARGET_ALT_MAX_M = 2.6
+OFFICE_TARGET_PAUSE_MIN_SEC = 0.5           # hover pause at a waypoint, like released sticks
+OFFICE_TARGET_PAUSE_MAX_SEC = 1.5
+OFFICE_TARGET_LEG_MIN_LOW = 1.2             # m — profile min-leg range: jittery short hops...
+OFFICE_TARGET_LEG_MIN_HIGH = 3.0            # m — ...to long cruising legs
+OFFICE_TARGET_AWARE_PROB = 0.65             # fraction of seeds whose target reacts to the chaser
+OFFICE_TARGET_REACT_MIN_M = 1.5             # chaser distance that spooks an aware target
+OFFICE_TARGET_REACT_MAX_M = 5.0
+OFFICE_TARGET_FLEE_MIN = 0.55               # flee speed as a fraction of OFFICE_RC_SPEED
+OFFICE_TARGET_FLEE_MAX = 0.65               # -> 1.65-1.95 m/s, always under the chaser's 3.0
+OFFICE_TARGET_BRAKE_DECEL = 2.4             # m/s^2 — calibrated PID braking (0.3 m from 1.2 m/s)
+OFFICE_TARGET_GUARD_SAFETY = 2.0            # brake guard = this x physical stopping distance
+OFFICE_MOTOR_TAU_SEC = 0.040                # s — brushed 8520 motor lag (30-60 ms); tune from real logs
+OFFICE_DRAG_COEF = 0.004                    # N/(m/s)^2 — from CdA ~0.006 m^2 x Cd 1.2; tune from real logs
+OFFICE_GROUND_EFFECT_COEF = 4.0             # thrust gain x (prop_r/4z)^2: ~25% at prop height
+OFFICE_PROP_RADIUS_M = 0.038                # 3-inch prop radius
+OFFICE_TARGET_TURN_SPEED = 0.5              # m/s — corner entry speed: turn overshoot stays inside
+OFFICE_TARGET_ACCEL = 2.0                   # m/s^2 — speed build after each corner
+OFFICE_TARGET_DODGE_REPLAN_STEPS = 25       # >= 0.5 s between dodge replans (human reaction)
+OFFICE_TARGET_ARRIVE_M = 0.25               # waypoint arrival radius
+OFFICE_TARGET_CLEAR_M = 0.15                # leg clearance radius for the ray checks
+OFFICE_KILL_RADIUS_M = 0.15                 # deep-overlap anti-tunnel guard; the catch is a real hit
+OFFICE_TARGET_SELFCRASH_FORCE = 3.0         # N — world-contact force that counts as a target crash
+OFFICE_TARGET_SEED_OFFSET = 0x0FF1CE        # decorrelates the target rng from map + telemetry
+
+# Appearance randomization: every episode the office wears a different seeded
+# skin (tints, light, camera jitter) so policies learn geometry, not color.
+OFFICE_TINT_LOW = 0.35                      # per-channel body tint drawn from [low, 1.0]
+OFFICE_RGB_BRIGHT_LOW = 0.8                 # per-episode camera brightness factor range
+OFFICE_RGB_BRIGHT_HIGH = 1.1
+OFFICE_RGB_NOISE_STD = 0.02                 # per-frame sensor noise std, [0,1] units
+OFFICE_RGB_PERIOD_STEPS = 2                 # fresh camera frame every N control steps (~25 Hz;
+                                            # the real stream is 30 fps, held frames between)
+OFFICE_APPEARANCE_SEED_OFFSET = 0xC0102     # decorrelates the appearance rng from the other streams
+
+# Detector emulator: statistical stand-in for the real YOLO drone detector
+# (mAP50 0.97, P 0.991, R 0.956). Marginals are measured; the bin shapes are
+# placeholders until the calibration recordings land.
+OFFICE_DET_PERIOD_STEPS = 5                 # detector frames every N control steps (~10 Hz rig)
+OFFICE_DET_DELAY_STEPS = 2                  # inference latency: boxes describe a frame N steps old
+OFFICE_DET_RECALL = 0.956                   # measured marginal detection rate on visible targets
+OFFICE_DET_MISS_PERSIST = 0.5               # chance a miss continues next frame (streaks, not coin flips)
+OFFICE_DET_FP_RATE = 0.009                  # per-frame false-positive probability (precision emerges)
+OFFICE_DET_CONF_FLOOR = 0.25                # the real rig never emits boxes below this confidence
+OFFICE_DET_JITTER_SIZE = 0.12               # box size noise (relative std)
+OFFICE_DET_STALE_SEC = 0.8                  # obs detection age saturates at twice this
+OFFICE_DET_MAX_BOXES = 2                    # contract slots: the target + a rare false positive
+OFFICE_DET_SEED_OFFSET = 0xDE7EC7           # decorrelates the detector rng from the other streams
+
+if OFFICE_RC_SPEED <= 0.0 or OFFICE_RC_YAW_RATE <= 0.0:
+    raise ValueError("OFFICE_RC speed and yaw rate must be positive")
+if not (0.0 <= OFFICE_RC_DEAD_ZONE < 1.0):
+    raise ValueError("OFFICE_RC_DEAD_ZONE must be in [0, 1)")
+if OFFICE_RC_SLEW_PER_SEC <= 0.0 or OFFICE_RC_YAW_LEAD_RAD <= 0.0:
+    raise ValueError("OFFICE_RC slew and yaw lead must be positive")
+if not (0.0 < OFFICE_MIN_START_DISTANCE_M <= OFFICE_MAX_START_DISTANCE_M):
+    raise ValueError("OFFICE start-distance bounds invalid")
+if OFFICE_TELEM_PERIOD_STEPS < 1 or OFFICE_TELEM_DELAY_STEPS < 0:
+    raise ValueError("OFFICE telemetry period/delay invalid")
+if OFFICE_TELEM_DELAY_STEPS >= OFFICE_TELEM_PERIOD_STEPS:
+    raise ValueError("OFFICE telemetry delay must be shorter than the packet period")
+if not (0.0 <= OFFICE_TELEM_DROP_PROB < 1.0):
+    raise ValueError("OFFICE_TELEM_DROP_PROB must be in [0, 1)")
+if OFFICE_TELEM_STALE_SEC <= OFFICE_TELEM_PERIOD_STEPS * SIM_DT:
+    raise ValueError("OFFICE_TELEM_STALE_SEC must survive a normal packet gap")
+if not (0.0 < OFFICE_TARGET_SPEED_MIN <= OFFICE_TARGET_SPEED_MAX < OFFICE_RC_SPEED):
+    raise ValueError("OFFICE_TARGET cruise band must be positive and below the chaser cap")
+if not (0.0 < OFFICE_TARGET_FLEE_MIN <= OFFICE_TARGET_FLEE_MAX < 1.0):
+    raise ValueError("OFFICE_TARGET flee fractions must keep flee speed below the chaser cap")
+if not (0.0 <= OFFICE_TARGET_AWARE_PROB <= 1.0):
+    raise ValueError("OFFICE_TARGET_AWARE_PROB must be in [0, 1]")
+if not (0.0 < OFFICE_TARGET_REACT_MIN_M <= OFFICE_TARGET_REACT_MAX_M):
+    raise ValueError("OFFICE_TARGET react range bounds invalid")
+if OFFICE_TARGET_BRAKE_DECEL <= 0.0 or OFFICE_TARGET_GUARD_SAFETY < 1.5:
+    raise ValueError("OFFICE_TARGET brake guard must keep at least a 1.5x stopping margin")
+if OFFICE_TARGET_DODGE_REPLAN_STEPS < 1:
+    raise ValueError("OFFICE_TARGET_DODGE_REPLAN_STEPS must be at least 1")
+if not (0.0 < OFFICE_TARGET_TURN_SPEED <= OFFICE_TARGET_SPEED_MIN) or OFFICE_TARGET_ACCEL <= 0.0:
+    raise ValueError("OFFICE_TARGET corner ramp must start at or below the slowest cruise")
+if not (0.0 < OFFICE_TARGET_ALT_MIN_M < OFFICE_TARGET_ALT_MAX_M):
+    raise ValueError("OFFICE_TARGET altitude band invalid")
+if not (0.0 <= OFFICE_TARGET_PAUSE_MIN_SEC <= OFFICE_TARGET_PAUSE_MAX_SEC):
+    raise ValueError("OFFICE_TARGET pause bounds invalid")
+if not (OFFICE_TARGET_ARRIVE_M < OFFICE_TARGET_LEG_MIN_LOW <= OFFICE_TARGET_LEG_MIN_HIGH):
+    raise ValueError("OFFICE_TARGET min-leg range must exceed the arrival radius")
+if OFFICE_DET_PERIOD_STEPS < 1 or not (0 <= OFFICE_DET_DELAY_STEPS < OFFICE_DET_PERIOD_STEPS):
+    raise ValueError("OFFICE_DET period/delay invalid")
+if not (0.0 < OFFICE_DET_RECALL <= 1.0) or not (0.0 <= OFFICE_DET_FP_RATE < 1.0):
+    raise ValueError("OFFICE_DET recall/false-positive rates invalid")
+if OFFICE_DET_STALE_SEC <= OFFICE_DET_PERIOD_STEPS * SIM_DT:
+    raise ValueError("OFFICE_DET_STALE_SEC must survive a normal frame gap")
+if not (0.0 < OFFICE_TINT_LOW < 1.0):
+    raise ValueError("OFFICE_TINT_LOW must be in (0, 1)")
+if not (0.0 < OFFICE_RGB_BRIGHT_LOW <= OFFICE_RGB_BRIGHT_HIGH):
+    raise ValueError("OFFICE_RGB brightness bounds invalid")
+if OFFICE_RGB_NOISE_STD < 0.0:
+    raise ValueError("OFFICE_RGB_NOISE_STD must be non-negative")
+if OFFICE_RGB_PERIOD_STEPS < 1:
+    raise ValueError("OFFICE_RGB_PERIOD_STEPS must be at least 1")
 
 PLATFORM_MOVEMENT_PATTERNS = ["circular", "linear", "figure8"]
 PLATFORM_SPEED_MIN, PLATFORM_SPEED_MAX = 0.6, 1.2

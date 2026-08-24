@@ -9,7 +9,7 @@ This directory contains repository-level executable utilities.
 - `visualize_map.py`
   - Interactive live-render visualizer for manually flying a seed/map with the keyboard. Also reachable as `swarm visualize`, which resolves `--seed`/`--summary-json --failed` into the right `--type`/`--family-id` for you. Accepts `--family-id` (default `cf_autopilot`) so any challenge family renders with its own world-building logic, e.g. `python3 scripts/visualize_map.py --type 1 --family-id cf_search_and_rescue`.
 - `generate_video.py`
-  - Renders mp4 flight videos for a model + seed, or a saved benchmark seed file. Also reachable as `swarm video`. Accepts `--family-id` (default `cf_autopilot`) and `--backend {local,benchmark}` (local fast replay vs. the exact benchmark Docker/RPC replay), e.g. `python3 scripts/generate_video.py --model Submission/submission.zip --seed 42 --type 1 --family-id cf_interceptor --mode chase`.
+  - Renders mp4 flight videos for a model + seed, or a saved benchmark seed file. Also reachable as `swarm video`. Accepts `--family-id` (default `cf_autopilot`) and `--backend {local,benchmark}` (local fast replay vs. the exact benchmark Docker/RPC replay), e.g. `python3 scripts/generate_video.py --model Submission/submission.zip --seed 42 --type 7 --family-id cf_interceptor_office --mode chase`.
 - `stress_benchmark_compare.py`
   - Repeats validator-style benchmark samples for one model, saves per-run artifacts, and emits a comparison report with average-score variance across runs.
   - Example smoke test:

@@ -1,0 +1,55 @@
+{
+  "source": {
+    "dataset": "SecureLink (github.com/PhyGroup/SecureLink)",
+    "hardware": "20 DJI Tello drones, 4 environments incl. office, 12+ hours",
+    "rows_analyzed": 251148,
+    "notes": "ESP32 carrier boards (device ids 20-21) excluded; sensor sheet only. No ground-truth position or RC logs, so only the sensor stream is calibrated."
+  },
+  "measurements": {
+    "packet_interval_s": {"median": 0.102, "mean": 0.105, "p90": 0.181, "p99": 0.224},
+    "packet_loss": {
+      "effective_fraction": 0.033,
+      "shape": "single-packet gaps (~0.2 s), no long bursts",
+      "caveat": "measured with 20 drones sharing one router; a single drone is likely cleaner"
+    },
+    "attitude_deg": {
+      "quiet_window_std_median": 0.0,
+      "note": "integer-degree output does not flicker when truly still; quantization dominates noise"
+    },
+    "velocity": {
+      "unit": "dm/s",
+      "evidence": "values are pure integers, |v| never exceeds 40 units (= 4 m/s) in flight; regressing vgz against d(h)/dt gives ~14 cm/s per unit; SDK 3.0 guide states dm/s",
+      "sign_convention": "vgz positive when descending (regression slope is negative vs climb rate)"
+    },
+    "acceleration_milli_g": {
+      "static_agz_mean": -999.2,
+      "gravity_included": true,
+      "quiet_window_std": [1.3, 1.2, 6.5],
+      "static_bias_observed": [5.1, 19.0],
+      "note": "quiet windows are propellers-off; in-flight vibration justifies a larger sim noise value"
+    },
+    "baro_m": {"quiet_window_std_median": 0.116, "quiet_window_std_p90": 0.164},
+    "tof": {
+      "note": "not measurable from static ground data: reads a constant 10 cm below its minimum range, with out-of-range spikes of 6553",
+      "sim_value_source": "team estimate pending in-flight lab logs"
+    }
+  },
+  "constants": {
+    "OFFICE_TELEM_PERIOD_STEPS": {"value": 5, "action": "kept", "basis": "measured median interval 0.102 s = 10 Hz"},
+    "OFFICE_TELEM_DROP_PROB": {"value": 0.05, "action": "kept", "basis": "measured 3.3% single-packet gaps; iid drops already produce that gap shape"},
+    "OFFICE_TELEM_ATTITUDE_NOISE_DEG": {"value": 1.0, "action": "kept", "basis": "quantization dominates; 1 deg covers mild disturbance"},
+    "_VEL_Q": {"value": 0.1, "action": "kept", "basis": "SDK reports integer dm/s, confirmed empirically"},
+    "OFFICE_TELEM_TOF_NOISE_M": {"value": 0.03, "action": "raised from 0.02", "basis": "team estimate; not measurable from this dataset"},
+    "OFFICE_TELEM_BARO_NOISE_M": {"value": 0.15, "action": "raised from 0.08", "basis": "measured quiet-window std 0.116-0.164 m"},
+    "OFFICE_TELEM_BARO_WALK_M": {"value": 0.005, "action": "reduced from 0.01", "basis": "prior walk drifted faster than observed medium-term drift"},
+    "OFFICE_TELEM_ACCEL_BIAS": {"value": 0.15, "action": "kept", "basis": "measured static bias up to ~19 milli-g = 0.19 m/s^2"},
+    "OFFICE_TELEM_ACCEL_NOISE": {"value": 0.3, "action": "kept", "basis": "quiet floor is 0.01-0.06 m/s^2 propellers-off; margin for in-flight vibration"},
+    "acceleration_semantics": {"action": "changed", "basis": "now raw specific force in the SDK z-down body frame: hover reads -9.8 m/s^2, matching static agz = -999 milli-g"},
+    "velocity_vertical_sign": {"action": "changed", "basis": "flipped to SDK convention: positive = descending"}
+  },
+  "still_needs_lab_logs": [
+    "in-flight ToF noise and failure behavior",
+    "horizontal velocity sign conventions (vgx/vgy) vs stick directions",
+    "in-flight accelerometer vibration spectrum"
+  ]
+}
