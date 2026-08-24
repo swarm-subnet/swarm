@@ -80,6 +80,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Challenge family whose world-building logic to use (default: cf_autopilot).",
     )
     parser.add_argument(
+        "--randomize-appearance",
+        action="store_true",
+        help="Office only: apply the per-seed colour and lighting skin the benchmark "
+             "uses. Off by default so the map is shown in its real colours.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -272,6 +278,14 @@ def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
         6: _MapVisualProfile(
             render_scale=0.65,
             render_distance=100.0,
+            render_fps=20.0,
+            sim_fps=20.0,
+        ),
+        # The office is one 18 m room, so it renders close and sharp instead of
+        # paying for the 100 m draw distance the outdoor maps need.
+        7: _MapVisualProfile(
+            render_scale=0.75,
+            render_distance=30.0,
             render_fps=20.0,
             sim_fps=20.0,
         ),
@@ -738,12 +752,15 @@ def _build_visualizer_env(task, prefer_gpu: bool):
 
     ctrl_freq = int(round(1.0 / task.sim_dt))
     runtime_profile = runtime_profile_for_task(task)
+    # Match the benchmark's physics rate, or the office would fly here with the
+    # motor lag resolved five times more coarsely than it is when scored.
+    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_office_interceptor" else 1
     common_kwargs = dict(
         gui=False,
         record=False,
         obs=ObservationType.RGB,
         ctrl_freq=ctrl_freq,
-        pyb_freq=ctrl_freq,
+        pyb_freq=ctrl_freq * pyb_mult,
         **dict(runtime_profile.env_bootstrap),
     )
     with contextlib.redirect_stdout(io.StringIO()):
@@ -797,6 +814,11 @@ def main(argv: Iterable[str] | None = None) -> None:
     from scripts.generate_video import TYPE_LABELS, build_task
 
     _ensure_local_ansible_temp()
+    # The office is skinned per seed during evaluation; show its real colours here
+    # unless the caller asked to see what a scored episode looks like.
+    from swarm.challenge_families.office_interceptor import use_plain_appearance
+
+    use_plain_appearance(not args.randomize_appearance)
     resolved_seed = _resolve_seed(args.seed, args.type, family_id=args.family_id)
     task = build_task(seed=resolved_seed, challenge_type=args.type, family_id=args.family_id)
     env, backend = _build_visualizer_env(task, prefer_gpu=bool(args.gpu))

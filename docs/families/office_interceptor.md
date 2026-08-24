@@ -99,4 +99,17 @@ score = 0.5 × success + 0.5 × time
 
 There is **no safety term** in this family: closing distance aggressively is the point.
 
+---
+
+## Seeing the map
+
+```bash
+swarm visualize --type 7 --family-id cf_office_interceptor
+```
+
+Opens the office and lets you fly it by hand. The room is shown in its real
+colours so the layout is readable; add `--randomize-appearance` to see the
+per-seed skin a scored episode gets instead. Physics matches the benchmark at
+250 Hz, so the airframe handles here the way it does when it is scored.
+
 <p align="right">(<a href="#office-interceptor-top">back to top</a>)</p>

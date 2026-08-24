@@ -130,6 +130,21 @@ _TEMPLATE_SLOT = {
 
 _tello_assets_ready = False
 
+# Inspection switch for the local visualizer. Evaluation never touches it, so the
+# benchmark always renders the per-seed skin.
+_PLAIN_APPEARANCE = False
+OFFICE_PLAIN_LIGHT_DIRECTION = (-0.4, -0.6, 0.9)
+
+
+def use_plain_appearance(enabled: bool = True) -> None:
+    """Show the office in its baked colours instead of the per-seed skin.
+
+    For looking at the map only: a policy is still scored against randomized
+    episodes, so nothing on an evaluation path may call this.
+    """
+    global _PLAIN_APPEARANCE
+    _PLAIN_APPEARANCE = bool(enabled)
+
 # Target reflexes: the guard range grows as v^2/2a, the full-leg recheck reroutes early.
 _GUARD_EVERY_STEPS = 2
 _RECHECK_EVERY_STEPS = 10
@@ -557,12 +572,18 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     def _apply_appearance(self, env, map_info: dict, seed: int) -> None:
         """Per-episode seeded skin: the policy must learn geometry, not color.
         Draw order is fixed — reordering changes every episode's look."""
-        rng = random.Random((seed ^ OFFICE_APPEARANCE_SEED_OFFSET) & 0xFFFFFFFF)
         cli = env.CLIENT
         plane = getattr(env, "PLANE_ID", None)
         if plane is not None:
             # The gym plane z-fights the office floor in color renders.
             p.changeVisualShape(plane, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli)
+        if _PLAIN_APPEARANCE:
+            # Inspection mode: keep the baked materials and neutral lighting.
+            env._light_direction = list(OFFICE_PLAIN_LIGHT_DIRECTION)
+            env._light_color = [1.0, 1.0, 1.0]
+            env._office_rgb_bright = 1.0
+            return
+        rng = random.Random((seed ^ OFFICE_APPEARANCE_SEED_OFFSET) & 0xFFFFFFFF)
         for name in sorted(map_info["bodies"]):
             tint = [rng.uniform(OFFICE_TINT_LOW, 1.0) for _ in range(3)] + [1.0]
             p.changeVisualShape(map_info["bodies"][name], -1, rgbaColor=tint,

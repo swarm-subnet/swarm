@@ -800,3 +800,17 @@ def test_office_task_generation_deterministic():
     assert OFFICE_X_RANGE[0] < a.start[0] < OFFICE_X_RANGE[1]
     assert OFFICE_Y_RANGE[0] < a.start[1] < OFFICE_Y_RANGE[1]
     assert 0.0 < a.goal[2] < OFFICE_CEILING_M
+
+
+def test_plain_appearance_is_inspection_only():
+    """Evaluation must always get the per-seed skin, whatever the visualizer did."""
+    from swarm.challenge_families import office_interceptor as oi
+
+    assert oi._PLAIN_APPEARANCE is False, "randomized appearance is the default"
+    try:
+        oi.use_plain_appearance(True)
+        assert oi._PLAIN_APPEARANCE is True
+        oi.use_plain_appearance(False)
+        assert oi._PLAIN_APPEARANCE is False
+    finally:
+        oi.use_plain_appearance(False)
