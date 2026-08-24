@@ -68,7 +68,7 @@ Swarm runs **six challenge families**. Five are active, public, and paying; Inte
 | Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](families/swarm_autopilot.md) |
 | Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](families/swarm_sar.md) |
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](families/interceptor.md) |
-| Office Interceptor | `cf_office_interceptor` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 30% | [families/office_interceptor.md](families/office_interceptor.md) |
+| Office Interceptor | `cf_interceptor_office` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 30% | [families/office_interceptor.md](families/office_interceptor.md) |
 
 
 The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the five active slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
@@ -120,7 +120,7 @@ cp swarm/submission_template/office_drone_agent.py my_agent/drone_agent.py
 Test an Office Interceptor agent with its required family ID:
 
 ```bash
-swarm model test --source my_agent/ --family-id cf_office_interceptor
+swarm model test --source my_agent/ --family-id cf_interceptor_office
 ```
 
 ### Agent Structure
@@ -339,7 +339,7 @@ Minimal example:
 }
 ```
 
-All families use the `submission_zip.v1` interface. A hand-written manifest must include `size_bytes`, set to the ZIP byte size; the generated manifest already includes it. For an Office Interceptor submission, the manifest targets `cf_office_interceptor` and its artifact path is under `artifacts/cf_office_interceptor/`. A repo without `submission_manifest.json` is rejected.
+All families use the `submission_zip.v1` interface. A hand-written manifest must include `size_bytes`, set to the ZIP byte size; the generated manifest already includes it. For an Office Interceptor submission, the manifest targets `cf_interceptor_office` and its artifact path is under `artifacts/cf_interceptor_office/`. A repo without `submission_manifest.json` is rejected.
 
 ### 4. Package The Family Artifact Into The Repo
 

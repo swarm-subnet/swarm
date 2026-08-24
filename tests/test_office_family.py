@@ -30,7 +30,7 @@ def office_env():
     task = task_gen.screening_task(
         1 / 50, 3, challenge_type=OFFICE_CHALLENGE_TYPE,
         distance_range=(OFFICE_MIN_START_DISTANCE_M, OFFICE_MAX_START_DISTANCE_M),
-        family_id="cf_office_interceptor",
+        family_id="cf_interceptor_office",
     )
     env = make_env(task)
     yield env
@@ -38,7 +38,7 @@ def office_env():
 
 
 def test_office_contract_action_space():
-    contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
+    contract = get_policy_interface_contract("cf_interceptor_office", "submission_zip.v1")
     action = contract["action_space"]
     assert action["shape"] == [4]
     assert action["component_names"] == ["lr", "fb", "ud", "yaw"]
@@ -68,7 +68,7 @@ def test_office_env_action_space_and_state(office_env):
     assert np.all(env.action_space.low == -1.0)
     assert np.all(env.action_space.high == 1.0)
     obs, _ = env.reset(seed=env.task.map_seed)
-    contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
+    contract = get_policy_interface_contract("cf_interceptor_office", "submission_zip.v1")
     assert obs["state"].shape == tuple(contract["smoke_test_observation"]["state"]["shape"])
     assert obs["rgb"].shape == (256, 256, 3)
     assert obs["rgb"].dtype == np.float32
@@ -256,7 +256,7 @@ def test_office_forward_matches_heading(office_env):
 
 
 def test_office_contract_matches_the_rig():
-    contract = get_policy_interface_contract("cf_office_interceptor", "submission_zip.v1")
+    contract = get_policy_interface_contract("cf_interceptor_office", "submission_zip.v1")
     assert contract["observation_assembly"]["state"] == [
         "tello_attitude", "tello_velocity", "tello_acceleration",
         "tello_altitude", "tello_detection", "action_history",
@@ -340,7 +340,7 @@ def test_office_telemetry_matches_calibration(office_env):
 
 
 def test_office_telemetry_deterministic():
-    task = task_gen.random_task(1 / 50, 42, family_id="cf_office_interceptor")
+    task = task_gen.random_task(1 / 50, 42, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
         env = make_env(task)
@@ -368,7 +368,7 @@ def test_office_target_spawns_in_band(office_env):
 
 
 def test_office_target_flight_deterministic_and_clear():
-    task = task_gen.random_task(1 / 50, 55, family_id="cf_office_interceptor")
+    task = task_gen.random_task(1 / 50, 55, family_id="cf_interceptor_office")
     trajs = []
     for _ in range(2):
         env = make_env(task)
@@ -693,7 +693,7 @@ def test_office_detector_occluded_means_silent(office_env):
 
 
 def test_office_detector_deterministic():
-    task = task_gen.random_task(1 / 50, 88, family_id="cf_office_interceptor")
+    task = task_gen.random_task(1 / 50, 88, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
         env = make_env(task)
@@ -709,7 +709,7 @@ def test_office_detector_deterministic():
 
 def test_office_rgb_deterministic_and_isolated():
     """Same seed => bit-identical frames across envs AND across resets."""
-    task = task_gen.random_task(1 / 50, 91, family_id="cf_office_interceptor")
+    task = task_gen.random_task(1 / 50, 91, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
         env = make_env(task)
@@ -729,7 +729,7 @@ def test_office_rgb_deterministic_and_isolated():
 def test_office_rgb_appearance_varies_by_seed():
     frames = []
     for seed in (91, 92):
-        task = task_gen.random_task(1 / 50, seed, family_id="cf_office_interceptor")
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
         obs, _ = env.reset(seed=task.map_seed)
         frames.append(obs["rgb"].copy())
@@ -793,8 +793,8 @@ def test_office_crash_pays_participation(office_env):
 
 
 def test_office_task_generation_deterministic():
-    a = task_gen.random_task(1 / 50, 77, family_id="cf_office_interceptor")
-    b = task_gen.random_task(1 / 50, 77, family_id="cf_office_interceptor")
+    a = task_gen.random_task(1 / 50, 77, family_id="cf_interceptor_office")
+    b = task_gen.random_task(1 / 50, 77, family_id="cf_interceptor_office")
     assert a == b
     assert a.challenge_type == OFFICE_CHALLENGE_TYPE
     assert OFFICE_X_RANGE[0] < a.start[0] < OFFICE_X_RANGE[1]

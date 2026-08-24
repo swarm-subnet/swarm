@@ -1,4 +1,4 @@
-"""Starter agent for the OFFICE INTERCEPTOR family (cf_office_interceptor).
+"""Starter agent for the OFFICE INTERCEPTOR family (cf_interceptor_office).
 
 Copy this file to drone_agent.py in your submission zip. The office contract
 differs from the SAR families: 4 RC-stick actions and an rgb+state observation.

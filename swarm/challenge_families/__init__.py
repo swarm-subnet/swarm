@@ -27,7 +27,7 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_swarm_autopilot": SwarmAutopilotChallengeFamily(),
     "cf_swarm_sar": SwarmSarChallengeFamily(),
     "cf_interceptor": InterceptorChallengeFamily(),
-    "cf_office_interceptor": OfficeInterceptorChallengeFamily(),
+    "cf_interceptor_office": OfficeInterceptorChallengeFamily(),
 }
 
 

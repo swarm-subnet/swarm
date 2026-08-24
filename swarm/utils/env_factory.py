@@ -89,7 +89,7 @@ def make_env_with_initial_obs(
     ctrl_freq = int(round(1.0 / task.sim_dt))
     runtime_profile = runtime_profile_for_task(task)
     # Office physics ticks at 250 Hz: a 20 ms tick cannot resolve motor lag (~1% cost).
-    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_office_interceptor" else 1
+    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_interceptor_office" else 1
     common_kwargs = dict(
         gui=gui,
         record=False,
@@ -109,12 +109,12 @@ def make_env_with_initial_obs(
     family_id = getattr(task, "family_id", "")
     if family_id == "cf_interceptor":
         env.SPEED_LIMIT = INTERCEPTOR_MINER_SPEED
-    elif family_id == "cf_office_interceptor":
+    elif family_id == "cf_interceptor_office":
         env.SPEED_LIMIT = OFFICE_RC_SPEED
     else:
         env.SPEED_LIMIT = SPEED_LIMIT
     env.MAX_YAW_RATE = (
-        OFFICE_RC_YAW_RATE if family_id == "cf_office_interceptor" else MAX_YAW_RATE
+        OFFICE_RC_YAW_RATE if family_id == "cf_interceptor_office" else MAX_YAW_RATE
     )
     env.ACT_TYPE = ActionType.VEL
 

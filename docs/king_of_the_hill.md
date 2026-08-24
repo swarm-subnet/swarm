@@ -182,7 +182,7 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 | Family | emission_allocation |
 |---|---|
 | Interceptor | 0.00 (historical 0.30) |
-| Office Interceptor (`cf_office_interceptor`) | 0.30 |
+| Office Interceptor (`cf_interceptor_office`) | 0.30 |
 | Swarm Autopilot | 0.20 |
 | Swarm SAR | 0.20 |
 | Autopilot | 0.15 |

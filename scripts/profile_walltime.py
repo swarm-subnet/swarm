@@ -314,7 +314,7 @@ def build_sweep(quick):
     if quick:
         sweep.append(("cf_autopilot", 2, 4))
         sweep.append(("cf_autopilot", 6, 106))
-        sweep.append(("cf_office_interceptor", 7, 7))
+        sweep.append(("cf_interceptor_office", 7, 7))
         sweep.append(("cf_swarm_sar", 2, seed_with_drone_count(5)))
         sweep.append(("cf_swarm_sar", 6, seed_with_drone_count(5)))
         return sweep
@@ -329,8 +329,8 @@ def build_sweep(quick):
         for n in (2, 8):
             sweep.append((family, 2, seed_with_drone_count(n)))
 
-    sweep.append(("cf_office_interceptor", 7, 7))
-    sweep.append(("cf_office_interceptor", 7, 21))
+    sweep.append(("cf_interceptor_office", 7, 7))
+    sweep.append(("cf_interceptor_office", 7, 21))
     return sweep
 
 

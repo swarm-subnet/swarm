@@ -754,7 +754,7 @@ def _build_visualizer_env(task, prefer_gpu: bool):
     runtime_profile = runtime_profile_for_task(task)
     # Match the benchmark's physics rate, or the office would fly here with the
     # motor lag resolved five times more coarsely than it is when scored.
-    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_office_interceptor" else 1
+    pyb_mult = 5 if getattr(task, "family_id", "") == "cf_interceptor_office" else 1
     common_kwargs = dict(
         gui=False,
         record=False,

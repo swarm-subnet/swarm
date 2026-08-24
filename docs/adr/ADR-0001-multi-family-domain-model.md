@@ -33,7 +33,7 @@ The top-level benchmark product line.
   - `cf_swarm_autopilot`
   - `cf_swarm_sar`
   - `cf_interceptor`
-  - `cf_office_interceptor`
+  - `cf_interceptor_office`
 
 ### `challenge_instance`
 

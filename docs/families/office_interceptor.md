@@ -12,7 +12,7 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 
 | | |
 |---|---|
-| Family ID | `cf_office_interceptor` |
+| Family ID | `cf_interceptor_office` |
 | Miner-controlled drones | 1 |
 | Map | Fixed office interior (18 m × 7.6 m × 3 m), baked-lighting digital twin |
 | Control rate | 50 Hz (dt = 1/50 s) |
@@ -104,7 +104,7 @@ There is **no safety term** in this family: closing distance aggressively is the
 ## Seeing the map
 
 ```bash
-swarm visualize --type 7 --family-id cf_office_interceptor
+swarm visualize --type 7 --family-id cf_interceptor_office
 ```
 
 Opens the office and lets you fly it by hand. The room is shown in its real

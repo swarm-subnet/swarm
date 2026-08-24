@@ -15,7 +15,7 @@ Swarm runs **six challenge families**: five active and one completed. Evaluation
 | [Swarm Autopilot](families/swarm_autopilot.md) | `cf_swarm_autopilot` | One policy lands 2–8 drones on a shared pool of pads | 20% |
 | [Swarm Search and Rescue](families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 20% |
 | [Interceptor](families/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
-| [Office Interceptor](families/office_interceptor.md) | `cf_office_interceptor` | One drone hunts down a validator-flown target inside a fixed office | 30% |
+| [Office Interceptor](families/office_interceptor.md) | `cf_interceptor_office` | One drone hunts down a validator-flown target inside a fixed office | 30% |
 
 ## 🖥️ System Requirements
 

@@ -63,7 +63,7 @@ Six families: five `family_state='active'` and `emissions_state='active'`, plus 
 | Family | `emission_allocation` |
 |--------|----------------------|
 | `cf_interceptor` | 0.00 (historical 0.30) |
-| `cf_office_interceptor` | 0.30 |
+| `cf_interceptor_office` | 0.30 |
 | `cf_swarm_autopilot` | 0.20 |
 | `cf_swarm_sar` | 0.20 |
 | `cf_autopilot` | 0.15 |

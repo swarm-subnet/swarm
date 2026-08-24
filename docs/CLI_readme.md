@@ -34,7 +34,7 @@ Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm repo pac
 | `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest |
 | `cf_swarm_autopilot` | City, Open, Mountain, Village, Forest |
 | `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
-| `cf_office_interceptor` | Office |
+| `cf_interceptor_office` | Office |
 
 ---
 
@@ -91,7 +91,7 @@ swarm visualize --type 5 --family-id cf_search_and_rescue
 swarm visualize --type 1 --seed 12345
 
 # Walk the office (type 7) in its real colours
-swarm visualize --type 7 --family-id cf_office_interceptor
+swarm visualize --type 7 --family-id cf_interceptor_office
 
 # List the seeds your model failed, then open one
 swarm visualize --summary-json bench_summary.json --failed

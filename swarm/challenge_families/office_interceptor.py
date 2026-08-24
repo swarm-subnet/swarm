@@ -313,7 +313,7 @@ def office_target_profile(map_seed: int) -> dict:
 class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     """Indoor Tello interceptor inside the fixed office map."""
 
-    family_id = "cf_office_interceptor"
+    family_id = "cf_interceptor_office"
     runtime_supported = True
 
     # ------------------------------------------------------------------ #

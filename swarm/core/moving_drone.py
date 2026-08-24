@@ -46,7 +46,7 @@ _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
 
 # Families driven by body-frame RC sticks [lr, fb, ud, yaw] instead of the
 # world-frame velocity contract (indoor Tello: no GPS, no world frame).
-_OFFICE_RC_FAMILIES = ("cf_office_interceptor",)
+_OFFICE_RC_FAMILIES = ("cf_interceptor_office",)
 
 
 def rc_sticks_to_world_velocity(rc, yaw, speed):

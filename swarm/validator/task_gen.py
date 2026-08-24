@@ -257,7 +257,7 @@ def _build_task_with_params(
             family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
         )
 
-    if family_id == "cf_office_interceptor":
+    if family_id == "cf_interceptor_office":
         # floor start and airborne goal, both wall-safe, distance_range apart
         from swarm.challenge_families.office_interceptor import office_point  # avoids an import cycle
         rng = random.Random(seed)
@@ -349,7 +349,7 @@ def _build_task_for_type(
             INTERCEPTOR_MIN_START_DISTANCE_M,
             INTERCEPTOR_MAX_START_DISTANCE_M,
         )
-    elif family_id == "cf_office_interceptor":
+    elif family_id == "cf_interceptor_office":
         challenge_type = OFFICE_CHALLENGE_TYPE
         params = _resolve_params(seed, challenge_type)
     else:
