@@ -284,8 +284,13 @@ def test_office_spawn_heading_random_and_yaw_relative(office_env):
     env.reset(seed=env.task.map_seed)
     assert abs(env._office_spawn_yaw) > 1e-6, "seeded heading must not be the old fixed 0"
     hover = np.zeros((1, 4), dtype=np.float32)
-    for _ in range(OFFICE_TELEM_PERIOD_STEPS + 2):
+    for _ in range(20 * OFFICE_TELEM_PERIOD_STEPS):
         obs, *_ = env.step(hover)
+        # A real packet carries a unit sin/cos pair; the zero state does not.
+        if float(obs["state"][2]) ** 2 + float(obs["state"][3]) ** 2 > 0.5:
+            break
+    else:
+        raise AssertionError("no telemetry packet survived the drop chance")
     rel = math.atan2(float(obs["state"][2]), float(obs["state"][3]))
     assert abs(rel) < math.radians(8), "reported yaw must start near zero, not world yaw"
     headings = set()
@@ -651,18 +656,28 @@ def test_office_detector_no_sight_no_boxes(office_env):
     """Facing away from the target, the emulator must stay silent and go stale."""
     env = office_env
     env.reset(seed=env.task.map_seed)
-    # Target spawns toward +x from the chaser on this seed; turn the camera away.
-    for _ in range(45):
-        env.step(np.array([[0.0, 0.0, 0.3, 1.0]], dtype=np.float32))
+    # Point the camera squarely away from the target: spawn heading is seeded.
+    cpos = env.pos[0]
+    rel = env._office_target_pos - cpos
+    back = math.atan2(float(rel[1]), float(rel[0])) + math.pi
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), cpos.tolist(),
+                                      p.getQuaternionFromEuler([0, 0, back]),
+                                      physicsClientId=env.CLIENT)
+    env._rc_target_yaw[:] = back
+    env._updateAndStoreKinematicInformation()
     away = np.zeros((1, 4), dtype=np.float32)
     boxes_seen = 0
+    away_frames = 0
     for _ in range(60):
         obs, *_ = env.step(away)
         rel = env._office_target_pos - env.pos[0]
         yaw = math.atan2(rel[1], rel[0]) - env.rpy[0][2]
         # Only count frames where the target truly sits behind the camera.
-        if abs(math.remainder(yaw, 2 * math.pi)) > 2.0 and obs["state"][15] > 0:
-            boxes_seen += 1
+        if abs(math.remainder(yaw, 2 * math.pi)) > 2.0:
+            away_frames += 1
+            if obs["state"][15] > 0:
+                boxes_seen += 1
+    assert away_frames >= 30, "the flip must actually put the target behind the camera"
     fp_budget = 3  # rare false positives are allowed, sightings are not
     assert boxes_seen <= fp_budget
 
