@@ -250,9 +250,52 @@ def test_office_forward_matches_heading(office_env):
         env.step(np.array([[0.0, 1.0, 0.0, 0.0]], dtype=np.float32))
     delta = env.pos[0] - start
     heading = math.atan2(delta[1], delta[0])
-    # Spawn yaw is 0, so forward stick must move the drone along +X.
-    assert abs(delta[0]) > 0.3
-    assert abs(heading) < math.radians(20), f"moved at {math.degrees(heading):.1f} deg"
+    # Forward stick must move the drone along its own seeded spawn heading.
+    off = abs(math.remainder(heading - env._office_spawn_yaw, 2 * math.pi))
+    assert float(np.hypot(delta[0], delta[1])) > 0.3
+    assert off < math.radians(20), f"moved {math.degrees(off):.1f} deg off heading"
+
+
+def test_office_body_accel_ignores_spawn_heading(office_env):
+    """Body-frame acceleration must rotate with the TRUE heading: during a pure
+    forward burst the forward axis dominates, whatever the seeded spawn yaw."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    hover = np.zeros((1, 4), dtype=np.float32)
+    for _ in range(80):
+        env.step(np.array([[0, 0, 0.45, 0]], dtype=np.float32)
+                 if env.pos[0][2] < 1.5 else hover)
+    afs, ars = [], []
+    for _ in range(30):
+        obs, *_ = env.step(np.array([[0, 1, 0, 0]], dtype=np.float32))
+        if obs["state"][14] > 0:  # valid packet
+            afs.append(float(obs["state"][7]))
+            ars.append(float(obs["state"][8]))
+    assert afs, "the burst must deliver telemetry packets"
+    assert abs(np.mean(afs)) > abs(np.mean(ars)), \
+        "forward acceleration must land on the body-forward axis, not smear sideways"
+    assert np.mean(afs) > 0.3, "accelerating forward must read as positive af"
+
+
+def test_office_spawn_heading_random_and_yaw_relative(office_env):
+    """The IMU has no world compass: headings vary by seed and reported yaw
+    starts at zero wherever the drone happens to face."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    assert abs(env._office_spawn_yaw) > 1e-6, "seeded heading must not be the old fixed 0"
+    hover = np.zeros((1, 4), dtype=np.float32)
+    for _ in range(OFFICE_TELEM_PERIOD_STEPS + 2):
+        obs, *_ = env.step(hover)
+    rel = math.atan2(float(obs["state"][2]), float(obs["state"][3]))
+    assert abs(rel) < math.radians(8), "reported yaw must start near zero, not world yaw"
+    headings = set()
+    for seed in (11, 12, 13):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        e2 = make_env(task)
+        e2.reset(seed=task.map_seed)
+        headings.add(round(float(e2._office_spawn_yaw), 3))
+        e2.close()
+    assert len(headings) == 3, "each seed must deal its own heading"
 
 
 def test_office_contract_matches_the_rig():
@@ -624,9 +667,22 @@ def test_office_detector_no_sight_no_boxes(office_env):
     assert boxes_seen <= fp_budget
 
 
+def _aim_at_target(env):
+    """Face the camera at the target: spawn heading is seeded, not aligned."""
+    cpos = env.pos[0]
+    rel = env._office_target_pos - cpos
+    yaw = math.atan2(float(rel[1]), float(rel[0]))
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), cpos.tolist(),
+                                      p.getQuaternionFromEuler([0, 0, yaw]),
+                                      physicsClientId=env.CLIENT)
+    env._rc_target_yaw[:] = yaw
+    env._updateAndStoreKinematicInformation()
+
+
 def test_office_detector_sees_target(office_env):
     env = office_env
     obs, _ = env.reset(seed=env.task.map_seed)
+    _aim_at_target(env)
     hits = 0
     for _ in range(100):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
@@ -644,6 +700,7 @@ def test_office_detector_recall_emerges(office_env):
     streaks included (this catches the streak-chain bias that once capped it)."""
     env = office_env
     env.reset(seed=env.task.map_seed)
+    _aim_at_target(env)
     frames = hits = 0
     for i in range(3000):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))

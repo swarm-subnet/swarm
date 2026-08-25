@@ -49,6 +49,7 @@ from swarm.constants import (
     OFFICE_DET_SEED_OFFSET,
     OFFICE_DET_STALE_SEC,
     OFFICE_DRIFT_SEED_OFFSET,
+    OFFICE_HEADING_SEED_OFFSET,
     OFFICE_KILL_RADIUS_M,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
@@ -391,6 +392,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_det_pending = None
         env._office_det_missed = False
         env._office_rgb_capture = None  # the held video frame never crosses episodes
+        env._office_spawn_yaw = 0.0  # set for real at spawn; the IMU zeroes there
         env._min_clearance_episode = None  # clearance is never scanned here (audit: None)
         # The one camera's focal length (px); env._fov is fixed per env at __init__.
         env._office_det_focal = (float(OFFICE_CAMERA_RES) / 2.0) / math.tan(
@@ -552,9 +554,14 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                                   floor=True, rng=place_rng,
                                   anchor=np.array(env.task.goal, dtype=float))
         env.task.start = tuple(float(v) for v in start)
+        # A real pilot places the drone facing anywhere; the IMU zeroes there.
+        yaw0 = random.Random((seed ^ OFFICE_HEADING_SEED_OFFSET) & 0xFFFFFFFF).uniform(
+            0.0, 2.0 * math.pi)
+        env._office_spawn_yaw = yaw0
+        env._rc_target_yaw[:] = yaw0
         p.resetBasePositionAndOrientation(
             int(env.DRONE_IDS[0]), start.tolist(),
-            p.getQuaternionFromEuler([0, 0, 0]), physicsClientId=cli,
+            p.getQuaternionFromEuler([0, 0, yaw0]), physicsClientId=cli,
         )
         p.resetBaseVelocity(int(env.DRONE_IDS[0]), [0, 0, 0], [0, 0, 0], physicsClientId=cli)
 
@@ -968,11 +975,13 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         roll, pitch, yaw = (float(v) for v in env.rpy[d])
         vf, vr, vu = world_to_body(vel, yaw)
         af, ar, au = world_to_body(accel, yaw)
+        # The IMU knows no world frame: reported yaw is relative to takeoff heading.
+        yaw_rel = yaw - getattr(env, "_office_spawn_yaw", 0.0)
         bias = env._office_accel_bias[d]  # sensor-fixed, so applied in the body frame
         tof = min(self._office_tof(env, d), OFFICE_TELEM_TOF_MAX_M)
         height = float(env.pos[d, 2]) - float(env._office_takeoff_z[d])
         baro = height + float(env._office_baro_walk[d])
-        return np.array([pitch, roll, yaw, vf, vr, -vu,
+        return np.array([pitch, roll, yaw_rel, vf, vr, -vu,
                          af + bias[0], ar + bias[1], -au + bias[2], tof, height, baro])
 
     def _deliver_packet(self, env, d: int, rng, dt: float) -> None:
