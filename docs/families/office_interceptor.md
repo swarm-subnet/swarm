@@ -66,7 +66,7 @@ The 15 telemetry values mirror a Tello state packet: only what the physical SDK 
 
 | Slice | Channel | Contents |
 |-------|---------|----------|
-| 0–3 | `attitude_pitch_roll_sincos_yaw` | pitch, roll (rad, 1° steps), sin(yaw), cos(yaw) |
+| 0–3 | `attitude_pitch_roll_sincos_yaw` | pitch, roll (rad, 1° steps), sin(yaw), cos(yaw) — yaw is **relative to the takeoff heading**, which is seeded per episode: like a real IMU, there is no world compass |
 | 4–6 | `body_velocity_xyz` | forward / right / down velocity (m/s, 0.1 steps = the SDK's dm/s) |
 | 7–9 | `body_acceleration_xyz` | forward / right / down specific force (m/s², with sensor bias) — **gravity included**: a hovering drone reads ≈ −9.8 on the down axis, like the real IMU |
 | 10–14 | `altitude_tof_height_baro_age_valid` | downward ToF (m; never returns the target — a target underneath reads as the floor), fused height (m), barometer with drift (m), packet age (s), valid flag |

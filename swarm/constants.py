@@ -588,6 +588,7 @@ OFFICE_TARGET_CLEAR_M = 0.15                # leg clearance radius for the ray c
 OFFICE_KILL_RADIUS_M = 0.15                 # deep-overlap anti-tunnel guard; the catch is a real hit
 OFFICE_TARGET_SELFCRASH_FORCE = 3.0         # N — world-contact force that counts as a target crash
 OFFICE_TARGET_SEED_OFFSET = 0x0FF1CE        # decorrelates the target rng from map + telemetry
+OFFICE_HEADING_SEED_OFFSET = 0x481D1        # own stream: spawn heading must not ride placement draws
 
 # Appearance randomization: every episode the office wears a different seeded
 # skin (tints, light, camera jitter) so policies learn geometry, not color.

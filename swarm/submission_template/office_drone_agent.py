@@ -11,7 +11,8 @@ Observation (dict):
       The TARGET IS NOT VISIBLE in the image (and the ToF never returns it) —
       use the camera for navigating, the detector block for finding the target.
     - "state": numpy array (127,), float32. Index ranges:
-        0:4    attitude — pitch, roll (rad), sin(yaw), cos(yaw)
+        0:4    attitude — pitch, roll (rad), sin(yaw), cos(yaw); yaw is RELATIVE
+               to your takeoff heading (seeded per episode) — no world compass
         4:7    body velocity — forward, right, down (m/s, SDK convention)
         7:10   body specific force — forward, right, down (m/s^2; hover reads
                ~-9.8 on the down axis, like the real IMU)
