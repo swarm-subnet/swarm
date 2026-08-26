@@ -1,0 +1,22 @@
+x-base: &swarm-base
+  build:
+    context: ..
+    dockerfile: .docker/Dockerfile
+  image: swarm:base
+  restart: unless-stopped
+
+services:
+  swarm_test:
+    <<: *swarm-base
+    container_name: swarm_base
+    # One-shot test run: override the anchor's restart policy, otherwise the
+    # container relaunches pytest forever once it exits.
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ..:/app
+    environment:
+      SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
+    command: >
+      pytest -m "not slow and not integration"
+             -n 2 --dist worksteal -ra -p no:cacheprovider
