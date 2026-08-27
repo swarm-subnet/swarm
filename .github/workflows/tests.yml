@@ -1,0 +1,61 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# a new push cancels the run already going
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  # the image you pushed to GHCR — change tag/digest here only
+  TEST_IMAGE: ghcr.io/swarm-subnet/swarm:base
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # On pull_request this checks out the MERGE commit: the PR branch
+      # already merged into the base branch. That is the state that would
+      # exist after merging, which is what you want to test.
+      # To test the PR branch as-is instead, uncomment the `with:` block.
+      - uses: actions/checkout@v4
+        # with:
+        #   ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Show what is under test
+        run: |
+          echo "event:      ${{ github.event_name }}"
+          echo "PR branch:  ${{ github.head_ref || github.ref_name }}"
+          echo "merging to: ${{ github.base_ref || '-' }}"
+          git log --oneline -1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull test image
+        run: docker pull "$TEST_IMAGE"
+
+      - name: Run pytest
+        run: |
+          docker run --rm \
+            --cpus=4 \
+            -v "$PWD":/app \
+            -w /app \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/app \
+            --user "$(id -u):$(id -g)" \
+            "$TEST_IMAGE" \
+            pytest -q -n4 --dist worksteal -p no:cacheprovider
