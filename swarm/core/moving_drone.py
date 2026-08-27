@@ -309,14 +309,14 @@ class MovingDroneAviary(BaseRLAviary):
     def _parseURDFParameters(self):
         """For cf_interceptor and the office family, point self.URDF at the family's drone
         before BaseAviary parses and loads it (both _parseURDFParameters and _housekeeping
-        read self.URDF)."""
+        read self.URDF, resolving it through swarm.utils.gym_assets' staged-path shim)."""
         family_id = getattr(self.family_runtime, "family_id", "")
         if family_id == "cf_interceptor":
-            from swarm.challenge_families.interceptor import ensure_interceptor_urdf_in_gym_assets
-            self.URDF = ensure_interceptor_urdf_in_gym_assets()
+            from swarm.challenge_families.interceptor import ensure_interceptor_urdf_staged
+            self.URDF = ensure_interceptor_urdf_staged()
         elif family_id in _OFFICE_RC_FAMILIES:
-            from swarm.challenge_families.office_interceptor import ensure_tello_assets_in_gym_assets
-            self.URDF = ensure_tello_assets_in_gym_assets()
+            from swarm.challenge_families.office_interceptor import ensure_tello_assets_staged
+            self.URDF = ensure_tello_assets_staged()
         return super()._parseURDFParameters()
 
     def _actionSpace(self):

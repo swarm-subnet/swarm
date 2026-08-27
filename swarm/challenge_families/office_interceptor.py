@@ -108,6 +108,7 @@ from swarm.core.maps.office import (
 )
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import FailureReason, SCHEMA_VERSION
+from swarm.utils import gym_assets
 from swarm.validator.reward import (
     PARTICIPATION_REASONS,
     PARTICIPATION_REWARD,
@@ -236,39 +237,26 @@ def tello_urdf_path() -> str:
     return str(_pkg_files("swarm").joinpath("assets", TELLO_URDF))
 
 
-def ensure_tello_assets_in_gym_assets() -> str:
-    """Make the Tello URDF + its mesh folder available in gym_pybullet_drones/assets
-    so BaseAviary's hardcoded loader finds them via self.URDF. Content-verified and
-    atomic so every validator parses byte-identical physical constants; the check
-    runs once per process. Returns the URDF basename."""
+def ensure_tello_assets_staged() -> str:
+    """Stage the Tello URDF + its mesh folder in the writable dir gym_assets routes
+    BaseAviary's hardcoded loader through (site-packages may be read-only). The meshes
+    sit next to the URDF so its relative ./tello/ references resolve. Content-verified
+    and atomic so every validator parses byte-identical physical constants; the check
+    runs once per process. Returns the URDF basename for self.URDF."""
     global _tello_assets_ready
     if _tello_assets_ready:
         return TELLO_URDF
-    dst_dir = str(_pkg_files("gym_pybullet_drones").joinpath("assets"))
+    dst_dir = gym_assets.stage_dir()
     src_mesh_dir = str(_pkg_files("swarm").joinpath("assets", TELLO_MESH_DIR))
     dst_mesh_dir = os.path.join(dst_dir, TELLO_MESH_DIR)
     os.makedirs(dst_mesh_dir, exist_ok=True)
     for name in sorted(os.listdir(src_mesh_dir)):
-        _copy_verified(os.path.join(src_mesh_dir, name), os.path.join(dst_mesh_dir, name))
-    _copy_verified(tello_urdf_path(), os.path.join(dst_dir, TELLO_URDF))
+        gym_assets.copy_verified(os.path.join(src_mesh_dir, name), os.path.join(dst_mesh_dir, name))
+    dst = os.path.join(dst_dir, TELLO_URDF)
+    gym_assets.copy_verified(tello_urdf_path(), dst)
+    gym_assets.register(TELLO_URDF, dst)
     _tello_assets_ready = True
     return TELLO_URDF
-
-
-def _copy_verified(src: str, dst: str) -> None:
-    with open(src, "rb") as f:
-        src_bytes = f.read()
-    if os.path.exists(dst):
-        with open(dst, "rb") as f:
-            if f.read() == src_bytes:
-                return
-    tmp = f"{dst}.tmp.{os.getpid()}"
-    with open(tmp, "wb") as f:
-        f.write(src_bytes)
-    os.replace(tmp, dst)  # atomic, race-safe across workers
-    with open(dst, "rb") as f:
-        if f.read() != src_bytes:
-            raise RuntimeError(f"{os.path.basename(dst)} content mismatch in gym assets")
 
 
 def make_office_control(env: Any) -> DSLPIDControl:
@@ -529,8 +517,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env.task.goal = env._original_goal
         seed = int(env.task.map_seed)
 
-        urdf = ensure_tello_assets_in_gym_assets()
-        urdf_path = str(_pkg_files("gym_pybullet_drones").joinpath("assets", urdf))
+        urdf_path = gym_assets.staged_path(ensure_tello_assets_staged())
         uid = int(p.loadURDF(
             urdf_path, [0.0, 0.0, -1000.0], p.getQuaternionFromEuler([0, 0, 0]),
             flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli,

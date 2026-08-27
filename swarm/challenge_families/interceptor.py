@@ -51,6 +51,7 @@ from swarm.core.env_builder.surface_resolver import resolve_surface
 from swarm.core.env_builder.victim import accepted_categories_for
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import FailureReason, SCHEMA_VERSION
+from swarm.utils import gym_assets
 from swarm.validator.reward import (
     PARTICIPATION_REASONS,
     PARTICIPATION_REWARD,
@@ -92,27 +93,18 @@ def interceptor_urdf_path() -> str:
     return str(_pkg_files("swarm").joinpath("assets", INTERCEPTOR_DRONE_URDF))
 
 
-def ensure_interceptor_urdf_in_gym_assets() -> str:
-    """Make the 36 cm URDF available in gym_pybullet_drones/assets (next to cf2.dae) so
-    BaseAviary's hardcoded loader finds it via self.URDF. Content-verified and atomic so every
-    validator parses byte-identical physical constants. Returns the URDF basename."""
-    dst_dir = str(_pkg_files("gym_pybullet_drones").joinpath("assets"))
+def ensure_interceptor_urdf_staged() -> str:
+    """Stage the 36 cm URDF in the writable dir gym_assets routes BaseAviary's hardcoded
+    loader through (site-packages may be read-only), along with the stock cf2.dae its
+    visual mesh references relative to the URDF. Content-verified and atomic so every
+    validator parses byte-identical physical constants. Returns the URDF basename for
+    self.URDF."""
+    dst_dir = gym_assets.stage_dir()
+    src_dae = str(_pkg_files("gym_pybullet_drones").joinpath("assets", "cf2.dae"))
+    gym_assets.copy_verified(src_dae, os.path.join(dst_dir, "cf2.dae"))
     dst = os.path.join(dst_dir, INTERCEPTOR_DRONE_URDF)
-    with open(interceptor_urdf_path(), "rb") as f:
-        src_bytes = f.read()
-    need = True
-    if os.path.exists(dst):
-        with open(dst, "rb") as f:
-            need = f.read() != src_bytes
-    if need:
-        tmp = f"{dst}.tmp.{os.getpid()}"
-        with open(tmp, "wb") as f:
-            f.write(src_bytes)
-        os.replace(tmp, dst)  # atomic, race-safe across workers
-    with open(dst, "rb") as f:
-        if f.read() != src_bytes:
-            raise RuntimeError("interceptor_drone.urdf content mismatch in gym assets")
-    return INTERCEPTOR_DRONE_URDF
+    gym_assets.copy_verified(interceptor_urdf_path(), dst)
+    return gym_assets.register(INTERCEPTOR_DRONE_URDF, dst)
 
 
 def make_interceptor_control(env: Any) -> DSLPIDControl:
@@ -209,8 +201,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         cli = getattr(env, "CLIENT", 0)
 
         # (a) load the target OFF-WORLD; it is flown into place after the map is built
-        urdf = ensure_interceptor_urdf_in_gym_assets()
-        urdf_path = str(_pkg_files("gym_pybullet_drones").joinpath("assets", urdf))
+        urdf_path = gym_assets.staged_path(ensure_interceptor_urdf_staged())
         target_uid = p.loadURDF(
             urdf_path, [0.0, 0.0, -1000.0], p.getQuaternionFromEuler([0, 0, 0]),
             flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli,
