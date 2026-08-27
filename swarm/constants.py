@@ -533,6 +533,7 @@ OFFICE_RC_YAW_LEAD_RAD = 0.6                # max angle the yaw setpoint may lea
 OFFICE_MAX_TILT_DEG = 60.0                  # deg — safety cutoff for the indoor drone
 OFFICE_CAMERA_RES = 256                     # env-local camera resolution (the RGB observation)
 OFFICE_CAMERA_EYE_FWD_M = 0.035             # m — measured on the real Tello; the shared 0.13 is an open-map value
+OFFICE_DET_NEAR_M = 0.10                    # m from the lens — closest range the real detector still boxes a drone
 OFFICE_HORIZON_SEC = 60.0                   # episode horizon
 OFFICE_SPAWN_Z = 0.05                       # floor spawn height (no platform indoors)
 OFFICE_MIN_START_DISTANCE_M = 4.0           # min chaser-to-target spawn separation

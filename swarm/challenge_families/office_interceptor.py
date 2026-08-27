@@ -77,6 +77,7 @@ from swarm.constants import (
     OFFICE_APPEARANCE_SEED_OFFSET,
     OFFICE_CAMERA_EYE_FWD_M,
     OFFICE_CAMERA_RES,
+    OFFICE_DET_NEAR_M,
     OFFICE_RGB_BRIGHT_HIGH,
     OFFICE_RGB_BRIGHT_LOW,
     OFFICE_TARGET_SEED_OFFSET,
@@ -828,7 +829,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         eye = cpos + fwd * OFFICE_CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
         rel = env._office_target_pos - eye
         depth = float(np.dot(rel, fwd))
-        if depth < 0.2:
+        if depth < OFFICE_DET_NEAR_M:
             return None
         res = float(OFFICE_CAMERA_RES)
         focal = env._office_det_focal
