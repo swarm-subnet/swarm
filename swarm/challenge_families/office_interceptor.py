@@ -30,7 +30,6 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
     ALTITUDE_RAY_INSET,
-    CAMERA_EYE_FWD_M,
     CAMERA_EYE_UP_M,
     DRONE_HULL_RADIUS,
     MAX_RAY_DISTANCE,
@@ -76,6 +75,7 @@ from swarm.constants import (
     OFFICE_TARGET_SPEED_MIN,
     OFFICE_TARGET_TURN_SPEED,
     OFFICE_APPEARANCE_SEED_OFFSET,
+    OFFICE_CAMERA_EYE_FWD_M,
     OFFICE_CAMERA_RES,
     OFFICE_RGB_BRIGHT_HIGH,
     OFFICE_RGB_BRIGHT_LOW,
@@ -825,7 +825,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         cpos = np.array(env.pos[0], dtype=float)
         rot = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
         fwd, left, up = rot[:, 0], rot[:, 1], rot[:, 2]
-        eye = cpos + fwd * CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
+        eye = cpos + fwd * OFFICE_CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
         rel = env._office_target_pos - eye
         depth = float(np.dot(rel, fwd))
         if depth < 0.2:
