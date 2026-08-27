@@ -56,6 +56,7 @@ jobs:
             -w /app \
             -e PYTHONDONTWRITEBYTECODE=1 \
             -e PYTHONPATH=/app \
+            -e HOME=/tmp \
             --user "$(id -u):$(id -g)" \
             "$TEST_IMAGE" \
             pytest -q -n4 --dist worksteal -p no:cacheprovider
