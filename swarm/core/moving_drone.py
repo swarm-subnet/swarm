@@ -20,7 +20,8 @@ from swarm.constants import (
     DRONE_HULL_RADIUS, ALTITUDE_RAY_INSET, MAX_RAY_DISTANCE,
     DEPTH_NEAR, DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M,
     INTERCEPTOR_DEPTH_RES, INTERCEPTOR_DEPTH_FAR_M, INTERCEPTOR_DEPTH_MAX_M, INTERCEPTOR_HULL_RADIUS,
-    OFFICE_APPEARANCE_SEED_OFFSET, OFFICE_CAMERA_RES, OFFICE_RC_DEAD_ZONE,
+    OFFICE_APPEARANCE_SEED_OFFSET, OFFICE_CAMERA_RES, OFFICE_CAMERA_EYE_FWD_M,
+    OFFICE_RC_DEAD_ZONE,
     OFFICE_RC_SLEW_PER_SEC, OFFICE_RC_YAW_LEAD_RAD, OFFICE_RGB_NOISE_STD,
     OFFICE_MOTOR_TAU_SEC, OFFICE_RGB_PERIOD_STEPS,
     SAR_DEPTH_RES, SAR_DEPTH_MAX_M, SAR_RGB_RES, SAR_RGB_REQUEST_CAP,
@@ -732,7 +733,9 @@ class MovingDroneAviary(BaseRLAviary):
         forward = forward / np.linalg.norm(forward)
         up = rot_mat @ np.array([0.0, 0.0, 1.0])
 
-        camera_pos = drone_pos + forward * CAMERA_EYE_FWD_M + up * CAMERA_EYE_UP_M
+        fwd_eye = (OFFICE_CAMERA_EYE_FWD_M
+                   if getattr(self, "_office_rc_enabled", False) else CAMERA_EYE_FWD_M)
+        camera_pos = drone_pos + forward * fwd_eye + up * CAMERA_EYE_UP_M
 
         target = camera_pos + forward * 20.0
 
