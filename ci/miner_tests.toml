@@ -1,0 +1,77 @@
+# Which files a miner-only pull request may touch, and what covers each of them.
+#
+# A pull request whose every changed file is listed here runs the miner tests
+# alone; anything else runs the whole suite. A file is only listed once its
+# covering tests are named, so adding a file without saying what tests it makes
+# the suite full rather than making it fast with nothing behind it.
+#
+# Paths are exact. There are no patterns, so a newly added file is not listed and
+# therefore runs the whole suite until somebody says what covers it.
+
+[files]
+
+"swarm/submission_manifest/__init__.py" = [
+    "tests/test_submission_manifest.py",
+]
+"swarm/submission_manifest/submission_manifest.schema.json" = [
+    "tests/test_submission_manifest.py",
+]
+
+# The template README ships verbatim into every miner repo and its sha256 is
+# pinned in swarm/utils/github.py, so both hash tests have to run with it.
+"swarm/templates/README.md" = [
+    "tests/test_github.py::test_required_readme_hash_pins_the_template",
+    "tests/test_github.py::test_required_readme_hash_matches_template",
+]
+
+"neurons/miner.py" = [
+    "tests/test_miner.py",
+]
+
+"scripts/miner/setup.sh" = [
+    "tests/test_scripts_shell.py",
+]
+"scripts/miner/install_dependencies.sh" = [
+    "tests/test_scripts_shell.py",
+]
+
+# Starter controllers a miner copies and replaces.
+"swarm/submission_template/drone_agent.py" = [
+    "tests/test_starter_templates.py",
+]
+"swarm/submission_template/office_drone_agent.py" = [
+    "tests/test_starter_templates.py",
+]
+
+# Run in the miner job as well: these cover the same surfaces from the other
+# side, and are cheap enough to keep in a job whose point is speed.
+extra_tests = [
+    "tests/test_policy_interface.py",
+    "tests/test_submission_runtime_caps.py",
+    "tests/test_observation_contract.py::test_artifact_contract_shape_for_v1",
+    "tests/test_observation_contract.py::test_smoke_observation_lengths_match_production_runtime",
+    "tests/test_observation_contract.py::test_gpsless_layout_drops_global_position",
+    "tests/test_model_graph_lane.py::test_code_agent_lane_still_unpacks_and_stages_the_rpc_server",
+]
+
+# A file may only be listed above if it sits here. Kept separate so widening the
+# miner side is a deliberate edit rather than a side effect of adding a row.
+[bounds]
+exact = [
+    "neurons/miner.py",
+    "swarm/submission_template/drone_agent.py",
+    "swarm/submission_template/office_drone_agent.py",
+]
+prefixes = [
+    "swarm/submission_manifest/",
+    "swarm/templates/",
+    "scripts/miner/",
+]
+
+# Changing how routing works is never itself a miner-only change.
+protected = [
+    ".github/",
+    "ci/miner_tests.toml",
+    "ci/classify_changes.py",
+    "tests/test_miner_tests_manifest.py",
+]

@@ -20,3 +20,16 @@ services:
     command: >
       pytest -m "not slow and not integration"
              -n 2 --dist worksteal -ra -p no:cacheprovider
+
+  # The miner slice, for the CI lane that runs when only miner files changed.
+  # Reads the same manifest the workflow does, so the two cannot disagree.
+  swarm_miner:
+    <<: *swarm-base
+    container_name: swarm_miner
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ..:/app
+    environment:
+      SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
+    command: python ci/run_miner_tests.py

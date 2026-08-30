@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
 
 # a new push cancels the run already going
 concurrency:
@@ -19,17 +21,77 @@ env:
   TEST_IMAGE: ghcr.io/swarm-subnet/swarm:base
 
 jobs:
-  pytest:
+  # Which lane the change belongs in. Reads the merge commit rather than an API
+  # listing so the set of files cannot move while it is being read, and prints
+  # `full` for anything it cannot classify with certainty.
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lane: ${{ steps.pick.outputs.lane }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick the lane
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "lane=full" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git diff --name-status -z -M "$GITHUB_SHA^1" "$GITHUB_SHA" > /tmp/changed \
+            || { echo "lane=full" >> "$GITHUB_OUTPUT"; exit 0; }
+          lane=$(python3 ci/classify_changes.py \
+                   --manifest ci/miner_tests.toml --diff /tmp/changed)
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "lane: $lane"
+
+  miner:
+    needs: classify
+    if: needs.classify.outputs.lane == 'miner'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull test image
+        run: docker pull "$TEST_IMAGE"
+
+      - name: Run the miner tests
+        run: |
+          docker run --rm \
+            --cpus=4 \
+            -v "$PWD":/app \
+            -w /app \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/app \
+            -e HOME=/tmp \
+            --user "$(id -u):$(id -g)" \
+            "$TEST_IMAGE" \
+            python ci/run_miner_tests.py
+
+  full:
+    needs: classify
+    if: needs.classify.outputs.lane != 'miner'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       # On pull_request this checks out the MERGE commit: the PR branch
       # already merged into the base branch. That is the state that would
       # exist after merging, which is what you want to test.
-      # To test the PR branch as-is instead, uncomment the `with:` block.
       - uses: actions/checkout@v4
-        # with:
-        #   ref: ${{ github.event.pull_request.head.sha }}
+        with:
+          persist-credentials: false
 
       - name: Show what is under test
         run: |
@@ -60,3 +122,28 @@ jobs:
             --user "$(id -u):$(id -g)" \
             "$TEST_IMAGE" \
             pytest -q -n4 --dist worksteal -p no:cacheprovider
+
+  # The one check to require. A job skipped by `if:` reports as success, so this
+  # looks at what actually happened rather than trusting that.
+  gate:
+    needs: [classify, miner, full]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the result of the lane that ran
+        run: |
+          lane="${{ needs.classify.outputs.lane }}"
+          echo "classify: ${{ needs.classify.result }} (lane: $lane)"
+          echo "miner:    ${{ needs.miner.result }}"
+          echo "full:     ${{ needs.full.result }}"
+
+          [ "${{ needs.classify.result }}" = "success" ] || {
+            echo "::error::classification did not complete"; exit 1; }
+
+          case "$lane" in
+            miner) ran="${{ needs.miner.result }}" ;;
+            full)  ran="${{ needs.full.result }}" ;;
+            *) echo "::error::unrecognised lane '$lane'"; exit 1 ;;
+          esac
+
+          [ "$ran" = "success" ] || { echo "::error::$lane tests did not pass"; exit 1; }
