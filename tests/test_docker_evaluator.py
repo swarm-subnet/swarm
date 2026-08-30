@@ -1944,6 +1944,16 @@ def test_docker_hash_covers_a_file_a_negation_puts_back(hash_tree, tmp_path):
     assert _digest() != before
 
 
+def test_docker_hash_covers_a_directory_mode_change(hash_tree):
+    """COPY carries directory permissions, so this changes the image on its own."""
+    (hash_tree / "nested").mkdir()
+    (hash_tree / "nested" / "keep.py").write_text("x = 1\n")
+    (hash_tree / "nested").chmod(0o755)
+    before = _digest()
+    (hash_tree / "nested").chmod(0o700)
+    assert _digest() != before
+
+
 def test_docker_hash_covers_a_symlink_to_a_directory(hash_tree):
     """Docker copies the link itself, so retargeting it changes the image."""
     (hash_tree / "one").mkdir()

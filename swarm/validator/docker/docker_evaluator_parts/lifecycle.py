@@ -154,7 +154,10 @@ def _is_excluded_from_build(rel_posix: str, patterns: list[str]) -> bool:
 
 
 def _build_context_files(root: Path, swarm_pkg: Path) -> list[Path]:
-    """Every path `COPY swarm` puts in the image, after .dockerignore."""
+    """Every path `COPY swarm` puts in the image, after .dockerignore.
+
+    Directories are included: COPY carries their permissions across, so a mode
+    change on one alters the image with no file having changed."""
     try:
         lines = (root / ".dockerignore").read_text().splitlines()
     except OSError:
@@ -167,8 +170,7 @@ def _build_context_files(root: Path, swarm_pkg: Path) -> list[Path]:
     return sorted(
         p
         for p in swarm_pkg.rglob("*")
-        if (p.is_symlink() or not p.is_dir())
-        and not _is_excluded_from_build(p.relative_to(root).as_posix(), patterns)
+        if not _is_excluded_from_build(p.relative_to(root).as_posix(), patterns)
     )
 
 
@@ -192,6 +194,8 @@ def _calculate_docker_hash(self) -> str:
         try:
             if f.is_symlink():
                 kind, mode, payload = b"l", 0, os.readlink(f).encode()
+            elif f.is_dir():
+                kind, mode, payload = b"d", stat.S_IMODE(f.stat().st_mode), b""
             else:
                 kind, mode = b"f", stat.S_IMODE(f.stat().st_mode)
                 payload = f.read_bytes()
