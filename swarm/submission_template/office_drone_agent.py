@@ -35,8 +35,11 @@ Action:
     - yaw: turn rate, counterclockwise (-1) / clockwise (+1)
     [0, 0, 0, 0] hovers.
 
-Mission: find the target drone and physically hit it. Contact ends the episode
-as a success; crashing into the office ends it as a failure.
+Mission: find the target drone and intercept it alongside. Success is physical
+contact, or holding within 0.20 m of it horizontally while level with it (within
+0.08 m of its height) for three control steps. Hovering above it is not an
+interception and scores nothing. Crashing into the office ends the episode as a
+failure.
 
 Scoring:
     score = 0.5 x success + 0.5 x time
@@ -45,7 +48,10 @@ Scoring:
 
 Constraints:
     - Control rate: 50 Hz (dt = 1/50 s), episode horizon 60 s
-    - Full stick = 3.0 m/s per axis (Tello slow mode); ceiling at 3 m
+    - Full stick = about 3.0 m/s per axis (Tello slow mode); ceiling about 3 m
+    - The airframe is dealt per episode: speed, dead zone, slew rate and motor
+      lag all move by up to 18%, the room by 2-5% on each axis, and the target's
+      apparent size by 10%. Nothing here is a constant worth memorising.
 """
 
 import numpy as np

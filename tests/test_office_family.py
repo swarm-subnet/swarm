@@ -1008,6 +1008,14 @@ def test_office_target_size_varies_per_episode():
         sizes.add((round(w, 6), round(h, 6)))
         assert abs(w - 0.18) / 0.18 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
         assert abs(h - 0.08) / 0.08 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
+        # and the boxes the policy sees are built from THIS episode's silhouette
+        fam = OfficeInterceptorChallengeFamily()
+        if _place_with_clear_view(env, dist=2.0):
+            truth = fam._detector_capture(env)
+            assert truth is not None, "arranged a clear view but got no detection"
+            focal = env._office_det_focal
+            assert truth["w"] == pytest.approx(focal * w / truth["dist"], rel=1e-6)
+            assert truth["h"] == pytest.approx(focal * h / truth["dist"], rel=1e-6)
         env.close()
     assert len(sizes) == 3, "each seed must deal its own silhouette"
 
@@ -1026,8 +1034,14 @@ def test_office_spawns_spread_over_the_floor():
         gap = float(np.linalg.norm(s[:2] - g[:2]))
         assert OFFICE_MIN_START_DISTANCE_M - 1e-6 <= gap <= OFFICE_MAX_START_DISTANCE_M + 1e-6, (
             f"seed {seed}: separation {gap:.2f} m is outside the band")
-        assert OFFICE_X_RANGE[0] < s[0] < OFFICE_X_RANGE[1]
-        assert OFFICE_Y_RANGE[0] < s[1] < OFFICE_Y_RANGE[1]
+        fam = OfficeInterceptorChallengeFamily()
+        assert fam._point_is_clear(env, s, floor=True), f"seed {seed}: start is not clear"
+        assert fam._point_is_clear(env, g, floor=False), f"seed {seed}: target is not clear"
+        probe = np.array([s[0], s[1], 1.4 * env._office_scale[2]])
+        assert fam._nav_in_main(env, probe), f"seed {seed}: start is sealed off"
+        assert fam._nav_in_main(env, g), f"seed {seed}: target is sealed off"
+        xr, yr = env._office_x_range, env._office_y_range
+        assert xr[0] < s[0] < xr[1] and yr[0] < s[1] < yr[1], "start outside this room"
         starts.append(s[:2]); goals.append(g[:2])
         env.close()
     starts = np.array(starts)
@@ -1097,3 +1111,34 @@ def test_office_room_size_is_deterministic():
     from swarm.core.maps.office.builder import office_scale
     assert office_scale(77) == office_scale(77)
     assert office_scale(77) != office_scale(78)
+
+
+def test_office_fast_level_pass_still_registers(office_env):
+    """A quick level pass must score. Physics runs five substeps per control step, so
+    a graze can exist and separate between contact queries; the held proximity
+    envelope is what makes a genuine fast interception count anyway."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    fam = OfficeInterceptorChallengeFamily()
+    cli = env.CLIENT
+    tgt = int(env._office_target_uid)
+    base = np.array([float(env.pos[0][0]), float(env.pos[0][1]), 1.60])
+    p.resetBasePositionAndOrientation(tgt, base.tolist(), [0, 0, 0, 1], physicsClientId=cli)
+    # sweep straight through the target at full stick speed, sampled at control cadence
+    speed, dt = env.SPEED_LIMIT, 1.0 / 50.0
+    env._success = False
+    env._office_catch_hold = 0
+    steps_inside = 0
+    for k in range(-40, 41):
+        pos = base + np.array([k * speed * dt, 0.0, 0.0])
+        p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), pos.tolist(),
+                                          [0, 0, 0, 1], physicsClientId=cli)
+        env._updateAndStoreKinematicInformation()
+        p.performCollisionDetection(physicsClientId=cli)
+        if abs(k * speed * dt) <= OFFICE_CATCH_RADIUS_M:
+            steps_inside += 1
+        fam._update_target(env)
+    assert steps_inside >= OFFICE_CATCH_HOLD_STEPS, (
+        f"a {speed:.2f} m/s pass only spends {steps_inside} steps inside the envelope; "
+        "the hold requirement would make genuine fast intercepts unscoreable")
+    assert env._success, "a full-speed level pass through the target must register"
