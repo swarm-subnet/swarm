@@ -1,6 +1,8 @@
 import hashlib
 import os
+import stat
 import subprocess
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Optional
 
@@ -139,34 +141,71 @@ def _resolve_base_image_for_key(self, image_key: str) -> str:
         return env_override
     return str(getattr(self, "base_images", {}).get(normalized, self.base_image))
 
+def _is_excluded_from_build(rel_posix: str, patterns: list[str]) -> bool:
+    """Whether .dockerignore keeps this path out of the build context.
+
+    A pattern this does not understand is skipped rather than applied, so the key
+    covers more than the image rather than less: a needless rebuild is harmless,
+    a stale image is not."""
+    for pattern in patterns:
+        if pattern.startswith("!"):  # negation, deliberately not applied
+            continue
+        if pattern.startswith("**/"):
+            tail = pattern[3:]
+            if any(fnmatch(part, tail) for part in rel_posix.split("/")):
+                return True
+        elif rel_posix == pattern or rel_posix.startswith(f"{pattern}/"):
+            return True
+    return False
+
+
+def _build_context_files(root: Path, swarm_pkg: Path) -> list[Path]:
+    """Every path `COPY swarm` puts in the image, after .dockerignore."""
+    try:
+        lines = (root / ".dockerignore").read_text().splitlines()
+    except OSError:
+        lines = []
+    patterns = [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+    return sorted(
+        p
+        for p in swarm_pkg.rglob("*")
+        if not p.is_dir()
+        and not _is_excluded_from_build(p.relative_to(root).as_posix(), patterns)
+    )
+
+
 def _calculate_docker_hash(self) -> str:
     """Cache key over every input that shapes the runner image.
 
-    Each entry is framed as path + length + bytes so file boundaries are
-    unambiguous; a missing or unreadable input hashes as a distinct marker
-    instead of silently keeping a stale key."""
+    Entries are framed as path + type + mode + length + payload so file
+    boundaries are unambiguous and a permission change is not mistaken for no
+    change; a missing or unreadable input hashes as a distinct marker instead of
+    silently keeping a stale key."""
     root = _repo_root()
-    swarm_pkg = _swarm_package_dir()
     inputs = [
         root / ".dockerignore",
         _docker_dir() / "Dockerfile",
         _docker_dir() / "docker-requirements.txt",
     ]
-    inputs.extend(
-        sorted(p for p in swarm_pkg.rglob("*.py") if "__pycache__" not in p.parts)
-    )
+    inputs.extend(_build_context_files(root, _swarm_package_dir()))
 
     hasher = hashlib.sha256()
     for f in inputs:
         try:
-            data = f.read_bytes()
+            if f.is_symlink():
+                kind, mode, payload = b"l", 0, os.readlink(f).encode()
+            else:
+                kind, mode = b"f", stat.S_IMODE(f.stat().st_mode)
+                payload = f.read_bytes()
         except OSError:
-            data = b"__missing_input__"
+            kind, mode, payload = b"x", 0, b"__missing_input__"
         rel = f.relative_to(root).as_posix().encode()
         hasher.update(len(rel).to_bytes(4, "big"))
         hasher.update(rel)
-        hasher.update(len(data).to_bytes(8, "big"))
-        hasher.update(data)
+        hasher.update(kind)
+        hasher.update(mode.to_bytes(4, "big"))
+        hasher.update(len(payload).to_bytes(8, "big"))
+        hasher.update(payload)
 
     return hasher.hexdigest()[:16]
 

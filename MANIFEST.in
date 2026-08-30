@@ -5,6 +5,9 @@ prune tests
 recursive-include swarm/assets *
 recursive-include swarm/submission_template *
 recursive-include swarm/domain_model *.json
+recursive-include swarm/model_graph *.json
+recursive-include swarm/validator/calibration *.json
+recursive-include swarm/validator/calibration *.zip
 recursive-include swarm/submission_manifest *.json
 recursive-include swarm/templates *
 recursive-include swarm/validator/docker *

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 from swarm import cli
 
@@ -143,3 +144,47 @@ def test_python_module_entrypoint_help_runs():
     )
     assert result.returncode == 0
     assert "Swarm CLI" in result.stdout
+
+
+# The doctor check must agree with what the validator actually stages: batch.py
+# copies runtime_caps.py into every submission, so a template missing it is broken.
+
+
+def _template_dir(tmp_path, names):
+    d = tmp_path / "swarm" / "submission_template"
+    d.mkdir(parents=True)
+    for name in names:
+        (d / name).write_text("")
+    return d
+
+
+def test_doctor_accepts_a_complete_submission_template(tmp_path, monkeypatch):
+    _template_dir(tmp_path, cli.REQUIRED_TEMPLATE_FILES)
+    monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
+    assert cli._check_submission_template().ok is True
+
+
+def test_doctor_rejects_a_template_missing_runtime_caps(tmp_path, monkeypatch):
+    names = set(cli.REQUIRED_TEMPLATE_FILES) - {"runtime_caps.py"}
+    _template_dir(tmp_path, names)
+    monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
+
+    check = cli._check_submission_template()
+    assert check.ok is False
+    assert "runtime_caps.py" in check.detail
+
+
+def test_required_template_files_match_what_the_validator_stages():
+    """cli.py and batch.py held two different lists; they must not drift again."""
+    staged = (
+        Path(__file__).resolve().parents[1]
+        / "swarm" / "validator" / "docker" / "docker_evaluator_parts" / "batch.py"
+    ).read_text()
+    marker = 'for name in ("agent.capnp", "agent_server.py", "main.py", "runtime_caps.py"):'
+    assert marker in staged
+    assert set(cli.REQUIRED_TEMPLATE_FILES) == {
+        "agent.capnp",
+        "agent_server.py",
+        "main.py",
+        "runtime_caps.py",
+    }
