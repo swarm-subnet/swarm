@@ -142,14 +142,8 @@ def _resolve_base_image_for_key(self, image_key: str) -> str:
     return str(getattr(self, "base_images", {}).get(normalized, self.base_image))
 
 def _is_excluded_from_build(rel_posix: str, patterns: list[str]) -> bool:
-    """Whether .dockerignore keeps this path out of the build context.
-
-    A pattern this does not understand is skipped rather than applied, so the key
-    covers more than the image rather than less: a needless rebuild is harmless,
-    a stale image is not."""
+    """Whether .dockerignore keeps this path out of the build context."""
     for pattern in patterns:
-        if pattern.startswith("!"):  # negation, deliberately not applied
-            continue
         if pattern.startswith("**/"):
             tail = pattern[3:]
             if any(fnmatch(part, tail) for part in rel_posix.split("/")):
@@ -166,10 +160,14 @@ def _build_context_files(root: Path, swarm_pkg: Path) -> list[Path]:
     except OSError:
         lines = []
     patterns = [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+    # A negation puts files back that an earlier line excluded; rather than work out
+    # which, drop the patterns and hash the whole tree. Over-hashing only costs a build.
+    if any(p.startswith("!") for p in patterns):
+        patterns = []
     return sorted(
         p
         for p in swarm_pkg.rglob("*")
-        if not p.is_dir()
+        if (p.is_symlink() or not p.is_dir())
         and not _is_excluded_from_build(p.relative_to(root).as_posix(), patterns)
     )
 

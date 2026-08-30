@@ -1931,3 +1931,26 @@ def test_docker_hash_marks_a_missing_required_input(hash_tree):
     before = _digest()
     (hash_tree / "validator" / "docker" / "Dockerfile").unlink()
     assert _digest() != before
+
+
+def test_docker_hash_covers_a_file_a_negation_puts_back(hash_tree, tmp_path):
+    """`!pattern` re-includes a file the line above excluded, so it is in the image."""
+    (tmp_path / ".dockerignore").write_text(
+        "swarm/assets\n!swarm/assets/needed.json\n"
+    )
+    (hash_tree / "assets" / "needed.json").write_text("first\n")
+    before = _digest()
+    (hash_tree / "assets" / "needed.json").write_text("second\n")
+    assert _digest() != before
+
+
+def test_docker_hash_covers_a_symlink_to_a_directory(hash_tree):
+    """Docker copies the link itself, so retargeting it changes the image."""
+    (hash_tree / "one").mkdir()
+    (hash_tree / "two").mkdir()
+    link = hash_tree / "current"
+    link.symlink_to("one", target_is_directory=True)
+    before = _digest()
+    link.unlink()
+    link.symlink_to("two", target_is_directory=True)
+    assert _digest() != before
