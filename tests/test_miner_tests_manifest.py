@@ -73,3 +73,12 @@ def test_routing_files_are_never_listed(manifest, files):
     protected = tuple(manifest["bounds"]["protected"])
     listed = [p for p in files if p.startswith(protected)]
     assert listed == [], f"routing files cannot be miner-only: {listed}"
+
+
+def test_the_workflow_reads_the_rules_from_the_base_branch():
+    """These rules only mean anything if a branch cannot supply its own copy."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text()
+    for path in ["ci/classify_changes.py", "ci/miner_tests.toml"]:
+        assert f'git show "$GITHUB_SHA^1:{path}"' in workflow, (
+            f"{path} must come from the first parent, not the branch under test"
+        )

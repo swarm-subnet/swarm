@@ -5,6 +5,7 @@ and return an action of the shape their family declares.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,15 +17,24 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "swarm" / "submission_templ
 
 
 @pytest.mark.parametrize("name", ["drone_agent.py", "office_drone_agent.py"])
-def test_starter_imports_on_its_own(name):
-    """A miner copies the file out of the package, so it cannot rely on it."""
+def test_starter_imports_on_its_own(name, tmp_path):
+    """A miner copies the file out of the package, so it cannot rely on it.
+
+    Run from elsewhere under -I, or the repo on sys.path answers the imports and
+    a starter that reaches back into swarm passes anyway."""
+    copied = tmp_path / name
+    copied.write_bytes((TEMPLATE_DIR / name).read_bytes())
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PWD")}
     result = subprocess.run(
-        [sys.executable, "-c", f"import importlib.util,sys;"
-         f"spec=importlib.util.spec_from_file_location('m', r'{TEMPLATE_DIR / name}');"
+        [sys.executable, "-I", "-c",
+         f"import importlib.util;"
+         f"spec=importlib.util.spec_from_file_location('m', r'{copied}');"
          f"m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
          f"assert hasattr(m,'DroneFlightController')"],
         capture_output=True,
         text=True,
+        cwd=tmp_path,
+        env=env,
     )
     assert result.returncode == 0, result.stderr[-1500:]
 

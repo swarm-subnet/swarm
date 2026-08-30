@@ -71,7 +71,7 @@ prefixes = [
 # Changing how routing works is never itself a miner-only change.
 protected = [
     ".github/",
-    "ci/miner_tests.toml",
-    "ci/classify_changes.py",
+    "ci/",
     "tests/test_miner_tests_manifest.py",
+    "tests/test_classify_changes.py",
 ]

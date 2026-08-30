@@ -24,10 +24,10 @@ from pathlib import Path
 def paths_from_name_status(payload: bytes) -> list[str] | None:
     """Every path in a ``git diff --name-status -z -M`` record set.
 
-    A rename yields both sides, so moving a file out of the miner side is not
-    mistaken for leaving it there. Returns None if the payload does not parse,
-    or if it contains a deletion: nothing selected asserts that a deleted file
-    ought to have existed, so a deletion is for the whole suite.
+    Only edits to files that already existed can take the short lane. Adding,
+    deleting, renaming or turning a file into a symlink all change what the
+    listed tests were written against, and none of them is worth the minutes
+    the whole suite costs, so the payload is refused and everything runs.
     """
     fields = [
         f.decode(errors="surrogateescape") for f in payload.split(b"\0") if f != b""
@@ -36,15 +36,10 @@ def paths_from_name_status(payload: bytes) -> list[str] | None:
     i = 0
     while i < len(fields):
         status = fields[i]
-        if not status or status[0] not in "AMDRCT":
+        if status != "M" or i + 1 >= len(fields):
             return None
-        if status[0] == "D":
-            return None
-        wanted = 2 if status[0] in "RC" else 1
-        if i + wanted >= len(fields):
-            return None
-        paths.extend(fields[i + 1 : i + 1 + wanted])
-        i += 1 + wanted
+        paths.append(fields[i + 1])
+        i += 2
     return paths or None
 
 

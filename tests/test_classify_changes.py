@@ -52,8 +52,18 @@ def test_several_listed_files_together_run_the_miner_tests():
     assert route(("M", MINER_FILE), ("M", OTHER_MINER_FILE)) == "miner"
 
 
-def test_a_rename_between_two_listed_files_runs_the_miner_tests():
-    assert route(("R100", MINER_FILE, OTHER_MINER_FILE)) == "miner"
+@pytest.mark.parametrize(
+    "records",
+    [
+        (("R100", MINER_FILE, OTHER_MINER_FILE),),
+        (("A", MINER_FILE),),
+        (("T", MINER_FILE),),
+    ],
+)
+def test_anything_but_an_edit_to_a_listed_file_runs_the_whole_suite(records):
+    """Adding, renaming or retyping a file changes what the tests were written
+    against, so only a plain modification takes the short lane."""
+    assert route(*records) == "full"
 
 
 # ── everything else ───────────────────────────────────────────────────────────
@@ -162,7 +172,7 @@ def test_a_path_that_is_not_utf8_runs_the_whole_suite():
 
 def test_a_path_containing_a_space_is_read_correctly():
     """The diff is NUL-delimited, so an awkward filename is still one path."""
-    assert route(("A", "scripts/miner/a file.sh")) == "full"
+    assert route(("M", "scripts/miner/a file.sh")) == "full"
     assert cc.paths_from_name_status(b"M\0swarm/a b.py\0") == ["swarm/a b.py"]
 
 

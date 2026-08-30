@@ -66,3 +66,12 @@ def test_scripts_are_not_world_writable():
     for script in _all_shell_scripts():
         mode = script.stat().st_mode
         assert not (mode & 0o002), f"{script} is world-writable"
+
+
+def test_setup_scripts_stay_executable():
+    """A permission change shows up as an ordinary edit, so pin the bit itself."""
+    for script in [
+        REPO_ROOT / "scripts" / "miner" / "setup.sh",
+        REPO_ROOT / "scripts" / "validator" / "main" / "setup.sh",
+    ]:
+        assert script.stat().st_mode & 0o111, f"{script} is not executable"
