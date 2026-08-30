@@ -49,11 +49,19 @@ from swarm.constants import (
     OFFICE_DET_STALE_SEC,
     OFFICE_DRIFT_SEED_OFFSET,
     OFFICE_HEADING_SEED_OFFSET,
-    OFFICE_KILL_RADIUS_M,
+    OFFICE_ACTUATOR_JITTER,
+    OFFICE_ACTUATOR_SEED_OFFSET,
+    OFFICE_CATCH_HOLD_STEPS,
+    OFFICE_CATCH_LEVEL_M,
+    OFFICE_CATCH_RADIUS_M,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MAX_TILT_DEG,
     OFFICE_MIN_START_DISTANCE_M,
+    OFFICE_MOTOR_TAU_SEC,
+    OFFICE_RC_DEAD_ZONE,
+    OFFICE_RC_SLEW_PER_SEC,
     OFFICE_RC_SPEED,
+    OFFICE_RC_YAW_RATE,
     OFFICE_TARGET_ACCEL,
     OFFICE_TARGET_ALT_MAX_M,
     OFFICE_TARGET_ALT_MIN_M,
@@ -71,6 +79,8 @@ from swarm.constants import (
     OFFICE_TARGET_PAUSE_MIN_SEC,
     OFFICE_TARGET_REACT_MAX_M,
     OFFICE_TARGET_REACT_MIN_M,
+    OFFICE_TARGET_SIZE_JITTER,
+    OFFICE_TARGET_SIZE_SEED_OFFSET,
     OFFICE_TARGET_SPEED_MAX,
     OFFICE_TARGET_SPEED_MIN,
     OFFICE_TARGET_TURN_SPEED,
@@ -271,10 +281,12 @@ def make_office_control(env: Any) -> DSLPIDControl:
     return ctrl
 
 
-def office_point(rng: random.Random, z_range: tuple) -> tuple:
+def office_point(rng: random.Random, z_range: tuple, x_range=None, y_range=None) -> tuple:
     """A deterministic point inside the office flight volume, clear of the walls."""
-    x = rng.uniform(OFFICE_X_RANGE[0] + _WALL_MARGIN_M, OFFICE_X_RANGE[1] - _WALL_MARGIN_M)
-    y = rng.uniform(OFFICE_Y_RANGE[0] + _WALL_MARGIN_M, OFFICE_Y_RANGE[1] - _WALL_MARGIN_M)
+    x_range = OFFICE_X_RANGE if x_range is None else x_range
+    y_range = OFFICE_Y_RANGE if y_range is None else y_range
+    x = rng.uniform(x_range[0] + _WALL_MARGIN_M, x_range[1] - _WALL_MARGIN_M)
+    y = rng.uniform(y_range[0] + _WALL_MARGIN_M, y_range[1] - _WALL_MARGIN_M)
     return (x, y, rng.uniform(*z_range))
 
 
@@ -361,6 +373,14 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_target_step = 0
         env._office_target_brakes = 0
         env._office_target_crashed = False
+        env._office_catch_hold = 0
+        self._resample_airframe(env, seed)
+        # No two airframes present the same silhouette (guards, battery, wear), so
+        # the size a box implies is dealt per episode and cannot be inverted once.
+        size_rng = np.random.default_rng((seed ^ OFFICE_TARGET_SIZE_SEED_OFFSET) & 0xFFFFFFFF)
+        j = OFFICE_TARGET_SIZE_JITTER
+        env._office_target_w_m = _DET_TARGET_W_M * float(size_rng.uniform(1 - j, 1 + j))
+        env._office_target_h_m = _DET_TARGET_H_M * float(size_rng.uniform(1 - j, 1 + j))
         env._collision_exempt_uids = frozenset()
         env._office_telemetry = np.zeros((n, _TELEM_DIM), dtype=np.float32)
         # Age starts beyond the stale threshold: no packet has arrived yet.
@@ -445,10 +465,11 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         return self._rays_clear(env, froms, tos, extra_ignore=(int(env.DRONE_IDS[0]),))
 
     def _nav_main_component(self, env) -> tuple:
-        """Grid the flight volume once and label its connected components with the
-        family's own leg clearance. The office is fixed geometry, so the result is
-        cached for the process and identical on every validator. Placement uses it
-        to keep tasks out of sealed rooms (the office has a closed corridor)."""
+        """Grid the flight volume and label its connected components with the
+        family's own leg clearance. Built once on the nominal room: stretching the
+        room moves every node but joins and separates nothing, so the components
+        carry over and the nodes are simply scaled at use. Placement uses it to keep
+        tasks out of sealed rooms (the office has a closed corridor)."""
         global _NAV_MAIN
         if _NAV_MAIN is not None:
             return _NAV_MAIN
@@ -484,6 +505,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         """True when a clear leg connects pos to a main-component nav node
         among the nearest few grid cells."""
         nodes, main = self._nav_main_component(env)
+        sc = getattr(env, "_office_scale", (1.0, 1.0, 1.0))
+        nodes = [(n[0] * sc[0], n[1] * sc[1], n[2] * sc[2]) for n in nodes]
         order = sorted(range(len(nodes)),
                        key=lambda i: float(np.linalg.norm(np.array(nodes[i]) - pos)))
         for i in order[:8]:
@@ -494,22 +517,28 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
 
     def _clear_spawn(self, env, pos: np.ndarray, *, floor: bool, rng,
                      anchor: np.ndarray) -> np.ndarray:
-        """First clear point in the main open component, preferring candidates that
-        keep the task's start-goal separation band; falls back to any clear point."""
+        """A point drawn uniformly over the office's reachable free space, keeping the
+        separation band; falls back to any clear point.
+
+        The task's own suggestion is only the fallback. Drawing every candidate
+        instead of nudging that one point is what stops a spatial prior over spawn
+        locations from being worth memorising."""
         z_range = (pos[2], pos[2]) if floor else (OFFICE_TARGET_ALT_MIN_M, OFFICE_TARGET_ALT_MAX_M)
         fallback = None
-        for i in range(65):
-            if self._point_is_clear(env, pos, floor=floor):
-                # A drone placed in a sealed room makes the task impossible.
-                probe = np.array([pos[0], pos[1], _NAV_Z_LEVELS[0]]) if floor else pos
-                if self._nav_in_main(env, probe):
-                    gap = float(np.linalg.norm(pos[:2] - anchor[:2]))
-                    if OFFICE_MIN_START_DISTANCE_M <= gap <= OFFICE_MAX_START_DISTANCE_M:
-                        return pos
-                    if fallback is None:
-                        fallback = pos
-            if i < 64:
-                pos = np.array(office_point(rng, z_range), dtype=float)
+        for _ in range(96):
+            cand = np.array(office_point(rng, z_range, env._office_x_range,
+                                         env._office_y_range), dtype=float)
+            if not self._point_is_clear(env, cand, floor=floor):
+                continue
+            # A drone placed in a sealed room makes the task impossible.
+            probe = np.array([cand[0], cand[1], _NAV_Z_LEVELS[0]]) if floor else cand
+            if not self._nav_in_main(env, probe):
+                continue
+            gap = float(np.linalg.norm(cand[:2] - anchor[:2]))
+            if OFFICE_MIN_START_DISTANCE_M <= gap <= OFFICE_MAX_START_DISTANCE_M:
+                return cand
+            if fallback is None:
+                fallback = cand
         return fallback if fallback is not None else pos
 
     def spawn_task_world(self, env) -> None:
@@ -532,6 +561,10 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._collision_exempt_uids = frozenset({uid})
 
         map_info = build_office_map(seed=seed, cli=cli)
+        env._office_x_range = tuple(map_info["x_range"])
+        env._office_y_range = tuple(map_info["y_range"])
+        env._office_scale = tuple(map_info["scale"])
+        env._office_ceiling_m = float(map_info["ceiling_m"])
         # Spawn-probe obstacles: every map body except the floor the drone rests on.
         env._office_map_uids = tuple(int(u) for name, u in sorted(map_info["bodies"].items())
                                      if name != "floor") + (int(map_info["window_plug"]),)
@@ -775,6 +808,21 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     # ------------------------------------------------------------------ #
     # post-physics: catch on real contact, target self-crash, telemetry
     # ------------------------------------------------------------------ #
+    def _resample_airframe(self, env, seed: int) -> None:
+        """Deal this episode's airframe. No two Tellos answer a stick the same way —
+        battery charge, prop wear and link latency all move the response — so the
+        mapping from stick to motion is drawn per episode instead of being a
+        constant a policy can invert once."""
+        rng = np.random.default_rng((int(seed) ^ OFFICE_ACTUATOR_SEED_OFFSET) & 0xFFFFFFFF)
+        j = OFFICE_ACTUATOR_JITTER
+        scale = lambda: float(rng.uniform(1.0 - j, 1.0 + j))
+        env.SPEED_LIMIT = OFFICE_RC_SPEED * scale()
+        env.MAX_YAW_RATE = OFFICE_RC_YAW_RATE * scale()
+        env._rc_dead_zone = OFFICE_RC_DEAD_ZONE * scale()
+        env._rc_max_step = OFFICE_RC_SLEW_PER_SEC * scale() * env.CTRL_TIMESTEP
+        tau = OFFICE_MOTOR_TAU_SEC * scale()
+        env._office_motor_alpha = 1.0 - float(np.exp(-env.PYB_TIMESTEP / tau))
+
     def _update_target(self, env) -> None:
         uid = getattr(env, "_office_target_uid", None)
         if uid is None:
@@ -788,8 +836,17 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         chaser_uid = int(env.DRONE_IDS[0])
         contacts = p.getContactPoints(bodyA=uid, physicsClientId=cli)
         others = [(int(c[2]) if int(c[1]) == uid else int(c[1]), c[9]) for c in contacts]
-        dist = float(np.linalg.norm(env.pos[0] - env._office_target_pos))
-        if dist <= OFFICE_KILL_RADIUS_M or any(o == chaser_uid for o, _ in others):
+        rel = env.pos[0] - env._office_target_pos
+        # An interception is flown alongside the target, not dropped onto it: the
+        # hull is wide and flat, so a centre test alone pays for hovering overhead.
+        level = abs(float(rel[2])) <= OFFICE_CATCH_LEVEL_M
+        near = float(np.linalg.norm(rel[:2])) <= OFFICE_CATCH_RADIUS_M
+        if level and near:
+            env._office_catch_hold += 1
+        else:
+            env._office_catch_hold = 0
+        if (env._office_catch_hold >= OFFICE_CATCH_HOLD_STEPS
+                or any(o == chaser_uid for o, _ in others)):
             env._success = True
             env._t_to_goal = env._time_alive
             env._failure_reason = FailureReason.NONE.value
@@ -824,8 +881,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         py = focal * float(np.dot(rel, -up)) / depth + res / 2.0
         if not (0.0 <= px <= res and 0.0 <= py <= res):
             return None
-        w_px = focal * _DET_TARGET_W_M / depth
-        h_px = focal * _DET_TARGET_H_M / depth
+        w_px = focal * env._office_target_w_m / depth
+        h_px = focal * env._office_target_h_m / depth
         tpos = env._office_target_pos
         offs = (np.zeros(3), 0.09 * -left, 0.09 * left, 0.045 * up, 0.045 * -up)
         froms = [eye.tolist()] * len(offs)
@@ -894,10 +951,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         # A full-speed drone can tunnel through the thin ceiling sheet between
         # substeps; leaving the room is hitting the shell, whatever physics missed.
         pos = env.pos[0]
+        xr, yr = env._office_x_range, env._office_y_range
+        ceiling = env._office_ceiling_m
         if (not env._collision
-                and (pos[2] > OFFICE_CEILING_M + 0.3 or pos[2] < -0.3
-                     or not (OFFICE_X_RANGE[0] - 0.3 < pos[0] < OFFICE_X_RANGE[1] + 0.3)
-                     or not (OFFICE_Y_RANGE[0] - 0.3 < pos[1] < OFFICE_Y_RANGE[1] + 0.3))):
+                and (pos[2] > ceiling + 0.3 or pos[2] < -0.3
+                     or not (xr[0] - 0.3 < pos[0] < xr[1] + 0.3)
+                     or not (yr[0] - 0.3 < pos[1] < yr[1] + 0.3))):
             env._collision = True
             if env._failure_reason == FailureReason.NONE.value:
                 env._failure_reason = FailureReason.OBSTACLE_COLLISION.value

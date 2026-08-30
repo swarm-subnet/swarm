@@ -587,7 +587,16 @@ OFFICE_TARGET_ACCEL = 2.0                   # m/s^2 — speed build after each c
 OFFICE_TARGET_DODGE_REPLAN_STEPS = 25       # >= 0.5 s between dodge replans (human reaction)
 OFFICE_TARGET_ARRIVE_M = 0.25               # waypoint arrival radius
 OFFICE_TARGET_CLEAR_M = 0.15                # leg clearance radius for the ray checks
-OFFICE_KILL_RADIUS_M = 0.15                 # deep-overlap anti-tunnel guard; the catch is a real hit
+OFFICE_SCALE_JITTER_MIN = 0.02              # the room is never the exact size of the drawing...
+OFFICE_SCALE_JITTER_MAX = 0.05              # ...each axis stretches by this much, per episode
+OFFICE_SCALE_SEED_OFFSET = 0x5CA1E          # own stream: the room draw must not ride other draws
+OFFICE_TARGET_SIZE_SEED_OFFSET = 0x51E0     # own stream: the silhouette draw must not ride other draws
+OFFICE_TARGET_SIZE_JITTER = 0.10            # +/- fraction the target's apparent size is resampled by each episode
+OFFICE_ACTUATOR_JITTER = 0.18               # +/- fraction the airframe's response is resampled by each episode
+OFFICE_ACTUATOR_SEED_OFFSET = 0x5A17C       # own stream: the airframe draw must not ride other draws
+OFFICE_CATCH_RADIUS_M = 0.20                # m — horizontal reach of an intercept, wider than the hulls
+OFFICE_CATCH_LEVEL_M = 0.08                 # m — height difference allowed; overhead is not an intercept
+OFFICE_CATCH_HOLD_STEPS = 3                 # control steps held inside the box, so one frame is not a lottery
 OFFICE_TARGET_SELFCRASH_FORCE = 3.0         # N — world-contact force that counts as a target crash
 OFFICE_TARGET_SEED_OFFSET = 0x0FF1CE        # decorrelates the target rng from map + telemetry
 OFFICE_HEADING_SEED_OFFSET = 0x481D1        # own stream: spawn heading must not ride placement draws
