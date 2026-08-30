@@ -109,8 +109,10 @@ def test_serialize_observation_payload_omits_victim_xy(sar_env):
         Path(__file__).resolve().parents[2]
         / "swarm" / "submission_template" / "agent.capnp"
     )
-    if not schema_path.is_file():
-        pytest.skip(f"capnp schema not found at {schema_path}")
+    assert schema_path.is_file(), (
+        f"capnp schema not found at {schema_path}; a skip here would hide the leak "
+        "this test exists to catch"
+    )
     agent_capnp = capnp.load(str(schema_path))
 
     env = sar_env
