@@ -490,8 +490,9 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         global _NAV_MAIN
         xr, yr = env._office_x_range, env._office_y_range
         zs = tuple(z * env._office_scale[2] for z in _NAV_Z_LEVELS)
-        key = (round(xr[0], 6), round(xr[1], 6), round(yr[0], 6), round(yr[1], 6),
-               tuple(round(z, 6) for z in zs))
+        # Keyed on the exact scale the geometry was built from: a rounded key could
+        # hand one room's component labels to a slightly different room.
+        key = tuple(env._office_scale)
         if _NAV_MAIN is not None and _NAV_MAIN[0] == key:
             return _NAV_MAIN[1]
         xs = np.arange(xr[0] + 0.5, xr[1] - 0.5, _NAV_PITCH)
@@ -544,8 +545,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         sealed-room check; `anchor` additionally holds it inside the separation band
         when one is given."""
         z_range = (z, z) if floor else (OFFICE_TARGET_ALT_MIN_M, OFFICE_TARGET_ALT_MAX_M)
-        spare = None
-        for _ in range(256):
+        for _ in range(512):
             cand = np.array(office_point(rng, z_range, env._office_x_range,
                                          env._office_y_range), dtype=float)
             if not self._point_is_clear(env, cand, floor=floor):
@@ -561,11 +561,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             gap = float(np.linalg.norm(cand[:2] - anchor[:2]))
             if OFFICE_MIN_START_DISTANCE_M <= gap <= OFFICE_MAX_START_DISTANCE_M:
                 return cand
-            if spare is None:
-                spare = cand
-        if spare is not None:
-            return spare
-        raise RuntimeError("office placement found no clear reachable point")
+        raise RuntimeError(
+            "office placement found no clear reachable point inside the separation band")
 
     def spawn_task_world(self, env) -> None:
         cli = env.getPyBulletClient()

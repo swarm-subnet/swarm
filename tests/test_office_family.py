@@ -1010,12 +1010,12 @@ def test_office_target_size_varies_per_episode():
         assert abs(h - 0.08) / 0.08 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
         # and the boxes the policy sees are built from THIS episode's silhouette
         fam = OfficeInterceptorChallengeFamily()
-        if _place_with_clear_view(env, dist=2.0):
-            truth = fam._detector_capture(env)
-            assert truth is not None, "arranged a clear view but got no detection"
-            focal = env._office_det_focal
-            assert truth["w"] == pytest.approx(focal * w / truth["dist"], rel=1e-6)
-            assert truth["h"] == pytest.approx(focal * h / truth["dist"], rel=1e-6)
+        assert _place_with_clear_view(env, dist=2.0), "no clear line of sight to arrange"
+        truth = fam._detector_capture(env)
+        assert truth is not None, "arranged a clear view but got no detection"
+        focal = env._office_det_focal
+        assert truth["w"] == pytest.approx(focal * w / truth["dist"], rel=1e-6)
+        assert truth["h"] == pytest.approx(focal * h / truth["dist"], rel=1e-6)
         env.close()
     assert len(sizes) == 3, "each seed must deal its own silhouette"
 
@@ -1124,21 +1124,60 @@ def test_office_fast_level_pass_still_registers(office_env):
     tgt = int(env._office_target_uid)
     base = np.array([float(env.pos[0][0]), float(env.pos[0][1]), 1.60])
     p.resetBasePositionAndOrientation(tgt, base.tolist(), [0, 0, 0, 1], physicsClientId=cli)
-    # sweep straight through the target at full stick speed, sampled at control cadence
+    # Sweep past at full stick speed, offset sideways so the hulls (which touch at
+    # 0.176 m) never meet: success here can only come from the held envelope, not
+    # from the contact branch.
     speed, dt = env.SPEED_LIMIT, 1.0 / 50.0
+    offset = 0.5 * (0.176 + OFFICE_CATCH_RADIUS_M)
+    assert 0.176 < offset <= OFFICE_CATCH_RADIUS_M, "offset must clear the hulls"
     env._success = False
     env._office_catch_hold = 0
-    steps_inside = 0
+    steps_inside = touches = 0
     for k in range(-40, 41):
-        pos = base + np.array([k * speed * dt, 0.0, 0.0])
+        pos = base + np.array([k * speed * dt, offset, 0.0])
         p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), pos.tolist(),
                                           [0, 0, 0, 1], physicsClientId=cli)
         env._updateAndStoreKinematicInformation()
         p.performCollisionDetection(physicsClientId=cli)
-        if abs(k * speed * dt) <= OFFICE_CATCH_RADIUS_M:
+        touches += len(p.getContactPoints(bodyA=int(env.DRONE_IDS[0]), bodyB=tgt,
+                                          physicsClientId=cli))
+        if float(np.linalg.norm([k * speed * dt, offset])) <= OFFICE_CATCH_RADIUS_M:
             steps_inside += 1
         fam._update_target(env)
+    assert touches == 0, "the sweep must not touch, or the contact branch is doing the work"
     assert steps_inside >= OFFICE_CATCH_HOLD_STEPS, (
         f"a {speed:.2f} m/s pass only spends {steps_inside} steps inside the envelope; "
         "the hold requirement would make genuine fast intercepts unscoreable")
-    assert env._success, "a full-speed level pass through the target must register"
+    assert env._success, "a full-speed level pass must register on the envelope alone"
+
+
+def test_office_par_follows_the_dealt_airframe():
+    """Par is the clock a seed is judged against, so it must be built from the
+    airframe that seed actually flies — and the flee allowance must stay the
+    target's, since the target runs at the nominal speed whatever the chaser got."""
+    from swarm.challenge_families.office_interceptor import (
+        office_airframe_profile,
+        office_target_profile,
+    )
+    from swarm.constants import OFFICE_ACQUIRE_SLACK_SEC
+    from swarm.validator.reward import _calculate_office_target_time
+
+    seeds = [201, 202, 203, 204, 205]
+    pars = set()
+    for seed in seeds:
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        chaser = office_airframe_profile(seed)["speed"]
+        assert env.SPEED_LIMIT == pytest.approx(chaser), "env and reward disagree on the airframe"
+        prof = office_target_profile(seed)
+        evasive = prof["flee_frac"] if prof["react_range"] > 0.0 else 0.0
+        closing = max(0.1, chaser - 0.5 * evasive * OFFICE_RC_SPEED)
+        sx, sy, _ = env.task.start
+        gx, gy, _ = env.task.goal
+        expected = min(math.hypot(gx - sx, gy - sy) / closing + OFFICE_ACQUIRE_SLACK_SEC,
+                       0.95 * float(env.task.horizon))
+        assert _calculate_office_target_time(env.task) == pytest.approx(expected)
+        pars.add(round(expected, 6))
+        env.close()
+    assert len(pars) == len(seeds), "par must move with the seed"
