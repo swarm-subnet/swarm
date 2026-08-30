@@ -155,6 +155,11 @@ def test_a_truncated_rename_record_runs_the_whole_suite():
     assert cc.classify(cc.paths_from_name_status(b"R100\0only-one-side\0"), MANIFEST) == "full"
 
 
+def test_a_path_that_is_not_utf8_runs_the_whole_suite():
+    """Git emits raw bytes, so an odd filename must route, not raise."""
+    assert cc.classify(cc.paths_from_name_status(b"M\0swarm/\xff.py\0"), MANIFEST) == "full"
+
+
 def test_a_path_containing_a_space_is_read_correctly():
     """The diff is NUL-delimited, so an awkward filename is still one path."""
     assert route(("A", "scripts/miner/a file.sh")) == "full"

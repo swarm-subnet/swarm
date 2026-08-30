@@ -29,7 +29,9 @@ def paths_from_name_status(payload: bytes) -> list[str] | None:
     or if it contains a deletion: nothing selected asserts that a deleted file
     ought to have existed, so a deletion is for the whole suite.
     """
-    fields = [f.decode() for f in payload.split(b"\0") if f != b""]
+    fields = [
+        f.decode(errors="surrogateescape") for f in payload.split(b"\0") if f != b""
+    ]
     paths: list[str] = []
     i = 0
     while i < len(fields):
