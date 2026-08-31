@@ -90,10 +90,15 @@ def test_the_miner_tests_are_actually_collected():
     """A default run has to reach miner/tests. Reading the setting is not enough:
     an ignore in addopts leaves testpaths looking right and collects nothing."""
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
-        cwd=str(REPO_ROOT), capture_output=True, text=True,
+        # -n 0 overrides the `-n auto` in addopts: this only lists tests, and
+        # starting a worker per core to do it changes the output as well as the cost.
+        [sys.executable, "-m", "pytest", "--collect-only", "-q",
+         "-p", "no:cacheprovider", "-n", "0"],
+        cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300,
     )
-    assert result.returncode == 0, result.stdout[-2000:]
+    assert result.returncode == 0, (
+        f"stdout:\n{result.stdout[-2000:]}\nstderr:\n{result.stderr[-2000:]}"
+    )
     assert "miner/tests/test_miner.py::" in result.stdout, (
         "a default run does not collect the miner's tests"
     )

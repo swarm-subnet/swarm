@@ -35,7 +35,9 @@ def test_every_trainer_is_listed_here():
     assert found == {p for p in REACH_THE_REPO_ROOT if p.name == "train.py"}
 
 
-@pytest.mark.parametrize("source", REACH_THE_REPO_ROOT, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "source", REACH_THE_REPO_ROOT, ids=lambda p: str(p.relative_to(REPO_ROOT))
+)
 def test_the_walk_up_still_lands_on_the_repo_root(source):
     depths = {int(d) for d in PARENTS.findall(source.read_text())}
     assert depths, f"{source} no longer computes a path from its own location"
