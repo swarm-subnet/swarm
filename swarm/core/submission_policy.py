@@ -4,7 +4,7 @@ Single source of truth shared by backend chain scanning and validator
 verification. The matching backend copy lives at
 ``app/submission_policy.py`` in the swarm-backend repo and must be kept
 in sync — changing a rule here without mirroring it there will let the
-backend accept submissions the validator cannot run. ``neurons/miner.py``
+backend accept submissions the validator cannot run. ``miner/src/miner.py``
 inlines these rules for its pre-commit check and must be updated too.
 """
 

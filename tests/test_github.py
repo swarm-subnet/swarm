@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from swarm.utils.github import (
     REQUIRED_README_HASH,
@@ -185,3 +188,41 @@ def test_claimed_repos_persists_to_disk(tmp_path, monkeypatch):
     assert state_file.exists()
     data = _vu.load_claimed_repos()
     assert data["https://github.com/owner/repo"] == HK_A
+
+
+# The starter README ships into every miner repository, so a link in it that stops
+# resolving is a broken link in every repository already published. Correcting one means
+# a new hash here and in the backend, where the old hash joins ACCEPTED_README_HASHES so
+# published repos stay eligible.
+_MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+_CANONICAL_LINK = re.compile(
+    r"https://github\.com/swarm-subnet/swarm/(?:tree|blob)/main/([^)\s\"']+)"
+)
+
+
+def _pinned_readme_targets() -> list[str]:
+    template = Path(__file__).resolve().parents[1] / "swarm" / "templates" / "README.md"
+    return sorted(set(_CANONICAL_LINK.findall(template.read_text())))
+
+
+def test_local_links_in_the_miner_guide_resolve():
+    """Moving a page changes what every relative link inside it means."""
+    root = Path(__file__).resolve().parents[1]
+    source = root / "miner" / "docs" / "miner.md"
+    local = [
+        t for t in _MARKDOWN_LINK.findall(source.read_text())
+        if not t.startswith(("http", "mailto:", "/"))
+    ]
+    missing = sorted({t for t in local if not (source.parent / t.split("#")[0]).exists()})
+    assert missing == [], f"the miner guide links to {missing}, which do not exist"
+
+
+def test_pinned_readme_links_point_at_paths_that_exist():
+    repo_root = Path(__file__).resolve().parents[1]
+    targets = _pinned_readme_targets()
+    assert targets, "no canonical repository links found in the starter README"
+    missing = [t for t in targets if not (repo_root / t).exists()]
+    assert missing == [], (
+        f"the starter README links to {missing}, which no longer exist; every repository "
+        "already published carries this README and cannot be corrected"
+    )

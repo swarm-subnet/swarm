@@ -1,6 +1,6 @@
 # Operator Runbook
 
-Internal guide for the team running the Swarm backend and validators. It covers the knobs that change network behavior: family rollout, the registry copies, validator trust, version gating, the screening switch, and the epoch freeze. Miner- and validator-facing setup lives in [miner.md](miner.md) and [validator.md](validator.md).
+Internal guide for the team running the Swarm backend and validators. It covers the knobs that change network behavior: family rollout, the registry copies, validator trust, version gating, the screening switch, and the epoch freeze. Miner- and validator-facing setup lives in [miner.md](../miner/docs/miner.md) and [validator.md](validator.md).
 
 ---
 

@@ -20,3 +20,15 @@ services:
     command: >
       pytest -m "not slow and not integration"
              -n 2 --dist worksteal -ra -p no:cacheprovider
+
+  # The miner side on its own, the same set the miner job runs in CI.
+  swarm_miner:
+    <<: *swarm-base
+    container_name: swarm_miner
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ..:/app
+    environment:
+      SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
+    command: pytest -v miner/tests -n 0 -p no:cacheprovider

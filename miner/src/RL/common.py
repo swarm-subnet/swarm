@@ -1,6 +1,6 @@
 """Shared training harness for the per-family baseline starters.
 
-Each RL/<family_id>/train.py calls train_family(): a small PPO baseline is
+Each miner/src/RL/<family_id>/train.py calls train_family(): a small PPO baseline is
 trained on real generator tasks, saved, packaged into a validator-ready
 submission.zip, and smoke-tested against the family's policy contract.
 
@@ -224,4 +224,4 @@ def train_family(family_id: str, *, supports_drone_count: bool = False) -> None:
 
     print(f"\nSubmission ready: {submission_zip}")
     print("Test it like a validator:")
-    print(f"  python3 RL/test_RL.py --model {submission_zip} --family_id {family_id}")
+    print(f"  python3 miner/src/RL/test_RL.py --model {submission_zip} --family_id {family_id}")

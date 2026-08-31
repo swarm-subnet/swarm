@@ -136,16 +136,16 @@ Each family's emission slice is split among its **last five champions**, weighte
 
 This entry was trained by one miner. The benchmark is open, every family has a champion, and every champion can be beaten.
 
-1. **Read the docs**: the [Miner guide](https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md) covers repo setup, packaging, submission, and training tips.
+1. **Read the docs**: the [Miner guide](https://github.com/swarm-subnet/swarm/blob/main/miner/docs/miner.md) covers repo setup, packaging, submission, and training tips.
 2. **Pick your family**: each family guide above defines the exact interface your model needs.
-3. **Study the baseline**: the [training starters](https://github.com/swarm-subnet/swarm/tree/main/RL) train a policy and package it into a ready artifact.
+3. **Study the baseline**: the [training starters](https://github.com/swarm-subnet/swarm/tree/main/miner/src/RL) train a policy and package it into a ready artifact.
 4. **Train and iterate**: benchmark locally, push your score higher.
 5. **Submit and compete**: publish your repo and climb the [leaderboard](https://swarm124.com/benchmark).
 
 Models trained on this benchmark fly on real hardware: see [Langostino](https://github.com/swarm-subnet/Langostino), Swarm's open-source ROS2 drone.
 
 <p align="center">
-  <a href="https://github.com/swarm-subnet/swarm/blob/main/docs/miner.md"><img alt="Start Training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-F5D400?style=for-the-badge" /></a>
+  <a href="https://github.com/swarm-subnet/swarm/blob/main/miner/docs/miner.md"><img alt="Start Training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-F5D400?style=for-the-badge" /></a>
 </p>
 
 ## Community

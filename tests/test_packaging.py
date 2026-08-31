@@ -5,18 +5,13 @@ Whether those reach an install depends on MANIFEST.in selecting them and on the
 package-data settings not throwing them back out, and nothing else in the suite
 would notice them going missing: every other test reads the source tree, where
 they are there either way.
+
+The miner's side of the same question lives in miner/tests/test_packaging.py.
 """
 from __future__ import annotations
 
-import os
-import tomllib
-from pathlib import Path
-
 import pytest
-from setuptools._distutils.filelist import FileList
 from setuptools._distutils.filelist import translate_pattern
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_DATA_FILES = [
     "swarm/model_graph/model_graph.schema.json",
@@ -24,29 +19,6 @@ REQUIRED_DATA_FILES = [
     "swarm/validator/calibration/baseline_manifest.json",
     "swarm/validator/calibration/baseline_model.zip",
 ]
-
-
-@pytest.fixture(scope="module")
-def selected_files() -> set[str]:
-    """What MANIFEST.in selects, resolved by the code that builds the package."""
-    cwd = os.getcwd()
-    os.chdir(REPO_ROOT)
-    try:
-        file_list = FileList()
-        file_list.findall()
-        for raw in Path("MANIFEST.in").read_text().splitlines():
-            line = raw.strip()
-            if line and not line.startswith("#"):
-                file_list.process_template_line(line)
-        return {name.replace(os.sep, "/") for name in file_list.files}
-    finally:
-        os.chdir(cwd)
-
-
-@pytest.fixture(scope="module")
-def setuptools_config() -> dict:
-    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
-        return tomllib.load(fh).get("tool", {}).get("setuptools", {})
 
 
 @pytest.mark.parametrize("relative_path", REQUIRED_DATA_FILES)
@@ -73,3 +45,9 @@ def test_nothing_excludes_the_data_files_again(relative_path, setuptools_config)
             assert not translate_pattern(pattern).match(within), (
                 f"{relative_path} is excluded again by '{pattern}' under '{scope}'"
             )
+
+
+def test_the_wheel_carries_what_an_install_needs(wheel_contents):
+    """The rules above say what should ship; the artifact says what does."""
+    missing = [p for p in REQUIRED_DATA_FILES if p not in wheel_contents]
+    assert missing == [], f"the wheel is missing {missing}"

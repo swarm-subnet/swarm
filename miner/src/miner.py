@@ -3,12 +3,12 @@
 Swarm Miner — commit a model to the Bittensor chain.
 
 Public track (open competition):
-    python neurons/miner.py --netuid 124 \
+    python miner/src/miner.py --netuid 124 \
         --wallet.name miner --wallet.hotkey default \
         --github_url https://github.com/yourname/your-model
 
 Private track (model stays secret; only trusted validators ever run it):
-    python neurons/miner.py --netuid 124 \
+    python miner/src/miner.py --netuid 124 \
         --wallet.name miner --wallet.hotkey default \
         --family_id cf_autopilot \
         --artifact ./submission.zip \
@@ -121,7 +121,7 @@ def _sha256_file(path: str) -> str:
 def _load_local_families() -> dict | None:
     """{family_id: visibility} from the repo's domain schema, or None."""
     schema_path = (
-        Path(__file__).resolve().parent.parent
+        Path(__file__).resolve().parents[2]
         / "swarm" / "domain_model" / "benchmark_domain_model.schema.json"
     )
     try:
@@ -289,10 +289,10 @@ def main(argv=None):
                 "Public models are submitted by committing a GitHub repository URL instead:"
             )
             bt.logging.error(
-                "  python neurons/miner.py --netuid 124 --wallet.name miner --wallet.hotkey default \\"
+                "  python miner/src/miner.py --netuid 124 --wallet.name miner --wallet.hotkey default \\"
             )
             bt.logging.error("      --github_url https://github.com/you/your-model")
-            bt.logging.error("The full submission guide is in docs/miner.md.")
+            bt.logging.error("The full submission guide is in miner/docs/miner.md.")
             return 1
 
         reason = _validate_artifact(args.artifact, family_id=args.family_id)

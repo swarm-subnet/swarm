@@ -23,7 +23,7 @@ Core benchmark assumptions:
   Project overview, benchmark framing, and quick CLI examples.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
   Canonical code-organization and dependency-boundary guide.
-- [`docs/miner.md`](docs/miner.md)
+- [`miner/docs/miner.md`](miner/docs/miner.md)
   Miner setup, submission structure, and GitHub publishing flow.
 - [`docs/validator.md`](docs/validator.md)
   Validator setup, Docker requirements, telemetry, and runtime expectations.
@@ -47,7 +47,9 @@ Core benchmark assumptions:
 - [`swarm/base/`](swarm/base)
   Shared neuron and validator base abstractions.
 - [`neurons/`](neurons)
-  Launch scripts for validator and miner processes.
+  Launch script for the validator process.
+- [`miner/`](miner)
+  The miner's own code, tests and guide.
 - [`scripts/`](scripts)
   Thin operational utilities for benchmark runs, replay, visualization, and setup.
 - [`tests/`](tests)
