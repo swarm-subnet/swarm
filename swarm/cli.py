@@ -65,6 +65,7 @@ REQUIRED_TEMPLATE_FILES = {
     "main.py",
     "agent.capnp",
     "agent_server.py",
+    "runtime_caps.py",
 }
 
 REPORT_FIELD_PATTERNS = {

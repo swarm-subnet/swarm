@@ -17,6 +17,7 @@ from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.protocol import ValidationResult
 from swarm.validator.calibration import SpeedFactor
 from swarm.validator.docker import docker_evaluator as de
+from swarm.validator.docker.docker_evaluator_parts import lifecycle
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
 
 
@@ -1832,3 +1833,134 @@ def test_die_with_parent_requests_kill_signal(monkeypatch):
     workers._die_with_parent()
     assert calls and calls[0][0] == workers._PR_SET_PDEATHSIG
     assert calls[0][1] == signal_mod.SIGKILL
+
+
+# ── docker cache key ──────────────────────────────────────────────────────────
+# The key decides whether a validator rebuilds its runner image. Anything it
+# misses is a stale image running against real submissions, so these drive the
+# real calculation rather than a stand-in.
+
+
+@pytest.fixture
+def hash_tree(tmp_path, monkeypatch):
+    """A miniature repo the cache key can be computed over."""
+    pkg = tmp_path / "swarm"
+    (pkg / "validator" / "docker").mkdir(parents=True)
+    (pkg / "assets").mkdir()
+    (tmp_path / ".dockerignore").write_text("**/__pycache__\n**/*.pyc\nswarm/assets\n")
+    (pkg / "validator" / "docker" / "Dockerfile").write_text("FROM python:3.11-slim\n")
+    (pkg / "validator" / "docker" / "docker-requirements.txt").write_text("numpy\n")
+    (pkg / "runner.py").write_text("x = 1\n")
+    (pkg / "profile.json").write_text('{"ops": []}\n')
+    (pkg / "assets" / "big.bin").write_text("ignored\n")
+
+    monkeypatch.setattr(lifecycle, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(lifecycle, "_swarm_package_dir", lambda: pkg)
+    monkeypatch.setattr(
+        lifecycle, "_docker_dir", lambda: pkg / "validator" / "docker"
+    )
+    return pkg
+
+
+def _digest():
+    return lifecycle._calculate_docker_hash(None)
+
+
+def test_docker_hash_changes_when_python_changes(hash_tree):
+    before = _digest()
+    (hash_tree / "runner.py").write_text("x = 2\n")
+    assert _digest() != before
+
+
+def test_docker_hash_changes_when_data_file_changes(hash_tree):
+    """The bug this replaces: the key only ever hashed *.py."""
+    before = _digest()
+    (hash_tree / "profile.json").write_text('{"ops": ["Add"]}\n')
+    assert _digest() != before
+
+
+def test_docker_hash_changes_when_file_added(hash_tree):
+    before = _digest()
+    (hash_tree / "agent.capnp").write_text("@0xdeadbeef;\n")
+    assert _digest() != before
+
+
+def test_docker_hash_changes_when_file_deleted(hash_tree):
+    before = _digest()
+    (hash_tree / "profile.json").unlink()
+    assert _digest() != before
+
+
+def test_docker_hash_changes_when_mode_changes(hash_tree):
+    """COPY preserves the mode, so a chmod alone still changes the image."""
+    target = hash_tree / "runner.py"
+    before = _digest()
+    target.chmod(0o755)
+    assert _digest() != before
+
+
+def test_docker_hash_changes_when_symlink_target_changes(hash_tree):
+    link = hash_tree / "current.py"
+    link.symlink_to("runner.py")
+    before = _digest()
+    link.unlink()
+    link.symlink_to("profile.json")
+    assert _digest() != before
+
+
+def test_docker_hash_distinguishes_file_from_symlink_with_same_bytes(hash_tree):
+    """A symlink hashes its target, never the bytes it resolves to."""
+    (hash_tree / "runner.py").write_text("payload\n")
+    plain = hash_tree / "copy.py"
+    plain.write_text("payload\n")
+    as_file = _digest()
+
+    plain.unlink()
+    plain.symlink_to("runner.py")
+    assert _digest() != as_file
+
+
+def test_docker_hash_ignores_files_excluded_from_the_build(hash_tree):
+    """Assets are not in the image, so they must not force a rebuild."""
+    before = _digest()
+    (hash_tree / "assets" / "big.bin").write_text("still ignored, different\n")
+    assert _digest() == before
+
+
+def test_docker_hash_marks_a_missing_required_input(hash_tree):
+    before = _digest()
+    (hash_tree / "validator" / "docker" / "Dockerfile").unlink()
+    assert _digest() != before
+
+
+def test_docker_hash_covers_a_file_a_negation_puts_back(hash_tree, tmp_path):
+    """`!pattern` re-includes a file the line above excluded, so it is in the image."""
+    (tmp_path / ".dockerignore").write_text(
+        "swarm/assets\n!swarm/assets/needed.json\n"
+    )
+    (hash_tree / "assets" / "needed.json").write_text("first\n")
+    before = _digest()
+    (hash_tree / "assets" / "needed.json").write_text("second\n")
+    assert _digest() != before
+
+
+def test_docker_hash_covers_a_directory_mode_change(hash_tree):
+    """COPY carries directory permissions, so this changes the image on its own."""
+    (hash_tree / "nested").mkdir()
+    (hash_tree / "nested" / "keep.py").write_text("x = 1\n")
+    (hash_tree / "nested").chmod(0o755)
+    before = _digest()
+    (hash_tree / "nested").chmod(0o700)
+    assert _digest() != before
+
+
+def test_docker_hash_covers_a_symlink_to_a_directory(hash_tree):
+    """Docker copies the link itself, so retargeting it changes the image."""
+    (hash_tree / "one").mkdir()
+    (hash_tree / "two").mkdir()
+    link = hash_tree / "current"
+    link.symlink_to("one", target_is_directory=True)
+    before = _digest()
+    link.unlink()
+    link.symlink_to("two", target_is_directory=True)
+    assert _digest() != before
