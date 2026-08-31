@@ -79,7 +79,7 @@ main() {
   verify_installation
   
   success_msg "System dependencies installed successfully!"
-  echo -e "\e[33m[NEXT]\e[0m Run: ./scripts/miner/setup.sh"
+  echo -e "\e[33m[NEXT]\e[0m Run: ./miner/src/scripts/setup.sh"
 }
 
 main "$@"

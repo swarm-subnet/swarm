@@ -121,7 +121,7 @@ def _sha256_file(path: str) -> str:
 def _load_local_families() -> dict | None:
     """{family_id: visibility} from the repo's domain schema, or None."""
     schema_path = (
-        Path(__file__).resolve().parent.parent
+        Path(__file__).resolve().parents[2]
         / "swarm" / "domain_model" / "benchmark_domain_model.schema.json"
     )
     try:

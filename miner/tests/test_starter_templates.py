@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "swarm" / "submission_template"
+TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "src"
 
 
 @pytest.mark.parametrize("name", ["drone_agent.py", "office_drone_agent.py"])

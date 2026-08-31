@@ -7,15 +7,22 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
+MINER_SCRIPTS_DIR = REPO_ROOT / "miner" / "src" / "scripts"
 
 
 def _all_shell_scripts() -> list[Path]:
-    return sorted(SCRIPTS_DIR.rglob("*.sh"))
+    return sorted(
+        p for d in (SCRIPTS_DIR, MINER_SCRIPTS_DIR) if d.is_dir() for p in d.rglob("*.sh")
+    )
 
 
 def test_all_shell_scripts_discovered():
     scripts = _all_shell_scripts()
     assert scripts, "No shell scripts found under scripts/"
+    # the miner's scripts live outside scripts/, so a glob of it alone misses them
+    assert any(MINER_SCRIPTS_DIR == p.parent for p in scripts), (
+        f"no shell scripts found under {MINER_SCRIPTS_DIR}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -53,7 +60,7 @@ def test_shell_scripts_use_strict_mode_for_deploy_scripts():
 
 def test_setup_scripts_define_main_entrypoint():
     setup_scripts = [
-        REPO_ROOT / "scripts" / "miner" / "setup.sh",
+        REPO_ROOT / "miner" / "src" / "scripts" / "setup.sh",
         REPO_ROOT / "scripts" / "validator" / "main" / "setup.sh",
     ]
     for script in setup_scripts:
@@ -71,7 +78,7 @@ def test_scripts_are_not_world_writable():
 def test_setup_scripts_stay_executable():
     """A permission change shows up as an ordinary edit, so pin the bit itself."""
     for script in [
-        REPO_ROOT / "scripts" / "miner" / "setup.sh",
+        REPO_ROOT / "miner" / "src" / "scripts" / "setup.sh",
         REPO_ROOT / "scripts" / "validator" / "main" / "setup.sh",
     ]:
         assert script.stat().st_mode & 0o111, f"{script} is not executable"

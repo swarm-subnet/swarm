@@ -20,7 +20,7 @@ import classify_changes as cc  # noqa: E402
 MANIFEST = cc.load_manifest(REPO_ROOT / "ci" / "miner_tests.toml")
 
 MINER_FILE = "swarm/submission_manifest/__init__.py"
-OTHER_MINER_FILE = "neurons/miner.py"
+OTHER_MINER_FILE = "miner/src/miner.py"
 
 
 def route(*records: tuple[str, ...]) -> str:
@@ -37,11 +37,11 @@ def route(*records: tuple[str, ...]) -> str:
         "swarm/submission_manifest/__init__.py",
         "swarm/submission_manifest/submission_manifest.schema.json",
         "swarm/templates/README.md",
-        "neurons/miner.py",
-        "scripts/miner/setup.sh",
-        "scripts/miner/install_dependencies.sh",
-        "swarm/submission_template/drone_agent.py",
-        "swarm/submission_template/office_drone_agent.py",
+        "miner/src/miner.py",
+        "miner/src/scripts/setup.sh",
+        "miner/src/scripts/install_dependencies.sh",
+        "miner/src/drone_agent.py",
+        "miner/src/office_drone_agent.py",
     ],
 )
 def test_a_listed_file_on_its_own_runs_the_miner_tests(path):
@@ -104,7 +104,7 @@ def test_the_trusted_runner_runs_the_whole_suite():
 
 def test_an_untested_miner_area_runs_the_whole_suite():
     """RL/ is the miner's, but nothing covers it, so it cannot be listed."""
-    assert route(("M", "RL/common.py")) == "full"
+    assert route(("M", "miner/src/RL/common.py")) == "full"
 
 
 def test_a_new_file_beside_listed_ones_runs_the_whole_suite():
@@ -113,7 +113,7 @@ def test_a_new_file_beside_listed_ones_runs_the_whole_suite():
 
 def test_a_new_file_of_another_kind_runs_the_whole_suite():
     """A README next to the shell scripts is not covered by the shell test."""
-    assert route(("A", "scripts/miner/README.txt")) == "full"
+    assert route(("A", "miner/src/scripts/README.txt")) == "full"
 
 
 @pytest.mark.parametrize(
@@ -146,7 +146,7 @@ def test_a_rename_across_the_boundary_runs_the_whole_suite(records):
     assert route(*records) == "full"
 
 
-@pytest.mark.parametrize("path", ["scripts/minerish/x.sh", "RL_backup/x.py"])
+@pytest.mark.parametrize("path", ["miner/srcish/x.sh", "miner_backup/x.py"])
 def test_a_similar_looking_path_runs_the_whole_suite(path):
     assert route(("M", path)) == "full"
 
@@ -172,7 +172,7 @@ def test_a_path_that_is_not_utf8_runs_the_whole_suite():
 
 def test_a_path_containing_a_space_is_read_correctly():
     """The diff is NUL-delimited, so an awkward filename is still one path."""
-    assert route(("M", "scripts/miner/a file.sh")) == "full"
+    assert route(("M", "miner/src/scripts/a file.sh")) == "full"
     assert cc.paths_from_name_status(b"M\0swarm/a b.py\0") == ["swarm/a b.py"]
 
 

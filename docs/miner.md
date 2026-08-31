@@ -44,11 +44,11 @@ The miner process is lightweight: it commits a GitHub repository URL on-chain, t
 git clone https://github.com/swarm-subnet/swarm
 cd swarm
 
-chmod +x scripts/miner/install_dependencies.sh
-./scripts/miner/install_dependencies.sh
+chmod +x miner/src/scripts/install_dependencies.sh
+./miner/src/scripts/install_dependencies.sh
 
-chmod +x scripts/miner/setup.sh
-./scripts/miner/setup.sh
+chmod +x miner/src/scripts/setup.sh
+./miner/src/scripts/setup.sh
 
 source miner_env/bin/activate
 ```
@@ -400,7 +400,7 @@ btcli wallet new_hotkey  --wallet.name my_cold --wallet.hotkey my_hot
 ```bash
 source miner_env/bin/activate
 
-python neurons/miner.py \
+python miner/src/miner.py \
      --netuid 124 \
      --subtensor.network finney \
      --wallet.name my_cold \

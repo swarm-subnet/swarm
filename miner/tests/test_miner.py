@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 import zipfile
 
-from neurons import miner
+from miner.src import miner
 
 
 def _make_bad_zip(tmp_path, names=("payload.bin",)):

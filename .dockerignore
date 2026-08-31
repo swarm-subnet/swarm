@@ -6,4 +6,6 @@ swarm/state
 tests
 docs
 scripts
+miner/tests
+miner/src/scripts
 Submission

@@ -83,7 +83,7 @@ show_completion_info() {
   echo -e "\e[34m[NEXT STEPS]\e[0m"
   echo "1. Start your miner with PM2:"
   echo "   source miner_env/bin/activate"
-  echo "   pm2 start neurons/miner.py --name miner --interpreter python -- \\"
+  echo "   pm2 start miner/src/miner.py --name miner --interpreter python -- \\"
   echo "     --netuid 124 --subtensor.network finney \\"
   echo "     --wallet.name your_coldkey --wallet.hotkey your_hotkey \\"
   echo "     --github_url https://github.com/YOUR_USER/YOUR_REPO"

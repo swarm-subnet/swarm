@@ -90,7 +90,7 @@ def _lane_script() -> str:
 @pytest.mark.parametrize(
     "change, expected",
     [
-        ('printf "\\n" >> neurons/miner.py', "miner"),
+        ('printf "\\n" >> miner/src/miner.py', "miner"),
         ('printf "\\n" >> swarm/validator/reward.py', "full"),
         # the branch rewrites the rules it is about to be judged by
         ('printf "\\n" >> swarm/validator/reward.py; '
@@ -108,11 +108,11 @@ def test_the_lane_comes_from_the_base_branch(change, expected, tmp_path):
     # Only the routing files and the two paths the cases touch: cloning the real
     # repository for this costs hundreds of megabytes and proves nothing extra.
     (repo / "ci").mkdir(parents=True)
-    (repo / "neurons").mkdir()
+    (repo / "miner" / "src").mkdir(parents=True)
     (repo / "swarm" / "validator").mkdir(parents=True)
     for name in ("classify_changes.py", "miner_tests.toml"):
         (repo / "ci" / name).write_bytes((REPO_ROOT / "ci" / name).read_bytes())
-    (repo / "neurons" / "miner.py").write_text("x = 1\n")
+    (repo / "miner" / "src" / "miner.py").write_text("x = 1\n")
     (repo / "swarm" / "validator" / "reward.py").write_text("x = 1\n")
     run(["git", "init", "-q", "."])
     run(["git", "config", "user.email", "t@t"])

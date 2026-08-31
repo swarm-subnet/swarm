@@ -24,23 +24,23 @@
     "tests/test_github.py::test_required_readme_hash_matches_template",
 ]
 
-"neurons/miner.py" = [
-    "tests/test_miner.py",
+"miner/src/miner.py" = [
+    "miner/tests/test_miner.py",
 ]
 
-"scripts/miner/setup.sh" = [
+"miner/src/scripts/setup.sh" = [
     "tests/test_scripts_shell.py",
 ]
-"scripts/miner/install_dependencies.sh" = [
+"miner/src/scripts/install_dependencies.sh" = [
     "tests/test_scripts_shell.py",
 ]
 
 # Starter controllers a miner copies and replaces.
-"swarm/submission_template/drone_agent.py" = [
-    "tests/test_starter_templates.py",
+"miner/src/drone_agent.py" = [
+    "miner/tests/test_starter_templates.py",
 ]
-"swarm/submission_template/office_drone_agent.py" = [
-    "tests/test_starter_templates.py",
+"miner/src/office_drone_agent.py" = [
+    "miner/tests/test_starter_templates.py",
 ]
 
 # Run in the miner job as well: these cover the same surfaces from the other
@@ -58,14 +58,14 @@ extra_tests = [
 # miner side is a deliberate edit rather than a side effect of adding a row.
 [bounds]
 exact = [
-    "neurons/miner.py",
-    "swarm/submission_template/drone_agent.py",
-    "swarm/submission_template/office_drone_agent.py",
+    "miner/src/miner.py",
+    "miner/src/drone_agent.py",
+    "miner/src/office_drone_agent.py",
 ]
 prefixes = [
     "swarm/submission_manifest/",
     "swarm/templates/",
-    "scripts/miner/",
+    "miner/",
 ]
 
 # Changing how routing works is never itself a miner-only change.
