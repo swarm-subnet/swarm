@@ -127,14 +127,15 @@ def wheel_contents(tmp_path_factory) -> set[str]:
         return set(wheel.namelist())
 
 
-@pytest.mark.parametrize(
-    "relative_path",
-    [*REQUIRED_DATA_FILES, *MINER_DATA_FILES, "miner/src/miner.py", "miner/src/drone_agent.py"],
-)
-def test_the_wheel_carries_what_an_install_needs(relative_path, wheel_contents):
-    assert relative_path in wheel_contents, f"{relative_path} is missing from the wheel"
+def test_the_wheel_carries_what_an_install_needs(wheel_contents):
+    """One test rather than one per file: the fixture builds a wheel, and under
+    xdist a module fixture is built once per worker that touches it."""
+    required = [
+        *REQUIRED_DATA_FILES, *MINER_DATA_FILES,
+        "miner/src/miner.py", "miner/src/drone_agent.py",
+    ]
+    missing = [p for p in required if p not in wheel_contents]
+    assert missing == [], f"the wheel is missing {missing}"
 
-
-def test_the_wheel_leaves_the_tests_behind(wheel_contents):
-    shipped = sorted(n for n in wheel_contents if n.startswith("miner/tests"))
-    assert shipped == [], f"the wheel carries miner tests: {shipped}"
+    shipped_tests = sorted(n for n in wheel_contents if n.startswith("miner/tests"))
+    assert shipped_tests == [], f"the wheel carries miner tests: {shipped_tests}"
