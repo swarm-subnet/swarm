@@ -20,8 +20,9 @@ def test_all_shell_scripts_discovered():
     scripts = _all_shell_scripts()
     assert scripts, "No shell scripts found under scripts/"
     # the miner's scripts live outside scripts/, so a glob of it alone misses them
-    assert any(MINER_SCRIPTS_DIR == p.parent for p in scripts), (
-        f"no shell scripts found under {MINER_SCRIPTS_DIR}"
+    found = {p.name for p in scripts if p.parent == MINER_SCRIPTS_DIR}
+    assert found == {"setup.sh", "install_dependencies.sh"}, (
+        f"expected the miner's two scripts under {MINER_SCRIPTS_DIR}, found {sorted(found)}"
     )
 
 

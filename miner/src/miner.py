@@ -3,12 +3,12 @@
 Swarm Miner — commit a model to the Bittensor chain.
 
 Public track (open competition):
-    python neurons/miner.py --netuid 124 \
+    python miner/src/miner.py --netuid 124 \
         --wallet.name miner --wallet.hotkey default \
         --github_url https://github.com/yourname/your-model
 
 Private track (model stays secret; only trusted validators ever run it):
-    python neurons/miner.py --netuid 124 \
+    python miner/src/miner.py --netuid 124 \
         --wallet.name miner --wallet.hotkey default \
         --family_id cf_autopilot \
         --artifact ./submission.zip \
@@ -289,7 +289,7 @@ def main(argv=None):
                 "Public models are submitted by committing a GitHub repository URL instead:"
             )
             bt.logging.error(
-                "  python neurons/miner.py --netuid 124 --wallet.name miner --wallet.hotkey default \\"
+                "  python miner/src/miner.py --netuid 124 --wallet.name miner --wallet.hotkey default \\"
             )
             bt.logging.error("      --github_url https://github.com/you/your-model")
             bt.logging.error("The full submission guide is in docs/miner.md.")

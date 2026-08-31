@@ -224,4 +224,4 @@ def train_family(family_id: str, *, supports_drone_count: bool = False) -> None:
 
     print(f"\nSubmission ready: {submission_zip}")
     print("Test it like a validator:")
-    print(f"  python3 RL/test_RL.py --model {submission_zip} --family_id {family_id}")
+    print(f"  python3 miner/src/RL/test_RL.py --model {submission_zip} --family_id {family_id}")

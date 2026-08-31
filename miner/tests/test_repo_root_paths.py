@@ -16,12 +16,23 @@ REPO_ROOT = MINER_ROOT.parent
 
 PARENTS = re.compile(r"Path\(__file__\)\.resolve\(\)\.parents\[(\d+)\]")
 
-# These walk up to the repository root so they can import `swarm`.
-REACH_THE_REPO_ROOT = sorted(
-    [*MINER_ROOT.parent.glob("miner/src/RL/cf_*/train.py"),
-     MINER_ROOT / "src" / "RL" / "test_RL.py",
-     MINER_ROOT / "src" / "miner.py"]
-)
+# These walk up to the repository root so they can import `swarm`. Named rather than
+# globbed: a glob that stops matching takes its own coverage with it and stays green.
+REACH_THE_REPO_ROOT = [
+    MINER_ROOT / "src" / "miner.py",
+    MINER_ROOT / "src" / "RL" / "test_RL.py",
+    MINER_ROOT / "src" / "RL" / "cf_autopilot" / "train.py",
+    MINER_ROOT / "src" / "RL" / "cf_interceptor" / "train.py",
+    MINER_ROOT / "src" / "RL" / "cf_search_and_rescue" / "train.py",
+    MINER_ROOT / "src" / "RL" / "cf_swarm_autopilot" / "train.py",
+    MINER_ROOT / "src" / "RL" / "cf_swarm_sar" / "train.py",
+]
+
+
+def test_every_trainer_is_listed_here():
+    """A new trainer has to be added above, or it goes unchecked."""
+    found = set(MINER_ROOT.glob("src/RL/cf_*/train.py"))
+    assert found == {p for p in REACH_THE_REPO_ROOT if p.name == "train.py"}
 
 
 @pytest.mark.parametrize("source", REACH_THE_REPO_ROOT, ids=lambda p: p.name)

@@ -206,7 +206,7 @@ swarm_venv/
 /stats/
 
 # Trained baseline artifacts from the RL starter scripts
-/RL/*/out/
+/miner/src/RL/*/out/
 
 # Accidental shell artifacts from malformed multiline CLI commands (repo root).
 /--*

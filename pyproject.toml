@@ -45,6 +45,7 @@ license-files = ["LICENSE"]
 
 [tool.setuptools.packages.find]
 include = ["swarm*", "neurons*", "scripts*", "miner*"]
+exclude = ["miner.tests*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.py[cod]"]
