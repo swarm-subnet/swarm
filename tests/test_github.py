@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from swarm.utils.github import (
     REQUIRED_README_HASH,
     build_raw_urls,
@@ -190,6 +192,7 @@ def test_claimed_repos_persists_to_disk(tmp_path, monkeypatch):
 
 # The starter README ships into every miner repository and is pinned by hash, so a link
 # in it cannot be corrected once published: the paths it points at have to keep existing.
+_MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 _CANONICAL_LINK = re.compile(
     r"https://github\.com/swarm-subnet/swarm/(?:tree|blob)/main/([^)\s\"']+)"
 )
@@ -198,6 +201,35 @@ _CANONICAL_LINK = re.compile(
 def _pinned_readme_targets() -> list[str]:
     template = Path(__file__).resolve().parents[1] / "swarm" / "templates" / "README.md"
     return sorted(set(_CANONICAL_LINK.findall(template.read_text())))
+
+
+# A page reached only through a legacy URL is easy to leave broken.
+LANDING_PAGES = ["docs/miner.md", "RL/README.md"]
+
+
+@pytest.mark.parametrize("page", LANDING_PAGES)
+def test_landing_pages_point_somewhere_real(page):
+    """These exist only to answer pinned links, so their own link has to work."""
+    root = Path(__file__).resolve().parents[1]
+    source = root / page
+    targets = _MARKDOWN_LINK.findall(source.read_text())
+    local = [t for t in targets if not t.startswith(("http", "mailto:", "/"))]
+    assert local, f"{page} points nowhere"
+    missing = [t for t in local if not (source.parent / t).exists()]
+    assert missing == [], f"{page} links to {missing}"
+
+
+@pytest.mark.parametrize("doc", ["miner/docs/miner.md", *LANDING_PAGES])
+def test_local_links_in_moved_docs_resolve(doc):
+    """Moving a page changes what every relative link inside it means."""
+    root = Path(__file__).resolve().parents[1]
+    source = root / doc
+    local = [
+        t for t in _MARKDOWN_LINK.findall(source.read_text())
+        if not t.startswith(("http", "mailto:", "/"))
+    ]
+    missing = sorted({t for t in local if not (source.parent / t.split("#")[0]).exists()})
+    assert missing == [], f"{doc} links to {missing}, which do not exist"
 
 
 def test_pinned_readme_links_point_at_paths_that_exist():

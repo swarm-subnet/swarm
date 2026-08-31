@@ -9,7 +9,11 @@ they are there either way.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import sys
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -98,3 +102,39 @@ def test_the_miner_tests_do_not_ship(selected_files, setuptools_config):
     assert "miner.tests*" in exclude, "miner tests would be discovered as a package"
     shipped = [p for p in selected_files if p.startswith("miner/tests/")]
     assert shipped == [], f"MANIFEST.in still selects miner tests: {shipped}"
+
+
+@pytest.fixture(scope="module")
+def wheel_contents(tmp_path_factory) -> set[str]:
+    """What a built wheel actually holds.
+
+    The rules above say what should ship; only the artifact says what does. Built
+    from a copy so a concurrent test cannot see a half-written build directory."""
+    source = tmp_path_factory.mktemp("src") / "repo"
+    shutil.copytree(
+        REPO_ROOT, source,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.egg-info", "build"),
+    )
+    out = tmp_path_factory.mktemp("wheel")
+    result = subprocess.run(
+        [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],
+        cwd=str(source), capture_output=True, text=True,
+    )
+    built = sorted(out.glob("*.whl"))
+    if result.returncode != 0 or not built:
+        pytest.fail(f"building the wheel failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
+    with zipfile.ZipFile(built[0]) as wheel:
+        return set(wheel.namelist())
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [*REQUIRED_DATA_FILES, *MINER_DATA_FILES, "miner/src/miner.py", "miner/src/drone_agent.py"],
+)
+def test_the_wheel_carries_what_an_install_needs(relative_path, wheel_contents):
+    assert relative_path in wheel_contents, f"{relative_path} is missing from the wheel"
+
+
+def test_the_wheel_leaves_the_tests_behind(wheel_contents):
+    shipped = sorted(n for n in wheel_contents if n.startswith("miner/tests"))
+    assert shipped == [], f"the wheel carries miner tests: {shipped}"

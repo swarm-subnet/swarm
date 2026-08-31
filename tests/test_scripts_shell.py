@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -85,9 +86,14 @@ def test_setup_scripts_stay_executable():
         assert script.stat().st_mode & 0o111, f"{script} is not executable"
 
 
-def test_both_test_roots_stay_configured():
-    """miner/tests runs only because pytest.ini says so; dropping it hides them."""
-    config = (REPO_ROOT / "pytest.ini").read_text()
-    line = next(l for l in config.splitlines() if l.startswith("testpaths"))
-    roots = line.split("=", 1)[1].split()
-    assert "tests" in roots and "miner/tests" in roots, f"testpaths is {roots}"
+def test_the_miner_tests_are_actually_collected():
+    """A default run has to reach miner/tests. Reading the setting is not enough:
+    an ignore in addopts leaves testpaths looking right and collects nothing."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=str(REPO_ROOT), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout[-2000:]
+    assert "miner/tests/test_miner.py::" in result.stdout, (
+        "a default run does not collect the miner's tests"
+    )
