@@ -31,4 +31,4 @@ services:
       - ..:/app
     environment:
       SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
-    command: pytest -q miner/tests -p no:cacheprovider
+    command: pytest -v miner/tests -n 0 -p no:cacheprovider
