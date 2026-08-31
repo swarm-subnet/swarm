@@ -280,6 +280,7 @@ class MovingDroneAviary(BaseRLAviary):
             self._rc_command = np.zeros((self.NUM_DRONES, 4), dtype=np.float64)
             self._rc_target_yaw = np.zeros(self.NUM_DRONES, dtype=np.float64)
             self._rc_max_step = OFFICE_RC_SLEW_PER_SEC * self.CTRL_TIMESTEP
+            self._rc_dead_zone = OFFICE_RC_DEAD_ZONE
             # First-order motor lag: rotors chase commanded RPM with tau ~ ESC+prop.
             self._office_rpm = np.full((self.NUM_DRONES, 4), self.HOVER_RPM)
             self._office_motor_alpha = 1.0 - float(
@@ -384,7 +385,7 @@ class MovingDroneAviary(BaseRLAviary):
         rpm = np.zeros((self.NUM_DRONES, 4))
         for k in range(self.NUM_DRONES):
             rc = action[k].astype(np.float64)
-            rc[np.abs(rc) < OFFICE_RC_DEAD_ZONE] = 0.0
+            rc[np.abs(rc) < self._rc_dead_zone] = 0.0
             prev = self._rc_command[k]
             rc = prev + np.clip(rc - prev, -self._rc_max_step, self._rc_max_step)
             self._rc_command[k] = rc
