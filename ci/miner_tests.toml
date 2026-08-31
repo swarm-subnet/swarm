@@ -29,17 +29,17 @@
 ]
 
 "miner/src/scripts/setup.sh" = [
-    "tests/test_scripts_shell.py",
+    "miner/tests/test_scripts_shell.py",
 ]
 "miner/src/scripts/install_dependencies.sh" = [
-    "tests/test_scripts_shell.py",
+    "miner/tests/test_scripts_shell.py",
 ]
 
 # Starter controllers a miner copies and replaces.
-"miner/src/drone_agent.py" = [
+"miner/src/submission_template/drone_agent.py" = [
     "miner/tests/test_starter_templates.py",
 ]
-"miner/src/office_drone_agent.py" = [
+"miner/src/submission_template/office_drone_agent.py" = [
     "miner/tests/test_starter_templates.py",
 ]
 
@@ -59,8 +59,8 @@ extra_tests = [
 [bounds]
 exact = [
     "miner/src/miner.py",
-    "miner/src/drone_agent.py",
-    "miner/src/office_drone_agent.py",
+    "miner/src/submission_template/drone_agent.py",
+    "miner/src/submission_template/office_drone_agent.py",
 ]
 prefixes = [
     "swarm/submission_manifest/",

@@ -5,22 +5,13 @@ Whether those reach an install depends on MANIFEST.in selecting them and on the
 package-data settings not throwing them back out, and nothing else in the suite
 would notice them going missing: every other test reads the source tree, where
 they are there either way.
+
+The miner's side of the same question lives in miner/tests/test_packaging.py.
 """
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-import sys
-import tomllib
-import zipfile
-from pathlib import Path
-
 import pytest
-from setuptools._distutils.filelist import FileList
 from setuptools._distutils.filelist import translate_pattern
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_DATA_FILES = [
     "swarm/model_graph/model_graph.schema.json",
@@ -28,29 +19,6 @@ REQUIRED_DATA_FILES = [
     "swarm/validator/calibration/baseline_manifest.json",
     "swarm/validator/calibration/baseline_model.zip",
 ]
-
-
-@pytest.fixture(scope="module")
-def selected_files() -> set[str]:
-    """What MANIFEST.in selects, resolved by the code that builds the package."""
-    cwd = os.getcwd()
-    os.chdir(REPO_ROOT)
-    try:
-        file_list = FileList()
-        file_list.findall()
-        for raw in Path("MANIFEST.in").read_text().splitlines():
-            line = raw.strip()
-            if line and not line.startswith("#"):
-                file_list.process_template_line(line)
-        return {name.replace(os.sep, "/") for name in file_list.files}
-    finally:
-        os.chdir(cwd)
-
-
-@pytest.fixture(scope="module")
-def setuptools_config() -> dict:
-    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
-        return tomllib.load(fh).get("tool", {}).get("setuptools", {})
 
 
 @pytest.mark.parametrize("relative_path", REQUIRED_DATA_FILES)
@@ -79,63 +47,7 @@ def test_nothing_excludes_the_data_files_again(relative_path, setuptools_config)
             )
 
 
-# Python files reach the distribution through package discovery; anything else only
-# reaches it if MANIFEST.in names it, which is why the shell scripts are listed here.
-MINER_DATA_FILES = [
-    "miner/src/scripts/setup.sh",
-    "miner/src/scripts/install_dependencies.sh",
-]
-
-
-@pytest.mark.parametrize("relative_path", MINER_DATA_FILES)
-def test_manifest_selects_the_miner_scripts(relative_path, selected_files):
-    assert relative_path in selected_files, f"{relative_path} is not selected for the package"
-
-
-def test_the_miner_package_is_discovered(setuptools_config):
-    include = setuptools_config.get("packages", {}).get("find", {}).get("include", [])
-    assert "miner*" in include, "the miner package would not be discovered"
-
-
-def test_the_miner_tests_do_not_ship(selected_files, setuptools_config):
-    exclude = setuptools_config.get("packages", {}).get("find", {}).get("exclude", [])
-    assert "miner.tests*" in exclude, "miner tests would be discovered as a package"
-    shipped = [p for p in selected_files if p.startswith("miner/tests/")]
-    assert shipped == [], f"MANIFEST.in still selects miner tests: {shipped}"
-
-
-@pytest.fixture(scope="module")
-def wheel_contents(tmp_path_factory) -> set[str]:
-    """What a built wheel actually holds.
-
-    The rules above say what should ship; only the artifact says what does. Built
-    from a copy so a concurrent test cannot see a half-written build directory."""
-    source = tmp_path_factory.mktemp("src") / "repo"
-    shutil.copytree(
-        REPO_ROOT, source,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.egg-info", "build"),
-    )
-    out = tmp_path_factory.mktemp("wheel")
-    result = subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],
-        cwd=str(source), capture_output=True, text=True,
-    )
-    built = sorted(out.glob("*.whl"))
-    if result.returncode != 0 or not built:
-        pytest.fail(f"building the wheel failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
-    with zipfile.ZipFile(built[0]) as wheel:
-        return set(wheel.namelist())
-
-
 def test_the_wheel_carries_what_an_install_needs(wheel_contents):
-    """One test rather than one per file: the fixture builds a wheel, and under
-    xdist a module fixture is built once per worker that touches it."""
-    required = [
-        *REQUIRED_DATA_FILES, *MINER_DATA_FILES,
-        "miner/src/miner.py", "miner/src/drone_agent.py",
-    ]
-    missing = [p for p in required if p not in wheel_contents]
+    """The rules above say what should ship; the artifact says what does."""
+    missing = [p for p in REQUIRED_DATA_FILES if p not in wheel_contents]
     assert missing == [], f"the wheel is missing {missing}"
-
-    shipped_tests = sorted(n for n in wheel_contents if n.startswith("miner/tests"))
-    assert shipped_tests == [], f"the wheel carries miner tests: {shipped_tests}"

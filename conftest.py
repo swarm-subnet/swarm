@@ -64,3 +64,64 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_e2e)
         if not run_full and item.get_closest_marker("full") is not None:
             item.add_marker(skip_full)
+
+
+# ── packaging ────────────────────────────────────────────────────────────────
+# Shared because both test roots ask questions about the same distribution, and
+# building a wheel twice to answer them would double the cost.
+
+@pytest.fixture(scope="session")
+def selected_files() -> set[str]:
+    """What MANIFEST.in selects, resolved by the code that builds the package."""
+    from setuptools._distutils.filelist import FileList
+
+    repo_root = Path(__file__).resolve().parent
+    cwd = os.getcwd()
+    os.chdir(repo_root)
+    try:
+        file_list = FileList()
+        file_list.findall()
+        for raw in Path("MANIFEST.in").read_text().splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                file_list.process_template_line(line)
+        return {name.replace(os.sep, "/") for name in file_list.files}
+    finally:
+        os.chdir(cwd)
+
+
+@pytest.fixture(scope="session")
+def setuptools_config() -> dict:
+    import tomllib
+
+    repo_root = Path(__file__).resolve().parent
+    with (repo_root / "pyproject.toml").open("rb") as fh:
+        return tomllib.load(fh).get("tool", {}).get("setuptools", {})
+
+
+@pytest.fixture(scope="session")
+def wheel_contents(tmp_path_factory) -> set[str]:
+    """What a built wheel actually holds.
+
+    The packaging rules say what should ship; only the artifact says what does.
+    Built from a copy so a concurrent test cannot see a half-written build tree."""
+    import shutil
+    import subprocess
+    import zipfile
+
+    repo_root = Path(__file__).resolve().parent
+    source = tmp_path_factory.mktemp("wheel_src") / "repo"
+    shutil.copytree(
+        repo_root, source,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.egg-info", "build"),
+    )
+    out = tmp_path_factory.mktemp("wheel_out")
+    result = subprocess.run(
+        [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],
+        cwd=str(source), capture_output=True, text=True, timeout=900,
+    )
+    built = sorted(out.glob("*.whl"))
+    if result.returncode != 0 or not built:
+        pytest.fail(f"building the wheel failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
+    with zipfile.ZipFile(built[0]) as wheel:
+        return set(wheel.namelist())

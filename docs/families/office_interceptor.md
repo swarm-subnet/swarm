@@ -34,7 +34,7 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside a fixed 18 m o
 | | |
 |---|---|
 | Interface version | `submission_zip.v1` |
-| Entry point | `drone_agent.DroneFlightController` — copy `miner/src/office_drone_agent.py` to `my_agent/drone_agent.py` |
+| Entry point | `drone_agent.DroneFlightController` — copy `miner/src/submission_template/office_drone_agent.py` to `my_agent/drone_agent.py` |
 | Contract file | `swarm_policy_contract.json` (policy_contract.v1) |
 | Environment types | office |
 

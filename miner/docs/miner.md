@@ -106,7 +106,7 @@ The full miner workflow, from first install to competing on the leaderboard:
 
 ```bash
 mkdir -p my_agent/
-cp miner/src/drone_agent.py my_agent/
+cp miner/src/submission_template/drone_agent.py my_agent/
 cd my_agent/
 # Edit drone_agent.py with your controller
 ```
@@ -115,7 +115,7 @@ For Office Interceptor, copy the office starter to the packaged entry point:
 
 ```bash
 mkdir -p my_agent/
-cp miner/src/office_drone_agent.py my_agent/drone_agent.py
+cp miner/src/submission_template/office_drone_agent.py my_agent/drone_agent.py
 ```
 
 Test an Office Interceptor agent with its required family ID:

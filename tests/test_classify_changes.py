@@ -40,8 +40,8 @@ def route(*records: tuple[str, ...]) -> str:
         "miner/src/miner.py",
         "miner/src/scripts/setup.sh",
         "miner/src/scripts/install_dependencies.sh",
-        "miner/src/drone_agent.py",
-        "miner/src/office_drone_agent.py",
+        "miner/src/submission_template/drone_agent.py",
+        "miner/src/submission_template/office_drone_agent.py",
     ],
 )
 def test_a_listed_file_on_its_own_runs_the_miner_tests(path):
