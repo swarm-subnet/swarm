@@ -7,10 +7,18 @@ import pybullet as p
 import pytest
 
 from swarm.constants import (
+    OFFICE_ACTUATOR_JITTER,
+    OFFICE_CATCH_HOLD_STEPS,
+    OFFICE_CATCH_LEVEL_M,
+    OFFICE_CATCH_RADIUS_M,
     OFFICE_CHALLENGE_TYPE,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MIN_START_DISTANCE_M,
     OFFICE_RC_DEAD_ZONE,
+    OFFICE_RC_SPEED,
+    OFFICE_SCALE_JITTER_MAX,
+    OFFICE_SCALE_JITTER_MIN,
+    OFFICE_TARGET_SIZE_JITTER,
     OFFICE_RC_SLEW_PER_SEC,
     OFFICE_DET_PERIOD_STEPS,
     OFFICE_TARGET_ALT_MAX_M,
@@ -18,6 +26,7 @@ from swarm.constants import (
     OFFICE_TELEM_DELAY_STEPS,
     OFFICE_TELEM_PERIOD_STEPS,
 )
+from swarm.challenge_families.office_interceptor import OfficeInterceptorChallengeFamily
 from swarm.core.maps.office import OFFICE_CEILING_M, OFFICE_X_RANGE, OFFICE_Y_RANGE
 from swarm.core.moving_drone import rc_sticks_to_world_velocity
 from swarm.domain_model import get_policy_interface_contract
@@ -87,14 +96,17 @@ def test_office_zero_action_hovers(office_env):
 
 
 def test_office_dead_zone_and_slew(office_env):
+    """Dead zone and slew still bound the sticks; both are this episode's values,
+    not the nominal ones, because the airframe is dealt per episode."""
     env = office_env
     env.reset(seed=env.task.map_seed)
-    tiny = np.full((1, 4), OFFICE_RC_DEAD_ZONE * 0.5, dtype=np.float32)
+    tiny = np.full((1, 4), env._rc_dead_zone * 0.5, dtype=np.float32)
     env.step(tiny)
     assert np.allclose(env._rc_command, 0.0)
     env.step(np.ones((1, 4), dtype=np.float32))
-    max_step = OFFICE_RC_SLEW_PER_SEC * env.CTRL_TIMESTEP
-    assert np.all(np.abs(env._rc_command) <= max_step + 1e-9)
+    assert np.all(np.abs(env._rc_command) <= env._rc_max_step + 1e-9)
+    nominal = OFFICE_RC_SLEW_PER_SEC * env.CTRL_TIMESTEP
+    assert abs(env._rc_max_step - nominal) / nominal <= OFFICE_ACTUATOR_JITTER + 1e-9
 
 
 def test_office_physics_rate_motor_lag_and_scope(office_env):
@@ -107,8 +119,11 @@ def test_office_physics_rate_motor_lag_and_scope(office_env):
     env = office_env
     env.reset(seed=env.task.map_seed)
     assert env.PYB_FREQ == 5 * env.CTRL_FREQ and env.PYB_STEPS_PER_CTRL == 5
-    assert env._office_motor_alpha == pytest.approx(
-        1.0 - _math.exp(-env.PYB_TIMESTEP / OFFICE_MOTOR_TAU_SEC))
+    nominal_alpha = 1.0 - _math.exp(-env.PYB_TIMESTEP / OFFICE_MOTOR_TAU_SEC)
+    tau = -env.PYB_TIMESTEP / _math.log(1.0 - env._office_motor_alpha)
+    nominal_tau = -env.PYB_TIMESTEP / _math.log(1.0 - nominal_alpha)
+    assert abs(tau - nominal_tau) / nominal_tau <= OFFICE_ACTUATOR_JITTER + 1e-9, (
+        "motor lag is dealt per episode, but only inside the airframe band")
     assert env._office_rpm.shape == (env.NUM_DRONES, 4), "lag state is chaser-side only"
     assert np.allclose(env._office_rpm, env.HOVER_RPM), "lag must reset to hover RPM"
     # Exact five-substep ZOH: rpm = hover + (1 - (1-a)^5)(command - hover).
@@ -618,22 +633,17 @@ def test_office_catch_is_physical_contact(office_env):
 
     env = office_env
     env.reset(seed=env.task.map_seed)
-    # Fixed route around the tall cabinet on this seed's line, then home in.
-    # Full sticks (3.0 m/s) outrun every legal target profile (flee tops at 1.95).
-    route = [np.array([4.8, 2.6, 1.8]), np.array([8.0, 2.6, 1.8]), np.array([10.0, 3.5, 1.8])]
-    leg = 0
+    # Start level with the target on a clear line and close the gap. The route is
+    # arranged from the episode's own geometry: the map is no longer a fixed shape
+    # a memorised waypoint list could cross.
+    assert _place_with_clear_view(env, dist=2.0), "no clear approach to arrange"
     for _ in range(3000):
         cpos = env.pos[0].copy()
-        if cpos[2] < 1.2 and env._time_alive < 2.0:
-            act = [0.0, 0.0, 0.5, 0.0]
-        else:
-            if leg < len(route) and np.linalg.norm(cpos - route[leg]) < 0.45:
-                leg += 1
-            aim = route[leg] if leg < len(route) else env._office_target_pos
-            rel = aim - cpos
-            yaw = float(env.rpy[0][2])
-            f, r, _ = world_to_body(rel, yaw)
-            act = [np.clip(r, -1.0, 1.0), np.clip(f, -1.0, 1.0), np.clip(rel[2] * 1.5, -0.6, 0.5), 0.0]
+        rel = env._office_target_pos - cpos
+        yaw = float(env.rpy[0][2])
+        f, r, _ = world_to_body(rel, yaw)
+        act = [np.clip(r, -1.0, 1.0), np.clip(f, -1.0, 1.0),
+               np.clip(rel[2] * 1.5, -0.6, 0.5), 0.0]
         _, _, term, trunc, _ = env.step(np.array([act], dtype=np.float32))
         if term or trunc:
             break
@@ -694,16 +704,44 @@ def _aim_at_target(env):
     env._updateAndStoreKinematicInformation()
 
 
+def _place_with_clear_view(env, dist=2.5):
+    """Put the chaser `dist` from the target, level with it and looking at it, on a
+    direction with an unobstructed line of sight. Spawns are drawn over free space
+    now, so a test that needs a sighting has to arrange one rather than assume the
+    seed provides it."""
+    from swarm.constants import CAMERA_EYE_UP_M, OFFICE_CAMERA_EYE_FWD_M
+
+    tgt = np.array(env._office_target_pos, dtype=float)
+    ignore = {int(env.DRONE_IDS[0]), int(env._office_target_uid), -1}
+    for k in range(72):
+        a = k * (2.0 * math.pi / 72.0)
+        pos = tgt + np.array([math.cos(a) * dist, math.sin(a) * dist, 0.0])
+        yaw = math.atan2(tgt[1] - pos[1], tgt[0] - pos[0])
+        eye = pos + np.array([math.cos(yaw), math.sin(yaw), 0.0]) * OFFICE_CAMERA_EYE_FWD_M
+        eye[2] += CAMERA_EYE_UP_M
+        hit = p.rayTest(eye.tolist(), tgt.tolist(), physicsClientId=env.CLIENT)[0]
+        if int(hit[0]) in ignore:
+            p.resetBasePositionAndOrientation(
+                int(env.DRONE_IDS[0]), pos.tolist(),
+                p.getQuaternionFromEuler([0, 0, yaw]), physicsClientId=env.CLIENT)
+            p.resetBaseVelocity(int(env.DRONE_IDS[0]), [0, 0, 0], [0, 0, 0],
+                                physicsClientId=env.CLIENT)
+            env._rc_target_yaw[:] = yaw
+            env._updateAndStoreKinematicInformation()
+            return True
+    return False
+
+
 def test_office_detector_sees_target(office_env):
     env = office_env
     obs, _ = env.reset(seed=env.task.map_seed)
-    _aim_at_target(env)
+    assert _place_with_clear_view(env), "no clear line of sight to arrange"
     hits = 0
     for _ in range(100):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
         if obs["state"][15] > 0:
             hits += 1
-    # Target starts inside the camera frame on this seed: recall must show up.
+    # The target is in frame and unobstructed: recall must show up.
     assert hits > 10
     d = obs["state"][15:27]
     assert 0.0 <= d[2] <= 1.0 and 0.0 <= d[3] <= 1.0
@@ -715,7 +753,7 @@ def test_office_detector_recall_emerges(office_env):
     streaks included (this catches the streak-chain bias that once capped it)."""
     env = office_env
     env.reset(seed=env.task.map_seed)
-    _aim_at_target(env)
+    assert _place_with_clear_view(env, dist=3.0), "no clear line of sight to arrange"
     frames = hits = 0
     for i in range(3000):
         obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
@@ -886,3 +924,260 @@ def test_plain_appearance_is_inspection_only():
         assert oi._PLAIN_APPEARANCE is False
     finally:
         oi.use_plain_appearance(False)
+
+
+def _place_pair(env, offset):
+    """Put the target in open air and the chaser at `offset` from it, then let the
+    family run one catch check."""
+    fam = OfficeInterceptorChallengeFamily()
+    cli = env.CLIENT
+    tgt = int(env._office_target_uid)
+    base = np.array([float(env.pos[0][0]), float(env.pos[0][1]), 1.60])
+    p.resetBasePositionAndOrientation(tgt, base.tolist(), [0, 0, 0, 1], physicsClientId=cli)
+    p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), (base + offset).tolist(),
+                                      [0, 0, 0, 1], physicsClientId=cli)
+    env._updateAndStoreKinematicInformation()
+    p.performCollisionDetection(physicsClientId=cli)
+    return fam
+
+
+def test_office_level_intercept_registers(office_env):
+    """A level pass inside the catch radius scores once it is held, not by luck."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    fam = _place_pair(env, np.array([OFFICE_CATCH_RADIUS_M - 0.01, 0.0, 0.0]))
+    env._success = False
+    env._office_catch_hold = 0
+    for i in range(OFFICE_CATCH_HOLD_STEPS):
+        assert not env._success, f"caught after only {i} steps inside the box"
+        fam._update_target(env)
+    assert env._success, "a held level intercept must register"
+
+
+def test_office_overhead_is_not_a_catch(office_env):
+    """Hovering above the target is not an interception: the hull is flat, so a
+    centre-distance test alone would pay for downwashing it out of the air."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    for dz in (0.09, 0.11, 0.14):
+        fam = _place_pair(env, np.array([0.0, 0.0, dz]))
+        env._success = False
+        env._office_catch_hold = 0
+        for _ in range(3 * OFFICE_CATCH_HOLD_STEPS):
+            fam._update_target(env)
+        assert not env._success, f"hovering {dz:.2f} m overhead scored a catch"
+
+
+def test_office_airframe_differs_per_episode():
+    """Every episode deals its own airframe, so a stick-to-motion constant cannot
+    be inverted once and reused."""
+    seen = set()
+    for seed in (11, 12, 13):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        seen.add((round(env.SPEED_LIMIT, 6), round(env._rc_dead_zone, 6),
+                  round(env._rc_max_step, 6), round(env._office_motor_alpha, 6)))
+        assert abs(env.SPEED_LIMIT - OFFICE_RC_SPEED) / OFFICE_RC_SPEED <= OFFICE_ACTUATOR_JITTER + 1e-9
+        env.close()
+    assert len(seen) == 3, "each seed must deal its own airframe"
+
+
+def test_office_airframe_is_deterministic():
+    """Two envs on the same seed must agree, or validators would disagree."""
+    draws = []
+    for _ in range(2):
+        task = task_gen.random_task(1 / 50, 21, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        draws.append((env.SPEED_LIMIT, env._rc_dead_zone, env._rc_max_step,
+                      env._office_motor_alpha))
+        env.close()
+    assert draws[0] == draws[1]
+
+
+def test_office_target_size_varies_per_episode():
+    """The silhouette is dealt per episode, so box size cannot be inverted into
+    distance with a memorised constant."""
+    sizes = set()
+    for seed in (31, 32, 33):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        w, h = env._office_target_w_m, env._office_target_h_m
+        sizes.add((round(w, 6), round(h, 6)))
+        assert abs(w - 0.18) / 0.18 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
+        assert abs(h - 0.08) / 0.08 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
+        # and the boxes the policy sees are built from THIS episode's silhouette
+        fam = OfficeInterceptorChallengeFamily()
+        assert _place_with_clear_view(env, dist=2.0), "no clear line of sight to arrange"
+        truth = fam._detector_capture(env)
+        assert truth is not None, "arranged a clear view but got no detection"
+        focal = env._office_det_focal
+        assert truth["w"] == pytest.approx(focal * w / truth["dist"], rel=1e-6)
+        assert truth["h"] == pytest.approx(focal * h / truth["dist"], rel=1e-6)
+        env.close()
+    assert len(sizes) == 3, "each seed must deal its own silhouette"
+
+
+def test_office_spawns_spread_over_the_floor():
+    """Spawns are drawn over free space, not nudged from one suggested point, so
+    no spatial prior over spawn location is worth memorising. Every spawn must
+    still be valid: clear of geometry and inside the separation band."""
+    starts, goals = [], []
+    for seed in range(40, 64):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        s = np.array(env.task.start, dtype=float)
+        g = np.array(env.task.goal, dtype=float)
+        gap = float(np.linalg.norm(s[:2] - g[:2]))
+        assert OFFICE_MIN_START_DISTANCE_M - 1e-6 <= gap <= OFFICE_MAX_START_DISTANCE_M + 1e-6, (
+            f"seed {seed}: separation {gap:.2f} m is outside the band")
+        fam = OfficeInterceptorChallengeFamily()
+        assert fam._point_is_clear(env, s, floor=True), f"seed {seed}: start is not clear"
+        assert fam._point_is_clear(env, g, floor=False), f"seed {seed}: target is not clear"
+        probe = np.array([s[0], s[1], 1.4 * env._office_scale[2]])
+        assert fam._nav_in_main(env, probe), f"seed {seed}: start is sealed off"
+        assert fam._nav_in_main(env, g), f"seed {seed}: target is sealed off"
+        xr, yr = env._office_x_range, env._office_y_range
+        assert xr[0] < s[0] < xr[1] and yr[0] < s[1] < yr[1], "start outside this room"
+        starts.append(s[:2]); goals.append(g[:2])
+        env.close()
+    starts = np.array(starts)
+    # Spread, not a ring: both axes must use a real share of the room.
+    span_x = starts[:, 0].max() - starts[:, 0].min()
+    span_y = starts[:, 1].max() - starts[:, 1].min()
+    assert span_x > 0.5 * (OFFICE_X_RANGE[1] - OFFICE_X_RANGE[0]), f"x span only {span_x:.1f} m"
+    assert span_y > 0.4 * (OFFICE_Y_RANGE[1] - OFFICE_Y_RANGE[0]), f"y span only {span_y:.1f} m"
+    assert len({tuple(np.round(s, 3)) for s in starts}) == len(starts), "spawns repeat"
+
+
+def test_office_room_size_varies_per_episode():
+    """The room is dealt per episode, so a metric grid fitted to one floorplan does
+    not line up with the next. Every axis still moves by a real, bounded amount."""
+    from swarm.core.maps.office.builder import office_scale
+    seen = set()
+    for seed in (51, 52, 53, 54):
+        sx, sy, sz = office_scale(seed)
+        seen.add((round(sx, 6), round(sy, 6), round(sz, 6)))
+        for a in (sx, sy, sz):
+            assert OFFICE_SCALE_JITTER_MIN - 1e-9 <= abs(a - 1.0) <= OFFICE_SCALE_JITTER_MAX + 1e-9
+    assert len(seen) == 4, "each seed must deal its own room"
+    assert office_scale(51) == office_scale(51), "the room must be deterministic"
+
+
+def test_office_spawns_follow_the_room(office_env):
+    """Spawn bounds track the episode's room, so nobody is placed outside it."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    sx, sy, _ = env._office_scale
+    assert env._office_x_range == (OFFICE_X_RANGE[0] * sx, OFFICE_X_RANGE[1] * sx)
+    assert env._office_y_range == (OFFICE_Y_RANGE[0] * sy, OFFICE_Y_RANGE[1] * sy)
+    for pt in (np.array(env.task.start, dtype=float), np.array(env.task.goal, dtype=float)):
+        assert env._office_x_range[0] < pt[0] < env._office_x_range[1]
+        assert env._office_y_range[0] < pt[1] < env._office_y_range[1]
+
+
+def test_office_room_size_varies_and_bounds_follow():
+    """The room is dealt a size per episode, and everything that reads the room
+    reads this episode's size — otherwise a stretched map would score against
+    yesterday's walls."""
+    from swarm.core.maps.office.builder import OFFICE_CEILING_M as NOMINAL_CEILING
+
+    rooms = set()
+    for seed in (101, 102, 103):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        sx, sy, sz = env._office_scale
+        for axis in (sx, sy, sz):
+            assert 0.02 - 1e-9 <= abs(axis - 1.0) <= 0.05 + 1e-9, f"scale {axis} off spec"
+        # the bounds the family flies by are this episode's, not the drawing's
+        assert env._office_x_range == pytest.approx(
+            (OFFICE_X_RANGE[0] * sx, OFFICE_X_RANGE[1] * sx))
+        assert env._office_y_range == pytest.approx(
+            (OFFICE_Y_RANGE[0] * sy, OFFICE_Y_RANGE[1] * sy))
+        assert env._office_ceiling_m == pytest.approx(NOMINAL_CEILING * sz)
+        # the target's flight band must still fit under the shrunk ceiling
+        assert OFFICE_TARGET_ALT_MAX_M < env._office_ceiling_m
+        rooms.add((round(sx, 6), round(sy, 6), round(sz, 6)))
+        env.close()
+    assert len(rooms) == 3, "each seed must deal its own room"
+
+
+def test_office_room_size_is_deterministic():
+    """Two builds of one seed must agree, or validators would disagree."""
+    from swarm.core.maps.office.builder import office_scale
+    assert office_scale(77) == office_scale(77)
+    assert office_scale(77) != office_scale(78)
+
+
+def test_office_fast_level_pass_still_registers(office_env):
+    """A quick level pass must score. Physics runs five substeps per control step, so
+    a graze can exist and separate between contact queries; the held proximity
+    envelope is what makes a genuine fast interception count anyway."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    fam = OfficeInterceptorChallengeFamily()
+    cli = env.CLIENT
+    tgt = int(env._office_target_uid)
+    base = np.array([float(env.pos[0][0]), float(env.pos[0][1]), 1.60])
+    p.resetBasePositionAndOrientation(tgt, base.tolist(), [0, 0, 0, 1], physicsClientId=cli)
+    # Sweep past at full stick speed, offset sideways so the hulls (which touch at
+    # 0.176 m) never meet: success here can only come from the held envelope, not
+    # from the contact branch.
+    speed, dt = env.SPEED_LIMIT, 1.0 / 50.0
+    offset = 0.5 * (0.176 + OFFICE_CATCH_RADIUS_M)
+    assert 0.176 < offset <= OFFICE_CATCH_RADIUS_M, "offset must clear the hulls"
+    env._success = False
+    env._office_catch_hold = 0
+    steps_inside = touches = 0
+    for k in range(-40, 41):
+        pos = base + np.array([k * speed * dt, offset, 0.0])
+        p.resetBasePositionAndOrientation(int(env.DRONE_IDS[0]), pos.tolist(),
+                                          [0, 0, 0, 1], physicsClientId=cli)
+        env._updateAndStoreKinematicInformation()
+        p.performCollisionDetection(physicsClientId=cli)
+        touches += len(p.getContactPoints(bodyA=int(env.DRONE_IDS[0]), bodyB=tgt,
+                                          physicsClientId=cli))
+        if float(np.linalg.norm([k * speed * dt, offset])) <= OFFICE_CATCH_RADIUS_M:
+            steps_inside += 1
+        fam._update_target(env)
+    assert touches == 0, "the sweep must not touch, or the contact branch is doing the work"
+    assert steps_inside >= OFFICE_CATCH_HOLD_STEPS, (
+        f"a {speed:.2f} m/s pass only spends {steps_inside} steps inside the envelope; "
+        "the hold requirement would make genuine fast intercepts unscoreable")
+    assert env._success, "a full-speed level pass must register on the envelope alone"
+
+
+def test_office_par_follows_the_dealt_airframe():
+    """Par is the clock a seed is judged against, so it must be built from the
+    airframe that seed actually flies — and the flee allowance must stay the
+    target's, since the target runs at the nominal speed whatever the chaser got."""
+    from swarm.challenge_families.office_interceptor import (
+        office_airframe_profile,
+        office_target_profile,
+    )
+    from swarm.constants import OFFICE_ACQUIRE_SLACK_SEC
+    from swarm.validator.reward import _calculate_office_target_time
+
+    seeds = [201, 202, 203, 204, 205]
+    pars = set()
+    for seed in seeds:
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        chaser = office_airframe_profile(seed)["speed"]
+        assert env.SPEED_LIMIT == pytest.approx(chaser), "env and reward disagree on the airframe"
+        prof = office_target_profile(seed)
+        evasive = prof["flee_frac"] if prof["react_range"] > 0.0 else 0.0
+        closing = max(0.1, chaser - 0.5 * evasive * OFFICE_RC_SPEED)
+        sx, sy, _ = env.task.start
+        gx, gy, _ = env.task.goal
+        expected = min(math.hypot(gx - sx, gy - sy) / closing + OFFICE_ACQUIRE_SLACK_SEC,
+                       0.95 * float(env.task.horizon))
+        assert _calculate_office_target_time(env.task) == pytest.approx(expected)
+        pars.add(round(expected, 6))
+        env.close()
+    assert len(pars) == len(seeds), "par must move with the seed"
