@@ -83,3 +83,11 @@ def test_setup_scripts_stay_executable():
         REPO_ROOT / "scripts" / "validator" / "main" / "setup.sh",
     ]:
         assert script.stat().st_mode & 0o111, f"{script} is not executable"
+
+
+def test_both_test_roots_stay_configured():
+    """miner/tests runs only because pytest.ini says so; dropping it hides them."""
+    config = (REPO_ROOT / "pytest.ini").read_text()
+    line = next(l for l in config.splitlines() if l.startswith("testpaths"))
+    roots = line.split("=", 1)[1].split()
+    assert "tests" in roots and "miner/tests" in roots, f"testpaths is {roots}"

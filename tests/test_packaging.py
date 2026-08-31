@@ -73,3 +73,28 @@ def test_nothing_excludes_the_data_files_again(relative_path, setuptools_config)
             assert not translate_pattern(pattern).match(within), (
                 f"{relative_path} is excluded again by '{pattern}' under '{scope}'"
             )
+
+
+# Python files reach the distribution through package discovery; anything else only
+# reaches it if MANIFEST.in names it, which is why the shell scripts are listed here.
+MINER_DATA_FILES = [
+    "miner/src/scripts/setup.sh",
+    "miner/src/scripts/install_dependencies.sh",
+]
+
+
+@pytest.mark.parametrize("relative_path", MINER_DATA_FILES)
+def test_manifest_selects_the_miner_scripts(relative_path, selected_files):
+    assert relative_path in selected_files, f"{relative_path} is not selected for the package"
+
+
+def test_the_miner_package_is_discovered(setuptools_config):
+    include = setuptools_config.get("packages", {}).get("find", {}).get("include", [])
+    assert "miner*" in include, "the miner package would not be discovered"
+
+
+def test_the_miner_tests_do_not_ship(selected_files, setuptools_config):
+    exclude = setuptools_config.get("packages", {}).get("find", {}).get("exclude", [])
+    assert "miner.tests*" in exclude, "miner tests would be discovered as a package"
+    shipped = [p for p in selected_files if p.startswith("miner/tests/")]
+    assert shipped == [], f"MANIFEST.in still selects miner tests: {shipped}"

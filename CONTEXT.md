@@ -47,7 +47,9 @@ Core benchmark assumptions:
 - [`swarm/base/`](swarm/base)
   Shared neuron and validator base abstractions.
 - [`neurons/`](neurons)
-  Launch scripts for validator and miner processes.
+  Launch script for the validator process.
+- [`miner/`](miner)
+  The miner's own code, tests and guide.
 - [`scripts/`](scripts)
   Thin operational utilities for benchmark runs, replay, visualization, and setup.
 - [`tests/`](tests)

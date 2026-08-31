@@ -1,6 +1,6 @@
 """Shared training harness for the per-family baseline starters.
 
-Each RL/<family_id>/train.py calls train_family(): a small PPO baseline is
+Each miner/src/RL/<family_id>/train.py calls train_family(): a small PPO baseline is
 trained on real generator tasks, saved, packaged into a validator-ready
 submission.zip, and smoke-tested against the family's policy contract.
 

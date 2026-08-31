@@ -103,7 +103,7 @@ def test_the_trusted_runner_runs_the_whole_suite():
 
 
 def test_an_untested_miner_area_runs_the_whole_suite():
-    """RL/ is the miner's, but nothing covers it, so it cannot be listed."""
+    """The trainers are the miner's, but nothing covers them, so they cannot be listed."""
     assert route(("M", "miner/src/RL/common.py")) == "full"
 
 
