@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/miner.md"><img alt="Start Training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-F5D400?style=for-the-badge" /></a>
+  <a href="miner/docs/miner.md"><img alt="Start Training" src="https://img.shields.io/badge/Start%20Training-Miner%20Guide-F5D400?style=for-the-badge" /></a>
   &nbsp;
   <a href="https://swarm124.com/benchmark"><img alt="Leaderboard" src="https://img.shields.io/badge/Leaderboard-Live-111111?style=for-the-badge" /></a>
 </p>
@@ -218,8 +218,8 @@ The local benchmark uses the same simulator and scoring path as validators, so i
 <tr>
 <td align="center" width="50%">
 <h3>Train a Model</h3>
-<p>Build a drone pilot from scratch. The <a href="docs/miner.md">Miner Guide</a> walks you through the whole path, from first install to a spot on the leaderboard.</p>
-<a href="docs/miner.md"><img alt="Miner Guide" src="https://img.shields.io/badge/Miner%20Guide-Start%20Training-F5D400?style=for-the-badge" /></a>
+<p>Build a drone pilot from scratch. The <a href="miner/docs/miner.md">Miner Guide</a> walks you through the whole path, from first install to a spot on the leaderboard.</p>
+<a href="miner/docs/miner.md"><img alt="Miner Guide" src="https://img.shields.io/badge/Miner%20Guide-Start%20Training-F5D400?style=for-the-badge" /></a>
 </td>
 <td align="center" width="50%">
 <h3>Run a Validator</h3>

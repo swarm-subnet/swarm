@@ -205,7 +205,7 @@ For local training, `env.step` returns the per-step **change** in this same roll
 
 ## Runtime limits
 
-Models run inside a sandboxed Docker container (6 GB RAM, 2 CPUs) as a Cap'n Proto RPC server; `requirements.txt` is restricted to the [whitelist](../miner.md#docker-whitelist) and the uncompressed zip is capped at 50 MiB.
+Models run inside a sandboxed Docker container (6 GB RAM, 2 CPUs) as a Cap'n Proto RPC server; `requirements.txt` is restricted to the [whitelist](../../miner/docs/miner.md#docker-whitelist) and the uncompressed zip is capped at 50 MiB.
 
 | Limit | Value |
 |---|---|

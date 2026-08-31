@@ -23,7 +23,7 @@ Core benchmark assumptions:
   Project overview, benchmark framing, and quick CLI examples.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
   Canonical code-organization and dependency-boundary guide.
-- [`docs/miner.md`](docs/miner.md)
+- [`miner/docs/miner.md`](miner/docs/miner.md)
   Miner setup, submission structure, and GitHub publishing flow.
 - [`docs/validator.md`](docs/validator.md)
   Validator setup, Docker requirements, telemetry, and runtime expectations.

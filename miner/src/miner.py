@@ -292,7 +292,7 @@ def main(argv=None):
                 "  python miner/src/miner.py --netuid 124 --wallet.name miner --wallet.hotkey default \\"
             )
             bt.logging.error("      --github_url https://github.com/you/your-model")
-            bt.logging.error("The full submission guide is in docs/miner.md.")
+            bt.logging.error("The full submission guide is in miner/docs/miner.md.")
             return 1
 
         reason = _validate_artifact(args.artifact, family_id=args.family_id)
