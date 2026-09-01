@@ -1,17 +1,16 @@
 """Paths under `validator/` that are written relative to the file holding them.
 
-Moving a file changes what `parents[n]` means, and the ones that walk up to the
-repository root go wrong quietly: a script inserts the wrong directory on
-`sys.path`, or a test reads a schema that is not there and treats the absence as
-an empty result.
+Moving a file changes what `parents[n]` means, and these go wrong quietly: a
+script inserts the wrong directory on `sys.path`, or a test reads a schema that
+is not there and treats the absence as an empty result.
 
-Each entry names its intended target, because they do not share one: most want
-the repository root, one wants a sibling checkout beside it, and a few
-deliberately want their own directory.
+Every expression is pinned, not every file. A file with five resolvers can have
+four right and one wrong, and a check that only asked whether *any* of them
+reached the repository root would pass. The expected values also include the
+ones that deliberately stay local, so a walk cannot quietly grow a level.
 """
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -22,40 +21,37 @@ VALIDATOR = REPO_ROOT / "validator"
 
 _PATHLIB = re.compile(r"Path\(__file__\)(?:\.resolve\(\))?((?:\.parents\[\d\]|\.parent)+)")
 _OSPATH = re.compile(r"os\.path\.dirname\(os\.path\.abspath\(__file__\)\)((?:,\s*os\.pardir)+)")
-# A root derived from an alias rather than from __file__ directly. This is how the
-# leak got through: _SCRIPT_DIR was correct, and the root built from it was not.
+# A root derived from an alias rather than from __file__ directly. This is how a leak
+# got through once: _SCRIPT_DIR was right, and the root built from it was not.
 _ALIAS_ROOT = re.compile(r"^_REPO_ROOT\s*=\s*_SCRIPT_DIR((?:\.parents\[\d\]|\.parent)+)", re.M)
 
-# Files whose walk is meant to reach the repository root.
-REACH_THE_REPO_ROOT = [
-    "scripts/bench_full_eval.py",
-    "scripts/dump_depth_frame.py",
-    "scripts/gen_family_io_tables.py",
-    "scripts/prebake_mannequin_parts.py",
-    "scripts/profile_walltime.py",
-    "scripts/sync_family_registry.py",
-    "scripts/test_timings.py",
-    "scripts/verify_render_identity.py",
-    "scripts/health/check_current_epoch_weights.py",
-    "scripts/health/check_validator_health.py",
-    "tests/sar/test_mannequin.py",
-    "tests/sar/test_no_coord_leak.py",
-    "tests/test_benchmark_default_model_fixed_seeds.py",
-    "tests/test_challenge_family_boundaries.py",
-    "tests/test_cli.py",
-    "tests/test_docker_evaluator.py",
-    "tests/test_domain_model_naming.py",
-    "tests/test_github.py",
-    "tests/test_scripts_shell.py",
-    "tests/test_submission_manifest.py",
-]
-
-# These want their own directory, not the root.
-STAY_LOCAL = {
-    "scripts/generate_video.py",
-    "scripts/stress_benchmark_compare.py",
-    "scripts/visualize_map.py",
-    "tests/test_swarm_autopilot_regression.py",
+# path relative to validator/ -> the target of every resolver in it, sorted.
+# "SIBLING" is the swarm-backend checkout beside the repository, not inside it.
+EXPECTED: dict[str, list[str]] = {
+    "scripts/bench_full_eval.py": ["REPO_ROOT"],
+    "scripts/dump_depth_frame.py": ["REPO_ROOT"],
+    "scripts/gen_family_io_tables.py": ["REPO_ROOT"],
+    "scripts/generate_video.py": ["REPO_ROOT", "validator/scripts"],
+    "scripts/health/check_current_epoch_weights.py": ["REPO_ROOT"],
+    "scripts/health/check_validator_health.py": ["REPO_ROOT"],
+    "scripts/prebake_mannequin_parts.py": ["REPO_ROOT"],
+    "scripts/profile_walltime.py": ["REPO_ROOT"],
+    "scripts/stress_benchmark_compare.py": ["REPO_ROOT", "validator/scripts"],
+    "scripts/sync_family_registry.py": ["REPO_ROOT"],
+    "scripts/test_timings.py": ["REPO_ROOT"],
+    "scripts/verify_render_identity.py": ["REPO_ROOT"],
+    "scripts/visualize_map.py": ["REPO_ROOT", "validator/scripts"],
+    "tests/sar/test_mannequin.py": ["REPO_ROOT"],
+    "tests/sar/test_no_coord_leak.py": ["REPO_ROOT"],
+    "tests/test_benchmark_default_model_fixed_seeds.py": ["REPO_ROOT"],
+    "tests/test_challenge_family_boundaries.py": ["REPO_ROOT"],
+    "tests/test_cli.py": ["REPO_ROOT"],
+    "tests/test_docker_evaluator.py": ["REPO_ROOT", "REPO_ROOT"],
+    "tests/test_domain_model_naming.py": ["REPO_ROOT"],
+    "tests/test_github.py": ["REPO_ROOT"] * 5,
+    "tests/test_scripts_shell.py": ["REPO_ROOT"],
+    "tests/test_submission_manifest.py": ["REPO_ROOT", "SIBLING"],
+    "tests/test_swarm_autopilot_regression.py": ["validator/tests"],
 }
 
 
@@ -67,81 +63,56 @@ def _steps(expr: str) -> int:
     return total
 
 
-def _resolved(source: Path) -> list[Path]:
+def _label(path: Path) -> str:
+    if path == REPO_ROOT:
+        return "REPO_ROOT"
+    if path == REPO_ROOT.parent:
+        return "SIBLING"
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _targets(source: Path) -> list[str]:
     """Where every file-relative walk in this file actually lands."""
     text = source.read_text(errors="ignore")
-    out = []
+    found = []
     for m in _PATHLIB.finditer(text):
-        landed = source.resolve()
+        p = source.resolve()
         for _ in range(_steps(m.group(1))):
-            landed = landed.parent
-        out.append(landed)
+            p = p.parent
+        found.append(_label(p))
     for m in _OSPATH.finditer(text):
-        landed = source.resolve().parent
+        p = source.resolve().parent
         for _ in range(m.group(1).count("os.pardir")):
-            landed = landed.parent
-        out.append(landed)
-    return out
-
-
-def _alias_roots(source: Path) -> list[Path]:
-    """Roots built from `_SCRIPT_DIR` rather than from `__file__` directly."""
-    out = []
-    for m in _ALIAS_ROOT.finditer(source.read_text(errors="ignore")):
-        landed = source.resolve().parent          # _SCRIPT_DIR
+            p = p.parent
+        found.append(_label(p))
+    for m in _ALIAS_ROOT.finditer(text):
+        p = source.resolve().parent          # _SCRIPT_DIR
         for _ in range(_steps(m.group(1))):
-            landed = landed.parent
-        out.append(landed)
-    return out
+            p = p.parent
+        found.append(_label(p))
+    return sorted(found)
 
 
-@pytest.mark.parametrize(
-    "relative",
-    ["scripts/visualize_map.py", "scripts/generate_video.py", "scripts/stress_benchmark_compare.py"],
-    ids=lambda p: p,
-)
-def test_a_root_built_from_the_script_dir_is_still_the_repo_root(relative):
-    """These insert their root on sys.path. Pointing it at `validator/` would make
-    the old top-level `scripts` importable again from an installed copy."""
-    roots = _alias_roots(VALIDATOR / relative)
-    assert roots, f"{relative} no longer derives a root from _SCRIPT_DIR"
-    assert set(roots) == {REPO_ROOT}, (
-        f"{relative} derives {sorted(str(r) for r in roots)}, not the repository root"
-    )
-
-
-@pytest.mark.parametrize("relative", REACH_THE_REPO_ROOT, ids=lambda p: p)
-def test_the_walk_reaches_the_repo_root(relative):
+@pytest.mark.parametrize("relative", sorted(EXPECTED), ids=lambda p: p)
+def test_every_resolver_lands_where_it_should(relative):
     source = VALIDATOR / relative
-    landed = _resolved(source)
-    assert landed, f"{relative} no longer computes a path from its own location"
-    assert REPO_ROOT in landed, (
-        f"{relative} walks up to {sorted({str(p) for p in landed})}, "
-        f"none of which is the repository root"
+    assert source.is_file(), f"{relative} is listed here but not in the tree"
+    assert _targets(source) == sorted(EXPECTED[relative]), (
+        f"{relative} resolves to {_targets(source)}, expected {sorted(EXPECTED[relative])}"
     )
 
 
-def test_the_sibling_backend_path_stays_beside_the_repo():
-    """Compared lexically: the checkout is usually absent, and a guard that
-    turned into a skip when it is would protect nothing."""
-    source = VALIDATOR / "tests" / "test_submission_manifest.py"
-    expected = REPO_ROOT.parent / "swarm-backend" / "app"
-    text = source.read_text()
-    assert 'parents[3] / "swarm-backend" / "app"' in text, (
-        f"the sibling checkout path in {source.name} no longer reaches {expected}"
-    )
-
-
-def test_every_resolver_is_accounted_for():
-    """A file that grows a new walk must be listed, or it goes unchecked."""
-    found = set()
-    for source in VALIDATOR.rglob("*.py"):
-        if "__pycache__" in str(source) or source.name == Path(__file__).name:
-            continue
-        if _resolved(source):
-            found.add(str(source.relative_to(VALIDATOR)))
-    listed = set(REACH_THE_REPO_ROOT) | STAY_LOCAL
-    assert found == listed, (
-        f"unlisted resolvers: {sorted(found - listed)}; "
-        f"listed but no longer present: {sorted(listed - found)}"
+def test_no_file_resolves_paths_without_being_listed():
+    """A file that grows a resolver must be listed, or it goes unchecked."""
+    found = {
+        str(p.relative_to(VALIDATOR))
+        for p in VALIDATOR.rglob("*.py")
+        if "__pycache__" not in str(p) and p.name != Path(__file__).name and _targets(p)
+    }
+    assert found == set(EXPECTED), (
+        f"unlisted: {sorted(found - set(EXPECTED))}; "
+        f"listed but gone: {sorted(set(EXPECTED) - found)}"
     )

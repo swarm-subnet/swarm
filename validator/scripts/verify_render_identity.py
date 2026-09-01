@@ -11,8 +11,8 @@ Proves a renderer change is pixel-identical. Two checks:
    observation. Valid to compare across thread counts on the same wheel.
 
 Run it once per configuration and diff the JSON outputs:
-    SWARM_RENDER_THREADS=1 python3 scripts/verify_render_identity.py --json a.json
-    SWARM_RENDER_THREADS=4 python3 scripts/verify_render_identity.py --json b.json
+    SWARM_RENDER_THREADS=1 python3 validator/scripts/verify_render_identity.py --json a.json
+    SWARM_RENDER_THREADS=4 python3 validator/scripts/verify_render_identity.py --json b.json
 """
 
 import argparse

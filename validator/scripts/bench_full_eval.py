@@ -2,8 +2,8 @@
 """Standalone script wrapper for ``swarm.benchmark.engine``.
 
 Usage:
-    python3 scripts/bench_full_eval.py --model path/to/model.zip
-    python3 scripts/bench_full_eval.py --model path/to/model.zip --workers 4 --seeds-per-group 5
+    python3 validator/scripts/bench_full_eval.py --model path/to/model.zip
+    python3 validator/scripts/bench_full_eval.py --model path/to/model.zip --workers 4 --seeds-per-group 5
 """
 
 from __future__ import annotations

@@ -47,7 +47,7 @@ The registry that defines the families, their states, policies, and emission all
 **Sync is manual.** After editing the schema in the swarm repo, run:
 
 ```bash
-python3 scripts/sync_family_registry.py \
+python3 validator/scripts/sync_family_registry.py \
   --backend /path/to/swarm-backend \
   --website /path/to/Swarm-Website
 ```
@@ -226,7 +226,7 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_MAX_DOCKER_WOR
 | I want to… | Do this |
 |------------|---------|
 | Keep out validators on the old contract | Nothing to do — only `agent_rpc.v1` validators are ever authorized |
-| Add/change a family or its policy | Edit `swarm/domain_model/benchmark_domain_model.schema.json`, then from the swarm repo run `python3 scripts/sync_family_registry.py --backend /path/to/swarm-backend --website /path/to/Swarm-Website`; commit all three copies |
+| Add/change a family or its policy | Edit `swarm/domain_model/benchmark_domain_model.schema.json`, then from the swarm repo run `python3 validator/scripts/sync_family_registry.py --backend /path/to/swarm-backend --website /path/to/Swarm-Website`; commit all three copies |
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |

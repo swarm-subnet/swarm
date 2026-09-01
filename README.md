@@ -223,8 +223,8 @@ The local benchmark uses the same simulator and scoring path as validators, so i
 </td>
 <td align="center" width="50%">
 <h3>Run a Validator</h3>
-<p>Help score the network on your own hardware. The <a href="docs/validator.md">Validator Guide</a> covers setup, launch, and auto-updates.</p>
-<a href="docs/validator.md"><img alt="Validator Guide" src="https://img.shields.io/badge/Validator%20Guide-Get%20Started-111111?style=for-the-badge" /></a>
+<p>Help score the network on your own hardware. The <a href="validator/docs/validator.md">Validator Guide</a> covers setup, launch, and auto-updates.</p>
+<a href="validator/docs/validator.md"><img alt="Validator Guide" src="https://img.shields.io/badge/Validator%20Guide-Get%20Started-111111?style=for-the-badge" /></a>
 </td>
 </tr>
 </table>

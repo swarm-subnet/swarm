@@ -281,4 +281,4 @@ The download includes SHA-256 integrity verification against the hash reported b
 
 ## Tests
 
-CLI behavior is covered in `tests/test_cli.py`: doctor, benchmark delegation, model verify/package/test, and report parsing. `tests/test_cli_visualize_video.py` covers `swarm visualize` and `swarm video`: dispatch, seed/type resolution, the failed-seed review flow, and family-aware task construction.
+CLI behavior is covered in `validator/tests/test_cli.py`: doctor, benchmark delegation, model verify/package/test, and report parsing. `validator/tests/test_cli_visualize_video.py` covers `swarm visualize` and `swarm video`: dispatch, seed/type resolution, the failed-seed review flow, and family-aware task construction.

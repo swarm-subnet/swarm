@@ -19,9 +19,9 @@ The script is designed for two use-cases:
 
 Examples
 --------
-    python3 scripts/generate_video.py --model UID_178.zip --seed 42 --type 1 --mode chase
-    python3 scripts/generate_video.py --model UID_178.zip --seed 42 --type 5 --mode all --out ./videos
-    python3 scripts/generate_video.py --model UID_178.zip --seed 42 --type 1 --mode depth,fpv --width 1920 --height 1080
+    python3 validator/scripts/generate_video.py --model UID_178.zip --seed 42 --type 1 --mode chase
+    python3 validator/scripts/generate_video.py --model UID_178.zip --seed 42 --type 5 --mode all --out ./videos
+    python3 validator/scripts/generate_video.py --model UID_178.zip --seed 42 --type 1 --mode depth,fpv --width 1920 --height 1080
 """
 from __future__ import annotations
 

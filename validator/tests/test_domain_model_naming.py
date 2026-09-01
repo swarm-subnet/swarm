@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAN_PATHS = [
@@ -28,10 +30,15 @@ def _iter_text_files():
             yield path
 
 
-def test_every_scanned_path_exists():
-    """A path that stops existing makes the scan below pass over nothing."""
-    missing = [str(p.relative_to(REPO_ROOT)) for p in SCAN_PATHS if not p.exists()]
-    assert missing == [], f"these are scanned but not there: {missing}"
+@pytest.mark.parametrize("base", SCAN_PATHS, ids=lambda p: str(p.name))
+def test_each_scanned_root_contributes_files(base):
+    """Per root, not in aggregate: one root going empty would otherwise hide
+    behind the others still finding files."""
+    assert base.exists(), f"{base} is scanned but not there"
+    if base.is_file():
+        return
+    found = [p for p in base.rglob("*") if p.suffix.lower() in {".md", ".py", ".txt"}]
+    assert found, f"{base} contributed no files to the scan"
 
 
 def test_benchmark_domain_docs_do_not_use_ambiguous_family_wording():

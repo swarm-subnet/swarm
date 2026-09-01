@@ -5,8 +5,8 @@ Runs the scripted baseline at the farthest-distance mountain scenario and
 measures timeout fraction. Plan target: 1000 seeds, < 30% TIMEOUT.
 
 Usage:
-    python3 scripts/sar_horizon_audit.py                  # full 1000
-    python3 scripts/sar_horizon_audit.py --n-seeds 50     # smoke
+    python3 validator/scripts/sar_horizon_audit.py                  # full 1000
+    python3 validator/scripts/sar_horizon_audit.py --n-seeds 50     # smoke
 """
 from __future__ import annotations
 

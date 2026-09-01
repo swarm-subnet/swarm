@@ -40,7 +40,7 @@ Modes:
 Python usage:
 
 ```python
-from scripts.validator.health.check_validator_health import were_last_epochs_healthy
+from validator.scripts.health.check_validator_health import were_last_epochs_healthy
 
 print(were_last_epochs_healthy(10))
 ```

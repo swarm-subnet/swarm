@@ -14,9 +14,21 @@ def _all_shell_scripts() -> list[Path]:
     return sorted(SCRIPTS_DIR.rglob("*.sh"))
 
 
+# Named, not counted: losing one of the four would drop its parametrised checks
+# while a "there is at least one" assertion stayed green.
+EXPECTED_SCRIPTS = {
+    "main/install_dependencies.sh",
+    "main/setup.sh",
+    "update/auto_update_deploy.sh",
+    "update/update_deploy.sh",
+}
+
+
 def test_all_shell_scripts_discovered():
-    scripts = _all_shell_scripts()
-    assert scripts, "No shell scripts found under scripts/"
+    found = {str(p.relative_to(SCRIPTS_DIR)) for p in _all_shell_scripts()}
+    assert found == EXPECTED_SCRIPTS, (
+        f"expected {sorted(EXPECTED_SCRIPTS)} under {SCRIPTS_DIR}, found {sorted(found)}"
+    )
 
 
 @pytest.mark.parametrize(

@@ -10,8 +10,8 @@ cutover runbook, not by code, because the baseline policy is intentionally
 sub-optimal and the absolute success rate is a calibration target.
 
 Usage:
-    python3 scripts/sar_baseline_audit.py                  # full 1000 / map
-    python3 scripts/sar_baseline_audit.py --n-seeds 50     # smoke
+    python3 validator/scripts/sar_baseline_audit.py                  # full 1000 / map
+    python3 validator/scripts/sar_baseline_audit.py --n-seeds 50     # smoke
 """
 from __future__ import annotations
 

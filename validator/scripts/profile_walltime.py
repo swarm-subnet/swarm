@@ -12,9 +12,9 @@ Per config it reports:
 then extrapolates to a full seed (horizon steps) and a full 1,100-seed eval.
 
 Usage:
-    python3 scripts/profile_walltime.py                 # full sweep
-    python3 scripts/profile_walltime.py --quick         # smoke test
-    python3 scripts/profile_walltime.py --json out.json
+    python3 validator/scripts/profile_walltime.py                 # full sweep
+    python3 validator/scripts/profile_walltime.py --quick         # smoke test
+    python3 validator/scripts/profile_walltime.py --json out.json
 """
 
 import argparse

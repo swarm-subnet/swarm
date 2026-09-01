@@ -5,9 +5,9 @@ Target: ≤ 0.5% SARSpawnError rate per map at the full 5000-seed sample
 size. Run before the cutover.
 
 Usage:
-    python3 scripts/sar_spawn_audit.py                       # full 5000 / map
-    python3 scripts/sar_spawn_audit.py --n-seeds 500         # smoke
-    python3 scripts/sar_spawn_audit.py --maps city,warehouse # subset
+    python3 validator/scripts/sar_spawn_audit.py                       # full 5000 / map
+    python3 validator/scripts/sar_spawn_audit.py --n-seeds 500         # smoke
+    python3 validator/scripts/sar_spawn_audit.py --maps city,warehouse # subset
 
 Exit code 0 when every environment type clears the threshold, 1 otherwise.
 """
