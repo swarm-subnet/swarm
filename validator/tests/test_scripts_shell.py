@@ -8,10 +8,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "validator" / "scripts"
+# Registered with PM2 by path on operator machines; kept as a forwarder.
+LEGACY_UPDATER = REPO_ROOT / "scripts" / "validator" / "update" / "auto_update_deploy.sh"
 
 
 def _all_shell_scripts() -> list[Path]:
-    return sorted(SCRIPTS_DIR.rglob("*.sh"))
+    """Everything that gets linted: the validator's scripts plus the forwarder
+    left at the path PM2 registered, which is the one that must never break."""
+    return sorted(SCRIPTS_DIR.rglob("*.sh")) + [LEGACY_UPDATER]
 
 
 # Named, not counted: losing one of the four would drop its parametrised checks
@@ -25,7 +29,7 @@ EXPECTED_SCRIPTS = {
 
 
 def test_all_shell_scripts_discovered():
-    found = {str(p.relative_to(SCRIPTS_DIR)) for p in _all_shell_scripts()}
+    found = {str(p.relative_to(SCRIPTS_DIR)) for p in _all_shell_scripts() if p != LEGACY_UPDATER}
     assert found == EXPECTED_SCRIPTS, (
         f"expected {sorted(EXPECTED_SCRIPTS)} under {SCRIPTS_DIR}, found {sorted(found)}"
     )
@@ -105,12 +109,6 @@ def test_the_miner_tests_are_actually_collected():
     assert "miner/tests/test_miner.py::" in result.stdout, (
         "a default run does not collect the miner's tests"
     )
-
-
-# The auto-updater is registered with PM2 by path on operator machines, and PM2 keeps
-# that path across restarts. A forwarder stays at the old location so the pull that
-# delivers this move does not break the updater that performed it.
-LEGACY_UPDATER = REPO_ROOT / "scripts" / "validator" / "update" / "auto_update_deploy.sh"
 
 
 def test_the_legacy_updater_path_still_answers():
