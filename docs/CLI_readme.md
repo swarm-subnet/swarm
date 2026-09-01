@@ -68,7 +68,7 @@ swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 swarm benchmark --model Submission/submission.zip --workers 3 --relax-timeouts --rpc-verbosity low
 ```
 
-If `--model` is omitted, the current champion (the default-family / cf_autopilot champion) is downloaded (with SHA-256 verification) and benchmarked instead.
+If `--model` is omitted, the champion of the family given by `--family-id` is downloaded (with SHA-256 verification) and benchmarked instead. Without `--family-id` the backend returns the highest-scoring champion across all families.
 
 Useful options:
 
@@ -266,11 +266,15 @@ swarm champion
 
 # Save to a specific path
 swarm champion --output my_champion.zip
+
+# Download the champion of one challenge family
+swarm champion --family-id cf_search_and_rescue
 ```
 
 Options:
 
 - `--output <path>`: output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
+- `--family-id <id>`: challenge family to download the champion for. Without it the backend returns the highest-scoring champion across all families, which is rarely the one you are working on. With it, the output file defaults to `champion_{family_id}_UID_{uid}.zip` so champions from different families do not overwrite each other.
 - `--backend-url <url>`: override the backend API URL (defaults to the public API).
 
 The download includes SHA-256 integrity verification against the hash reported by the backend.

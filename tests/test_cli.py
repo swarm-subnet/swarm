@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
+
+import httpx
+import pytest
 
 from swarm import cli
 
@@ -188,3 +192,85 @@ def test_required_template_files_match_what_the_validator_stages():
         "main.py",
         "runtime_caps.py",
     }
+
+
+ZIP_BYTES = b"champion-zip"
+
+
+def _fake_champion_client(monkeypatch, calls, uid=7):
+    class FakeResponse:
+        def __init__(self, payload=None, content=b""):
+            self.status_code = 200
+            self._payload = payload
+            self.content = content
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url, params=None):
+            calls.append((url, params))
+            if url.endswith("/champion"):
+                return FakeResponse(payload={
+                    "uid": uid,
+                    "benchmark_score": 0.5,
+                    "is_released": True,
+                    "model_hash": hashlib.sha256(ZIP_BYTES).hexdigest(),
+                })
+            return FakeResponse(content=ZIP_BYTES)
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+
+def test_champion_scopes_both_requests_to_the_family(monkeypatch, tmp_path):
+    calls = []
+    _fake_champion_client(monkeypatch, calls)
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["champion", "--family-id", "cf_search_and_rescue"]) == 0
+    assert [params for _, params in calls] == [
+        {"family_id": "cf_search_and_rescue"},
+        {"family_id": "cf_search_and_rescue"},
+    ]
+    assert (tmp_path / "champion_cf_search_and_rescue_UID_7.zip").read_bytes() == ZIP_BYTES
+
+
+def test_champion_without_a_family_keeps_the_old_filename(monkeypatch, tmp_path):
+    calls = []
+    _fake_champion_client(monkeypatch, calls)
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["champion"]) == 0
+    assert [params for _, params in calls] == [{}, {}]
+    assert (tmp_path / "champion_UID_7.zip").exists()
+
+
+def test_champion_rejects_an_unknown_family(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["champion", "--family-id", "cf_nope"])
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_benchmark_auto_download_uses_the_benchmark_family(monkeypatch, tmp_path):
+    model_path = tmp_path / "graph.zip"
+    model_path.write_bytes(b"zip")
+    captured = {}
+
+    def fake_download(family_id=None):
+        captured["family_id"] = family_id
+        return model_path
+
+    monkeypatch.setattr(cli, "_download_champion_model", fake_download)
+    monkeypatch.setattr("swarm.benchmark.engine.main", lambda argv: 0)
+
+    assert cli.main(["benchmark", "--family-id", "cf_search_and_rescue"]) == 0
+    assert captured["family_id"] == "cf_search_and_rescue"

@@ -403,13 +403,20 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
     return argv
 
 
-def _download_champion_model() -> Optional[Path]:
+def _champion_zip_name(uid: int, family_id: Optional[str]) -> str:
+    if family_id:
+        return f"champion_{family_id}_UID_{uid}.zip"
+    return f"champion_UID_{uid}.zip"
+
+
+def _download_champion_model(family_id: Optional[str] = None) -> Optional[Path]:
     import httpx
 
     base_url = os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com").rstrip("/")
+    params = {"family_id": family_id} if family_id else {}
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.get(f"{base_url}/champion")
+            resp = client.get(f"{base_url}/champion", params=params)
             if resp.status_code != 200:
                 print("No champion model available to download.", file=sys.stderr)
                 return None
@@ -420,7 +427,7 @@ def _download_champion_model() -> Optional[Path]:
 
             uid = champ["uid"]
             expected_hash = champ.get("model_hash")
-            output = Path(f"champion_UID_{uid}.zip")
+            output = Path(_champion_zip_name(uid, family_id))
 
             if output.exists() and expected_hash:
                 existing_hash = hashlib.sha256(output.read_bytes()).hexdigest()
@@ -429,7 +436,7 @@ def _download_champion_model() -> Optional[Path]:
                     return output
 
             print(f"Downloading champion UID {uid} (score: {champ.get('benchmark_score', 0):.4f})...")
-            dl = client.get(f"{base_url}/models/{uid}/download")
+            dl = client.get(f"{base_url}/models/{uid}/download", params=params)
             if dl.status_code != 200:
                 print(f"Download failed: HTTP {dl.status_code}", file=sys.stderr)
                 return None
@@ -450,7 +457,7 @@ def _download_champion_model() -> Optional[Path]:
 
 def _cmd_benchmark(args: argparse.Namespace) -> int:
     if args.model is None:
-        downloaded = _download_champion_model()
+        downloaded = _download_champion_model(args.family_id)
         if downloaded is None:
             print("No --model specified and champion download failed.", file=sys.stderr)
             return 1
@@ -1361,10 +1368,11 @@ def _cmd_champion(args: argparse.Namespace) -> int:
         print("Backend URL required. Set --backend-url or SWARM_BACKEND_API_URL.", file=sys.stderr)
         return 1
     base_url = base_url.rstrip("/")
+    params = {"family_id": args.family_id} if args.family_id else {}
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.get(f"{base_url}/champion")
+            resp = client.get(f"{base_url}/champion", params=params)
             if resp.status_code == 404:
                 print("No champion model yet.", file=sys.stderr)
                 return 1
@@ -1384,7 +1392,7 @@ def _cmd_champion(args: argparse.Namespace) -> int:
                 print("Model is not released for download yet.")
                 return 0
 
-            output = args.output or Path(f"champion_UID_{uid}.zip")
+            output = args.output or Path(_champion_zip_name(uid, args.family_id))
             print(f"Champion: UID {uid}  Score: {score:.4f}")
             if per_type:
                 parts = [f"{k}: {v:.3f}" for k, v in sorted(per_type.items()) if v]
@@ -1392,7 +1400,7 @@ def _cmd_champion(args: argparse.Namespace) -> int:
                     print(f"Per-map:  {', '.join(parts)}")
             print(f"Downloading to {output} ...")
 
-            dl = client.get(f"{base_url}/models/{uid}/download")
+            dl = client.get(f"{base_url}/models/{uid}/download", params=params)
             if dl.status_code == 403:
                 print("Model not released for public download.", file=sys.stderr)
                 return 1
@@ -1704,6 +1712,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Output file path. Defaults to champion_UID_{uid}.zip in current directory.",
+    )
+    champion_parser.add_argument(
+        "--family-id",
+        choices=sorted(CHALLENGE_FAMILY_IDS),
+        default=None,
+        help="Challenge family to download the champion for (default: the best champion across families).",
     )
     champion_parser.add_argument(
         "--backend-url",
