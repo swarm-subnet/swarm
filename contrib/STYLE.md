@@ -58,15 +58,15 @@ Python's official style guide is PEP 8, which provides conventions for writing c
 
 #### More details
 
-Use `black` to format your python code before commiting for consistency across such a large pool of contributors. Black's code [style](https://black.readthedocs.io/en/stable/the_black_code_style/current_style.html#code-style) ensures consistent and opinionated code formatting. It automatically formats your Python code according to the Black style guide, enhancing code readability and maintainability.
+Run the repository's linters before committing. `pre-commit install` wires them to every commit and `pre-commit run --all-files` checks the whole tree; the rules live in `.pre-commit-config.yaml` and `pyproject.toml`, so there is nothing to decide per change. See the [Linting](./CONTRIBUTING.md#linting) section for what each tool covers.
 
-Key Features of Black:
+Why it is configured in the repository rather than left to each contributor:
 
-    Consistency: Black enforces a single, consistent coding style across your project, eliminating style debates and allowing developers to focus on code logic.
+    Consistency: one rule set across the project, so style is settled once instead of per review.
 
-    Readability: By applying a standard formatting style, Black improves code readability, making it easier to understand and collaborate on projects.
+    Readability: a standard layout makes code easier to read and to collaborate on.
 
-    Automation: Black automates the code formatting process, saving time and effort. It eliminates the need for manual formatting and reduces the likelihood of inconsistencies.
+    Automation: most findings fix themselves in place, which removes the manual pass and the inconsistencies that come with it.
 
 ### Naming Conventions
 
