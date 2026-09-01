@@ -39,8 +39,12 @@ def obj_bounds(obj_path: str | Path) -> Tuple[Vec3, Vec3]:
             if len(parts) < 4:
                 continue
             x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
-            mn[0] = min(mn[0], x); mn[1] = min(mn[1], y); mn[2] = min(mn[2], z)
-            mx[0] = max(mx[0], x); mx[1] = max(mx[1], y); mx[2] = max(mx[2], z)
+            mn[0] = min(mn[0], x)
+            mn[1] = min(mn[1], y)
+            mn[2] = min(mn[2], z)
+            mx[0] = max(mx[0], x)
+            mx[1] = max(mx[1], y)
+            mx[2] = max(mx[2], z)
     if not (mn[0] < mx[0]):
         raise ValueError(f"OBJ has no vertices: {obj_path}")
     return tuple(mn), tuple(mx)  # type: ignore[return-value]

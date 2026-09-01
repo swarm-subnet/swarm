@@ -39,8 +39,12 @@ def _obj_bounds(path):
             if len(parts) < 4:
                 continue
             x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
-            mn[0] = min(mn[0], x); mn[1] = min(mn[1], y); mn[2] = min(mn[2], z)
-            mx[0] = max(mx[0], x); mx[1] = max(mx[1], y); mx[2] = max(mx[2], z)
+            mn[0] = min(mn[0], x)
+            mn[1] = min(mn[1], y)
+            mn[2] = min(mn[2], z)
+            mx[0] = max(mx[0], x)
+            mx[1] = max(mx[1], y)
+            mx[2] = max(mx[2], z)
     return tuple(mn), tuple(mx)
 
 

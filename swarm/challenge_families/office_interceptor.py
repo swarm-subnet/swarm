@@ -317,7 +317,9 @@ def office_airframe_profile(map_seed: int) -> dict:
     battery charge, prop wear and link latency all move the response."""
     rng = np.random.default_rng((int(map_seed) ^ OFFICE_ACTUATOR_SEED_OFFSET) & 0xFFFFFFFF)
     j = OFFICE_ACTUATOR_JITTER
-    scale = lambda: float(rng.uniform(1.0 - j, 1.0 + j))
+    def scale() -> float:
+        return float(rng.uniform(1.0 - j, 1.0 + j))
+
     return {
         "speed": OFFICE_RC_SPEED * scale(),
         "yaw_rate": OFFICE_RC_YAW_RATE * scale(),

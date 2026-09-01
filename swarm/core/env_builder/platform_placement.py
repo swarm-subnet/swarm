@@ -68,9 +68,8 @@ def _find_flat_platform_spot(
         return center_z, max_z, slope, edge_zs
 
     best_x, best_y = x, y
-    center_z, max_z, slope, edge_zs = _sample(x, y)
+    _, _, slope, _ = _sample(x, y)
     best_slope = slope
-    best_max_z = max_z
 
     if slope > 0.3:
         for attempt in range(nudge_attempts):
@@ -78,11 +77,10 @@ def _find_flat_platform_spot(
             rad = _math.radians(angle)
             nx = x + nudge_distance * _math.cos(rad)
             ny = y + nudge_distance * _math.sin(rad)
-            nc_z, nm_z, ns, _ = _sample(nx, ny)
+            _, _, ns, _ = _sample(nx, ny)
             if ns < best_slope:
                 best_slope = ns
                 best_x, best_y = nx, ny
-                best_max_z = nm_z
 
         if best_slope > 0.3 and nudge_distance < 4.0:
             for attempt in range(nudge_attempts):
@@ -90,11 +88,10 @@ def _find_flat_platform_spot(
                 rad = _math.radians(angle)
                 nx = x + nudge_distance * 2.0 * _math.cos(rad)
                 ny = y + nudge_distance * 2.0 * _math.sin(rad)
-                nc_z, nm_z, ns, _ = _sample(nx, ny)
+                _, _, ns, _ = _sample(nx, ny)
                 if ns < best_slope:
                     best_slope = ns
                     best_x, best_y = nx, ny
-                    best_max_z = nm_z
 
     _, final_max_z, _, _ = _sample(best_x, best_y)
 

@@ -1059,7 +1059,8 @@ def test_office_spawns_spread_over_the_floor():
         assert fam._nav_in_main(env, g), f"seed {seed}: target is sealed off"
         xr, yr = env._office_x_range, env._office_y_range
         assert xr[0] < s[0] < xr[1] and yr[0] < s[1] < yr[1], "start outside this room"
-        starts.append(s[:2]); goals.append(g[:2])
+        starts.append(s[:2])
+        goals.append(g[:2])
         env.close()
     starts = np.array(starts)
     # Spread, not a ring: both axes must use a real share of the room.

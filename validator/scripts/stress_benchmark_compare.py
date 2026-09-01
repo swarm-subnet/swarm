@@ -39,15 +39,16 @@ _ANSIBLE_TMP.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("ANSIBLE_LOCAL_TEMP", str(_ANSIBLE_TMP))
 os.environ.setdefault("ANSIBLE_REMOTE_TEMP", str(_ANSIBLE_TMP))
 
-from swarm.benchmark.engine import main as benchmark_main
-from swarm.constants import (
+# Imported after the ansible temp dirs are set, which they read at import time.
+from swarm.benchmark.engine import main as benchmark_main  # noqa: E402
+from swarm.constants import (  # noqa: E402
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_TOTAL_SEED_COUNT,
     CHALLENGE_TYPE_DISTRIBUTION,
     SIM_DT,
 )
-from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP as TYPE_TO_GROUP
-from swarm.validator.task_gen import random_task
+from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP as TYPE_TO_GROUP  # noqa: E402
+from swarm.validator.task_gen import random_task  # noqa: E402
 
 # Only the types random_task can draw: a group outside the distribution never fills.
 BENCH_GROUP_ORDER = [TYPE_TO_GROUP[t] for t in sorted(CHALLENGE_TYPE_DISTRIBUTION)]

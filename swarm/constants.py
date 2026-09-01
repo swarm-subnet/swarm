@@ -90,7 +90,7 @@ LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of
 
 # Model size and validation limits — sourced from submission_policy so the
 # backend and validator agree on the same ceiling.
-from swarm.core.submission_policy import MAX_UNCOMPRESSED_BYTES as _POLICY_MAX_BYTES
+from swarm.core.submission_policy import MAX_UNCOMPRESSED_BYTES as _POLICY_MAX_BYTES  # noqa: E402
 
 MAX_MODEL_BYTES = _POLICY_MAX_BYTES
 
@@ -285,7 +285,8 @@ SAFETY_DISTANCE_DANGER = 0.2            # Zero safety score at this clearance (m
 # BENCHMARK SYSTEM
 # =============================================================================
 
-from swarm import version_split as _vs
+# Kept beside the value it feeds rather than at the top, where the link is lost.
+from swarm import version_split as _vs  # noqa: E402
 
 BENCHMARK_VERSION = ".".join(_vs[:3])
 BENCHMARK_TOTAL_SEED_COUNT = 1100       # Total seeds per epoch
