@@ -1,7 +1,7 @@
 include LICENSE
 include README.md
 include docs/CLI_readme.md
-prune tests
+prune validator/tests
 prune miner/tests
 recursive-include miner/src/scripts *.sh
 recursive-include swarm/assets *

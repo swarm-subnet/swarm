@@ -717,7 +717,7 @@ def _cmd_visualize(args: argparse.Namespace) -> int:
             return 0
         if target.note:
             print(target.note)
-        from scripts.visualize_map import main as visualize_main
+        from validator.scripts.visualize_map import main as visualize_main
 
         visualize_main(_build_visualize_argv(args, target))
         return 0
@@ -779,7 +779,7 @@ def _cmd_video(args: argparse.Namespace) -> int:
         )
         return 1
     try:
-        from scripts.generate_video import main as video_main
+        from validator.scripts.generate_video import main as video_main
 
         video_main(_build_video_argv(args))
         return 0

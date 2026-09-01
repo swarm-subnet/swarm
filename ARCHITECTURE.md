@@ -17,8 +17,8 @@ The codebase is organized so benchmark orchestration, validator orchestration, m
 
 ## Top-Level Layout
 - [swarm/](swarm): main Python package
-- [scripts/](scripts): operational scripts and local tooling entrypoints
-- [tests/](tests): unit, integration, and opt-in e2e coverage
+- [scripts/](validator/scripts): operational scripts and local tooling entrypoints
+- [tests/](validator/tests): unit, integration, and opt-in e2e coverage
 - [docs/](docs): user and validator documentation
 
 ## Main Package Structure
@@ -105,8 +105,8 @@ Legacy public modules still exist as compatibility facades, but their implementa
 
 ## CLI and Scripts
 - [swarm/cli.py](swarm/cli.py): public CLI entrypoint exposed as `swarm`
-- [scripts/bench_full_eval.py](scripts/bench_full_eval.py): benchmark script entrypoint
-- [scripts/README.md](scripts/README.md): script-level usage notes
+- [scripts/bench_full_eval.py](validator/scripts/bench_full_eval.py): benchmark script entrypoint
+- [scripts/README.md](validator/scripts/README.md): script-level usage notes
 
 Rule:
 - reusable logic belongs in `swarm/...`
