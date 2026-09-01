@@ -48,7 +48,7 @@ What runs, and where each one is configured:
 | `ruff` | Python: undefined names, unused imports, import order | `[tool.ruff]` in `pyproject.toml` |
 | `codespell` | Typos in code, comments, Markdown and text | `[tool.codespell]` in `pyproject.toml` |
 | `markdownlint-cli2` | Markdown structure | `.markdownlint-cli2.jsonc` |
-| `shellcheck` | The `.sh` scripts under `scripts/` and `miner/src/scripts/` | hook defaults |
+| `shellcheck` | The `.sh` scripts under `validator/scripts/` and `miner/src/scripts/` | hook defaults |
 | `check-xml` | The `.urdf` drone descriptions under `swarm/assets/` | `.pre-commit-config.yaml` |
 | pre-commit's own hooks | Trailing whitespace, final newlines, line endings, and YAML/JSON/TOML that does not parse — `.txt` included | `.pre-commit-config.yaml` |
 
