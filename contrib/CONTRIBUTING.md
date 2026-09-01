@@ -21,11 +21,45 @@ TODO(developer): Define your desired contribution procedure.
 ## Communication Channels
 TODO(developer): Place your communication channels here
 
-> Please follow the Bittensor Subnet [style guide](./STYLE.md) regardless of your contribution type. 
+> Please follow the Bittensor Subnet [style guide](./STYLE.md) regardless of your contribution type.
+
+## Linting
+
+The linters are configured in the repository, so there is nothing to decide per
+change. Install the hooks once and they run on every commit:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+To check the whole tree, or to see what CI will see:
+
+```bash
+pre-commit run --all-files
+```
+
+What runs, and where each one is configured:
+
+| Tool | Covers | Config |
+| --- | --- | --- |
+| `ruff` | Python: undefined names, unused imports, import order | `[tool.ruff]` in `pyproject.toml` |
+| `codespell` | Typos in code, comments, Markdown and text | `[tool.codespell]` in `pyproject.toml` |
+| `markdownlint-cli2` | Markdown structure | `.markdownlint-cli2.jsonc` |
+| `shellcheck` | The `.sh` scripts under `scripts/` and `miner/src/scripts/` | hook defaults |
+| `check-xml` | The `.urdf` drone descriptions under `swarm/assets/` | `.pre-commit-config.yaml` |
+| pre-commit's own hooks | Trailing whitespace, final newlines, line endings, and YAML/JSON/TOML that does not parse — `.txt` included | `.pre-commit-config.yaml` |
+
+Most findings fix themselves. `ruff check --fix .` and `markdownlint-cli2 --fix`
+handle the mechanical ones; the hooks apply those fixes in place, so a commit
+that trips them will stage clean on the second attempt.
+
+Ruff replaced `flake8` here. The old `.flake8` ignored so much — `E501`, `E402`,
+`W291` and more — that it passed on almost anything, which is why it was never
+wired into CI.
 
 Here is a high-level summary:
 - Code consistency is crucial; adhere to established programming language conventions.
-- Use `black` to format your Python code; it ensures readability and consistency.
 - Write concise Git commit messages; summarize changes in ~50 characters.
 - Follow these six commit rules:
   - Atomic Commits: Focus on one task or fix per commit.
@@ -40,12 +74,12 @@ Here is a high-level summary:
 
 ### Code Contribution General Guidelines
 
-> Review the Bittensor Subnet [style guide](./STYLE.md) and [development workflow](./DEVELOPMENT_WORKFLOW.md) before contributing. 
+> Review the Bittensor Subnet [style guide](./STYLE.md) and [development workflow](./DEVELOPMENT_WORKFLOW.md) before contributing.
 
 
 #### Pull Request Philosophy
 
-Patchsets and enhancements should always be focused. A pull request could add a feature, fix a bug, or refactor code, but it should not contain a mixture of these. Please also avoid 'super' pull requests which attempt to do too much, are overly large, or overly complex as this makes review difficult. 
+Patchsets and enhancements should always be focused. A pull request could add a feature, fix a bug, or refactor code, but it should not contain a mixture of these. Please also avoid 'super' pull requests which attempt to do too much, are overly large, or overly complex as this makes review difficult.
 
 Specifically, pull requests must adhere to the following criteria:
 - Contain fewer than 50 files. PRs with more than 50 files will be closed.
@@ -78,7 +112,7 @@ Please follow these steps to have your contribution considered by the maintainer
 6. Explain what your changes do and why you think they should be merged in the PR description consistent with the [style guide](./STYLE.md).
 
 *After* creating the PR:
-1. Verify that all [status checks](https://help.github.com/articles/about-status-checks/) are passing after you submit your pull request. 
+1. Verify that all [status checks](https://help.github.com/articles/about-status-checks/) are passing after you submit your pull request.
 2. Label your PR using GitHub's labeling feature. The labels help categorize the PR and streamline the review process.
 3. Document your code with comments that provide a clear understanding of your changes. Explain any non-obvious parts of your code or design decisions you've made.
 4. If your PR has extensive changes, consider splitting it into smaller, related PRs. This reduces the cognitive load on the reviewers and speeds up the review process.
@@ -166,7 +200,7 @@ Please track bugs as GitHub issues.
 Explain the problem and include additional details to help maintainers reproduce the problem:
 
 * **Use a clear and descriptive title** for the issue to identify the problem.
-* **Describe the exact steps which reproduce the problem** in as many details as possible. For example, start by explaining how you started the application, e.g. which command exactly you used in the terminal, or how you started Bittensor otherwise. When listing steps, **don't just say what you did, but explain how you did it**. For example, if you ran with a set of custom configs, explain if you used a config file or command line arguments. 
+* **Describe the exact steps which reproduce the problem** in as many details as possible. For example, start by explaining how you started the application, e.g. which command exactly you used in the terminal, or how you started Bittensor otherwise. When listing steps, **don't just say what you did, but explain how you did it**. For example, if you ran with a set of custom configs, explain if you used a config file or command line arguments.
 * **Provide specific examples to demonstrate the steps**. Include links to files or GitHub projects, or copy/pasteable snippets, which you use in those examples. If you're providing snippets in the issue, use [Markdown code blocks](https://help.github.com/articles/markdown-basics/#multiple-lines).
 * **Describe the behavior you observed after following the steps** and point out what exactly is the problem with that behavior.
 * **Explain which behavior you expected to see instead and why.**
@@ -178,7 +212,7 @@ Explain the problem and include additional details to help maintainers reproduce
 Provide more context by answering these questions:
 
 * **Did the problem start happening recently** (e.g. after updating to a new version) or was this always a problem?
-* If the problem started happening recently, **can you reproduce the problem in an older version of Bittensor?** 
+* If the problem started happening recently, **can you reproduce the problem in an older version of Bittensor?**
 * **Can you reliably reproduce the issue?** If not, provide details about how often the problem happens and under which conditions it normally happens.
 
 Include details about your configuration and environment:

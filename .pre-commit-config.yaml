@@ -1,0 +1,66 @@
+# Run on every commit once installed:  pre-commit install
+# Run over the whole tree on demand:   pre-commit run --all-files
+#
+# pre-commit builds each hook its own pinned environment, so nothing here is
+# added to requirements.txt and nothing here ships with the package.
+#
+# The exclusion is per-hook rather than global so that check-added-large-files
+# still sees the asset directories, which is where a large binary would land.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: &skip |
+          (?x)^(
+            swarm/assets/.*|
+            artifacts/.*|
+            miner_env/.*|
+            .*\.egg-info/.*
+          )$
+      - id: end-of-file-fixer
+        exclude: *skip
+      - id: check-merge-conflict
+      - id: check-yaml
+        exclude: *skip
+      - id: check-json
+        exclude: *skip
+      - id: check-toml
+        exclude: *skip
+      # The three .urdf files live under swarm/assets and are therefore outside the
+      # shared exclusion; name them here so the drone descriptions are still parsed.
+      - id: check-xml
+        files: \.urdf$
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: *skip
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        exclude: *skip
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
+        exclude: *skip
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.20.0
+    hooks:
+      - id: markdownlint-cli2
+        exclude: *skip
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
