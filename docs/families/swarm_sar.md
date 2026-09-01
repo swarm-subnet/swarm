@@ -229,7 +229,7 @@ Your zip runs as a Cap'n Proto RPC server inside Docker; the validator calls `pi
 | Per-step `act` | 0.6 s baseline-equivalent compute; hard cap 2.0 s reference + measured RPC overhead + 0.05 s margin |
 | Strikes | 3 hard-cap strikes or 15 RPC timeouts fail the seed |
 
-Timing is hardware-fair: your steps are judged in baseline-equivalent time, so a slower validator host doesn't penalize you. Pip installs in the container are whitelisted: torch/torchvision/torchaudio, onnx/onnxruntime(-gpu), stable-baselines3, sb3-contrib, gymnasium/gym, swarm-bullet3, swarm-drone-gym, numpy, scipy, scikit-learn, opencv-python(-headless), pillow, imageio, matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack.
+Timing is hardware-fair: your steps are judged in baseline-equivalent time, so a slower validator host doesn't penalize you. Package installs in the container are whitelisted: torch/torchvision/torchaudio, onnx/onnxruntime(-gpu), stable-baselines3, sb3-contrib, gymnasium/gym, swarm-bullet3, swarm-drone-gym, numpy, scipy, scikit-learn, opencv-python(-headless), pillow, imageio, matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack.
 
 Every submission goes straight to the full benchmark. (A screening phase with its own 41-slot template and early-fail checkpoints exists in the codebase behind an operator constant, currently disabled.)
 

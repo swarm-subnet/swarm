@@ -881,14 +881,16 @@ def _check_repo_readme(repo_root: Path) -> tuple[bool, str]:
 
     The backend rejects a submission whose README hash does not match, and the
     rejection is silent, so catch it here before the miner commits on-chain."""
-    from swarm.utils.github import REQUIRED_README_HASH
+    from swarm.utils.github import ACCEPTED_README_HASHES, REQUIRED_README_HASH
 
     readme = repo_root / "README.md"
     if not readme.is_file():
         return False, "missing (run `swarm repo package` to write it)"
     digest = hashlib.sha256(readme.read_bytes()).hexdigest()
-    if digest != REQUIRED_README_HASH:
+    if digest not in ACCEPTED_README_HASHES:
         return False, "does not match the template; do not edit, reformat, or change its line endings"
+    if digest != REQUIRED_README_HASH:
+        return True, "matches a previous template; run `swarm repo package` to refresh it"
     return True, "matches template"
 
 

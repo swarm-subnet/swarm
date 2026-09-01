@@ -14,7 +14,15 @@ GITHUB_CONNECT_TIMEOUT_SEC = 10.0
 GITHUB_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 GITHUB_MAX_README_BYTES = 64 * 1024
 
-REQUIRED_README_HASH = "9139c39669a9865c597861e09130b3cb57a6d9a293829ef0732c27d78af3c669"
+REQUIRED_README_HASH = "72cc30323f3f5ce0cea91bf5b31d29a4ae7a5bb2090eea3537602abd57f4d786"
+
+# A repository published before a template change still carries the previous README
+# and stays eligible on the backend, so the local check mirrors that accepted set
+# rather than reporting an already-valid repo as failing.
+ACCEPTED_README_HASHES = frozenset({
+    REQUIRED_README_HASH,
+    "9139c39669a9865c597861e09130b3cb57a6d9a293829ef0732c27d78af3c669",
+})
 
 
 def validate_github_url(raw_url: str, *, uid: Optional[int] = None) -> Optional[str]:

@@ -241,7 +241,7 @@ def prepare_model_image(
     model_path: Path,
     runtime_profile_payload: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
-    """Build a per-model image with the miner's pip dependencies baked in.
+    """Build a per-model image with the miner's declared dependencies baked in.
 
     Dependencies are installed here, in a throwaway container that never runs
     miner code, so the evaluation container itself needs no network. Returns the
@@ -282,6 +282,10 @@ def prepare_model_image(
 
         _extract_submission(model_path, submission_dir)
 
+        # The archive may carry a .pip_done of its own; left in place the wait below
+        # would see it immediately and commit the image mid-install.
+        (submission_dir / ".pip_done").unlink(missing_ok=True)
+
         miner_requirements = submission_dir / "requirements.txt"
         if not miner_requirements.exists():
             return None
@@ -300,7 +304,8 @@ def prepare_model_image(
         startup_script = submission_dir / "startup.sh"
         startup_script.write_text(
             "#!/bin/bash\n"
-            "pip install --no-cache-dir --user -r /workspace/submission/requirements.txt\n"
+            "uv pip install --no-cache --python /opt/env/bin/python "
+            "-r /workspace/submission/requirements.txt\n"
             "if [ $? -ne 0 ]; then exit 1; fi\n"
             "touch /workspace/submission/.pip_done\n"
             "sleep infinity\n"
@@ -329,14 +334,14 @@ def prepare_model_image(
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            bt.logging.warning(f"UID {uid}: pip container start failed: {result.stderr[:200]}")
+            bt.logging.warning(f"UID {uid}: dependency container start failed: {result.stderr[:200]}")
             return None
 
         pip_done_flag = submission_dir / ".pip_done"
         pip_start = time.time()
         pip_done = False
 
-        bt.logging.info(f"UID {uid}: installing pip dependencies...")
+        bt.logging.info(f"UID {uid}: installing dependencies...")
         while time.time() - pip_start < _PIP_INSTALL_TIMEOUT_SEC:
             if pip_done_flag.exists():
                 pip_done = True
@@ -350,7 +355,7 @@ def prepare_model_image(
             time.sleep(2)
 
         if not pip_done:
-            bt.logging.warning(f"UID {uid}: pip install failed during image build")
+            bt.logging.warning(f"UID {uid}: dependency install failed during image build")
             _docker_cmd_quiet(["docker", "kill", container_name])
             _docker_cmd_quiet(["docker", "rm", "-f", container_name])
             return None
@@ -371,7 +376,7 @@ def prepare_model_image(
             bt.logging.warning(f"UID {uid}: docker commit failed: {commit_result.stderr[:200]}")
             return None
 
-        bt.logging.info(f"UID {uid}: model image ready ({image_tag}, pip took {elapsed:.1f}s)")
+        bt.logging.info(f"UID {uid}: model image ready ({image_tag}, install took {elapsed:.1f}s)")
         return image_tag
 
     except Exception as e:
@@ -387,7 +392,7 @@ def prepare_model_image(
 def prune_build_cache_if_disk_low() -> None:
     """Drop the layer cache only when the disk is genuinely tight.
 
-    The cache holds the apt and pip layers of the base image, so clearing it
+    The cache holds the apt and dependency layers of the base image, so clearing it
     turns the next version bump into a full rebuild that costs the validator
     its evaluation time. Bound the disk, but not on every cleanup.
     """
@@ -1493,7 +1498,7 @@ async def evaluate_seeds_batch(
         uid: Miner UID
         model_path: Path to model zip file
         worker_id: Worker ID for logging (0 to N_DOCKER_WORKERS-1)
-        model_image: Pre-built image carrying the miner's pip dependencies
+        model_image: Pre-built image carrying the miner's declared dependencies
 
     Returns:
         List of ValidationResult objects (one per seed)

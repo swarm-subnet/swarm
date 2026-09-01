@@ -32,33 +32,39 @@ create_activate_venv() {
     || handle_error "Failed to activate virtualenv"
 }
 
-upgrade_pip() {
-  echo -e "\e[34m[INFO]\e[0m Upgrading pip and setuptools..."
-  python -m pip install --upgrade pip setuptools \
-    || handle_error "Failed to upgrade pip/setuptools"
-  success_msg "pip and setuptools upgraded."
+check_uv() {
+  echo -e "\e[34m[INFO]\e[0m Checking for uv..."
+  uv --version || handle_error "uv is required. Run install_dependencies.sh first."
+}
+
+upgrade_setuptools() {
+  echo -e "\e[34m[INFO]\e[0m Upgrading setuptools..."
+  uv pip install --upgrade setuptools \
+    || handle_error "Failed to upgrade setuptools"
+  success_msg "setuptools upgraded."
 }
 
 install_python_reqs() {
   echo -e "\e[34m[INFO]\e[0m Installing Python dependencies from requirements.txt..."
   [ -f "requirements.txt" ] || handle_error "requirements.txt not found"
 
-  pip install -r requirements.txt \
+  uv pip install -r requirements.txt \
     || handle_error "Failed to install Python dependencies"
   success_msg "Dependencies installed."
 }
 
 install_modules() {
   echo -e "\e[34m[INFO]\e[0m Installing current package in editable mode..."
-  pip install -e . --no-deps \
+  uv pip install -e . --no-deps \
     || handle_error "Failed to install current package"
   success_msg "Main package installed."
 }
 
 main() {
   check_python
+  check_uv
   create_activate_venv
-  upgrade_pip
+  upgrade_setuptools
   install_python_reqs
   install_modules
   success_msg "Setup completed successfully."

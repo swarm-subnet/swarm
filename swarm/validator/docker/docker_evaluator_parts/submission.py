@@ -15,8 +15,8 @@ def _normalize_package_name(name: str) -> str:
 def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
     """Gate a miner's requirements.txt against the approved package list.
 
-    Only plain, whitelisted package specifiers are accepted: pip options, direct
-    URL/path installs and PEP 508 direct references are all refused, so the
+    Only plain, whitelisted package specifiers are accepted: installer options,
+    direct URL/path installs and PEP 508 direct references are all refused, so the
     dependency phase cannot fetch arbitrary code.
     """
     try:
@@ -32,7 +32,7 @@ def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
             continue
 
         if line.startswith("-"):
-            bt.logging.warning(f"UID {uid}: Pip option not allowed: {line}")
+            bt.logging.warning(f"UID {uid}: Installer option not allowed: {line}")
             return False
 
         if line.startswith(("git+", "http://", "https://", "file:", "./", "/")):

@@ -60,7 +60,9 @@ The model in this repo runs on your machine with the public benchmark engine: th
 ```bash
 git clone https://github.com/swarm-subnet/swarm.git
 cd swarm
-pip install -e .
+uv venv
+source .venv/bin/activate
+uv pip install -e .
 ```
 
 **2. Run a benchmark**
