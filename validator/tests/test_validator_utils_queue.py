@@ -21,14 +21,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from swarm.protocol import ValidationResult
 from swarm.validator import utils as validator_utils
-from swarm.validator.runtime_telemetry import (
-    ValidatorRuntimeTracker,
-    load_recent_events,
-)
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 
 

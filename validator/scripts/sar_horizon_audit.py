@@ -32,7 +32,6 @@ import sys
 
 from sar_baseline_audit import run_one_episode
 
-
 DEFAULT_N_SEEDS = 1000
 DEFAULT_THRESHOLD = 0.30
 

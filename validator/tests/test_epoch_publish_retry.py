@@ -21,8 +21,6 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-import pytest
-
 from swarm.validator import seed_manager as seed_manager_mod
 from swarm.validator.utils_parts.backend_submission import (
     PUBLISH_BACKOFF_CAP_CYCLES,

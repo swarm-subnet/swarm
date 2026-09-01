@@ -27,7 +27,6 @@ from swarm.constants import (
     INTERCEPTOR_MAX_START_DISTANCE_M,
     INTERCEPTOR_MIN_START_DISTANCE_M,
 )
-from swarm.protocol import FailureReason
 from swarm.validator import task_gen
 from swarm.validator.reward import _calculate_interceptor_target_time
 

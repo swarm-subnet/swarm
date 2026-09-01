@@ -130,6 +130,7 @@ Rank weighting is separate from the crowning floor below: the floor decides who 
 ---
 
 <a id="taking-the-throne--the-dynamic-floor"></a>
+
 ## Taking the throne: the dynamic floor
 
 Every submission runs the full 1100-seed benchmark. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
@@ -211,6 +212,7 @@ burn share = 1 − sum of paid shares
 Example: four active families payable, Office Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Office Interceptor's `0.30` burns. The moment Office Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
+
 ### Who a seat can pay
 
 Before shipping a window to validators, the backend checks every seat: a seat is payable while `repo_intact` is true and the repo is accessible.
@@ -232,6 +234,7 @@ The backend serves the **raw kings** (score + previous score) per family plus th
 ## Edge cases
 
 <a id="the-first-king-ever"></a>
+
 ### The first king ever
 
 When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. A positive score gives it the only positive row weight, so it takes 100% of **that family's slice** until someone dethrones it; a zero-score row leaves the slice unpaid.

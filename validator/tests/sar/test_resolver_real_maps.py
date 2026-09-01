@@ -20,16 +20,13 @@ acceptance rates. Catches resolver bugs that synthetic tests miss."""
 from __future__ import annotations
 
 import random
-from typing import Iterable
 
 import pybullet as p
 import pytest
 
-from swarm.core.env_builder.body_tagger import BodyTagger
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
-from swarm.core.env_builder.sar_types import BodyCategory, SUPPORT_CATEGORIES
+from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES
 from swarm.core.env_builder.surface_resolver import resolve_surface
-
 
 _FUZZ_N = 2000
 _RNG_SEED = 7

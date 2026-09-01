@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -35,7 +34,6 @@ from swarm.submission_manifest import (
     validate_submission_repo,
     write_submission_manifest,
 )
-
 
 _AGENT_SOURCE = """import numpy as np
 

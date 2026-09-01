@@ -31,9 +31,9 @@ from swarm.challenge_families import (
     infer_task_family_id,
     list_registered_challenge_families,
     require_runtime_family,
-    screening_policy_for_family,
-    runtime_profile_for_task,
     runtime_family_for_task,
+    runtime_profile_for_task,
+    screening_policy_for_family,
 )
 from swarm.protocol import MapTask
 from swarm.validator.reward import flight_reward

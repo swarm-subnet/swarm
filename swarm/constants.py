@@ -286,6 +286,7 @@ SAFETY_DISTANCE_DANGER = 0.2            # Zero safety score at this clearance (m
 # =============================================================================
 
 from swarm import version_split as _vs
+
 BENCHMARK_VERSION = ".".join(_vs[:3])
 BENCHMARK_TOTAL_SEED_COUNT = 1100       # Total seeds per epoch
 BENCHMARK_SCREENING_SEED_COUNT = 300    # Seeds used for screening phase

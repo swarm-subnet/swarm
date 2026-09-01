@@ -31,7 +31,7 @@
 
 ---
 
-https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
+<https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2>
 
 <p align="center">
   <sub><b>Search and Rescue.</b> One of five missions on the Swarm benchmark: teaching a drone to find people.</sub>
@@ -81,7 +81,7 @@ Point `--model` and `--family-id` at the artifact this repo ships. The artifact 
 
 ## See It Fly
 
-https://github.com/user-attachments/assets/a16e9453-663c-4483-a3b8-160c412fd3e7
+<https://github.com/user-attachments/assets/a16e9453-663c-4483-a3b8-160c412fd3e7>
 
 <p align="center">
   <sub><b>Interceptor:</b> air-to-air pursuit, from a real benchmark run.</sub>

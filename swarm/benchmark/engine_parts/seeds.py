@@ -17,6 +17,13 @@
 
 from __future__ import annotations
 
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, build_random_task
+from swarm.domain_model import (
+    BENCHMARK_GROUP_TO_ENVIRONMENT_TYPE,
+    CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
+    CHALLENGE_TYPE_TO_BENCHMARK_GROUP,
+)
+
 from ._shared import (
     _UID_RE,
     BENCH_GROUP_ORDER,
@@ -27,12 +34,6 @@ from ._shared import (
     Path,
     json,
     random,
-)
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, build_random_task
-from swarm.domain_model import (
-    BENCHMARK_GROUP_TO_ENVIRONMENT_TYPE,
-    CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
-    CHALLENGE_TYPE_TO_BENCHMARK_GROUP,
 )
 
 

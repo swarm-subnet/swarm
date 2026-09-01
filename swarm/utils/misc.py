@@ -18,9 +18,9 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
-from math import floor
-from typing import Callable, Any
 from functools import lru_cache, update_wrapper
+from math import floor
+from typing import Any, Callable
 
 
 # LRU Cache with TTL

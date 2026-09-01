@@ -25,11 +25,10 @@ from __future__ import annotations
 
 import contextlib
 import io
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
-from types import SimpleNamespace
 
 from swarm.constants import (
     SAFETY_DISTANCE_DANGER,

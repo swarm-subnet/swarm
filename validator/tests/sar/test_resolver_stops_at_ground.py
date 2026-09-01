@@ -31,7 +31,7 @@ import pytest
 
 from swarm.core.env_builder.body_tagger import BodyTagger
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
-from swarm.core.env_builder.sar_types import BodyCategory, SUPPORT_CATEGORIES
+from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES, BodyCategory
 from swarm.core.env_builder.surface_resolver import resolve_surface
 
 

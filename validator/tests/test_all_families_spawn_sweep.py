@@ -23,7 +23,7 @@ import random
 import pybullet as p
 import pytest
 
-from swarm.constants import SIM_DT, SAR_MAX_VICTIM_DISTANCE_M
+from swarm.constants import SAR_MAX_VICTIM_DISTANCE_M, SIM_DT
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError, find_spawn_xy
 from swarm.domain_model import CHALLENGE_FAMILY_IDS

@@ -22,8 +22,8 @@ import io
 
 import pytest
 
-from swarm.protocol import MapTask
 from swarm.core.env_builder.sar_types import BodyCategory, SARWorld
+from swarm.protocol import MapTask
 
 
 def _task(challenge_type=2):

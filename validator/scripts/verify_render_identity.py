@@ -44,7 +44,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.p
 import numpy as np
 import pybullet as p
 
-from swarm.constants import SIM_DT, DEPTH_NEAR
+from swarm.constants import DEPTH_NEAR, SIM_DT
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.task_gen import task_for_seed_and_type
 

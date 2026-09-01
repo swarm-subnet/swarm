@@ -20,8 +20,8 @@ from __future__ import annotations
 import numpy as np
 
 from swarm.constants import SIM_DT
-from swarm.validator.task_gen import task_for_seed_and_type
 from swarm.utils.env_factory import make_env
+from swarm.validator.task_gen import task_for_seed_and_type
 
 
 def test_village_env_builds_for_reported_seed() -> None:

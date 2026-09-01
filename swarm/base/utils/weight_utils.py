@@ -15,10 +15,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import numpy as np
-from typing import Tuple, List, Union, Any
+from typing import Any, List, Tuple, Union
+
 import bittensor
-from numpy import ndarray, dtype, floating, complexfloating
+import numpy as np
+from numpy import complexfloating, dtype, floating, ndarray
 
 U32_MAX = 4294967295
 U16_MAX = 65535

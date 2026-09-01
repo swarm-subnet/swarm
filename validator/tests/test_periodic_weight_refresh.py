@@ -21,7 +21,6 @@ import os
 import sys
 import types
 from types import MethodType, SimpleNamespace
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest

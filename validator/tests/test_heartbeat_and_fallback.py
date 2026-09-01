@@ -20,10 +20,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import threading
 
-from swarm.validator import backend_api
 from swarm.constants import BACKEND_GRACE_PERIOD_SEC
+from swarm.validator import backend_api
 
 
 def _run(coro):

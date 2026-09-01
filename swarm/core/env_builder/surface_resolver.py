@@ -24,7 +24,6 @@ import pybullet as p
 
 from .sar_types import BodyCategory
 
-
 NORMAL_Z_FLAT = 0.85
 NORMAL_Z_SLOPE = 0.70
 AABB_TOP_TOLERANCE = 0.20

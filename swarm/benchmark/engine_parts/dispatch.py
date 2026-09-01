@@ -28,8 +28,8 @@ except Exception:  # pragma: no cover - optional dependency in tests.
 from swarm.constants import available_vcpu_count
 
 from ._shared import (
-    Any,
     BENCH_GROUP_ORDER,
+    Any,
     Counter,
     Dict,
     List,

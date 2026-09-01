@@ -22,7 +22,6 @@ from .staging_helpers import (
     make_staging_layout_helpers,
     make_staging_spawn_helpers,
 )
-from .visuals import _spawn_obj_with_mtl_parts
 
 
 def build_loading_staging(

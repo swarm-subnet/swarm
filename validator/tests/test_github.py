@@ -23,8 +23,6 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from swarm.utils.github import (
     REQUIRED_README_HASH,
     build_raw_urls,

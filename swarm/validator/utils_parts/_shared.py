@@ -36,7 +36,6 @@ from swarm.constants import (
     UID_ZERO,
 )
 from swarm.core.model_verify import load_blacklist, verify_new_model_with_docker
-from swarm.policy_interface import PolicyInterfaceError, read_policy_contract_from_zip
 from swarm.core.submission_lane import (
     RUNNABLE_INTERFACE_VERSIONS,
     graph_declared_family,
@@ -47,6 +46,7 @@ from swarm.core.submission_policy import (
     check_safety,
     validate_submission_zip,
 )
+from swarm.policy_interface import PolicyInterfaceError, read_policy_contract_from_zip
 from swarm.protocol import PolicyRef
 from swarm.utils.github import (
     build_raw_urls,

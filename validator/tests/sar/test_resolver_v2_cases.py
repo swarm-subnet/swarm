@@ -25,11 +25,10 @@ Builds a small tagged scene covering 20 representative situations:
 - empty positions (no body, must return None)"""
 from __future__ import annotations
 
-import pytest
 import pybullet as p
 
 from swarm.core.env_builder.body_tagger import BodyTagger
-from swarm.core.env_builder.sar_types import BodyCategory, SUPPORT_CATEGORIES
+from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES, BodyCategory
 from swarm.core.env_builder.surface_resolver import resolve_surface
 
 

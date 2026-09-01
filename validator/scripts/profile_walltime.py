@@ -49,11 +49,11 @@ import numpy as np
 import pybullet as p
 
 from swarm.constants import (
+    BENCHMARK_TOTAL_SEED_COUNT,
     SIM_DT,
     SWARM_COUNT_SEED_OFFSET,
     SWARM_MAX_DRONES,
     SWARM_MIN_DRONES,
-    BENCHMARK_TOTAL_SEED_COUNT,
 )
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.docker.docker_evaluator_parts._shared import _submission_template_dir

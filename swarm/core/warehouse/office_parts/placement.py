@@ -24,7 +24,6 @@ from .geometry import (
     slot_xy,
     snap_cardinal,
     snap_octant,
-    spawn_walls_with_entry,
     wall_face_yaw,
     wall_tangent_yaw,
     workstation_right_is_positive_along,
@@ -455,4 +454,3 @@ def build_center_meeting(loader, floor_top_z, seed):
         yaw_deg=snap_cardinal(yaw_right),
         floor_z=floor_top_z,
     )
-

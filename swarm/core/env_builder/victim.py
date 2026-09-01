@@ -35,7 +35,6 @@ from .mesh_loader import (
 )
 from .sar_types import BodyCategory
 
-
 VictimAttrs = Tuple[list, Tuple[Tuple[float, float, float], Tuple[float, float, float]], Tuple[float, float, float]]
 
 

@@ -20,7 +20,6 @@ Storage rack builder: build_storage_racks.
 """
 
 import math
-import os
 import random
 
 from .constants import (

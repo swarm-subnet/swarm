@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-import httpx
 import bittensor as bt
+import httpx
 
 GITHUB_DOWNLOAD_TIMEOUT_SEC = 60.0
 GITHUB_CONNECT_TIMEOUT_SEC = 10.0

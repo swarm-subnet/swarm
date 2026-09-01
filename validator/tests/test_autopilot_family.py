@@ -21,7 +21,6 @@ import math
 
 import numpy as np
 import pybullet as p
-import pytest
 
 from swarm.constants import SEARCH_RADIUS_MAX, SIM_DT
 from swarm.protocol import MapTask
