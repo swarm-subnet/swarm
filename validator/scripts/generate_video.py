@@ -70,7 +70,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS
+from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Action log I/O
