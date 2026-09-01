@@ -80,7 +80,7 @@ The swarm families fly 2–8 drones per seed, all under one policy. Each active 
 
 The full miner workflow, from first install to competing on the leaderboard:
 
-```
+```text
 1. swarm doctor              ← Check environment readiness
 2. Train your model           ← SB3, PyTorch, or custom
 3. swarm model test           ← Validate source folder before packaging
@@ -374,7 +374,7 @@ Forking and improving a published champion is allowed and encouraged. Re-submitt
 
 Per-seed reward for most families:
 
-```
+```text
 score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
@@ -477,7 +477,7 @@ Your `requirements.txt` can only include packages from the approved whitelist (`
 
 **Approved packages:**
 
-```
+```text
 torch, torchvision, torchaudio, onnx, onnxruntime, onnxruntime-gpu,
 stable-baselines3, sb3-contrib, gymnasium, gym, numpy, scipy,
 scikit-learn, opencv-python, opencv-python-headless, pillow, imageio,

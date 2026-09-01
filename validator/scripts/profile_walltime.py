@@ -275,9 +275,9 @@ def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
     )
     bookkeeping = _avg(phase_ms, "bookkeeping") + _avg(phase_ms, "rgb_serve")
     leftover = step - ctrl - obs_total - scoring - bookkeeping - physics - phys_apply - kinematics
-    ser = float(np.mean(ser_ms))
+    serialize_ms = float(np.mean(ser_ms))
     parse = float(np.mean(parse_ms))
-    per_step_total = step + ser + parse
+    per_step_total = step + serialize_ms + parse
     per_seed_s = (result["build_ms"] + result["steps_per_seed"] * per_step_total) / 1000.0
 
     result.update(
@@ -295,7 +295,7 @@ def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
         bookkeeping_ms=bookkeeping,
         leftover_ms=leftover,
         other_ms=step - render - physics - clearance,
-        serialize_ms=ser,
+        serialize_ms=serialize_ms,
         parse_ms=parse,
         obs_kb=obs_bytes / 1024.0,
         render_calls_per_step=float(
@@ -355,7 +355,7 @@ def print_table(results):
     hdr = (
         f"{'family':<20} {'map':<9} {'n':>2} {'batch':>5} {'step':>7} {'render':>7} "
         f"{'ctrl':>6} {'obsbld':>7} {'physic':>7} {'apply':>6} {'kin':>6} "
-        f"{'score':>6} {'book':>6} {'left':>6} {'ser':>5} {'seed_s':>7}"
+        f"{'score':>6} {'book':>6} {'left':>6} {'serial':>6} {'seed_s':>7}"
     )
     print(hdr)
     print("-" * len(hdr))
@@ -367,7 +367,7 @@ def print_table(results):
             f"{r['ctrl_ms']:>6.2f} {r['obs_build_ms']:>7.2f} {r['physics_ms']:>7.2f} "
             f"{r['phys_apply_ms']:>6.2f} {r['kinematics_ms']:>6.2f} "
             f"{r['scoring_ms']:>6.2f} {r['bookkeeping_ms']:>6.2f} {r['leftover_ms']:>6.2f} "
-            f"{r['serialize_ms']+r['parse_ms']:>5.2f} {r['per_seed_s']:>7.1f}"
+            f"{r['serialize_ms']+r['parse_ms']:>6.2f} {r['per_seed_s']:>7.1f}"
         )
 
 
@@ -436,7 +436,7 @@ def main():
             f"    n={r['n_drones']} res={r['img_res']} batch={'Y' if r.get('batch_depth_active') else 'n'} "
             f"step={r['step_ms_mean']:.2f}ms "
             f"(render {r['render_ms']:.2f} / ctrl {r['ctrl_ms']:.2f} / obs {r['obs_build_ms']:.2f} / "
-            f"physics {r['physics_ms']:.2f}) ser={r['serialize_ms']+r['parse_ms']:.2f}ms "
+            f"physics {r['physics_ms']:.2f}) serialize_ms={r['serialize_ms']+r['parse_ms']:.2f}ms "
             f"-> {r['per_seed_s']:.1f}s/seed",
             flush=True,
         )

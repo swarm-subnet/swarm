@@ -2,6 +2,10 @@
   "config": {
     "MD013": false,
     "MD033": false,
+    // Ten docs open with a back-to-top anchor, and the PR template starts at h2.
+    "MD041": false,
+    // The vendored contrib guides mix indented and fenced blocks on purpose.
+    "MD046": false,
     "MD060": false,
     "MD024": { "siblings_only": true }
   },

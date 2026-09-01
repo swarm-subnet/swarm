@@ -298,8 +298,8 @@ def build_storage_racks(
             along_ranges = [(along_lo, along_hi)]
             slots = []
             along_centers_by_bank = {}
-            for bank_idx, (alo, ahi) in enumerate(along_ranges):
-                along_centers = _packed_centers(alo, ahi, along_size, slot_gap)
+            for bank_idx, (a_lo, a_hi) in enumerate(along_ranges):
+                along_centers = _packed_centers(a_lo, a_hi, along_size, slot_gap)
                 if not along_centers:
                     continue
                 along_centers_by_bank[int(bank_idx)] = [float(v) for v in along_centers]

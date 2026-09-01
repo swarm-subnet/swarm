@@ -11,8 +11,8 @@ This is a highly advisable workflow to follow to keep your subtensor project org
     - [Release Branches](#release-branches)
     - [Hotfix Branches](#hotfix-branches)
   - [Git Operations](#git-operations)
-    - [Creating a Feature Branch](#creating-a-feature-branch)
-    - [Merging Feature Branch into Staging](#merging-feature-branch-into-staging)
+    - [Create a Feature Branch](#create-a-feature-branch)
+    - [Merge Feature Branch into Staging](#merge-feature-branch-into-staging)
     - [Creating a Release Branch](#creating-a-release-branch)
     - [Finishing a Release Branch](#finishing-a-release-branch)
     - [Creating a Hotfix Branch](#creating-a-hotfix-branch)
@@ -25,11 +25,11 @@ This is a highly advisable workflow to follow to keep your subtensor project org
 
 Bittensor's codebase consists of two main branches: **main** and **staging**.
 
-**main**
+### main
 
 - This is Bittensor's live production branch, which should only be updated by the core development team. This branch is protected, so refrain from pushing or merging into it unless authorized.
 
-**staging**
+### staging
 
 - This branch is continuously updated and is where you propose and merge changes. It's essentially Bittensor's active development branch.
 
@@ -63,14 +63,14 @@ Hotfix branches are meant for quick fixes in the production environment. When a 
 
 ## Git Operations
 
-#### Create a feature branch
+### Create a feature branch
 
 1. Branch from the **staging** branch.
     1. Command: `git checkout -b feature/my-feature staging`
 
 > Rebase frequently with the updated staging branch so you do not face big conflicts before submitting your pull request. Remember, syncing your changes with other developers could also help you avoid big conflicts.
 
-#### Merge feature branch into staging
+### Merge feature branch into staging
 
 In other words, integrate your changes into a branch that will be tested and prepared for release.
 
@@ -86,13 +86,13 @@ So, what you have to keep in mind is:
 - Open the PR against the `staging` branch.
 - After merging a PR you should delete your feature branch. This will be strictly enforced.
 
-#### Creating a release branch
+### Creating a release branch
 
 1. Create branch from staging: `git checkout -b release/3.4.0/descriptive-message/creator's_name staging`
 2. Updating version with major or minor: `./scripts/update_version.sh major|minor`
 3. Commit file changes with new version: `git commit -a -m "Updated version to 3.4.0"`
 
-#### Finishing a Release Branch
+### Finishing a Release Branch
 
 This involves releasing stable code and generating a new version for bittensor.
 
@@ -109,14 +109,14 @@ To keep the changes made in the **release** branch, we need to merge those back 
 
 This step may well lead to a merge conflict (probably even, since we have changed the version number). If so, fix it and commit.
 
-#### Creating a hotfix branch
+### Creating a hotfix branch
 
 1. Create branch from main: `git checkout -b hotfix/3.3.4/descriptive-message/creator's-name main`
 2. Update patch version: `./scripts/update_version.sh patch`
 3. Commit file changes with new version: `git commit -a -m "Updated version to 3.3.4"`
 4. Fix the bug and commit the fix: `git commit -m "Fixed critical production issue X"`
 
-#### Finishing a Hotfix Branch
+### Finishing a Hotfix Branch
 
 Finishing a hotfix branch involves merging the bugfix into both `main` and `staging`.
 

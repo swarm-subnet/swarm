@@ -95,7 +95,7 @@ The four values mirror the Tello SDK's `rc a b c d` sticks, in the drone's own b
 
 ## Scoring
 
-```
+```text
 score = 0.5 × success + 0.5 × time
 ```
 
