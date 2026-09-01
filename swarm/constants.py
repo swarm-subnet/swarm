@@ -551,9 +551,12 @@ OFFICE_TELEM_DROP_PROB = 0.05               # per-packet loss probability
 OFFICE_TELEM_STALE_SEC = 0.5                # age beyond this flips telemetry_valid to 0
 OFFICE_TELEM_ATTITUDE_NOISE_DEG = 1.0       # IMU attitude noise (std, per packet)
 OFFICE_TELEM_VELOCITY_NOISE = 0.05          # m/s — VPS velocity noise (std)
+OFFICE_TELEM_VELOCITY_BIAS = 0.006          # m/s — per-episode optical-flow velocity bias, per horizontal axis (std)
+OFFICE_TELEM_VELOCITY_WALK = 0.0005         # m/s — velocity bias random walk per packet (std)
 OFFICE_TELEM_ACCEL_NOISE = 0.3              # m/s^2 — accelerometer noise (std)
 OFFICE_TELEM_ACCEL_BIAS = 0.15              # m/s^2 — per-episode accelerometer bias (std)
-OFFICE_TELEM_TOF_NOISE_M = 0.03             # m — downward ToF noise (std)
+OFFICE_TELEM_TOF_NOISE_M = 0.13             # m — downward ToF noise (std, measured 0.13)
+OFFICE_TELEM_TOF_OUTLIER_PROB = 0.02        # per-packet probability of a spurious ToF range
 OFFICE_TELEM_HEIGHT_NOISE_M = 0.03          # m — fused-height noise (std)
 OFFICE_TELEM_BARO_NOISE_M = 0.15            # m — barometer noise (std, measured 0.12-0.16)
 OFFICE_TELEM_BARO_WALK_M = 0.005            # m — barometer random walk per packet (std)
@@ -591,7 +594,9 @@ OFFICE_SCALE_JITTER_MIN = 0.02              # the room is never the exact size o
 OFFICE_SCALE_JITTER_MAX = 0.05              # ...each axis stretches by this much, per episode
 OFFICE_SCALE_SEED_OFFSET = 0x5CA1E          # own stream: the room draw must not ride other draws
 OFFICE_TARGET_SIZE_SEED_OFFSET = 0x51E0     # own stream: the silhouette draw must not ride other draws
-OFFICE_TARGET_SIZE_JITTER = 0.10            # +/- fraction the target's apparent size is resampled by each episode
+OFFICE_TARGET_W_MIN_M = 0.12                # m — apparent target width, lower bound of the per-episode draw
+OFFICE_TARGET_W_MAX_M = 0.30                # m — apparent target width, upper bound of the per-episode draw
+OFFICE_TARGET_SIZE_JITTER = 0.10            # +/- fraction the target's aspect ratio is resampled by each episode
 OFFICE_ACTUATOR_JITTER = 0.18               # +/- fraction the airframe's response is resampled by each episode
 OFFICE_ACTUATOR_SEED_OFFSET = 0x5A17C       # own stream: the airframe draw must not ride other draws
 OFFICE_CATCH_RADIUS_M = 0.20                # m — horizontal reach of an intercept, wider than the hulls
@@ -616,11 +621,13 @@ OFFICE_APPEARANCE_SEED_OFFSET = 0xC0102     # decorrelates the appearance rng fr
 # placeholders until the calibration recordings land.
 OFFICE_DET_PERIOD_STEPS = 5                 # detector frames every N control steps (~10 Hz rig)
 OFFICE_DET_DELAY_STEPS = 2                  # inference latency: boxes describe a frame N steps old
-OFFICE_DET_RECALL = 0.956                   # measured marginal detection rate on visible targets
+OFFICE_DET_RECALL = 0.825                   # good-conditions detection rate; ~0.78 emerges over a pursuit (measured 0.78)
 OFFICE_DET_MISS_PERSIST = 0.5               # chance a miss continues next frame (streaks, not coin flips)
 OFFICE_DET_FP_RATE = 0.009                  # per-frame false-positive probability (precision emerges)
 OFFICE_DET_CONF_FLOOR = 0.25                # the real rig never emits boxes below this confidence
-OFFICE_DET_JITTER_SIZE = 0.12               # box size noise (relative std)
+OFFICE_DET_JITTER_SIZE = 0.05               # box size noise (relative std)
+OFFICE_DET_SPLIT_NEAR_M = 1.5               # m — range inside which a detection can fragment into two boxes
+OFFICE_DET_SPLIT_PROB = 0.15                # per-detection fragmentation probability inside that range
 OFFICE_DET_STALE_SEC = 0.8                  # obs detection age saturates at twice this
 OFFICE_DET_MAX_BOXES = 2                    # contract slots: the target + a rare false positive
 OFFICE_DET_SEED_OFFSET = 0xDE7EC7           # decorrelates the detector rng from the other streams
@@ -639,6 +646,12 @@ if OFFICE_TELEM_DELAY_STEPS >= OFFICE_TELEM_PERIOD_STEPS:
     raise ValueError("OFFICE telemetry delay must be shorter than the packet period")
 if not (0.0 <= OFFICE_TELEM_DROP_PROB < 1.0):
     raise ValueError("OFFICE_TELEM_DROP_PROB must be in [0, 1)")
+if not (0.0 <= OFFICE_TELEM_TOF_OUTLIER_PROB < 1.0):
+    raise ValueError("OFFICE_TELEM_TOF_OUTLIER_PROB must be in [0, 1)")
+if OFFICE_TELEM_VELOCITY_BIAS < 0.0 or OFFICE_TELEM_VELOCITY_WALK < 0.0:
+    raise ValueError("OFFICE_TELEM velocity bias and walk must be non-negative")
+if not (0.0 < OFFICE_TARGET_W_MIN_M <= OFFICE_TARGET_W_MAX_M):
+    raise ValueError("OFFICE_TARGET width band invalid")
 if OFFICE_TELEM_STALE_SEC <= OFFICE_TELEM_PERIOD_STEPS * SIM_DT:
     raise ValueError("OFFICE_TELEM_STALE_SEC must survive a normal packet gap")
 if not (0.0 < OFFICE_TARGET_SPEED_MIN <= OFFICE_TARGET_SPEED_MAX < OFFICE_RC_SPEED):

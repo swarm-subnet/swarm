@@ -19,6 +19,8 @@ from swarm.constants import (
     OFFICE_SCALE_JITTER_MAX,
     OFFICE_SCALE_JITTER_MIN,
     OFFICE_TARGET_SIZE_JITTER,
+    OFFICE_TARGET_W_MAX_M,
+    OFFICE_TARGET_W_MIN_M,
     OFFICE_RC_SLEW_PER_SEC,
     OFFICE_DET_PERIOD_STEPS,
     OFFICE_TARGET_ALT_MAX_M,
@@ -417,6 +419,68 @@ def test_office_telemetry_deterministic():
     assert np.array_equal(streams[0], streams[1])
 
 
+def _packets(env, steps, action):
+    """Delivered (reported, clean snapshot, velocity bias) triples along a flight."""
+    out, prev_age = [], None
+    for _ in range(steps):
+        obs, *_ = env.step(action)
+        age = float(obs["state"][13])
+        if prev_age is not None and age < prev_age:
+            out.append((obs["state"][:15].copy(), env._office_pending[0].copy(),
+                        env._office_vel_bias[0].copy()))
+        prev_age = age
+    return out
+
+
+def test_office_velocity_reading_carries_a_bias(monkeypatch):
+    """Optical-flow velocity drifts: the reported speed sits off the truth by an
+    offset that persists packet to packet and is dealt per episode."""
+    import swarm.challenge_families.office_interceptor as oi
+
+    quant = oi._SNAP_QUANT.copy()
+    quant[3:6] = 1e-9
+    noise = oi._SNAP_NOISE_STD.copy()
+    noise[3:6] = 0.0
+    monkeypatch.setattr(oi, "_SNAP_QUANT", quant)
+    monkeypatch.setattr(oi, "_SNAP_NOISE_STD", noise)
+    monkeypatch.setattr(oi, "OFFICE_TELEM_DROP_PROB", 0.0)
+    offsets = []
+    for seed in (5, 6):
+        task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
+        env = make_env(task)
+        env.reset(seed=task.map_seed)
+        packets = _packets(env, 60, np.array([[0.0, 0.4, 0.2, 0.0]], dtype=np.float32))
+        env.close()
+        assert len(packets) >= 8
+        for rep, snap, bias in packets:
+            assert rep[4] - snap[3] == pytest.approx(bias[0], abs=1e-5)
+            assert rep[5] - snap[4] == pytest.approx(bias[1], abs=1e-5)
+            assert rep[6] - snap[5] == pytest.approx(0.0, abs=1e-5), "no bias on the vertical axis"
+        steps = np.diff([b[0] for _, _, b in packets])
+        assert np.all(np.abs(steps) < 0.003), "the offset wanders slowly, it does not flicker"
+        offsets.append(packets[0][2][0])
+    assert abs(offsets[0] - offsets[1]) > 1e-4, "the offset is dealt per episode"
+
+
+def test_office_tof_has_outliers(office_env, monkeypatch):
+    """A ToF packet occasionally returns a spurious range; when forced on every
+    packet the readings scatter far beyond the noise band."""
+    import swarm.challenge_families.office_interceptor as oi
+
+    env = office_env
+    monkeypatch.setattr(oi, "OFFICE_TELEM_TOF_OUTLIER_PROB", 1.0)
+    env.reset(seed=env.task.map_seed)
+    pairs = _packets(env, 100, np.array([[0.0, 0.0, 0.3, 0.0]], dtype=np.float32))
+    err = np.array([abs(rep[10] - snap[9]) for rep, snap, _ in pairs])
+    assert len(err) >= 10
+    assert np.mean(err > 0.5) > 0.6, "forced outliers must land far from the truth"
+    monkeypatch.setattr(oi, "OFFICE_TELEM_TOF_OUTLIER_PROB", 0.0)
+    env.reset(seed=env.task.map_seed)
+    pairs = _packets(env, 100, np.array([[0.0, 0.0, 0.3, 0.0]], dtype=np.float32))
+    err = np.array([abs(rep[10] - snap[9]) for rep, snap, _ in pairs])
+    assert np.all(err < 0.7), "without outliers the reading stays inside ~5 sigma"
+
+
 def test_office_target_spawns_in_band(office_env):
     env = office_env
     env.reset(seed=env.task.map_seed)
@@ -767,7 +831,59 @@ def test_office_detector_recall_emerges(office_env):
                     hits += 1
     assert frames > 100, "test setup must produce clearly-visible frames"
     recall = hits / frames
-    assert 0.90 < recall <= 1.0, f"marginal recall {recall:.3f} off the ~0.956 spec"
+    assert 0.68 < recall < 0.88, f"marginal recall {recall:.3f} off the measured 0.78"
+
+
+def test_office_detector_boxes_are_tight(office_env):
+    """Localisation matches the rig's mAP50-95 of 0.64: centre error under ~4%
+    and size error under ~5% of the box, not the loose boxes of a guessed model."""
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    assert _place_with_clear_view(env, dist=2.0), "no clear line of sight to arrange"
+    centre_err, size_err = [], []
+    for _ in range(1500):
+        obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
+        truth = env._office_det_pending
+        if (env._office_telem_step % OFFICE_DET_PERIOD_STEPS == 0 and truth is not None
+                and int(obs["state"][15]) == 1 and not env._office_det_missed):
+            d = obs["state"][17:22] * 256.0
+            centre_err += [(d[0] - truth["px"]) / truth["w"], (d[1] - truth["py"]) / truth["h"]]
+            size_err += [d[2] / truth["w"] - 1.0, d[3] / truth["h"] - 1.0]
+    assert len(size_err) > 100, "test setup must deliver real boxes"
+    assert 0.02 < float(np.std(centre_err)) < 0.07, f"centre jitter {np.std(centre_err):.3f}"
+    assert 0.02 < float(np.std(size_err)) < 0.08, f"size jitter {np.std(size_err):.3f}"
+
+
+def test_office_detector_fragments_at_close_range(office_env, monkeypatch):
+    """Up close the real detector splits one drone into two boxes; both fragments
+    must sit on the target, and together they fill both slots."""
+    import swarm.challenge_families.office_interceptor as oi
+
+    monkeypatch.setattr(oi, "OFFICE_DET_SPLIT_PROB", 1.0)
+    monkeypatch.setattr(oi, "OFFICE_DET_FP_RATE", 0.0)
+    env = office_env
+    env.reset(seed=env.task.map_seed)
+    assert _place_with_clear_view(env, dist=1.0), "no clear line of sight to arrange"
+    split_frames = single_frames = 0
+    for _ in range(200):
+        obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
+        truth = env._office_det_pending
+        # The target flies its own legs, so only frames still inside the split range count.
+        if (env._office_telem_step % OFFICE_DET_PERIOD_STEPS != 0 or truth is None
+                or truth["dist"] >= oi.OFFICE_DET_SPLIT_NEAR_M):
+            continue
+        n = int(obs["state"][15])
+        if n == 2:
+            split_frames += 1
+            for base in (17, 22):
+                cx, cy, w = obs["state"][base:base + 3] * 256.0
+                assert abs(cx - truth["px"]) < truth["w"], "fragment must sit on the target"
+                assert abs(cy - truth["py"]) < truth["h"], "fragment must sit on the target"
+                assert w < truth["w"], "a fragment is narrower than the whole drone"
+        elif n == 1:
+            single_frames += 1
+    assert split_frames > 0, "a detected close target must fragment when forced"
+    assert single_frames == 0, "with split forced, no close detection may stay whole"
 
 
 def test_office_detector_confidence_not_an_oracle():
@@ -999,15 +1115,21 @@ def test_office_airframe_is_deterministic():
 def test_office_target_size_varies_per_episode():
     """The silhouette is dealt per episode, so box size cannot be inverted into
     distance with a memorised constant."""
+    from swarm.challenge_families.office_interceptor import office_target_silhouette
+
+    widths = [office_target_silhouette(s)[0] for s in range(200)]
+    assert min(widths) < OFFICE_TARGET_W_MIN_M + 0.02, "the band's low end must be dealt"
+    assert max(widths) > OFFICE_TARGET_W_MAX_M - 0.02, "the band's high end must be dealt"
     sizes = set()
     for seed in (31, 32, 33):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
         env.reset(seed=task.map_seed)
         w, h = env._office_target_w_m, env._office_target_h_m
+        assert (w, h) == office_target_silhouette(seed)
         sizes.add((round(w, 6), round(h, 6)))
-        assert abs(w - 0.18) / 0.18 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
-        assert abs(h - 0.08) / 0.08 <= OFFICE_TARGET_SIZE_JITTER + 1e-9
+        assert OFFICE_TARGET_W_MIN_M <= w <= OFFICE_TARGET_W_MAX_M
+        assert abs(h / w - 0.08 / 0.18) / (0.08 / 0.18) <= OFFICE_TARGET_SIZE_JITTER + 1e-9
         # and the boxes the policy sees are built from THIS episode's silhouette
         fam = OfficeInterceptorChallengeFamily()
         assert _place_with_clear_view(env, dist=2.0), "no clear line of sight to arrange"
