@@ -29,10 +29,10 @@ This directory contains repository-level executable utilities.
 
 ## Shell scripts
 
-- `validator/main/setup.sh`
-- `validator/main/install_dependencies.sh`
-- `validator/update/update_deploy.sh`
-- `validator/update/auto_update_deploy.sh`
+- `main/setup.sh`
+- `main/install_dependencies.sh`
+- `update/update_deploy.sh`
+- `update/auto_update_deploy.sh`
 
 These are operational setup scripts for validator environments. The miner's own
-scripts live in `../miner/src/scripts/`.
+scripts live in `../../miner/src/scripts/`.

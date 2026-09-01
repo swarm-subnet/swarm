@@ -105,6 +105,19 @@ def test_every_resolver_lands_where_it_should(relative):
     )
 
 
+def test_the_sibling_backend_path_is_complete():
+    """The generic check above only sees how far the walk goes, not what is
+    appended to it. Renaming the directory would leave the walk at the same
+    depth while the production test quietly skipped instead of comparing."""
+    source = VALIDATOR / "tests" / "test_submission_manifest.py"
+    expected = REPO_ROOT.parent / "swarm-backend" / "app"
+    text = source.read_text()
+    assert 'parents[3] / "swarm-backend" / "app"' in text, (
+        f"the sibling checkout path no longer reads {expected}; a change here turns "
+        "the manifest comparison into a permanent skip"
+    )
+
+
 def test_no_file_resolves_paths_without_being_listed():
     """A file that grows a resolver must be listed, or it goes unchecked."""
     found = {

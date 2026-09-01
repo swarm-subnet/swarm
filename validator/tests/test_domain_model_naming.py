@@ -37,7 +37,7 @@ def test_each_scanned_root_contributes_files(base):
     assert base.exists(), f"{base} is scanned but not there"
     if base.is_file():
         return
-    found = [p for p in base.rglob("*") if p.suffix.lower() in {".md", ".py", ".txt"}]
+    found = [p for p in base.rglob("*") if p.is_file() and p.suffix.lower() in {".md", ".py", ".txt"}]
     assert found, f"{base} contributed no files to the scan"
 
 
