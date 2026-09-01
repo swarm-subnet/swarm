@@ -119,7 +119,7 @@ def test_the_sibling_backend_path_is_complete():
 
 
 def test_no_file_resolves_paths_without_being_listed():
-    """A file that grows a resolver must be listed, or it goes unchecked."""
+    """A file that grows a recognised resolver must be listed, or it goes unchecked."""
     found = {
         str(p.relative_to(VALIDATOR))
         for p in VALIDATOR.rglob("*.py")

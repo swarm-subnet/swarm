@@ -140,7 +140,7 @@ def test_video_dispatches_with_family(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# family-aware task construction (scripts.generate_video.build_task)
+# family-aware task construction (validator.scripts.generate_video.build_task)
 # --------------------------------------------------------------------------
 
 
