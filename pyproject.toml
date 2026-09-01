@@ -44,8 +44,8 @@ include-package-data = true
 license-files = ["LICENSE"]
 
 [tool.setuptools.packages.find]
-include = ["swarm*", "neurons*", "scripts*", "miner*"]
-exclude = ["miner.tests*"]
+include = ["swarm*", "neurons*", "miner*", "validator", "validator.scripts*"]
+exclude = ["miner.tests*", "validator.tests*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.py[cod]"]

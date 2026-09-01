@@ -97,4 +97,4 @@ jobs:
             -e HOME=/tmp \
             --user "$(id -u):$(id -g)" \
             "$TEST_IMAGE" \
-            pytest -v tests -n4 --dist worksteal -p no:cacheprovider
+            pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider

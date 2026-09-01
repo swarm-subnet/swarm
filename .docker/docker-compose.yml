@@ -32,3 +32,16 @@ services:
     environment:
       SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
     command: pytest -v miner/tests -n 0 -p no:cacheprovider
+
+  # The validator side on its own, the same set the validator job runs in CI.
+  swarm_validator:
+    <<: *swarm-base
+    container_name: swarm_validator
+    # the anchor restarts unless-stopped, which would relaunch pytest forever
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ..:/app
+    environment:
+      SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
+    command: pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider

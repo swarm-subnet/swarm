@@ -96,7 +96,7 @@ db.sqlite3-journal
 remote_videos/
 swarm/assets/open_terrain/
 training_pipeline/
-tests/default_model/*_summary.json
+validator/tests/default_model/*_summary.json
 
 # Flask stuff:
 instance/

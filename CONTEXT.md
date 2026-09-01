@@ -25,7 +25,7 @@ Core benchmark assumptions:
   Canonical code-organization and dependency-boundary guide.
 - [`miner/docs/miner.md`](miner/docs/miner.md)
   Miner setup, submission structure, and GitHub publishing flow.
-- [`docs/validator.md`](docs/validator.md)
+- [`validator/docs/validator.md`](validator/docs/validator.md)
   Validator setup, Docker requirements, telemetry, and runtime expectations.
 - [`docs/CLI_readme.md`](docs/CLI_readme.md)
   CLI command reference.
@@ -50,9 +50,9 @@ Core benchmark assumptions:
   Launch script for the validator process.
 - [`miner/`](miner)
   The miner's own code, tests and guide.
-- [`scripts/`](scripts)
+- [`validator/scripts/`](validator/scripts)
   Thin operational utilities for benchmark runs, replay, visualization, and setup.
-- [`tests/`](tests)
+- [`validator/tests/`](validator/tests)
   Unit, integration, smoke, and selected end-to-end coverage.
 
 ## Key Files To Know

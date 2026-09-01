@@ -3,8 +3,7 @@
 **/*.pyc
 swarm/assets
 swarm/state
-tests
 docs
-scripts
 miner
+validator
 Submission
