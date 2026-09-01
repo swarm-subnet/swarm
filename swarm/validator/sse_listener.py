@@ -41,7 +41,6 @@ from .backend_api import (
     BackendTransportError,
 )
 
-
 _CANCEL_TYPES = {"screening_failed", "evaluation_failed", "benchmark_done", "stop"}
 _WAKE_ONLY_TYPES = {"screening_passed", "wake"}
 _RESYNC_TYPES = {"epoch_transition", "resync_required"}

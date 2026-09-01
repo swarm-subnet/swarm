@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 import pybullet as p
 
 from swarm import constants as C
+
 from .platform import build_goal_platform, build_start_platform
 
 

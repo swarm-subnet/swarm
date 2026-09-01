@@ -53,6 +53,7 @@ def _task(family_id: str):
 
 def _build_env(family_id: str, sar_mode: bool):
     from gym_pybullet_drones.utils.enums import ActionType
+
     from swarm.core.moving_drone import MovingDroneAviary
 
     with contextlib.redirect_stdout(io.StringIO()):

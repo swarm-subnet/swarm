@@ -23,27 +23,25 @@ import numpy as np
 import pybullet as p
 import pytest
 
+from swarm.challenge_families.office_interceptor import OfficeInterceptorChallengeFamily
 from swarm.constants import (
     OFFICE_ACTUATOR_JITTER,
     OFFICE_CATCH_HOLD_STEPS,
-    OFFICE_CATCH_LEVEL_M,
     OFFICE_CATCH_RADIUS_M,
     OFFICE_CHALLENGE_TYPE,
+    OFFICE_DET_PERIOD_STEPS,
     OFFICE_MAX_START_DISTANCE_M,
     OFFICE_MIN_START_DISTANCE_M,
-    OFFICE_RC_DEAD_ZONE,
+    OFFICE_RC_SLEW_PER_SEC,
     OFFICE_RC_SPEED,
     OFFICE_SCALE_JITTER_MAX,
     OFFICE_SCALE_JITTER_MIN,
-    OFFICE_TARGET_SIZE_JITTER,
-    OFFICE_RC_SLEW_PER_SEC,
-    OFFICE_DET_PERIOD_STEPS,
     OFFICE_TARGET_ALT_MAX_M,
     OFFICE_TARGET_ALT_MIN_M,
+    OFFICE_TARGET_SIZE_JITTER,
     OFFICE_TELEM_DELAY_STEPS,
     OFFICE_TELEM_PERIOD_STEPS,
 )
-from swarm.challenge_families.office_interceptor import OfficeInterceptorChallengeFamily
 from swarm.core.maps.office import OFFICE_CEILING_M, OFFICE_X_RANGE, OFFICE_Y_RANGE
 from swarm.core.moving_drone import rc_sticks_to_world_velocity
 from swarm.domain_model import get_policy_interface_contract
@@ -179,9 +177,10 @@ def test_office_substep_refresh_scoped_to_office(office_env):
     assert calls["n"] == env.PYB_STEPS_PER_CTRL + 1
 
     # A real non-office env forced to the same 5x substeps must NOT refresh in-loop.
+    from gym_pybullet_drones.utils.enums import ActionType, ObservationType
+
     from swarm.core.moving_drone import MovingDroneAviary
     from swarm.utils.env_factory import runtime_profile_for_task
-    from gym_pybullet_drones.utils.enums import ActionType, ObservationType
 
     task = task_gen.random_task(1 / 50, 3, family_id="cf_search_and_rescue")
     prof = runtime_profile_for_task(task)
@@ -469,7 +468,6 @@ def test_office_target_flight_deterministic_and_clear():
 
 def test_office_target_profile_deterministic_and_varied():
     from swarm.challenge_families.office_interceptor import office_target_profile
-
     from swarm.constants import OFFICE_TARGET_FLEE_MAX, OFFICE_TARGET_FLEE_MIN
 
     assert office_target_profile(55) == office_target_profile(55)
@@ -556,7 +554,9 @@ def test_office_target_brake_guard_scales():
     full safety factor at every legal speed, cadence travel included."""
     from swarm.challenge_families.office_interceptor import _brake_guard_range
     from swarm.constants import (
-        OFFICE_TARGET_BRAKE_DECEL, OFFICE_TARGET_GUARD_SAFETY, SIM_DT,
+        OFFICE_TARGET_BRAKE_DECEL,
+        OFFICE_TARGET_GUARD_SAFETY,
+        SIM_DT,
     )
 
     for v in (0.7, 1.2, 1.8, 1.95):

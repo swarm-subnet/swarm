@@ -57,7 +57,6 @@ from swarm.constants import (
 from swarm.protocol import ValidationResult
 from swarm.utils.env_factory import make_env
 
-
 _THREAD_CAP_ENV_VARS = (
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",

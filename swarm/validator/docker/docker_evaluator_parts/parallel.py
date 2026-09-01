@@ -43,8 +43,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None
 
-from swarm.constants import N_DOCKER_WORKERS
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
+from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.faults import ReasonCode
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.runtime_telemetry import tracker_call

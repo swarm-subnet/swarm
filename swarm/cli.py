@@ -33,11 +33,11 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from swarm.constants import N_DOCKER_WORKERS
+from swarm.core.submission_policy import validate_submission_zip
 from swarm.domain_model import (
     CHALLENGE_FAMILY_IDS,
     get_challenge_family_definition,
 )
-from swarm.core.submission_policy import validate_submission_zip
 from swarm.policy_interface import (
     POLICY_CONTRACT_FILENAME,
     PolicyInterfaceError,

@@ -20,7 +20,6 @@ from __future__ import annotations
 import contextlib
 import io
 
-import numpy as np
 import pybullet as p
 import pytest
 

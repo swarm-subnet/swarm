@@ -17,13 +17,8 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from swarm.utils.github import build_raw_urls, validate_github_url
 

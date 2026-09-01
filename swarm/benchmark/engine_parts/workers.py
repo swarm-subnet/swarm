@@ -21,6 +21,15 @@ import ctypes
 import os
 import signal
 
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.config import HostWorkerRuntimeSettings
+from swarm.constants import MINER_COMPUTE_BUDGET_SEC
+from swarm.validator.calibration.speed_factor import baseline_model_available
+from swarm.validator.docker.docker_evaluator_parts.batch import (
+    _ensure_host_speed_factor,
+    host_speed_factor_is_fresh,
+)
+
 from ._shared import (
     BENCH_GROUP_TO_TYPE,
     Any,
@@ -47,17 +56,9 @@ from ._shared import (
 )
 from .config import _build_progress_bar, _temporary_env, _ts
 from .dispatch import (
-    _RamWorkerScheduler,
     _build_worker_stall_seed_meta,
+    _RamWorkerScheduler,
     _select_next_batch_index,
-)
-from swarm.config import HostWorkerRuntimeSettings
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.constants import MINER_COMPUTE_BUDGET_SEC
-from swarm.validator.calibration.speed_factor import baseline_model_available
-from swarm.validator.docker.docker_evaluator_parts.batch import (
-    _ensure_host_speed_factor,
-    host_speed_factor_is_fresh,
 )
 
 try:

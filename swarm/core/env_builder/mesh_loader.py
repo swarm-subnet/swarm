@@ -22,7 +22,6 @@ from typing import List, Tuple
 
 import pybullet as p
 
-
 Vec3 = Tuple[float, float, float]
 
 

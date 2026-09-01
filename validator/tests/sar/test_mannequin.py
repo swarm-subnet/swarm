@@ -17,12 +17,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest import mock
-
-import pytest
-
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _ASSET_DIR = _REPO_ROOT / "swarm" / "assets" / "maps" / "custom" / "people" / "open_mannequin_raw"

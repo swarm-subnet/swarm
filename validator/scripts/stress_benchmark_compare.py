@@ -49,7 +49,6 @@ from swarm.constants import (
 from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP as TYPE_TO_GROUP
 from swarm.validator.task_gen import random_task
 
-
 # Only the types random_task can draw: a group outside the distribution never fills.
 BENCH_GROUP_ORDER = [TYPE_TO_GROUP[t] for t in sorted(CHALLENGE_TYPE_DISTRIBUTION)]
 

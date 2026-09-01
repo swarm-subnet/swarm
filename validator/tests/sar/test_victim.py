@@ -17,17 +17,13 @@
 
 from __future__ import annotations
 
-import math
-import os
 import random
-from unittest import mock
 
 import pybullet as p
 import pytest
 
 from swarm.core.env_builder.body_tagger import BodyTagger
 from swarm.core.env_builder.sar_types import BodyCategory
-from swarm.core.env_builder import victim as victim_mod
 from swarm.core.env_builder.victim import spawn_victim
 
 

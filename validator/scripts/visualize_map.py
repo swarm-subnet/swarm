@@ -49,8 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Tuple
 
-import numpy as np
 import gymnasium.spaces as spaces
+import numpy as np
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent.parent

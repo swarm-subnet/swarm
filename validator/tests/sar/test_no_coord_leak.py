@@ -36,7 +36,6 @@ import pytest
 
 from swarm.protocol import MapTask
 
-
 _FLOAT_EPS = 1e-3
 
 
@@ -116,11 +115,13 @@ def test_serialize_observation_payload_omits_victim_xy(sar_env):
     """Round-trip the obs through the same cap'n proto serializer the docker
     miner sees, then assert no float in any tensor blob matches victim XY."""
     pytest.importorskip("capnp")
+    from pathlib import Path
+
+    import capnp
+
     from swarm.validator.docker.docker_evaluator_parts.submission import (
         _serialize_observation,
     )
-    from pathlib import Path
-    import capnp
 
     schema_path = (
         Path(__file__).resolve().parents[3]

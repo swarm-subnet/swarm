@@ -15,11 +15,10 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from ._shared import *
-
 from swarm.constants import UID_ZERO
 from swarm.validator import koth as _koth
 
+from ._shared import *
 
 _ADVISORY_DIVERGENCE_EPS: float = 1e-3
 _advisory_warn_state: Dict[str, float] = {"last_log_ts": 0.0}

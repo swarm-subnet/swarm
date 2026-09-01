@@ -17,8 +17,9 @@
 
 from __future__ import annotations
 
-import pytest
 from dataclasses import asdict
+
+import pytest
 
 from swarm.protocol import ValidationResult
 
