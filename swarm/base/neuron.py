@@ -173,7 +173,7 @@ class BaseNeuron(ABC):
                     error=traceback.format_exc(),
                 )
                 bt.logging.error(
-                    "Coundn't sync metagraph or set weights: {}".format(
+                    "Couldn't sync metagraph or set weights: {}".format(
                         traceback.format_exc()
                     )
                 )

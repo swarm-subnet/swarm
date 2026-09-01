@@ -355,7 +355,7 @@ Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epoc
 
 **Docker not installed:**
 
-```
+```text
 docker: command not found
 ```
 
@@ -363,7 +363,7 @@ Follow the Docker installation section above.
 
 **Docker permission denied:**
 
-```
+```text
 Permission denied while trying to connect to Docker daemon
 ```
 
@@ -374,7 +374,7 @@ sudo usermod -aG docker swarm-validator   # the dedicated validator user
 
 **Docker service not running:**
 
-```
+```text
 Cannot connect to the Docker daemon
 ```
 

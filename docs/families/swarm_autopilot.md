@@ -173,7 +173,7 @@ Each drone's minimum clearance is tracked every step within a 1.0 m search box, 
 
 The seed's score is the **arithmetic mean of the per-drone scores**. A drone that lands cleanly (no collision beforehand) scores:
 
-```
+```text
 per_drone = clamp( 0.45 · success + 0.45 · time_factor + 0.10 · safety_factor )   ∈ [0, 1]
 ```
 
@@ -181,14 +181,14 @@ with `success = 1.0` on that path. A drone that does not land cleanly (including
 
 ### Time factor
 
-```
+```text
 time_factor = 1.0                                   if t ≤ target_time
             = clamp(1 − (t − target_time) / (60 − target_time))   otherwise
 ```
 
 `t` is the drone's `t_to_goal` on success, else the full 60 s horizon. The per-drone `target_time` allows a straight-line flight plus congestion slack:
 
-```
+```text
 target_time = 1.06 × (distance / 3.0 m/s) + 1.0 s × (n_drones − 1)
 ```
 
@@ -196,7 +196,7 @@ where `distance` is the 3D straight-line distance from that drone's (adjusted) s
 
 ### Safety factor
 
-```
+```text
 safety_factor = 1.0    if min_clearance ≥ 1.0 m   (0.6 m on forest maps)
               = 0.0    if min_clearance ≤ 0.2 m, or on collision
               linear in between

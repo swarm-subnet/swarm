@@ -43,7 +43,7 @@
 
 This repository holds one trained flight model entered into [Swarm](https://swarm124.com), the open benchmark for autonomous drone AI. The artifact under `artifacts/` is a complete pilot: a policy that reads a depth camera and its own flight state, and flies. Models are evaluated across six procedurally generated world types, 1,100 fresh seeds per family every weekly epoch, with no privileged information and no pre-built maps.
 
-```
+```text
 README.md                              # This file, the byte-exact benchmark template
 submission_manifest.json               # Declares which family this repo competes in
 artifacts/<family_id>/submission.zip   # The trained agent for that family
@@ -55,7 +55,7 @@ The `.zip` carries the agent's `DroneFlightController` class in `drone_agent.py`
 
 The model in this repo runs on your machine with the public benchmark engine: the same worlds and the same scoring the leaderboard uses.
 
-**1. Clone and install**
+### 1. Clone and install
 
 ```bash
 git clone https://github.com/swarm-subnet/swarm.git
@@ -65,7 +65,7 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-**2. Run a benchmark**
+### 2. Run a benchmark
 
 ```bash
 python -m swarm.benchmark.engine \
@@ -124,7 +124,7 @@ Each guide spells out the full contract: observation layout, action bounds, maps
 | **Speed** | 45% | How fast relative to the time limit? |
 | **Safety** | 10% | Minimum clearance from obstacles |
 
-```
+```text
 seed score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 

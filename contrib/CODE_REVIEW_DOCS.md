@@ -1,6 +1,6 @@
 # Code Review
 
-### Conceptual Review
+## Conceptual Review
 
 A review can be a conceptual review, where the reviewer leaves a comment
 
@@ -23,7 +23,7 @@ following language is used within pull request comments:
     OK, I agree it can be merged";
 * A "nit" refers to a trivial, often non-blocking issue.
 
-### Code Review
+## Code Review
 
 Project maintainers reserve the right to weigh the opinions of peer reviewers
 using common sense judgement and may also weigh based on merit. Reviewers that
@@ -41,7 +41,7 @@ discussed extensively on the discord server and other channels, be accompanied b
 discussed BIP and have a generally widely perceived technical consensus of being
 a worthwhile change based on the judgement of the maintainers.
 
-### Finding Reviewers
+## Finding Reviewers
 
 As most reviewers are themselves developers with their own projects, the review
 process can be quite lengthy, and some amount of patience is required. If you find

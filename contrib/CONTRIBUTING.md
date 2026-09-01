@@ -52,9 +52,11 @@ What runs, and where each one is configured:
 | `check-xml` | The `.urdf` drone descriptions under `swarm/assets/` | `.pre-commit-config.yaml` |
 | pre-commit's own hooks | Trailing whitespace, final newlines, line endings, and YAML/JSON/TOML that does not parse — `.txt` included | `.pre-commit-config.yaml` |
 
-Most findings fix themselves. `ruff check --fix .` and `markdownlint-cli2 --fix`
-handle the mechanical ones; the hooks apply those fixes in place, so a commit
-that trips them will stage clean on the second attempt.
+Most findings fix themselves. `ruff check --fix .` and
+`markdownlint-cli2 --fix "**/*.md"` handle the mechanical ones. A hook that
+rewrites a file leaves the fix in the working tree without staging it, so a
+commit that trips one is retried by reading the change, `git add`-ing it and
+committing again.
 
 Ruff replaced `flake8` here. The old `.flake8` ignored so much — `E501`, `E402`,
 `W291` and more — that it passed on almost anything, which is why it was never
@@ -232,7 +234,7 @@ Include details about your configuration and environment:
 
 This section guides you through submitting an enhancement suggestion, including completely new features and minor improvements to existing functionality. Following these guidelines helps maintainers and the community understand your suggestion :pencil: and find related suggestions :mag_right:.
 
-When you are creating an enhancement suggestion, please [include as many details as possible](#how-do-i-submit-a-good-enhancement-suggestion). Fill in [the template](https://bit.ly/atom-behavior-pr), including the steps that you imagine you would take if the feature you're requesting existed.
+When you are creating an enhancement suggestion, please [include as many details as possible](#how-submit-a-good-feature-suggestion). Fill in [the template](https://bit.ly/atom-behavior-pr), including the steps that you imagine you would take if the feature you're requesting existed.
 
 #### Before Submitting An Enhancement Suggestion
 
