@@ -105,3 +105,25 @@ def test_the_miner_tests_are_actually_collected():
     assert "miner/tests/test_miner.py::" in result.stdout, (
         "a default run does not collect the miner's tests"
     )
+
+
+# The auto-updater is registered with PM2 by path on operator machines, and PM2 keeps
+# that path across restarts. A forwarder stays at the old location so the pull that
+# delivers this move does not break the updater that performed it.
+LEGACY_UPDATER = REPO_ROOT / "scripts" / "validator" / "update" / "auto_update_deploy.sh"
+
+
+def test_the_legacy_updater_path_still_answers():
+    assert LEGACY_UPDATER.is_file(), (
+        f"{LEGACY_UPDATER} is what operators registered with PM2; removing it breaks "
+        "their updater on the next pull"
+    )
+    assert LEGACY_UPDATER.stat().st_mode & 0o111, f"{LEGACY_UPDATER} is not executable"
+
+
+def test_the_forwarder_points_at_the_real_updater():
+    target = SCRIPTS_DIR / "update" / "auto_update_deploy.sh"
+    assert target.is_file(), f"{target} is missing, so the forwarder leads nowhere"
+    assert "validator/scripts/update/auto_update_deploy.sh" in LEGACY_UPDATER.read_text(), (
+        "the forwarder no longer names the script it forwards to"
+    )

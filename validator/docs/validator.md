@@ -309,6 +309,18 @@ pm2 start --name auto_update_validator \
           validator/scripts/update/auto_update_deploy.sh
 ```
 
+If you registered the updater before these scripts moved, it keeps working:
+`scripts/validator/update/auto_update_deploy.sh` still exists and forwards to the path
+above. Re-register when convenient, so the forwarder can eventually be dropped:
+
+```bash
+pm2 delete auto_update_validator
+pm2 start --name auto_update_validator \
+          --interpreter /bin/bash \
+          validator/scripts/update/auto_update_deploy.sh
+pm2 save
+```
+
 ## 🧩 What the Validator Does
 
 1. **Sync with the backend**
