@@ -38,9 +38,6 @@ def _cache_file() -> Path:
     return _runtime_setting("CACHE_FILE")
 
 
-def _claimed_repos_file() -> Path:
-    return _runtime_setting("CLAIMED_REPOS_FILE")
-
 def load_model_hash_tracker() -> dict:
     hash_tracker_file = _state_dir() / "uid_model_hashes.json"
     try:
@@ -70,62 +67,6 @@ def mark_model_hash_processed(uid: int, model_hash: str) -> None:
     tracker = load_model_hash_tracker()
     tracker[str(uid)] = model_hash
     save_model_hash_tracker(tracker)
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# GitHub repo ownership (one repo per hotkey)
-# ──────────────────────────────────────────────────────────────────────────
-
-_claimed_repos_lock = threading.Lock()
-
-
-def load_claimed_repos() -> dict:
-    claimed_repos_file = _claimed_repos_file()
-    try:
-        if claimed_repos_file.exists():
-            with open(claimed_repos_file, 'r') as f:
-                return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return {}
-
-
-def save_claimed_repos(claimed: dict) -> bool:
-    state_dir = _state_dir()
-    claimed_repos_file = _claimed_repos_file()
-    state_dir.mkdir(exist_ok=True)
-    temp_file = claimed_repos_file.with_suffix(".tmp")
-    try:
-        with open(temp_file, 'w') as f:
-            json.dump(claimed, f)
-        temp_file.replace(claimed_repos_file)
-        return True
-    except IOError as e:
-        bt.logging.error(f"Failed to save claimed repos: {e}")
-        temp_file.unlink(missing_ok=True)
-        return False
-
-
-def check_repo_ownership(github_url: str, hotkey: str, uid: int) -> bool:
-    normalized = validate_github_url(github_url)
-    if not normalized:
-        return False
-    key = normalized.lower()
-    with _claimed_repos_lock:
-        claimed = load_claimed_repos()
-        owner = claimed.get(key)
-        if owner is None:
-            claimed[key] = hotkey
-            if not save_claimed_repos(claimed):
-                return False
-            return True
-        owner = str(owner)
-        if owner == hotkey:
-            return True
-    bt.logging.warning(
-        f"UID {uid}: repo {normalized} already claimed by hotkey {owner[:16]}..."
-    )
-    return False
 
 
 # ──────────────────────────────────────────────────────────────────────────

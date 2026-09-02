@@ -26,6 +26,26 @@ BACKEND_MIRROR = Path("app") / "family_registry.json"
 WEBSITE_MIRROR = Path("src") / "family_registry.json"
 
 
+def _validate_registry(payload: dict) -> None:
+    """Refuse to mirror a registry whose enum-valued fields carry a typo.
+
+    Every reader falls back to a default for an unknown value, so a misspelt
+    visibility would silently reopen a family instead of failing loudly here."""
+    enums = payload["enum_types"]
+    checks = (
+        ("visibility", set(enums["visibility"])),
+        ("family_state", set(enums["family_state"])),
+        ("emissions_state", set(enums["emissions_state"])),
+    )
+    for family_id, family in payload["challenge_families"].items():
+        for field, allowed in checks:
+            value = family.get(field)
+            if value not in allowed:
+                raise SystemExit(
+                    f"{family_id}: {field} {value!r} is not one of {sorted(allowed)}"
+                )
+
+
 def _mirror_path(checkout: Path, mirror: Path) -> Path:
     target = checkout / mirror
     if not target.is_file():
@@ -54,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parents[2]
     source_path = repo_root / "swarm" / "domain_model" / "benchmark_domain_model.schema.json"
     payload = json.loads(source_path.read_text(encoding="utf-8"))
+    _validate_registry(payload)
     rendered = json.dumps(payload, indent=2) + "\n"
 
     target_paths = (

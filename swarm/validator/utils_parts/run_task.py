@@ -41,7 +41,7 @@ from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
-from .model_fetch import _ensure_models_from_backend
+from .model_fetch import _ensure_models_from_backend, _set_private_marker
 
 
 def _pool_drained(granted: list, pending: int) -> bool:
@@ -60,20 +60,6 @@ async def run_task(
     phase = str(task.get("phase", ""))
     task_id = task.get("task_id")
     family_id = str(task.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID)
-    seeds_from = int(task.get("seeds_from", 0))
-    seeds_to_raw = task.get("seeds_to")
-    seeds_to = int(seeds_to_raw) if seeds_to_raw is not None else None
-    batch_id = task.get("batch_id")
-    flow = str(task.get("flow") or "")
-    if flow == "seed":
-        # Seed flow has no window: the full seed list is built and the backend feeds indexes.
-        seeds_from = 0
-        seeds_to = None
-    epoch = int(
-        task.get("epoch_number")
-        or self.seed_manager.epoch_number
-        or 0
-    )
     model_hash = str(task.get("model_hash", ""))
     github_url = str(task.get("github_url") or "")
     is_private = bool(task.get("is_private"))
@@ -97,9 +83,46 @@ async def run_task(
         bt.logging.warning(f"run_task: failed to fetch model for UID {uid}")
         return
     model_path: Path = entry[0]
-    if not model_path.exists() or sha256sum(model_path) != model_hash:
-        bt.logging.warning(f"run_task: model hash mismatch for UID {uid}")
-        return
+    try:
+        if not model_path.exists() or sha256sum(model_path) != model_hash:
+            bt.logging.warning(f"run_task: model hash mismatch for UID {uid}")
+            return
+        await _run_phase(
+            self, task, uid=uid, phase=phase, task_id=task_id, family_id=family_id,
+            model_path=model_path, cancel_flag=cancel_flag,
+        )
+    finally:
+        if is_private:
+            # Private bytes live on this disk only for the task they were fetched for.
+            model_path.unlink(missing_ok=True)
+            _set_private_marker(model_path, False)
+
+
+async def _run_phase(
+    self,
+    task: Dict[str, Any],
+    *,
+    uid: int,
+    phase: str,
+    task_id: Any,
+    family_id: str,
+    model_path: Path,
+    cancel_flag: asyncio.Event,
+) -> None:
+    seeds_from = int(task.get("seeds_from", 0))
+    seeds_to_raw = task.get("seeds_to")
+    seeds_to = int(seeds_to_raw) if seeds_to_raw is not None else None
+    batch_id = task.get("batch_id")
+    flow = str(task.get("flow") or "")
+    if flow == "seed":
+        # Seed flow has no window: the full seed list is built and the backend feeds indexes.
+        seeds_from = 0
+        seeds_to = None
+    epoch = int(
+        task.get("epoch_number")
+        or self.seed_manager.epoch_number
+        or 0
+    )
 
     seed_feeder = None
     if flow == "seed":

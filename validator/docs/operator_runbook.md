@@ -101,7 +101,7 @@ Comma-separated coldkey whitelist, checked by `require_trusted_validator` on the
 | Empty / unset | **Fail-closed**: every evaluation endpoint returns 403 and heartbeats tell validators to stop — nothing is evaluated until the whitelist is configured |
 | Configured | **Fail-closed**: coldkey resolved from the DB (`validatoronchain`) then the metagraph; unresolved or unlisted coldkeys get 403 with "Contact the team to be added" |
 
-`require_strict_trusted_validator` (private-track artifact bytes) applies the same fail-closed rule; the private track itself is dormant — every family is public.
+`require_strict_trusted_validator` (private-track artifact bytes) applies the same fail-closed rule. Every family is on the private track, so a validator outside the whitelist evaluates nothing and only mirrors weights.
 
 > **Required before anything scores.** The whitelist gates all evaluation, so a fresh deploy must set `TRUSTED_VALIDATOR_COLDKEYS` before validators can take tasks. Set the whitelist **before** relying on evaluation.
 
@@ -113,7 +113,7 @@ Two version headers travel on every validator request, gated separately.
 
 ### Code version: `X-Code-Version`
 
-Validators send their full `swarm.__version__`. The backend dependency `require_current_code_version` rejects with **HTTP 426** `validator_code_version_below_minimum` when the header is missing or below `MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). Private-track endpoints use `require_private_code_version` against `PRIVATE_MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). To cut old validators off after a release: bump these env vars and restart the backend. No code change needed.
+Validators send their full `swarm.__version__`. The backend dependency `require_current_code_version` rejects with **HTTP 426** `validator_code_version_below_minimum` when the header is missing or below `MIN_VALIDATOR_CODE_VERSION` (env, default `5.0.0`). Private-track endpoints use `require_private_code_version` against `PRIVATE_MIN_VALIDATOR_CODE_VERSION` (env, default `5.1.5.4`); a validator below it is never handed a private task and idles until it updates. To cut old validators off after a release: bump these env vars and restart the backend. No code change needed.
 
 ### Benchmark version: `X-Benchmark-Version`
 
@@ -182,7 +182,7 @@ The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../
 | Var | Default |
 |-----|---------|
 | `MIN_VALIDATOR_CODE_VERSION` | `5.0.0` |
-| `PRIVATE_MIN_VALIDATOR_CODE_VERSION` | `5.0.0` |
+| `PRIVATE_MIN_VALIDATOR_CODE_VERSION` | `5.1.5.4` |
 | `STAKE_WEIGHTED_FROM_VERSION` | `5.0.0` |
 | `SWARM_VERSION_REF` | `main` |
 | `SWARM_VERSION_URL` | unset (overrides the GitHub raw URL wholesale) |

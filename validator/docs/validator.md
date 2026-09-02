@@ -327,7 +327,7 @@ pm2 save
    `GET /validators/sync` returns the current epoch, the per-family King of the Hill windows and family shares, the champions, and the latest weight map. Runs once per forward cycle. Evaluation work arrives separately via the `GET /validators/next-task` long-poll, which assigns the model under evaluation; individual seeds are then leased on demand through `POST /validators/tasks/{id}/claim-seeds` as workers free up.
 
 2. **Fetch the model**
-   Download the manifest-declared artifact path (normally `artifacts/<family_id>/submission.zip`) from the miner's GitHub repo and verify its SHA-256 against the backend record. Private-track artifacts, when enabled for a family, come from the backend vault instead. The backend checks the README hash at admission.
+   Fetch the archive from the backend vault (every family is on the private track) and verify its SHA-256 against the backend record. The bytes are written owner-only, never kept for forensics, and deleted once the task is done. A public-track family, if one is ever reopened, is downloaded from the miner's GitHub repo instead.
 
 3. **Full benchmark (1,100 seeds)**
    Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers. As workers free up, the validator claims up to that many pending seeds from the backend's shared pool, so validators of different speeds share one model without long idle tails. The task metadata carries the family and phase, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.

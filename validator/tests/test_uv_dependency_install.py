@@ -51,32 +51,40 @@ def test_startup_script_marks_completion_only_after_a_clean_install():
     assert install_at < guard_at < marker_at
 
 
-def test_an_extracted_marker_would_end_the_wait_immediately(tmp_path: Path):
-    """Guards the fixture the next test relies on: extraction really does write a
-    submission-supplied marker into the directory the poll loop watches."""
+def test_declared_requirements_is_read_from_the_archive(tmp_path: Path):
+    """The installer sees the requirements file and nothing else from the model."""
     archive = tmp_path / "model.zip"
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("drone_agent.py", "class Agent: pass\n")
+        zf.writestr("requirements.txt", "numpy\n")
         zf.writestr(".pip_done", "")
+    assert batch_mod._declared_requirements(archive) == b"numpy\n"
 
-    submission_dir = tmp_path / "submission"
-    submission_dir.mkdir()
-    batch_mod._extract_submission(archive, submission_dir)
-    assert (submission_dir / ".pip_done").exists()
+    wrapped = tmp_path / "wrapped.zip"
+    with zipfile.ZipFile(wrapped, "w") as zf:
+        zf.writestr("bundle/drone_agent.py", "class Agent: pass\n")
+        zf.writestr("bundle/requirements.txt", "scipy\n")
+    assert batch_mod._declared_requirements(wrapped) == b"scipy\n"
+
+    bare = tmp_path / "bare.zip"
+    with zipfile.ZipFile(bare, "w") as zf:
+        zf.writestr("drone_agent.py", "class Agent: pass\n")
+    assert batch_mod._declared_requirements(bare) is None
 
 
-def test_prepare_model_image_removes_the_marker_before_launching():
-    """Deleting the unlink from prepare_model_image must fail here: the poll at
-    `.pip_done` runs before the running-state check, so a stale marker commits the
-    image mid-install."""
+def test_prepare_model_image_never_unpacks_the_model():
+    """The dependency container has network, so the model bytes must never be
+    mounted into it: only the requirements file is written to its directory, and a
+    submission-supplied marker can no longer end the install wait early."""
     source = Path(batch_mod.__file__).read_text(encoding="utf-8")
     start = source.index("def prepare_model_image(")
     body = source[start : source.index("\ndef ", start + 1)]
 
-    extract_at = body.index("_extract_submission(model_path, submission_dir)")
-    unlink_at = body.index('(submission_dir / ".pip_done").unlink(')
+    assert "_extract_submission(" not in body
+    assert "_declared_requirements(model_path)" in body
+    written_at = body.index("miner_requirements.write_bytes(requirements)")
     launch_at = body.index("startup_script = submission_dir")
-    assert extract_at < unlink_at < launch_at
+    assert written_at < launch_at
 
 
 def test_evaluator_image_builds_the_base_environment_and_puts_it_first_on_path():
