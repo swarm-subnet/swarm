@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -116,6 +117,17 @@ def setuptools_config() -> dict:
         return tomllib.load(fh).get("tool", {}).get("setuptools", {})
 
 
+def wheel_source_ignore():
+    """What never belongs in the copy the wheel is built from.
+
+    `.venv` earns its place here: the install instructions create one in the
+    repository root, its `bin/python` points at the host interpreter, and
+    copytree follows that symlink into a path a container cannot see."""
+    return shutil.ignore_patterns(
+        ".git", "__pycache__", "*.pyc", "*.egg-info", "build", ".venv", "venv",
+    )
+
+
 @pytest.fixture(scope="session")
 def wheel_contents(tmp_path_factory) -> set[str]:
     """What a built wheel actually holds.
@@ -128,10 +140,7 @@ def wheel_contents(tmp_path_factory) -> set[str]:
 
     repo_root = Path(__file__).resolve().parent
     source = tmp_path_factory.mktemp("wheel_src") / "repo"
-    shutil.copytree(
-        repo_root, source,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.egg-info", "build"),
-    )
+    shutil.copytree(repo_root, source, ignore=wheel_source_ignore())
     out = tmp_path_factory.mktemp("wheel_out")
     result = subprocess.run(
         [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],

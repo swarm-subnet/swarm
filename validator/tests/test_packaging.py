@@ -27,8 +27,12 @@ The miner's side of the same question lives in miner/tests/test_packaging.py.
 """
 from __future__ import annotations
 
+import shutil
+
 import pytest
 from setuptools._distutils.filelist import translate_pattern
+
+from conftest import wheel_source_ignore
 
 REQUIRED_DATA_FILES = [
     "swarm/model_graph/model_graph.schema.json",
@@ -68,3 +72,18 @@ def test_the_wheel_carries_what_an_install_needs(wheel_contents):
     """The rules above say what should ship; the artifact says what does."""
     missing = [p for p in REQUIRED_DATA_FILES if p not in wheel_contents]
     assert missing == [], f"the wheel is missing {missing}"
+
+
+def test_the_wheel_source_copy_skips_a_virtualenv(tmp_path):
+    """The install instructions create `.venv` in the repository root. Its
+    `bin/python` points at the host interpreter, which does not exist inside the
+    test container, so copying it raises shutil.Error and every test that needs a
+    wheel errors before it runs."""
+    repo = tmp_path / "repo"
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    (repo / ".venv" / "bin" / "python").symlink_to("/nonexistent/host/python")
+    (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+
+    shutil.copytree(repo, tmp_path / "copy", ignore=wheel_source_ignore())
+
+    assert not (tmp_path / "copy" / ".venv").exists()
