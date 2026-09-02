@@ -1,4 +1,6 @@
 .git
+.venv
+venv
 **/__pycache__
 **/*.pyc
 swarm/assets

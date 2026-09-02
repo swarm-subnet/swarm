@@ -227,7 +227,7 @@ A timed-out step substitutes a zero action and counts a strike; **15 strikes** o
 
 The pre-eval smoke test instantiates your controller and calls `reset()` + `act()` at **both ends of the drone range (n = 2 and n = 8)**, with synthetic observations; the returned action must be shape `(n, 5)`, finite, and within bounds. Make sure your policy handles the dynamic axis before submitting.
 
-`requirements.txt` is limited to the Docker pip whitelist: torch/torchvision/torchaudio, onnx/onnxruntime(-gpu), stable-baselines3, sb3-contrib, gymnasium/gym, swarm-bullet3, swarm-drone-gym, numpy, scipy, scikit-learn, opencv-python(-headless), pillow, imageio, matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack.
+`requirements.txt` is limited to the Docker package whitelist: torch/torchvision/torchaudio, onnx/onnxruntime(-gpu), stable-baselines3, sb3-contrib, gymnasium/gym, swarm-bullet3, swarm-drone-gym, numpy, scipy, scikit-learn, opencv-python(-headless), pillow, imageio, matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack.
 
 <p align="right">(<a href="#swarm-autopilot-top">back to top</a>)</p>
 

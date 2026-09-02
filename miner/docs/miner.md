@@ -149,7 +149,7 @@ class DroneFlightController:
 
 **Required files:**
 - `drone_agent.py`: Your controller class, at the zip root (REQUIRED)
-- `requirements.txt`: Additional pip packages (optional, must be on the [whitelist](#docker-whitelist))
+- `requirements.txt`: Additional packages (optional, must be on the [whitelist](#docker-whitelist))
 - Model artifacts using a supported extension: `.bin`, `.ckpt`, `.h5`, `.json`, `.npy`, `.npz`, `.onnx`, `.pb`, `.pkl`, `.pt`, `.pth`, `.safetensors`, `.tflite`, `.weights`, or `.zip`
 
 `swarm model package` recursively includes only those artifacts plus root-level `drone_agent.py` and `requirements.txt`. Arbitrary helper `.py`, YAML, TOML, and other files are not packaged; keep required logic in `drone_agent.py` and required configuration in a supported model artifact.
@@ -206,7 +206,14 @@ For Office Interceptor, the contract is `rgb` (256, 256, 3) plus a 127-float `st
 
 ## CLI
 
-Swarm includes a CLI for the full development workflow. Install with `pip install -e .`, then use `swarm <command>`.
+Swarm includes a CLI for the full development workflow. Install it from the repository root, then use `swarm <command>`.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
 
 ### Check Environment
 
@@ -529,7 +536,7 @@ matplotlib, pyyaml, tqdm, einops, tensorboard, h5py, msgpack,
 swarm-bullet3, swarm-drone-gym
 ```
 
-Version pins are fine; pip option lines, URL/path installs (`git+`, `http://`, `https://`, `file:`, `./`, or an absolute path), and PEP 508 `@` direct references are rejected.
+Version pins are fine; installer option lines, URL/path installs (`git+`, `http://`, `https://`, `file:`, `./`, or an absolute path), and PEP 508 `@` direct references are rejected.
 
 Need a package not on this list? Ask in [Discord](https://discord.gg/8dPqPDw7GC).
 

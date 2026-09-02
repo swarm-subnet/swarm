@@ -20,7 +20,7 @@ from ._shared import *
 
 def _set_private_marker(model_fp: Path, is_private: bool) -> None:
     """Mark a stored model as private so the evaluator refuses to run a networked
-    pip phase with the private bytes mounted."""
+    dependency install with the private bytes mounted."""
     marker = model_fp.with_suffix(".private")
     if is_private:
         marker.touch()

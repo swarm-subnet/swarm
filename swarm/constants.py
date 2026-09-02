@@ -149,7 +149,7 @@ def default_docker_worker_count(*, maximum: int | None = None) -> int:
 # otherwise every complete CPU group becomes a worker slot.
 N_DOCKER_WORKERS = default_docker_worker_count()
 
-# Docker pip package whitelist (approved packages for miner requirements.txt)
+# Docker package whitelist (approved packages for miner requirements.txt)
 DOCKER_PIP_WHITELIST = {
     "torch", "torchvision", "torchaudio",
     "onnx", "onnxruntime", "onnxruntime-gpu",

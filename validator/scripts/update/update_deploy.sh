@@ -70,7 +70,30 @@ fi
 }
 
 ###############################################################################
-# 2. Locate repo root and virtualenv
+# 2. Ensure uv is available
+#
+# Runs before the repo is touched: a machine that predates the uv migration has
+# no uv, and an unattended update that failed after `git reset` would leave the
+# local version matching the remote, so the watcher would never retry.
+###############################################################################
+banner "Checking uv"
+
+UV_VERSION="0.12.8"
+export PATH="$HOME/.local/bin:$PATH"
+
+if ! uv --version >/dev/null 2>&1; then
+  echo "[INFO] uv not found – installing $UV_VERSION"
+  curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" \
+    | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
+fi
+
+uv --version >/dev/null 2>&1 || {
+  echo "[ERR] uv bootstrap failed – aborting before the repository is modified." >&2
+  exit 1
+}
+
+###############################################################################
+# 3. Locate repo root and virtualenv
 ###############################################################################
 banner "Locating repository root & virtualenv"
 
@@ -86,20 +109,26 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   bash "$REPO_ROOT/validator/scripts/main/setup.sh"
 fi
 
+# setup.sh creates the venv relative to its own working directory, so confirm it
+# landed where this script expects rather than failing later at activation.
+[[ -x "$PYTHON_BIN" ]] || {
+  echo "[ERR] Virtualenv still missing at $PYTHON_BIN after setup." >&2
+  exit 1
+}
+
 ###############################################################################
-# 3. Update repository
+# 4. Update repository
 ###############################################################################
 banner "Pulling latest code from origin/main"
 git -C "$REPO_ROOT" fetch --quiet origin main
 git -C "$REPO_ROOT" reset --hard origin/main
 
 ###############################################################################
-# 4. Re‑install package inside venv & restart validator
+# 5. Re‑install package inside venv & restart validator
 ###############################################################################
 banner "Installing updated Python package"
 source "$VENV_DIR/bin/activate"
-pip install --quiet --upgrade pip
-pip install --quiet -e "$REPO_ROOT"
+uv pip install --quiet -e "$REPO_ROOT"
 
 banner "Restarting PM2 process: $PROCESS_NAME"
 if ! pm2 restart "$PROCESS_NAME" &>/dev/null; then

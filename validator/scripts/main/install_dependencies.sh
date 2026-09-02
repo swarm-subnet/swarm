@@ -19,6 +19,8 @@
 # install_dependencies.sh - Install ONLY system dependencies for validator
 set -e
 
+UV_VERSION="0.12.8"
+
 handle_error() {
   echo -e "\e[31m[ERROR]\e[0m $1" >&2
   exit 1
@@ -63,6 +65,18 @@ install_system_dependencies() {
     || handle_error "Failed to install system dependencies"
 }
 
+install_uv() {
+  if command -v uv &>/dev/null && uv --version &>/dev/null; then
+    info_msg "uv is already installed. Skipping installation."
+    return
+  fi
+
+  info_msg "Installing uv $UV_VERSION..."
+  curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" \
+    | sudo env UV_INSTALL_DIR="/usr/local/bin" UV_NO_MODIFY_PATH=1 sh \
+    || handle_error "Failed to install uv"
+}
+
 install_pm2() {
   if command -v pm2 &>/dev/null; then
     info_msg "PM2 is already installed. Checking if it works..."
@@ -87,7 +101,10 @@ verify_installation() {
   
   # Check Python
   python3.11 --version || handle_error "Python 3.11 verification failed"
-  
+
+  # Check uv
+  uv --version || handle_error "uv verification failed"
+
   # Check PM2
   pm2 --version || handle_error "PM2 verification failed"
   
@@ -97,6 +114,7 @@ verify_installation() {
 main() {
   info_msg "Installing validator system dependencies..."
   install_system_dependencies
+  install_uv
   install_pm2
   verify_installation
   
