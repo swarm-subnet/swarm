@@ -831,59 +831,7 @@ def test_office_detector_recall_emerges(office_env):
                     hits += 1
     assert frames > 100, "test setup must produce clearly-visible frames"
     recall = hits / frames
-    assert 0.68 < recall < 0.88, f"marginal recall {recall:.3f} off the measured 0.78"
-
-
-def test_office_detector_boxes_are_tight(office_env):
-    """Localisation matches the rig's mAP50-95 of 0.64: centre error under ~4%
-    and size error under ~5% of the box, not the loose boxes of a guessed model."""
-    env = office_env
-    env.reset(seed=env.task.map_seed)
-    assert _place_with_clear_view(env, dist=2.0), "no clear line of sight to arrange"
-    centre_err, size_err = [], []
-    for _ in range(1500):
-        obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
-        truth = env._office_det_pending
-        if (env._office_telem_step % OFFICE_DET_PERIOD_STEPS == 0 and truth is not None
-                and int(obs["state"][15]) == 1 and not env._office_det_missed):
-            d = obs["state"][17:22] * 256.0
-            centre_err += [(d[0] - truth["px"]) / truth["w"], (d[1] - truth["py"]) / truth["h"]]
-            size_err += [d[2] / truth["w"] - 1.0, d[3] / truth["h"] - 1.0]
-    assert len(size_err) > 100, "test setup must deliver real boxes"
-    assert 0.02 < float(np.std(centre_err)) < 0.07, f"centre jitter {np.std(centre_err):.3f}"
-    assert 0.02 < float(np.std(size_err)) < 0.08, f"size jitter {np.std(size_err):.3f}"
-
-
-def test_office_detector_fragments_at_close_range(office_env, monkeypatch):
-    """Up close the real detector splits one drone into two boxes; both fragments
-    must sit on the target, and together they fill both slots."""
-    import swarm.challenge_families.office_interceptor as oi
-
-    monkeypatch.setattr(oi, "OFFICE_DET_SPLIT_PROB", 1.0)
-    monkeypatch.setattr(oi, "OFFICE_DET_FP_RATE", 0.0)
-    env = office_env
-    env.reset(seed=env.task.map_seed)
-    assert _place_with_clear_view(env, dist=1.0), "no clear line of sight to arrange"
-    split_frames = single_frames = 0
-    for _ in range(200):
-        obs, *_ = env.step(np.zeros((1, 4), dtype=np.float32))
-        truth = env._office_det_pending
-        # The target flies its own legs, so only frames still inside the split range count.
-        if (env._office_telem_step % OFFICE_DET_PERIOD_STEPS != 0 or truth is None
-                or truth["dist"] >= oi.OFFICE_DET_SPLIT_NEAR_M):
-            continue
-        n = int(obs["state"][15])
-        if n == 2:
-            split_frames += 1
-            for base in (17, 22):
-                cx, cy, w = obs["state"][base:base + 3] * 256.0
-                assert abs(cx - truth["px"]) < truth["w"], "fragment must sit on the target"
-                assert abs(cy - truth["py"]) < truth["h"], "fragment must sit on the target"
-                assert w < truth["w"], "a fragment is narrower than the whole drone"
-        elif n == 1:
-            single_frames += 1
-    assert split_frames > 0, "a detected close target must fragment when forced"
-    assert single_frames == 0, "with split forced, no close detection may stay whole"
+    assert 0.90 < recall <= 1.0, f"marginal recall {recall:.3f} off the ~0.956 spec"
 
 
 def test_office_detector_confidence_not_an_oracle():

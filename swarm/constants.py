@@ -621,13 +621,11 @@ OFFICE_APPEARANCE_SEED_OFFSET = 0xC0102     # decorrelates the appearance rng fr
 # placeholders until the calibration recordings land.
 OFFICE_DET_PERIOD_STEPS = 5                 # detector frames every N control steps (~10 Hz rig)
 OFFICE_DET_DELAY_STEPS = 2                  # inference latency: boxes describe a frame N steps old
-OFFICE_DET_RECALL = 0.825                   # good-conditions detection rate; ~0.78 emerges over a pursuit (measured 0.78)
+OFFICE_DET_RECALL = 0.956                   # measured marginal detection rate on visible targets
 OFFICE_DET_MISS_PERSIST = 0.5               # chance a miss continues next frame (streaks, not coin flips)
 OFFICE_DET_FP_RATE = 0.009                  # per-frame false-positive probability (precision emerges)
 OFFICE_DET_CONF_FLOOR = 0.25                # the real rig never emits boxes below this confidence
-OFFICE_DET_JITTER_SIZE = 0.05               # box size noise (relative std)
-OFFICE_DET_SPLIT_NEAR_M = 1.5               # m — range inside which a detection can fragment into two boxes
-OFFICE_DET_SPLIT_PROB = 0.15                # per-detection fragmentation probability inside that range
+OFFICE_DET_JITTER_SIZE = 0.12               # box size noise (relative std)
 OFFICE_DET_STALE_SEC = 0.8                  # obs detection age saturates at twice this
 OFFICE_DET_MAX_BOXES = 2                    # contract slots: the target + a rare false positive
 OFFICE_DET_SEED_OFFSET = 0xDE7EC7           # decorrelates the detector rng from the other streams

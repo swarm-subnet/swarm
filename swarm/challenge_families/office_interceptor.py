@@ -46,8 +46,6 @@ from swarm.constants import (
     OFFICE_DET_PERIOD_STEPS,
     OFFICE_DET_RECALL,
     OFFICE_DET_SEED_OFFSET,
-    OFFICE_DET_SPLIT_NEAR_M,
-    OFFICE_DET_SPLIT_PROB,
     OFFICE_DET_STALE_SEC,
     OFFICE_DRIFT_SEED_OFFSET,
     OFFICE_HEADING_SEED_OFFSET,
@@ -191,8 +189,7 @@ _DET_EDGE_MARGIN = 0.1   # the outer frame band where detection weakens...
 _DET_EDGE_FACTOR = 0.85  # ...by this factor
 _DET_CONF_TOP = 0.97     # ceiling of sampled confidences
 _DET_FP_ANCHOR_P = 0.7   # false positives favor fixed scene spots, like real YOLO ghosts
-_DET_CENTER_JITTER_FRAC = 0.03  # center noise as a fraction of box size, like real YOLO
-_DET_SPLIT_FRAC = 0.6           # each fragment of a split detection keeps this much of the width
+_DET_CENTER_JITTER_FRAC = 0.15  # center noise as a fraction of box size, like real YOLO
 
 
 def _det_marginal_to_eval_p(marginal: float, persist: float) -> float:
@@ -964,20 +961,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                 detected = rng.random() < prob
             env._office_det_missed = not detected
             if detected:
-                pieces = [(0.0, 1.0)]
-                if (truth["dist"] < OFFICE_DET_SPLIT_NEAR_M
-                        and rng.random() < OFFICE_DET_SPLIT_PROB):
-                    # Up close the rig breaks one drone into side-by-side fragments.
-                    pieces = [(-0.25, _DET_SPLIT_FRAC), (0.25, _DET_SPLIT_FRAC)]
-                for offset, frac in pieces:
-                    w_true = truth["w"] * frac
-                    cx = (truth["px"] + offset * truth["w"]
-                          + rng.normal(0.0, _DET_CENTER_JITTER_FRAC * w_true))
-                    cy = truth["py"] + rng.normal(0.0, _DET_CENTER_JITTER_FRAC * truth["h"])
-                    w = w_true * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
-                    h = truth["h"] * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
-                    conf = _det_true_conf(rng, truth["vis"], w_true)
-                    boxes.append((cx, cy, w, h, conf))
+                cx = truth["px"] + rng.normal(0.0, _DET_CENTER_JITTER_FRAC * truth["w"])
+                cy = truth["py"] + rng.normal(0.0, _DET_CENTER_JITTER_FRAC * truth["h"])
+                w = truth["w"] * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
+                h = truth["h"] * (1.0 + rng.normal(0.0, OFFICE_DET_JITTER_SIZE))
+                conf = _det_true_conf(rng, truth["vis"], truth["w"])
+                boxes.append((cx, cy, w, h, conf))
         if rng.random() < OFFICE_DET_FP_RATE:
             boxes.append(_det_fp_box(rng, env._office_det_fp_anchors, env._office_det_focal))
         # The real rig sorts by confidence; slot order must not reveal which is real.
