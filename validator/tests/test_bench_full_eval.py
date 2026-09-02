@@ -31,6 +31,7 @@ from types import SimpleNamespace
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.benchmark.engine_parts.seeds import family_bench_groups
 from swarm.constants import N_DOCKER_WORKERS
 
 pytestmark = pytest.mark.full
@@ -121,6 +122,7 @@ def test_ram_estimates_are_defined_per_group():
         "type4_village": 2200.0,
         "type3_mountain": 2300.0,
         "type6_forest": 2400.0,
+        "type7_office": 1900.0,
     }
 
 
@@ -247,16 +249,27 @@ def test_select_next_batch_index_mixes_groups_fairly():
 
 def test_save_and_load_type_seeds(tmp_path):
     seed_file = tmp_path / "seeds.json"
-    payload = {group: [i + 1] for i, group in enumerate(bench_full_eval.BENCH_GROUP_ORDER)}
+    groups = family_bench_groups("cf_autopilot")
+    payload = {group: [i + 1] for i, group in enumerate(groups)}
     bench_full_eval._save_type_seeds(seed_file, payload, family_id="cf_autopilot")
     assert bench_full_eval._load_type_seeds(seed_file, family_id="cf_autopilot") == payload
 
 
 def test_load_type_seeds_accepts_legacy_payload(tmp_path):
     seed_file = tmp_path / "legacy-seeds.json"
-    payload = {group: [i + 1] for i, group in enumerate(bench_full_eval.BENCH_GROUP_ORDER)}
+    groups = family_bench_groups("cf_search_and_rescue")
+    payload = {group: [i + 1] for i, group in enumerate(groups)}
     seed_file.write_text(json.dumps(payload))
     assert bench_full_eval._load_type_seeds(seed_file, family_id="cf_search_and_rescue") == payload
+
+
+def test_a_family_only_loads_its_own_groups():
+    """`type7_office` belongs to the office family alone, so a seed file loaded for
+    another family must not carry it — the reason the two tests above ask
+    `family_bench_groups` rather than the global order."""
+    for family_id in ("cf_autopilot", "cf_search_and_rescue"):
+        assert "type7_office" not in family_bench_groups(family_id)
+    assert "type7_office" in bench_full_eval.BENCH_GROUP_ORDER
 
 
 def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
