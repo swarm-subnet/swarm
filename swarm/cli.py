@@ -1,3 +1,20 @@
+# The MIT License (MIT)
+# Copyright © 2026 Swarm
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from __future__ import annotations
 
 import argparse
@@ -881,14 +898,16 @@ def _check_repo_readme(repo_root: Path) -> tuple[bool, str]:
 
     The backend rejects a submission whose README hash does not match, and the
     rejection is silent, so catch it here before the miner commits on-chain."""
-    from swarm.utils.github import REQUIRED_README_HASH
+    from swarm.utils.github import ACCEPTED_README_HASHES, REQUIRED_README_HASH
 
     readme = repo_root / "README.md"
     if not readme.is_file():
         return False, "missing (run `swarm repo package` to write it)"
     digest = hashlib.sha256(readme.read_bytes()).hexdigest()
-    if digest != REQUIRED_README_HASH:
+    if digest not in ACCEPTED_README_HASHES:
         return False, "does not match the template; do not edit, reformat, or change its line endings"
+    if digest != REQUIRED_README_HASH:
+        return True, "matches a previous template; run `swarm repo package` to refresh it"
     return True, "matches template"
 
 

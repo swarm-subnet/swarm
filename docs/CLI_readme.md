@@ -7,13 +7,16 @@ Command-line interface for benchmarking, testing, and packaging drone navigation
 ## Install
 
 ```bash
-pip install -e .
+uv venv
+source .venv/bin/activate
+uv pip install -e .
 ```
 
 Or install from PyPI (the published release may lag this repo):
 
 ```bash
-pip install swarm-sotapilot
+uv tool install swarm-sotapilot
+uv tool update-shell
 ```
 
 Then use `swarm <command>` directly. Alternatively, run without installation:
