@@ -45,7 +45,11 @@ from swarm.constants import (
     OFFICE_TELEM_DELAY_STEPS,
     OFFICE_TELEM_PERIOD_STEPS,
 )
-from swarm.challenge_families.office_interceptor import OfficeInterceptorChallengeFamily
+from swarm.challenge_families import office_interceptor as oi
+from swarm.challenge_families.office_interceptor import (
+    OfficeInterceptorChallengeFamily,
+    office_target_silhouette,
+)
 from swarm.core.maps.office import OFFICE_CEILING_M, OFFICE_X_RANGE, OFFICE_Y_RANGE
 from swarm.core.moving_drone import rc_sticks_to_world_velocity
 from swarm.domain_model import get_policy_interface_contract
@@ -452,8 +456,6 @@ def _packets(env, steps, action):
 def test_office_velocity_reading_carries_a_bias(monkeypatch):
     """Optical-flow velocity drifts: the reported speed sits off the truth by an
     offset that persists packet to packet and is dealt per episode."""
-    import swarm.challenge_families.office_interceptor as oi
-
     quant = oi._SNAP_QUANT.copy()
     quant[3:6] = 1e-9
     noise = oi._SNAP_NOISE_STD.copy()
@@ -482,8 +484,6 @@ def test_office_velocity_reading_carries_a_bias(monkeypatch):
 def test_office_tof_has_outliers(office_env, monkeypatch):
     """A ToF packet occasionally returns a spurious range; when forced on every
     packet the readings scatter far beyond the noise band."""
-    import swarm.challenge_families.office_interceptor as oi
-
     env = office_env
     monkeypatch.setattr(oi, "OFFICE_TELEM_TOF_OUTLIER_PROB", 1.0)
     env.reset(seed=env.task.map_seed)
@@ -1082,8 +1082,6 @@ def test_office_airframe_is_deterministic():
 def test_office_target_size_varies_per_episode():
     """The silhouette is dealt per episode, so box size cannot be inverted into
     distance with a memorised constant."""
-    from swarm.challenge_families.office_interceptor import office_target_silhouette
-
     widths = [office_target_silhouette(s)[0] for s in range(200)]
     assert min(widths) < OFFICE_TARGET_W_MIN_M + 0.02, "the band's low end must be dealt"
     assert max(widths) > OFFICE_TARGET_W_MAX_M - 0.02, "the band's high end must be dealt"
