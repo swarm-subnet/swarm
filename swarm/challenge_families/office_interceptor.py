@@ -509,7 +509,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         zs = tuple(z * env._office_scale[2] for z in _NAV_Z_LEVELS)
         # Keyed on the exact scale the geometry was built from: a rounded key could
         # hand one room's component labels to a slightly different room.
-        key = tuple(env._office_scale)
+        # The furniture moves with the seed, so the seed is part of the key too.
+        key = (int(getattr(env.task, "map_seed", 0)), tuple(env._office_scale))
         if _NAV_MAIN is not None and _NAV_MAIN[0] == key:
             return _NAV_MAIN[1]
         xs = np.arange(xr[0] + 0.5, xr[1] - 0.5, _NAV_PITCH)
@@ -605,6 +606,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_y_range = tuple(map_info["y_range"])
         env._office_scale = tuple(map_info["scale"])
         env._office_ceiling_m = float(map_info["ceiling_m"])
+        env._office_layout = tuple(map_info["layout"])
         # Spawn-probe obstacles: every map body except the floor the drone rests on.
         env._office_map_uids = tuple(int(u) for name, u in sorted(map_info["bodies"].items())
                                      if name != "floor") + (int(map_info["window_plug"]),)

@@ -14,7 +14,7 @@ Your drone is a Tello-class quadcopter (87 g, prop guards) inside an 18 m office
 |---|---|
 | Family ID | `cf_interceptor_office` |
 | Miner-controlled drones | 1 |
-| Map | Office interior, nominally 18 m × 7.6 m × 3 m; every axis is stretched 2–5% per episode |
+| Map | Office interior, nominally 18 m × 7.6 m × 3 m; every axis is stretched 2–5% per episode, and the 41 pieces of furniture are rearranged per episode by seeded rules (wall units flush to walls, desk sets in rows, the lounge as a group, doors and walkways kept clear) |
 | Control rate | 50 Hz (dt = 1/50 s) |
 | Episode horizon | 60 s (3,000 control steps) |
 | Speed cap | ~3.0 m/s per axis (Tello slow mode), dealt ±18% per episode along with the dead zone, slew rate and motor lag |

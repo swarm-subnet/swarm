@@ -688,7 +688,9 @@ def test_office_spawn_rejects_sealed_room_and_floor_objects(office_env):
     assert not fam._nav_in_main(env, np.array([8.0, 6.2, 1.4]))
     assert fam._nav_in_main(env, np.array([8.0, 3.0, 1.4]))
     # A floor point on top of a flat object: only the narrowphase probe sees it.
-    assert not fam._point_is_clear(env, np.array([8.23, 4.15, 0.05]), floor=True)
+    # The low lounge table stands wherever this seed's layout put it.
+    _, x, y, _, _ = next(row for row in env._office_layout if row[0] == "B2b_final")
+    assert not fam._point_is_clear(env, np.array([x, y, 0.05]), floor=True)
 
 
 def test_office_catch_is_physical_contact(office_env):
