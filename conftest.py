@@ -117,15 +117,25 @@ def setuptools_config() -> dict:
         return tomllib.load(fh).get("tool", {}).get("setuptools", {})
 
 
+_WHEEL_SOURCE_JUNK = shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.egg-info", "build")
+
+
 def wheel_source_ignore():
     """What never belongs in the copy the wheel is built from.
 
-    `.venv` earns its place here: the install instructions create one in the
-    repository root, its `bin/python` points at the host interpreter, and
-    copytree follows that symlink into a path a container cannot see."""
-    return shutil.ignore_patterns(
-        ".git", "__pycache__", "*.pyc", "*.egg-info", "build", ".venv", "venv",
-    )
+    Virtualenvs are recognised by the `pyvenv.cfg` they contain rather than by
+    name: the setup scripts make `validator_env` and `miner_env`, the install
+    steps make `.venv`, and .gitignore lists several more. Their `bin/python`
+    points at the interpreter that created them, so copying one from a mounted
+    repository into a container follows a symlink to a path that is not there."""
+    def ignore(directory, names):
+        ignored = set(_WHEEL_SOURCE_JUNK(directory, names))
+        for name in names:
+            if (Path(directory) / name / "pyvenv.cfg").is_file():
+                ignored.add(name)
+        return ignored
+
+    return ignore
 
 
 @pytest.fixture(scope="session")
@@ -140,7 +150,12 @@ def wheel_contents(tmp_path_factory) -> set[str]:
 
     repo_root = Path(__file__).resolve().parent
     source = tmp_path_factory.mktemp("wheel_src") / "repo"
-    shutil.copytree(repo_root, source, ignore=wheel_source_ignore())
+    # A link pointing outside the repository cannot be part of a wheel, and letting
+    # copytree fail on one turns an unrelated stray file into an error here.
+    shutil.copytree(
+        repo_root, source,
+        ignore=wheel_source_ignore(), ignore_dangling_symlinks=True,
+    )
     out = tmp_path_factory.mktemp("wheel_out")
     result = subprocess.run(
         [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],
