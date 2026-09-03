@@ -130,7 +130,11 @@ def wheel_contents(tmp_path_factory) -> set[str]:
     source = tmp_path_factory.mktemp("wheel_src") / "repo"
     shutil.copytree(
         repo_root, source,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.egg-info", "build"),
+        ignore=shutil.ignore_patterns(
+            ".git", "__pycache__", "*.pyc", "*.egg-info", "build",
+            ".venv", "venv", "*_env", ".ruff_cache", ".pytest_cache",
+        ),
+        ignore_dangling_symlinks=True,
     )
     out = tmp_path_factory.mktemp("wheel_out")
     result = subprocess.run(
