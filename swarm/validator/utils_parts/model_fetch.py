@@ -19,8 +19,8 @@ from ._shared import *
 
 
 def _set_private_marker(model_fp: Path, is_private: bool) -> None:
-    """Mark a stored model as private so the evaluator refuses to run a networked
-    dependency install with the private bytes mounted."""
+    """Mark a stored model as private so the bytes are never kept for forensics
+    and are dropped from disk once their task is done."""
     marker = model_fp.with_suffix(".private")
     if is_private:
         marker.touch()
@@ -141,6 +141,9 @@ async def _ensure_models_from_backend(
                 paths[uid] = (model_fp, github_url)
                 continue
             model_fp.unlink(missing_ok=True)
+            # The marker goes down before the bytes so a crash mid-fetch never leaves
+            # unmarked private bytes behind.
+            _set_private_marker(model_fp, is_private)
             if is_private:
                 ok = await _download_private_model(self, uid, model_hash, family_id, model_fp)
             else:
@@ -148,7 +151,6 @@ async def _ensure_models_from_backend(
                     github_url, artifact_path, model_hash, family_id, model_fp, uid
                 )
             if ok and model_fp.is_file():
-                _set_private_marker(model_fp, is_private)
                 paths[uid] = (model_fp, github_url)
             else:
                 _set_private_marker(model_fp, False)

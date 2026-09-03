@@ -273,8 +273,16 @@ def prepare_model_image(
         # contributes dependencies of its own
         return None
     image_tag = model_image_tag(sha256sum(model_path))
-    if not model_path.with_suffix(".private").exists() and _image_exists(image_tag):
+    if _image_exists(image_tag):
         return image_tag
+
+    try:
+        requirements = _declared_requirements(model_path)
+    except (zipfile.BadZipFile, OSError) as exc:
+        bt.logging.warning(f"UID {uid}: cannot read the archive for its dependencies: {exc}")
+        return None
+    if requirements is None:
+        return None
 
     tmpdir = None
     container_name = f"swarm_pip_{uid}_{int(time.time() * 1000)}"
@@ -292,27 +300,13 @@ def prepare_model_image(
             run_image = self._resolve_base_image_for_key(runtime_profile.image_key)
 
         tmpdir = tempfile.mkdtemp()
-        os.chmod(tmpdir, 0o755)
+        os.chmod(tmpdir, 0o700)
+        # Only the requirements file enters this container: it has network, the model never does.
         submission_dir = Path(tmpdir) / "submission"
         submission_dir.mkdir()
-        os.chmod(submission_dir, 0o755)
-
-        _extract_submission(model_path, submission_dir)
-
-        # The archive may carry a .pip_done of its own; left in place the wait below
-        # would see it immediately and commit the image mid-install.
-        (submission_dir / ".pip_done").unlink(missing_ok=True)
-
+        os.chmod(submission_dir, 0o700)
         miner_requirements = submission_dir / "requirements.txt"
-        if not miner_requirements.exists():
-            return None
-
-        if model_path.with_suffix(".private").exists():
-            bt.logging.warning(
-                f"UID {uid}: private model with requirements.txt rejected "
-                "(no pre-lockdown dependency install for private submissions)"
-            )
-            return None
+        miner_requirements.write_bytes(requirements)
 
         if not self._validate_requirements(miner_requirements, uid):
             bt.logging.warning(f"UID {uid}: requirements.txt rejected during image build")
@@ -1301,6 +1295,23 @@ async def _ensure_host_speed_factor(self, worker_count: int):
     return await _run_host_baseline_calibration(self, requested)
 
 
+def _declared_requirements(model_path: Path) -> Optional[bytes]:
+    """The submission's requirements.txt read straight from the archive, or None.
+
+    Mirrors the flattening below: a single wrapping directory is looked through.
+    """
+    with zipfile.ZipFile(model_path, "r") as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        if "requirements.txt" in names:
+            return zf.read("requirements.txt")
+        roots = {n.split("/", 1)[0] for n in names if "/" in n}
+        if len(roots) == 1 and all("/" in n for n in names):
+            nested = f"{next(iter(roots))}/requirements.txt"
+            if nested in names:
+                return zf.read(nested)
+    return None
+
+
 def _extract_submission(model_path: Path, submission_dir: Path) -> None:
     """Extract the miner's zip, flattening a single wrapping directory if present."""
     with zipfile.ZipFile(model_path, "r") as zf:
@@ -1338,12 +1349,12 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     tmpdir = tempfile.mkdtemp()
     ctx.tmpdir = tmpdir  # set before chown/chmod so the outer finally still cleans up
     os.chown(tmpdir, current_uid, current_gid)
-    os.chmod(tmpdir, 0o755)
+    os.chmod(tmpdir, 0o700)
 
     submission_dir = Path(tmpdir) / "submission"
     submission_dir.mkdir(exist_ok=True)
     os.chown(submission_dir, current_uid, current_gid)
-    os.chmod(submission_dir, 0o755)
+    os.chmod(submission_dir, 0o700)
 
     try:
         if ctx.is_model_graph:
@@ -1375,7 +1386,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     for f in submission_dir.iterdir():
         if f.is_file():
             os.chown(f, current_uid, current_gid)
-            os.chmod(f, 0o644)
+            os.chmod(f, 0o600)
 
     ctx.submission_dir = submission_dir
     ctx.current_uid = current_uid

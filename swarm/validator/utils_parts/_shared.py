@@ -50,7 +50,6 @@ from swarm.core.submission_policy import (
 from swarm.protocol import PolicyRef
 from swarm.utils.github import (
     build_raw_urls,
-    check_readme_matches,
     download_from_github,
     validate_github_url,
 )

@@ -65,7 +65,7 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_cli.py": ["REPO_ROOT"],
     "tests/test_docker_evaluator.py": ["REPO_ROOT", "REPO_ROOT"],
     "tests/test_domain_model_naming.py": ["REPO_ROOT"],
-    "tests/test_github.py": ["REPO_ROOT"] * 5,
+    "tests/test_github.py": ["REPO_ROOT"] * 3,
     "tests/test_scripts_shell.py": ["REPO_ROOT"],
     "tests/test_submission_manifest.py": ["REPO_ROOT", "SIBLING"],
     "tests/test_swarm_autopilot_regression.py": ["validator/tests"],
