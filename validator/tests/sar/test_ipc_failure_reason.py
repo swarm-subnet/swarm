@@ -19,11 +19,11 @@
 process IPC round-trip via _pack_validation_result / _unpack_validation_result."""
 from __future__ import annotations
 
-from swarm.protocol import FailureReason, ValidationResult
 from swarm.benchmark.engine_parts.workers import (
     _pack_validation_result,
     _unpack_validation_result,
 )
+from swarm.protocol import FailureReason, ValidationResult
 
 
 def test_pack_widens_to_five_tuple():

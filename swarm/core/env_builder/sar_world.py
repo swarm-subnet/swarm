@@ -22,12 +22,12 @@ from typing import Optional, Tuple
 
 import pybullet as p
 
-from .body_tagger import BodyTagger
+from swarm.constants import SAR_MAX_VICTIM_DISTANCE_M
+
 from .sar_tagging import build_and_tag_map, enumerate_bodies, tag_world_after_build
 from .sar_types import SafetyPatch, SARWorld
 from .search_clue import sample_search_centre
 from .spawn_pipeline import SARSpawnError, find_spawn_xy
-from swarm.constants import SAR_MAX_VICTIM_DISTANCE_M
 from .victim import select_victim_split_dir, spawn_victim, terrain_slope_deg, victim_scale_for
 
 

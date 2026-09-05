@@ -79,7 +79,6 @@ If yes, please explain how user-experience changes with this pull request
 (e.g. flight behavior, CLI usage, install steps, benchmark scoring).
 -->
 
-
 - [ ] Scoring, weights or epoch behavior changes
 - [ ] Protocol version bumped - validators and miners have to match
 

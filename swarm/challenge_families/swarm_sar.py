@@ -45,7 +45,7 @@ from swarm.core.env_builder.platform import (
 from swarm.core.env_builder.sar_world import build_sar_world
 from swarm.core.env_builder.search_clue import sample_search_centre
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError
-from swarm.protocol import FailureReason, SCHEMA_VERSION
+from swarm.protocol import SCHEMA_VERSION, FailureReason
 from swarm.validator.reward import (
     PARTICIPATION_REASONS,
     PARTICIPATION_REWARD,

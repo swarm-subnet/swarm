@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import math
 import time
 
 import pybullet as p
@@ -25,7 +24,6 @@ import pytest
 
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.core.env_builder.spawn_pipeline import (
-    MAX_SPAWN_ATTEMPTS,
     SARSpawnError,
     find_spawn_xy,
 )

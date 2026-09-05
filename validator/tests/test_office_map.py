@@ -24,7 +24,6 @@ import pytest
 from swarm.core.maps.office import OFFICE_CEILING_M, build_office_map
 from swarm.core.maps.office.builder import office_scale
 
-
 SEED = 0
 SCALE = office_scale(SEED)
 

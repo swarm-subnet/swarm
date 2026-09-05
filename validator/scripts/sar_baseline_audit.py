@@ -40,11 +40,9 @@ import time
 from collections import Counter
 
 import numpy as np
-import pybullet as p
 
-from swarm.constants import HORIZON_SEC, SAR_DWELL_SEC, SAR_HOVER_BAND, SPEED_LIMIT
+from swarm.constants import HORIZON_SEC, SAR_HOVER_BAND, SPEED_LIMIT
 from swarm.protocol import MapTask
-
 
 CHALLENGE_TYPES = {
     "city":      1,

@@ -18,25 +18,26 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-import copy
-import time
-import numpy as np
-import asyncio
 import argparse
+import asyncio
+import copy
 import os
 import threading
-import bittensor as bt
-from typing import List, Union
+import time
 from traceback import print_exception
-from swarm.base.neuron import BaseNeuron
-from swarm.constants import WANDB_IDLE_RESTART_SEC
-from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker, tracker_call
-from swarm.base.utils.weight_utils import (
-    process_weights_for_netuid,
-    convert_weights_and_uids_for_emit,
-)
-from swarm.utils.config import add_validator_args
+from typing import List, Union
 
+import bittensor as bt
+import numpy as np
+
+from swarm.base.neuron import BaseNeuron
+from swarm.base.utils.weight_utils import (
+    convert_weights_and_uids_for_emit,
+    process_weights_for_netuid,
+)
+from swarm.constants import WANDB_IDLE_RESTART_SEC
+from swarm.utils.config import add_validator_args
+from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker, tracker_call
 
 WEIGHT_SETTER_POLL_SEC = float(os.getenv("SWARM_WEIGHT_SETTER_POLL_SEC", "60"))
 WEIGHT_SETTER_RETRY_SEC = float(os.getenv("SWARM_WEIGHT_SETTER_RETRY_SEC", "300"))

@@ -40,10 +40,10 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import sys
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import urlparse
 
 os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")

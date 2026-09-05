@@ -173,7 +173,7 @@ Only Autopilot has them. When a slot is moving, the pad follows a **circular, li
 
 Per seed:
 
-```
+```text
 final_score = clamp01(0.45 · success_term + 0.45 · time_term + 0.10 · safety_term)
 ```
 
@@ -185,7 +185,7 @@ final_score = clamp01(0.45 · success_term + 0.45 · time_term + 0.10 · safety_
 
 The time budget is search-aware:
 
-```
+```text
 target_time = 1.06 × ( dist(start, goal) / 3.0  +  0.75 · π · R² / (5.1 · 3.0)  +  2.0 )
 ```
 

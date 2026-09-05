@@ -21,9 +21,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from swarm.protocol import (
+    SCHEMA_VERSION,
     FailureReason,
     MapTask,
-    SCHEMA_VERSION,
     normalize_version,
 )
 from swarm.validator.docker.docker_evaluator_parts.batch import (

@@ -25,7 +25,6 @@ import sys
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Sequence
 
-
 U16_MAX = 65535.0
 
 

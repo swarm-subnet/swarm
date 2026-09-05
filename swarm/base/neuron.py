@@ -18,18 +18,19 @@
 
 import contextlib
 import copy
-import bittensor as bt
-from abc import ABC, abstractmethod
-
-# Sync calls set weights and also resyncs the metagraph.
-from swarm.utils.config import check_config, add_args, config
-from swarm.utils.misc import ttl_get_block
+import re
 import time
 import traceback
+from abc import ABC, abstractmethod
+
+import bittensor as bt
 import requests
-import re
-from swarm import version_url
-from swarm import __version__, __spec_version__
+
+from swarm import __spec_version__, __version__, version_url
+
+# Sync calls set weights and also resyncs the metagraph.
+from swarm.utils.config import add_args, check_config, config
+from swarm.utils.misc import ttl_get_block
 from swarm.validator.runtime_telemetry import tracker_call
 
 
@@ -172,7 +173,7 @@ class BaseNeuron(ABC):
                     error=traceback.format_exc(),
                 )
                 bt.logging.error(
-                    "Coundn't sync metagraph or set weights: {}".format(
+                    "Couldn't sync metagraph or set weights: {}".format(
                         traceback.format_exc()
                     )
                 )

@@ -30,7 +30,7 @@ from swarm.constants import (
 from swarm.core.env_builder.platform_placement import build_autopilot_world
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
-from swarm.protocol import FailureReason, SCHEMA_VERSION
+from swarm.protocol import SCHEMA_VERSION, FailureReason
 from swarm.validator.reward import (
     PARTICIPATION_REWARD,
     _calculate_safety_term,
@@ -40,7 +40,6 @@ from swarm.validator.reward import (
 )
 
 from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool, interleave
-
 
 AUTOPILOT_GOAL_REACH_RADIUS_M = 1.0
 

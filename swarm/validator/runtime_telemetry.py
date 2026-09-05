@@ -23,8 +23,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 STATE_DIR = Path(__file__).resolve().parent.parent / "state"
 RUNTIME_SNAPSHOT_FILE = STATE_DIR / "validator_runtime.json"

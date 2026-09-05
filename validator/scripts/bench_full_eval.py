@@ -32,7 +32,8 @@ _repo_root = str(_Path(__file__).resolve().parents[2])
 if _repo_root not in _sys.path:
     _sys.path.insert(0, _repo_root)
 
-from swarm.benchmark import engine as _engine
+# Imported after the repo root joins sys.path so a plain checkout runs uninstalled.
+from swarm.benchmark import engine as _engine  # noqa: E402
 
 _mod = _sys.modules[__name__]
 for _attr in dir(_engine):

@@ -22,9 +22,11 @@ import os
 # drop --netuid/--wallet/--neuron args and fall back to its own defaults.
 os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
 
-import subprocess
 import argparse
+import subprocess
+
 import bittensor as bt
+
 from .logging import setup_events_logger
 
 

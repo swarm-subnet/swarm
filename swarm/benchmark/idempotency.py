@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from swarm.constants import SIM_DT
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator

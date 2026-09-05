@@ -30,7 +30,6 @@ import pytest
 from swarm.core.env_builder.sar_tagging import build_and_tag_map, enumerate_bodies
 from swarm.core.env_builder.sar_world import build_sar_world
 
-
 _CHALLENGE_TYPES = {
     "city": 1,
     "open": 2,

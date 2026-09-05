@@ -20,7 +20,6 @@ from collections import Counter
 from swarm.challenge_families.search_and_rescue import _SAR_BENCHMARK_TEMPLATE as T
 from swarm.constants import BENCHMARK_FULL_SEED_COUNT, SAR_SCREENING_TEMPLATE
 
-
 VALID_TYPES = {1, 2, 3, 4, 5, 6}
 
 

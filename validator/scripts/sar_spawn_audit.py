@@ -39,7 +39,6 @@ import pybullet as p
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError, find_spawn_xy
 
-
 CHALLENGE_TYPES = {
     "city":      1,
     "open":      2,

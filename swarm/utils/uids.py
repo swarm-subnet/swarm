@@ -16,9 +16,10 @@
 # DEALINGS IN THE SOFTWARE.
 
 import random
+from typing import List
+
 import bittensor as bt
 import numpy as np
-from typing import List
 
 
 def check_uid_availability(

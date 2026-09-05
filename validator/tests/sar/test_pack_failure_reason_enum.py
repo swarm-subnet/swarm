@@ -17,8 +17,8 @@
 
 from __future__ import annotations
 
-from swarm.protocol import FailureReason, ValidationResult
 from swarm.benchmark.engine_parts.workers import _pack_validation_result
+from swarm.protocol import FailureReason, ValidationResult
 
 
 def test_pack_serialises_enum_via_value():

@@ -23,8 +23,8 @@ import time
 from typing import List
 
 import bittensor as bt
-from swarm.base.validator import BaseValidatorNeuron
 
+from swarm.base.validator import BaseValidatorNeuron
 
 HEARTBEAT_SEC = int(os.getenv("BURN_VALIDATOR_HEARTBEAT_SEC", "5"))
 STALL_TIMEOUT_SEC = int(os.getenv("BURN_VALIDATOR_STALL_TIMEOUT_SEC", "900"))

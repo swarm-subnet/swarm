@@ -33,7 +33,6 @@ from swarm.constants import (
 )
 from swarm.core import moving_drone as moving_drone_mod
 
-
 LANDING_R = LANDING_PLATFORM_RADIUS + DRONE_HULL_RADIUS + LANDING_COLUMN_PADDING
 
 

@@ -16,7 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 from ._shared import *
-from .generation import Block, Building, Rect, RoadTile, SeededRNG, generate_city
+from .generation import SeededRNG, generate_city
 
 
 def ceil_half(x):

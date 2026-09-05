@@ -19,10 +19,10 @@
 total emissions; miners keep exactly their raw share and the unassigned
 remainder always goes to the burn UID, so the vector conserves to 1.0 and
 set_weights' normalization is a no-op."""
-import numpy as np
-import pytest
 from types import SimpleNamespace
 
+import numpy as np
+import pytest
 from bittensor.utils.weight_utils import process_weights
 
 from swarm.constants import UID_ZERO

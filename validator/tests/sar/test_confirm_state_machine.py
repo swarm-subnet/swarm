@@ -29,8 +29,6 @@ from swarm.constants import (
     SAR_CONFIRM_SPEED_MAX,
     SAR_DWELL_SEC,
     SAR_HOVER_BAND,
-    SAR_HYSTERESIS_GRACE,
-    SAR_NO_TOUCH_RADIUS,
 )
 from swarm.protocol import MapTask
 

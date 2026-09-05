@@ -41,12 +41,8 @@ from .config import (
 )
 from .reporting import _print_results
 from .seeds import (
-    _find_seeds,
     _infer_uid_from_model_path,
-    _load_type_seeds,
-    _save_type_seeds,
 )
-from .workers import _run_benchmark
 
 
 def main(argv: Optional[List[str]] = None) -> None:

@@ -47,14 +47,14 @@ from swarm.constants import (
 from swarm.core.faults import ReasonCode
 from swarm.core.submission_lane import is_model_graph_artifact
 from swarm.core.submission_policy import check_safety, validate_submission_zip
-from swarm.utils.hash import sha256sum
 from swarm.protocol import (
-    FailureReason,
     SCHEMA_VERSION,
+    FailureReason,
     ValidationResult,
     is_supported_schema,
     normalize_version,
 )
+from swarm.utils.hash import sha256sum
 from swarm.validator.calibration import (
     SpeedFactor,
     baseline_model_available,

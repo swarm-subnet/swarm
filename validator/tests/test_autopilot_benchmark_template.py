@@ -20,7 +20,6 @@ from collections import Counter
 from swarm.challenge_families.autopilot import _AUTOPILOT_BENCHMARK_TEMPLATE as T
 from swarm.constants import BENCHMARK_FULL_SEED_COUNT
 
-
 VALID_TYPES = {1, 2, 3, 4, 5, 6}
 
 

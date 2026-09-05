@@ -28,4 +28,3 @@ def build_village_map(cli, seed, safe_zones, safe_zone_radius):
         safe_zone_radius,
         forced_subtype=2,
     )
-

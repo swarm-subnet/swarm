@@ -23,8 +23,6 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from swarm.utils.github import (
     REQUIRED_README_HASH,
     build_raw_urls,
@@ -144,7 +142,8 @@ def test_required_readme_hash_matches_template():
 # Repo ownership (one GitHub repo per hotkey)
 # ──────────────────────────────────────────────────────────────────────────
 
-import swarm.validator.utils as _vu
+# Imported here so the section below reads as one block with the tests it serves.
+import swarm.validator.utils as _vu  # noqa: E402
 
 HK_A = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty"
 HK_B = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"

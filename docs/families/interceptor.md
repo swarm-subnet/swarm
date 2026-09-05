@@ -179,7 +179,7 @@ Docker runtime profile: image `base`, resource class `navigation`, `sar_mode: fa
 
 ## Scoring
 
-```
+```text
 score = 0.5 × success + 0.5 × time
 ```
 
@@ -194,14 +194,14 @@ There is **no safety term** in this family: closing distance aggressively is the
 
 ### Time term
 
-```
+```text
 time_term = 1.0                                    if t ≤ target_time
           = 1 − (t − target_time) / (60 − target_time)   otherwise, clamped to [0, 1]
 ```
 
 where `t` is the catch time and the par (`target_time`) scales with the seed's chase gap:
 
-```
+```text
 target_time = min(1.1 × (gap / 3.75 + 10.0), 0.95 × 60)
 ```
 

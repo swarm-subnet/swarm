@@ -20,10 +20,10 @@ from __future__ import annotations
 import pickle
 
 from swarm.core.env_builder.sar_types import (
+    SUPPORT_CATEGORIES,
     BodyCategory,
     SafetyPatch,
     SARWorld,
-    SUPPORT_CATEGORIES,
 )
 
 

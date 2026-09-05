@@ -71,24 +71,24 @@ class DroneFlightController:
         - Max yaw rate: 3.141 rad/s (180°/s)
         - Simulation rate: 30 Hz control / 30 Hz physics
     """
-    
+
     def __init__(self):
         """
         Initialize your flight controller.
-        
+
         Load your trained model here using any ML framework
-        
+
         Example:
             import torch
             self.model = torch.jit.load("policy.pt")
             self.model.eval()
         """
         pass
-    
+
     def act(self, observation):
         """
         Compute flight action for current observation.
-        
+
         Args:
             observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and
                 "state" (N,) arrays
@@ -100,11 +100,11 @@ class DroneFlightController:
         action[3] = np.clip(action[3], 0, 1)
         action[5] = 0.0  # rgb_request: 0 = do not ask for a colour frame
         return action
-    
+
     def reset(self):
         """
         Reset controller state at mission start.
-        
+
         Called before each new mission. Use this to reset any internal
         state like hidden states, observation buffers, or counters.
         """

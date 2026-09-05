@@ -38,20 +38,20 @@ install_system_dependencies() {
   info_msg "Updating apt package lists..."
   sudo apt update -y || handle_error "Failed to update apt lists"
   sudo apt upgrade -y || handle_error "Failed to upgrade packages"
-  
+
   info_msg "Installing core tools..."
   sudo apt install -y sudo software-properties-common lsb-release curl \
     || handle_error "Failed to install core tools"
-  
+
   sudo apt update -y || handle_error "Failed to refresh apt lists"
-  
+
   # Common packages for all Ubuntu versions
   COMMON_PACKAGES=(
     python3.11 python3.11-venv python3.11-dev
     build-essential cmake wget unzip sqlite3
     libnss3 libnss3-dev gnupg curl nodejs npm
   )
-  
+
   # Add version-specific audio package
   UBUNTU_CODENAME=$(lsb_release -cs)
   case "$UBUNTU_CODENAME" in
@@ -59,7 +59,7 @@ install_system_dependencies() {
     noble)  EXTRA_PACKAGES=(libasound2t64) ;;
     *)      EXTRA_PACKAGES=(libasound2)   ;;
   esac
-  
+
   info_msg "Installing system dependencies for $UBUNTU_CODENAME..."
   sudo apt install -y "${COMMON_PACKAGES[@]}" "${EXTRA_PACKAGES[@]}" \
     || handle_error "Failed to install system dependencies"
@@ -88,17 +88,17 @@ install_pm2() {
       sudo npm uninstall -g pm2 2>/dev/null || true
     fi
   fi
-  
+
   info_msg "Installing PM2..."
   sudo npm install -g pm2@latest || handle_error "Failed to install PM2"
-  
+
   info_msg "Updating PM2..."
   pm2 update || handle_error "Failed to update PM2"
 }
 
 verify_installation() {
   info_msg "Verifying system dependencies..."
-  
+
   # Check Python
   python3.11 --version || handle_error "Python 3.11 verification failed"
 
@@ -107,7 +107,7 @@ verify_installation() {
 
   # Check PM2
   pm2 --version || handle_error "PM2 verification failed"
-  
+
   success_msg "System dependencies verification passed"
 }
 
@@ -117,7 +117,7 @@ main() {
   install_uv
   install_pm2
   verify_installation
-  
+
   success_msg "System dependencies installed successfully!"
   echo -e "\e[33m[NEXT]\e[0m Run: ./validator/scripts/main/setup.sh"
 }

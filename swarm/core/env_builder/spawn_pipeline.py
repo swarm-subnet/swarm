@@ -22,10 +22,9 @@ from typing import Optional, Tuple
 
 import pybullet as p
 
-from .sar_types import BodyCategory, SUPPORT_CATEGORIES
+from .sar_types import SUPPORT_CATEGORIES, BodyCategory
 from .surface_resolver import SurfaceHit, resolve_surface
 from .victim import accepted_categories_for, terrain_slope_deg
-
 
 MAX_SPAWN_ATTEMPTS = 50
 NO_TOUCH_SPHERE_RADIUS = 0.8
