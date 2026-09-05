@@ -31,13 +31,14 @@ GITHUB_CONNECT_TIMEOUT_SEC = 10.0
 GITHUB_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 GITHUB_MAX_README_BYTES = 64 * 1024
 
-REQUIRED_README_HASH = "72cc30323f3f5ce0cea91bf5b31d29a4ae7a5bb2090eea3537602abd57f4d786"
+REQUIRED_README_HASH = "f518a976ce5fe9e4c0433e1c5aa9466c1afd10c7410d8a8889c23607d2a576e0"
 
 # A repository published before a template change still carries the previous README
 # and stays eligible on the backend, so the local check mirrors that accepted set
 # rather than reporting an already-valid repo as failing.
 ACCEPTED_README_HASHES = frozenset({
     REQUIRED_README_HASH,
+    "72cc30323f3f5ce0cea91bf5b31d29a4ae7a5bb2090eea3537602abd57f4d786",
     "9139c39669a9865c597861e09130b3cb57a6d9a293829ef0732c27d78af3c669",
 })
 
