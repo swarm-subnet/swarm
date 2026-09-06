@@ -41,7 +41,7 @@ from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.utils.hash import sha256sum
 
 from .evaluation import _run_full_benchmark, _run_screening
-from .model_fetch import _ensure_models_from_backend, _set_private_marker
+from .model_fetch import _ensure_models_from_backend, _set_private_marker, stored_model_path
 
 
 def _pool_drained(granted: list, pending: int) -> bool:
@@ -68,22 +68,25 @@ async def run_task(
         bt.logging.warning(f"run_task: malformed task payload {task}")
         return
 
-    paths = await _ensure_models_from_backend(
-        self,
-        [{
-            "uid": uid, "model_hash": model_hash,
-            "github_url": github_url, "is_private": is_private,
-            "family_id": family_id,
-            "interface_version": str(task.get("interface_version") or SUBMISSION_INTERFACE_VERSION),
-            "artifact_path": str(task.get("artifact_path") or ""),
-        }],
-    )
-    entry = paths.get(uid)
-    if entry is None:
-        bt.logging.warning(f"run_task: failed to fetch model for UID {uid}")
-        return
-    model_path: Path = entry[0]
+    # The cleanup covers the fetch too: cancelling mid-download must not leave
+    # private bytes behind, and nothing else sweeps them.
+    model_path = stored_model_path(uid)
     try:
+        paths = await _ensure_models_from_backend(
+            self,
+            [{
+                "uid": uid, "model_hash": model_hash,
+                "github_url": github_url, "is_private": is_private,
+                "family_id": family_id,
+                "interface_version": str(task.get("interface_version") or SUBMISSION_INTERFACE_VERSION),
+                "artifact_path": str(task.get("artifact_path") or ""),
+            }],
+        )
+        entry = paths.get(uid)
+        if entry is None:
+            bt.logging.warning(f"run_task: failed to fetch model for UID {uid}")
+            return
+        model_path = entry[0]
         if not model_path.exists() or sha256sum(model_path) != model_hash:
             bt.logging.warning(f"run_task: model hash mismatch for UID {uid}")
             return

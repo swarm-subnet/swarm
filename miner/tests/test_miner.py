@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shlex
 from types import SimpleNamespace
 import zipfile
 
@@ -63,6 +64,7 @@ def test_main_uses_set_commitment(monkeypatch):
 
     class FakeWallet:
         def __init__(self, name, hotkey):
+            self.name, self.hotkey_str = name, hotkey
             self.hotkey = SimpleNamespace(ss58_address="5ExampleHotkey")
 
     class FakeSubtensor:
@@ -223,6 +225,7 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
 
     class FakeWallet:
         def __init__(self, name, hotkey):
+            self.name, self.hotkey_str = name, hotkey
             self.hotkey = SimpleNamespace(
                 ss58_address="5ExampleHotkey",
                 sign=lambda message: b"signature",
@@ -481,10 +484,11 @@ class _Response:
         return self._payload
 
 
-def _wallet():
-    return SimpleNamespace(hotkey=SimpleNamespace(
-        ss58_address="5ExampleHotkey", sign=lambda message: b"signature",
-    ))
+def _wallet(name="my cold", hotkey_str="my_hot"):
+    return SimpleNamespace(
+        name=name, hotkey_str=hotkey_str,
+        hotkey=SimpleNamespace(ss58_address="5ExampleHotkey", sign=lambda message: b"signature"),
+    )
 
 
 def _upload_env(monkeypatch, responses, *, status=None):
@@ -541,11 +545,24 @@ def test_upload_shows_the_backend_message_on_a_rejection(monkeypatch, tmp_path):
 
 
 def test_upload_gives_up_with_the_resume_command(monkeypatch, tmp_path):
+    """The command must carry the wallet that signed the commitment, or the retry signs as someone else."""
     monkeypatch.setattr(miner, "UPLOAD_RETRY_BUDGET_SEC", 0)
     calls, logs = _upload_env(monkeypatch, [_Response(404)], status=None)
-    ok = miner._upload_private_artifact("http://backend.test", _make_submission(tmp_path), "a" * 64, _wallet())
+    artifact = _make_submission(tmp_path)
+    ok = miner._upload_private_artifact("http://backend.test", artifact, "a" * 64, _wallet())
     assert ok is False
-    assert any("--upload-only" in line for line in logs["error"])
+    resume = next(line for line in logs["error"] if "--upload-only" in line)
+    assert "--wallet.name 'my cold'" in resume
+    assert "--wallet.hotkey my_hot" in resume
+    assert "--backend-url http://backend.test" in resume
+    assert shlex.quote(artifact) in resume
+
+
+def test_the_resume_command_leaves_out_the_default_backend(tmp_path):
+    resume = miner._resume_hint(
+        "cf_autopilot", str(tmp_path / "submission.zip"), _wallet(), miner.DEFAULT_BACKEND_URL)
+    assert "--backend-url" not in resume
+    assert "--wallet.name 'my cold'" in resume
 
 
 # ── the whole submission against a fake backend ───────────────────────────────
@@ -610,6 +627,7 @@ def _content_key(archive: bytes) -> str:
 def _chain(monkeypatch, backend: _FakeBackend):
     class FakeWallet:
         def __init__(self, name, hotkey):
+            self.name, self.hotkey_str = name, hotkey
             self.hotkey = SimpleNamespace(ss58_address="5ExampleHotkey", sign=lambda m: b"signature")
 
     class FakeSubtensor:

@@ -39,6 +39,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import uuid
@@ -318,10 +319,21 @@ def _response_detail(response) -> str:
     return response.text.strip()
 
 
-def _resume_hint(family_id: str, artifact_path: str) -> str:
+def _resume_hint(family_id: str, artifact_path: str, wallet, backend_url: str) -> str:
+    """The exact command that retries the upload, carrying the wallet that signed the commitment."""
+    parts = [
+        "swarm model submit",
+        f"--family-id {family_id}",
+        f"--artifact {shlex.quote(artifact_path)}",
+        f"--wallet.name {shlex.quote(wallet.name)}",
+        f"--wallet.hotkey {shlex.quote(wallet.hotkey_str)}",
+    ]
+    if backend_url != DEFAULT_BACKEND_URL:
+        parts.append(f"--backend-url {shlex.quote(backend_url)}")
+    parts.append("--upload-only")
     return (
-        "Nothing more is needed on-chain. Re-run with --upload_only to retry the upload:\n"
-        f"  swarm model submit --family-id {family_id} --artifact {artifact_path} --upload-only"
+        "Nothing more is needed on-chain. Re-run to retry the upload:\n"
+        f"  {' '.join(parts)}"
     )
 
 
@@ -390,7 +402,7 @@ def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, 
 
         if time.monotonic() + delay > deadline:
             bt.logging.error(f"Upload gave up after {attempt} attempts ({reason}).")
-            bt.logging.error(_resume_hint(family_id, artifact_path))
+            bt.logging.error(_resume_hint(family_id, artifact_path, wallet, backend_url))
             return False
         bt.logging.info(f"Upload not ready ({reason}); attempt {attempt}, retrying in {delay}s...")
         time.sleep(delay)
@@ -528,7 +540,7 @@ def submit_private(
 
     if not _upload_private_artifact(backend_url, artifact, digest, wallet):
         bt.logging.error("Commitment succeeded but the artifact upload did not land.")
-        bt.logging.error(_resume_hint(family_id, artifact))
+        bt.logging.error(_resume_hint(family_id, artifact, wallet, backend_url))
         return 1
     bt.logging.info("")
     bt.logging.info("=" * 60)

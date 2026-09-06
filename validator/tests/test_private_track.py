@@ -27,6 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from swarm.core import model_verify
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
@@ -190,6 +191,27 @@ def test_private_bytes_are_deleted_once_the_task_is_done(monkeypatch, tmp_path):
 def test_public_bytes_stay_cached_between_tasks(monkeypatch, tmp_path):
     model_fp = _run(monkeypatch, tmp_path, is_private=False)
     assert model_fp.exists()
+
+
+def test_private_bytes_are_dropped_when_the_fetch_itself_is_cancelled(monkeypatch, tmp_path):
+    """Cancellation during the download must not leave the bytes on disk with nothing to sweep them."""
+    monkeypatch.setattr(model_fetch, "MODEL_DIR", tmp_path)
+    model_fp = tmp_path / "UID_7.zip"
+
+    async def ensure(_self, _entries):
+        model_fp.write_bytes(_submission_bytes())
+        model_fetch._set_private_marker(model_fp, True)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(run_task_mod, "_ensure_models_from_backend", ensure)
+    task = {"uid": 7, "phase": "BENCHMARK", "task_id": 1, "model_hash": "d" * 64, "is_private": True}
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(run_task_mod.run_task(
+            SimpleNamespace(), task, cancel_flag=asyncio.Event(), wake_flag=asyncio.Event(),
+        ))
+
+    assert not model_fp.exists()
+    assert not model_fp.with_suffix(".private").exists()
 
 
 # ── forensics ────────────────────────────────────────────────────────────────
