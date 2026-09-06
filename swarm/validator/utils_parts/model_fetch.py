@@ -18,9 +18,14 @@
 from ._shared import *
 
 
+def stored_model_path(uid: int) -> Path:
+    """Where a UID's fetched archive lives on this validator."""
+    return MODEL_DIR / f"UID_{uid}.zip"
+
+
 def _set_private_marker(model_fp: Path, is_private: bool) -> None:
-    """Mark a stored model as private so the evaluator refuses to run a networked
-    dependency install with the private bytes mounted."""
+    """Mark a stored model as private so the bytes are never kept for forensics
+    and are dropped from disk once their task is done."""
     marker = model_fp.with_suffix(".private")
     if is_private:
         marker.touch()
@@ -134,13 +139,16 @@ async def _ensure_models_from_backend(
             continue
         if not is_private and (not github_url or not artifact_path):
             continue
-        model_fp = MODEL_DIR / f"UID_{uid}.zip"
+        model_fp = stored_model_path(uid)
         try:
             if model_fp.is_file() and sha256sum(model_fp) == model_hash and _admitted(model_fp, family_id):
                 _set_private_marker(model_fp, is_private)
                 paths[uid] = (model_fp, github_url)
                 continue
             model_fp.unlink(missing_ok=True)
+            # The marker goes down before the bytes so a crash mid-fetch never leaves
+            # unmarked private bytes behind.
+            _set_private_marker(model_fp, is_private)
             if is_private:
                 ok = await _download_private_model(self, uid, model_hash, family_id, model_fp)
             else:
@@ -148,7 +156,6 @@ async def _ensure_models_from_backend(
                     github_url, artifact_path, model_hash, family_id, model_fp, uid
                 )
             if ok and model_fp.is_file():
-                _set_private_marker(model_fp, is_private)
                 paths[uid] = (model_fp, github_url)
             else:
                 _set_private_marker(model_fp, False)

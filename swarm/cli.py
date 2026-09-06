@@ -46,15 +46,18 @@ from swarm.policy_interface import (
     smoke_test_policy_package,
     verify_policy_package_contract,
 )
-from swarm.submission_manifest import (
-    REPO_LAYOUT_RULES,
-    SUBMISSION_MANIFEST_FILENAME,
-    SubmissionArtifact,
-    SubmissionManifestError,
-    load_submission_manifest,
-    validate_submission_repo,
-    write_submission_manifest,
-)
+
+# The submission module pulls in bittensor, which parses sys.argv at import unless told not to;
+# the swarm CLI owns its arguments, so the flag is set for that import and then put back.
+_BT_PARSE_FLAG = os.environ.get("BT_NO_PARSE_CLI_ARGS")
+os.environ["BT_NO_PARSE_CLI_ARGS"] = "true"
+
+from miner.src.miner import DEFAULT_BACKEND_URL, submit_private  # noqa: E402
+
+if _BT_PARSE_FLAG is None:
+    del os.environ["BT_NO_PARSE_CLI_ARGS"]
+else:
+    os.environ["BT_NO_PARSE_CLI_ARGS"] = _BT_PARSE_FLAG
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCH_LOG = Path("/tmp/bench_full_eval.log")
@@ -170,13 +173,6 @@ class PackagedModelArtifact:
     output_zip: Path
     sha256: str
     packaged_files_count: int
-
-
-@dataclass(frozen=True)
-class RepoPackageSource:
-    family_id: str
-    source_dir: Path
-    interface_version: str | None = None
 
 
 def _check_module_available(module_name: str) -> DoctorCheck:
@@ -882,120 +878,6 @@ def _package_model_artifact(
     )
 
 
-def _default_repo_artifact_relpath(family_id: str) -> str:
-    artifact_basename = "submission.zip"
-    return (
-        Path(REPO_LAYOUT_RULES["artifacts_dir"]) / family_id / artifact_basename
-    ).as_posix()
-
-
-def _template_readme_path() -> Path:
-    return Path(__file__).resolve().parent / "templates" / "README.md"
-
-
-def _check_repo_readme(repo_root: Path) -> tuple[bool, str]:
-    """Confirm the repo's README.md is a byte-exact copy of the required template.
-
-    The backend rejects a submission whose README hash does not match, and the
-    rejection is silent, so catch it here before the miner commits on-chain."""
-    from swarm.utils.github import ACCEPTED_README_HASHES, REQUIRED_README_HASH
-
-    readme = repo_root / "README.md"
-    if not readme.is_file():
-        return False, "missing (run `swarm repo package` to write it)"
-    digest = hashlib.sha256(readme.read_bytes()).hexdigest()
-    if digest not in ACCEPTED_README_HASHES:
-        return False, "does not match the template; do not edit, reformat, or change its line endings"
-    if digest != REQUIRED_README_HASH:
-        return True, "matches a previous template; run `swarm repo package` to refresh it"
-    return True, "matches template"
-
-
-def _parse_repo_family_source(raw_value: str) -> RepoPackageSource:
-    family_and_version, separator, source_token = raw_value.partition("=")
-    if not separator or not source_token.strip():
-        raise ValueError(
-            "invalid_family_source:expected FAMILY_ID=PATH or FAMILY_ID@INTERFACE_VERSION=PATH"
-        )
-    family_id, version_separator, interface_version = family_and_version.partition("@")
-    family_id = family_id.strip()
-    if family_id not in CHALLENGE_FAMILY_IDS:
-        raise ValueError(f"unsupported_family_id:{family_id}")
-    normalized_version = interface_version.strip() if version_separator else None
-    return RepoPackageSource(
-        family_id=family_id,
-        source_dir=Path(source_token.strip()),
-        interface_version=normalized_version or None,
-    )
-
-
-def _resolve_repo_package_sources(args: argparse.Namespace) -> list[RepoPackageSource]:
-    specs: list[RepoPackageSource] = []
-    for raw_value in args.family_source or ():
-        specs.append(_parse_repo_family_source(raw_value))
-
-    if args.source is not None or args.family_id is not None:
-        if args.source is None or args.family_id is None:
-            raise ValueError("repo_package_requires_source_and_family_id_together")
-        specs.append(
-            RepoPackageSource(
-                family_id=str(args.family_id),
-                source_dir=Path(args.source),
-                interface_version=args.interface_version,
-            )
-        )
-
-    if not specs:
-        raise ValueError("no_family_sources_specified")
-    if len(specs) > 1:
-        raise ValueError(f"multiple_families_not_allowed:{len(specs)}")
-    return specs
-
-
-def _inspect_submission_repo(
-    repo_root: Path,
-) -> tuple[bool, str, list[dict[str, Any]]]:
-    ok, reason, manifest = validate_submission_repo(repo_root)
-    if not ok or manifest is None:
-        return False, reason, []
-
-    artifact_reports: list[dict[str, Any]] = []
-    first_failure = "ok"
-    repo_ok = True
-    for artifact in manifest.artifacts:
-        artifact_file = repo_root / artifact.artifact_path
-        contract_ok, contract_reason, contract = verify_policy_package_contract(artifact_file)
-        smoke_ok = False
-        smoke_reason = "skipped_due_to_contract_failure"
-        if contract_ok:
-            smoke_ok, smoke_reason = smoke_test_policy_package(artifact_file)
-        compliant = bool(contract_ok and smoke_ok)
-        artifact_reports.append(
-            {
-                "family_id": artifact.family_id,
-                "artifact_path": artifact.artifact_path,
-                "sha256": artifact.sha256,
-                "interface_version": artifact.interface_version,
-                "metadata": dict(artifact.metadata),
-                "policy_contract_ok": contract_ok,
-                "policy_contract_reason": contract_reason,
-                "runtime_smoke_ok": smoke_ok,
-                "runtime_smoke_reason": smoke_reason,
-                "compliant": compliant,
-                "policy_contract": contract,
-            }
-        )
-        if not compliant and repo_ok:
-            repo_ok = False
-            first_failure = (
-                f"policy_contract:{artifact.family_id}:{contract_reason}"
-                if not contract_ok
-                else f"runtime_smoke:{artifact.family_id}:{smoke_reason}"
-            )
-
-    return repo_ok, first_failure, artifact_reports
-
-
 def _family_display_name(family_id: str) -> str:
     try:
         return str(get_challenge_family_definition(family_id)["name"])
@@ -1026,19 +908,23 @@ def _prompt_family_id() -> Optional[str]:
         print(f"Please enter a number between 1 and {len(families)}.", file=sys.stderr)
 
 
+def _resolve_family_id(args: argparse.Namespace) -> Optional[str]:
+    """The family from the flag, or from a menu when there is a terminal to ask."""
+    if args.family_id is not None:
+        return str(args.family_id)
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return _prompt_family_id()
+    print(
+        "--family-id is required when not run interactively (no terminal to prompt).",
+        file=sys.stderr,
+    )
+    return None
+
+
 def _cmd_model_package(args: argparse.Namespace) -> int:
-    family_id = args.family_id
+    family_id = _resolve_family_id(args)
     if family_id is None:
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            family_id = _prompt_family_id()
-            if family_id is None:
-                return 1
-        else:
-            print(
-                "--family-id is required when not run interactively (no terminal to prompt).",
-                file=sys.stderr,
-            )
-            return 1
+        return 1
 
     source_dir = Path(args.source)
     output_zip = Path(args.output)
@@ -1062,7 +948,8 @@ def _cmd_model_package(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_model_verify(args: argparse.Namespace) -> int:
+def _verify_model_zip(model_path: Path, max_uncompressed_mb: float) -> dict[str, Any]:
+    """Every local check a submission must pass, as one report; ``compliant`` sums it up."""
     from swarm.constants import MAX_MODEL_BYTES
     from swarm.core.model_verify import (
         classify_model_validity,
@@ -1070,13 +957,8 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
         zip_is_safe,
     )
 
-    model_path = Path(args.model)
-    if not model_path.is_file():
-        print(f"Model zip not found: {model_path}", file=sys.stderr)
-        return 1
-
     size_bytes = model_path.stat().st_size
-    max_uncompressed = int(args.max_uncompressed_mb * 1024 * 1024)
+    max_uncompressed = int(max_uncompressed_mb * 1024 * 1024)
     size_ok = size_bytes <= MAX_MODEL_BYTES
     zip_safe = zip_is_safe(model_path, max_uncompressed=max_uncompressed)
     inspection = inspect_model_structure(model_path)
@@ -1094,7 +976,7 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
         and smoke_ok
     )
 
-    payload = {
+    return {
         "model": str(model_path),
         "compliant": compliant,
         "size_bytes": size_bytes,
@@ -1111,6 +993,8 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
         "inspection": inspection,
     }
 
+
+def _print_model_report(payload: dict[str, Any]) -> None:
     print(f"Model: {payload['model']}")
     print(f"Compliant: {payload['compliant']}")
     print(f"Status: {payload['status']}")
@@ -1122,117 +1006,62 @@ def _cmd_model_verify(args: argparse.Namespace) -> int:
         print(f"Policy interface: {payload['policy_contract']['interface_version']}")
     print(f"Runtime smoke: {payload['runtime_smoke_ok']} ({payload['runtime_smoke_reason']})")
 
-    return 0 if compliant else 1
+
+def _cmd_model_verify(args: argparse.Namespace) -> int:
+    model_path = Path(args.model)
+    if not model_path.is_file():
+        print(f"Model zip not found: {model_path}", file=sys.stderr)
+        return 1
+    payload = _verify_model_zip(model_path, args.max_uncompressed_mb)
+    _print_model_report(payload)
+    return 0 if payload["compliant"] else 1
 
 
-def _cmd_repo_package(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root)
-    repo_root.mkdir(parents=True, exist_ok=True)
-
-    try:
-        package_sources = _resolve_repo_package_sources(args)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+def _cmd_model_submit(args: argparse.Namespace) -> int:
+    """Package (or take) an artifact, verify it locally, then commit and upload it privately."""
+    family_id = _resolve_family_id(args)
+    if family_id is None:
         return 1
 
-    existing_artifacts: dict[str, SubmissionArtifact] = {}
-    manifest_path = repo_root / SUBMISSION_MANIFEST_FILENAME
-    if manifest_path.exists():
-        try:
-            existing_manifest = load_submission_manifest(manifest_path)
-        except SubmissionManifestError as exc:
-            print(str(exc), file=sys.stderr)
+    if args.artifact is not None:
+        artifact = Path(args.artifact)
+        if not artifact.is_file():
+            print(f"Artifact not found: {artifact}", file=sys.stderr)
             return 1
-        existing_artifacts = {
-            artifact.family_id: artifact for artifact in existing_manifest.artifacts
-        }
-        for existing_family_id in existing_artifacts:
-            if existing_family_id != package_sources[0].family_id:
-                print(
-                    f"repo_already_packages_family:{existing_family_id} "
-                    "(one task per hotkey; use a fresh repo to switch)",
-                    file=sys.stderr,
-                )
-                return 1
-
-    packaged_artifacts: list[PackagedModelArtifact] = []
-    for spec in package_sources:
-        artifact_relpath = _default_repo_artifact_relpath(spec.family_id)
-        artifact_output = repo_root / artifact_relpath
+    else:
+        print(f"\nPackaging for {_family_display_name(family_id)} ({family_id})...")
         try:
             packaged = _package_model_artifact(
-                source_dir=spec.source_dir,
-                output_zip=artifact_output,
-                family_id=spec.family_id,
-                interface_version=spec.interface_version,
-                overwrite=bool(args.overwrite),
+                source_dir=Path(args.source),
+                output_zip=Path(args.output),
+                family_id=family_id,
+                interface_version=args.interface_version,
+                overwrite=True,
             )
         except ValueError as exc:
-            print(f"{spec.family_id}: {exc}", file=sys.stderr)
+            print(str(exc), file=sys.stderr)
             return 1
+        artifact = packaged.output_zip
+        print(f"Created package: {artifact} ({packaged.packaged_files_count} files)")
 
-        existing_artifacts[spec.family_id] = SubmissionArtifact(
-            family_id=packaged.family_id,
-            interface_version=packaged.interface_version,
-            artifact_path=artifact_relpath,
-            sha256=packaged.sha256,
-            size_bytes=packaged.output_zip.stat().st_size,
-            metadata={
-                "packaged_with": "swarm_cli",
-                "source_dir_name": spec.source_dir.name,
-            },
-        )
-        packaged_artifacts.append(packaged)
+    if not args.upload_only:
+        payload = _verify_model_zip(artifact, max_uncompressed_mb=50.0)
+        _print_model_report(payload)
+        if not payload["compliant"]:
+            print("\nThe archive did not pass the local checks; nothing was committed on-chain.", file=sys.stderr)
+            return 1
+        print()
 
-    write_submission_manifest(repo_root, tuple(existing_artifacts.values()))
-    shutil.copyfile(_template_readme_path(), repo_root / "README.md")
-
-    print(f"Repo root: {repo_root}")
-    print(f"Manifest: {repo_root / SUBMISSION_MANIFEST_FILENAME}")
-    print("README.md: written (canonical template)")
-    print(f"Artifacts updated: {len(packaged_artifacts)}")
-    for packaged in packaged_artifacts:
-        print(
-            f"- {packaged.family_id}: {packaged.output_zip} "
-            f"({packaged.interface_version}, sha256={packaged.sha256[:12]}...)"
-        )
-    print("Run `swarm repo verify --repo-root <path>` before publishing.")
-    return 0
-
-
-def _cmd_repo_verify(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root)
-    if not repo_root.is_dir():
-        print(f"Repo root not found: {repo_root}", file=sys.stderr)
-        return 1
-
-    repo_ok, reason, artifact_reports = _inspect_submission_repo(repo_root)
-    readme_ok, readme_detail = _check_repo_readme(repo_root)
-    overall_ok = repo_ok and readme_ok
-
-    manifest_path = repo_root / SUBMISSION_MANIFEST_FILENAME
-    print(f"Repo: {repo_root}")
-    print(f"Manifest path: {manifest_path}")
-    print(f"README.md: {'OK' if readme_ok else 'FAIL'} ({readme_detail})")
-    print(f"Compliant: {overall_ok}")
-    if not artifact_reports:
-        print(f"Reason: {reason}")
-        return 0 if overall_ok else 1
-
-    for report in artifact_reports:
-        print(f"Family: {report['family_id']}")
-        print(f"Artifact: {report['artifact_path']}")
-        print(
-            "Policy contract: "
-            f"{report['policy_contract_ok']} ({report['policy_contract_reason']})"
-        )
-        print(
-            "Runtime smoke: "
-            f"{report['runtime_smoke_ok']} ({report['runtime_smoke_reason']})"
-        )
-    if not repo_ok:
-        print(f"Reason: {reason}")
-    return 0 if overall_ok else 1
+    return submit_private(
+        family_id=family_id,
+        artifact=str(artifact),
+        backend_url=args.backend_url,
+        wallet_name=args.wallet_name,
+        wallet_hotkey=args.wallet_hotkey,
+        netuid=args.netuid,
+        network=args.network,
+        upload_only=bool(args.upload_only),
+    )
 
 
 def _cmd_model_test(args: argparse.Namespace) -> int:
@@ -1408,8 +1237,8 @@ def _cmd_champion(args: argparse.Namespace) -> int:
 
             if not released:
                 print(f"Champion: UID {uid}  Score: {score:.4f}")
-                print("Model is not released for download yet.")
-                return 0
+                print("Model is not published for download yet; a fresh crown is published within minutes.")
+                return 2
 
             output = args.output or Path(_champion_zip_name(uid, args.family_id))
             print(f"Champion: UID {uid}  Score: {score:.4f}")
@@ -1649,66 +1478,54 @@ def build_parser() -> argparse.ArgumentParser:
     model_test_parser.add_argument("--interface-version", default=None)
     model_test_parser.set_defaults(func=_cmd_model_test)
 
-    repo_parser = subparsers.add_parser(
-        "repo",
-        help="Repository-level submission packaging and verification.",
+    model_submit_parser = model_subparsers.add_parser(
+        "submit",
+        help="Package, verify, commit on-chain and upload a model privately.",
     )
-    repo_subparsers = repo_parser.add_subparsers(dest="repo_command", required=True)
-
-    repo_package_parser = repo_subparsers.add_parser(
-        "package",
-        help="Build or update a submission repo manifest and its artifact.",
-    )
-    repo_package_parser.add_argument(
-        "--repo-root",
-        type=Path,
-        required=True,
-        help="Repo root where submission_manifest.json and artifacts/ live.",
-    )
-    repo_package_parser.add_argument(
-        "--family-source",
-        action="append",
-        default=[],
-        help=(
-            "Family source mapping in the form FAMILY_ID=PATH or "
-            "FAMILY_ID@INTERFACE_VERSION=PATH. One family per repo."
-        ),
-    )
-    repo_package_parser.add_argument(
+    submit_input = model_submit_parser.add_mutually_exclusive_group(required=True)
+    submit_input.add_argument(
         "--source",
         type=Path,
-        default=None,
-        help="Single-family source directory shortcut.",
+        help="Source directory to package first (drone_agent.py and model weights).",
     )
-    repo_package_parser.add_argument(
+    submit_input.add_argument(
+        "--artifact",
+        type=Path,
+        help="An already packaged submission zip to submit as is.",
+    )
+    model_submit_parser.add_argument(
         "--family-id",
         choices=sorted(CHALLENGE_FAMILY_IDS),
         default=None,
-        help="Single-family shortcut for --source.",
+        help="Challenge family this model competes in (prompted in a terminal when omitted).",
     )
-    repo_package_parser.add_argument(
+    model_submit_parser.add_argument(
         "--interface-version",
         default=None,
-        help="Optional interface version for the single-family shortcut.",
+        help="Explicit policy interface version when packaging from --source.",
     )
-    repo_package_parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite targeted artifact ZIPs if they already exist.",
-    )
-    repo_package_parser.set_defaults(func=_cmd_repo_package)
-
-    repo_verify_parser = repo_subparsers.add_parser(
-        "verify",
-        help="Verify a repo-root submission manifest and all published artifacts.",
-    )
-    repo_verify_parser.add_argument(
-        "--repo-root",
+    model_submit_parser.add_argument(
+        "--output",
         type=Path,
-        required=True,
-        help="Repo root containing submission_manifest.json.",
+        default=DEFAULT_MODEL_ZIP,
+        help=f"Where --source is packaged to (default: {DEFAULT_MODEL_ZIP}).",
     )
-    repo_verify_parser.set_defaults(func=_cmd_repo_verify)
+    model_submit_parser.add_argument(
+        "--backend-url",
+        type=str,
+        default=os.environ.get("SWARM_BACKEND_API_URL", DEFAULT_BACKEND_URL),
+        help=f"Backend API URL (default: {DEFAULT_BACKEND_URL}).",
+    )
+    model_submit_parser.add_argument("--wallet.name", dest="wallet_name", default="default")
+    model_submit_parser.add_argument("--wallet.hotkey", dest="wallet_hotkey", default="default")
+    model_submit_parser.add_argument("--netuid", type=int, default=124)
+    model_submit_parser.add_argument("--subtensor.network", dest="network", default="finney")
+    model_submit_parser.add_argument(
+        "--upload-only",
+        action="store_true",
+        help="Skip the chain commit and only (re)upload the artifact committed earlier.",
+    )
+    model_submit_parser.set_defaults(func=_cmd_model_submit)
 
     report_parser = subparsers.add_parser(
         "report",

@@ -213,7 +213,7 @@ Example: four active families payable, Office Interceptor has no king yet — th
 <a id="who-a-seat-can-pay"></a>
 ### Who a seat can pay
 
-Before shipping a window to validators, the backend checks every seat: a seat is payable while `repo_intact` is true and the repo is accessible.
+Before shipping a window to validators, the backend checks every seat: a private-track seat is payable while the backend still holds the archive it was crowned with; a public-track seat while `repo_intact` is true and the repo is accessible.
 
 Champion status is **not** required: past kings in the window are ordinary evaluated models. An ineligible seat is skipped at payout and its slice renormalizes onto the family's surviving kings. UID 0 is reserved and can never hold a seat.
 
@@ -258,9 +258,9 @@ You slide down one rung (70% of the seat above) and keep earning, dropping anoth
 
 Not on the same hotkey. Once your model is evaluated, the hotkey's slot is locked, so you cannot swap in a stronger model on it. To take a crown again, register a new hotkey and submit your improved model from it. Every hotkey is one family, one model, one final submission.
 
-### What happens to a king who deletes their GitHub repo?
+### Do I have to keep anything online to be paid?
 
-Their seat stops paying. A seat is only payable while its repo is intact and accessible. The seat keeps its window slot but is skipped at payout, and its slice renormalizes onto the family's surviving kings. It comes back if the repo does.
+No. Every family is on the private track: the backend holds the archive your seat was crowned with, so the seat pays for as long as it is in the window. A public-track seat, where a family is ever reopened as public, is only payable while its GitHub repo is intact and accessible; such a seat keeps its window slot but is skipped at payout, and its slice renormalizes onto the family's surviving kings until the repo comes back.
 
 ### Why is there a minimum jump to take the throne?
 
@@ -289,7 +289,7 @@ The active family slices are set by the team, not derived automatically, so a ne
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
-| **Payable seat** | A window seat that passes the eligibility check: an intact and accessible repo. |
+| **Payable seat** | A window seat that passes the eligibility check: the crowned archive still in the backend vault (private track) or an intact and accessible repo (public track). |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
 | **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity; zero when the score does not exceed the previous king's. Feeds the seat bonus, capped at `1.0`. |

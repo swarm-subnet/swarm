@@ -175,6 +175,9 @@ def save_fake_model_for_analysis(
     Save fake model for forensic analysis. Keep max 3 fake models per UID.
     Creates: miner_models_v2/UID_X_fake_Y/
     """
+    if model_path.with_suffix(".private").exists():
+        _log.info(f"Private model from UID {uid} flagged as fake; bytes not retained")
+        return
     try:
         # Create base directory for this UID's fake models
         uid_fake_dir = MODEL_DIR / f"UID_{uid}_fake"
