@@ -53,11 +53,7 @@ _MAX_TASK_RESAMPLES = 200
 
 
 def _policy_view(depth: np.ndarray, state: np.ndarray) -> dict[str, np.ndarray]:
-    """Downsample one depth frame to POLICY_DEPTH_SIZE and pair it with the state vector.
-
-    This is the same transform the packaged agent_template.py applies at
-    inference time, so the policy trains on exactly what it will see.
-    """
+    """Downsample the depth frame to POLICY_DEPTH_SIZE and pair it with the state vector, as agent_template.py does."""
     step = max(1, depth.shape[0] // POLICY_DEPTH_SIZE)
     return {
         "depth": np.ascontiguousarray(depth[::step, ::step, :], dtype=np.float32),
@@ -73,13 +69,7 @@ class FamilyVecEnv(VecEnv):
     """
 
     def __init__(self, family_id: str, *, seed: int, n_drones: int | None = None):
-        """Build the first episode and derive the observation and action spaces from it.
-
-        Args:
-            family_id: Challenge family whose generator and contract to train against.
-            seed: Seed for the task sampler, so a run is reproducible.
-            n_drones: Fixed drone count for multi-drone families; None accepts any count.
-        """
+        """Build the first episode and derive the observation and action spaces from it; n_drones pins the drone count."""
         self._family_id = family_id
         self._rng = random.Random(seed)
         self._forced_drones = n_drones
@@ -107,11 +97,7 @@ class FamilyVecEnv(VecEnv):
         self._pending_actions: np.ndarray | None = None
 
     def _build_episode(self):
-        """Sample a fresh task and return (env, initial_obs) for it.
-
-        When a drone count is forced, tasks are resampled until one matches it,
-        up to _MAX_TASK_RESAMPLES; the generator picks the count at random.
-        """
+        """Sample a fresh task and return (env, initial_obs), resampling until the forced drone count matches."""
         for _ in range(_MAX_TASK_RESAMPLES):
             task = random_task(
                 sim_dt=SIM_DT,
@@ -143,7 +129,7 @@ class FamilyVecEnv(VecEnv):
         }
 
     def reset(self):
-        """Return the current episode's observation; a new task is sampled on episode end, not here."""
+        """Return the current episode's observation; new tasks are sampled on episode end, not here."""
         return self._stack_obs(self._last_obs)
 
     def step_async(self, actions: np.ndarray) -> None:
@@ -151,16 +137,7 @@ class FamilyVecEnv(VecEnv):
         self._pending_actions = np.asarray(actions, dtype=np.float32)
 
     def step_wait(self):
-        """Advance the shared simulation one step and report it to every slot.
-
-        All slots share one reward and one done flag because they are one
-        simulation. On episode end, each slot's info carries the terminal
-        observation and the TimeLimit.truncated flag SB3 uses for bootstrapping,
-        the environment is closed, and a new task is sampled for the next step.
-
-        Returns:
-            Tuple of (batched observation, rewards, dones, infos).
-        """
+        """Step the shared simulation once; every slot gets the same reward and done, and a new task starts on episode end."""
         env_action = self._pending_actions
         if self.num_envs == 1:
             env_action = env_action.reshape(1, -1)
@@ -213,14 +190,7 @@ class FamilyVecEnv(VecEnv):
 
 
 def _package_submission(policy_path: Path, family_id: str, out_dir: Path) -> Path:
-    """Build submission.zip from the trained policy and the agent template.
-
-    The template is copied as drone_agent.py next to ppo_policy.zip and packaged
-    through the swarm CLI, so the result is exactly what a miner would submit.
-
-    Returns:
-        Path to the packaged submission.zip.
-    """
+    """Package the trained policy with agent_template.py (as drone_agent.py) into submission.zip via the swarm CLI."""
     pkg_dir = out_dir / "package"
     if pkg_dir.exists():
         shutil.rmtree(pkg_dir)
@@ -250,16 +220,7 @@ def _package_submission(policy_path: Path, family_id: str, out_dir: Path) -> Pat
 
 
 def train_family(family_id: str, *, supports_drone_count: bool = False) -> None:
-    """Entry point for a family's train.py: train, save, package and smoke-test a baseline PPO.
-
-    Parses --timesteps, --seed and, for multi-drone families, --drones from the
-    command line. The packaged submission is checked against the family's
-    policy contract before the run is reported as ready.
-
-    Args:
-        family_id: Challenge family to train for.
-        supports_drone_count: Expose the --drones flag for multi-drone families.
-    """
+    """Entry point for a family's train.py: parse the CLI flags, train a baseline PPO, package it and smoke-test the result."""
     parser = argparse.ArgumentParser(
         description=f"Train a baseline PPO model for {family_id} and package it."
     )
