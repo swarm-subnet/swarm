@@ -17,8 +17,8 @@
 
 from __future__ import annotations
 
-import pytest
 import pybullet as p
+import pytest
 
 
 @pytest.fixture

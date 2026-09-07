@@ -28,6 +28,7 @@ import capnp
 import numpy as np
 
 from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
+from swarm.config import RpcTraceSettings
 from swarm.constants import (
     CALIBRATION_MARGIN_SEC,
     CALIBRATION_RECAL_INTERVAL,
@@ -45,10 +46,10 @@ from swarm.constants import (
     RPC_STEP_TIMEOUT_SEC,
     SIM_DT,
 )
+from swarm.core.action import canonicalize_action
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.calibration import act_hard_cap_sec, judge_act
-from swarm.core.action import canonicalize_action
 
 from ._shared import (
     _cleanup_env_quietly,
@@ -57,7 +58,6 @@ from ._shared import (
     _submission_template_dir,
 )
 from .submission import _serialize_observation_shm
-from swarm.config import RpcTraceSettings
 
 
 def _strike_zero_action(n_drones: int, act_dim: int) -> np.ndarray:

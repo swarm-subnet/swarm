@@ -56,7 +56,7 @@ KotH rewards **the act of moving the frontier**, not just the act of sitting on 
 
 The window holds **exactly 5 entries**: the current king plus the four most recent past kings.
 
-```
+```text
 Rank        Slot                          Earning
 ─────────────────────────────────────────────────────
  0          Reigning (current)            yes
@@ -80,7 +80,7 @@ A seat stops paying before it ages out if it fails the [payout eligibility check
 
 Each king's share depends on the gain they locked at crowning and their current rank in the family window:
 
-```
+```text
 1.  How much remaining headroom they closed
 2.  How fresh their crown is
 ```
@@ -91,7 +91,7 @@ The gain recognises that improving from `0.20 → 0.25` is easier than improving
 
 For each king `i` in the 5-king window, with their score `score_i` and the previous king's score `prev_i` (both clamped to `[0, 1]`; non-finite values become `0`):
 
-```
+```text
 gain_i   = log( max(1 − prev_i, 0.01) / max(1 − score_i, 0.01) )   # 0 when score_i ≤ prev_i
 ladder_i = 0.7 ^ rank_i                                            # rank 0 = newest crowning
 bonus_i  = 1 + 0.3 × min(gain_i, 1.0)
@@ -114,7 +114,7 @@ The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. 
 
 A king's seat is weighted by where it sits in the family lineage. The reigning champion (rank 0) holds the full weight; every step further back keeps **70%** of the seat above:
 
-```
+```text
 weight = 0.7 ^ rank
    rank 0 (champion) → 1.0     rank 2 → 0.49     rank 4 (oldest) → 0.24
 ```
@@ -130,11 +130,12 @@ Rank weighting is separate from the crowning floor below: the floor decides who 
 ---
 
 <a id="taking-the-throne--the-dynamic-floor"></a>
+
 ## Taking the throne: the dynamic floor
 
 Every submission runs the full 1100-seed benchmark. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
 
-```
+```text
 s ≤ 0.5      floor = floor_max                                (flat, anti-noise while scores are low)
 s > 0.5      floor = floor_min + (floor_max − floor_min) × (1 − t²),   t = (s − 0.5) / 0.5
 ```
@@ -166,7 +167,7 @@ A screening pre-phase exists in the code behind a build-time constant, but it is
 
 Each family runs its own 5-king window. Two levels decide a UID's final weight:
 
-```
+```text
 1.  family_share(f)   = how big a slice family f gets of the emission pool
 2.  koth_share(uid,f) = the UID's share WITHIN family f (the formula above)
 
@@ -190,7 +191,7 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
-```
+```text
 emissions state                              weight
 ─────────────────────────────────────────    ──────
 active / saturated / incubating / regression   1.0
@@ -203,7 +204,7 @@ Five families are currently `active`; Interceptor is `completed` with `archived`
 
 A family is **payable** when it is not archived and its window has at least one eligible king with a positive improvement gain. Each family owns exactly its own slice — nothing redistributes. The slice of every non-payable family (kingless, solved-and-archived, or archived for any other reason) goes to the **burn UID**:
 
-```
+```text
 share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
@@ -211,9 +212,10 @@ burn share = 1 − sum of paid shares
 Example: four active families payable, Office Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Office Interceptor's `0.30` burns. The moment Office Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
+
 ### Who a seat can pay
 
-Before shipping a window to validators, the backend checks every seat: a seat is payable while `repo_intact` is true and the repo is accessible.
+Before shipping a window to validators, the backend checks every seat: a private-track seat is payable while the backend still holds the archive it was crowned with; a public-track seat while `repo_intact` is true and the repo is accessible.
 
 Champion status is **not** required: past kings in the window are ordinary evaluated models. An ineligible seat is skipped at payout and its slice renormalizes onto the family's surviving kings. UID 0 is reserved and can never hold a seat.
 
@@ -232,6 +234,7 @@ The backend serves the **raw kings** (score + previous score) per family plus th
 ## Edge cases
 
 <a id="the-first-king-ever"></a>
+
 ### The first king ever
 
 When a family has zero past champions, the first evaluated model is crowned unconditionally and its `prev_score` is recorded as `0`. A positive score gives it the only positive row weight, so it takes 100% of **that family's slice** until someone dethrones it; a zero-score row leaves the slice unpaid.
@@ -258,9 +261,9 @@ You slide down one rung (70% of the seat above) and keep earning, dropping anoth
 
 Not on the same hotkey. Once your model is evaluated, the hotkey's slot is locked, so you cannot swap in a stronger model on it. To take a crown again, register a new hotkey and submit your improved model from it. Every hotkey is one family, one model, one final submission.
 
-### What happens to a king who deletes their GitHub repo?
+### Do I have to keep anything online to be paid?
 
-Their seat stops paying. A seat is only payable while its repo is intact and accessible. The seat keeps its window slot but is skipped at payout, and its slice renormalizes onto the family's surviving kings. It comes back if the repo does.
+No. Every family is on the private track: the backend holds the archive your seat was crowned with, so the seat pays for as long as it is in the window. A public-track seat, where a family is ever reopened as public, is only payable while its GitHub repo is intact and accessible; such a seat keeps its window slot but is skipped at payout, and its slice renormalizes onto the family's surviving kings until the repo comes back.
 
 ### Why is there a minimum jump to take the throne?
 
@@ -289,7 +292,7 @@ The active family slices are set by the team, not derived automatically, so a ne
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
-| **Payable seat** | A window seat that passes the eligibility check: an intact and accessible repo. |
+| **Payable seat** | A window seat that passes the eligibility check: the crowned archive still in the backend vault (private track) or an intact and accessible repo (public track). |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
 | **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity; zero when the score does not exceed the previous king's. Feeds the seat bonus, capped at `1.0`. |

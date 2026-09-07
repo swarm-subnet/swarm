@@ -25,7 +25,6 @@ from swarm.core.maps.office import OFFICE_CEILING_M, build_office_map, office_la
 from swarm.core.maps.office.builder import office_scale
 from swarm.core.maps.office.layout import DESK_PAIRS, SETS, footprint
 
-
 SEED = 0
 SCALE = office_scale(SEED)
 

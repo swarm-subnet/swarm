@@ -31,7 +31,6 @@ import validator.scripts.generate_video as generate_video
 import validator.scripts.visualize_map as visualize_map
 from swarm import cli
 
-
 # --------------------------------------------------------------------------
 # swarm visualize
 # --------------------------------------------------------------------------

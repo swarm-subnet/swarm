@@ -28,7 +28,6 @@ from swarm.validator import utils as validator_utils
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 from swarm.validator.utils_parts.heartbeat import HeartbeatManager
 
-
 _FAKE_MODEL_DIR = tempfile.TemporaryDirectory(prefix="swarm_streaming_phase_")
 _FAKE_MODEL_ZIP = Path(_FAKE_MODEL_DIR.name) / "fake_model.zip"
 _FAKE_MODEL_ZIP.write_bytes(b"streaming-phase fixture artifact")

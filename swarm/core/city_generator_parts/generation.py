@@ -202,7 +202,7 @@ def extract_blocks(v_pos, h_pos, min_area, removed_h_segments=None,
     queue = list(initial_blocks)
     while queue:
         block = queue.pop(0)
-        splitted = False
+        was_split = False
         for (y, sx1, sx2) in added_h_segments:
             if block.rect.y < y and (y + effective_tile_size) < (block.rect.y + block.rect.h):
                 if sx1 < block.rect.x + block.rect.w and sx2 > block.rect.x:
@@ -215,9 +215,9 @@ def extract_blocks(v_pos, h_pos, min_area, removed_h_segments=None,
                     bid += 1
                     queue.append(b1)
                     queue.append(b2)
-                    splitted = True
+                    was_split = True
                     break
-        if splitted:
+        if was_split:
             continue
         for (x, sy1, sy2) in added_v_segments:
             if block.rect.x < x and (x + effective_tile_size) < (block.rect.x + block.rect.w):
@@ -231,9 +231,9 @@ def extract_blocks(v_pos, h_pos, min_area, removed_h_segments=None,
                     bid += 1
                     queue.append(b1)
                     queue.append(b2)
-                    splitted = True
+                    was_split = True
                     break
-        if not splitted:
+        if not was_split:
             area = block.rect.w * block.rect.h
             block.too_small = area < (min_area * 0.95)
             final_blocks.append(block)

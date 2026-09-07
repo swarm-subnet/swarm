@@ -24,7 +24,6 @@ declared models/*.onnx files.
 
 from __future__ import annotations
 
-import hashlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path

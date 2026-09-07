@@ -35,7 +35,6 @@ from .mesh_loader import (
 )
 from .sar_types import BodyCategory
 
-
 VictimAttrs = Tuple[list, Tuple[Tuple[float, float, float], Tuple[float, float, float]], Tuple[float, float, float]]
 
 
@@ -166,8 +165,12 @@ def _rotated_bounds(
         wx = rot_matrix[0] * c[0] + rot_matrix[1] * c[1] + rot_matrix[2] * c[2]
         wy = rot_matrix[3] * c[0] + rot_matrix[4] * c[1] + rot_matrix[5] * c[2]
         wz = rot_matrix[6] * c[0] + rot_matrix[7] * c[1] + rot_matrix[8] * c[2]
-        rmin[0] = min(rmin[0], wx); rmin[1] = min(rmin[1], wy); rmin[2] = min(rmin[2], wz)
-        rmax[0] = max(rmax[0], wx); rmax[1] = max(rmax[1], wy); rmax[2] = max(rmax[2], wz)
+        rmin[0] = min(rmin[0], wx)
+        rmin[1] = min(rmin[1], wy)
+        rmin[2] = min(rmin[2], wz)
+        rmax[0] = max(rmax[0], wx)
+        rmax[1] = max(rmax[1], wy)
+        rmax[2] = max(rmax[2], wz)
     return (
         (rmin[0] + base_position[0], rmin[1] + base_position[1], rmin[2] + base_position[2]),
         (rmax[0] + base_position[0], rmax[1] + base_position[1], rmax[2] + base_position[2]),

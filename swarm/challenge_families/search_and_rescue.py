@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import inspect
-import math
 from typing import Any, Optional
 
 import numpy as np
@@ -50,7 +49,7 @@ from swarm.core.env_builder.sar_world import build_sar_world
 from swarm.core.env_builder.spawn_pipeline import SARSpawnError
 from swarm.core.env_builder.victim import accepted_categories_for
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
-from swarm.protocol import FailureReason, SCHEMA_VERSION
+from swarm.protocol import SCHEMA_VERSION, FailureReason
 from swarm.validator.reward import (
     PARTICIPATION_REASONS,
     PARTICIPATION_REWARD,
@@ -61,7 +60,6 @@ from swarm.validator.reward import (
 )
 
 from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool, interleave
-
 
 # A failed placement parks the drone in open air so the first step cannot add a collision.
 SPAWN_FAILURE_PARK_Z = 200.0

@@ -39,8 +39,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from swarm.constants import SPEED_FACTOR_MAX_ELIGIBLE, SPEED_FACTOR_MIN
-from swarm.utils.hash import sha256sum
 from swarm.core.submission_policy import validate_submission_zip
+from swarm.utils.hash import sha256sum
 
 _CALIBRATION_DIR = Path(__file__).resolve().parent
 _MANIFEST_PATH = _CALIBRATION_DIR / "baseline_manifest.json"

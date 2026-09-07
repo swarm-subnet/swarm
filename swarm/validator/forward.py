@@ -52,8 +52,8 @@ from .seed_manager import BenchmarkSeedManager
 from .sse_listener import SseListener
 from .utils import (
     _apply_backend_weights_to_scores,
-    accept_sync_version,
     _publish_pending_epoch_seeds,
+    accept_sync_version,
     compute_koth_weights_from_sync,
     stamp_local_weights_on_kings,
 )

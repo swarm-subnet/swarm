@@ -29,8 +29,8 @@ Output:
     Per-scene breakdown: bodies checked, ms per component, % of total step.
 """
 
-import sys
 import os
+import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir))
@@ -38,9 +38,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.p
 import numpy as np
 import pybullet as p
 
-from swarm.constants import SIM_DT, DEPTH_NEAR, DEPTH_FAR, SAFETY_DISTANCE_SAFE
-from swarm.validator.task_gen import random_task
+from swarm.constants import DEPTH_FAR, DEPTH_NEAR, SAFETY_DISTANCE_SAFE, SIM_DT
 from swarm.utils.env_factory import make_env
+from swarm.validator.task_gen import random_task
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SEEDS = {

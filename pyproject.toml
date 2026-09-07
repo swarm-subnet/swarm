@@ -61,3 +61,26 @@ exclude = ["miner.tests*", "validator.tests*"]
 [tool.setuptools.dynamic]
 version = { attr = "swarm.__version__" }
 dependencies = { file = ["requirements.txt"] }
+
+[tool.ruff]
+line-length = 200
+target-version = "py311"
+extend-exclude = ["swarm/assets", "artifacts", "miner_env"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/_shared.py" = ["F401"]
+"**/__init__.py" = ["F401", "F403"]
+"**/*_parts/**" = ["F403", "F405"]
+"swarm/core/warehouse/**" = ["F403", "F405"]
+# The backend keeps a byte-identical mirror of this module under a different import
+# root, so the two repos sort these imports in provably opposite orders.
+"swarm/submission_manifest/__init__.py" = ["I001"]
+"swarm/core/city_generator.py" = ["F403"]
+"swarm/core/forest_generator.py" = ["F403"]
+"swarm/core/mountain_generator.py" = ["F403"]
+
+[tool.codespell]
+ignore-words-list = "froms,statics,oppen"

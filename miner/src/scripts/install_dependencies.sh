@@ -38,23 +38,23 @@ install_system_dependencies() {
   info_msg "Updating apt package lists..."
   sudo apt update -y || handle_error "Failed to update apt lists"
   sudo apt upgrade -y || handle_error "Failed to upgrade packages"
-  
+
   info_msg "Installing core tools..."
   sudo apt install -y sudo software-properties-common lsb-release \
     || handle_error "Failed to install core tools"
-  
+
   info_msg "Adding Python 3.11 PPA..."
   sudo add-apt-repository ppa:deadsnakes/ppa -y \
     || handle_error "Failed to add Python PPA"
   sudo apt update -y || handle_error "Failed to refresh apt lists"
-  
+
   # Same packages as validator
   COMMON_PACKAGES=(
     python3.11 python3.11-venv python3.11-dev
     build-essential cmake wget unzip sqlite3
-    libnss3 libnss3-dev gnupg curl nodejs 
+    libnss3 libnss3-dev gnupg curl nodejs
   )
-  
+
   # Ask apt which ALSA runtime exists here; libasound2 is virtual from noble onwards.
   UBUNTU_CODENAME=$(lsb_release -cs)
   if apt-cache show libasound2t64 >/dev/null 2>&1; then
@@ -62,7 +62,7 @@ install_system_dependencies() {
   else
     EXTRA_PACKAGES=(libasound2)
   fi
-  
+
   info_msg "Installing system dependencies for $UBUNTU_CODENAME..."
   sudo apt install -y "${COMMON_PACKAGES[@]}" "${EXTRA_PACKAGES[@]}" \
     || handle_error "Failed to install system dependencies"
@@ -92,7 +92,7 @@ install_pm2() {
 
 verify_installation() {
   info_msg "Verifying system dependencies..."
-  
+
   # Check Python
   python3.11 --version || handle_error "Python 3.11 verification failed"
 
@@ -101,7 +101,7 @@ verify_installation() {
 
   # Check PM2
   pm2 --version || handle_error "PM2 verification failed"
-  
+
   success_msg "System dependencies verification passed"
 }
 
@@ -111,7 +111,7 @@ main() {
   install_uv
   install_pm2
   verify_installation
-  
+
   success_msg "System dependencies installed successfully!"
   echo -e "\e[33m[NEXT]\e[0m Run: ./miner/src/scripts/setup.sh"
 }

@@ -25,7 +25,6 @@ import pytest
 from swarm.validator.calibration import normalize_speed_factor
 from swarm.validator.docker.docker_evaluator_parts import batch
 
-
 VERSION = "cal-1"
 
 

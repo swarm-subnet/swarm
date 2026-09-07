@@ -85,11 +85,11 @@ install_modules() {
 
 verify_installation() {
   info_msg "Verifying miner environment setup..."
-  
+
   # Check Bittensor
   python -c "import bittensor; print(f'✓ Bittensor: {bittensor.__version__}')" || \
     info_msg "⚠ Warning: Bittensor import failed"
-  
+
   success_msg "Installation verification completed."
 }
 
@@ -119,7 +119,7 @@ main() {
   install_python_reqs
   install_modules
   verify_installation
-  
+
   show_completion_info
 }
 
