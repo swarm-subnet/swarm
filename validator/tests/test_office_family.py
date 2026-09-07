@@ -49,8 +49,17 @@ from swarm.utils.env_factory import make_env
 from swarm.validator import task_gen
 
 
+_BLANK_FRAME = np.zeros((256, 256, 3), dtype=np.float32)
+
+
+def _blind(env):
+    """Skip the camera render: it is most of a step's cost and only the RGB tests read it."""
+    env._office_rgb_frame = lambda: _BLANK_FRAME
+    return env
+
+
 @pytest.fixture(scope="module")
-def office_env():
+def office_world():
     task = task_gen.screening_task(
         1 / 50, 3, challenge_type=OFFICE_CHALLENGE_TYPE,
         distance_range=(OFFICE_MIN_START_DISTANCE_M, OFFICE_MAX_START_DISTANCE_M),
@@ -59,6 +68,13 @@ def office_env():
     env = make_env(task)
     yield env
     env.close()
+
+
+@pytest.fixture
+def office_env(office_world, monkeypatch):
+    """The shared env with the camera off; a test that reads pixels takes office_world."""
+    monkeypatch.setattr(office_world, "_office_rgb_frame", lambda: _BLANK_FRAME)
+    return office_world
 
 
 def test_office_contract_action_space():
@@ -86,8 +102,8 @@ def test_rc_body_to_world_math():
     assert np.allclose(v, [0.0, 0.0, 1.5], atol=1e-9)
 
 
-def test_office_env_action_space_and_state(office_env):
-    env = office_env
+def test_office_env_action_space_and_state(office_world):
+    env = office_world
     assert env.action_space.shape == (1, 4)
     assert np.all(env.action_space.low == -1.0)
     assert np.all(env.action_space.high == 1.0)
@@ -422,7 +438,7 @@ def test_office_telemetry_deterministic():
     task = task_gen.random_task(1 / 50, 42, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
-        env = make_env(task)
+        env = _blind(make_env(task))
         env.reset(seed=task.map_seed)
         states = []
         for i in range(3 * OFFICE_TELEM_PERIOD_STEPS):
@@ -450,7 +466,7 @@ def test_office_target_flight_deterministic_and_clear():
     task = task_gen.random_task(1 / 50, 55, family_id="cf_interceptor_office")
     trajs = []
     for _ in range(2):
-        env = make_env(task)
+        env = _blind(make_env(task))
         env.reset(seed=task.map_seed)
         hover = np.zeros((1, 4), dtype=np.float32)
         pts = []
@@ -823,7 +839,7 @@ def test_office_detector_deterministic():
     task = task_gen.random_task(1 / 50, 88, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
-        env = make_env(task)
+        env = _blind(make_env(task))
         env.reset(seed=task.map_seed)
         rows = []
         for _ in range(150):
@@ -865,9 +881,9 @@ def test_office_rgb_appearance_varies_by_seed():
     assert diff > 0.02, f"different seeds must look different (mean diff {diff:.4f})"
 
 
-def test_office_rgb_stream_cadence_and_noise(office_env):
+def test_office_rgb_stream_cadence_and_noise(office_world):
     """Held frames repeat exactly; fresh captures differ (sensor noise at least)."""
-    env = office_env
+    env = office_world
     obs, _ = env.reset(seed=env.task.map_seed)
     hover = np.zeros((1, 4), dtype=np.float32)
     frames = [obs["rgb"].copy()]

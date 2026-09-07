@@ -25,6 +25,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from filelock import FileLock
 
 
 def _ensure_repo_on_syspath() -> None:
@@ -143,26 +144,33 @@ def wheel_contents(tmp_path_factory) -> set[str]:
     """What a built wheel actually holds.
 
     The packaging rules say what should ship; only the artifact says what does.
-    Built from a copy so a concurrent test cannot see a half-written build tree."""
+    Built from a copy so a concurrent test cannot see a half-written build tree,
+    and once per run: xdist workers share the session's temp directory, so the
+    first worker to take the lock builds and the others read its wheel."""
     import shutil
     import subprocess
     import zipfile
 
     repo_root = Path(__file__).resolve().parent
-    source = tmp_path_factory.mktemp("wheel_src") / "repo"
-    # A link pointing outside the repository cannot be part of a wheel, and letting
-    # copytree fail on one turns an unrelated stray file into an error here.
-    shutil.copytree(
-        repo_root, source,
-        ignore=wheel_source_ignore(), ignore_dangling_symlinks=True,
-    )
-    out = tmp_path_factory.mktemp("wheel_out")
-    result = subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],
-        cwd=str(source), capture_output=True, text=True, timeout=900,
-    )
-    built = sorted(out.glob("*.whl"))
-    if result.returncode != 0 or not built:
-        pytest.fail(f"building the wheel failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
+    base = tmp_path_factory.getbasetemp()
+    out = (base.parent if os.getenv("PYTEST_XDIST_WORKER") else base) / "wheel"
+    out.mkdir(exist_ok=True)
+    with FileLock(str(out / "build.lock")):
+        built = sorted(out.glob("*.whl"))
+        if not built:
+            source = out / "src" / "repo"
+            # A link pointing outside the repository cannot be part of a wheel, and letting
+            # copytree fail on one turns an unrelated stray file into an error here.
+            shutil.copytree(
+                repo_root, source,
+                ignore=wheel_source_ignore(), ignore_dangling_symlinks=True,
+            )
+            result = subprocess.run(
+                [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out), str(source)],
+                cwd=str(source), capture_output=True, text=True, timeout=900,
+            )
+            built = sorted(out.glob("*.whl"))
+            if result.returncode != 0 or not built:
+                pytest.fail(f"building the wheel failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
     with zipfile.ZipFile(built[0]) as wheel:
         return set(wheel.namelist())
