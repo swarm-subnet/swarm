@@ -17,29 +17,30 @@
 # DEALINGS IN THE SOFTWARE.
 
 
+import os
 import sys
 import time
-import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
 
-import bittensor as bt
 import subprocess
+
+import bittensor as bt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from swarm.base.validator import BaseValidatorNeuron
-from swarm.validator.forward import forward
-from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
-from swarm.protocol import ValidationResult, MapTask
 from datetime import datetime
-import swarm
 
-from loguru import logger
-from dotenv import load_dotenv
 import wandb
+from dotenv import load_dotenv
+from loguru import logger
+
+import swarm
+from swarm.base.validator import BaseValidatorNeuron
+from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+from swarm.validator.forward import forward
 
 
 # ───────────────────────────────────────────────────────────────────────────

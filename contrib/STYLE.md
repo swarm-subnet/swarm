@@ -4,7 +4,8 @@ A project’s long-term success rests (among other things) on its maintainabilit
 
 Most programming languages have well-established conventions as to what constitutes idiomatic style, i.e. naming, formatting and so on. There are variations on these conventions, of course, but most developers agree that picking one and sticking to it is far better than the chaos that ensues when everybody does their own thing.
 
-# Table of Contents
+## Table of Contents
+
 1. [Code Style](#code-style)
 2. [Naming Conventions](#naming-conventions)
 3. [Git Commit Style](#git-commit-style)
@@ -20,10 +21,10 @@ Most programming languages have well-established conventions as to what constitu
    - [Interactive Rebase](#interactive-rebase)
 6. [Pull Request and Squashing Commits Caveats](#pull-request-and-squashing-commits-caveats)
 
+## Code style
 
-### Code style
+### General Style
 
-#### General Style
 Python's official style guide is PEP 8, which provides conventions for writing code for the main Python distribution. Here are some key points:
 
 - `Indentation:` Use 4 spaces per indentation level.
@@ -34,17 +35,17 @@ Python's official style guide is PEP 8, which provides conventions for writing c
 
 - `Imports:` Imports should usually be on separate lines and should be grouped in the following order:
 
-    - Standard library imports.
-    - Related third party imports.
-    - Local application/library specific imports.
+  - Standard library imports.
+  - Related third party imports.
+  - Local application/library specific imports.
 - `Whitespace:` Avoid extraneous whitespace in the following situations:
 
-    - Immediately inside parentheses, brackets or braces.
-    - Immediately before a comma, semicolon, or colon.
-    - Immediately before the open parenthesis that starts the argument list of a function call.
+  - Immediately inside parentheses, brackets or braces.
+  - Immediately before a comma, semicolon, or colon.
+  - Immediately before the open parenthesis that starts the argument list of a function call.
 - `Comments:` Comments should be complete sentences and should be used to clarify code and are not a substitute for poorly written code.
 
-#### For Python
+### For Python
 
 - `List Comprehensions:` Use list comprehensions for concise and readable creation of lists.
 
@@ -56,19 +57,19 @@ Python's official style guide is PEP 8, which provides conventions for writing c
 
 - `Error Handling:` Use exceptions for error handling whenever possible.
 
-#### More details
+### More details
 
-Use `black` to format your python code before commiting for consistency across such a large pool of contributors. Black's code [style](https://black.readthedocs.io/en/stable/the_black_code_style/current_style.html#code-style) ensures consistent and opinionated code formatting. It automatically formats your Python code according to the Black style guide, enhancing code readability and maintainability.
+Run the repository's linters before committing. `pre-commit install` wires them to every commit and `pre-commit run --all-files` checks the whole tree; the rules live in `.pre-commit-config.yaml` and `pyproject.toml`, so there is nothing to decide per change. See the [Linting](./CONTRIBUTING.md#linting) section for what each tool covers.
 
-Key Features of Black:
+Why it is configured in the repository rather than left to each contributor:
 
-    Consistency: Black enforces a single, consistent coding style across your project, eliminating style debates and allowing developers to focus on code logic.
+    Consistency: one rule set across the project, so style is settled once instead of per review.
 
-    Readability: By applying a standard formatting style, Black improves code readability, making it easier to understand and collaborate on projects.
+    Readability: a standard layout makes code easier to read and to collaborate on.
 
-    Automation: Black automates the code formatting process, saving time and effort. It eliminates the need for manual formatting and reduces the likelihood of inconsistencies.
+    Automation: most findings fix themselves in place, which removes the manual pass and the inconsistencies that come with it.
 
-### Naming Conventions
+## Naming Conventions
 
 - `Classes:` Class names should normally use the CapWords Convention.
 - `Functions and Variables:` Function names should be lowercase, with words separated by underscores as necessary to improve readability. Variable names follow the same convention as function names.
@@ -79,11 +80,11 @@ Key Features of Black:
 
 - `Strongly "private" methods and variables:` Use a double leading underscore (__). This triggers name mangling in Python.
 
-
-### Git commit style
+## Git commit style
 
 Here’s a model Git commit message when contributing:
-```
+
+```text
 Summarize changes in around 50 characters or less
 
 More detailed explanatory text, if necessary. Wrap it to about 72
@@ -113,17 +114,18 @@ Resolves: #123
 See also: #456, #789
 ```
 
+## The six rules of a great commit
 
-## The six rules of a great commit.
+### 1. Atomic Commits
 
-#### 1. Atomic Commits
 An “atomic” change revolves around one task or one fix.
 
 Atomic Approach
- - Commit each fix or task as a separate change
- - Only commit when a block of work is complete
- - Commit each layout change separately
- - Joint commit for layout file, code behind file, and additional resources
+
+- Commit each fix or task as a separate change
+- Only commit when a block of work is complete
+- Commit each layout change separately
+- Joint commit for layout file, code behind file, and additional resources
 
 Benefits
 
@@ -131,23 +133,23 @@ Benefits
 - Easy to make other changes on the fly
 - Easy to merge features to other branches
 
-#### Avoid trivial commit messages
+### Avoid trivial commit messages
 
 Commit messages like "fix", "fix2", or "fix3" don't provide any context or clear understanding of what changes the commit introduces. Here are some examples of good vs. bad commit messages:
 
-**Bad Commit Message:** 
+**Bad Commit Message:**
 
-    $ git commit -m "fix"
+    git commit -m "fix"
 
 **Good Commit Message:**
 
-    $ git commit -m "Fix typo in README file"
+    git commit -m "Fix typo in README file"
 
 > **Caveat**: When working with new features, an atomic commit will often consist of multiple files, since a layout file, code behind file, and additional resources may have been added/modified. You don’t want to commit all of these separately, because if you had to roll back the application to a state before the feature was added, it would involve multiple commit entries, and that can get confusing
 
-#### 2. Separate subject from body with a blank line
+### 2. Separate subject from body with a blank line
 
-Not every commit requires both a subject and a body. Sometimes a single line is fine, especially when the change is so simple that no further context is necessary. 
+Not every commit requires both a subject and a body. Sometimes a single line is fine, especially when the change is so simple that no further context is necessary.
 
 For example:
 
@@ -157,7 +159,7 @@ Nothing more need be said; if the reader wonders what the typo was, she can simp
 
 If you’re committing something like this at the command line, it’s easy to use the -m option to git commit:
 
-    $ git commit -m"Fix typo in introduction to user guide"
+    git commit -m"Fix typo in introduction to user guide"
 
 However, when a commit merits a bit of explanation and context, you need to write a body. For example:
 
@@ -175,20 +177,21 @@ In any case, the separation of subject from body pays off when browsing the log.
     commit 42e769bdf4894310333942ffc5a15151222a87be
     Author: Kevin Flynn <kevin@flynnsarcade.com>
     Date:   Fri Jan 01 00:00:00 1982 -0200
-    
+
      Derezz the master control program
-    
+
      MCP turned out to be evil and had become intent on world domination.
      This commit throws Tron's disc into MCP (causing its deresolution)
      and turns it back into a chess game.
 
+### 3. Limit the subject line to 50 characters
 
-#### 3. Limit the subject line to 50 characters
 50 characters is not a hard limit, just a rule of thumb. Keeping subject lines at this length ensures that they are readable, and forces the author to think for a moment about the most concise way to explain what’s going on.
 
 GitHub’s UI is fully aware of these conventions. It will warn you if you go past the 50 character limit. Git will truncate any subject line longer than 72 characters with an ellipsis, thus keeping it to 50 is best practice.
 
-#### 4. Use the imperative mood in the subject line
+### 4. Use the imperative mood in the subject line
+
 Imperative mood just means “spoken or written as if giving a command or instruction”. A few examples:
 
     Clean your room
@@ -244,17 +247,19 @@ For example:
     If applied, this commit will release version 1.0.0
     If applied, this commit will merge pull request #123 from user/branch
 
-#### 5. Wrap the body at 72 characters
+### 5. Wrap the body at 72 characters
+
 Git never wraps text automatically. When you write the body of a commit message, you must mind its right margin, and wrap text manually.
 
 The recommendation is to do this at 72 characters, so that Git has plenty of room to indent text while still keeping everything under 80 characters overall.
 
 A good text editor can help here. It’s easy to configure Vim, for example, to wrap text at 72 characters when you’re writing a Git commit.
 
-#### 6. Use the body to explain what and why vs. how
+### 6. Use the body to explain what and why vs. how
+
 This [commit](https://github.com/bitcoin/bitcoin/commit/eb0b56b19017ab5c16c745e6da39c53126924ed6) from Bitcoin Core is a great example of explaining what changed and why:
 
-```
+```text
 commit eb0b56b19017ab5c16c745e6da39c53126924ed6
 Author: Pieter Wuille <pieter.wuille@gmail.com>
 Date:   Fri Aug 1 22:57:55 2014 +0200
@@ -284,36 +289,33 @@ In most cases, you can leave out details about how a change has been made. Code 
 
 The future maintainer that thanks you may be yourself!
 
+### Tools worth mentioning
 
+#### Using `--fixup`
 
-#### Tools worth mentioning
-
-##### Using `--fixup`
-
-If you've made a commit and then realize you've missed something or made a minor mistake, you can use the `--fixup` option. 
+If you've made a commit and then realize you've missed something or made a minor mistake, you can use the `--fixup` option.
 
 For example, suppose you've made a commit with a hash `9fceb02`. Later, you realize you've left a debug statement in your code. Instead of making a new commit titled "remove debug statement" or "fix", you can do the following:
 
-    $ git commit --fixup 9fceb02
+    git commit --fixup 9fceb02
 
 This will create a new commit to fix the issue, with a message like "fixup! The original commit message".
 
-##### Interactive Rebase
+#### Interactive Rebase
 
 Interactive rebase, or `rebase -i`, can be used to squash these fixup commits into the original commits they're fixing, which cleans up your commit history. You can use the `autosquash` option to automatically squash any commits marked as "fixup" into their target commits.
 
 For example:
 
-    $ git rebase -i --autosquash HEAD~5
+    git rebase -i --autosquash HEAD~5
 
 This command starts an interactive rebase for the last 5 commits (`HEAD~5`). Any commits marked as "fixup" will be automatically moved to squash with their target commits.
 
 The benefit of using `--fixup` and interactive rebase is that it keeps your commit history clean and readable. It groups fixes with the commits they are related to, rather than having a separate "fix" commit that might not make sense to other developers (or even to you) in the future.
 
-
 ---
 
-#### Pull Request and Squashing Commits Caveats
+### Pull Request and Squashing Commits Caveats
 
 While atomic commits are great for development and for understanding the changes within the branch, the commit history can get messy when merging to the main branch. To keep a cleaner and more understandable commit history in our main branch, we encourage squashing all the commits of a PR into one when merging.
 
@@ -329,13 +331,13 @@ where `n` is the number of commits to squash. After running the command, replace
 
 In this context, an atomic commit message could look like:
 
-```
+```text
 Add feature X
 
-This commit introduces feature X which does A, B, and C. It adds 
+This commit introduces feature X which does A, B, and C. It adds
 new files for layout, updates the code behind the file, and introduces
-new resources. This change is important because it allows users to 
-perform task Y more efficiently. 
+new resources. This change is important because it allows users to
+perform task Y more efficiently.
 
 It includes:
 - Creation of new layout file
@@ -345,4 +347,4 @@ It includes:
 Resolves: #123
 ```
 
-In your PRs, remember to detail what the PR is introducing or fixing. This will be helpful for reviewers to understand the context and the reason behind the changes. 
+In your PRs, remember to detail what the PR is introducing or fixing. This will be helpful for reviewers to understand the context and the reason behind the changes.

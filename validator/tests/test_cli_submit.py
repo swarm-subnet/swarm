@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import zipfile
-from pathlib import Path
 
 from swarm import cli
 

@@ -24,10 +24,8 @@ import pytest
 
 from swarm.core.env_builder.sar_types import (
     BodyCategory,
-    SUPPORT_CATEGORIES,
 )
 from swarm.core.env_builder.sar_world import build_sar_world
-
 
 _MAPS = {
     "open":      2,

@@ -31,6 +31,8 @@ from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
 
 from ._shared import _THREAD_CAP_ENV_VARS
 from .batch import remove_all_model_images
+
+
 def __new__(cls):
     if cls._instance is None:
         cls._instance = super().__new__(cls)

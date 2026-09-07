@@ -24,7 +24,6 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Mapping
 
-
 _SCHEMA_RESOURCE = "benchmark_domain_model.schema.json"
 
 

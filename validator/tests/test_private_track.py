@@ -32,7 +32,8 @@ import pytest
 from swarm.core import model_verify
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.validator.backend_api import BackendApiClient
-from swarm.validator.utils_parts import model_fetch, run_task as run_task_mod
+from swarm.validator.utils_parts import model_fetch
+from swarm.validator.utils_parts import run_task as run_task_mod
 
 AGENT = (
     "import numpy as np\n\n\n"

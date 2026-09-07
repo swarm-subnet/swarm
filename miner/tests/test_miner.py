@@ -21,8 +21,8 @@ import hashlib
 import io
 import json
 import shlex
-from types import SimpleNamespace
 import zipfile
+from types import SimpleNamespace
 
 from miner.src import miner
 

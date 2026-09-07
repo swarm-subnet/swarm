@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 from swarm.core.maps.open import builder as open_builder

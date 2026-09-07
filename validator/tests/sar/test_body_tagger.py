@@ -26,7 +26,6 @@ import pytest
 from swarm.core.env_builder.body_tagger import BodyTagger
 from swarm.core.env_builder.sar_types import BodyCategory
 
-
 _MINIMAL_URDF = """<?xml version='1.0'?>
 <robot name='tagger_test'>
   <link name='base_link'>

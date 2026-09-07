@@ -1,0 +1,35 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Deliberately not the docker image the tests use. Linting needs the source
+  # and the linters, not the runtime, and a bare runner starts in seconds
+  # where pulling the image takes minutes.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # pre-commit runs every hook in this repo's config from one place, so
+      # what CI checks and what a commit checks cannot drift apart.
+      - uses: pre-commit/action@v3.0.1

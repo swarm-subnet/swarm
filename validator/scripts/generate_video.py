@@ -70,7 +70,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS
+from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Action log I/O
@@ -437,7 +437,7 @@ class DepthCamera(_CameraBase):
 
     def __init__(self, cli: int, width: int, height: int):
         super().__init__(cli, DEPTH_SENSOR_RES, DEPTH_SENSOR_RES, fov=90.0)
-        from swarm.constants import DEPTH_FAR, DEPTH_MIN_M, DEPTH_MAX_M
+        from swarm.constants import DEPTH_FAR, DEPTH_MAX_M, DEPTH_MIN_M
 
         self._near = 0.05
         self._far = float(DEPTH_FAR)
@@ -1049,6 +1049,7 @@ def record_flight(
     """
     import pybullet as p
     from gym_pybullet_drones.utils.enums import ActionType
+
     from swarm.constants import SIM_DT, SPEED_LIMIT
 
     model_path = Path(model_path).resolve()

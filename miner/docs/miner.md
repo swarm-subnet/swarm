@@ -70,7 +70,6 @@ Swarm runs **six challenge families**. Five are active and paying; Interceptor i
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](../../docs/families/interceptor.md) |
 | Office Interceptor | `cf_interceptor_office` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 30% | [families/office_interceptor.md](../../docs/families/office_interceptor.md) |
 
-
 The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the five active slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
@@ -81,7 +80,7 @@ The swarm families fly 2–8 drones per seed, all under one policy. Each active 
 
 The full miner workflow, from first install to competing on the leaderboard:
 
-```
+```text
 1. swarm doctor              ← Check environment readiness
 2. Train your model           ← SB3, PyTorch, or custom
 3. swarm model test           ← Validate source folder before packaging
@@ -145,6 +144,7 @@ class DroneFlightController:
 ```
 
 **Required files:**
+
 - `drone_agent.py`: Your controller class, at the zip root (REQUIRED)
 - `requirements.txt`: Additional packages (optional, must be on the [whitelist](#docker-whitelist))
 - Model artifacts using a supported extension: `.bin`, `.ckpt`, `.h5`, `.json`, `.npy`, `.npz`, `.onnx`, `.pb`, `.pkl`, `.pt`, `.pth`, `.safetensors`, `.tflite`, `.weights`, or `.zip`
@@ -152,9 +152,11 @@ class DroneFlightController:
 `swarm model package` recursively includes only those artifacts plus root-level `drone_agent.py` and `requirements.txt`. Arbitrary helper `.py`, YAML, TOML, and other files are not packaged; keep required logic in `drone_agent.py` and required configuration in a supported model artifact.
 
 **Auto-injected (do not include):**
+
 - `main.py`, `agent.capnp`, `agent_server.py`, `runtime_caps.py`: provided by the evaluation system
 
 **Hard limits, enforced before the commit and again at intake:**
+
 - Compressed archive ≤ **50 MiB**
 - Total **uncompressed** content ≤ **50 MiB** (summed across zip entries: a zip-bomb guard, so squeezing the archive harder does not help)
 - No `.exe`, `.so`, `.dll`, `.sh`, `.bat`, or `.pyc` entries
@@ -193,6 +195,7 @@ For Office Interceptor, the contract is `rgb` (256, 256, 3) plus a 127-float `st
 | 5 | rgb_request | [0, 1] | Set above 0.5 to receive a colour frame in the next observation's `rgb` (max 40 per episode) |
 
 **Constraints:**
+
 - Max velocity: 3.0 m/s
 - Max yaw rate: 3.141 rad/s (180°/s)
 - Simulation rate: 50 Hz (dt = 1/50)
@@ -371,7 +374,7 @@ Forking and improving a published champion is allowed and encouraged. Re-submitt
 
 Per-seed reward for most families:
 
-```
+```text
 score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
@@ -474,7 +477,7 @@ Your `requirements.txt` can only include packages from the approved whitelist (`
 
 **Approved packages:**
 
-```
+```text
 torch, torchvision, torchaudio, onnx, onnxruntime, onnxruntime-gpu,
 stable-baselines3, sb3-contrib, gymnasium, gym, numpy, scipy,
 scikit-learn, opencv-python, opencv-python-headless, pillow, imageio,

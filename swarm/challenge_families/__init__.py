@@ -24,16 +24,15 @@ from swarm.domain_model import CHALLENGE_FAMILY_IDS
 from .autopilot import AutopilotChallengeFamily
 from .base import (
     ChallengeFamilyEvaluation,
-    ChallengeFamilyRuntimeProfile,
     ChallengeFamilyRuntime,
     ChallengeFamilyRuntimeError,
+    ChallengeFamilyRuntimeProfile,
 )
 from .interceptor import InterceptorChallengeFamily
 from .office_interceptor import OfficeInterceptorChallengeFamily
 from .search_and_rescue import SearchAndRescueChallengeFamily
 from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
-
 
 DEFAULT_RUNTIME_FAMILY_ID = "cf_autopilot"
 

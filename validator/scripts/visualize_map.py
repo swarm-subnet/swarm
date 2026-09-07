@@ -49,8 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Tuple
 
-import numpy as np
 import gymnasium.spaces as spaces
+import numpy as np
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent.parent
@@ -58,7 +58,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS
+from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
 
 _FOLLOW_CAMERA_FOV = 45.0
 

@@ -272,10 +272,12 @@ swarm monitor --max-events 20
 If the monitor looks unhealthy:
 
 1. Confirm Docker is healthy:
+
    ```bash
    docker ps
    docker stats --no-stream
    ```
+
 2. Check whether backend sync is falling back:
    - look for `backend.fallback=true`
    - look at `last_sync_success_at`
@@ -352,24 +354,30 @@ Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epoc
 ### Docker Issues
 
 **Docker not installed:**
-```
+
+```text
 docker: command not found
 ```
+
 Follow the Docker installation section above.
 
 **Docker permission denied:**
-```
+
+```text
 Permission denied while trying to connect to Docker daemon
 ```
+
 ```bash
 sudo usermod -aG docker swarm-validator   # the dedicated validator user
 # Log out and back in
 ```
 
 **Docker service not running:**
-```
+
+```text
 Cannot connect to the Docker daemon
 ```
+
 ```bash
 sudo systemctl start docker
 sudo systemctl enable docker
@@ -378,17 +386,20 @@ sudo systemctl enable docker
 ### Validator Startup Issues
 
 **PyBullet/OpenGL errors:**
+
 ```bash
 sudo apt update && sudo apt install -y libgl1-mesa-glx mesa-utils
 ```
 
 **Model cache permissions:**
+
 ```bash
 mkdir -p miner_models_v2
 chmod 755 miner_models_v2
 ```
 
 **Docker container issues:**
+
 ```bash
 docker system df
 docker system prune -f

@@ -19,9 +19,6 @@ from __future__ import annotations
 
 import math
 import random
-import statistics
-
-import pytest
 
 from swarm.core.env_builder.search_clue import (
     SEARCH_RADIUS_M,

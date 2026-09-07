@@ -33,7 +33,7 @@ Drones are moving into everyday life: delivering packages, inspecting bridges an
 
 **Swarm is the open arena that settles it.** Anyone can train a drone pilot, submit it, and watch it compete on a public [leaderboard](https://swarm124.com/benchmark) across thousands of fresh worlds it has never seen. No private test sets, no memorizing, no shortcuts. The best pilot wins, out in the open, and its rewards are paid automatically by the [Bittensor](https://bittensor.com) network (Subnet 124).
 
-https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2
+<https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2>
 
 <p align="center">
   <sub><b>Search and Rescue.</b> The mission Swarm is built around: teaching a drone to find people.</sub>
@@ -71,7 +71,7 @@ Swarm is five separate competitions, each with its own champion and its own shar
 <!-- WATCH: INTERCEPTOR -->
 ## Watch: Interceptor
 
-https://github.com/user-attachments/assets/a16e9453-663c-4483-a3b8-160c412fd3e7
+<https://github.com/user-attachments/assets/a16e9453-663c-4483-a3b8-160c412fd3e7>
 
 <p align="center">
   <sub><b>Air-to-air pursuit,</b> from a real benchmark run: close the gap and catch a fleeing drone before the clock runs out.</sub>

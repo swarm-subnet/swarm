@@ -40,7 +40,6 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
-
 HEADROOM_EPS: float = 0.01
 WINDOW_SIZE: int = 5
 RESERVED_BURN_UID: int = 0

@@ -175,7 +175,7 @@ The infeasible check truncates when `time_left < max(0, horiz_dist_to_search_cen
 
 ## Scoring
 
-```
+```text
 score = clamp01(0.45 × success + 0.45 × time + 0.10 × safety)
 ```
 
@@ -189,7 +189,7 @@ The full stack only pays on a CONFIRMED hover. Any non-success outcome (`OBSTACL
 
 The time target budgets a realistic search, not a beeline:
 
-```
+```text
 target_time = 1.03 × ( dist(start, search_centre) / 3.0        # transit at speed limit
                      + 0.70 × π × 30² / (24 × 3.0)              # partial sweep of the circle, ≈ 27.5 s
                      + 2.0 )                                    # the dwell

@@ -25,16 +25,14 @@ and forensic storage of detected fake models.
 
 import asyncio
 import json
+import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import time
-import shutil
 from pathlib import Path
-from typing import Dict, Tuple, Set
-from zipfile import ZipFile, BadZipFile
-
-import logging
+from typing import Dict, Set, Tuple
 
 try:
     import bittensor as bt
@@ -42,14 +40,13 @@ try:
 except ImportError:
     _log = logging.getLogger("swarm.model_verify")
 
-from swarm.constants import MODEL_DIR, BLACKLIST_FILE, HORIZON_SEC
+from swarm.constants import BLACKLIST_FILE, HORIZON_SEC, MODEL_DIR
 from swarm.core.submission_lane import is_model_graph_artifact
 from swarm.core.submission_policy import (
     MAX_UNCOMPRESSED_BYTES,
     check_safety,
     check_structure,
 )
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Blacklist Management

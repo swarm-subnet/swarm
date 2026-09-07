@@ -37,20 +37,19 @@ from swarm.constants import (
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
-from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
-from swarm.core.faults import EvaluationFault, INFRA_FAULT_CODES, ReasonCode
+from swarm.core.faults import INFRA_FAULT_CODES, EvaluationFault, ReasonCode
 from swarm.core.submission_policy import (
     EXECUTION_PROFILE_ID,
     RUNNER_ABI,
     profile_digest,
 )
+from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
 from swarm.protocol import FailureReason
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
-
 
 _EMPTY_PER_TYPE = tuple(ENVIRONMENT_TYPES) + ("moving_platform",)
 

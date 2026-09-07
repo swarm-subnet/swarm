@@ -26,17 +26,12 @@ from typing import Any, Optional
 
 import numpy as np
 import pybullet as p
-
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
-    INTERCEPTOR_ACQUIRE_SLACK_SEC,
     INTERCEPTOR_ALT_MAX_M,
     INTERCEPTOR_ALT_MIN_M,
-    INTERCEPTOR_DEPTH_FAR_M,
-    INTERCEPTOR_DEPTH_MAX_M,
-    INTERCEPTOR_DEPTH_RES,
     INTERCEPTOR_DRONE_URDF,
     INTERCEPTOR_JINK_FREQ_MAX,
     INTERCEPTOR_JINK_FREQ_MIN,
@@ -61,13 +56,12 @@ from swarm.constants import (
     INTERCEPTOR_W_SUCCESS,
     INTERCEPTOR_W_TIME,
 )
-from swarm.core.env_builder.body_tagger import BodyTagger
 from swarm.core.env_builder.platform import build_start_platform, surface_z_at
 from swarm.core.env_builder.sar_tagging import build_and_tag_map
 from swarm.core.env_builder.surface_resolver import resolve_surface
 from swarm.core.env_builder.victim import accepted_categories_for
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
-from swarm.protocol import FailureReason, SCHEMA_VERSION
+from swarm.protocol import SCHEMA_VERSION, FailureReason
 from swarm.utils import gym_assets
 from swarm.validator.reward import (
     PARTICIPATION_REASONS,

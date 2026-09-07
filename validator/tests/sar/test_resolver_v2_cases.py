@@ -25,11 +25,10 @@ Builds a small tagged scene covering 20 representative situations:
 - empty positions (no body, must return None)"""
 from __future__ import annotations
 
-import pytest
 import pybullet as p
 
 from swarm.core.env_builder.body_tagger import BodyTagger
-from swarm.core.env_builder.sar_types import BodyCategory, SUPPORT_CATEGORIES
+from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES, BodyCategory
 from swarm.core.env_builder.surface_resolver import resolve_surface
 
 
@@ -68,29 +67,29 @@ def test_all_20_synthetic_cases(sar_pybullet):
     tagger = BodyTagger(cli)
 
     # 1. Flat ground tile (SUPPORT_TERRAIN, large flat box).
-    ground = _make_box(
+    _make_box(
         cli, tagger, BodyCategory.SUPPORT_TERRAIN,
         position=[0.0, 0.0, 0.0], half_extents=[20.0, 20.0, 0.1],
     )
     # 2. Building rooftop (SUPPORT_ROOFTOP, tall box) at (10, 0).
-    rooftop = _make_box(
+    _make_box(
         cli, tagger, BodyCategory.SUPPORT_ROOFTOP,
         position=[10.0, 0.0, 3.0], half_extents=[2.0, 2.0, 3.0],
     )
     # 3. Warehouse floor (SUPPORT_FLOOR) at (-15, 0).
-    floor = _make_box(
+    _make_box(
         cli, tagger, BodyCategory.SUPPORT_FLOOR,
         position=[-15.0, 0.0, 0.05], half_extents=[3.0, 3.0, 0.05],
     )
     # 4. Gentle slope (SUPPORT_SLOPE, 30deg).
     import math
-    gentle_slope = _make_slope(
+    _make_slope(
         cli, tagger, BodyCategory.SUPPORT_SLOPE,
         position=[20.0, 0.0, 1.0], half_extents=[2.0, 2.0, 0.1],
         tilt_rad=math.radians(30.0),
     )
     # 5. Steep slope (SUPPORT_SLOPE, 60deg) — should be rejected.
-    steep_slope = _make_slope(
+    _make_slope(
         cli, tagger, BodyCategory.SUPPORT_SLOPE,
         position=[25.0, 0.0, 1.0], half_extents=[2.0, 2.0, 0.1],
         tilt_rad=math.radians(60.0),
@@ -99,7 +98,7 @@ def test_all_20_synthetic_cases(sar_pybullet):
     col_pillar = p.createCollisionShape(
         p.GEOM_CYLINDER, radius=0.5, height=4.0, physicsClientId=cli,
     )
-    pillar = tagger.create_body(
+    tagger.create_body(
         BodyCategory.OBSTACLE_OTHER,
         baseMass=0.0, baseCollisionShapeIndex=col_pillar,
         basePosition=[30.0, 0.0, 2.0],
@@ -189,7 +188,7 @@ def test_all_20_synthetic_cases(sar_pybullet):
     col_extra = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[0.3, 0.3, 0.3], physicsClientId=cli,
     )
-    raw_uid = p.createMultiBody(
+    p.createMultiBody(
         baseMass=0.0,
         baseCollisionShapeIndex=col_extra,
         basePosition=[7.0, 7.0, 5.0],
@@ -203,7 +202,7 @@ def test_all_20_synthetic_cases(sar_pybullet):
     assert hit is not None and hit.normal[2] > 0.85
 
     # (19) is_slope is True for slope-tagged body even if normal almost flat
-    almost_flat_slope = _make_slope(
+    _make_slope(
         cli, tagger, BodyCategory.SUPPORT_SLOPE,
         position=[35.0, 0.0, 0.1], half_extents=[2.0, 2.0, 0.05],
         tilt_rad=math.radians(5.0),

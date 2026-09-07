@@ -30,6 +30,7 @@ from pathlib import Path
 import pybullet as p
 
 from swarm import constants as C
+
 from .body_tagger import BodyTagger
 from .sar_types import BodyCategory
 from .surface_resolver import resolve_surface
