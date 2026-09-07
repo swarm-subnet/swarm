@@ -30,6 +30,7 @@ class DroneFlightController:
     """
 
     def __init__(self):
+        """Load the packaged policy and cache the input size and action bounds it was trained with."""
         policy_path = Path(__file__).resolve().parent / "ppo_policy.zip"
         self._model = PPO.load(str(policy_path), device="cpu")
         self._depth_size = int(self._model.observation_space["depth"].shape[0])
@@ -37,6 +38,15 @@ class DroneFlightController:
         self._high = self._model.action_space.high
 
     def _policy_obs(self, depth, state):
+        """Downsample one depth frame to the policy resolution and pair it with the state vector.
+
+        Args:
+            depth: Depth image of shape (H, W, 1) from the validator observation.
+            state: Flat state vector for the same drone.
+
+        Returns:
+            Observation dict with the "depth" and "state" keys the policy expects.
+        """
         step = max(1, depth.shape[0] // self._depth_size)
         return {
             "depth": np.ascontiguousarray(depth[::step, ::step, :], dtype=np.float32),
@@ -44,10 +54,22 @@ class DroneFlightController:
         }
 
     def _predict(self, depth, state):
+        """Run the policy on one drone and clip the action to the contract bounds."""
         action, _ = self._model.predict(self._policy_obs(depth, state), deterministic=True)
         return np.clip(action, self._low, self._high)
 
     def act(self, observation):
+        """Return the action for one drone, or one action per drone in a multi-drone task.
+
+        A 2-D state means one row per drone, in which case the policy runs once
+        per row and the results are stacked in the same order.
+
+        Args:
+            observation: Validator observation dict with at least "depth" and "state".
+
+        Returns:
+            float32 action array, shape (action_dim,) or (num_drones, action_dim).
+        """
         depth = np.asarray(observation["depth"])
         state = np.asarray(observation["state"])
         if state.ndim == 2:
@@ -56,4 +78,5 @@ class DroneFlightController:
         return np.asarray(self._predict(depth, state), dtype=np.float32)
 
     def reset(self):
+        """Called at the start of every episode; the baseline keeps no state between steps."""
         pass
