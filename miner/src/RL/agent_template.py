@@ -38,15 +38,7 @@ class DroneFlightController:
         self._high = self._model.action_space.high
 
     def _policy_obs(self, depth, state):
-        """Downsample one depth frame to the policy resolution and pair it with the state vector.
-
-        Args:
-            depth: Depth image of shape (H, W, 1) from the validator observation.
-            state: Flat state vector for the same drone.
-
-        Returns:
-            Observation dict with the "depth" and "state" keys the policy expects.
-        """
+        """Downsample the depth frame to the policy resolution and pair it with the state vector."""
         step = max(1, depth.shape[0] // self._depth_size)
         return {
             "depth": np.ascontiguousarray(depth[::step, ::step, :], dtype=np.float32),
@@ -59,17 +51,7 @@ class DroneFlightController:
         return np.clip(action, self._low, self._high)
 
     def act(self, observation):
-        """Return the action for one drone, or one action per drone in a multi-drone task.
-
-        A 2-D state means one row per drone, in which case the policy runs once
-        per row and the results are stacked in the same order.
-
-        Args:
-            observation: Validator observation dict with at least "depth" and "state".
-
-        Returns:
-            float32 action array, shape (action_dim,) or (num_drones, action_dim).
-        """
+        """Return the action for one drone, or one per drone when the state is 2-D (multi-drone task)."""
         depth = np.asarray(observation["depth"])
         state = np.asarray(observation["state"])
         if state.ndim == 2:
