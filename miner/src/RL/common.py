@@ -53,6 +53,11 @@ _MAX_TASK_RESAMPLES = 200
 
 
 def _policy_view(depth: np.ndarray, state: np.ndarray) -> dict[str, np.ndarray]:
+    """Downsample one depth frame to POLICY_DEPTH_SIZE and pair it with the state vector.
+
+    This is the same transform the packaged agent_template.py applies at
+    inference time, so the policy trains on exactly what it will see.
+    """
     step = max(1, depth.shape[0] // POLICY_DEPTH_SIZE)
     return {
         "depth": np.ascontiguousarray(depth[::step, ::step, :], dtype=np.float32),
@@ -68,6 +73,13 @@ class FamilyVecEnv(VecEnv):
     """
 
     def __init__(self, family_id: str, *, seed: int, n_drones: int | None = None):
+        """Build the first episode and derive the observation and action spaces from it.
+
+        Args:
+            family_id: Challenge family whose generator and contract to train against.
+            seed: Seed for the task sampler, so a run is reproducible.
+            n_drones: Fixed drone count for multi-drone families; None accepts any count.
+        """
         self._family_id = family_id
         self._rng = random.Random(seed)
         self._forced_drones = n_drones
@@ -95,6 +107,11 @@ class FamilyVecEnv(VecEnv):
         self._pending_actions: np.ndarray | None = None
 
     def _build_episode(self):
+        """Sample a fresh task and return (env, initial_obs) for it.
+
+        When a drone count is forced, tasks are resampled until one matches it,
+        up to _MAX_TASK_RESAMPLES; the generator picks the count at random.
+        """
         for _ in range(_MAX_TASK_RESAMPLES):
             task = random_task(
                 sim_dt=SIM_DT,
@@ -112,11 +129,13 @@ class FamilyVecEnv(VecEnv):
         return make_env_with_initial_obs(task)
 
     def _slot_obs(self, obs: dict[str, np.ndarray], slot: int) -> dict[str, np.ndarray]:
+        """Return the policy view for one drone slot of a raw simulation observation."""
         if self.num_envs == 1:
             return _policy_view(obs["depth"], obs["state"])
         return _policy_view(obs["depth"][slot], obs["state"][slot])
 
     def _stack_obs(self, obs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Stack every slot's policy view into the batched dict SB3 expects from a VecEnv."""
         slots = [self._slot_obs(obs, i) for i in range(self.num_envs)]
         return {
             key: np.stack([slot[key] for slot in slots])
@@ -124,12 +143,24 @@ class FamilyVecEnv(VecEnv):
         }
 
     def reset(self):
+        """Return the current episode's observation; a new task is sampled on episode end, not here."""
         return self._stack_obs(self._last_obs)
 
     def step_async(self, actions: np.ndarray) -> None:
+        """Store the per-slot actions for the next step_wait call."""
         self._pending_actions = np.asarray(actions, dtype=np.float32)
 
     def step_wait(self):
+        """Advance the shared simulation one step and report it to every slot.
+
+        All slots share one reward and one done flag because they are one
+        simulation. On episode end, each slot's info carries the terminal
+        observation and the TimeLimit.truncated flag SB3 uses for bootstrapping,
+        the environment is closed, and a new task is sampled for the next step.
+
+        Returns:
+            Tuple of (batched observation, rewards, dones, infos).
+        """
         env_action = self._pending_actions
         if self.num_envs == 1:
             env_action = env_action.reshape(1, -1)
@@ -155,27 +186,41 @@ class FamilyVecEnv(VecEnv):
         return self._stack_obs(self._last_obs), rewards, dones, infos
 
     def close(self) -> None:
+        """Close the underlying simulation."""
         self._env.close()
 
     def get_attr(self, attr_name, indices=None):
+        """Read an attribute from the shared env, repeated once per slot."""
         return [getattr(self._env, attr_name)] * self.num_envs
 
     def set_attr(self, attr_name, value, indices=None) -> None:
+        """Set an attribute on the shared env; indices are ignored since there is one env."""
         setattr(self._env, attr_name, value)
 
     def env_method(self, method_name, *args, indices=None, **kwargs):
+        """Call a method on the shared env once and repeat the result per slot."""
         return [getattr(self._env, method_name)(*args, **kwargs)] * self.num_envs
 
     def env_is_wrapped(self, wrapper_class, indices=None):
+        """Report no wrappers: the env is used directly, never wrapped."""
         return [False] * self.num_envs
 
     def seed(self, seed=None):
+        """Reseed the task sampler; the running episode is unaffected until it ends."""
         if seed is not None:
             self._rng = random.Random(seed)
         return [seed] * self.num_envs
 
 
 def _package_submission(policy_path: Path, family_id: str, out_dir: Path) -> Path:
+    """Build submission.zip from the trained policy and the agent template.
+
+    The template is copied as drone_agent.py next to ppo_policy.zip and packaged
+    through the swarm CLI, so the result is exactly what a miner would submit.
+
+    Returns:
+        Path to the packaged submission.zip.
+    """
     pkg_dir = out_dir / "package"
     if pkg_dir.exists():
         shutil.rmtree(pkg_dir)
@@ -205,6 +250,16 @@ def _package_submission(policy_path: Path, family_id: str, out_dir: Path) -> Pat
 
 
 def train_family(family_id: str, *, supports_drone_count: bool = False) -> None:
+    """Entry point for a family's train.py: train, save, package and smoke-test a baseline PPO.
+
+    Parses --timesteps, --seed and, for multi-drone families, --drones from the
+    command line. The packaged submission is checked against the family's
+    policy contract before the run is reported as ready.
+
+    Args:
+        family_id: Challenge family to train for.
+        supports_drone_count: Expose the --drones flag for multi-drone families.
+    """
     parser = argparse.ArgumentParser(
         description=f"Train a baseline PPO model for {family_id} and package it."
     )
