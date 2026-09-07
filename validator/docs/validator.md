@@ -394,8 +394,8 @@ sudo apt update && sudo apt install -y libgl1-mesa-glx mesa-utils
 **Model cache permissions:**
 
 ```bash
-mkdir -p miner_models_v2
-chmod 755 miner_models_v2
+mkdir -p swarm/state/miner_models
+chmod 755 swarm/state/miner_models
 ```
 
 **Docker container issues:**

@@ -18,6 +18,21 @@
 from ._shared import *
 
 
+def ensure_model_dir() -> Path:
+    """Create the model cache, adopting the pre-state-dir folder if this host still has one."""
+    if LEGACY_MODEL_DIR.is_dir() and not any(MODEL_DIR.glob("*")):
+        MODEL_DIR.parent.mkdir(parents=True, exist_ok=True)
+        if MODEL_DIR.is_dir():
+            MODEL_DIR.rmdir()
+        if LEGACY_MODEL_DIR.is_symlink():
+            MODEL_DIR.symlink_to(LEGACY_MODEL_DIR.resolve())
+            LEGACY_MODEL_DIR.unlink()
+        else:
+            shutil.move(str(LEGACY_MODEL_DIR), str(MODEL_DIR))
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    return MODEL_DIR
+
+
 def stored_model_path(uid: int) -> Path:
     """Where a UID's fetched archive lives on this validator."""
     return MODEL_DIR / f"UID_{uid}.zip"
@@ -118,7 +133,7 @@ async def _ensure_models_from_backend(
 ) -> Dict[int, Tuple[Path, str]]:
     if not pending_models:
         return {}
-    MODEL_DIR.mkdir(exist_ok=True)
+    ensure_model_dir()
     paths: Dict[int, Tuple[Path, str]] = {}
     for entry in pending_models:
         uid = int(entry.get("uid", -1))

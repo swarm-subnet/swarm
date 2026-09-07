@@ -41,6 +41,7 @@ import swarm
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.forward import forward
+from swarm.validator.utils_parts.model_fetch import ensure_model_dir
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -232,6 +233,7 @@ class Validator(BaseValidatorNeuron):
                 )
         except Exception:
             pass
+        ensure_model_dir()
         self.docker_evaluator = DockerSecureEvaluator()
         if DockerSecureEvaluator._base_ready:
             bt.logging.info("✅ Docker evaluator ready")
