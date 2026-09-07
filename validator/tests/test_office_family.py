@@ -48,7 +48,6 @@ from swarm.domain_model import get_policy_interface_contract
 from swarm.utils.env_factory import make_env
 from swarm.validator import task_gen
 
-
 _BLANK_FRAME = np.zeros((256, 256, 3), dtype=np.float32)
 
 
