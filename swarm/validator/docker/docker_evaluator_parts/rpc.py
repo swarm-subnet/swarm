@@ -971,7 +971,5 @@ async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: floa
 
 async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
     """Measure trusted transport overhead; graph artifacts cannot calibrate hosts."""
-    overhead = await _measure_rpc_overhead_via_ping(
-        agent, uid, _docker_evaluator_facade().RPC_PING_TIMEOUT_SEC
-    )
+    overhead = await _measure_rpc_overhead_via_ping(agent, uid, RPC_PING_TIMEOUT_SEC)
     return overhead, 1.0
