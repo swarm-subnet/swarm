@@ -23,7 +23,7 @@ env:
 jobs:
   # Rebuilds the test image when the Dockerfile changed, so the jobs below run
   # on the image this commit describes rather than whichever one was pushed last.
-  image:
+  push-docker-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -72,7 +72,7 @@ jobs:
   # change is confined to one of them is a claim the run would then not be
   # checking, and the two are less separate than the folders suggest.
   miner:
-    needs: image
+    needs: push-docker-image
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -107,7 +107,7 @@ jobs:
         # than running them in order, and the names come out interleaved.
 
   validator:
-    needs: image
+    needs: push-docker-image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
