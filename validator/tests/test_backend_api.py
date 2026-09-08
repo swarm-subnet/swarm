@@ -211,6 +211,78 @@ def test_duplicate_session_response_exits_process(monkeypatch, tmp_path):
         _run(client.close())
 
 
+class _SequencedAsyncClient(_FakeAsyncClient):
+    """Answers each POST with the next response in the list, then repeats the last."""
+
+    def __init__(self, responses):
+        super().__init__()
+        self._responses = list(responses)
+        self.posts = []
+
+    async def post(self, url, **kwargs):
+        self.posts.append(json.loads(kwargs["content"]))
+        response = self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        return response
+
+
+def _duplicate_response():
+    return httpx.Response(
+        status_code=409,
+        json={"detail": "DUPLICATE_VALIDATOR_INSTANCE"},
+        request=httpx.Request("POST", "http://backend.local/validators/heartbeat"),
+    )
+
+
+def test_announce_startup_waits_out_a_fresh_previous_session(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _SequencedAsyncClient(
+        [_duplicate_response(), _duplicate_response(), _FakeResponse({"ok": True})]
+    )
+    client.client = fake_http
+    monkeypatch.setattr(backend_api, "DUPLICATE_SESSION_RETRY_SEC", 0)
+
+    try:
+        _run(client.announce_startup())
+    finally:
+        _run(client.close())
+
+    assert len(fake_http.posts) == 3
+    assert all(p["status"] == "idle" and p["in_flight_seeds"] == [] for p in fake_http.posts)
+    assert client._announcing is False
+
+
+def test_announce_startup_exits_when_the_rejection_outlives_the_window(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    client.client = _SequencedAsyncClient([_duplicate_response()])
+    monkeypatch.setattr(backend_api, "DUPLICATE_SESSION_WAIT_SEC", 0)
+
+    try:
+        try:
+            _run(client.announce_startup())
+            assert False, "a duplicate that outlives the takeover window must terminate the validator"
+        except SystemExit as exc:
+            assert exc.code == 1
+    finally:
+        _run(client.close())
+
+
+def test_stand_down_hands_back_and_silences_later_progress(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    fake_http = _SequencedAsyncClient([_FakeResponse({"ok": True})])
+    client.client = fake_http
+
+    try:
+        _run(client.stand_down())
+        late = _run(client.post_heartbeat(status="evaluating_benchmark", current_uid=7, progress=3))
+    finally:
+        _run(client.close())
+
+    assert fake_http.posts == [
+        {"status": "idle", "session_id": client.session_id, "in_flight_seeds": []}
+    ]
+    assert late == {"error": "standing_down"}
+
+
 def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()

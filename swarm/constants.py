@@ -37,6 +37,9 @@ EPOCH_FREEZE_SECONDS = 5400                # 1.5 hours before epoch end — no n
 # =============================================================================
 
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
+DUPLICATE_SESSION_RETRY_SEC = 15.0      # Wait between startup heartbeats while the previous session is still fresh
+DUPLICATE_SESSION_WAIT_SEC = 240.0      # Startup gives up on a duplicate-session rejection after this long
+STAND_DOWN_TIMEOUT_SEC = 1.2            # Time allowed for the hand-back heartbeat before the process exits
 BACKEND_GRACE_PERIOD_SEC = 3600         # Use cached weights for 1h after last successful sync
 WANDB_IDLE_RESTART_SEC = 5 * 3600      # Restart W&B run every 5h when idle
 
