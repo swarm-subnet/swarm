@@ -1,0 +1,960 @@
+{
+ "source": "office_stage1.blend",
+ "axes": "Z up, Y forward, metres",
+ "pieces": [
+  {
+   "id": "A1_final",
+   "unit": "A1",
+   "zone": "A",
+   "size": [
+    0.8,
+    0.28,
+    2.26
+   ],
+   "authored": {
+    "x": 0.88,
+    "y": 0.155,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "south",
+   "back_side": "-y",
+   "wall_gap": 0.015,
+   "role": "wall_unit",
+   "file": "pieces/A1_final.obj"
+  },
+  {
+   "id": "A10",
+   "unit": "A10",
+   "zone": "A",
+   "size": [
+    0.25,
+    0.25,
+    0.3
+   ],
+   "authored": {
+    "x": 0.15,
+    "y": 1.63,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "west",
+   "back_side": "-x",
+   "wall_gap": 0.025,
+   "role": "free",
+   "file": "pieces/A10.obj"
+  },
+  {
+   "id": "A1B_final",
+   "unit": "A1B",
+   "zone": "A",
+   "size": [
+    0.28,
+    0.8,
+    2.11
+   ],
+   "authored": {
+    "x": 0.155,
+    "y": 1.1,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "west",
+   "back_side": "-x",
+   "wall_gap": 0.015,
+   "role": "wall_unit",
+   "file": "pieces/A1B_final.obj"
+  },
+  {
+   "id": "A2_final",
+   "unit": "A2",
+   "zone": "A",
+   "size": [
+    1.0,
+    0.621,
+    1.97
+   ],
+   "authored": {
+    "x": 2.42,
+    "y": 0.31,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "south",
+   "back_side": "-y",
+   "wall_gap": -0.001,
+   "role": "wall_unit",
+   "file": "pieces/A2_final.obj"
+  },
+  {
+   "id": "A3_final",
+   "unit": "A3",
+   "zone": "A",
+   "size": [
+    0.61,
+    1.445,
+    1.21
+   ],
+   "authored": {
+    "x": 0.32,
+    "y": 2.5,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "west",
+   "back_side": "-x",
+   "wall_gap": 0.015,
+   "role": "free",
+   "file": "pieces/A3_final.obj"
+  },
+  {
+   "id": "A3_final_2",
+   "unit": "A3",
+   "zone": "A",
+   "size": [
+    0.61,
+    1.445,
+    1.21
+   ],
+   "authored": {
+    "x": 0.33,
+    "y": 3.98,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "west",
+   "back_side": "-x",
+   "wall_gap": 0.025,
+   "role": "free",
+   "file": "pieces/A3_final_2.obj"
+  },
+  {
+   "id": "A4_final",
+   "unit": "A4",
+   "zone": "A",
+   "size": [
+    0.471,
+    0.7,
+    0.765
+   ],
+   "authored": {
+    "x": 0.34,
+    "y": 5.08,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "west",
+   "back_side": "-x",
+   "wall_gap": 0.104,
+   "role": "free",
+   "file": "pieces/A4_final.obj"
+  },
+  {
+   "id": "A6",
+   "unit": "A6",
+   "zone": "A",
+   "size": [
+    0.6,
+    0.4,
+    0.8
+   ],
+   "authored": {
+    "x": 0.55,
+    "y": 6.45,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.25,
+   "role": "free",
+   "file": "pieces/A6.obj"
+  },
+  {
+   "id": "A9_final",
+   "unit": "A9",
+   "zone": "A",
+   "size": [
+    0.431,
+    0.386,
+    0.973
+   ],
+   "authored": {
+    "x": 2.3,
+    "y": 5.0,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.977,
+   "role": "free",
+   "file": "pieces/A9_final.obj"
+  },
+  {
+   "id": "B1_chair_final",
+   "unit": "B1",
+   "zone": "B",
+   "size": [
+    0.918,
+    0.976,
+    0.848
+   ],
+   "authored": {
+    "x": 6.371,
+    "y": 4.667,
+    "yaw_deg": 0.0
+   },
+   "base_z": -0.011,
+   "floor_standing": true,
+   "wall": "north_mid_south_face",
+   "back_side": "+y",
+   "wall_gap": 0.045,
+   "role": "free",
+   "file": "pieces/B1_chair_final.obj"
+  },
+  {
+   "id": "B1_chair_final_2",
+   "unit": "B1",
+   "zone": "B",
+   "size": [
+    0.918,
+    0.976,
+    0.848
+   ],
+   "authored": {
+    "x": 8.079,
+    "y": 4.667,
+    "yaw_deg": 0.0
+   },
+   "base_z": -0.011,
+   "floor_standing": true,
+   "wall": "north_mid_south_face",
+   "back_side": "+y",
+   "wall_gap": 0.045,
+   "role": "free",
+   "file": "pieces/B1_chair_final_2.obj"
+  },
+  {
+   "id": "B2a_final",
+   "unit": "B2a",
+   "zone": "B",
+   "size": [
+    0.45,
+    0.45,
+    0.53
+   ],
+   "authored": {
+    "x": 7.23,
+    "y": 4.62,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.355,
+   "role": "free",
+   "file": "pieces/B2a_final.obj"
+  },
+  {
+   "id": "B2b_final",
+   "unit": "B2b",
+   "zone": "B",
+   "size": [
+    0.9,
+    0.55,
+    0.45
+   ],
+   "authored": {
+    "x": 7.2,
+    "y": 3.55,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.375,
+   "role": "free",
+   "file": "pieces/B2b_final.obj"
+  },
+  {
+   "id": "B3_final",
+   "unit": "B3",
+   "zone": "B",
+   "size": [
+    0.35,
+    0.35,
+    0.45
+   ],
+   "authored": {
+    "x": 8.62,
+    "y": 4.12,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.905,
+   "role": "free",
+   "file": "pieces/B3_final.obj"
+  },
+  {
+   "id": "B6_final",
+   "unit": "B6",
+   "zone": "B",
+   "size": [
+    0.545,
+    0.476,
+    1.741
+   ],
+   "authored": {
+    "x": 8.72,
+    "y": 4.97,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "north_mid_south_face",
+   "back_side": "+y",
+   "wall_gap": -0.008,
+   "role": "wall_unit",
+   "file": "pieces/B6_final.obj"
+  },
+  {
+   "id": "C1_table_final",
+   "unit": "C1",
+   "zone": "C",
+   "size": [
+    1.6,
+    0.8,
+    0.74
+   ],
+   "authored": {
+    "x": 6.555,
+    "y": 1.55,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.15,
+   "role": "desk",
+   "file": "pieces/C1_table_final.obj"
+  },
+  {
+   "id": "C1_table_final_2",
+   "unit": "C1",
+   "zone": "C",
+   "size": [
+    1.6,
+    0.8,
+    0.74
+   ],
+   "authored": {
+    "x": 8.245,
+    "y": 1.55,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.15,
+   "role": "desk",
+   "file": "pieces/C1_table_final_2.obj"
+  },
+  {
+   "id": "C2_chair_final",
+   "unit": "C2",
+   "zone": "C",
+   "size": [
+    0.44,
+    0.426,
+    0.845
+   ],
+   "authored": {
+    "x": 6.45,
+    "y": 2.35,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 2.137,
+   "role": "chair",
+   "file": "pieces/C2_chair_final.obj",
+   "desk": "C1_table_final"
+  },
+  {
+   "id": "C2_chair_final_2",
+   "unit": "C2",
+   "zone": "C",
+   "size": [
+    0.44,
+    0.426,
+    0.845
+   ],
+   "authored": {
+    "x": 7.4,
+    "y": 2.35,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 2.137,
+   "role": "chair",
+   "file": "pieces/C2_chair_final_2.obj",
+   "desk": "C1_table_final_2"
+  },
+  {
+   "id": "C2_chair_final_3",
+   "unit": "C2",
+   "zone": "C",
+   "size": [
+    0.44,
+    0.426,
+    0.845
+   ],
+   "authored": {
+    "x": 8.35,
+    "y": 2.35,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 2.137,
+   "role": "chair",
+   "file": "pieces/C2_chair_final_3.obj",
+   "desk": "C1_table_final_2"
+  },
+  {
+   "id": "C2_chair_final_4",
+   "unit": "C2",
+   "zone": "C",
+   "size": [
+    0.44,
+    0.426,
+    0.845
+   ],
+   "authored": {
+    "x": 6.45,
+    "y": 0.75,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.537,
+   "role": "chair",
+   "file": "pieces/C2_chair_final_4.obj",
+   "desk": "C1_table_final"
+  },
+  {
+   "id": "C2_chair_final_5",
+   "unit": "C2",
+   "zone": "C",
+   "size": [
+    0.44,
+    0.426,
+    0.845
+   ],
+   "authored": {
+    "x": 7.4,
+    "y": 0.75,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.537,
+   "role": "chair",
+   "file": "pieces/C2_chair_final_5.obj",
+   "desk": "C1_table_final_2"
+  },
+  {
+   "id": "C2_chair_final_6",
+   "unit": "C2",
+   "zone": "C",
+   "size": [
+    0.44,
+    0.426,
+    0.845
+   ],
+   "authored": {
+    "x": 8.35,
+    "y": 0.75,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.537,
+   "role": "chair",
+   "file": "pieces/C2_chair_final_6.obj",
+   "desk": "C1_table_final_2"
+  },
+  {
+   "id": "D1_final",
+   "unit": "D1",
+   "zone": "D",
+   "size": [
+    0.6,
+    1.94,
+    2.22
+   ],
+   "authored": {
+    "x": 12.9,
+    "y": 6.42,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "step_east_face",
+   "back_side": "-x",
+   "wall_gap": 0.08,
+   "role": "wall_unit",
+   "file": "pieces/D1_final.obj"
+  },
+  {
+   "id": "D3_final",
+   "unit": "D3",
+   "zone": "D",
+   "size": [
+    0.331,
+    0.383,
+    0.435
+   ],
+   "authored": {
+    "x": 12.0,
+    "y": 5.02,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "north_mid_south_face",
+   "back_side": "+y",
+   "wall_gap": -0.012,
+   "role": "free",
+   "file": "pieces/D3_final.obj"
+  },
+  {
+   "id": "E1_desk_final",
+   "unit": "E1",
+   "zone": "E",
+   "size": [
+    1.6,
+    0.995,
+    0.876
+   ],
+   "authored": {
+    "x": 16.1,
+    "y": 6.215,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.887,
+   "role": "desk",
+   "file": "pieces/E1_desk_final.obj"
+  },
+  {
+   "id": "E1_desk_final_2",
+   "unit": "E1",
+   "zone": "E",
+   "size": [
+    1.6,
+    0.995,
+    0.876
+   ],
+   "authored": {
+    "x": 16.1,
+    "y": 5.335,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.1,
+   "role": "desk",
+   "file": "pieces/E1_desk_final_2.obj"
+  },
+  {
+   "id": "E1_desk_final_3",
+   "unit": "E1",
+   "zone": "E",
+   "size": [
+    1.6,
+    0.995,
+    0.876
+   ],
+   "authored": {
+    "x": 16.0,
+    "y": 2.495,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.2,
+   "role": "desk",
+   "file": "pieces/E1_desk_final_3.obj"
+  },
+  {
+   "id": "E1_desk_final_4",
+   "unit": "E1",
+   "zone": "E",
+   "size": [
+    1.6,
+    0.995,
+    0.876
+   ],
+   "authored": {
+    "x": 16.0,
+    "y": 1.615,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.118,
+   "role": "desk",
+   "file": "pieces/E1_desk_final_4.obj"
+  },
+  {
+   "id": "E2_final",
+   "unit": "E2",
+   "zone": "E",
+   "size": [
+    0.62,
+    0.609,
+    1.083
+   ],
+   "authored": {
+    "x": 16.1,
+    "y": 6.9,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.396,
+   "role": "chair",
+   "file": "pieces/E2_final.obj",
+   "desk": "E1_desk_final"
+  },
+  {
+   "id": "E2_final_2",
+   "unit": "E2",
+   "zone": "E",
+   "size": [
+    0.62,
+    0.609,
+    1.083
+   ],
+   "authored": {
+    "x": 16.1,
+    "y": 4.65,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.59,
+   "role": "chair",
+   "file": "pieces/E2_final_2.obj",
+   "desk": "E1_desk_final_2"
+  },
+  {
+   "id": "E2_final_3",
+   "unit": "E2",
+   "zone": "E",
+   "size": [
+    0.62,
+    0.609,
+    1.083
+   ],
+   "authored": {
+    "x": 16.0,
+    "y": 3.18,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.69,
+   "role": "chair",
+   "file": "pieces/E2_final_3.obj",
+   "desk": "E1_desk_final_3"
+  },
+  {
+   "id": "E2_final_4",
+   "unit": "E2",
+   "zone": "E",
+   "size": [
+    0.62,
+    0.609,
+    1.083
+   ],
+   "authored": {
+    "x": 16.0,
+    "y": 0.93,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.626,
+   "role": "chair",
+   "file": "pieces/E2_final_4.obj",
+   "desk": "E1_desk_final_4"
+  },
+  {
+   "id": "E3_final",
+   "unit": "E3",
+   "zone": "E",
+   "size": [
+    0.4,
+    0.516,
+    0.604
+   ],
+   "authored": {
+    "x": 15.7,
+    "y": 5.225,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 2.1,
+   "role": "drawer",
+   "file": "pieces/E3_final.obj",
+   "desk": "E1_desk_final_2"
+  },
+  {
+   "id": "E3_final_2",
+   "unit": "E3",
+   "zone": "E",
+   "size": [
+    0.4,
+    0.516,
+    0.604
+   ],
+   "authored": {
+    "x": 15.6,
+    "y": 1.505,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.247,
+   "role": "drawer",
+   "file": "pieces/E3_final_2.obj",
+   "desk": "E1_desk_final_4"
+  },
+  {
+   "id": "E3_final_3",
+   "unit": "E3",
+   "zone": "E",
+   "size": [
+    0.4,
+    0.516,
+    0.604
+   ],
+   "authored": {
+    "x": 15.7,
+    "y": 6.325,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 1.017,
+   "role": "drawer",
+   "file": "pieces/E3_final_3.obj",
+   "desk": "E1_desk_final"
+  },
+  {
+   "id": "E3_final_4",
+   "unit": "E3",
+   "zone": "E",
+   "size": [
+    0.4,
+    0.516,
+    0.604
+   ],
+   "authored": {
+    "x": 15.6,
+    "y": 2.605,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 2.2,
+   "role": "drawer",
+   "file": "pieces/E3_final_4.obj",
+   "desk": "E1_desk_final_3"
+  },
+  {
+   "id": "E4_printer_final",
+   "unit": "E4",
+   "zone": "E",
+   "size": [
+    0.414,
+    0.397,
+    0.677
+   ],
+   "authored": {
+    "x": 17.735,
+    "y": 6.549,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.799,
+   "floor_standing": false,
+   "wall": "east",
+   "back_side": "+x",
+   "wall_gap": 0.058,
+   "role": "free",
+   "file": "pieces/E4_printer_final.obj",
+   "on_top_of": "E4_table_big"
+  },
+  {
+   "id": "E4_table_big",
+   "unit": "E4",
+   "zone": "E",
+   "size": [
+    0.67,
+    2.02,
+    0.8
+   ],
+   "authored": {
+    "x": 17.635,
+    "y": 6.56,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": "north",
+   "back_side": "+y",
+   "wall_gap": 0.03,
+   "role": "free",
+   "file": "pieces/E4_table_big.obj"
+  },
+  {
+   "id": "E6_final",
+   "unit": "E6",
+   "zone": "E",
+   "size": [
+    0.476,
+    0.545,
+    1.741
+   ],
+   "authored": {
+    "x": 17.388,
+    "y": 0.865,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 0.375,
+   "role": "free",
+   "file": "pieces/E6_final.obj"
+  },
+  {
+   "id": "E8_final",
+   "unit": "E8",
+   "zone": "E",
+   "size": [
+    0.301,
+    0.306,
+    0.392
+   ],
+   "authored": {
+    "x": 14.95,
+    "y": 3.15,
+    "yaw_deg": 0.0
+   },
+   "base_z": 0.0,
+   "floor_standing": true,
+   "wall": null,
+   "back_side": null,
+   "wall_gap": 2.899,
+   "role": "free",
+   "file": "pieces/E8_final.obj"
+  }
+ ],
+ "fixed": [
+  {
+   "id": "D4v",
+   "file": "fixed/D4v.obj",
+   "solid": true
+  },
+  {
+   "id": "R1v",
+   "file": "fixed/R1v.obj",
+   "solid": true
+  },
+  {
+   "id": "R3v",
+   "file": "fixed/R3v.obj",
+   "solid": true
+  },
+  {
+   "id": "R4v",
+   "file": "fixed/R4v.obj",
+   "solid": true
+  },
+  {
+   "id": "R6",
+   "file": "fixed/R6.obj",
+   "solid": true
+  },
+  {
+   "id": "R6v",
+   "file": "fixed/R6v.obj",
+   "solid": true
+  },
+  {
+   "id": "R7",
+   "file": "fixed/R7.obj",
+   "solid": true
+  }
+ ]
+}

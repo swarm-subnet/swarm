@@ -108,6 +108,8 @@ from swarm.constants import (
     OFFICE_TARGET_SPEED_MAX,
     OFFICE_TARGET_SPEED_MIN,
     OFFICE_TARGET_TURN_SPEED,
+    OFFICE_TARGET_W_MAX_M,
+    OFFICE_TARGET_W_MIN_M,
     OFFICE_TELEM_ACCEL_BIAS,
     OFFICE_TELEM_ACCEL_NOISE,
     OFFICE_TELEM_ATTITUDE_NOISE_DEG,
@@ -121,7 +123,10 @@ from swarm.constants import (
     OFFICE_TELEM_STALE_SEC,
     OFFICE_TELEM_TOF_MAX_M,
     OFFICE_TELEM_TOF_NOISE_M,
+    OFFICE_TELEM_TOF_OUTLIER_PROB,
+    OFFICE_TELEM_VELOCITY_BIAS,
     OFFICE_TELEM_VELOCITY_NOISE,
+    OFFICE_TELEM_VELOCITY_WALK,
     OFFICE_TINT_LOW,
     OFFICE_VPS_DRIFT_FORCE_N,
     OFFICE_W_SUCCESS,
@@ -329,6 +334,17 @@ def office_airframe_profile(map_seed: int) -> dict:
     }
 
 
+def office_target_silhouette(map_seed: int) -> tuple:
+    """This episode's apparent target size (width, height) in metres. The width is
+    dealt across the measured band of hulls and the aspect ratio jitters on top,
+    so a box cannot be inverted into range with a memorised constant."""
+    rng = np.random.default_rng((int(map_seed) ^ OFFICE_TARGET_SIZE_SEED_OFFSET) & 0xFFFFFFFF)
+    j = OFFICE_TARGET_SIZE_JITTER
+    w = float(rng.uniform(OFFICE_TARGET_W_MIN_M, OFFICE_TARGET_W_MAX_M))
+    h = w * (_DET_TARGET_H_M / _DET_TARGET_W_M) * float(rng.uniform(1 - j, 1 + j))
+    return w, h
+
+
 def office_target_profile(map_seed: int) -> dict:
     """The seed deals the target its personality for the episode. Pure function of
     the seed so the reward side can rebuild it without an env; own salt so the
@@ -410,10 +426,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         self._resample_airframe(env, seed)
         # No two airframes present the same silhouette (guards, battery, wear), so
         # the size a box implies is dealt per episode and cannot be inverted once.
-        size_rng = np.random.default_rng((seed ^ OFFICE_TARGET_SIZE_SEED_OFFSET) & 0xFFFFFFFF)
-        j = OFFICE_TARGET_SIZE_JITTER
-        env._office_target_w_m = _DET_TARGET_W_M * float(size_rng.uniform(1 - j, 1 + j))
-        env._office_target_h_m = _DET_TARGET_H_M * float(size_rng.uniform(1 - j, 1 + j))
+        env._office_target_w_m, env._office_target_h_m = office_target_silhouette(seed)
         env._collision_exempt_uids = frozenset()
         env._office_telemetry = np.zeros((n, _TELEM_DIM), dtype=np.float32)
         # Age starts beyond the stale threshold: no packet has arrived yet.
@@ -424,6 +437,10 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_prev_vel = np.array(env.vel, dtype=np.float64)
         env._office_accel_bias = env._office_telem_rng.normal(
             0.0, OFFICE_TELEM_ACCEL_BIAS, (n, 3)
+        )
+        # Optical-flow velocity carries an offset that wanders: integrating it drifts.
+        env._office_vel_bias = env._office_telem_rng.normal(
+            0.0, OFFICE_TELEM_VELOCITY_BIAS, (n, 2)
         )
         env._office_baro_walk = np.zeros(n, dtype=np.float64)
         env._office_takeoff_z = np.array(env.pos[:, 2], dtype=np.float64)
@@ -510,7 +527,8 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         zs = tuple(z * env._office_scale[2] for z in _NAV_Z_LEVELS)
         # Keyed on the exact scale the geometry was built from: a rounded key could
         # hand one room's component labels to a slightly different room.
-        key = tuple(env._office_scale)
+        # The furniture moves with the seed, so the seed is part of the key too.
+        key = (int(getattr(env.task, "map_seed", 0)), tuple(env._office_scale))
         if _NAV_MAIN is not None and _NAV_MAIN[0] == key:
             return _NAV_MAIN[1]
         xs = np.arange(xr[0] + 0.5, xr[1] - 0.5, _NAV_PITCH)
@@ -606,6 +624,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_y_range = tuple(map_info["y_range"])
         env._office_scale = tuple(map_info["scale"])
         env._office_ceiling_m = float(map_info["ceiling_m"])
+        env._office_layout = tuple(map_info["layout"])
         # Spawn-probe obstacles: every map body except the floor the drone rests on.
         env._office_map_uids = tuple(int(u) for name, u in sorted(map_info["bodies"].items())
                                      if name != "floor") + (int(map_info["window_plug"]),)
@@ -1071,12 +1090,17 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
 
     def _deliver_packet(self, env, d: int, rng, dt: float) -> None:
         env._office_baro_walk[d] += rng.normal(0.0, OFFICE_TELEM_BARO_WALK_M)
+        env._office_vel_bias[d] += rng.normal(0.0, OFFICE_TELEM_VELOCITY_WALK, 2)
         if rng.random() < OFFICE_TELEM_DROP_PROB:
             return
         snap = env._office_pending[d]
         if snap is None:
             return
-        q = np.round((snap + rng.normal(0.0, _SNAP_NOISE_STD)) / _SNAP_QUANT) * _SNAP_QUANT
+        raw = snap + rng.normal(0.0, _SNAP_NOISE_STD)
+        raw[3:5] += env._office_vel_bias[d]
+        if rng.random() < OFFICE_TELEM_TOF_OUTLIER_PROB:
+            raw[9] = rng.uniform(0.0, OFFICE_TELEM_TOF_MAX_M)
+        q = np.round(raw / _SNAP_QUANT) * _SNAP_QUANT
         telem = env._office_telemetry
         telem[d, 0:2] = q[0:2]
         telem[d, 2] = math.sin(q[2])
