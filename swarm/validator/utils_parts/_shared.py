@@ -30,6 +30,7 @@ import numpy as np
 
 from swarm.constants import (
     BENCHMARK_VERSION,
+    LEGACY_MODEL_DIR,
     MAX_MODEL_BYTES,
     MODEL_DIR,
     SIM_DT,

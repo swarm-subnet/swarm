@@ -202,7 +202,8 @@ FIRST_STEP_BUDGET_REF_SEC = 2.0          # Baseline-equivalent compute budget fo
 FIRST_STEP_HARD_CAP_REF_SEC = 3.0        # Per-act hard cap for the first act in baseline-equivalent seconds
 
 # Model storage and processing
-MODEL_DIR = Path("miner_models_v2")     # Directory for storing miner model files
+MODEL_DIR = Path(__file__).resolve().parent / "state" / "miner_models"  # Directory for storing miner model files
+LEGACY_MODEL_DIR = Path("miner_models_v2")  # Old cache location, relative to the process cwd; adopted on startup
 BLACKLIST_FILE = MODEL_DIR / "fake_models_blacklist.txt"  # Blacklisted model hashes file
 SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess (MB)
 
