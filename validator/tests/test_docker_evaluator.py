@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import re
 import socket
 import threading
 import time
@@ -1981,3 +1982,16 @@ def test_docker_hash_covers_a_symlink_to_a_directory(hash_tree):
     link.unlink()
     link.symlink_to("two", target_is_directory=True)
     assert _digest() != before
+
+
+def test_every_name_read_through_the_evaluator_facade_exists():
+    """The parts read some constants off the evaluator module at call time, so a
+    name dropped from its import list only fails on a live host."""
+    parts_dir = Path(de.__file__).parent / "docker_evaluator_parts"
+    pattern = re.compile(r"(?:_docker_evaluator_facade\(\)|\bfacade)\.([A-Za-z_]+)")
+    names = set()
+    for source in parts_dir.glob("*.py"):
+        names.update(pattern.findall(source.read_text()))
+    assert names, "no facade reads found; the pattern is stale"
+    missing = sorted(n for n in names if not hasattr(de, n))
+    assert not missing, f"read through the facade but not on the module: {missing}"
