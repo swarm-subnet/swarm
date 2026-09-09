@@ -29,6 +29,9 @@ requests==2.34.2
 httpx==0.28.1
 pycapnp==2.2.2
 swarm-drone-gym==2.0.0.3
+# Maps, robot descriptions and textures. The tag is a release of the assets; a
+# new tag can change flight results and follows the same bump rules as scoring.
+swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.0.0
 pygame==2.6.1
 pytest==8.4.2
 pytest-xdist==3.8.0

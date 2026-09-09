@@ -21,8 +21,9 @@ env:
   TEST_IMAGE: ghcr.io/swarm-subnet/swarm:base
 
 jobs:
-  # Rebuilds the test image when the Dockerfile changed, so the jobs below run
-  # on the image this commit describes rather than whichever one was pushed last.
+  # Rebuilds the test image when the Dockerfile or requirements.txt changed, so
+  # the jobs below run on the image this commit describes rather than whichever
+  # one was pushed last.
   push-docker-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -35,7 +36,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check whether the Dockerfile changed
+      - name: Check whether the image inputs changed
         id: check
         run: |
           case "$GITHUB_EVENT_NAME" in
@@ -46,12 +47,12 @@ jobs:
           esac
           # An unknown base (first push, force push) also lands here: rebuilding
           # when unsure costs minutes, skipping when unsure costs a stale image.
-          if [ -n "$base" ] && git diff --quiet "$base" "$GITHUB_SHA" -- .docker/Dockerfile; then
+          if [ -n "$base" ] && git diff --quiet "$base" "$GITHUB_SHA" -- .docker/Dockerfile requirements.txt; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Dockerfile unchanged, keeping the image on GHCR"
+            echo "Dockerfile and requirements.txt unchanged, keeping the image on GHCR"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Dockerfile changed, rebuilding"
+            echo "Dockerfile or requirements.txt changed, rebuilding"
           fi
 
       - name: Log in to GHCR

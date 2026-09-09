@@ -94,7 +94,6 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 remote_videos/
-swarm/assets/open_terrain/
 training_pipeline/
 validator/tests/default_model/*_summary.json
 
@@ -199,6 +198,7 @@ cython_debug/
 testing/
 data/mongodb_data/
 swarm_venv/
+.pixi/
 
 # Runtime state (auto-created by validator)
 /state/

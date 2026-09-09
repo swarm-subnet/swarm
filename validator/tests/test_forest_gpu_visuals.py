@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import swarm_worlds
+
 from swarm.core.forest_generator_parts import geometry as forest_geometry
 
 
@@ -26,9 +28,7 @@ def test_material_visual_obj_paths_generate_split_objs(tmp_path, monkeypatch) ->
     monkeypatch.setattr(
         forest_geometry.tempfile, "gettempdir", lambda: str(tmp_path)
     )
-    obj_path = Path(
-        "swarm/assets/maps/forest/quaternius_ultimate_nature/normal/CommonTree_1.obj"
-    )
+    obj_path = Path(swarm_worlds.maps_dir()) / "forest" / "quaternius_ultimate_nature" / "normal" / "CommonTree_1.obj"
 
     split_paths = forest_geometry._material_visual_obj_paths(str(obj_path))
 

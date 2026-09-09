@@ -25,6 +25,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Iterable, Optional
 
+import swarm_worlds
+
 
 def _safe_token(value: str) -> str:
     token = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in value)
@@ -231,8 +233,7 @@ def _prebake(obj_path: str, out_dir: str, scale: float = 1.0) -> Iterable[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    repo_root = Path(__file__).resolve().parents[2]
-    default_obj = repo_root / "swarm" / "assets" / "maps" / "custom" / "people" / "open_mannequin_raw" / "mannequin_a_raw.obj"
+    default_obj = Path(swarm_worlds.maps_dir()) / "custom" / "people" / "open_mannequin_raw" / "mannequin_a_raw.obj"
     default_out = default_obj.parent / "split"
 
     parser = argparse.ArgumentParser()

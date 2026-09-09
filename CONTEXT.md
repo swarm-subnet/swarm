@@ -127,9 +127,9 @@ There is substantial test coverage across CLI behavior, validator orchestration,
 ## Operational Notes
 
 - Package metadata lives in [`pyproject.toml`](pyproject.toml).
-- Runtime requirements are sourced from [`requirements.txt`](requirements.txt).
+- Runtime requirements are sourced from [`requirements.txt`](requirements.txt). `pixi install --locked` builds the same environment from [`pixi.lock`](pixi.lock).
 - Validator operation requires Docker.
-- The repo includes large static assets under `swarm/assets/`.
+- Maps, robot descriptions and textures come from the [`swarm-worlds`](https://github.com/swarm-subnet/swarm-worlds) package, pinned to a release tag in `requirements.txt`. `swarm/assets/` keeps only the README media.
 - Generated runtime state commonly lands under `swarm/state/` and should not be treated as source architecture.
 
 ## Quick Orientation
