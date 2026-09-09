@@ -53,7 +53,6 @@ exclude = ["miner.tests*", "validator.tests*"]
   "assets/Drone_flying.gif",
   "assets/Drone_flying_FPV.gif",
   "assets/Drone_flying.mp4",
-  "assets/map_images/*",
 ]
 
 [tool.setuptools.dynamic]

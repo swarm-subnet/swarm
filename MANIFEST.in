@@ -13,7 +13,6 @@ recursive-include swarm/validator/calibration *.zip
 recursive-include swarm/submission_manifest *.json
 recursive-include swarm/templates *
 recursive-include swarm/validator/docker *
-prune swarm/assets/map_images
 exclude swarm/assets/Drone_flying.gif
 exclude swarm/assets/Drone_flying_FPV.gif
 exclude swarm/assets/Drone_flying.mp4

@@ -125,29 +125,29 @@ None of these worlds exist until the benchmark builds them. Every 14-day epoch, 
 <table>
 <tr>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type1_sub2.png" alt="City" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type1_sub2.png" alt="City" width="100%">
 <br><b>City</b><br><sub>streets, buildings, intersections</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3_sub2.png" alt="Ski Village" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type3_sub2.png" alt="Ski Village" width="100%">
 <br><b>Ski Village</b><br><sub>snow-roofed streets, mountains</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type3.png" alt="Mountains" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type3.png" alt="Mountains" width="100%">
 <br><b>Mountains</b><br><sub>peaks and valleys</sub>
 </td>
 </tr>
 <tr>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type4_2.png" alt="Warehouse" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type4_2.png" alt="Warehouse" width="100%">
 <br><b>Warehouse</b><br><sub>indoor racks and cranes</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub1.png" alt="Forest" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type6_sub1.png" alt="Forest" width="100%">
 <br><b>Forest</b><br><sub>dense trees, tight gaps</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type2.png" alt="Open terrain" width="100%">
+<img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type2.png" alt="Open terrain" width="100%">
 <br><b>Open terrain</b><br><sub>wide skies, no cover</sub>
 </td>
 </tr>
@@ -157,10 +157,10 @@ None of these worlds exist until the benchmark builds them. Every 14-day epoch, 
 
 <table>
 <tr>
-<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub1.png" alt="Forest Normal" width="100%"><br><sub><b>Normal</b></sub></td>
-<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub2.png" alt="Forest Autumn" width="100%"><br><sub><b>Autumn</b></sub></td>
-<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub3.png" alt="Forest Snow" width="100%"><br><sub><b>Snow</b></sub></td>
-<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm/main/swarm/assets/map_images/Type6_sub4.png" alt="Forest Dead" width="100%"><br><sub><b>Dead</b></sub></td>
+<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type6_sub1.png" alt="Forest Normal" width="100%"><br><sub><b>Normal</b></sub></td>
+<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type6_sub2.png" alt="Forest Autumn" width="100%"><br><sub><b>Autumn</b></sub></td>
+<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type6_sub3.png" alt="Forest Snow" width="100%"><br><sub><b>Snow</b></sub></td>
+<td align="center" width="25%"><img src="https://raw.githubusercontent.com/swarm-subnet/swarm-worlds/main/docs/img/Type6_sub4.png" alt="Forest Dead" width="100%"><br><sub><b>Dead</b></sub></td>
 </tr>
 </table>
 
