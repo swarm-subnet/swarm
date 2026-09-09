@@ -40,7 +40,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.7.22-hbd8a1cb_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - pypi: ./
-      - pypi: git+https://github.com/swarm-subnet/swarm-worlds.git?rev=v1.0.0#cdbdc3b0480cdc4dd53292e2b243477f49e05f66
+      - pypi: git+https://github.com/swarm-subnet/swarm-worlds.git?rev=v1.0.0#4084a9f8c63938d8289ebf849b685f02e4e77d8a
       - pypi: https://download-r2.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/00/b7/e3bf5133d697a08128598c8d0abc5e16377b51465a33756de24fa7dee953/aiosqlite-0.22.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/02/03/74fe2a4cb3817d94d86402f2506554130a2f01414e299b5a843e5a8a957f/numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -572,7 +572,7 @@ packages:
   - apscheduler==3.11.2
   - psycopg2-binary==2.9.11
   requires_python: '>=3.11'
-- pypi: git+https://github.com/swarm-subnet/swarm-worlds.git?rev=v1.0.0#cdbdc3b0480cdc4dd53292e2b243477f49e05f66
+- pypi: git+https://github.com/swarm-subnet/swarm-worlds.git?rev=v1.0.0#4084a9f8c63938d8289ebf849b685f02e4e77d8a
   name: swarm-worlds
   version: 1.0.0
   requires_python: '>=3.11'
