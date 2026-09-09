@@ -120,7 +120,7 @@ The drone sees the world through a single depth camera and knows its own positio
 <!-- ENVIRONMENTS -->
 ## The Worlds
 
-None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives **1,100 fresh seeds** across its supported map types, so nothing can be memorized.
+None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives **1,100 fresh seeds** across its supported map types, so nothing can be memorized. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
 
 <table>
 <tr>
