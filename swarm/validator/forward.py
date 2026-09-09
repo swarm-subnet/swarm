@@ -176,6 +176,7 @@ async def _ensure_components(self) -> None:
             bt.logging.error(f"Backend API init failed: {exc}")
             bt.logging.error("Set SWARM_BACKEND_API_URL")
             raise
+        await self.backend_api.announce_startup()
     if not hasattr(self, "docker_evaluator") or not DockerSecureEvaluator._base_ready:
         tracker_call(self, "mark_forward_failed", error="Docker evaluator not ready")
         raise RuntimeError("Docker evaluator not ready")
