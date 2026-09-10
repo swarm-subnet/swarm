@@ -1019,7 +1019,13 @@ class MovingDroneAviary(BaseRLAviary):
             cx = (mn[0] + mx[0]) * 0.5
             cy = (mn[1] + mx[1]) * 0.5
             rgba_orig = list(vdata[0][7])
-            targets.append((uid, cx, cy, span / 2.0, rgba_orig))
+            # Remember the collision filter because culling temporarily replaces it.
+            restore_filter = (
+                (2, 1)
+                if p.getDynamicsInfo(uid, -1, physicsClientId=cli)[0] == 0
+                else (1, 0xFF)
+            )
+            targets.append((uid, cx, cy, span / 2.0, rgba_orig, restore_filter))
             total_faces += faces
 
         self._cull_targets = targets
@@ -1050,7 +1056,7 @@ class MovingDroneAviary(BaseRLAviary):
         vis_hidden = self._cull_vis_hidden
         phys_disabled = self._cull_phys_disabled
 
-        for uid, cx, cy, hs, rgba in self._cull_targets:
+        for uid, cx, cy, hs, rgba, restore_filter in self._cull_targets:
             dist = math.sqrt((cx - dx) ** 2 + (cy - dy) ** 2)
             surface_dist = dist - hs
 
@@ -1067,17 +1073,21 @@ class MovingDroneAviary(BaseRLAviary):
                     p.setCollisionFilterGroupMask(uid, -1, 0, 0, physicsClientId=cli)
                     phys_disabled.add(uid)
             elif uid in phys_disabled:
-                p.setCollisionFilterGroupMask(uid, -1, 1, 0xFF, physicsClientId=cli)
+                p.setCollisionFilterGroupMask(
+                    uid, -1, *restore_filter, physicsClientId=cli
+                )
                 phys_disabled.discard(uid)
 
     def _restore_culled_bodies(self) -> None:
         """Restore all culled bodies to their original state."""
         cli = getattr(self, "CLIENT", 0)
-        for uid, _, _, _, rgba in self._cull_targets:
+        for uid, _, _, _, rgba, restore_filter in self._cull_targets:
             if uid in self._cull_vis_hidden:
                 p.changeVisualShape(uid, -1, rgbaColor=rgba, physicsClientId=cli)
             if uid in self._cull_phys_disabled:
-                p.setCollisionFilterGroupMask(uid, -1, 1, 0xFF, physicsClientId=cli)
+                p.setCollisionFilterGroupMask(
+                    uid, -1, *restore_filter, physicsClientId=cli
+                )
         self._cull_vis_hidden.clear()
         self._cull_phys_disabled.clear()
 
