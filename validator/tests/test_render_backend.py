@@ -191,30 +191,48 @@ def test_moved_body_is_seen_at_its_new_place():
         p.disconnect(cli)
 
 
-def _depth_hash():
-    """SHA-256 of a ray-cast depth frame of the test world, for the thread-count check."""
+BATCH_EYES = [(3.0, -4.0, 2.5), (0.0, 0.0, 8.0), (-4.0, 3.0, 3.0), (2.0, 5.0, 1.5), (-1.0, -6.0, 4.0)]
+BATCH_TARGET = (0.0, 0.5, 0.8)
+# SHA-256 of the ray-cast frames of the test world. Every machine and every thread count must reproduce
+# them byte for byte; a renderer change that moves one pixel updates them on purpose, in its own PR.
+RAYCAST_FRAME_SHA256 = "5c7513cf527aa93b3b6c5ba6f42100d5fe8434e1d14ca6227d34f6305de0a995"
+RAYCAST_BATCH_SHA256 = "a047ce7eb9a4f81a34d9e02e4fd171e5f420c277d5dec53da2f54468032e3694"
+
+
+def _raycast_hashes():
+    """SHA-256 of one ray-cast frame and of a five-camera batch, and whether the batch equals the single frames."""
     cli = p.connect(p.DIRECT)
     try:
         _build_world(cli)
-        view, proj = _camera(cli, (3.0, -4.0, 2.5), (0.0, 0.5, 0.8))
-        depth, _ = _render(cli, view, proj, p.ER_NO_SEGMENTATION_MASK | p.ER_DEPTH_ONLY | p.ER_SWARM_RAYCAST)
-        return hashlib.sha256(depth.tobytes()).hexdigest()
+        flags = p.ER_NO_SEGMENTATION_MASK | p.ER_DEPTH_ONLY | p.ER_SWARM_RAYCAST
+        views, singles = [], []
+        for eye in BATCH_EYES:
+            view, proj = _camera(cli, eye, BATCH_TARGET)
+            views.append(view)
+            singles.append(_render(cli, view, proj, flags)[0])
+        batch = np.asarray(p.getDepthImagesBatch(
+            SIZE, SIZE, viewMatrices=views, projectionMatrix=proj, lightDirection=[1.0, 1.0, 1.0],
+            flags=flags, physicsClientId=cli,
+        ), dtype=np.float32)
+        same = batch.shape == (len(views), SIZE, SIZE) and all(np.array_equal(batch[i], singles[i]) for i in range(len(views)))
+        return hashlib.sha256(singles[0].tobytes()).hexdigest(), hashlib.sha256(batch.tobytes()).hexdigest(), same
     finally:
         p.disconnect(cli)
 
 
 @_needs_wheel
-def test_raycast_frame_is_identical_for_every_thread_count():
-    """The render thread count is read once per process, so each count renders in its own process."""
-    hashes = set()
-    for threads in ("1", "2", "4"):
-        env = dict(os.environ, SWARM_RENDER_THREADS=threads)
-        result = subprocess.run(
-            [sys.executable, "-m", "validator.tests.test_render_backend"],
-            capture_output=True, text=True, env=env, check=True,
-        )
-        hashes.add(result.stdout.strip().splitlines()[-1])
-    assert len(hashes) == 1
+@pytest.mark.parametrize("threads", ["1", "2", "4", "8"])
+def test_raycast_frames_are_identical_for_every_thread_count(threads):
+    """Every thread count gives the committed bytes, alone and in a batch; the count is read once per process."""
+    env = dict(os.environ, SWARM_RENDER_THREADS=threads)
+    result = subprocess.run(
+        [sys.executable, "-m", "validator.tests.test_render_backend"],
+        capture_output=True, text=True, env=env, check=True,
+    )
+    frame, batch, batch_equals_singles = result.stdout.strip().splitlines()[-1].split()
+    assert frame == RAYCAST_FRAME_SHA256
+    assert batch == RAYCAST_BATCH_SHA256
+    assert batch_equals_singles == "True"
 
 
 def _autopilot_obs(monkeypatch, backend):
@@ -257,4 +275,4 @@ def test_office_family_stays_on_tiny_renderer(monkeypatch):
 
 
 if __name__ == "__main__":
-    print(_depth_hash())
+    print(*_raycast_hashes())
