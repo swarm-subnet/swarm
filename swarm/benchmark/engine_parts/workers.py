@@ -22,12 +22,19 @@ import os
 import signal
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.config import HostWorkerRuntimeSettings
-from swarm.constants import MINER_COMPUTE_BUDGET_SEC
+from swarm.config import HostWorkerRuntimeSettings, env_bool
+from swarm.constants import AGENT_STARTUP_WALL_SEC, MINER_COMPUTE_BUDGET_SEC
 from swarm.validator.calibration.speed_factor import baseline_model_available
+from swarm.validator.docker.docker_evaluator_parts._shared import (
+    _runtime_profile_from_payload,
+)
 from swarm.validator.docker.docker_evaluator_parts.batch import (
+    WarmContainer,
+    WarmContainerStart,
     _ensure_host_speed_factor,
+    discard_warm_container,
     host_speed_factor_is_fresh,
+    warm_container_key,
 )
 
 from ._shared import (
@@ -67,6 +74,15 @@ except Exception:  # pragma: no cover - non-glibc platform
     _libc = None
 
 _PR_SET_PDEATHSIG = 1
+
+# A spare start has its own deadlines; this only bounds the wait after a flight,
+# and stays well inside the parent's stall timeout for the next batch.
+_WARM_CONTAINER_WAIT_SEC = AGENT_STARTUP_WALL_SEC + 15.0
+
+
+def _prewarm_enabled() -> bool:
+    """Whether a worker may start the next seed's container during the current flight."""
+    return env_bool("SWARM_DOCKER_PREWARM", True)
 
 
 def _release_freed_memory() -> None:
@@ -227,17 +243,40 @@ def _benchmark_worker_main(
     result_queue: Any,
     progress_queue: Any,
 ) -> None:
+    """Worker process body: fly each batch from the queue in its own container."""
     _die_with_parent()
     _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         evaluator = _engine_facade()._create_prepared_benchmark_evaluator()
+        spare: Optional[WarmContainer] = None
 
         while True:
             request = task_queue.get()
             if request is None:
+                discard_warm_container(spare)
                 return
+
+            key = warm_container_key(
+                request.uid,
+                request.model_path,
+                process_slot,
+                _runtime_profile_from_payload(
+                    getattr(request, "runtime_profile", None), request.tasks
+                ).as_dict(),
+                getattr(request, "model_image", None),
+            )
+            warm = spare if spare is not None and spare.key == key else None
+            if spare is not None and warm is None:
+                discard_warm_container(spare)
+            spare = None
+            next_start: dict[str, WarmContainerStart] = {}
+
+            def _prewarm_next() -> None:
+                """Start the next seed's container now that this one is serving."""
+                if getattr(request, "prewarm_next", False) and _prewarm_enabled():
+                    next_start["start"] = WarmContainerStart(evaluator, key)
 
             batch_start = time.time()
             heartbeat_stop = threading.Event()
@@ -294,6 +333,8 @@ def _benchmark_worker_main(
                         runtime_profile_payload=getattr(request, "runtime_profile", None),
                         host_speed_factor=getattr(request, "host_speed_factor", None),
                         model_image=getattr(request, "model_image", None),
+                        warm_container=warm,
+                        on_container_ready=_prewarm_next,
                     )
                 )
                 result_queue.put(
@@ -317,12 +358,18 @@ def _benchmark_worker_main(
                         traceback_text=traceback.format_exc(),
                     )
                 )
+                if "start" in next_start:
+                    discard_warm_container(next_start["start"].wait(_WARM_CONTAINER_WAIT_SEC))
                 return
             finally:
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)
                 gc.collect()
                 _release_freed_memory()
+
+            # The result is already on its way; only the next request needs the spare.
+            if "start" in next_start:
+                spare = next_start["start"].wait(_WARM_CONTAINER_WAIT_SEC)
     finally:
         asyncio.set_event_loop(None)
         loop.close()
@@ -341,6 +388,7 @@ async def _run_benchmark_process_mode(
     run_opts: _RunOptions,
     set_heartbeat_status_provider: Optional[Any] = None,
 ) -> int:
+    """Run the batch plan over a pool of worker processes with RAM-aware admission."""
     engine = _engine_facade()
     await _precalibrate_host(effective_workers)
     ctx = engine._benchmark_mp_context()
@@ -436,6 +484,7 @@ async def _run_benchmark_process_mode(
         _spawn_worker(worker_slot)
 
     def _dispatch_available_batches() -> None:
+        """Queue pending batches while the scheduler admits more workers."""
         while pending_batch_ids and len(inflight_batches) < scheduler.active_worker_cap:
             batch_index = _select_next_batch_index(
                 pending_batch_ids=pending_batch_ids,
@@ -467,6 +516,7 @@ async def _run_benchmark_process_mode(
                 uid=uid,
                 model_path=str(model_path),
                 task_total=len(all_tasks),
+                prewarm_next=bool(pending_batch_ids),
             )
             inflight_batches[batch_index] = request
             scheduler.note_group_dispatched(group_name)

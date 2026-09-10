@@ -509,8 +509,31 @@ class _BatchContext:
     container_started_at: Optional[float] = None
     container_startup_sec: Optional[float] = None
 
+    # Container start, stage by stage (set by the prepare helpers)
+    setup_sec: float = 0.0
+    launch_sec: float = 0.0
+    lockdown_sec: float = 0.0
+    serve_sec: float = 0.0
+    prewarmed: bool = False
+    failure_error: str = ""
+
     # Closure bundle (built in _init_batch_state)
     helpers: Optional[_BatchHelpers] = None
+
+
+# The container fields a warm spare hands over to the seed that adopts it.
+_CONTAINER_FIELDS = (
+    "container_name", "host_port", "tmpdir", "submission_dir", "run_image",
+    "current_uid", "current_gid", "worker_limits", "docker_envs", "validator_ip",
+    "runtime_profile", "connected", "container_started_at", "container_startup_sec",
+    "setup_sec", "launch_sec", "lockdown_sec", "serve_sec",
+)
+
+# A spare loads its model on the cores the flying container is pinned to, so it
+# runs at the lowest CPU weight and under a small quota, both lifted once adopted.
+_WARM_CPU_SHARES = 2
+_WARM_CPU_LIMIT = "0.5"
+_ACTIVE_CPU_SHARES = 1024
 
 
 def _init_batch_state(ctx: _BatchContext) -> None:
@@ -1331,8 +1354,11 @@ def _extract_submission(model_path: Path, submission_dir: Path) -> None:
         nested_dir.rmdir()
 
 
-def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
-    """Extract the submission and stage the RPC server next to the miner's agent."""
+def _setup_workspace(ctx: _BatchContext) -> Optional[ReasonCode]:
+    """Extract the submission and stage the RPC server next to the miner's agent.
+
+    Returns the failure reason, or None when the workspace is ready."""
+    t_start = time.monotonic()
     runtime_profile = _runtime_profile_from_payload(ctx.runtime_profile_payload, ctx.tasks)
     worker_limits = ctx.self._resolve_worker_limits(ctx.worker_id, runtime_profile=runtime_profile)
     thread_cap = DockerRuntimeSettings.worker_thread_cap(worker_limits)
@@ -1364,13 +1390,8 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
         else:
             _extract_submission(ctx.model_path, submission_dir)
     except Exception as exc:
-        ctx.helpers.notify_all_failed(
-            status=ReasonCode.LOAD_FAILED.value, error=f"extract failed: {exc}"
-        )
-        return [
-            ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=ReasonCode.LOAD_FAILED.value)
-            for _ in ctx.tasks
-        ]
+        ctx.failure_error = f"extract failed: {exc}"
+        return ReasonCode.LOAD_FAILED
 
     template_dir = _submission_template_dir()
     if ctx.is_model_graph:
@@ -1402,6 +1423,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[list]:
     ctx.self.last_selected_worker_limits = dict(worker_limits)
     ctx.self.last_selected_runtime_env = dict(docker_envs)
     ctx.self.last_selected_run_image = str(ctx.run_image)
+    ctx.setup_sec = time.monotonic() - t_start
     return None
 
 
@@ -1443,7 +1465,11 @@ def _container_is_gone(container_name: str) -> bool:
         return False
 
 
-def _launch_container(ctx: _BatchContext) -> Optional[list]:
+def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[ReasonCode]:
+    """Start the sandbox container detached; the agent waits behind the start gate.
+
+    A warm start takes the spare's CPU weight and quota instead of the worker's.
+    Returns the failure reason, or None once docker has accepted the run."""
     obs_shm_path = _create_obs_shm(ctx.host_port)
     cmd = [
         "docker", "run", "--rm", "-d", "--name", ctx.container_name,
@@ -1456,7 +1482,9 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
         "-p", f"127.0.0.1:{ctx.host_port}:8000",
         "-v", f"{ctx.submission_dir}:/workspace/submission:rw",
     ]
-    if ctx.worker_limits["cpus"]:
+    if warm:
+        cmd.extend([f"--cpus={_WARM_CPU_LIMIT}", f"--cpu-shares={_WARM_CPU_SHARES}"])
+    elif ctx.worker_limits["cpus"]:
         cmd.append(f"--cpus={ctx.worker_limits['cpus']}")
     if ctx.worker_limits["cpuset_cpus"]:
         cmd.extend(["--cpuset-cpus", str(ctx.worker_limits["cpuset_cpus"])])
@@ -1468,13 +1496,18 @@ def _launch_container(ctx: _BatchContext) -> Optional[list]:
     cmd.extend([ctx.run_image, "python", "/workspace/submission/main.py"])
     ctx.container_started_at = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    ctx.launch_sec = time.monotonic() - ctx.container_started_at
     if result.returncode != 0:
-        ctx.helpers.notify_all_failed(status=ReasonCode.INFRA_DOCKER.value, error=result.stderr[:300])
-        return [ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=ReasonCode.INFRA_DOCKER.value) for _ in ctx.tasks]
+        ctx.failure_error = result.stderr[:300]
+        return ReasonCode.INFRA_DOCKER
     return None
 
 
-async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
+async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
+    """Lock the container's network, open the start gate and wait for the agent.
+
+    Returns the failure reason, or None once the RPC server accepts connections."""
+    t_lockdown = time.monotonic()
     container_pid = ctx.self._get_container_pid(ctx.container_name)
     if (
         not container_pid
@@ -1482,12 +1515,14 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
         or not _open_start_gate(ctx.container_name)
     ):
         ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
-        ctx.helpers.notify_all_failed(status=ReasonCode.INFRA_DOCKER.value)
-        return [ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=ReasonCode.INFRA_DOCKER.value) for _ in ctx.tasks]
-    deadline = time.monotonic() + AGENT_STARTUP_WALL_SEC
+        return ReasonCode.INFRA_DOCKER
+    gate_opened_at = time.monotonic()
+    ctx.lockdown_sec = gate_opened_at - t_lockdown
+    deadline = gate_opened_at + AGENT_STARTUP_WALL_SEC
     while time.monotonic() < deadline:
         if ctx.self._check_rpc_ready(ctx.host_port):
             ctx.connected = True
+            ctx.serve_sec = time.monotonic() - gate_opened_at
             started_at = getattr(ctx, "container_started_at", None)
             if started_at is not None:
                 startup_sec = time.monotonic() - started_at
@@ -1499,9 +1534,154 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[list]:
         await asyncio.sleep(0.1)
     gone = _container_is_gone(ctx.container_name)
     ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
-    reason = ReasonCode.LOAD_FAILED if gone else ReasonCode.INFRA_DOCKER
-    ctx.helpers.notify_all_failed(status=reason.value)
-    return [ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=reason.value) for _ in ctx.tasks]
+    return ReasonCode.LOAD_FAILED if gone else ReasonCode.INFRA_DOCKER
+
+
+def _fail_batch(ctx: _BatchContext, reason: ReasonCode) -> list:
+    """Report every seed of the batch as failed for ``reason`` and build its results."""
+    ctx.helpers.notify_all_failed(status=reason.value, error=ctx.failure_error)
+    return [
+        ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=reason.value)
+        for _ in ctx.tasks
+    ]
+
+
+async def _prepare_container(ctx: _BatchContext, warm: bool = False) -> Optional[ReasonCode]:
+    """Run the whole container start: workspace, launch, lockdown, agent ready."""
+    failure = _setup_workspace(ctx)
+    if failure is None:
+        failure = _launch_container(ctx, warm=warm)
+    if failure is None:
+        failure = await _prepare_network_and_rpc(ctx)
+    return failure
+
+
+def _release_container(ctx: _BatchContext) -> None:
+    """Kill the container and drop the workspace and shared-memory file it used."""
+    if ctx.container_name:
+        ctx.helpers.run_docker_cmd_quiet(["docker", "kill", ctx.container_name])
+        ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
+    ctx.helpers.cleanup_tmpdir_quiet(ctx.tmpdir)
+    if ctx.host_port:
+        try:
+            os.unlink(_obs_shm_host_path(ctx.host_port))
+        except OSError:
+            pass
+
+
+def warm_container_key(
+    uid: int,
+    model_path: Path,
+    worker_id: int,
+    runtime_profile_payload: Optional[dict[str, Any]],
+    model_image: Optional[str],
+) -> tuple:
+    """Everything a container start depends on; a spare only serves an equal key."""
+    return (
+        int(uid),
+        str(model_path),
+        int(worker_id),
+        json.dumps(runtime_profile_payload, sort_keys=True, default=str),
+        model_image,
+    )
+
+
+@dataclass
+class WarmContainer:
+    """A container started ahead of its seed, ready to fly once adopted."""
+
+    key: tuple
+    ctx: _BatchContext
+
+
+class WarmContainerStart:
+    """The background start of a spare; ``wait`` yields the spare or None."""
+
+    def __init__(self, self_evaluator: Any, key: tuple) -> None:
+        """Start the spare's container in a thread of its own."""
+        uid, model_path, worker_id, payload, model_image = key
+        self._ctx = _BatchContext(
+            self=self_evaluator,
+            tasks=[],
+            uid=uid,
+            model_path=Path(model_path),
+            worker_id=worker_id,
+            runtime_profile_payload=json.loads(payload),
+            model_image=model_image,
+        )
+        self._key = key
+        self._result: Optional[WarmContainer] = None
+        self._abandoned = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name=f"warm_container_uid{uid}_w{worker_id}", daemon=True
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        """Prepare the spare at the lowest CPU weight; a failure leaves nothing behind."""
+        ctx = self._ctx
+        _init_batch_state(ctx)
+        _setup_pretry_state(ctx)
+        try:
+            failure = asyncio.run(_prepare_container(ctx, warm=True))
+        except Exception as exc:
+            failure = ReasonCode.INFRA_DOCKER
+            ctx.failure_error = f"{type(exc).__name__}: {exc}"
+        if failure is not None or self._abandoned.is_set():
+            if failure is not None:
+                bt.logging.info(
+                    f"[Worker {ctx.worker_id}] spare container not ready "
+                    f"({failure.value}); the next seed starts its own"
+                )
+            _release_container(ctx)
+            return
+        ctx.prewarmed = True
+        self._result = WarmContainer(key=self._key, ctx=ctx)
+
+    def wait(self, timeout: float) -> Optional[WarmContainer]:
+        """The finished spare, or None; a start still running is abandoned."""
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            self._abandoned.set()
+            return None
+        return self._result
+
+
+def discard_warm_container(warm: Optional[WarmContainer]) -> None:
+    """Kill a spare that no seed will use."""
+    if warm is not None:
+        _release_container(warm.ctx)
+
+
+def _adopt_warm_container(ctx: _BatchContext, warm: WarmContainer) -> bool:
+    """Take over a spare's container for this batch, with the worker's CPU limits.
+
+    Returns False, with the spare released, when the limits cannot be restored."""
+    worker_cpus = warm.ctx.worker_limits["cpus"]
+    quota = f"--cpus={worker_cpus}" if worker_cpus else "--cpu-quota=-1"
+    try:
+        result = subprocess.run(
+            ["docker", "update", quota, f"--cpu-shares={_ACTIVE_CPU_SHARES}", warm.ctx.container_name],
+            capture_output=True, text=True, timeout=30,
+        )
+        restored = result.returncode == 0
+    except Exception:
+        restored = False
+    if not restored:
+        bt.logging.warning(
+            f"[Worker {ctx.worker_id}] could not restore the CPU limits of the spare "
+            "container; starting a fresh one"
+        )
+        _release_container(warm.ctx)
+        return False
+    for name in _CONTAINER_FIELDS:
+        setattr(ctx, name, getattr(warm.ctx, name))
+    ctx.prewarmed = True
+    ctx.helpers.phase(
+        f"adopted spare container={ctx.container_name} host_port={ctx.host_port} "
+        f"seeds={len(ctx.tasks)}"
+    )
+    return True
 
 
 async def evaluate_seeds_batch(
@@ -1518,6 +1698,8 @@ async def evaluate_seeds_batch(
     is_calibration_run: bool = False,
     host_speed_factor: Optional[float] = None,
     model_image: Optional[str] = None,
+    warm_container: Optional[WarmContainer] = None,
+    on_container_ready: Optional[Callable[[], None]] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1527,6 +1709,8 @@ async def evaluate_seeds_batch(
         model_path: Path to model zip file
         worker_id: Worker ID for logging (0 to N_DOCKER_WORKERS-1)
         model_image: Pre-built image carrying the miner's declared dependencies
+        warm_container: A spare started ahead of time; adopted instead of a fresh start
+        on_container_ready: Called once the container serves, before the first seed flies
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -1552,6 +1736,7 @@ async def evaluate_seeds_batch(
 
     early = _validate_inputs(ctx)
     if early is not None:
+        discard_warm_container(warm_container)
         return early
 
     if not is_calibration_run:
@@ -1583,6 +1768,7 @@ async def evaluate_seeds_batch(
             ctx.helpers.notify_all_failed(
                 status=ReasonCode.INFRA_CALIBRATION.value, error=detail
             )
+            discard_warm_container(warm_container)
             return [
                 ValidationResult(
                     uid, False, 0.0, 0.0,
@@ -1591,31 +1777,34 @@ async def evaluate_seeds_batch(
                 for _ in tasks
             ]
 
-    _setup_pretry_state(ctx)
+    adopted = warm_container is not None and _adopt_warm_container(ctx, warm_container)
+    if not adopted:
+        _setup_pretry_state(ctx)
 
     try:
         t0 = time.monotonic()
-        early = _setup_workspace(ctx)
-        if early is not None:
-            return early
+        if not adopted:
+            failure = await _prepare_container(ctx)
+            if failure is not None:
+                return _fail_batch(ctx, failure)
 
         t1 = time.monotonic()
-        early = _launch_container(ctx)
-        if early is not None:
-            return early
-
-        t2 = time.monotonic()
-        early = await _prepare_network_and_rpc(ctx)
-        if early is not None:
-            return early
-
-        t3 = time.monotonic()
+        rpc_started_at = time.time()
+        if on_container_ready is not None:
+            on_container_ready()
         results = await _run_rpc_phase(ctx)
-        t4 = time.monotonic()
+        t2 = time.monotonic()
+        # The host port accepts as soon as the proxy is up, so the model load shows
+        # as the time to the first successful ping, which a spare has already spent.
+        connect_sec = max(0.0, ctx.progress_state.get("ping_ok_ts", rpc_started_at) - rpc_started_at)
+        start_sec = ctx.setup_sec + ctx.launch_sec + ctx.lockdown_sec + ctx.serve_sec
         bt.logging.info(
-            f"[Worker {ctx.worker_id}] seed timing: setup {t1 - t0:.1f}s · "
-            f"container {t2 - t1:.1f}s · rpc {t3 - t2:.1f}s · "
-            f"mission {t4 - t3:.1f}s · total {t4 - t0:.1f}s"
+            f"[Worker {ctx.worker_id}] seed timing: start {start_sec:.1f}s "
+            f"(setup {ctx.setup_sec:.1f}s · launch {ctx.launch_sec:.1f}s · "
+            f"lockdown {ctx.lockdown_sec:.1f}s · serve {ctx.serve_sec:.1f}s"
+            f"{', hidden behind the previous seed' if ctx.prewarmed else ''}) · "
+            f"waited {t1 - t0:.1f}s · connect {connect_sec:.1f}s · "
+            f"mission {t2 - t1:.1f}s · total {t2 - t0:.1f}s"
         )
         return results
 

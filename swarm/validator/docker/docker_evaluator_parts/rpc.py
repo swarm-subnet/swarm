@@ -257,6 +257,7 @@ def _run_multi_seed_rpc_sync(
             )
 
     async def run_all_seeds():
+        """Connect to the agent, then fly every task in turn on the same connection."""
         results = []
         async with capnp.kj_loop():
             stream = None
@@ -298,6 +299,8 @@ def _run_multi_seed_rpc_sync(
                             f"Unexpected ping response (attempt {attempt}/{max_ping_attempts})"
                         )
 
+                    if progress_state is not None:
+                        progress_state["ping_ok_ts"] = time.time()
                     _trace(
                         f"ping ok (attempt {attempt}) response={ping_response.response}"
                     )

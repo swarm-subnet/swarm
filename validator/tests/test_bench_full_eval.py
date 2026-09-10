@@ -713,6 +713,7 @@ def test_run_benchmark_heartbeat_uses_process_scheduler_status_provider(
 
 
 def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path):
+    """A worker reports each seed, a batch-started heartbeat and one packed result."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     task_queue: queue.Queue = queue.Queue()
@@ -720,6 +721,8 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
     progress_queue: queue.Queue = queue.Queue()
 
     class _FakeEvaluator:
+        """Evaluator stand-in that scores every task without a container."""
+
         async def evaluate_seeds_batch(
             self,
             tasks,
@@ -732,7 +735,10 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
             runtime_profile_payload=None,
             host_speed_factor=None,
             model_image=None,
+            warm_container=None,
+            on_container_ready=None,
         ):
+            """Report each task as done and return a zero result per task."""
             _ = uid, model_path, worker_id, task_offset, task_total, runtime_profile_payload
             for task in tasks:
                 if on_seed_complete is not None:

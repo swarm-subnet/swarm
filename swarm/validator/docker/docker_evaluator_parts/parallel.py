@@ -230,6 +230,7 @@ async def _run_process_parallel(
     initial_pending: Optional[list[int]] = None,
     on_held_seeds: Optional[Callable[[list[int]], None]] = None,
 ) -> list:
+    """Fly every seed through the worker pool, retrying and degrading failures per seed."""
     bench_engine = _benchmark_engine()
     ctx = bench_engine._benchmark_mp_context()
     result_queue = ctx.Queue()
@@ -424,6 +425,7 @@ async def _run_process_parallel(
         on_held_seeds(list(snapshot))
 
     def _dispatch_available_batches() -> None:
+        """Hand pending seeds to idle workers while the scheduler admits more."""
         if stop_reason is not None:
             return
         _maybe_recycle_idle_workers()
@@ -463,6 +465,7 @@ async def _run_process_parallel(
                 runtime_profile=resolved_runtime_profile.as_dict(),
                 host_speed_factor=host_speed_factor,
                 model_image=model_image,
+                prewarm_next=bool(pending_batch_ids) or (feeder_active and not feeder_done),
             )
             worker_active_requests[worker_slot] = request
             now = time.time()
