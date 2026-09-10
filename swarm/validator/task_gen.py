@@ -103,6 +103,7 @@ from swarm.constants import (
     TYPE_6_WORLD_RANGE,
     VILLAGE_R_MAX,
     VILLAGE_R_MIN,
+    WIND_BY_MAP,
 )
 from swarm.core.mountain_generator import get_global_scale, get_terrain_z
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
@@ -246,6 +247,18 @@ def _max_search_radius(distance: float, horizon: float) -> float:
     return math.sqrt(budget * SEARCH_DETECT_WIDTH * SPEED_LIMIT / (SEARCH_SWEEP_ALPHA * math.pi))
 
 
+def _wind_for_map(family_id: str, challenge_type: int) -> dict:
+    """MapTask wind fields for this family on this map; empty (no wind) unless the map opted in."""
+    spec = WIND_BY_MAP.get((family_id, int(challenge_type)))
+    if not spec:
+        return {}
+    return {
+        "wind_max_mps": float(spec["max_mps"]),
+        "wind_turbulence": float(spec.get("turbulence", 0.0)),
+        "wind_gusts": int(spec.get("gusts", 0)),
+    }
+
+
 def _build_task_with_params(
     sim_dt: float,
     seed: int,
@@ -256,6 +269,7 @@ def _build_task_with_params(
     moving_platform: bool = False,
     n_drones: Optional[int] = None,
 ) -> MapTask:
+    wind = _wind_for_map(family_id, challenge_type)
     if family_id == "cf_interceptor":
         # chaser and target on opposite sides of a near-centre midpoint, 60-100 m apart,
         # so the chase fits inside the (larger) open terrain. z values are placeholders;
@@ -271,7 +285,7 @@ def _build_task_with_params(
         return MapTask(
             map_seed=seed, start=start, goal=goal, sim_dt=sim_dt,
             horizon=INTERCEPTOR_HORIZON_SEC, challenge_type=challenge_type,
-            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False, **wind,
         )
 
     if family_id == "cf_interceptor_office":
@@ -286,7 +300,7 @@ def _build_task_with_params(
         return MapTask(
             map_seed=seed, start=start, goal=goal, sim_dt=sim_dt,
             horizon=params['horizon'], challenge_type=OFFICE_CHALLENGE_TYPE,
-            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False, **wind,
         )
 
     if family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
@@ -300,7 +314,7 @@ def _build_task_with_params(
             map_seed=seed, start=starts[0], goal=goals[0], sim_dt=sim_dt,
             horizon=params['horizon'], challenge_type=challenge_type,
             family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
-            num_drones=n_drones, starts=starts, goals=goals,
+            num_drones=n_drones, starts=starts, goals=goals, **wind,
         )
 
     rng = random.Random(seed)
@@ -337,6 +351,7 @@ def _build_task_with_params(
         version=SCHEMA_VERSION,
         search_radius=search_radius,
         moving_platform=moving_platform,
+        **wind,
     )
 
 

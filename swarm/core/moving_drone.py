@@ -99,6 +99,7 @@ from swarm.constants import (
     SOLVER_MIN_ISLAND_SIZE,
 )
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
+from swarm.core.wind import SeededWind
 
 # Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
 _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
@@ -243,6 +244,13 @@ class MovingDroneAviary(BaseRLAviary):
         self._movement_pattern = self._get_movement_pattern_from_seed(seed)
         self._platform_offsets = []
         self._init_platform_randomization(seed)
+        wind_max = float(getattr(task, 'wind_max_mps', 0.0) or 0.0)
+        self._wind = None if wind_max <= 0.0 else SeededWind(
+            seed, max_mps=wind_max,
+            turbulence=float(getattr(task, 'wind_turbulence', 0.0) or 0.0),
+            gusts=int(getattr(task, 'wind_gusts', 0) or 0),
+            dt=float(task.sim_dt), horizon=float(task.horizon),
+        )
         self._end_platform_uids = []
         self._start_platform_uids = []
         self._platform_hit = False
@@ -1342,6 +1350,9 @@ class MovingDroneAviary(BaseRLAviary):
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
         self._d_failure_reason = [FailureReason.NONE.value] * n
+        wind_model = getattr(self, "_wind", None)
+        if wind_model is not None:
+            wind_model.reset()
         self.family_runtime.reset_env_state(self)
 
         if getattr(self, "_sar_rgb_enabled", False):
@@ -1474,6 +1485,8 @@ class MovingDroneAviary(BaseRLAviary):
             )
         self._update_moving_platform()
         self.family_runtime.advance_world(self)
+        wind_model = getattr(self, "_wind", None)
+        wind = None if wind_model is None else wind_model.velocity(self._time_alive)
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if (
                 self.PYB_STEPS_PER_CTRL > 1
@@ -1517,6 +1530,8 @@ class MovingDroneAviary(BaseRLAviary):
                     self._groundEffect(clipped_action[i, :], i)
                     self._drag(self.last_clipped_action[i, :], i)
                     self._downwash(i)
+                if wind is not None and self.PHYSICS != Physics.DYN:
+                    self._apply_wind(clipped_action[i, :], i, wind)
             self.family_runtime.apply_world_physics(self)
             if self.PHYSICS != Physics.DYN:
                 p.stepSimulation(physicsClientId=self.CLIENT)
@@ -1531,6 +1546,24 @@ class MovingDroneAviary(BaseRLAviary):
         info = self._computeInfo()
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return obs, reward, terminated, truncated, info
+
+    def _apply_wind(self, rpm, nth_drone: int, wind) -> None:
+        """Rotor drag on the air moving relative to the drone, the drone's own URDF
+        coefficient times total rotor speed, so wind pushes a hovering drone and brakes a
+        flying one. Written as scalar math so every CPU produces the same bytes."""
+        vx, vy, vz = (float(c) for c in self.vel[nth_drone])
+        rx, ry, rz = vx - float(wind[0]), vy - float(wind[1]), vz - float(wind[2])
+        m = p.getMatrixFromQuaternion(self.quat[nth_drone])
+        # rows of m^T: relative airspeed in the body frame, where the URDF coefficients live
+        bx = m[0] * rx + m[3] * ry + m[6] * rz
+        by = m[1] * rx + m[4] * ry + m[7] * rz
+        bz = m[2] * rx + m[5] * ry + m[8] * rz
+        omega = (float(rpm[0]) + float(rpm[1]) + float(rpm[2]) + float(rpm[3])) * (2.0 * math.pi / 60.0)
+        kxy, kz = -float(self.DRAG_COEFF[0]) * omega, -float(self.DRAG_COEFF[2]) * omega
+        p.applyExternalForce(
+            int(self.DRONE_IDS[nth_drone]), -1, [kxy * bx, kxy * by, kz * bz], [0.0, 0.0, 0.0],
+            p.LINK_FRAME, physicsClientId=self.CLIENT,
+        )
 
     def _process_step_updates(self):
         """Handle post-physics episode bookkeeping exactly once per control step."""

@@ -477,6 +477,24 @@ MOVING_PLATFORM_PROB = {
 }
 MOVING_PLATFORM_SEED_OFFSET = 555555
 
+# =============================================================================
+# WIND (per map, off unless a map opts in)
+# =============================================================================
+
+# (family_id, challenge_type) -> {"max_mps", "turbulence", "gusts"}. max_mps caps the
+# total wind (0 = none), turbulence scales the Dryden low-altitude intensity (1 = the
+# standard, 0 = steady wind only), gusts is the number of gust bumps per flight.
+# Maps not listed get no wind, so every existing family flies in still air.
+WIND_BY_MAP = {}
+WIND_SEED_OFFSET = 0xB10B5                  # own stream: wind must not ride the other seed draws
+WIND_MEAN_FRACTION = (0.4, 0.67)            # episode mean as a fraction of max_mps; 0.67 x 1.5 gust peak stays under the cap
+WIND_TURB_SIGMA_XY = 0.2                    # horizontal turbulence std / mean wind (Dryden, ~3 m altitude)
+WIND_TURB_SIGMA_Z = 0.1                     # vertical turbulence std / mean wind (Dryden: 0.1 x W20)
+WIND_TURB_TAU_XY_SEC = 4.0                  # horizontal correlation time (~20 m length scale at a few m/s)
+WIND_TURB_TAU_Z_SEC = 1.0                   # vertical correlation time (length scale = altitude)
+WIND_GUST_PEAK = 1.5                        # gust peak / mean wind, the common near-ground gust factor
+WIND_GUST_DURATION_SEC = (3.0, 8.0)         # gust bump length
+
 # Swarm autopilot (cf_swarm_autopilot): N drones flown by one centralized policy.
 SWARM_NUM_DRONES = 5                      # reference / smoke default
 SWARM_MIN_DRONES = 2                      # per-seed drone count is random in [MIN, MAX]
