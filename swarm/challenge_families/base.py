@@ -172,6 +172,8 @@ class ChallengeFamilyRuntimeProfile:
 class ChallengeFamilyRuntime:
     family_id: str
     runtime_supported: bool = True
+    # Depth camera backend: "tiny" is TinyRenderer, "raycast" the Embree ray caster in the same wheel.
+    render_backend: str = "tiny"
 
     def screening_policy(self) -> Dict[str, Any]:
         return get_family_screening_policy(self.family_id)

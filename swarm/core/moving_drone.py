@@ -324,6 +324,14 @@ class MovingDroneAviary(BaseRLAviary):
             os.environ.get("SWARM_BATCH_DEPTH", "1") != "0"
             and hasattr(p, "getDepthImagesBatch")
         )
+        backend = os.environ.get("SWARM_RENDER_BACKEND") or self.family_runtime.render_backend
+        # The office family observes colour, which only TinyRenderer shades, so it stays there.
+        self._raycast_enabled = backend == "raycast" and not self._office_rc_enabled
+        self._render_flags = 0
+        if self._raycast_enabled:
+            if not hasattr(p, "ER_SWARM_RAYCAST"):
+                raise RuntimeError("render_backend 'raycast' needs a swarm-bullet3 wheel with ER_SWARM_RAYCAST")
+            self._render_flags = p.ER_SWARM_RAYCAST
 
         # on-demand RGB state (SAR only): per-drone request budget + the frame served this step
         if self._sar_rgb_enabled:
@@ -850,7 +858,7 @@ class MovingDroneAviary(BaseRLAviary):
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
             lightDirection=self._light_direction,
-            flags=seg_flag,
+            flags=seg_flag | self._render_flags,
             physicsClientId=cli,
             **extra_kwargs
         )
@@ -1684,6 +1692,7 @@ class MovingDroneAviary(BaseRLAviary):
                 viewMatrices=views,
                 projectionMatrix=self._drone_proj_matrix(),
                 lightDirection=self._light_direction,
+                flags=self._render_flags,
                 physicsClientId=getattr(self, "CLIENT", 0),
             )
         depth_stack = np.empty(
