@@ -1086,12 +1086,14 @@ class MovingDroneAviary(BaseRLAviary):
         dx, dy = dp[0], dp[1]
         vis_hidden = self._cull_vis_hidden
         phys_disabled = self._cull_phys_disabled
+        # The ray caster's frame cost does not grow with the bodies in view, so it keeps far bodies.
+        hide_visuals = not getattr(self, "_raycast_enabled", False)
 
         for uid, cx, cy, hs, rgba, restore_filter in self._cull_targets:
             dist = math.sqrt((cx - dx) ** 2 + (cy - dy) ** 2)
             surface_dist = dist - hs
 
-            if surface_dist > CULL_VISUAL_RADIUS:
+            if hide_visuals and surface_dist > CULL_VISUAL_RADIUS:
                 if uid not in vis_hidden:
                     p.changeVisualShape(uid, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli)
                     vis_hidden.add(uid)
