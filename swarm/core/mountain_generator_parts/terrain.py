@@ -17,6 +17,9 @@
 
 from ._shared import *
 
+# Hills and peaks repeat across seeds at rounded scales, so their collision trees are worth caching on disk.
+_BVH_CACHE_FLAG = getattr(p, "GEOM_CONCAVE_BVH_CACHE", 0)
+
 
 def get_global_scale(seed: int) -> float:
     rng = random.Random(seed + TYPE_3_SCALE_SEED_OFFSET)
@@ -108,7 +111,7 @@ class _ShapeCache:
         vis = p.createVisualShape(p.GEOM_MESH, physicsClientId=cli, **kw)
         col = p.createCollisionShape(
             p.GEOM_MESH, fileName=path, meshScale=scale_vec,
-            flags=p.GEOM_FORCE_CONCAVE_TRIMESH,
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH | _BVH_CACHE_FLAG,
             physicsClientId=cli,
         )
         self._cache[key] = (vis, col)

@@ -16,8 +16,10 @@
 # DEALINGS IN THE SOFTWARE.
 
 import json
+import os
 import random
 import re
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +43,8 @@ STATE_DIR = Path(__file__).parent.parent.parent / "state"
 EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
 # Kept out of the epoch_*.json namespace so a restart cannot read it as the rollover having happened.
 PREEVAL_SEEDS_DIR = STATE_DIR / "preeval_seeds"
+# Where the engine reads the collision trees it saved per mesh and scale; the folder follows the epoch.
+BVH_CACHE_ENV = "SWARM_BVH_CACHE_DIR"
 
 _MAX_SEED = 2**32 - 1
 _EPOCH_FILE_RE = re.compile(r"^epoch_(\d+)(?:__(.+))?\.json$")
@@ -185,6 +189,17 @@ class BenchmarkSeedManager:
             DEFAULT_RUNTIME_FAMILY_ID,
             invalidate_local_state_on_regenerate=invalidate_local_state_on_regenerate,
         )
+        self._activate_bvh_cache()
+
+    def _activate_bvh_cache(self) -> None:
+        """Point the engine's collision-tree cache at this epoch's folder and drop the older epochs' folders."""
+        cache_root = STATE_DIR / "bvh_cache"
+        epoch_dir = cache_root / f"epoch_{self.epoch_number}"
+        epoch_dir.mkdir(parents=True, exist_ok=True)
+        for old in cache_root.iterdir():
+            if old.is_dir() and old != epoch_dir:
+                shutil.rmtree(old, ignore_errors=True)
+        os.environ[BVH_CACHE_ENV] = str(epoch_dir)
 
     def _save_epoch_file(
         self,

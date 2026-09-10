@@ -81,6 +81,7 @@ def _visual_shape(cli: int, obj_path: str, scale) -> int:
 
 def _collision_shape(cli: int, obj_path: str, scale) -> int:
     flags = p.GEOM_FORCE_CONCAVE_TRIMESH if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH") else 0
+    flags |= getattr(p, "GEOM_CONCAVE_BVH_CACHE", 0)
     return p.createCollisionShape(
         p.GEOM_MESH, fileName=obj_path, flags=flags, meshScale=list(scale),
         physicsClientId=cli
