@@ -198,6 +198,12 @@ class ChallengeFamilyRuntime:
         _ = task
         return {}
 
+    def sky_colors(self, task: Any) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+        """Horizon and zenith colours painted where a colour camera sees nothing, or None
+        for the plain white background every family renders today."""
+        _ = task
+        return None
+
     def observation_interface_version(self, task: Any) -> str:
         _ = task
         return get_supported_interface_versions(self.family_id)[0]
