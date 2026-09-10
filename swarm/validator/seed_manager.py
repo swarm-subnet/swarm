@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Per-epoch benchmark seeds: generation, storage, publication and the engine's collision-tree cache folder."""
+
 import json
 import os
 import random
@@ -52,6 +54,7 @@ _PREEVAL_FILE_RE = re.compile(r"^preeval_(\d+)(?:__(.+))?\.json$")
 
 
 def _generate_random_seeds(count: int) -> List[int]:
+    """Fresh seeds from the system's random source."""
     rng = random.SystemRandom()
     return [rng.randint(0, _MAX_SEED) for _ in range(count)]
 
@@ -64,6 +67,7 @@ class BenchmarkSeedManager:
     """
 
     def __init__(self) -> None:
+        """Recover the latest local epoch and its seeds from disk, generating them when absent."""
         EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
         self.seeds: List[int] = []
         self.current_epoch_requires_state_invalidation = False
@@ -95,13 +99,16 @@ class BenchmarkSeedManager:
         return best
 
     def _seed_file(self, directory: Path, prefix: str, epoch: int, family_id: str) -> Path:
+        """Path of a seed file for one epoch and family under the given folder."""
         suffix = "" if family_id == DEFAULT_RUNTIME_FAMILY_ID else f"__{family_id}"
         return directory / f"{prefix}_{epoch}{suffix}.json"
 
     def _epoch_file(self, epoch: int, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> Path:
+        """Path of the published-seeds file for one epoch and family."""
         return self._seed_file(EPOCH_SEEDS_DIR, "epoch", epoch, family_id)
 
     def _parse_epoch_file_path(self, path: Path) -> Tuple[int, str] | None:
+        """Epoch number and family id encoded in a seed file name, or None for a foreign file."""
         match = _EPOCH_FILE_RE.match(path.name)
         if not match:
             return None
@@ -113,11 +120,13 @@ class BenchmarkSeedManager:
         return epoch_number, family_id
 
     def _load_epoch_payload(self, path: Path) -> dict:
+        """The seed file's JSON, with the family id filled in for old files."""
         data = json.loads(path.read_text())
         data.setdefault("family_id", DEFAULT_RUNTIME_FAMILY_ID)
         return data
 
     def _queue_pending_publication(self, data: dict) -> None:
+        """Remember a seed set that still has to be published, once per epoch and family."""
         family_id = str(data.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID)
         epoch_number = data.get("epoch_number")
         if epoch_number is None:
@@ -156,6 +165,7 @@ class BenchmarkSeedManager:
         *,
         invalidate_local_state_on_regenerate: bool,
     ) -> List[int]:
+        """Seeds for one epoch and family, read from disk or generated and saved."""
         path = self._epoch_file(epoch, family_id)
         seeds = self._read_seed_file(path, epoch, family_id)
         if seeds is not None:
@@ -184,6 +194,7 @@ class BenchmarkSeedManager:
         *,
         invalidate_local_state_on_regenerate: bool,
     ) -> None:
+        """Load or generate the current epoch's seeds and activate the epoch's cache folder."""
         self._ensure_epoch_family_seeds(
             self.epoch_number,
             DEFAULT_RUNTIME_FAMILY_ID,
@@ -209,6 +220,7 @@ class BenchmarkSeedManager:
         published: bool,
         path: Path | None = None,
     ) -> None:
+        """Write a seed set with its epoch window and publication state, atomically."""
         start, end = self.epoch_time_range(epoch)
         data = {
             "epoch_number": epoch,
@@ -228,6 +240,7 @@ class BenchmarkSeedManager:
         tmp.replace(path)
 
     def _publish_unpublished_epochs(self) -> None:
+        """Queue every stored seed set from an earlier epoch that was never published."""
         pending: List[dict] = []
         for path in sorted(EPOCH_SEEDS_DIR.glob("epoch_*.json")):
             parsed = self._parse_epoch_file_path(path)
@@ -247,6 +260,7 @@ class BenchmarkSeedManager:
             self._queue_pending_publication(item)
 
     def get_pending_publications(self, family_id: str | None = None) -> List[dict]:
+        """Seed sets waiting to be published, optionally for one family."""
         publications = list(self._pending_publications)
         if family_id is None:
             return publications
@@ -261,6 +275,7 @@ class BenchmarkSeedManager:
         epoch: int,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     ) -> None:
+        """Record that an epoch's seeds are published and drop them from the pending queue."""
         path = self._epoch_file(epoch, family_id)
         if not path.exists():
             return
@@ -315,16 +330,19 @@ class BenchmarkSeedManager:
         return old_epoch
 
     def _epoch_start_ts(self, epoch: int) -> float:
+        """Unix time at which the epoch begins, on either side of the schedule switch."""
         if epoch < EPOCH_SWITCH_NUMBER:
             return EPOCH_ANCHOR_UTC.timestamp() + (epoch - 1) * EPOCH_DURATION_SECONDS
         return EPOCH_SWITCH_TS + (epoch - EPOCH_SWITCH_NUMBER) * EPOCH_DURATION_LONG_SECONDS
 
     def epoch_time_range(self, epoch: int) -> tuple[datetime, datetime]:
+        """Start and end of an epoch as aware datetimes."""
         start = datetime.fromtimestamp(self._epoch_start_ts(epoch), tz=timezone.utc)
         end = datetime.fromtimestamp(self._epoch_start_ts(epoch + 1), tz=timezone.utc)
         return start, end
 
     def seconds_until_epoch_end(self) -> float:
+        """Seconds left in the current epoch, never negative."""
         _, end = self.epoch_time_range(self.epoch_number)
         return max(0.0, end.timestamp() - time.time())
 
@@ -332,6 +350,7 @@ class BenchmarkSeedManager:
         self,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     ) -> List[int]:
+        """Seeds of the current epoch for one family, loaded on first use."""
         if self.epoch_number <= 0:
             return []
         seeds = self._family_seeds.get(family_id)
@@ -344,6 +363,7 @@ class BenchmarkSeedManager:
         )
 
     def _seeds_for(self, family_id: str, epoch: Optional[int]) -> List[int]:
+        """Seeds for a family in the current epoch or in any other epoch."""
         if epoch is None or epoch == self.epoch_number:
             return self._ensure_current_family_seeds(family_id)
         return self.seeds_for_epoch(epoch, family_id)
@@ -353,6 +373,7 @@ class BenchmarkSeedManager:
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
         epoch: Optional[int] = None,
     ) -> List[int]:
+        """The screening slice of a family's seeds."""
         return self._seeds_for(family_id, epoch)[:BENCHMARK_SCREENING_SEED_COUNT]
 
     def get_benchmark_seeds(
@@ -360,6 +381,7 @@ class BenchmarkSeedManager:
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
         epoch: Optional[int] = None,
     ) -> List[int]:
+        """The benchmark slice of a family's seeds."""
         return self._seeds_for(family_id, epoch)[BENCHMARK_SCREENING_SEED_COUNT:]
 
     def get_all_seeds(
@@ -367,9 +389,11 @@ class BenchmarkSeedManager:
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
         epoch: Optional[int] = None,
     ) -> List[int]:
+        """Every seed of a family for the epoch."""
         return list(self._seeds_for(family_id, epoch))
 
     def _preeval_file(self, epoch: int, family_id: str) -> Path:
+        """Path of the pre-evaluation seed file for one epoch and family."""
         return self._seed_file(PREEVAL_SEEDS_DIR, "preeval", epoch, family_id)
 
     def _promote_preeval_seeds(self, epoch: int) -> None:

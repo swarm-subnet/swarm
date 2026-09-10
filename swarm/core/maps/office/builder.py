@@ -65,6 +65,7 @@ _WINDOW_PLUG_CENTER: Tuple[float, float, float] = (17.99, 3.8, 1.65)
 _WINDOW_PLUG_HALF_EXTENTS: Tuple[float, float, float] = (0.02, 1.26, 0.76)
 
 def _asset(name: str) -> str:
+    """Absolute path of an office asset file, failing loudly when it is missing."""
     path = os.path.join(_OFFICE_ASSET_DIR, name)
     if not os.path.exists(path):
         raise FileNotFoundError(f"office map asset missing: {path}")
@@ -75,11 +76,13 @@ _PIECE_FILES = {item["id"]: item["file"] for item in office_pieces()["pieces"]}
 
 
 def _visual_shape(cli: int, obj_path: str, scale) -> int:
+    """A visual mesh shape for one office OBJ at the episode's scale."""
     return p.createVisualShape(p.GEOM_MESH, fileName=obj_path,
                                meshScale=list(scale), physicsClientId=cli)
 
 
 def _collision_shape(cli: int, obj_path: str, scale) -> int:
+    """A concave collision shape for one office OBJ at the episode's scale, tree cached on disk."""
     flags = p.GEOM_FORCE_CONCAVE_TRIMESH if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH") else 0
     flags |= getattr(p, "GEOM_CONCAVE_BVH_CACHE", 0)
     return p.createCollisionShape(
@@ -94,6 +97,7 @@ def office_scale(seed: int) -> Tuple[float, float, float]:
     floorplan does not line up with the next."""
     rng = random.Random((int(seed) ^ OFFICE_SCALE_SEED_OFFSET) & 0xFFFFFFFF)
     def axis() -> float:
+        """One axis stretch factor drawn from the room's own random stream."""
         return 1.0 + rng.choice((-1.0, 1.0)) * rng.uniform(
             OFFICE_SCALE_JITTER_MIN, OFFICE_SCALE_JITTER_MAX)
     return (axis(), axis(), axis())

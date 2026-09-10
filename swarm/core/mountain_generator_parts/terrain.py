@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Mountain terrain: seeded height field, OBJ tiles, and the shape cache for hills and peaks."""
+
 from ._shared import *
 
 # Hills and peaks repeat across seeds at rounded scales, so their collision trees are worth caching on disk.
@@ -22,11 +24,13 @@ _BVH_CACHE_FLAG = getattr(p, "GEOM_CONCAVE_BVH_CACHE", 0)
 
 
 def get_global_scale(seed: int) -> float:
+    """The seed's global size factor for the mountain map."""
     rng = random.Random(seed + TYPE_3_SCALE_SEED_OFFSET)
     return rng.uniform(TYPE_3_SCALE_MIN, TYPE_3_SCALE_MAX)
 
 
 def _make_noise_params(seed: int, gs: float) -> List[dict]:
+    """Per-octave amplitude, frequency and phase of the terrain noise for a seed."""
     rng = random.Random(seed + 9999)
     params = []
     for i in range(TERRAIN_N_OCTAVES):
@@ -45,6 +49,7 @@ def _make_noise_params(seed: int, gs: float) -> List[dict]:
 def _sample_terrain_height(
     x: float, y: float, noise_params: List[dict], amplitude: float
 ) -> float:
+    """Terrain height at a point from the noise octaves."""
     h = 0.0
     for o in noise_params:
         h += (
@@ -54,6 +59,7 @@ def _sample_terrain_height(
 
 
 def get_terrain_z(x: float, y: float, seed: int, gs: float) -> float:
+    """Terrain height at a point, interpolated from the same grid the tiles are built from."""
     noise = _make_noise_params(seed, gs)
     amp_rng = random.Random(seed + 12345)
     amp = amp_rng.uniform(2.0 * gs, 5.0 * gs)
@@ -94,13 +100,17 @@ def get_terrain_z(x: float, y: float, seed: int, gs: float) -> float:
 # SECTION 3: Shape cache
 # ---------------------------------------------------------------------------
 class _ShapeCache:
+    """Visual and collision shape ids per client, mesh, scale and colour, so instances share shapes."""
     def __init__(self):
+        """Start with no shapes."""
         self._cache: Dict = {}
 
     def clear(self):
+        """Forget every shape."""
         self._cache = {}
 
     def get(self, cli: int, path: str, scale_vec: list, rgba: Optional[list] = None):
+        """Shape ids for a mesh at a scale and colour, created on first use."""
         key = (cli, path, tuple(scale_vec), tuple(rgba) if rgba else None)
         if key in self._cache:
             return self._cache[key]
@@ -132,6 +142,7 @@ def _generate_terrain_tiles(
     amplitude: float,
     tiles: int,
 ) -> Tuple[Dict, float, List[str]]:
+    """Sample the height grid, write it as OBJ tiles, and return the grid, its step and the tile paths."""
     half = size / 2.0
     step = size / (res - 1)
     heights: Dict[Tuple[int, int], float] = {}
@@ -179,6 +190,7 @@ def _generate_terrain_tiles(
 def _terrain_z_at(
     x: float, y: float, heights: Dict, res: int, step: float, half: float
 ) -> float:
+    """Bilinear terrain height from a sampled height grid."""
     gx = (x + half) / step
     gy = (y + half) / step
     gx = max(0.0, min(res - 1.001, gx))
@@ -199,6 +211,7 @@ def _terrain_z_at(
 
 
 def _spawn_terrain(cli: int, seed: int, obj_dir: str, gs: float):
+    """Spawn the seed's terrain tiles and ground slab and return a height lookup."""
     noise_params = _make_noise_params(seed, gs)
     amp_rng = random.Random(seed + 12345)
     amplitude = amp_rng.uniform(2.0 * gs, 5.0 * gs)
@@ -246,6 +259,7 @@ def _spawn_terrain(cli: int, seed: int, obj_dir: str, gs: float):
     half = mesh_size / 2.0
 
     def get_z(x: float, y: float) -> float:
+        """Terrain height at a point of this seed's grid."""
         return _terrain_z_at(x, y, heights, res, step, half)
 
     return get_z
