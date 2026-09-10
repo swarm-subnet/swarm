@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Tests for the Blender export checker: one tiny export per rule, each must fire once."""
+
 from __future__ import annotations
 
 import struct
@@ -39,10 +41,12 @@ CUBE_TRIANGLES = [((1, 3, 2), 1), ((1, 4, 3), 1), ((5, 6, 7), 2), ((5, 7, 8), 2)
 
 
 def write_png(path: Path, colour_type: int = 2, depth: int = 8) -> None:
+    """Write a one-pixel PNG with the given colour type and bit depth."""
     channels = {0: 1, 2: 3, 4: 2, 6: 4}[colour_type]
     row = b"\x00" + b"\x80" * (channels * depth // 8)
 
     def chunk(kind: bytes, body: bytes) -> bytes:
+        """One PNG chunk: length, type, body, CRC."""
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
 
     ihdr = struct.pack(">IIBBBBB", 1, 1, depth, colour_type, 0, 0, 0)
@@ -50,6 +54,7 @@ def write_png(path: Path, colour_type: int = 2, depth: int = 8) -> None:
 
 
 def write_jpeg(path: Path, frame_marker: int = 0xC0) -> None:
+    """Write a JPEG header whose frame marker is baseline or progressive."""
     frame = struct.pack(">BBHHB", 8, 1, 1, 1, 1) + b"\x01\x11\x00"
     path.write_bytes(b"\xff\xd8" + bytes([0xFF, frame_marker]) + struct.pack(">H", len(frame) + 2) + frame + b"\xff\xd9")
 
@@ -69,6 +74,7 @@ def write_piece(
     texture="tex.png",
     extra_lines=(),
 ) -> Path:
+    """Write a cube export (OBJ, MTL and texture) with the requested defects."""
     obj = folder / f"{name}.obj"
     lines = [f"mtllib {name}.mtl", f"o {name}"]
     for x, y, z in vertices:
@@ -98,23 +104,28 @@ def write_piece(
 
 
 def run(folder: Path) -> list:
+    """Run the checker on one folder."""
     return checker.check_export([folder])
 
 
 def errors(findings) -> list:
+    """Only the findings that set the exit code."""
     return [f for f in findings if f.level == "error"]
 
 
 def messages(findings) -> str:
+    """All finding messages joined, for substring asserts."""
     return "\n".join(f.message for f in findings)
 
 
 def test_clean_cube_has_no_findings(tmp_path):
+    """A closed, textured, Z-up cube on its origin passes every rule."""
     write_piece(tmp_path)
     assert run(tmp_path) == []
 
 
 def test_non_triangle_face_is_reported_with_its_line(tmp_path):
+    """A quad is an error that names its line in the OBJ."""
     write_piece(tmp_path, faces=CUBE_QUADS)
     found = errors(run(tmp_path))
     assert len(found) == 1
@@ -123,33 +134,39 @@ def test_non_triangle_face_is_reported_with_its_line(tmp_path):
 
 
 def test_second_material_in_one_file(tmp_path):
+    """Two usemtl lines in one OBJ are an error."""
     write_piece(tmp_path, materials=("mat", "second"))
     assert "2 materials in one file" in messages(errors(run(tmp_path)))
 
 
 def test_material_missing_from_mtl(tmp_path):
+    """A usemtl name absent from the MTL is an error."""
     write_piece(tmp_path, materials=("ghost",))
     assert "ghost is not in piece.mtl" in messages(errors(run(tmp_path)))
 
 
 def test_missing_texture(tmp_path):
+    """A map_Kd file that does not exist next to the MTL is an error."""
     write_piece(tmp_path, texture="missing.jpg")
     assert "texture missing.jpg not found" in messages(errors(run(tmp_path)))
 
 
 def test_texture_with_alpha(tmp_path):
+    """An RGBA PNG texture is an error."""
     write_png(tmp_path / "tex.png", colour_type=6)
     write_piece(tmp_path)
     assert "alpha channel" in messages(errors(run(tmp_path)))
 
 
 def test_sixteen_bit_png(tmp_path):
+    """A 16-bit PNG texture is an error."""
     write_png(tmp_path / "tex.png", depth=16)
     write_piece(tmp_path)
     assert "16-bit PNG" in messages(errors(run(tmp_path)))
 
 
 def test_progressive_jpeg_fails_and_baseline_passes(tmp_path):
+    """A progressive JPEG is an error; the same file as baseline passes."""
     write_jpeg(tmp_path / "tex.jpg", frame_marker=0xC2)
     write_piece(tmp_path, texture="tex.jpg")
     assert "progressive JPEG" in messages(errors(run(tmp_path)))
@@ -158,11 +175,13 @@ def test_progressive_jpeg_fails_and_baseline_passes(tmp_path):
 
 
 def test_textured_faces_without_uvs(tmp_path):
+    """A textured material on faces without UVs is an error."""
     write_piece(tmp_path, with_uvs=False)
     assert "no UVs" in messages(errors(run(tmp_path)))
 
 
 def test_line_over_1023_characters(tmp_path):
+    """A line longer than the parser buffer is an error with its line and length."""
     write_piece(tmp_path, extra_lines=["# " + "x" * 1500])
     found = errors(run(tmp_path))
     assert len(found) == 1
@@ -171,11 +190,13 @@ def test_line_over_1023_characters(tmp_path):
 
 
 def test_one_flipped_face_breaks_the_winding(tmp_path):
+    """One face wound against its neighbours is an error."""
     write_piece(tmp_path, flip_faces=(0,))
     assert "wind in opposite directions" in messages(errors(run(tmp_path)))
 
 
 def test_inside_out_shell(tmp_path):
+    """A cube wound consistently inward is an inside-out error, not a winding error."""
     write_piece(tmp_path, flip_faces=range(12))
     found = errors(run(tmp_path))
     assert "inside out" in messages(found)
@@ -183,6 +204,7 @@ def test_inside_out_shell(tmp_path):
 
 
 def test_normals_against_winding_is_a_warning(tmp_path):
+    """vn vectors that oppose the winding are a warning, not an error."""
     write_piece(tmp_path, flip_normals=True)
     found = run(tmp_path)
     assert errors(found) == []
@@ -190,6 +212,7 @@ def test_normals_against_winding_is_a_warning(tmp_path):
 
 
 def test_open_plane_is_a_warning(tmp_path):
+    """A lone plane has open edges and is only a warning."""
     write_piece(tmp_path, vertices=CUBE_VERTICES[4:], faces=[((1, 2, 3), 2), ((1, 3, 4), 2)])
     found = run(tmp_path)
     assert errors(found) == []
@@ -197,12 +220,14 @@ def test_open_plane_is_a_warning(tmp_path):
 
 
 def test_piece_exported_y_up_on_its_origin(tmp_path):
+    """A cube standing on y = 0 is reported as exported Y-up."""
     y_up = [(x, z, -y) for x, y, z in CUBE_VERTICES]
     write_piece(tmp_path, vertices=y_up, faces=[(tuple(reversed(c)), n) for c, n in CUBE_TRIANGLES], normals=[(0, 0, 1)] * 6)
     assert "looks exported Y-up" in messages(errors(run(tmp_path)))
 
 
 def test_map_floors_facing_y_is_reported_on_the_folder(tmp_path):
+    """A map whose ground faces +Y is reported once, on the folder."""
     ground = [(-50.0, 0.0, -50.0), (50.0, 0.0, -50.0), (50.0, 0.0, 50.0), (-50.0, 0.0, 50.0)]
     write_piece(tmp_path, "ground", vertices=ground, faces=[((1, 3, 2), 1), ((1, 4, 3), 1)], normals=[(0, 1, 0)])
     write_piece(tmp_path, "shed", offset=(10.0, 0.0, 10.0))
@@ -211,6 +236,7 @@ def test_map_floors_facing_y_is_reported_on_the_folder(tmp_path):
 
 
 def test_piece_away_from_map_and_origin_is_a_transform_warning(tmp_path):
+    """A piece far from both the map and the origin is an unapplied-transform warning."""
     write_piece(tmp_path, "room")
     write_piece(tmp_path, "stray", offset=(40.0, 40.0, 0.0))
     found = run(tmp_path)
@@ -220,6 +246,7 @@ def test_piece_away_from_map_and_origin_is_a_transform_warning(tmp_path):
 
 
 def test_piece_in_a_subfolder_is_judged_against_the_whole_map(tmp_path):
+    """A piece in a subfolder that touches the room shell is not a stray."""
     room = [(-0.5 + 20 * (i in (1, 2)), -0.5 + 8 * (i in (2, 3)), 0.0) for i in range(4)]
     write_piece(tmp_path, "shell", vertices=room + [(x, y, 3.0) for x, y, _ in room])
     (tmp_path / "fixed").mkdir()
@@ -228,6 +255,7 @@ def test_piece_in_a_subfolder_is_judged_against_the_whole_map(tmp_path):
 
 
 def test_main_exit_code_and_report(tmp_path, capsys):
+    """The CLI exits 0 on a clean folder and 1 with a rendered report on errors."""
     write_piece(tmp_path)
     assert checker.main([str(tmp_path)]) == 0
     assert capsys.readouterr().out.strip() == "0 errors, 0 warnings"

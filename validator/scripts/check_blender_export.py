@@ -68,6 +68,8 @@ Vec3 = Tuple[float, float, float]
 
 @dataclass
 class Finding:
+    """One broken rule: where it is, how bad it is, and what to do in Blender."""
+
     path: Path
     level: str
     message: str
@@ -75,12 +77,15 @@ class Finding:
     line: Optional[int] = None
 
     def render(self) -> str:
+        """The two report lines for this finding, message then fix."""
         where = f"line {self.line}: " if self.line else ""
         return f"  {self.level.upper():<8}{where}{self.message}\n          fix: {self.fix}"
 
 
 @dataclass
 class ObjFile:
+    """What the checker keeps from one OBJ file: geometry, material names and over-long lines."""
+
     path: Path
     vertices: List[Vec3] = field(default_factory=list)
     normals: List[Vec3] = field(default_factory=list)
@@ -92,6 +97,7 @@ class ObjFile:
 
     @property
     def bounds(self) -> Tuple[Vec3, Vec3]:
+        """Axis-aligned box around every vertex, as (min, max)."""
         xs, ys, zs = zip(*self.vertices)
         return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
 
@@ -105,6 +111,7 @@ def _parse_index(token: str, count: int) -> int:
 
 
 def parse_obj(path: Path) -> ObjFile:
+    """Read the vertices, normals, faces, material names and line lengths of one OBJ file."""
     obj = ObjFile(path)
     texcoord_count = 0
     with open(path, "r", encoding="utf-8", errors="ignore") as handle:
@@ -194,18 +201,22 @@ def texture_problem(path: Path) -> Optional[str]:
 
 
 def _sub(a: Vec3, b: Vec3) -> Vec3:
+    """Vector a minus b."""
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
 def _cross(a: Vec3, b: Vec3) -> Vec3:
+    """Cross product of a and b."""
     return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
 
 def _dot(a: Vec3, b: Vec3) -> float:
+    """Dot product of a and b."""
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
 def check_lines(path: Path, long_lines: Iterable[Tuple[int, int]]) -> List[Finding]:
+    """One error per line longer than the parser's buffer."""
     return [
         Finding(path, "error", f"line is {length} characters, the parser reads {MAX_LINE} and treats the rest as a new line",
                 "export triangulated faces and keep file names short", line_no)
@@ -214,6 +225,7 @@ def check_lines(path: Path, long_lines: Iterable[Tuple[int, int]]) -> List[Findi
 
 
 def check_faces(obj: ObjFile) -> List[Finding]:
+    """An error on the first face that is not a triangle."""
     for line_no, corners in obj.faces:
         if len(corners) != 3:
             return [Finding(obj.path, "error", f"face has {len(corners)} corners, the engine fans it from the first corner without checking the shape",
@@ -222,6 +234,7 @@ def check_faces(obj: ObjFile) -> List[Finding]:
 
 
 def check_materials(obj: ObjFile) -> List[Finding]:
+    """Material count, MTL and texture presence, texture format and UVs for one OBJ."""
     findings: List[Finding] = []
     if not obj.mtllib:
         return [Finding(obj.path, "warning", "no mtllib line, the piece has no material and renders in the builder's colour only",
@@ -275,6 +288,7 @@ def check_orientation(obj: ObjFile) -> List[Finding]:
     parent = list(range(len(positions)))
 
     def root(i: int) -> int:
+        """The representative vertex of the connected piece i belongs to."""
         while parent[i] != i:
             parent[i] = parent[parent[i]]
             i = parent[i]
@@ -355,6 +369,7 @@ def facing_area(obj: ObjFile) -> Dict[str, float]:
 
 
 def _centred(lo: float, hi: float) -> bool:
+    """Whether a range sits on the origin, within a quarter of its own width."""
     return abs(lo + hi) <= 0.25 * (hi - lo)
 
 
@@ -367,6 +382,7 @@ def _local_up_axis(lo: Vec3, hi: Vec3) -> Optional[str]:
 
 
 def _overlaps(a: Tuple[Vec3, Vec3], b: Tuple[Vec3, Vec3], margin: float) -> bool:
+    """Whether two boxes touch once each is grown by the margin."""
     return all(a[0][i] - margin <= b[1][i] and b[0][i] <= a[1][i] + margin for i in range(3))
 
 
@@ -421,6 +437,7 @@ def check_export(folders: List[Path]) -> List[Finding]:
 
 
 def report(findings: List[Finding], root: Path) -> str:
+    """The printed report: findings grouped by file, paths relative to root, totals last."""
     lines = []
     by_path: Dict[Path, List[Finding]] = defaultdict(list)
     for finding in findings:
@@ -439,6 +456,7 @@ def report(findings: List[Finding], root: Path) -> str:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Check the folders given on the command line; exit 1 when any error is found."""
     parser = argparse.ArgumentParser(description="Check a Blender OBJ export against the engine's import rules.")
     parser.add_argument("folders", nargs="+", type=Path, help="folder holding the exported .obj, .mtl and texture files")
     args = parser.parse_args(argv)
