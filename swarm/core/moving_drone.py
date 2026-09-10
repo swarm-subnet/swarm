@@ -98,6 +98,7 @@ from swarm.constants import (
     SOLVER_ITERATIONS,
     SOLVER_MIN_ISLAND_SIZE,
 )
+from swarm.core.daylight import apply_seeded_sun, sun_render_kwargs
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
 
 # Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
@@ -272,6 +273,9 @@ class MovingDroneAviary(BaseRLAviary):
             self._light_direction = [0, 0, 1]
         # Neutral light tint; the office family overwrites it per episode.
         self._light_color = [1.0, 1.0, 1.0]
+        self._sun = None
+        if getattr(self.family_runtime, "seeded_sun", False):
+            apply_seeded_sun(self, seed)
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -842,6 +846,8 @@ class MovingDroneAviary(BaseRLAviary):
             depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
             if depth_only_flag is not None:
                 seg_flag |= depth_only_flag
+        if self._sun is not None:
+            extra_kwargs.update(sun_render_kwargs(self._sun))
         [w, h, rgb, dep, _seg] = p.getCameraImage(
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
@@ -1782,10 +1788,11 @@ class MovingDroneAviary(BaseRLAviary):
             fov=self._fov, aspect=1.0, nearVal=0.05,
             farVal=getattr(self, "_depth_far_m", DEPTH_FAR), physicsClientId=cli,
         )
+        sun_kwargs = sun_render_kwargs(self._sun) if self._sun is not None else {}
         _w, _h, rgb, _dep, _seg = p.getCameraImage(
             width=res, height=res, shadow=0, renderer=p.ER_TINY_RENDERER,
             viewMatrix=view, projectionMatrix=proj, lightDirection=self._light_direction,
-            flags=p.ER_NO_SEGMENTATION_MASK, physicsClientId=cli,
+            flags=p.ER_NO_SEGMENTATION_MASK, physicsClientId=cli, **sun_kwargs,
         )
         return np.reshape(rgb, (res, res, 4))[:, :, :3].astype(np.float32) / 255.0
 
