@@ -74,9 +74,12 @@ def test_steady_wind_is_constant_horizontal_and_inside_the_mean_band() -> None:
 def test_gusts_raise_the_speed_above_the_steady_wind() -> None:
     """Gust bumps lift the speed well above the steady value and fall back to it."""
     wind = _wind(3, turbulence=0.0, gusts=2)
-    speeds = np.linalg.norm(_series(wind, 3000), axis=1)
+    series = _series(wind, 3000)
+    speeds = np.linalg.norm(series, axis=1)
     assert speeds.max() > 1.3 * wind.mean_mps
-    assert speeds.min() == np.linalg.norm(wind.steady)
+    # Compare the calmest step to the steady vector itself: the row-wise and single-vector norms of
+    # the same values can land a bit apart, so the speeds are not comparable with ==.
+    assert np.array_equal(series[speeds.argmin()], wind.steady)
 
 
 def test_turbulence_has_the_dryden_intensity() -> None:
