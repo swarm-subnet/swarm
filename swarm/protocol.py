@@ -93,6 +93,11 @@ class MapTask:
     num_drones: int = 1
     starts: Tuple[Tuple[float, float, float], ...] = ()
     goals: Tuple[Tuple[float, float, float], ...] = ()
+    # Seeded wind, off unless the map opts in: cap on the total wind speed, Dryden
+    # turbulence scale (1 = the standard) and gust bumps per flight.
+    wind_max_mps: float = 0.0
+    wind_turbulence: float = 0.0
+    wind_gusts: int = 0
 
     def pack(self) -> bytes:
         return msgpack.packb(asdict(self), use_bin_type=True)
