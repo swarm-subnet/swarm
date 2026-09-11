@@ -174,6 +174,8 @@ class ChallengeFamilyRuntime:
     runtime_supported: bool = True
     # Opt in to the seeded daylight sun (swarm.core.daylight); off keeps today's light.
     seeded_sun: bool = False
+    # Depth camera backend: "tiny" is TinyRenderer, "raycast" the Embree ray caster in the same wheel.
+    render_backend: str = "tiny"
 
     def screening_policy(self) -> Dict[str, Any]:
         return get_family_screening_policy(self.family_id)
