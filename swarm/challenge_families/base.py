@@ -172,6 +172,8 @@ class ChallengeFamilyRuntimeProfile:
 class ChallengeFamilyRuntime:
     family_id: str
     runtime_supported: bool = True
+    # Opt in to the seeded daylight sun (swarm.core.daylight); off keeps today's light.
+    seeded_sun: bool = False
 
     def screening_policy(self) -> Dict[str, Any]:
         return get_family_screening_policy(self.family_id)

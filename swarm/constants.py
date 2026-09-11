@@ -85,6 +85,15 @@ SEARCH_TIME_BUFFER = 1.06               # Slack multiplier on the search-aware t
 SEARCH_FEASIBILITY_MARGIN_SEC = 1.0     # Keep target time this far under the horizon when clamping radius
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
+# Seeded sun for families that opt in (ChallengeFamilyRuntime.seeded_sun): a real
+# sun arc at a mid latitude, sampled between sunrise and sunset.
+SUN_SEED_OFFSET = 0x5A11                # decorrelates the sun rng from the other streams
+SUN_LATITUDE_DEG = 40.0                 # site latitude of the arc
+SUN_DECLINATION_DEG = 10.0              # sun declination: noon peak of 60 deg, 12.6 h of daylight
+SUN_MIN_ELEVATION_DEG = 3.0             # lowest sun a seed may pick (degrees above the horizon)
+SUN_DIFFUSE_MAX = 0.35                  # renderer diffuse coefficient with the sun overhead
+SUN_EXTINCTION = 0.06                   # per-air-mass loss of sun strength toward the horizon
+SUN_AMBIENT_RANGE = (0.40, 0.60)        # renderer ambient coefficient from a low sun to 20 deg and above
 # Propulsion efficiency
 
 # =============================================================================
