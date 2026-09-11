@@ -23,7 +23,11 @@ import signal
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.config import HostWorkerRuntimeSettings, env_bool
-from swarm.constants import AGENT_STARTUP_WALL_SEC, MINER_COMPUTE_BUDGET_SEC
+from swarm.constants import (
+    AGENT_STARTUP_WALL_SEC,
+    MINER_COMPUTE_BUDGET_SEC,
+    WARM_CONTAINER_GRACE_SEC,
+)
 from swarm.validator.calibration.speed_factor import baseline_model_available
 from swarm.validator.docker.docker_evaluator_parts._shared import (
     _runtime_profile_from_payload,
@@ -77,7 +81,7 @@ _PR_SET_PDEATHSIG = 1
 
 # A spare start has its own deadlines; this only bounds the wait after a flight,
 # and stays well inside the parent's stall timeout for the next batch.
-_WARM_CONTAINER_WAIT_SEC = AGENT_STARTUP_WALL_SEC + 15.0
+_WARM_CONTAINER_WAIT_SEC = AGENT_STARTUP_WALL_SEC + WARM_CONTAINER_GRACE_SEC
 
 
 def _prewarm_enabled() -> bool:
