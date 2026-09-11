@@ -187,6 +187,7 @@ RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() betwe
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
 RPC_CONNECT_MAX_WAIT_SEC = 60.0         # Total budget to reach a serving RPC agent
 AGENT_STARTUP_WALL_SEC = 30.0           # Budget for the agent to serve after the start gate opens
+WARM_CONTAINER_GRACE_SEC = 15.0         # Extra wait for a pre-warmed container once the flight before it ends
 RPC_MAX_STRIKES_PER_SEED = 15           # Soft timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 600.0            # Base overhead for global worker timeout (seconds); one-seed validator batches get ~600s wall-clock
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)

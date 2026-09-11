@@ -85,6 +85,8 @@ class _BatchStat:
 
 @dataclass
 class _ProcessBatchRequest:
+    """One batch of seeds handed to a worker process, with what it needs to fly them."""
+
     batch_index: int
     batch_indices: List[int]
     tasks: List[Any]
@@ -94,6 +96,8 @@ class _ProcessBatchRequest:
     runtime_profile: Optional[Dict[str, Any]] = None
     host_speed_factor: Optional[float] = None
     model_image: Optional[str] = None
+    # More seeds follow for this worker: start the next container during this flight.
+    prewarm_next: bool = False
 
 
 @dataclass
