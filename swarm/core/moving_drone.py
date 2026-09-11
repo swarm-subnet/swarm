@@ -208,6 +208,7 @@ class MovingDroneAviary(BaseRLAviary):
             self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
         self.family_runtime = runtime_family_for_task(task)
+        self._sky_colors = self.family_runtime.sky_colors(task)
         self.sar_mode = bool(sar_mode)
 
         self._time_alive = 0.0
@@ -848,6 +849,7 @@ class MovingDroneAviary(BaseRLAviary):
                 seg_flag |= depth_only_flag
         if self._sun is not None:
             extra_kwargs.update(sun_render_kwargs(self._sun))
+        extra_kwargs.update(self._sky_kwargs())
         [w, h, rgb, dep, _seg] = p.getCameraImage(
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
@@ -863,6 +865,13 @@ class MovingDroneAviary(BaseRLAviary):
 
         dep = np.reshape(dep, (h, w))
         return (np.reshape(rgb, (h, w, 4)) if office else None), dep, None
+
+    def _sky_kwargs(self) -> dict:
+        """getCameraImage arguments for the family's sky; empty when it keeps the white background."""
+        if self._sky_colors is None:
+            return {}
+        horizon, zenith = self._sky_colors
+        return {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
 
     def _get_altitude_distance(self, nth_drone: int = 0) -> float:
         """Cast single ray downward for ground/altitude detection."""
@@ -1430,6 +1439,7 @@ class MovingDroneAviary(BaseRLAviary):
                 renderer=p.ER_TINY_RENDERER,
                 flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
                 physicsClientId=self.CLIENT,
+                **self._sky_kwargs(),
             )
             (Image.fromarray(np.reshape(rgb, (h, w, 4)), 'RGBA')).save(
                 os.path.join(self.IMG_PATH, "frame_" + str(self.FRAME_NUM) + ".png")
@@ -1793,6 +1803,7 @@ class MovingDroneAviary(BaseRLAviary):
             width=res, height=res, shadow=0, renderer=p.ER_TINY_RENDERER,
             viewMatrix=view, projectionMatrix=proj, lightDirection=self._light_direction,
             flags=p.ER_NO_SEGMENTATION_MASK, physicsClientId=cli, **sun_kwargs,
+            **self._sky_kwargs(),
         )
         return np.reshape(rgb, (res, res, 4))[:, :, :3].astype(np.float32) / 255.0
 
