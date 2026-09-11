@@ -52,14 +52,12 @@ EXPECTED: dict[str, list[str]] = {
     "scripts/generate_video.py": ["REPO_ROOT", "validator/scripts"],
     "scripts/health/check_current_epoch_weights.py": ["REPO_ROOT"],
     "scripts/health/check_validator_health.py": ["REPO_ROOT"],
-    "scripts/prebake_mannequin_parts.py": ["REPO_ROOT"],
     "scripts/profile_walltime.py": ["REPO_ROOT"],
     "scripts/stress_benchmark_compare.py": ["REPO_ROOT", "validator/scripts"],
     "scripts/sync_family_registry.py": ["REPO_ROOT"],
     "scripts/test_timings.py": ["REPO_ROOT"],
     "scripts/verify_render_identity.py": ["REPO_ROOT"],
     "scripts/visualize_map.py": ["REPO_ROOT", "validator/scripts"],
-    "tests/sar/test_mannequin.py": ["REPO_ROOT"],
     "tests/sar/test_no_coord_leak.py": ["REPO_ROOT"],
     "tests/test_benchmark_default_model_fixed_seeds.py": ["REPO_ROOT"],
     "tests/test_challenge_family_boundaries.py": ["REPO_ROOT"],
@@ -71,6 +69,7 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_submission_manifest.py": ["REPO_ROOT", "SIBLING"],
     "tests/test_swarm_autopilot_regression.py": ["validator/tests"],
     "tests/test_uv_dependency_install.py": ["REPO_ROOT"],
+    "tests/test_worlds_pin.py": ["REPO_ROOT"],
 }
 
 

@@ -20,8 +20,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest import mock
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_ASSET_DIR = _REPO_ROOT / "swarm" / "assets" / "maps" / "custom" / "people" / "open_mannequin_raw"
+import swarm_worlds
+
+_ASSET_DIR = Path(swarm_worlds.maps_dir()) / "custom" / "people" / "open_mannequin_raw"
 _RAW_OBJ = _ASSET_DIR / "mannequin_a_raw.obj"
 _RAW_MTL = _ASSET_DIR / "mannequin_a_raw.mtl"
 _LICENSE = _ASSET_DIR / "LICENSE.txt"

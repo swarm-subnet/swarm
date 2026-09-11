@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import pybullet as p
+import swarm_worlds
 
 from swarm.constants import CITY_VARIANT_DISTRIBUTION, GOAL_AREA_CLEARANCE
 
@@ -39,14 +40,7 @@ TILE_SIZE = 10
 SCALE_FACTOR = 5.0
 MODEL_BASE_SIZE = 1.8
 
-ASSETS_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    os.pardir,
-    os.pardir,
-    "assets",
-    "maps",
-)
-ASSETS_DIR = os.path.normpath(ASSETS_DIR)
+ASSETS_DIR = swarm_worlds.maps_dir()
 
 KENNEY_DIR = os.path.join(ASSETS_DIR, "kenney")
 OTHER_SOURCES_DIR = os.path.join(ASSETS_DIR, "other_sources")

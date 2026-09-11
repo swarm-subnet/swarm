@@ -12,6 +12,13 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
+Or with [pixi](https://pixi.prefix.dev), which installs the exact set recorded in `pixi.lock`:
+
+```bash
+pixi install --locked
+pixi run swarm <command>
+```
+
 Or install from PyPI (the published release may lag this repo):
 
 ```bash

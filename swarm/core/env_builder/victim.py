@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Set, Tuple
 
 import pybullet as p
+import swarm_worlds
 
 from .body_tagger import BodyTagger
 from .mesh_loader import (
@@ -38,17 +39,8 @@ from .sar_types import BodyCategory
 VictimAttrs = Tuple[list, Tuple[Tuple[float, float, float], Tuple[float, float, float]], Tuple[float, float, float]]
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_SPLIT_DIR = (
-    _REPO_ROOT
-    / "swarm"
-    / "assets"
-    / "maps"
-    / "custom"
-    / "people"
-    / "open_mannequin_raw"
-    / "split"
-)
+_PEOPLE_ROOT = Path(swarm_worlds.maps_dir()) / "custom" / "people"
+_DEFAULT_SPLIT_DIR = _PEOPLE_ROOT / "open_mannequin_raw" / "split"
 
 _Y_UP_TO_Z_UP = (math.pi / 2.0, 0.0, 0.0)
 _GROUND_EPS = 0.005
@@ -58,15 +50,7 @@ _LIE_MAX_TILT = math.radians(40.0)
 _MAX_TERRAIN_PENETRATION = 0.35
 _MAX_FOOT_FLOAT = 0.03
 
-_PEOPLE_DIR = (
-    _REPO_ROOT
-    / "swarm"
-    / "assets"
-    / "maps"
-    / "custom"
-    / "people"
-    / "lost_person_characters"
-)
+_PEOPLE_DIR = _PEOPLE_ROOT / "lost_person_characters"
 _MANIFEST_PATH = _PEOPLE_DIR / "manifest.json"
 _VICTIM_SELECT_SALT = 0x56494354
 _CHALLENGE_TYPE_TO_MAP = {

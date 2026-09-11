@@ -26,6 +26,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pybullet as p
+import swarm_worlds
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
@@ -100,8 +101,8 @@ def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
 
 
 def interceptor_urdf_path() -> str:
-    """Absolute path to the 36 cm URDF in the swarm package assets."""
-    return str(_pkg_files("swarm").joinpath("assets", INTERCEPTOR_DRONE_URDF))
+    """Absolute path to the 36 cm URDF in the swarm-worlds package."""
+    return os.path.join(swarm_worlds.robots_dir(), INTERCEPTOR_DRONE_URDF)
 
 
 def ensure_interceptor_urdf_staged() -> str:

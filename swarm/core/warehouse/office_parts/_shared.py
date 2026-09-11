@@ -29,6 +29,7 @@ import tempfile
 from collections import OrderedDict
 
 import pybullet as p
+import swarm_worlds
 
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageOps
@@ -39,7 +40,6 @@ except Exception:
     ImageChops = None
 
 from ..constants import (
-    ASSETS_DIR,
     DOCK_INWARD_NUDGE,
     EMBEDDED_OFFICE_SEED_OFFSET,
     ENABLE_EMBEDDED_OFFICE_MAP,
@@ -49,7 +49,7 @@ from ..constants import (
 )
 from ..helpers import slot_point
 
-_SWARM_ASSETS_DIR = os.path.normpath(os.path.join(ASSETS_DIR, os.pardir))
+_TEXTURES_DIR = swarm_worlds.textures_dir()
 
 FLOOR_SIZE = [12.0]
 UNIFORM_SCALE = 2.0
@@ -61,8 +61,8 @@ SCREEN_TEXTURE_ROTATE_DEG = 180
 ASSET_PATH = FURNITURE_KIT_OBJ_DIR
 TEMP_URDF_DIR = os.path.join(tempfile.gettempdir(), "swarm_warehouse_office_urdfs")
 SCREEN_LOGO_CANDIDATES = (
-    os.path.join(_SWARM_ASSETS_DIR, "Swarm.png"),
-    os.path.join(_SWARM_ASSETS_DIR, "Swarm_2.png"),
+    os.path.join(_TEXTURES_DIR, "Swarm.png"),
+    os.path.join(_TEXTURES_DIR, "Swarm_2.png"),
 )
 
 ASSETS = {

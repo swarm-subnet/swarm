@@ -38,7 +38,6 @@ from swarm.constants import (
 _PACKAGE_DIR = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
-_ASSETS_DIR = os.path.join(_PACKAGE_DIR, "assets")
 _STATE_DIR = os.path.join(_PACKAGE_DIR, "state")
 _TERRAIN_CACHE_DIR = os.path.join(_STATE_DIR, "open_terrain")
 _TERRAIN_TEXTURE_RES = 512

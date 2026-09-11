@@ -28,6 +28,7 @@ import math
 from pathlib import Path
 
 import pybullet as p
+import swarm_worlds
 
 from swarm import constants as C
 
@@ -54,7 +55,7 @@ _PAD_PARK = (0.0, 0.0, 1.0e4)
 
 def _tao_texture(cli: int) -> int:
     if cli not in _TAO_TEX:
-        tex_path = Path(__file__).resolve().parent.parent.parent / "assets" / "tao.png"
+        tex_path = Path(swarm_worlds.textures_dir()) / "tao.png"
         _TAO_TEX[cli] = p.loadTexture(str(tex_path))
     return _TAO_TEX[cli]
 

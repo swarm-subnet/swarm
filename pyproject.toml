@@ -53,14 +53,34 @@ exclude = ["miner.tests*", "validator.tests*"]
   "assets/Drone_flying.gif",
   "assets/Drone_flying_FPV.gif",
   "assets/Drone_flying.mp4",
-  "assets/map_images/*",
-  "assets/maps/forest/terrain_cache/*",
-  "assets/open_terrain/*",
 ]
 
 [tool.setuptools.dynamic]
 version = { attr = "swarm.__version__" }
 dependencies = { file = ["requirements.txt"] }
+
+# pixi reads the dependencies above through the editable install, so
+# requirements.txt stays the single list and pixi.lock records what it resolved
+# to, including the exact swarm-worlds commit behind the pinned tag.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+# swarm-bullet3 ships manylinux_2_34 wheels only, so the resolver has to assume at
+# least that glibc; pixi's default of 2.17 finds no wheel and gives up.
+platforms = [{ name = "linux-64-glibc-2-34", platform = "linux-64", glibc = "2.34" }]
+
+[tool.pixi.dependencies]
+python = "3.11.*"
+
+[tool.pixi.pypi-dependencies]
+swarm-sotapilot = { path = ".", editable = true }
+# The CPU wheel at the pin from requirements.txt; the default index resolves the
+# same version to the CUDA build, as the test image already works around.
+torch = { version = "==2.10.0", index = "https://download.pytorch.org/whl/cpu" }
+
+[tool.pixi.tasks]
+test = "pytest"
+lint = "pre-commit run --all-files"
+validator = "python neurons/validator.py"
 
 [tool.ruff]
 line-length = 200
