@@ -133,11 +133,15 @@ class HeartbeatManager:
                 if session_id != self._session_id or not self._active:
                     return
                 progress = self._progress
-            self.main_loop.call_soon_threadsafe(
-                lambda p=progress, s=session_id: asyncio.create_task(
-                    self._safe_heartbeat(p, s)
+            try:
+                self.main_loop.call_soon_threadsafe(
+                    lambda p=progress, s=session_id: asyncio.create_task(
+                        self._safe_heartbeat(p, s)
+                    )
                 )
-            )
+            except RuntimeError:
+                # the loop closed under the timer; there is no lease left to renew
+                return
 
     def _stop_timer(self) -> None:
         self._timer_stop.set()

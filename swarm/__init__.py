@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import sys
+import warnings
 from pathlib import Path
 
 __version__ = "5.1.5.6"
@@ -29,15 +30,19 @@ __spec_version__ = (
     + (1 * int(version_split[2]))
 )
 
-try:
-    import pkg_resources  # noqa: F401
-except ImportError:
-    # setuptools 82 removed pkg_resources; the drone gym still imports it
-    import types
-    from importlib.resources import files as _pkg_files
+# Taking the deprecation here is what keeps it off the drone gym's own import of
+# pkg_resources; the fallback below already covers the removal the warning announces.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    try:
+        import pkg_resources  # noqa: F401
+    except ImportError:
+        # setuptools 82 removed pkg_resources; the drone gym still imports it
+        import types
+        from importlib.resources import files as _pkg_files
 
-    _pkg_resources = types.ModuleType("pkg_resources")
-    _pkg_resources.resource_filename = (
-        lambda package, resource: str(_pkg_files(package).joinpath(resource))
-    )
-    sys.modules["pkg_resources"] = _pkg_resources
+        _pkg_resources = types.ModuleType("pkg_resources")
+        _pkg_resources.resource_filename = (
+            lambda package, resource: str(_pkg_files(package).joinpath(resource))
+        )
+        sys.modules["pkg_resources"] = _pkg_resources
