@@ -99,7 +99,7 @@ from swarm.constants import (
     SOLVER_ITERATIONS,
     SOLVER_MIN_ISLAND_SIZE,
 )
-from swarm.core.daylight import apply_seeded_sun, sun_render_kwargs
+from swarm.core.daylight import apply_seeded_sun, sky_render_kwargs, sun_render_kwargs
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
 from swarm.core.wind import SeededWind
 
@@ -289,7 +289,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._light_color = [1.0, 1.0, 1.0]
         self._sun = None
         if getattr(self.family_runtime, "seeded_sun", False):
-            apply_seeded_sun(self, seed)
+            apply_seeded_sun(self, seed, getattr(self.family_runtime, "night_share", 0.0))
         self._apply_sun_sky(seed)
 
         if physics is None:
@@ -909,11 +909,15 @@ class MovingDroneAviary(BaseRLAviary):
             self._sky_cloud_seed = int(seed)
 
     def _sky_kwargs(self) -> dict:
-        """getCameraImage arguments for the family's sky; empty when it keeps the white background."""
+        """getCameraImage arguments for the family's sky, or the seeded light's own sky when the
+        family sets none; empty when it keeps the white background."""
         kwargs = {}
         if self._sky_colors is not None:
             horizon, zenith = self._sky_colors
             kwargs = {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
+        else:
+            sun = getattr(self, "_sun", None)
+            kwargs = (sky_render_kwargs(sun) if sun is not None else None) or {}
         if getattr(self, "_sky_cloud_seed", None) is not None:
             kwargs["skyCloudSeed"] = self._sky_cloud_seed
         return kwargs
