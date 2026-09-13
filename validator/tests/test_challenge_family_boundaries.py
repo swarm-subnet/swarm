@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Generic runtime code reaches task building and scoring through the family registry, never by naming a family or a version inline."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,10 +24,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def _read(rel_path: str) -> str:
+    """Return the text of a file addressed relative to the repository root."""
     return (_ROOT / rel_path).read_text(encoding="utf-8")
 
 
 def test_env_factory_uses_family_dispatch_instead_of_version_switching():
+    """The env factory parses no version string: the runtime profile comes from the task's family."""
     source = _read("swarm/utils/env_factory.py")
 
     assert "runtime_profile_for_task" in source
@@ -35,6 +38,7 @@ def test_env_factory_uses_family_dispatch_instead_of_version_switching():
 
 
 def test_validator_evaluation_routes_task_building_through_family_registry():
+    """Evaluation builds its tasks from the registry and imports neither the legacy generator nor the SAR template."""
     source = _read("swarm/validator/utils_parts/evaluation.py")
 
     assert "build_random_task" in source
@@ -44,6 +48,7 @@ def test_validator_evaluation_routes_task_building_through_family_registry():
 
 
 def test_rpc_evaluator_routes_scoring_through_family_registry():
+    """The RPC evaluator scores a rollout via the family, with no direct call to flight_reward."""
     source = _read("swarm/validator/docker/docker_evaluator_parts/rpc.py")
 
     assert "evaluate_rollout" in source
@@ -52,6 +57,7 @@ def test_rpc_evaluator_routes_scoring_through_family_registry():
 
 
 def test_moving_drone_generic_runtime_no_longer_contains_sar_spawn_or_mission_logic():
+    """The shared drone environment keeps no victim spawn, dwell or touch-radius constants, only a family handle."""
     source = _read("swarm/core/moving_drone.py")
 
     assert "build_sar_world" not in source
@@ -62,6 +68,7 @@ def test_moving_drone_generic_runtime_no_longer_contains_sar_spawn_or_mission_lo
 
 
 def test_benchmark_runtime_uses_family_dispatch_for_seed_task_building():
+    """Both the benchmark seed search and its worker pool build tasks from the registry, not the legacy generator."""
     seeds_source = _read("swarm/benchmark/engine_parts/seeds.py")
     workers_source = _read("swarm/benchmark/engine_parts/workers.py")
 
@@ -72,6 +79,7 @@ def test_benchmark_runtime_uses_family_dispatch_for_seed_task_building():
 
 
 def test_autopilot_family_is_not_a_runtime_placeholder():
+    """Autopilot declares a supported runtime and owns its own metric normalization."""
     source = _read("swarm/challenge_families/autopilot.py")
 
     assert "runtime_not_implemented:cf_autopilot" not in source
@@ -81,6 +89,7 @@ def test_autopilot_family_is_not_a_runtime_placeholder():
 
 
 def test_search_and_rescue_family_owns_its_normalization_logic():
+    """The SAR family normalizes its rollout metrics itself, without calling flight_reward."""
     source = _read("swarm/challenge_families/search_and_rescue.py")
 
     assert "def normalize_rollout_metrics" in source
@@ -88,6 +97,7 @@ def test_search_and_rescue_family_owns_its_normalization_logic():
 
 
 def test_moving_drone_routes_training_reward_through_family_runtime():
+    """The per-step training signal comes from a compute_training_reward call on the family runtime."""
     source = _read("swarm/core/moving_drone.py")
 
     assert "compute_training_reward(" in source

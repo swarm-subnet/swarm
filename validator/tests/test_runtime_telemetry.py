@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""What the validator records in its snapshot and event log, and the alerts a bad state raises."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,6 +30,7 @@ from swarm.validator.runtime_telemetry import (
 
 
 def test_runtime_tracker_writes_snapshot_and_events(tmp_path: Path) -> None:
+    """A forward pass and a backend sync land in the snapshot and append both events in the order they happened."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
 
     tracker.mark_worker_thread_alive(True)
@@ -57,6 +60,7 @@ def test_runtime_tracker_writes_snapshot_and_events(tmp_path: Path) -> None:
 
 
 def test_runtime_tracker_summarizes_queue_stage_and_progress(tmp_path: Path) -> None:
+    """A queued model marked at a stage appears in active_items with its progress and note, counted as processing."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     queue = {
         "items": {
@@ -96,6 +100,7 @@ def test_runtime_tracker_summarizes_queue_stage_and_progress(tmp_path: Path) -> 
 
 
 def test_compute_alerts_flags_fallback_freeze_and_stalls(tmp_path: Path) -> None:
+    """A snapshot with a dead worker, an overrunning forward and chain sync, an offline backend and a stale queue raises all seven codes."""
     snapshot = ValidatorRuntimeTracker(state_dir=tmp_path).snapshot_copy()
     now = 10_000.0
     snapshot["process"]["worker_thread_alive"] = False

@@ -49,6 +49,7 @@ class _StagedAssetResolver:
     resolve to their writable-dir copies, everything else passes through."""
 
     def resource_filename(self, package: str, resource: str) -> str:
+        """Absolute staged path for a registered ``assets/<basename>``, otherwise whatever real pkg_resources answers."""
         if package == "gym_pybullet_drones" and resource.startswith("assets/"):
             staged = _STAGED.get(resource[len("assets/"):])
             if staged is not None:
@@ -56,6 +57,7 @@ class _StagedAssetResolver:
         return _REAL_PKG_RESOURCES.resource_filename(package, resource)
 
     def __getattr__(self, name):
+        """Forward every attribute other than the resolver's own to the real pkg_resources."""
         return getattr(_REAL_PKG_RESOURCES, name)
 
 

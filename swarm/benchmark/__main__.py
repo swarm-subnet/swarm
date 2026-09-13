@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Entry point for ``python -m swarm.benchmark``: hands the command line to the benchmark engine's run loop."""
+
 from swarm.benchmark.engine import main
 
 if __name__ == "__main__":

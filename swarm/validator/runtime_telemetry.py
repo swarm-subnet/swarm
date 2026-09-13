@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Runtime state the validator writes for ``swarm monitor``: a JSON snapshot, an append-only event log, and the alerts derived from them."""
+
 from __future__ import annotations
 
 import json
@@ -32,6 +34,7 @@ _TRACKER_SCHEMA_VERSION = 1
 
 
 def tracker_call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
+    """Invoke a tracker method on ``target.runtime_tracker``, or on target itself, returning None when it is absent or raises."""
     tracker = getattr(target, "runtime_tracker", None)
     if tracker is None and callable(getattr(target, method, None)):
         tracker = target
@@ -47,6 +50,7 @@ def tracker_call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
 
 
 def _new_counts() -> dict[str, int]:
+    """A zeroed tally for every queue status the snapshot reports."""
     return {
         "pending": 0,
         "processing": 0,
@@ -57,6 +61,7 @@ def _new_counts() -> dict[str, int]:
 
 
 def _new_stage_state() -> dict[str, Any]:
+    """An idle block for one evaluation stage: nothing running and no previous result recorded."""
     return {
         "active": False,
         "uid": None,
@@ -72,6 +77,8 @@ def _new_stage_state() -> dict[str, Any]:
 
 
 class ValidatorRuntimeTracker:
+    """Collects what the validator is doing into one JSON snapshot on disk plus an append-only event log."""
+
     def __init__(
         self,
         *,
@@ -80,6 +87,7 @@ class ValidatorRuntimeTracker:
         events_file: Path | None = None,
         process_label: str = "validator",
     ) -> None:
+        """Lay out the empty snapshot, resolve the state file paths, and log the tracker_started event."""
         self.state_dir = Path(state_dir) if state_dir is not None else STATE_DIR
         self.snapshot_file = (
             Path(snapshot_file) if snapshot_file is not None else self.state_dir / RUNTIME_SNAPSHOT_FILE.name
@@ -216,10 +224,12 @@ class ValidatorRuntimeTracker:
         self.record_event("tracker_started", force_snapshot=True, process_label=process_label)
 
     def flush(self) -> None:
+        """Force the snapshot to disk, ignoring the rate limit that normally throttles writes."""
         with self._lock:
             self._persist_snapshot_locked(force=True)
 
     def _record_counter(self, counter: str, amount: int = 1) -> None:
+        """Add amount to one of the lifetime totals kept in the snapshot."""
         counters = self.snapshot["counters"]
         counters[counter] = int(counters.get(counter, 0)) + amount
 
@@ -231,6 +241,7 @@ class ValidatorRuntimeTracker:
         force_snapshot: bool = False,
         **fields: Any,
     ) -> None:
+        """Append the event to the JSONL log, refresh the alerts, and persist; the caller must already hold the lock."""
         payload = {
             "ts": time.time(),
             "severity": severity,
@@ -251,6 +262,7 @@ class ValidatorRuntimeTracker:
         force_snapshot: bool = False,
         **fields: Any,
     ) -> None:
+        """Log one event with its arbitrary fields, taking the lock first."""
         with self._lock:
             self._record_event_locked(
                 event,
@@ -260,6 +272,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_worker_thread_alive(self, alive: bool) -> None:
+        """Flag whether the background evaluation thread is running, which feeds the worker_thread_dead alert."""
         with self._lock:
             self.snapshot["process"]["worker_thread_alive"] = bool(alive)
             self._record_event_locked(
@@ -268,6 +281,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_forward_started(self, forward_count: int) -> None:
+        """Open a forward pass: store which one it is and stamp the moment it began."""
         now = time.time()
         with self._lock:
             forward = self.snapshot["forward"]
@@ -277,6 +291,7 @@ class ValidatorRuntimeTracker:
             self._record_event_locked("forward_started", forward_count=int(forward_count))
 
     def mark_forward_completed(self, forward_count: int) -> None:
+        """Close the forward pass cleanly, storing how long it took and clearing the previous error."""
         now = time.time()
         with self._lock:
             forward = self.snapshot["forward"]
@@ -296,6 +311,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_forward_failed(self, error: str) -> None:
+        """Close the forward pass with the error text, keeping the elapsed time on the snapshot."""
         now = time.time()
         with self._lock:
             forward = self.snapshot["forward"]
@@ -315,6 +331,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_backend_sync_started(self) -> None:
+        """Stamp the moment a call to the backend began and flag one as in flight."""
         now = time.time()
         with self._lock:
             backend = self.snapshot["backend"]
@@ -331,6 +348,7 @@ class ValidatorRuntimeTracker:
         leaderboard_version: int | None,
         error: str = "",
     ) -> None:
+        """Close a backend sync: store the queue sizes and leaderboard version, and count consecutive fallbacks."""
         now = time.time()
         with self._lock:
             backend = self.snapshot["backend"]
@@ -378,6 +396,7 @@ class ValidatorRuntimeTracker:
             self._persist_snapshot_locked(force=False)
 
     def mark_chain_sync_started(self, *, context: str) -> None:
+        """Stamp the start of a chain sync and keep the context label naming the call site."""
         now = time.time()
         with self._lock:
             chain_sync = self.snapshot["chain_sync"]
@@ -393,6 +412,7 @@ class ValidatorRuntimeTracker:
         success: bool,
         error: str = "",
     ) -> None:
+        """Close a chain sync, storing its duration and, when it worked, the time of the last good one."""
         now = time.time()
         with self._lock:
             chain_sync = self.snapshot["chain_sync"]
@@ -416,6 +436,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_weights_attempt(self) -> None:
+        """Stamp the moment a weight submission was tried, before its outcome is known."""
         with self._lock:
             self.snapshot["weights"]["last_attempt_at"] = time.time()
             self._record_event_locked("weights_attempt")
@@ -427,6 +448,7 @@ class ValidatorRuntimeTracker:
         error: str = "",
         nonzero_uids: int = 0,
     ) -> None:
+        """Record how a weight submission ended and how many UIDs carried a non-zero value."""
         now = time.time()
         with self._lock:
             weights = self.snapshot["weights"]
@@ -448,6 +470,7 @@ class ValidatorRuntimeTracker:
         uid: int,
         total_seeds: int,
     ) -> None:
+        """Open the screening stage for one UID and reset its progress against the seed count."""
         now = time.time()
         with self._lock:
             screening = self.snapshot["evaluation"]["screening"]
@@ -473,6 +496,7 @@ class ValidatorRuntimeTracker:
         running_median: float,
         note: str = "",
     ) -> None:
+        """Update the screening stage with the seeds finished so far and the running median score."""
         with self._lock:
             screening = self.snapshot["evaluation"]["screening"]
             screening["uid"] = int(uid)
@@ -499,6 +523,7 @@ class ValidatorRuntimeTracker:
         median_score: float,
         note: str = "",
     ) -> None:
+        """Close the screening stage with its median score, duration and note, forcing a snapshot write."""
         now = time.time()
         with self._lock:
             screening = self.snapshot["evaluation"]["screening"]
@@ -527,6 +552,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_benchmark_started(self, *, uid: int, total_seeds: int, note: str = "") -> None:
+        """Open the benchmark stage for one UID and reset its progress against the seed count."""
         now = time.time()
         with self._lock:
             benchmark = self.snapshot["evaluation"]["benchmark"]
@@ -552,6 +578,7 @@ class ValidatorRuntimeTracker:
         total_seeds: int,
         note: str = "",
     ) -> None:
+        """Update the benchmark stage with the seeds finished so far."""
         with self._lock:
             benchmark = self.snapshot["evaluation"]["benchmark"]
             benchmark["uid"] = int(uid)
@@ -576,6 +603,7 @@ class ValidatorRuntimeTracker:
         median_score: float,
         note: str = "",
     ) -> None:
+        """Close the benchmark stage with its median score, duration and note, forcing a snapshot write."""
         now = time.time()
         with self._lock:
             benchmark = self.snapshot["evaluation"]["benchmark"]
@@ -615,6 +643,7 @@ class ValidatorRuntimeTracker:
         severity: str = "info",
         note: str = "",
     ) -> None:
+        """Record which stage a queued model has reached, with any progress note, and refresh the queue summary."""
         with self._lock:
             self._queue_item_stages[str(key)] = str(stage)
             if progress_done is not None or progress_total is not None or note:
@@ -640,6 +669,7 @@ class ValidatorRuntimeTracker:
             )
 
     def _update_queue_state_locked(self, queue: dict) -> None:
+        """Recount the queue by status, age and retries, forget items that have left it, and keep the eight oldest live ones."""
         items = dict(queue.get("items", {}))
         now = time.time()
         counts = _new_counts()
@@ -703,6 +733,7 @@ class ValidatorRuntimeTracker:
         effective_workers: int,
         total_tasks: int,
     ) -> None:
+        """Record the worker counts a Docker evaluation run opens with, seeding the adaptive cap."""
         with self._lock:
             docker = self.snapshot["docker"]
             docker["requested_workers"] = int(requested_workers)
@@ -725,6 +756,7 @@ class ValidatorRuntimeTracker:
         seed: int,
         active_worker_cap: int,
     ) -> None:
+        """Count one batch handed to a worker and store the group, seed and cap in force."""
         with self._lock:
             docker = self.snapshot["docker"]
             docker["dispatch_count"] = int(docker.get("dispatch_count", 0)) + 1
@@ -747,6 +779,7 @@ class ValidatorRuntimeTracker:
         worker_slot: int,
         error: str,
     ) -> None:
+        """Count a lost worker as a stall or a crash, according to the status the evaluator reported."""
         with self._lock:
             docker = self.snapshot["docker"]
             if status == "worker_stall_timeout":
@@ -762,6 +795,7 @@ class ValidatorRuntimeTracker:
             )
 
     def mark_docker_worker_restart(self, *, worker_slot: int) -> None:
+        """Count one worker slot being replaced, whether it stalled, crashed or was recycled."""
         with self._lock:
             docker = self.snapshot["docker"]
             docker["worker_restarts"] = int(docker.get("worker_restarts", 0)) + 1
@@ -771,15 +805,18 @@ class ValidatorRuntimeTracker:
             )
 
     def snapshot_copy(self) -> dict[str, Any]:
+        """A deep copy taken under the lock, so a reader never sees a half-written update."""
         with self._lock:
             return json.loads(json.dumps(self.snapshot))
 
     def _append_event_jsonl(self, payload: dict[str, Any]) -> None:
+        """Add one event as a JSON line to the events file, creating the state directory if needed."""
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with self.events_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
     def _persist_snapshot_locked(self, *, force: bool) -> None:
+        """Write the snapshot atomically through a .tmp file, at most once every 0.25s unless force is set."""
         now_monotonic = time.monotonic()
         if not force and (now_monotonic - self._last_snapshot_write_monotonic) < 0.25:
             self._snapshot_dirty = True
@@ -796,11 +833,13 @@ class ValidatorRuntimeTracker:
 
 
 def load_runtime_snapshot(path: Path | None = None) -> dict[str, Any]:
+    """Read back the JSON a tracker wrote, defaulting to the validator's own state file."""
     target = Path(path) if path is not None else RUNTIME_SNAPSHOT_FILE
     return json.loads(target.read_text(encoding="utf-8"))
 
 
 def load_recent_events(path: Path | None = None, limit: int = 8) -> list[dict[str, Any]]:
+    """Tail the last few entries of the event log, skipping any line that does not parse."""
     target = Path(path) if path is not None else RUNTIME_EVENTS_FILE
     if not target.exists():
         return []
@@ -818,10 +857,12 @@ def load_recent_events(path: Path | None = None, limit: int = 8) -> list[dict[st
 
 
 def compute_alerts(snapshot: dict[str, Any], *, now: float | None = None) -> list[dict[str, str]]:
+    """Derive the warnings and critical conditions a snapshot implies, worst severity first."""
     current_time = time.time() if now is None else float(now)
     alerts: list[dict[str, str]] = []
 
     def _add(code: str, severity: str, message: str) -> None:
+        """Append one alert to the list being built."""
         alerts.append({"code": code, "severity": severity, "message": message})
 
     process = snapshot.get("process", {})

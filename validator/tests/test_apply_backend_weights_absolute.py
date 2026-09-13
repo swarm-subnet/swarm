@@ -32,14 +32,17 @@ from swarm.validator.utils_parts.weights import (
 
 
 def _self(n=16):
+    """A stand-in validator carrying an n-neuron metagraph and a zeroed score vector."""
     return SimpleNamespace(metagraph=SimpleNamespace(n=n), scores=np.zeros(n, dtype=np.float32))
 
 
 def _sum(self):
+    """Total of the stand-in validator's score vector."""
     return float(self.scores.sum())
 
 
 def test_miners_keep_raw_share_and_remainder_burns():
+    """Two miners at 0.10 each keep exactly that, and the unassigned 0.80 lands on the burn UID."""
     s = _self()
     apply_weights(s, {"5": 0.10, "7": 0.10})
     assert s.scores[5] == pytest.approx(0.10)
@@ -49,6 +52,7 @@ def test_miners_keep_raw_share_and_remainder_burns():
 
 
 def test_empty_map_burns_everything():
+    """An empty payload is valid, not an error: the whole emission goes to the burn UID."""
     s = _self()
     apply_weights(s, {})
     # Valid payload, nobody payable: the whole emission burns.
@@ -57,6 +61,7 @@ def test_empty_map_burns_everything():
 
 
 def test_uid0_entry_is_ignored_but_still_receives_remainder():
+    """A weight addressed to the burn UID is dropped, yet it collects whatever nobody was paid."""
     s = _self()
     apply_weights(s, {"0": 0.5, "5": 0.10})
     assert s.scores[5] == pytest.approx(0.10)
@@ -64,6 +69,7 @@ def test_uid0_entry_is_ignored_but_still_receives_remainder():
 
 
 def test_out_of_range_and_nonfinite_skipped():
+    """Negative, oversized and NaN entries are dropped and their share burns, leaving the total at 1.0."""
     s = _self(n=10)
     apply_weights(s, {"999": 0.4, "-3": 0.2, "5": 0.10, "6": float("nan")})
     assert s.scores[5] == pytest.approx(0.10)
@@ -72,6 +78,7 @@ def test_out_of_range_and_nonfinite_skipped():
 
 
 def test_overallocation_is_clamped_to_full_pool():
+    """Weights summing past 1.0 are scaled down together, and nothing is left over to burn."""
     s = _self()
     apply_weights(s, {"5": 0.7, "7": 0.7})
     assert s.scores[5] == pytest.approx(0.5)
@@ -81,6 +88,7 @@ def test_overallocation_is_clamped_to_full_pool():
 
 
 def test_sparse_one_champion_survives_chain_processing_no_uid0_burn():
+    """A vector holding a single 1.0 leaves Bittensor's processor unchanged, with nothing added at UID 0."""
     # Single-champion vector through Bittensor's processor (min=1, max=1.0): champion 1.0, UID0 0.
     n = 256
     uids = np.arange(n)

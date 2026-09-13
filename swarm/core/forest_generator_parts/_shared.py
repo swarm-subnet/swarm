@@ -268,6 +268,7 @@ _CLI_TEX_CACHE: Dict[int, Optional[int]] = {}
 
 
 def _reset_client_caches(cli: int) -> None:
+    """Empty the collision and visual shape caches for one PyBullet client and drop its ground texture id."""
     _CLI_COL_CACHE[cli] = {}
     _CLI_VIS_CACHE[cli] = {}
     _CLI_TEX_CACHE.pop(cli, None)

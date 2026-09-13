@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Entry point of the mountain generator: picks a subtype for the seed and dispatches to the matching builder."""
 from ._shared import *
 from .mountains_only import _build_mountains_only
 from .terrain import _cache, get_global_scale
@@ -22,6 +23,7 @@ from .village import _build_ski_village
 
 
 def get_mountain_subtype(seed: int) -> int:
+    """Draw 1 (bare peaks) or 2 (ski village) from the weighted distribution on a stream of its own."""
     subtype_rng = random.Random(seed + 666666)
     subtypes = list(MOUNTAIN_SUBTYPE_DISTRIBUTION.keys())
     weights = list(MOUNTAIN_SUBTYPE_DISTRIBUTION.values())
@@ -36,6 +38,7 @@ def build_mountains(
     *,
     forced_subtype: Optional[int] = None,
 ) -> Tuple[Callable, List, float]:
+    """Clear the height cache and return the terrain height function, the peak list and the global scale for a seed."""
     _cache.clear()
 
     gs = get_global_scale(seed)

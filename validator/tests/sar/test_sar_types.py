@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The body category enum and the SARWorld record that has to cross a process boundary intact."""
+
 from __future__ import annotations
 
 import pickle
@@ -28,6 +30,7 @@ from swarm.core.env_builder.sar_types import (
 
 
 def test_enum_members():
+    """BodyCategory holds exactly ten tags whose value equals their name, with SUPPORT_TERRAIN standable and VICTIM and OBSTACLE_BEAM not."""
     expected = {
         "SUPPORT_TERRAIN", "SUPPORT_ROOFTOP", "SUPPORT_FLOOR",
         "SUPPORT_SLOPE", "SUPPORT_WALKWAY", "VICTIM",
@@ -43,6 +46,7 @@ def test_enum_members():
 
 
 def test_sar_world_round_trip():
+    """A pickled world comes back whole: victim ids, centre, patch radius, support tag, search centre and body tags."""
     patch = SafetyPatch(support_uid=2, xy=(1.5, -2.0), surface_z=0.3)
     world = SARWorld(
         victim_uids=[10, 11, 12],

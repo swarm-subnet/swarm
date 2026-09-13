@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Replaying one seed has to land on the same score every time, and the summary has to notice when it does not."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,6 +28,7 @@ from swarm.benchmark import idempotency
 
 
 def test_summarize_idempotency_runs_marks_identical_scores_as_idempotent():
+    """Three runs agreeing on score, success and sim time raise every flag, strict included."""
     summary = idempotency.summarize_idempotency_runs(
         [
             {"run": 1, "score": 0.42, "success": False, "time_sec": 1.2, "wall_time_sec": 2.3},
@@ -41,6 +44,7 @@ def test_summarize_idempotency_runs_marks_identical_scores_as_idempotent():
 
 
 def test_summarize_idempotency_runs_detects_mismatch():
+    """A second run differing in score, success and sim time alike clears all four flags."""
     summary = idempotency.summarize_idempotency_runs(
         [
             {"run": 1, "score": 0.42, "success": False, "time_sec": 1.2, "wall_time_sec": 2.3},
@@ -55,10 +59,12 @@ def test_summarize_idempotency_runs_detects_mismatch():
 
 
 def test_run_idempotency_rebuilds_the_same_task_each_time(monkeypatch):
+    """Every repeat gets a freshly built task from the one seed and map type, never a reused object."""
     built_tasks: list[SimpleNamespace] = []
     evaluator_calls: list[tuple[list[SimpleNamespace], int, Path, int]] = []
 
     def _fake_task_for_seed_and_type(sim_dt, *, seed, challenge_type):
+        """A stub task stamped with a build_index so the caller can tell the rebuilds apart."""
         task = SimpleNamespace(
             sim_dt=sim_dt,
             map_seed=seed,
@@ -69,9 +75,11 @@ def test_run_idempotency_rebuilds_the_same_task_each_time(monkeypatch):
         return task
 
     class _FakeEvaluator:
+        """Records the arguments of each batch call and answers with one fixed failing result."""
         _base_ready = True
 
         async def evaluate_seeds_batch(self, *, tasks, uid, model_path, worker_id):
+            """Log the call arguments and hand back a single unsuccessful result."""
             evaluator_calls.append((list(tasks), uid, Path(model_path), worker_id))
             return [SimpleNamespace(success=False, time_sec=0.68, score=0.01)]
 
@@ -106,6 +114,7 @@ def test_run_idempotency_rebuilds_the_same_task_each_time(monkeypatch):
 
 
 def test_run_idempotency_requires_positive_runs():
+    """Asking for zero repeats raises ValueError rather than handing back an empty summary."""
     with pytest.raises(ValueError, match="runs must be positive"):
         idempotency.run_idempotency(
             model_path=Path("model/UID_178.zip"),

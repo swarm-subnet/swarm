@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The clue is a point drawn evenly from a disc around the victim, wherever the victim ended up."""
 from __future__ import annotations
 
 import math
@@ -27,6 +28,7 @@ from swarm.core.env_builder.search_clue import (
 
 
 def test_within_30m_circle():
+    """A thousand draws all land inside the search radius, never further out than the miner is told."""
     victim = (12.3, -4.5)
     rng = random.Random(0)
     for _ in range(1000):
@@ -36,6 +38,7 @@ def test_within_30m_circle():
 
 
 def test_circle_uniformity():
+    """Samples fill the disc by area, not by radius: ring counts track the squared radii."""
     victim = (0.0, 0.0)
     rng = random.Random(42)
     n = 10000
@@ -56,6 +59,7 @@ def test_circle_uniformity():
 
 
 def test_anchored_to_victim_not_task_goal():
+    """After a spawn retry the clue follows where the victim really is, not the stale task goal."""
     # Simulate spawn-retry: victim ends up far from original task.goal.
     task_goal_xy = (10.0, 0.0)
     victim_after_retry = (-15.0, 22.0)

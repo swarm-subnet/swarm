@@ -34,6 +34,7 @@ from swarm.validator.task_gen import task_for_seed_and_type
 
 
 def main():
+    """Render eight depth frames from a ring of poses around the seeded task and save them stacked to --out."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--family", default="cf_autopilot")
     ap.add_argument("--ctype", type=int, default=1)

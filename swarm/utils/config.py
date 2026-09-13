@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Neuron configuration: the argparse surface shared by miner and validator, and the event log wiring."""
+
 import os
 
 # bittensor >=10.3 skips CLI parsing unless this is set, which would silently
@@ -31,6 +33,7 @@ from .logging import setup_events_logger
 
 
 def is_cuda_available():
+    """Probe nvidia-smi then nvcc, returning the torch device string "cuda" when either answers and "cpu" otherwise."""
     try:
         output = subprocess.check_output(["nvidia-smi", "-L"], stderr=subprocess.STDOUT)
         if "NVIDIA" in output.decode("utf-8"):

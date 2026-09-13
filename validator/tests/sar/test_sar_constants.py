@@ -15,12 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The tuning numbers behind a search and rescue score, pinned so none of them moves by accident."""
 from __future__ import annotations
 
 from swarm import constants as C
 
 
 def test_values():
+    """The confirm radius, hover band, dwell time and search geometry are frozen; editing one is a deliberate act, never a slip."""
     assert C.SAR_CONFIRM_HORIZ_RADIUS == 2.0
     assert C.SAR_HOVER_BAND == (2.0, 4.0)
     assert C.SAR_CONFIRM_SPEED_MAX == 1.0

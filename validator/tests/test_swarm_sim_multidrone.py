@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A three-drone task must build with one body per drone, and a frozen drone must stop moving for good."""
 from __future__ import annotations
 
 import numpy as np
@@ -24,6 +25,7 @@ from swarm.utils.env_factory import make_env
 
 
 def _multi_task() -> MapTask:
+    """A three-drone autopilot task on the open map, each drone given its own start and its own goal."""
     return MapTask(
         map_seed=7, start=(0.0, 0.0, 1.5), goal=(6.0, 0.0, 1.5),
         sim_dt=1 / 30, horizon=5.0, challenge_type=2, family_id="cf_autopilot",
@@ -34,6 +36,7 @@ def _multi_task() -> MapTask:
 
 
 def test_multi_drone_builds_steps_and_freezes():
+    """All three bodies spawn and accept a stacked action, and a frozen one holds position however hard it is commanded."""
     env = make_env(_multi_task(), gui=False)
     try:
         env.reset(seed=7)

@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The autopilot family end to end: the search clue a policy actually sees, the landing that counts as success, and a baseline that must beat noise."""
 from __future__ import annotations
 
 import math
@@ -29,6 +30,7 @@ from swarm.validator.task_gen import task_for_seed_and_type
 
 
 def _autopilot_center_and_goal(seed):
+    """The search centre, the true goal, the last three state numbers and the drone position after one reset on the seed."""
     task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=2, family_id="cf_autopilot")
     env = make_env(task, gui=False)
     try:
@@ -45,12 +47,14 @@ def _autopilot_center_and_goal(seed):
 
 
 def test_autopilot_observation_is_noisy_search_clue_not_exact_goal():
+    """The tail of the state vector is the offset to the noisy search centre, never a free handout of the true goal."""
     center, _goal, state_tail, pos = _autopilot_center_and_goal(4242)
     # the last 3 state numbers are the offset to the (noisy) search centre, exactly like main
     np.testing.assert_allclose(state_tail, (center - pos).astype(np.float32), atol=1e-5)
 
 
 def test_autopilot_search_clue_is_deterministic_and_within_radius():
+    """A seed always yields the same clue, its offset stays inside 1.5x SEARCH_RADIUS_MAX, and across seeds it lands far enough off the goal to matter."""
     c1, g1, _t1, _p1 = _autopilot_center_and_goal(7)
     c2, _g2, _t2, _p2 = _autopilot_center_and_goal(7)
     np.testing.assert_array_equal(c1, c2)
@@ -65,6 +69,7 @@ def test_autopilot_search_clue_is_deterministic_and_within_radius():
 
 
 def _manual_open_world_task() -> MapTask:
+    """A hand-written autopilot task on map seed 31415: goal 8 m straight ahead, 20 s horizon."""
     return MapTask(
         map_seed=31415,
         start=(0.0, 0.0, 1.5),
@@ -78,6 +83,7 @@ def _manual_open_world_task() -> MapTask:
 
 
 def _goal_directed_policy(observation: dict[str, np.ndarray]) -> np.ndarray:
+    """A hand-flown controller: turn onto the clue offset, cruise while far, then slow and descend onto the pad."""
     state = np.asarray(observation["state"], dtype=np.float32)
     goal_offset = state[-3:]
     horizontal_offset = np.array([goal_offset[0], goal_offset[1], 0.0], dtype=np.float32)
@@ -101,6 +107,7 @@ def _random_policy(
     rng: np.random.RandomState,
     observation: dict[str, np.ndarray],
 ) -> np.ndarray:
+    """Uniform noise in every action channel, with a non-negative speed term, ignoring what the drone sees."""
     _ = observation
     action = rng.uniform(-1.0, 1.0, size=5).astype(np.float32)
     action[3] = float(rng.uniform(0.0, 1.0))
@@ -114,6 +121,7 @@ def _run_policy_episode(
     seed: int,
     max_steps: int | None = None,
 ) -> tuple[dict[str, object], bool, bool]:
+    """Fly the controller until the episode ends or the horizon runs out, and return the last info with the terminated and truncated flags."""
     env = make_env(task, gui=False)
     try:
         obs, _ = env.reset(seed=seed)
@@ -135,6 +143,7 @@ def _run_policy_episode(
 
 
 def test_autopilot_runtime_marks_success_on_stable_landing():
+    """A step with no contact keeps success False; LANDING_STABLE_SEC of unbroken stable contact sets success and the arrival time, leaving the failure reason at NONE."""
     from swarm.constants import LANDING_STABLE_SEC
 
     task = _manual_open_world_task()
@@ -176,6 +185,7 @@ def test_autopilot_runtime_marks_success_on_stable_landing():
 
 
 def test_autopilot_generated_scenario_builds_and_steps():
+    """A generated type 4 map resets and steps with finite depth, a finite reward and the autopilot info keys present."""
     task = task_for_seed_and_type(
         sim_dt=SIM_DT,
         seed=657398,
@@ -203,6 +213,7 @@ def test_autopilot_generated_scenario_builds_and_steps():
 
 
 def test_goal_directed_baseline_beats_random_policy_on_easy_autopilot_seed():
+    """On an open map the hand-flown run ends closer to the goal than uniform noise, so the measured distance separates flying from thrashing."""
     task = _manual_open_world_task()
 
     baseline_info, baseline_terminated, baseline_truncated = _run_policy_episode(

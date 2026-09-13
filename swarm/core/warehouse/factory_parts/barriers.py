@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Safety barrier ring fenced around the factory area of the warehouse map."""
+
 from ._shared import *
 
 
 def _segment_centers_1d(min_v, max_v, segment_len, gap):
+    """Centre positions for as many fixed-length pieces as fit the span, gapped and left-right centred."""
     span = max_v - min_v
     if segment_len <= 1e-6 or span <= 1e-6:
         return []
@@ -38,12 +41,14 @@ def _segment_centers_1d(min_v, max_v, segment_len, gap):
 
 
 def _resolve_factory_barrier_model():
+    """Absolute path of the configured barrier mesh, empty string when it is not on disk."""
     if FACTORY_BARRIER_MODEL_PATH and os.path.exists(FACTORY_BARRIER_MODEL_PATH):
         return os.path.abspath(FACTORY_BARRIER_MODEL_PATH)
     return ""
 
 
 def _get_factory_barrier_loader(model_dir, texture_path, cli):
+    """Reuse one MeshKitLoader per client, mesh directory and texture instead of rebuilding it."""
     key = (cli, os.path.abspath(str(model_dir)), str(texture_path or ""))
     cached = _FACTORY_BARRIER_LOADER_CACHE.get(key)
     if cached is not None:
@@ -56,6 +61,11 @@ def _get_factory_barrier_loader(model_dir, texture_path, cli):
 def build_factory_barrier_ring(
     conveyor_loader, floor_top_z, factory_area, network, cli
 ):
+    """Fence the inset factory bounds with barrier segments, omitting the one nearest the start as a doorway.
+
+    Returns the segment count, the side the gap landed on and the start position it was
+    measured from, or a reason string when the area or the mesh cannot support a ring.
+    """
     if not ENABLE_FACTORY_BARRIER_RING:
         return {"factory_barrier_enabled": False}
     if not factory_area:

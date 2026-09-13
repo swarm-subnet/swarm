@@ -15,12 +15,20 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Factory sub-map dropped into the warehouse FACTORY area: one belt network behind its barrier ring."""
+
 from ._shared import *
 from .barriers import build_factory_barrier_ring
 from .belts import build_single_belt_network
 
 
 def build_embedded_factory(conveyor_loader, floor_top_z, area_layout, seed, cli=0):
+    """Spawn the belt network and barrier ring inside the layout's FACTORY area.
+
+    Returns the geometry for the map record, or a dict carrying
+    ``factory_map_embedded`` False and a reason when the feature is off, the
+    area is absent, or a spawn raises.
+    """
     if not ENABLE_EMBEDDED_FACTORY_MAP:
         return {"factory_map_embedded": False}
 

@@ -62,12 +62,14 @@ _WORKER_RECYCLE_MIN_SEEDS = 3
 
 
 def _benchmark_engine():
+    """Import swarm.benchmark.engine on first use and hand back the module."""
     import swarm.benchmark.engine as bench_engine
 
     return bench_engine
 
 
 def _task_seed(task: Any, index: int) -> int:
+    """The task's map_seed, falling back to its position in the run."""
     try:
         return int(getattr(task, "map_seed", index))
     except Exception:
@@ -75,6 +77,7 @@ def _task_seed(task: Any, index: int) -> int:
 
 
 def _task_challenge_type(task: Any) -> int:
+    """The task's challenge type as an int, 0 when the attribute is missing."""
     try:
         return int(getattr(task, "challenge_type", 0))
     except Exception:
@@ -82,6 +85,7 @@ def _task_challenge_type(task: Any) -> int:
 
 
 def _task_group_name(task: Any, index: int) -> str:
+    """The benchmark group a seed belongs to, or a typeN_unknown label when none matches."""
     bench_engine = _benchmark_engine()
     seed = _task_seed(task, index)
     challenge_type = _task_challenge_type(task)
@@ -95,6 +99,7 @@ def _emit_seed_complete(
     on_seed_complete: Optional[Callable[..., None]],
     seed_meta: Optional[Dict[str, Any]],
 ) -> None:
+    """Fire the progress callback with seed_meta, tolerating one that takes no argument and swallowing its errors."""
     if on_seed_complete is None:
         return
     try:
@@ -116,6 +121,7 @@ def _failure_seed_meta(
     error: str,
     elapsed_sec: float = 0.0,
 ) -> Dict[str, Any]:
+    """A progress record for a seed that never produced a result, carrying the status and the error text."""
     return {
         "uid": int(uid),
         "map_seed": _task_seed(task, -1),
@@ -131,6 +137,7 @@ def _failure_seed_meta(
 
 
 def _seed_status(seed_meta: Optional[Dict[str, Any]]) -> str:
+    """The trimmed status string of a progress record, empty when there is no record."""
     if not isinstance(seed_meta, dict):
         return ""
     return str(seed_meta.get("status", "")).strip()
@@ -143,6 +150,7 @@ def _build_result_seed_meta(
     result_obj: ValidationResult,
     status: str,
 ) -> Dict[str, Any]:
+    """A progress record assembled from a finished ValidationResult when the worker reported none."""
     return {
         "uid": int(uid),
         "map_seed": int(meta.get("seed", -1)) if isinstance(meta, dict) else -1,
@@ -164,6 +172,7 @@ def _summary_bucket_for_result(
     result_obj: Optional[ValidationResult],
     is_infra_failure: bool = False,
 ) -> str:
+    """Which counter a finished seed belongs in: ok, failed, slow_act, timeout or runtime."""
     if status == "seed_timeout_strikes":
         return "slow_act"
     if status == "seed_env_failure":
@@ -187,6 +196,7 @@ def _pop_batch_seed_meta(
     fallback_seed_meta: Optional[Dict[str, Any]] = None,
     prefer_fallback: bool = False,
 ) -> Dict[str, Any]:
+    """Take the record the worker reported for a batch, else the fallback, else one assembled from the result."""
     observed = batch_seed_meta.pop(int(batch_index), None)
     if prefer_fallback and fallback_seed_meta is not None:
         return fallback_seed_meta
@@ -268,6 +278,7 @@ async def _run_process_parallel(
     stop_reason: Optional[str] = None
 
     def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
+        """Fire the per-seed result callback, ignoring anything it raises."""
         if on_seed_result is None:
             return
         try:
@@ -311,6 +322,7 @@ async def _run_process_parallel(
         bt.logging.info(f"    {line}")
 
     def _spawn_worker(worker_slot: int) -> None:
+        """Start a daemon process for one slot with its own task queue."""
         task_queue = ctx.Queue()
         worker = ctx.Process(
             target=bench_engine._benchmark_worker_main,
@@ -323,12 +335,14 @@ async def _run_process_parallel(
         workers[worker_slot] = worker
 
     def _close_queue(queue_obj: Any) -> None:
+        """Close a multiprocessing queue, ignoring one already torn down."""
         try:
             queue_obj.close()
         except Exception:
             pass
 
     def _restart_worker(worker_slot: int) -> None:
+        """Kill the process in a slot, drop its bookkeeping, and start a fresh one in its place."""
         worker = workers.get(worker_slot)
         if worker is not None:
             try:
@@ -349,6 +363,7 @@ async def _run_process_parallel(
         tracker_call(runtime_tracker, "mark_docker_worker_restart", worker_slot=int(worker_slot))
 
     def _worker_rss_mb(worker: Any) -> Optional[float]:
+        """Resident memory of a worker process in MiB, None without psutil."""
         if psutil is None:
             return None
         try:
@@ -357,6 +372,7 @@ async def _run_process_parallel(
             return None
 
     def _worker_recycle_seed_budget(worker_slot: int) -> int:
+        """How many seeds a slot serves before replacement, staggered so slots do not turn over together."""
         # Stagger budgets across slots so workers do not recycle in lockstep.
         if effective_workers <= 1:
             return _WORKER_RECYCLE_SEED_BUDGET
@@ -364,6 +380,7 @@ async def _run_process_parallel(
         return max(_WORKER_RECYCLE_MIN_SEEDS, round(_WORKER_RECYCLE_SEED_BUDGET * spread))
 
     def _maybe_recycle_idle_workers() -> None:
+        """Replace any idle worker that has served its seed budget or grown past the RSS ceiling."""
         if stop_reason is not None:
             return
         for worker_slot in range(effective_workers):
@@ -396,6 +413,7 @@ async def _run_process_parallel(
             _restart_worker(worker_slot)
 
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
+        """Refresh the RAM reading behind the worker cap, at most once an interval unless forced."""
         nonlocal last_resource_poll_at
         now = time.monotonic()
         if (
@@ -487,10 +505,12 @@ async def _run_process_parallel(
             )
 
     def _remember_seed_meta(batch_index: int, seed_meta: Optional[Dict[str, Any]]) -> None:
+        """Keep a copy of the latest progress record a worker sent for that batch."""
         if isinstance(seed_meta, dict):
             batch_seed_meta[int(batch_index)] = dict(seed_meta)
 
     def _drain_progress_events() -> None:
+        """Empty the progress queue, refreshing heartbeats and keeping the seed records it carries."""
         while True:
             try:
                 event = progress_queue.get_nowait()
@@ -515,6 +535,7 @@ async def _run_process_parallel(
         error: str,
         elapsed_sec: float,
     ) -> None:
+        """Score every seed of a dead batch as an INFRA failure and free the worker slot."""
         bt.logging.warning(
             f"[Validator eval] worker {worker_slot} failed batch {request.batch_index + 1}/{len(batch_plan)} "
             f"with status={status}: {error}"
@@ -567,6 +588,7 @@ async def _run_process_parallel(
         worker_started_at.pop(worker_slot, None)
 
     def _check_for_stalled_workers() -> int:
+        """Fail the batches whose worker stopped sending heartbeats, restart them, and count the batches closed."""
         completed_now = 0
         now = time.time()
         for worker_slot, request in list(worker_active_requests.items()):
@@ -601,10 +623,12 @@ async def _run_process_parallel(
     last_summary_chunk_done = 0
 
     def _type_name(meta: Optional[dict]) -> str:
+        """The group label with its typeN_ prefix stripped off."""
         raw = meta.get("group", "unknown") if meta else "unknown"
         return _TYPE_PREFIX.sub("", raw)
 
     def _seed_label(meta: Optional[dict]) -> str:
+        """The 'group:#index' tag a seed is written as in the log lines."""
         seed_index = meta.get("index", "?") if meta else "?"
         return f"{_type_name(meta)}:#{seed_index}"
 
@@ -615,6 +639,7 @@ async def _run_process_parallel(
         status: str,
         is_runtime_failure: bool = False,
     ) -> None:
+        """Add one finished seed to the running scores, its type average and its outcome counter."""
         if result_obj is None:
             result_obj = ValidationResult(int(uid), False, 0.0, 0.0)
         score = float(result_obj.score) if result_obj else 0.0
@@ -638,14 +663,17 @@ async def _run_process_parallel(
             seed_stats.setdefault("slow_act_seeds", []).append(_seed_label(meta))
 
     def _record_timeout_retry(meta: Optional[dict]) -> None:
+        """Count a seed sent back round after a timeout and name it in the summary."""
         seed_stats["retried_timeout"] += 1
         seed_stats.setdefault("retried_timeout_seeds", []).append(_seed_label(meta))
 
     def _record_rpc_transport_retry(meta: Optional[dict]) -> None:
+        """Count a seed sent back round after the RPC channel broke and name it in the summary."""
         seed_stats["retried_rpc_transport"] += 1
         seed_stats.setdefault("retried_rpc_transport_seeds", []).append(_seed_label(meta))
 
     def _log_summary() -> None:
+        """Print one progress line: running average, outcome counts, per-type averages and worker load."""
         nonlocal last_summary_chunk_done
         chunk_done = len(seed_stats["scores"])
         if chunk_done == 0 or chunk_done == last_summary_chunk_done:
@@ -707,6 +735,7 @@ async def _run_process_parallel(
         _dispatch_available_batches()
 
         def _more_work_expected(done_count: int) -> bool:
+            """True while batches are queued, in the air, or still to come from the feeder."""
             if feeder_active:
                 return bool(
                     pending_batch_ids or worker_active_requests or not feeder_done

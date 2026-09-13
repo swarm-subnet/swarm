@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Locate the warehouse kit folders, their model files and the baked shell meshes on disk."""
+
 from ._shared import *
 
 
 def _resolve_optional_model(directory, model_names):
+    """Return (folder, filename) for the first name present, matched case-insensitively for .obj, else two empty strings."""
     if not directory or not os.path.exists(directory):
         return "", ""
     root_abs = os.path.abspath(directory)
@@ -39,6 +42,7 @@ def _resolve_optional_model(directory, model_names):
 
 
 def _resolve_kit_paths():
+    """Check the conveyor, vehicle and loading assets are on disk and return the folders and textures to spawn from."""
     conveyor_obj = CONVEYOR_KIT_OBJ_DIR
     conveyor_tex = CONVEYOR_KIT_TEXTURE
 
@@ -110,6 +114,7 @@ def _resolve_kit_paths():
 
 
 def _resolve_shell_mesh_paths():
+    """Locations of the baked roof, filler and truss meshes plus the bake settings from metadata.json."""
     root = os.path.abspath(WAREHOUSE_SHELL_DIR)
     roof = os.path.join(root, WAREHOUSE_SHELL_FILES["roof"])
     fillers = os.path.join(root, WAREHOUSE_SHELL_FILES["fillers"])

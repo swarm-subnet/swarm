@@ -1,3 +1,4 @@
+"""Where a submission's dependencies get installed, and what the installer is allowed to see."""
 from __future__ import annotations
 
 import ast
@@ -88,6 +89,7 @@ def test_prepare_model_image_never_unpacks_the_model():
 
 
 def test_evaluator_image_builds_the_base_environment_and_puts_it_first_on_path():
+    """A bare `python` in the container reaches /opt/env, which only uv ever populates."""
     dockerfile = EVALUATOR_DOCKERFILE.read_text(encoding="utf-8")
     assert f"uv venv {BASE_ENV}" in dockerfile
     assert f"ENV PATH={BASE_ENV}/bin:$PATH" in dockerfile

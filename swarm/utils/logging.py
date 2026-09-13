@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The rotating events.log writer and the ANSI colour wrapper around bt.logging."""
+
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -26,12 +28,14 @@ DEFAULT_LOG_BACKUP_COUNT = 10
 
 
 def setup_events_logger(full_path, events_retention_size):
+    """Register the EVENT level and return a logger rotating events.log in full_path."""
     logging.addLevelName(EVENTS_LEVEL_NUM, "EVENT")
 
     logger = logging.getLogger("event")
     logger.setLevel(EVENTS_LEVEL_NUM)
 
     def event(self, message, *args, **kws):
+        """Emit message at the EVENT level when the logger is enabled for it."""
         if self.isEnabledFor(EVENTS_LEVEL_NUM):
             self._log(EVENTS_LEVEL_NUM, message, args, **kws)
 
@@ -93,16 +97,20 @@ class ColoredLogger:
 
     @staticmethod
     def info(message: str, color: str = "blue") -> None:
+        """Send message to bt.logging.info, tinted blue unless another color is named."""
         bt.logging.info(ColoredLogger._colored_msg(message, color))
 
     @staticmethod
     def warning(message: str, color: str = "yellow") -> None:
+        """Send message to bt.logging.warning, tinted yellow unless another color is named."""
         bt.logging.warning(ColoredLogger._colored_msg(message, color))
 
     @staticmethod
     def error(message: str, color: str = "red") -> None:
+        """Send message to bt.logging.error, tinted red unless another color is named."""
         bt.logging.error(ColoredLogger._colored_msg(message, color))
 
     @staticmethod
     def success(message: str, color: str = "green") -> None:
+        """Send message to bt.logging.success, tinted green unless another color is named."""
         bt.logging.success(ColoredLogger._colored_msg(message, color))

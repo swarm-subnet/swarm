@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Container entrypoint for a miner submission: wait on the start gate, cap the thread pools, serve the agent."""
+
 from __future__ import annotations
 
 import os
@@ -44,6 +46,7 @@ def wait_for_start_gate(timeout_sec: float = 120.0) -> None:
 
 
 def main() -> None:
+    """Serve the miner's flight controller once the gate has lifted and the thread caps are in place."""
     # nothing may import from the submission directory before the gate opens:
     # the validator only opens it once this container's network is locked down
     wait_for_start_gate()

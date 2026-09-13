@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A failure reason leaves the packer as a plain string whether it arrived as an enum or not."""
+
 from __future__ import annotations
 
 from swarm.benchmark.engine_parts.workers import _pack_validation_result
@@ -22,6 +24,7 @@ from swarm.protocol import FailureReason, ValidationResult
 
 
 def test_pack_serialises_enum_via_value():
+    """A FailureReason member is written out as its value, never its repr."""
     vr = ValidationResult(
         uid=9, success=False, time_sec=2.0, score=0.01,
         failure_reason=FailureReason.TIMEOUT,
@@ -31,6 +34,7 @@ def test_pack_serialises_enum_via_value():
 
 
 def test_pack_passes_through_plain_string():
+    """A reason already given as text is written out unchanged."""
     vr = ValidationResult(
         uid=9, success=False, time_sec=2.0, score=0.01,
         failure_reason="OBSTACLE_COLLISION",

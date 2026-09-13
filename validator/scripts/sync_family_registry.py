@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Copy the challenge-family registry out of the swarm schema into the backend and website mirrors."""
+
 from __future__ import annotations
 
 import argparse
@@ -47,6 +49,7 @@ def _validate_registry(payload: dict) -> None:
 
 
 def _mirror_path(checkout: Path, mirror: Path) -> Path:
+    """Resolve a mirror inside a checkout, exiting when the file is not there to overwrite."""
     target = checkout / mirror
     if not target.is_file():
         raise SystemExit(f"{target} does not exist; is {checkout} the right checkout?")
@@ -54,6 +57,7 @@ def _mirror_path(checkout: Path, mirror: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Render the schema and rewrite both mirrors, or report drift and return 1 under --check."""
     parser = argparse.ArgumentParser(
         description=(
             "Copy the family registry from the swarm schema into the backend and "

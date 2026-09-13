@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A sampled audit of victim placement: how often the spawn search comes up empty."""
 from __future__ import annotations
 
 import time
@@ -52,6 +53,7 @@ _MAX_FAILURE_RATE = 0.02
 # the full 5000-seed audit ships as the nightly script in D.3.2.
 @pytest.mark.parametrize("name,ctype", list(_MAPS.items()))
 def test_per_map_failure_rate(sar_pybullet, name, ctype):
+    """No map type may leave a victim unplaced on more than 2% of its sampled seeds."""
     failures = 0
     started = time.time()
     for seed in range(_N_SEEDS):

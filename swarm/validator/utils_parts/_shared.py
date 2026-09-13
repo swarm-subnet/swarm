@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Imports, state-file paths and caches every utils_parts module pulls in with a star import."""
+
 from __future__ import annotations
 
 import asyncio

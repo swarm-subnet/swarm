@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Weight preparation for chain emission: peak capping, u16 packing and netuid processing."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -29,42 +31,52 @@ from swarm.base.utils.weight_utils import (
 
 
 class _DummyMetagraph:
+    """Metagraph stub carrying only the neuron count the weight code reads."""
     def __init__(self, n: int):
+        """Hold the neuron count the caller wants the subnet to have."""
         self.n = n
 
 
 class _DummySubtensor:
+    """Subtensor stub answering with fixed chain limits and one canned metagraph."""
     def __init__(self, metagraph, min_allowed: int, max_limit: float):
+        """Hold the metagraph and the two chain limits the stub will report."""
         self._metagraph = metagraph
         self._min_allowed = min_allowed
         self._max_limit = max_limit
 
     def metagraph(self, netuid):
+        """The canned metagraph, whatever netuid is asked for."""
         _ = netuid
         return self._metagraph
 
     def min_allowed_weights(self, netuid):
+        """The configured minimum entry count, ignoring the netuid."""
         _ = netuid
         return self._min_allowed
 
     def max_weight_limit(self, netuid):
+        """The configured per-neuron ceiling, ignoring the netuid."""
         _ = netuid
         return self._max_limit
 
 
 def test_normalize_max_weight_returns_uniform_when_sum_zero():
+    """An all-zero vector comes back as an even split rather than a division by zero."""
     x = np.array([0.0, 0.0, 0.0], dtype=np.float32)
     y = normalize_max_weight(x, limit=0.5)
     assert np.allclose(y, np.array([1 / 3, 1 / 3, 1 / 3]))
 
 
 def test_normalize_max_weight_keeps_distribution_when_under_limit():
+    """Values whose peak already sits below the ceiling are only rescaled to sum to one."""
     x = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     y = normalize_max_weight(x, limit=0.8)
     assert np.allclose(y, x / x.sum())
 
 
 def test_normalize_max_weight_caps_peak_weight():
+    """A dominant entry is cut back to the ceiling and the vector still sums to one."""
     x = np.array([100.0, 1.0, 1.0], dtype=np.float32)
     y = normalize_max_weight(x, limit=0.6)
     assert np.isclose(float(y.sum()), 1.0)
@@ -72,6 +84,7 @@ def test_normalize_max_weight_caps_peak_weight():
 
 
 def test_convert_weights_and_uids_for_emit_validates_inputs():
+    """Negative values raise, and a length mismatch dies on the index before its own check."""
     with pytest.raises(ValueError):
         convert_weights_and_uids_for_emit(np.array([0, 1]), np.array([-0.1, 0.2]))
     with pytest.raises(ValueError):
@@ -82,12 +95,14 @@ def test_convert_weights_and_uids_for_emit_validates_inputs():
 
 
 def test_convert_weights_and_uids_for_emit_handles_zero_sum():
+    """Nothing goes to chain when no miner scored: two empty lists, no division."""
     uids, vals = convert_weights_and_uids_for_emit(np.array([0, 1]), np.array([0.0, 0.0]))
     assert uids == []
     assert vals == []
 
 
 def test_convert_weights_and_uids_for_emit_scales_to_u16():
+    """The largest value becomes the u16 maximum, the rest land below it, order preserved."""
     uids, vals = convert_weights_and_uids_for_emit(np.array([10, 11]), np.array([0.5, 1.0]))
     assert uids == [10, 11]
     assert vals[1] == U16_MAX
@@ -95,6 +110,7 @@ def test_convert_weights_and_uids_for_emit_scales_to_u16():
 
 
 def test_process_weights_for_netuid_returns_uniform_when_no_nonzero():
+    """With nobody scored, every neuron in the subnet gets an equal share."""
     metagraph = _DummyMetagraph(n=4)
     subtensor = _DummySubtensor(metagraph=metagraph, min_allowed=2, max_limit=0.5)
     uids, weights = process_weights_for_netuid(
@@ -109,6 +125,7 @@ def test_process_weights_for_netuid_returns_uniform_when_no_nonzero():
 
 
 def test_process_weights_for_netuid_expands_when_below_min_allowed():
+    """Fewer scored miners than the chain accepts pads every neuron and caps the peak."""
     metagraph = _DummyMetagraph(n=4)
     subtensor = _DummySubtensor(metagraph=metagraph, min_allowed=3, max_limit=0.5)
     uids, weights = process_weights_for_netuid(
@@ -124,6 +141,7 @@ def test_process_weights_for_netuid_expands_when_below_min_allowed():
 
 
 def test_process_weights_for_netuid_filters_low_quantile_and_normalizes():
+    """The bottom half is dropped and the survivors are renormalized to sum to one."""
     metagraph = _DummyMetagraph(n=4)
     subtensor = _DummySubtensor(metagraph=metagraph, min_allowed=2, max_limit=0.6)
     uids, weights = process_weights_for_netuid(

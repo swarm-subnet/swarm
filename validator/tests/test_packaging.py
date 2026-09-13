@@ -44,6 +44,7 @@ REQUIRED_DATA_FILES = [
 
 @pytest.mark.parametrize("relative_path", REQUIRED_DATA_FILES)
 def test_manifest_selects_the_data_files_the_package_loads(relative_path, selected_files):
+    """MANIFEST.in selects every data file the package loads at runtime, so an installed copy carries it."""
     assert relative_path in selected_files, (
         f"{relative_path} is loaded at runtime but MANIFEST.in does not select it, "
         "so an installed copy would not have it"

@@ -136,6 +136,7 @@ FAMILY_GRAPH_CONTRACTS: dict[str, dict] = {
 
 
 def family_has_swarm_axis(family_id: str) -> bool:
+    """True when any observation shape in the contract leads with the N drone-count token."""
     contract = FAMILY_GRAPH_CONTRACTS[family_id]
     return any(
         shape and shape[0] == SWARM_AXIS_TOKEN

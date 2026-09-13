@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Tests for the challenge-family registry: dispatch by family id, runtime profiles, task building, scoring."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -40,6 +41,7 @@ from swarm.validator.reward import flight_reward
 
 
 def _sample_task(*, family_id: str = "cf_search_and_rescue") -> MapTask:
+    """Build a fixed MapTask so only the family id varies between cases."""
     return MapTask(
         map_seed=7,
         start=(0.0, 0.0, 1.0),
@@ -52,6 +54,7 @@ def _sample_task(*, family_id: str = "cf_search_and_rescue") -> MapTask:
 
 
 def test_registered_challenge_families_include_runtime_ids():
+    """Autopilot and search and rescue are both among the ids the registry hands back."""
     family_ids = list_registered_challenge_families()
 
     assert "cf_search_and_rescue" in family_ids
@@ -59,6 +62,7 @@ def test_registered_challenge_families_include_runtime_ids():
 
 
 def test_runtime_family_for_task_uses_family_id_dispatch():
+    """Dispatch reads the task's own id and hands back a family marked as flyable."""
     task = _sample_task()
     family = runtime_family_for_task(task)
 
@@ -67,6 +71,7 @@ def test_runtime_family_for_task_uses_family_id_dispatch():
 
 
 def test_runtime_profile_for_task_routes_family_bootstrap_and_metadata():
+    """Each family carries its own profile name, resource class, image key and sar_mode switch."""
     sar_profile = runtime_profile_for_task(_sample_task())
     autopilot_profile = runtime_profile_for_task(_sample_task(family_id="cf_autopilot"))
 
@@ -84,6 +89,7 @@ def test_runtime_profile_for_task_routes_family_bootstrap_and_metadata():
 
 
 def test_family_screening_and_admission_policies_are_runtime_scoped():
+    """Each family carries its own bootstrap threshold, improvement step and early-fail checkpoints."""
     autopilot_screening = screening_policy_for_family("cf_autopilot")
     sar_screening = screening_policy_for_family("cf_search_and_rescue")
     autopilot_admission = benchmark_admission_policy_for_family("cf_autopilot")
@@ -108,6 +114,7 @@ def test_family_screening_and_admission_policies_are_runtime_scoped():
 
 
 def test_infer_task_family_id_uses_legacy_version_fallback():
+    """A task carrying an empty family id falls back to autopilot; the version string is not read."""
     legacy_task = MapTask(
         map_seed=11,
         start=(0.0, 0.0, 1.0),
@@ -123,6 +130,7 @@ def test_infer_task_family_id_uses_legacy_version_fallback():
 
 
 def test_require_runtime_family_accepts_autopilot():
+    """The strict lookup hands back a flyable autopilot family rather than raising."""
     family = require_runtime_family("cf_autopilot")
 
     assert family.family_id == "cf_autopilot"
@@ -130,6 +138,7 @@ def test_require_runtime_family_accepts_autopilot():
 
 
 def test_build_random_task_routes_through_registered_family():
+    """The top-level builder stamps the requested id onto the task it hands back."""
     task = build_random_task(
         sim_dt=0.02,
         seed=12345,
@@ -140,6 +149,7 @@ def test_build_random_task_routes_through_registered_family():
 
 
 def test_autopilot_random_task_generation_is_deterministic():
+    """One seed builds an identical navigation map twice, so every validator flies the same thing."""
     family = require_runtime_family("cf_autopilot")
 
     first = family.build_random_task(sim_dt=0.02, seed=777)
@@ -150,6 +160,7 @@ def test_autopilot_random_task_generation_is_deterministic():
 
 
 def test_search_and_rescue_random_task_generation_is_deterministic():
+    """One seed builds an identical mission twice, so every validator flies the same thing."""
     family = require_runtime_family("cf_search_and_rescue")
 
     first = family.build_random_task(sim_dt=0.02, seed=555)
@@ -159,6 +170,7 @@ def test_search_and_rescue_random_task_generation_is_deterministic():
 
 
 def test_build_screening_tasks_route_through_registered_family():
+    """One task per seed, each stamped with the family that was asked for."""
     tasks = build_screening_tasks(
         sim_dt=0.02,
         seeds=[101, 102, 103],
@@ -171,6 +183,7 @@ def test_build_screening_tasks_route_through_registered_family():
 
 
 def test_autopilot_screening_tasks_follow_family_template():
+    """The offset indexes into the family's own template, so the challenge types come from there."""
     family = get_challenge_family("cf_autopilot")
     template = list(family.screening_template())
 
@@ -190,6 +203,7 @@ def test_autopilot_screening_tasks_follow_family_template():
 
 
 def test_search_and_rescue_screening_tasks_follow_family_template():
+    """The offset indexes into the rescue template, so its own challenge types come through."""
     family = get_challenge_family("cf_search_and_rescue")
     template = list(family.screening_template())
 
@@ -209,6 +223,7 @@ def test_search_and_rescue_screening_tasks_follow_family_template():
 
 
 def test_evaluate_rollout_returns_common_evaluation_schema():
+    """One flight comes back as the shared record: score, raw metrics and normalized terms together."""
     evaluation = evaluate_rollout(
         task=_sample_task(),
         success=True,
@@ -237,6 +252,7 @@ def test_evaluate_rollout_returns_common_evaluation_schema():
 
 
 def test_search_and_rescue_score_evaluation_is_reproducible():
+    """Identical inputs give an equal record, and an infeasible run still earns the 0.01 floor."""
     task = _sample_task()
 
     first = evaluate_rollout(
@@ -263,6 +279,7 @@ def test_search_and_rescue_score_evaluation_is_reproducible():
 
 
 def test_autopilot_evaluation_matches_legacy_navigation_reward_curve():
+    """Routing through the family gives exactly what flight_reward computes: the curve did not move."""
     task = _sample_task(family_id="cf_autopilot")
 
     evaluation = evaluate_rollout(
@@ -292,6 +309,7 @@ def test_autopilot_evaluation_matches_legacy_navigation_reward_curve():
 
 
 def test_autopilot_score_monotonicity_prefers_success_and_faster_time():
+    """A quick win beats a slow one, and any win beats a flight that never arrived."""
     task = _sample_task(family_id="cf_autopilot")
 
     fast_success = evaluate_rollout(
@@ -327,6 +345,7 @@ def test_autopilot_score_monotonicity_prefers_success_and_faster_time():
 
 
 def test_family_runtime_training_reward_defaults_to_score_delta():
+    """With no family override, the signal is the run's score minus the previous one, nothing else."""
     family = require_runtime_family("cf_autopilot")
     evaluation = evaluate_rollout(
         task=_sample_task(family_id="cf_autopilot"),
@@ -348,6 +367,7 @@ def test_family_runtime_training_reward_defaults_to_score_delta():
 
 
 def test_family_normalization_is_isolated_between_autopilot_and_search_and_rescue():
+    """The same failed flight pays 0.01 on autopilot and nothing on rescue: neither curve leaks."""
     autopilot = evaluate_rollout(
         task=_sample_task(family_id="cf_autopilot"),
         success=False,
@@ -374,6 +394,7 @@ def test_family_normalization_is_isolated_between_autopilot_and_search_and_rescu
 
 
 def test_autopilot_runtime_sets_collision_failure_reason():
+    """Hitting something does not end the episode by itself, but it does stamp the obstacle label."""
     family = require_runtime_family("cf_autopilot")
     env = SimpleNamespace(
         _collision=True,
@@ -386,6 +407,7 @@ def test_autopilot_runtime_sets_collision_failure_reason():
 
 
 def test_autopilot_runtime_sets_truncation_failure_reasons():
+    """Over-tilting and running out of clock both cut the episode short, each under its own label."""
     family = require_runtime_family("cf_autopilot")
 
     tilt_env = SimpleNamespace(

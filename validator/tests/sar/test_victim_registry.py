@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Victim asset picking: which character a seed draws, and how it sits on the surface."""
+
 import math
 import random
 
@@ -31,10 +33,13 @@ from swarm.core.env_builder.victim import (
 
 
 def _folder_of(split_dir) -> str:
+    """Return the character folder name, three directories above the split path."""
     return str(split_dir).split("/")[-4]
 
 
 def test_selection_deterministic_and_map_scoped():
+    """A seed always draws the same character, and only one registered for that map.
+    Over 400 seeds the whole pool is reached, so no asset sits unused."""
     characters = _load_characters()
     for ct, map_name in _CHALLENGE_TYPE_TO_MAP.items():
         pool = {c["folder"] for c in characters if map_name in c.get("maps", [])}
@@ -52,10 +57,13 @@ def test_selection_deterministic_and_map_scoped():
 
 
 def test_unknown_challenge_type_falls_back_to_default():
+    """A map with no victim registry yields None, never a character from another map."""
     assert select_victim_split_dir(123, 99) is None
 
 
 def test_selection_respects_slope():
+    """On a 45 degree surface only characters rated for that tilt are drawn.
+    Flat ground still reaches the rest of the pool."""
     characters = _load_characters()
     steep_ok = {
         c["folder"] for c in characters
@@ -73,6 +81,8 @@ def test_selection_respects_slope():
 @pytest.mark.full
 @pytest.mark.parametrize("ct", sorted(_CHALLENGE_TYPE_TO_MAP))
 def test_selected_victim_spawns_grounded(ct):
+    """The chosen character loads with its feet on the surface and a real height.
+    That holds for every map over a spread of eight seeds, and the centre stays finite."""
     cli = p.connect(p.DIRECT)
     try:
         for seed in range(0, 56, 7):

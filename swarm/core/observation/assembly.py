@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Turn a layout of named sensor channels into observation dicts and their gym spaces."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
@@ -32,6 +34,7 @@ class UnknownSensorChannelError(KeyError):
 
 
 def _channels_for(channel_ids: Sequence[str]):
+    """Look each id up in the registry, raising UnknownSensorChannelError on the first one not there."""
     resolved = []
     for channel_id in channel_ids:
         channel = OBSERVATION_CHANNELS.get(channel_id)
@@ -42,10 +45,12 @@ def _channels_for(channel_ids: Sequence[str]):
 
 
 def _is_image(channels) -> bool:
+    """True when any channel in the group renders a picture rather than a flat vector."""
     return any(channel.kind == "image" for channel in channels)
 
 
 def _image_channel(channels, key: str):
+    """The single channel behind an image key; declaring more than one is a layout error."""
     if len(channels) != 1:
         raise ValueError(f"image key '{key}' must declare exactly one channel")
     return channels[0]

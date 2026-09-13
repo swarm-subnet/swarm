@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The office room dropped inside the warehouse: which wall carries which furnishing, and its door side."""
+
 from ._shared import *
 from .geometry import corner_points, spawn_walls_with_entry
 from .loader import AssetLoader
@@ -29,6 +31,7 @@ from .placement import (
 
 
 def wall_role_map(seed):
+    """Seeded shuffle pairing every office wall with one furnishing role."""
     rng = random.Random(int(seed) + 1201)
     slots = list(WALL_SLOTS)
     roles = list(WALL_ROLES)
@@ -38,6 +41,7 @@ def wall_role_map(seed):
 
 
 def _embedded_office_role_map(seed, office_center_xy, entry_target_xy=None):
+    """Same pairing, but the entry lands on a free wall pointing at the personnel door instead of at random."""
     cx, cy = office_center_xy
     blocked_slots = {
         "east" if cx >= 0.0 else "west",
@@ -87,6 +91,7 @@ def _embedded_office_role_map(seed, office_center_xy, entry_target_xy=None):
 
 
 def build_embedded_office(floor_top_z, area_layout, wall_info, cli=0, seed=0):
+    """Spawn the walls and furniture inside the OFFICE zone, restoring the room globals on the way out."""
     if not ENABLE_EMBEDDED_OFFICE_MAP:
         return {"office_map_embedded": False}
     office_area = (area_layout or {}).get("OFFICE")

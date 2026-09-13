@@ -27,6 +27,7 @@ from .placement import *
 # SECTION 11: PyBullet spawning (with physicsClientId)
 # ---------------------------------------------------------------------------
 def _collision_shape_for_obj(cli: int, obj_path: str, scale: float) -> int:
+    """Concave trimesh collider for a mesh at one scale, cached per physics client."""
     cli_cache = _CLI_COL_CACHE.setdefault(cli, {})
     key = (obj_path, round(scale, 4))
     cached = cli_cache.get(key)
@@ -49,6 +50,11 @@ def _collision_shape_for_obj(cli: int, obj_path: str, scale: float) -> int:
 def _spawn_colored_obj(
     cli: int, *, obj_path: str, scale: float, double_sided_flags: int,
 ) -> List[int]:
+    """Visual shapes for a mesh, one per material tinted from its MTL, cached per client.
+
+    A mesh with no usable material split falls back to a single shape loaded
+    straight from the file.
+    """
     cli_cache = _CLI_VIS_CACHE.setdefault(cli, {})
     use_file_visuals_only = os.environ.get("SWARM_FOREST_FILE_VISUALS_ONLY", "0") == "1"
     cache_key = (
@@ -118,6 +124,7 @@ def _spawn_asset_instance(
     x: float, y: float, yaw_deg: float,
     scale: float, flags: int, enable_collision: bool = True,
 ) -> bool:
+    """Place one asset at (x, y) with its base on the floor; False when the mesh is missing."""
     obj_path = os.path.join(FOREST_ASSET_DIR, category, obj_name)
     if not os.path.exists(obj_path):
         return False
@@ -191,6 +198,11 @@ def _spawn_instances_as_single_multibody(
     rng: random.Random, flags: int, class_name: str,
     enable_collision: bool, fixed_yaw_deg: Optional[float] = None,
 ) -> int:
+    """Pack many props into batched bodies of at most TREE_BATCH_MAX_LINKS links.
+
+    Returns how many were placed. An asset whose visuals alone exceed the link
+    budget is spawned on its own instead.
+    """
     if not instances:
         return 0
 
@@ -207,6 +219,7 @@ def _spawn_instances_as_single_multibody(
     placed_count = 0
 
     def _flush() -> None:
+        """Emit the buffered links as one body and empty every buffer."""
         nonlocal link_masses, link_col, link_vis, link_pos, link_orn
         nonlocal link_ifp, link_ifo, link_parent, link_jtype, link_jaxis
         if not link_vis:
@@ -316,6 +329,13 @@ def _spawn_forest_assets(
     safe_zones: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_radius: float = 0.0,
 ) -> dict:
+    """Populate a world for one seed and difficulty, returning the tree and prop body ids.
+
+    Counts come from the difficulty table, placement keeps clear of the space
+    already taken by earlier classes and, logs aside, of the safe zones, and
+    trees are spawned before the smaller props so the two id ranges stay
+    separable.
+    """
     diff_cfg = DIFFICULTY_CONFIG[difficulty_id]
     flags = (
         p.VISUAL_SHAPE_DOUBLE_SIDED
@@ -328,6 +348,7 @@ def _spawn_forest_assets(
     safe_zone_rects = _safe_zone_rects(safe_zone_circles)
 
     def _scaled_count(cls: str, base: int) -> int:
+        """A class's base population after the global, per-class and difficulty multipliers."""
         mul = CLASS_DENSITY_MULTIPLIER.get(cls, 1.0)
         mul *= DIFFICULTY_DENSITY_MULTIPLIER.get(difficulty_id, 1.0)
         if cls == "trees":

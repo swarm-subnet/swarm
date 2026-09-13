@@ -15,12 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Peak and hill scattering for the mountains-only map, laid over spawned terrain."""
+
 from ._shared import *
 from .terrain import _cache, _ShapeCache, _spawn_terrain
 
 
 @dataclass
 class _Placed:
+    """A claimed disc on the plan: centre and the radius that keeps neighbours off."""
     x: float
     y: float
     radius: float
@@ -29,6 +32,7 @@ class _Placed:
 def _too_close(
     x: float, y: float, radius: float, placed: List[_Placed], max_overlap: float = 0.60
 ) -> bool:
+    """True when (x, y) crowds a claimed disc past the allowed overlap fraction."""
     for p0 in placed:
         min_dist = (radius + p0.radius) * (1.0 - max_overlap)
         dx = x - p0.x
@@ -39,24 +43,29 @@ def _too_close(
 
 
 def _estimate_radius_peak(gs: float, scale_var: float) -> float:
+    """Ground footprint of a peak mesh at this grid scale and size variation."""
     return 95.0 * gs * scale_var * 0.06
 
 
 def _estimate_radius_hill(gs: float, scale: float) -> float:
+    """Ground footprint of a hill mesh, 1.8 times its scaled size."""
     return scale * gs * 1.8
 
 
 def _sample_point_square(rng: random.Random, half: float) -> Tuple[float, float]:
+    """Uniform (x, y) inside the square of the given half-width."""
     return rng.uniform(-half, half), rng.uniform(-half, half)
 
 
 def _sample_point_circle(rng: random.Random, radius: float) -> Tuple[float, float]:
+    """Uniform (x, y) inside the disc of the given radius, area-weighted."""
     a = rng.uniform(0, 2 * math.pi)
     r = math.sqrt(rng.uniform(0, 1)) * radius
     return r * math.cos(a), r * math.sin(a)
 
 
 def _hill_objs() -> List[str]:
+    """Sorted paths of every non-peak OBJ in the mountain asset directory."""
     cands = []
     for fn in os.listdir(MOUNTAIN_DIR):
         if fn.lower().endswith(".obj") and "peak" not in fn.lower():
@@ -78,6 +87,7 @@ def _spawn_mesh_snapped(
     tex_id: Optional[int] = None,
     get_z: Optional[Callable] = None,
 ) -> Tuple[int, float]:
+    """Drop a mesh onto the terrain under (x, y), sunk by sink_z; returns its body id and height."""
     if rgba is None:
         rgba = SNOW
     vis, col = cache.get(cli, path, scale_vec, rgba)
@@ -107,6 +117,10 @@ def _build_mountains_only(
     safe_zones: List[Tuple[float, float]],
     safe_zone_radius: float,
 ) -> Tuple[Callable, List]:
+    """Scatter peaks and hills across the map and its surround.
+
+    Returns the terrain height lookup and the (x, y, height) of every peak spawned.
+    """
     rng = random.Random(seed)
     map_size = 500.0 * gs
     half = map_size / 2.0
@@ -118,6 +132,7 @@ def _build_mountains_only(
     if not hills:
 
         def flat_z(x, y):
+            """Height lookup for the assetless fallback world: ground everywhere."""
             return 0.0
 
         return flat_z, []
@@ -142,6 +157,7 @@ def _build_mountains_only(
     peak_heights: List[Tuple[float, float, float]] = []
 
     def spawn_peak(x, y, is_edge=False, scale_var=None):
+        """Place one snow-capped summit mesh and record its (x, y, height)."""
         if not os.path.exists(PEAK_OBJ):
             return
         if scale_var is None:
@@ -165,6 +181,7 @@ def _build_mountains_only(
         peak_heights.append((x, y, h))
 
     def spawn_hill(x, y, scale):
+        """Place a random mound mesh at a half-unit quantised scale."""
         path = rng.choice(hills)
         s = round(scale * 2) / 2
         sz = round(s * 0.55 * 2) / 2

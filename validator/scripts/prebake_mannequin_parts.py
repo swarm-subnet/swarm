@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Split a mannequin OBJ into one OBJ and MTL per material so each part spawns on its own."""
+
 from __future__ import annotations
 
 import argparse
@@ -27,11 +29,13 @@ from typing import Iterable, Optional
 
 
 def _safe_token(value: str) -> str:
+    """Reduce a material name to alphanumerics, dashes and underscores for use as a filename."""
     token = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in value)
     return token or "default"
 
 
 def _obj_mtl_path(obj_path: str) -> Optional[str]:
+    """Locate the material library an OBJ names in mtllib, falling back to the sibling .mtl."""
     obj_dir = os.path.dirname(obj_path)
     with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -45,6 +49,7 @@ def _obj_mtl_path(obj_path: str) -> Optional[str]:
 
 
 def _parse_mtl_materials(mtl_path: Optional[str]) -> dict[str, dict]:
+    """Map every material name to its verbatim lines, clamped diffuse colour and texture reference."""
     if not mtl_path or not os.path.exists(mtl_path):
         return {}
     materials: dict[str, dict] = {}
@@ -82,6 +87,11 @@ def _parse_mtl_materials(mtl_path: Optional[str]) -> dict[str, dict]:
 
 
 def _prebake(obj_path: str, out_dir: str, scale: float = 1.0) -> Iterable[str]:
+    """Write one OBJ and MTL per material into out_dir, re-indexed and scaled, and list what was written.
+
+    Raises SystemExit when the source has no materials or two material names sanitise to
+    the same filename, since one part would otherwise silently overwrite the other.
+    """
     mtl_path = _obj_mtl_path(obj_path)
     material_info = _parse_mtl_materials(mtl_path)
 
@@ -231,6 +241,7 @@ def _prebake(obj_path: str, out_dir: str, scale: float = 1.0) -> Iterable[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Split the OBJ named on the command line and print each part written; 2 if the source is absent."""
     repo_root = Path(__file__).resolve().parents[2]
     default_obj = repo_root / "swarm" / "assets" / "maps" / "custom" / "people" / "open_mannequin_raw" / "mannequin_a_raw.obj"
     default_out = default_obj.parent / "split"

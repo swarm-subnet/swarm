@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Wiring between _evaluate_seeds and the container evaluator: seed indices translated both ways, and what a drained pool means."""
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,28 +25,35 @@ from swarm.validator.utils_parts.evaluation import _evaluate_seeds
 
 
 class _StubEvaluator:
+    """An evaluator that records the keyword arguments it was handed and answers with canned per-seed results."""
     def __init__(self, results):
+        """Store the canned results and start with nothing captured."""
         self._results = results
         self.captured = None
 
     async def evaluate_seeds_parallel(self, **kwargs):
+        """Capture the call's keyword arguments for inspection and hand back the canned results."""
         self.captured = kwargs
         return self._results
 
 
 def _stub_task():
+    """A task stand-in carrying only the challenge type and moving-platform flag the caller reads."""
     return SimpleNamespace(challenge_type=1, moving_platform=False)
 
 
 def _stub_self(results):
+    """A validator stand-in whose docker_evaluator is the recording stub."""
     return SimpleNamespace(docker_evaluator=_StubEvaluator(results))
 
 
 @pytest.mark.asyncio
 async def test_feeder_indexes_map_between_absolute_and_valid_positions():
+    """A seed with no built task shifts the numbering, so pending indices and feeder grants both reach the evaluator renumbered over the built tasks."""
     tasks = [_stub_task(), None, _stub_task()]
 
     async def feeder(free_slots):
+        """Grant the absolute seed indices 0 and 2, and report the pool drained."""
         return [0, 2], True
 
     stub = _stub_self([None, None])
@@ -67,9 +75,11 @@ async def test_feeder_indexes_map_between_absolute_and_valid_positions():
 
 @pytest.mark.asyncio
 async def test_sparse_feeder_results_score_nothing():
+    """A feeder that leases nothing leaves no scores and no seed details, rather than scoring seeds that never flew."""
     tasks = [_stub_task(), _stub_task(), _stub_task()]
 
     async def feeder(free_slots):
+        """Lease no seeds at all and report the pool drained."""
         return [], True
 
     stub = _stub_self([None, None, None])
@@ -87,6 +97,7 @@ async def test_sparse_feeder_results_score_nothing():
 
 
 def test_pool_drained_ignores_seeds_flying_elsewhere():
+    """Drained means nothing granted and nothing pending here, whatever other validators are still flying."""
     from swarm.validator.utils_parts.run_task import _pool_drained
 
     assert _pool_drained([], 0) is True

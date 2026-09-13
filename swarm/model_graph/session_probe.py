@@ -46,6 +46,7 @@ from .runner import GraphRunner
 
 
 def _zero_observation(manifest: GraphManifest, num_drones: int | None) -> dict[str, np.ndarray]:
+    """Zero-filled float32 arrays for every key the family's graph contract declares."""
     contract = FAMILY_GRAPH_CONTRACTS[manifest.family_id]
     observation = {}
     for key, shape in contract["observations"].items():
@@ -54,6 +55,7 @@ def _zero_observation(manifest: GraphManifest, num_drones: int | None) -> dict[s
 
 
 def _drone_counts(family_id: str) -> tuple[int | None, ...]:
+    """Both ends of the swarm-axis range to probe, or a single None for a fixed-size family."""
     from .constants import family_has_swarm_axis
 
     if family_has_swarm_axis(family_id):
@@ -83,6 +85,7 @@ def probe_runner(runner: GraphRunner) -> None:
 
 
 def _probe_child(artifact: str, connection) -> None:
+    """Subprocess body: cap the address space, probe the artifact, send the outcome record back."""
     try:
         if os.name == "posix":
             resource.setrlimit(

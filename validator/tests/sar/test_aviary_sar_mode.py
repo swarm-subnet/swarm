@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""MovingDroneAviary under SAR mode: the world it loads and the clue it publishes."""
+
 from __future__ import annotations
 
 import contextlib
@@ -27,6 +29,7 @@ from swarm.protocol import MapTask
 
 
 def _task(challenge_type=2):
+    """Build the seeded SAR MapTask these checks fly, on the given challenge type."""
     return MapTask(
         map_seed=2024,
         start=(0.0, 0.0, 1.5),
@@ -40,6 +43,7 @@ def _task(challenge_type=2):
 
 
 def _build_aviary(sar_mode: bool):
+    """Return an already reset MovingDroneAviary on the open map, with stdout swallowed."""
     from swarm.core.moving_drone import MovingDroneAviary
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -55,6 +59,7 @@ def _build_aviary(sar_mode: bool):
 
 @pytest.mark.timeout(180)
 def test_sar_mode_loads_sar_world():
+    """The env comes up holding a SARWorld with at least one victim and a search centre."""
     env = _build_aviary(sar_mode=True)
     try:
         assert env.sar_mode is True
@@ -70,6 +75,8 @@ def test_sar_mode_loads_sar_world():
 
 @pytest.mark.timeout(180)
 def test_sar_mode_writes_search_centre_into_env_and_task():
+    """Both copies agree with the centre the SARWorld chose.
+    The clue handed to the miner cannot disagree with the scene being flown."""
     env = _build_aviary(sar_mode=True)
     try:
         sc = env.sar_world.search_centre
@@ -87,6 +94,8 @@ def test_sar_mode_writes_search_centre_into_env_and_task():
 
 @pytest.mark.timeout(180)
 def test_sar_mode_suppresses_open_scenery():
+    """Nothing outside the registered victim list wears the VICTIM tag.
+    A stray prop can never be scored as a rescue."""
     env = _build_aviary(sar_mode=True)
     try:
         body_tags = env.sar_world.body_tags

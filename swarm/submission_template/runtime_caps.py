@@ -31,6 +31,7 @@ from typing import Callable, Optional
 
 @dataclass(frozen=True)
 class ThreadCaps:
+    """Thread ceilings for one run: the ONNX Runtime pair plus optional torch overrides."""
     intra_op: int
     inter_op: int
     torch_intra_op: Optional[int] = None
@@ -39,14 +40,17 @@ class ThreadCaps:
 
     @property
     def effective_torch_intra_op(self) -> int:
+        """The torch intra-op ceiling, falling back to the shared one when unset."""
         return self.torch_intra_op or self.intra_op
 
     @property
     def effective_torch_inter_op(self) -> int:
+        """The torch inter-op ceiling, falling back to the shared one when unset."""
         return self.torch_inter_op or self.inter_op
 
 
 def _positive_env(name: str, default: int) -> int:
+    """Read an environment variable as an int of at least 1, or the default when it will not parse."""
     try:
         return max(1, int(os.environ.get(name, str(default))))
     except (TypeError, ValueError):
@@ -54,6 +58,7 @@ def _positive_env(name: str, default: int) -> int:
 
 
 def _configured_caps() -> Optional[ThreadCaps]:
+    """Ceilings read from SWARM_INFERENCE_THREADS, or the torch-only variables, else None."""
     raw = os.environ.get("SWARM_INFERENCE_THREADS")
     if raw in (None, ""):
         torch_raw = (
@@ -99,6 +104,7 @@ def _configured_caps() -> Optional[ThreadCaps]:
 
 
 def _bounded(current: object, ceiling: int) -> int:
+    """Keep a requested thread count under the ceiling, treating 0 or junk as unset."""
     try:
         value = int(current)
     except (TypeError, ValueError):
@@ -107,6 +113,7 @@ def _bounded(current: object, ceiling: int) -> int:
 
 
 def _patch_onnxruntime(module: ModuleType, caps: ThreadCaps) -> None:
+    """Wrap InferenceSession so every session's thread options are clamped, once per class."""
     session_class = getattr(module, "InferenceSession", None)
     options_class = getattr(module, "SessionOptions", None)
     if session_class is None or options_class is None:
@@ -117,6 +124,7 @@ def _patch_onnxruntime(module: ModuleType, caps: ThreadCaps) -> None:
 
     @functools.wraps(original)
     def capped_init(self, path_or_bytes, sess_options=None, *args, **kwargs):
+        """Supply session options when the caller gave none and clamp both counts before building."""
         options = sess_options if sess_options is not None else options_class()
         try:
             options.intra_op_num_threads = _bounded(
@@ -137,6 +145,7 @@ def _patch_onnxruntime(module: ModuleType, caps: ThreadCaps) -> None:
 
 
 def _patch_torch(module: ModuleType, caps: ThreadCaps) -> None:
+    """Apply both counts to torch at once and clamp any later call that tries to raise them."""
     intra_op = caps.effective_torch_intra_op
     inter_op = caps.effective_torch_inter_op
     original_set = getattr(module, "set_num_threads", None)
@@ -147,6 +156,7 @@ def _patch_torch(module: ModuleType, caps: ThreadCaps) -> None:
 
         @functools.wraps(original_set)
         def capped_set_num_threads(value):
+            """Forward the request to torch, never above the intra-op ceiling."""
             return original_set(_bounded(value, intra_op))
 
         capped_set_num_threads.__swarm_thread_capped__ = True
@@ -163,6 +173,7 @@ def _patch_torch(module: ModuleType, caps: ThreadCaps) -> None:
 
         @functools.wraps(original_interop)
         def capped_set_num_interop_threads(value):
+            """Forward the request under the inter-op ceiling, swallowing the too-late RuntimeError."""
             try:
                 return original_interop(_bounded(value, inter_op))
             except RuntimeError:
@@ -179,28 +190,35 @@ _PATCHERS: dict[str, Callable[[ModuleType, ThreadCaps], None]] = {
 
 
 class _PostImportLoader(importlib.abc.Loader):
+    """Loader wrapper that fires a callback on the module the moment it finishes executing."""
     def __init__(
         self,
         loader: importlib.abc.Loader,
         callback: Callable[[ModuleType], None],
     ) -> None:
+        """Hold the real loader and the callback to run after it."""
         self._loader = loader
         self._callback = callback
 
     def create_module(self, spec):
+        """Delegate creation to the wrapped loader, or let Python use the default machinery."""
         create = getattr(self._loader, "create_module", None)
         return create(spec) if create is not None else None
 
     def exec_module(self, module: ModuleType) -> None:
+        """Run the wrapped loader, then hand the freshly executed module to the callback."""
         self._loader.exec_module(module)
         self._callback(module)
 
 
 class _ThreadCapFinder(importlib.abc.MetaPathFinder):
+    """Meta-path finder that arms torch and onnxruntime with the caps as miner code imports them."""
     def __init__(self, caps: ThreadCaps) -> None:
+        """Hold the ceilings the wrapped loaders will apply."""
         self._caps = caps
 
     def find_spec(self, fullname, path=None, target=None):
+        """Wrap the spec's loader for a module a patcher covers, otherwise stand aside."""
         if fullname == "onnxruntime" and not self._caps.onnxruntime_enabled:
             return None
         patcher = _PATCHERS.get(fullname)

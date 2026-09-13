@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The info dict is the scorer's only channel, so every key it reads must be there from the start."""
 from __future__ import annotations
 
 import contextlib
@@ -26,6 +27,7 @@ from swarm.protocol import MapTask
 
 
 def _task():
+    """Return a seed-314 search-and-rescue MapTask stamped with version 5.0.0."""
     return MapTask(
         map_seed=314,
         start=(0.0, 0.0, 1.5),
@@ -39,6 +41,7 @@ def _task():
 
 
 def _build():
+    """Return a reset SAR aviary on the stock task, with its startup output swallowed."""
     from swarm.core.moving_drone import MovingDroneAviary
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -51,6 +54,7 @@ def _build():
 
 @pytest.mark.timeout(180)
 def test_info_carries_sar_telemetry_fields():
+    """Every distance, dwell and timing key is present before a step, with both versions stamped."""
     env = _build()
     try:
         info = env._computeInfo()

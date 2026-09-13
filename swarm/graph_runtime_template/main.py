@@ -32,6 +32,11 @@ from swarm.submission_template.main import wait_for_start_gate
 
 
 def main() -> int:
+    """Wait on the start gate, serve the graph over RPC, and return the server's exit code.
+
+    The artifact, listening port and schema come from SWARM_MODEL_GRAPH_ARTIFACT,
+    SWARM_AGENT_PORT and the agent.capnp staged beside this file.
+    """
     wait_for_start_gate()
     artifact = Path(
         os.environ.get("SWARM_MODEL_GRAPH_ARTIFACT", "/workspace/submission/model_graph.zip")

@@ -37,9 +37,11 @@ from swarm import cli
 
 
 def test_visualize_dispatches_with_resolved_type_and_family(monkeypatch):
+    """The resolved map type and family are handed to the viewer, at the front of the argv it is launched with."""
     captured: dict = {}
 
     def _fake_main(argv):
+        """Keep the argv the viewer was launched with instead of opening a window."""
         captured["argv"] = argv
 
     monkeypatch.setattr(visualize_map, "main", _fake_main)
@@ -49,6 +51,7 @@ def test_visualize_dispatches_with_resolved_type_and_family(monkeypatch):
 
 
 def test_visualize_defaults_family_to_autopilot(monkeypatch):
+    """With no family named on the command line, the viewer is still told one outright: cf_autopilot."""
     captured: dict = {}
     monkeypatch.setattr(visualize_map, "main", lambda argv: captured.setdefault("argv", argv))
 
@@ -58,11 +61,13 @@ def test_visualize_defaults_family_to_autopilot(monkeypatch):
 
 
 def test_visualize_requires_type_seed_or_summary(monkeypatch):
+    """Nothing to open means a non-zero exit and no viewer launched, rather than an arbitrary map."""
     monkeypatch.setattr(visualize_map, "main", lambda argv: pytest.fail("must not launch"))
     assert cli.main(["visualize"]) == 1
 
 
 def test_visualize_rejects_mismatched_explicit_type(tmp_path, monkeypatch):
+    """A map type contradicting the one the seed was saved under is refused before the viewer starts."""
     seed_file = tmp_path / "seeds.json"
     seed_file.write_text(json.dumps({"type1_city": [42]}))
     monkeypatch.setattr(visualize_map, "main", lambda argv: pytest.fail("must not launch"))
@@ -73,6 +78,7 @@ def test_visualize_rejects_mismatched_explicit_type(tmp_path, monkeypatch):
 
 
 def test_visualize_failed_lists_rows_without_index(tmp_path, monkeypatch, capsys):
+    """Asking for the losing seeds with no index prints them and why each one lost, and opens nothing."""
     summary = tmp_path / "summary.json"
     summary.write_text(
         json.dumps(
@@ -97,6 +103,7 @@ def test_visualize_failed_lists_rows_without_index(tmp_path, monkeypatch, capsys
 
 
 def test_visualize_failed_index_opens_the_chosen_seed(tmp_path, monkeypatch):
+    """Picking a losing seed by its printed number opens that seed on the map type it actually ran."""
     summary = tmp_path / "summary.json"
     summary.write_text(
         json.dumps(
@@ -131,17 +138,20 @@ def test_visualize_failed_index_opens_the_chosen_seed(tmp_path, monkeypatch):
 
 
 def test_video_requires_model_to_exist(tmp_path):
+    """A model path pointing at nothing stops the command before any rendering is attempted."""
     missing = tmp_path / "no_such_model.zip"
     assert cli.main(["video", "--model", str(missing), "--seed", "1", "--type", "1"]) == 1
 
 
 def test_video_requires_seed_or_seed_file(tmp_path):
+    """A model given nothing to fly is refused: either one seed and its type, or a whole seed file."""
     model = tmp_path / "model.zip"
     model.write_bytes(b"not a real zip, existence is all that's checked here")
     assert cli.main(["video", "--model", str(model)]) == 1
 
 
 def test_video_dispatches_with_family(tmp_path, monkeypatch):
+    """The recorder is launched with the family it was asked for, so the flight is filmed under those rules."""
     model = tmp_path / "model.zip"
     model.write_bytes(b"placeholder")
     captured: dict = {}
@@ -171,12 +181,14 @@ def test_video_dispatches_with_family(tmp_path, monkeypatch):
     ],
 )
 def test_build_task_is_family_aware(family_id, expected_drones):
+    """The sampled task keeps the family it was built for, and the swarm families bring five drones, not one."""
     task = generate_video.build_task(12345, 1, family_id=family_id)
     assert task.family_id == family_id
     assert getattr(task, "num_drones", 1) == expected_drones
 
 
 def test_build_task_defaults_to_autopilot():
+    """A task sampled with no family named comes back as an autopilot one, never with the field unset."""
     task = generate_video.build_task(999, 2)
     assert task.family_id == "cf_autopilot"
 
@@ -209,6 +221,7 @@ def test_seed_file_from_the_benchmark_is_readable(tmp_path):
 
 
 def test_seed_lookup_finds_a_seed_in_a_real_seed_file(tmp_path):
+    """A seed stored under the warehouse group resolves back to map type 5 through the file's envelope."""
     seed_file = tmp_path / "bench_seeds.json"
     groups = _write_real_seed_file(seed_file)
     warehouse_seed = groups["type5_warehouse"][0]
@@ -217,6 +230,7 @@ def test_seed_lookup_finds_a_seed_in_a_real_seed_file(tmp_path):
 
 
 def test_seed_file_family_mismatch_is_rejected(tmp_path):
+    """Reading a seed file under the wrong family raises, rather than quietly yielding no jobs."""
     seed_file = tmp_path / "bench_seeds.json"
     _write_real_seed_file(seed_file, family_id="cf_autopilot")
 
@@ -225,6 +239,7 @@ def test_seed_file_family_mismatch_is_rejected(tmp_path):
 
 
 def test_video_rejects_seed_file_combined_with_seed(tmp_path, monkeypatch):
+    """A whole seed file and a single seed together is contradictory, so the recorder is never launched."""
     model = tmp_path / "model.zip"
     model.write_bytes(b"placeholder")
     seed_file = tmp_path / "bench_seeds.json"
@@ -290,6 +305,7 @@ def test_visualizer_env_matches_family_runtime(
 
 
 def _write_bench_log(path, seeds=8):
+    """Write a log carrying the summary lines the report command parses its fields out of."""
     path.write_text(
         "=== BENCHMARK RESULTS ===\n"
         f"Seeds evaluated: {seeds}\n"
@@ -309,6 +325,7 @@ def test_report_picks_up_the_per_run_log(tmp_path, monkeypatch, capsys):
 
 
 def test_report_prefers_the_newest_run(tmp_path, monkeypatch, capsys):
+    """With several of this user's logs on disk, the most recently written one is what gets summarized."""
     monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
     old = tmp_path / f"bench_full_eval_{os.getuid()}_1.log"
     new = tmp_path / f"bench_full_eval_{os.getuid()}_2.log"
@@ -322,6 +339,7 @@ def test_report_prefers_the_newest_run(tmp_path, monkeypatch, capsys):
 
 
 def test_report_explicit_input_still_wins(tmp_path, monkeypatch, capsys):
+    """A path named on the command line is read even when an auto-discovered log is sitting beside it."""
     monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
     _write_bench_log(tmp_path / f"bench_full_eval_{os.getuid()}_9.log")
     chosen = tmp_path / "mine.log"
@@ -341,6 +359,7 @@ def test_report_ignores_another_users_log(tmp_path, monkeypatch, capsys):
 
 
 def test_report_without_any_log_explains_itself(tmp_path, monkeypatch, capsys):
+    """With nothing on disk to summarize, the command fails and says to run the benchmark first."""
     monkeypatch.setattr(cli, "DEFAULT_BENCH_LOG", tmp_path / "bench_full_eval.log")
     assert cli.main(["report"]) == 1
     assert "Run `swarm benchmark` first" in capsys.readouterr().err
