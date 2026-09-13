@@ -64,3 +64,16 @@ repos:
     hooks:
       - id: shellcheck
         args: [--severity=warning]
+
+  # Scoped to the diff rather than the tree: the repository predates the rule, so a whole-tree
+  # check would fail on every commit for definitions nobody in the change touched. The script
+  # works out that scope itself from git, which is why it takes no file list here and why CI
+  # running pre-commit with --all-files does not widen it. Add --all once the backfill lands.
+  - repo: local
+    hooks:
+      - id: docstrings
+        name: docstrings on changed definitions
+        entry: python3 scripts/check_docstrings.py
+        language: system
+        pass_filenames: false
+        always_run: true
