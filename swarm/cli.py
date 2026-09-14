@@ -15,6 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The ``swarm`` console entry point.
+
+Wires every subcommand: environment doctor, benchmark runs, model packaging, verification and
+submission, log reports, champion download, the interactive visualizer and video rendering.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -152,6 +158,7 @@ TYPE_LABELS = {
 
 @dataclass
 class DoctorCheck:
+    """One environment probe's verdict: pass or fail, a detail line, and whether it is fatal."""
     name: str
     ok: bool
     detail: str
@@ -160,6 +167,7 @@ class DoctorCheck:
 
 @dataclass(frozen=True)
 class VisualizeTarget:
+    """What the viewer is asked to open: map type, optional seed, family, and how it was resolved."""
     challenge_type: int
     seed: Optional[int] = None
     family_id: str = "cf_autopilot"
@@ -168,6 +176,7 @@ class VisualizeTarget:
 
 @dataclass(frozen=True)
 class PackagedModelArtifact:
+    """The zip that packaging wrote, with its family, interface version, digest and file count."""
     family_id: str
     interface_version: str
     output_zip: Path
@@ -176,6 +185,7 @@ class PackagedModelArtifact:
 
 
 def _check_module_available(module_name: str) -> DoctorCheck:
+    """Pass when importlib can find a spec for the named import, without importing it."""
     spec = importlib.util.find_spec(module_name)
     return DoctorCheck(
         name=f"module:{module_name}",
@@ -186,6 +196,7 @@ def _check_module_available(module_name: str) -> DoctorCheck:
 
 
 def _check_python_version() -> DoctorCheck:
+    """Pass on 3.11 or newer; the detail carries the running interpreter's exact release."""
     ok = sys.version_info >= (3, 11)
     return DoctorCheck(
         name="python",
@@ -196,6 +207,7 @@ def _check_python_version() -> DoctorCheck:
 
 
 def _check_docker_binary() -> DoctorCheck:
+    """Run ``docker --version`` and report its output, or that the command is not installed."""
     try:
         result = subprocess.run(
             ["docker", "--version"],
@@ -211,6 +223,7 @@ def _check_docker_binary() -> DoctorCheck:
 
 
 def _check_binary_available(binary_name: str, *, required: bool = True) -> DoctorCheck:
+    """Look the named executable up on PATH and report where it resolved."""
     path = shutil.which(binary_name)
     return DoctorCheck(
         name=f"binary:{binary_name}",
@@ -221,6 +234,7 @@ def _check_binary_available(binary_name: str, *, required: bool = True) -> Docto
 
 
 def _binary_capabilities(path: str) -> set[str]:
+    """The ``cap_*`` privileges getcap reports for a file; empty when it cannot be read."""
     getcap = shutil.which("getcap")
     if getcap is None:
         return set()
@@ -246,6 +260,10 @@ def _binary_capabilities(path: str) -> set[str]:
 
 
 def _check_sandbox_lockdown_permissions() -> DoctorCheck:
+    """Pass when the sandbox is allowed to cut a container off the network.
+
+    That means running as root, or nsenter holding cap_sys_admin and iptables cap_net_admin.
+    """
     nsenter_path = shutil.which("nsenter")
     iptables_path = shutil.which("iptables")
     if nsenter_path is None or iptables_path is None:
@@ -294,6 +312,7 @@ def _check_sandbox_lockdown_permissions() -> DoctorCheck:
 
 
 def _check_docker_daemon() -> DoctorCheck:
+    """Pass when ``docker info`` answers inside 15 seconds, so the daemon is reachable."""
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -317,6 +336,7 @@ def _check_docker_daemon() -> DoctorCheck:
 
 
 def _check_writable_dir(path: Path, name: str) -> DoctorCheck:
+    """Create the folder if it is absent and prove a temporary file can be opened inside it."""
     try:
         path.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=path, delete=True):
@@ -327,6 +347,7 @@ def _check_writable_dir(path: Path, name: str) -> DoctorCheck:
 
 
 def _check_submission_template() -> DoctorCheck:
+    """Pass when the shipped template folder still holds all four files a miner builds on."""
     template_dir = REPO_ROOT / "swarm" / "submission_template"
     missing = [f for f in sorted(REQUIRED_TEMPLATE_FILES) if not (template_dir / f).exists()]
     if missing:
@@ -340,6 +361,7 @@ def _check_submission_template() -> DoctorCheck:
 
 
 def _check_benchmark_engine() -> DoctorCheck:
+    """Pass when swarm.benchmark.engine is importable from this checkout."""
     spec = importlib.util.find_spec("swarm.benchmark.engine")
     if spec is not None:
         return DoctorCheck("benchmark_engine", True, "swarm.benchmark.engine", True)
@@ -347,6 +369,7 @@ def _check_benchmark_engine() -> DoctorCheck:
 
 
 def _check_env_var(name: str, required: bool = False) -> DoctorCheck:
+    """Report whether the named environment variable holds a non-empty value."""
     value = os.getenv(name)
     if value:
         return DoctorCheck(name, True, "set", required)
@@ -354,10 +377,15 @@ def _check_env_var(name: str, required: bool = False) -> DoctorCheck:
 
 
 def _runtime_state_dir() -> Path:
+    """The swarm/state folder under the repository root, where the validator writes at run time."""
     return REPO_ROOT / "swarm" / "state"
 
 
 def _run_doctor_checks() -> list[DoctorCheck]:
+    """Every readiness probe, in the order the report prints them.
+
+    Interpreter, Docker, sandbox privileges, imports, writable folders, template and engine.
+    """
     from swarm.constants import MODEL_DIR
 
     return [
@@ -378,6 +406,7 @@ def _run_doctor_checks() -> list[DoctorCheck]:
 
 
 def _print_doctor_text(checks: list[DoctorCheck]) -> None:
+    """Print a header and one OK/FAIL line per probe, marked required or optional."""
     print("Swarm Doctor")
     for check in checks:
         status = "OK" if check.ok else "FAIL"
@@ -386,6 +415,7 @@ def _print_doctor_text(checks: list[DoctorCheck]) -> None:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Print the environment report and exit non-zero when a required probe failed."""
     checks = _run_doctor_checks()
     _print_doctor_text(checks)
     failed_required = any((not c.ok) and c.required for c in checks)
@@ -393,6 +423,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
+    """Translate the parsed flags into the argv list swarm.benchmark.engine expects."""
     argv = ["--model", str(args.model)]
     if args.uid is not None:
         argv.extend(["--uid", str(args.uid)])
@@ -417,12 +448,17 @@ def _build_benchmark_argv(args: argparse.Namespace) -> list[str]:
 
 
 def _champion_zip_name(uid: int, family_id: Optional[str]) -> str:
+    """The local filename a downloaded crown is saved under, carrying the family when one was asked for."""
     if family_id:
         return f"champion_{family_id}_UID_{uid}.zip"
     return f"champion_UID_{uid}.zip"
 
 
 def _download_champion_model(family_id: Optional[str] = None) -> Optional[Path]:
+    """Fetch the released crown zip from the backend, reusing a cached copy whose hash matches.
+
+    None whenever the fetch fails, the crown is unreleased, or the digest does not check out.
+    """
     import httpx
 
     base_url = os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com").rstrip("/")
@@ -469,6 +505,7 @@ def _download_champion_model(family_id: Optional[str] = None) -> Optional[Path]:
 
 
 def _cmd_benchmark(args: argparse.Namespace) -> int:
+    """Settle on a zip, falling back to the downloaded crown, then hand the flags to the engine."""
     if args.model is None:
         downloaded = _download_champion_model(args.family_id)
         if downloaded is None:
@@ -495,6 +532,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
 
 
 def _group_label(group_name: str) -> str:
+    """The short map word behind a benchmark group key, ``type1_city`` reading back as ``city``."""
     challenge_type = BENCH_GROUP_TO_TYPE.get(str(group_name))
     if challenge_type is None:
         return str(group_name)
@@ -502,6 +540,10 @@ def _group_label(group_name: str) -> str:
 
 
 def _load_visualize_summary_groups(summary_json: Path) -> dict[str, list[dict[str, Any]]]:
+    """Read ``group_results`` out of a benchmark summary, one list of per-seed rows per map group.
+
+    Raises when the key is missing or the rows are not objects.
+    """
     payload = json.loads(Path(summary_json).read_text())
     raw_groups = payload.get("group_results")
     if not isinstance(raw_groups, dict):
@@ -534,6 +576,7 @@ def _load_visualize_seed_groups(
 
 
 def _lookup_seed_type_in_summary(summary_json: Path, seed: int) -> int:
+    """The map type a seed ran as in a benchmark summary; raises when it is absent or listed twice."""
     groups = _load_visualize_summary_groups(summary_json)
     matches = [
         BENCH_GROUP_TO_TYPE[group_name]
@@ -554,6 +597,10 @@ def _lookup_seed_type_in_summary(summary_json: Path, seed: int) -> int:
 def _lookup_seed_type_in_seed_file(
     seed_file: Path, seed: int, family_id: str = "cf_autopilot"
 ) -> int:
+    """The map type a seed was saved under in a benchmark seed file.
+
+    Raises when the seed is absent, or appears under more than one type.
+    """
     groups = _load_visualize_seed_groups(seed_file, family_id=family_id)
     matches = [
         BENCH_GROUP_TO_TYPE[group_name]
@@ -571,6 +618,7 @@ def _lookup_seed_type_in_seed_file(
 
 
 def _infer_benchmark_type_from_seed(seed: int, family_id: str = "cf_autopilot") -> int:
+    """Rebuild the task for a seed and read back the map type the generator deterministically gave it."""
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
 
@@ -579,6 +627,10 @@ def _infer_benchmark_type_from_seed(seed: int, family_id: str = "cf_autopilot") 
 
 
 def _load_failed_visualize_rows(summary_json: Path) -> list[dict[str, Any]]:
+    """Every unsuccessful seed in a summary, flattened into one row apiece.
+
+    Each row carries the map type, score, sim time and execution status, in group order.
+    """
     groups = _load_visualize_summary_groups(summary_json)
     failed_rows: list[dict[str, Any]] = []
     for group_name in BENCH_GROUP_ORDER:
@@ -600,6 +652,7 @@ def _load_failed_visualize_rows(summary_json: Path) -> list[dict[str, Any]]:
 
 
 def _print_failed_visualize_rows(summary_json: Path, failed_rows: Sequence[dict[str, Any]]) -> None:
+    """Print the numbered list of losing seeds and the command that reopens one of them."""
     print(f"Failed benchmark seeds from {summary_json}:")
     if not failed_rows:
         print("  none")
@@ -618,6 +671,11 @@ def _print_failed_visualize_rows(summary_json: Path, failed_rows: Sequence[dict[
 
 
 def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTarget]:
+    """Settle the flags into the one map the viewer should open.
+
+    The type comes from a summary, a seed file, or the seed's own deterministic assignment;
+    None is returned once the list of losing seeds has been printed instead.
+    """
     failed_mode = bool(args.failed or args.failed_index is not None)
 
     if failed_mode:
@@ -702,6 +760,7 @@ def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTar
 
 
 def _build_visualize_argv(args: argparse.Namespace, target: VisualizeTarget) -> list[str]:
+    """Turn the resolved map and the viewer flags into argv for validator.scripts.visualize_map."""
     argv = ["--type", str(target.challenge_type), "--family-id", str(target.family_id)]
     if target.seed is not None:
         argv.extend(["--seed", str(target.seed)])
@@ -724,6 +783,7 @@ def _build_visualize_argv(args: argparse.Namespace, target: VisualizeTarget) -> 
 
 
 def _cmd_visualize(args: argparse.Namespace) -> int:
+    """Open the interactive viewer on the resolved map, or print why the flags cannot resolve one."""
     try:
         target = _resolve_visualize_target(args)
         if target is None:
@@ -745,6 +805,7 @@ def _cmd_visualize(args: argparse.Namespace) -> int:
 
 
 def _build_video_argv(args: argparse.Namespace) -> list[str]:
+    """Turn the flags into argv for validator.scripts.generate_video, for one seed or a whole seed file."""
     argv = ["--model", str(args.model), "--family-id", str(args.family_id)]
     if args.seed_file is not None:
         argv.extend(["--seed-file", str(args.seed_file)])
@@ -777,6 +838,7 @@ def _build_video_argv(args: argparse.Namespace) -> list[str]:
 
 
 def _cmd_video(args: argparse.Namespace) -> int:
+    """Reject an impossible seed selection, then render the mp4s through the video generator."""
     model_path = Path(args.model)
     if not model_path.exists():
         print(f"Model not found: {model_path}", file=sys.stderr)
@@ -804,6 +866,11 @@ def _cmd_video(args: argparse.Namespace) -> int:
 
 
 def _collect_packable_files(source_dir: Path) -> list[Path]:
+    """Every file under the source folder that belongs in a submission.
+
+    The agent, its requirements, and anything with a known weight extension; bytecode caches
+    are skipped.
+    """
     allowed_names = {"drone_agent.py", "requirements.txt"}
     files: list[Path] = []
     for path in sorted(source_dir.rglob("*")):
@@ -817,6 +884,7 @@ def _collect_packable_files(source_dir: Path) -> list[Path]:
 
 
 def _sha256sum(path: Path) -> str:
+    """The hex digest of a file, read a mebibyte at a time so large weights never land in memory."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(1 << 20):
@@ -832,6 +900,10 @@ def _package_model_artifact(
     interface_version: str | None,
     overwrite: bool,
 ) -> PackagedModelArtifact:
+    """Zip the agent, its weights and the policy contract for one challenge family.
+
+    The archive is deleted again and the reason raised when it fails the admission rules.
+    """
     if not source_dir.is_dir():
         raise ValueError(f"Source directory not found: {source_dir}")
     drone_agent = source_dir / "drone_agent.py"
@@ -879,6 +951,7 @@ def _package_model_artifact(
 
 
 def _family_display_name(family_id: str) -> str:
+    """The readable title registered for a challenge family, falling back to the raw id."""
     try:
         return str(get_challenge_family_definition(family_id)["name"])
     except Exception:
@@ -922,6 +995,7 @@ def _resolve_family_id(args: argparse.Namespace) -> Optional[str]:
 
 
 def _cmd_model_package(args: argparse.Namespace) -> int:
+    """Build the submission zip from a source folder and print what went into it."""
     family_id = _resolve_family_id(args)
     if family_id is None:
         return 1
@@ -995,6 +1069,10 @@ def _verify_model_zip(model_path: Path, max_uncompressed_mb: float) -> dict[str,
 
 
 def _print_model_report(payload: dict[str, Any]) -> None:
+    """Print one labelled line per verdict in a verification payload.
+
+    Compliance, status, size against the limit, the policy contract and the runtime smoke run.
+    """
     print(f"Model: {payload['model']}")
     print(f"Compliant: {payload['compliant']}")
     print(f"Status: {payload['status']}")
@@ -1008,6 +1086,7 @@ def _print_model_report(payload: dict[str, Any]) -> None:
 
 
 def _cmd_model_verify(args: argparse.Namespace) -> int:
+    """Run the local admission checks on a zip and exit non-zero when a validator would reject it."""
     model_path = Path(args.model)
     if not model_path.is_file():
         print(f"Model zip not found: {model_path}", file=sys.stderr)
@@ -1065,6 +1144,10 @@ def _cmd_model_submit(args: argparse.Namespace) -> int:
 
 
 def _cmd_model_test(args: argparse.Namespace) -> int:
+    """Package a source folder into a throwaway zip and probe its runtime.
+
+    Both results print as doctor-style lines and no artifact is left behind.
+    """
     source_dir = Path(args.source)
     if not source_dir.is_dir():
         print(f"Source directory not found: {source_dir}", file=sys.stderr)
@@ -1098,12 +1181,17 @@ def _cmd_model_test(args: argparse.Namespace) -> int:
 
 
 def sanitize_benchmark_log_text(text: str) -> str:
+    """Strip ANSI colour escapes and carriage returns so a captured console log parses as plain text."""
     text = ANSI_ESCAPE_RE.sub("", text)
     text = text.replace("\r", "")
     return text
 
 
 def extract_benchmark_results_block(text: str) -> str | None:
+    """The last ``=== RESULTS ===`` section of a log, cut at the complete or failed marker.
+
+    None when the run never reached that section.
+    """
     clean_text = sanitize_benchmark_log_text(text)
     start = clean_text.rfind("=== RESULTS ===")
     if start < 0:
@@ -1121,6 +1209,10 @@ def extract_benchmark_results_block(text: str) -> str | None:
 
 
 def parse_benchmark_report_text(text: str) -> dict[str, Any]:
+    """Pull the summary numbers out of a benchmark log by regex.
+
+    Raises unless the seed count, the wall-clock total and the worker count all came through.
+    """
     text = sanitize_benchmark_log_text(text)
     output: dict[str, Any] = {}
     for field, pattern in REPORT_FIELD_PATTERNS.items():
@@ -1150,6 +1242,7 @@ def _latest_bench_log() -> Optional[Path]:
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
+    """Summarize a benchmark log, defaulting to the newest one this user wrote."""
     input_path = Path(args.input) if args.input is not None else (
         _latest_bench_log() or DEFAULT_BENCH_LOG
     )
@@ -1190,6 +1283,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 
 def _cmd_monitor(args: argparse.Namespace) -> int:
+    """Run the live validator dashboard over its snapshot and event files, looping until Ctrl-C unless ``--once``."""
     try:
         from swarm.validator.runtime_dashboard import run_runtime_dashboard
 
@@ -1209,6 +1303,10 @@ def _cmd_monitor(args: argparse.Namespace) -> int:
 
 
 def _cmd_champion(args: argparse.Namespace) -> int:
+    """Save the reigning crown zip from the backend, checking its published hash.
+
+    Returns 2 when a crown exists but has not been published for download yet.
+    """
     import httpx
 
     base_url = args.backend_url
@@ -1278,6 +1376,7 @@ def _cmd_champion(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The whole ``swarm`` command line: every subcommand, its flags, and the handler it dispatches to."""
     parser = argparse.ArgumentParser(prog="swarm", description="Swarm CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1811,6 +1910,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Parse the command line and run the chosen subcommand, returning its exit code."""
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.func(args))

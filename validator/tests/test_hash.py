@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The block-at-a-time digest must equal what hashlib gives for the whole file, at any block size."""
 from __future__ import annotations
 
 import hashlib
@@ -23,6 +24,7 @@ from swarm.utils.hash import sha256sum
 
 
 def test_sha256sum_matches_hashlib_for_small_file(tmp_path):
+    """A payload smaller than the default block is swallowed in a single read and still lands on the same digest."""
     fp = tmp_path / "payload.bin"
     data = b"swarm-subnet-test-data"
     fp.write_bytes(data)
@@ -32,6 +34,7 @@ def test_sha256sum_matches_hashlib_for_small_file(tmp_path):
 
 
 def test_sha256sum_matches_hashlib_for_chunked_reads(tmp_path):
+    """Feeding 160 KB in 64-byte blocks gives the same digest as hashing the bytes in one go, so the loop never drops one."""
     fp = tmp_path / "large.bin"
     data = b"0123456789abcdef" * 10000
     fp.write_bytes(data)

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Cap'n Proto RPC server that feeds each validator observation to the miner's flight controller."""
+
 import asyncio
 import json
 import mmap
@@ -90,13 +92,18 @@ def decode_observation(entries):
 
 
 class AgentServer(agent_capnp.Agent.Server):
+    """Bootstrap capability the validator calls into, wrapping one controller instance."""
+
     def __init__(self, agent):
+        """Hold the controller the act and reset calls are dispatched to."""
         self.agent = agent
 
     async def ping(self, message, **kwargs):
+        """Answer pong so the caller can confirm the socket is live."""
         return "pong"
 
     async def act(self, obs, **kwargs):
+        """Decode the observation, ask the controller for a move, and send it back as a float32 tensor."""
         obs_array = decode_observation(list(obs.entries))
 
         action = self.agent.act(obs_array)
@@ -110,6 +117,7 @@ class AgentServer(agent_capnp.Agent.Server):
         return response
 
     async def calibrate(self, obs, **kwargs):
+        """Return a zero move plus the nanoseconds three 512x512 matrix products took, as a speed reading of the host."""
         _ = decode_observation(list(obs.entries))
 
         a = np.random.randn(512, 512).astype(np.float32)
@@ -127,11 +135,15 @@ class AgentServer(agent_capnp.Agent.Server):
         return response, benchmark_ns
 
     async def reset(self, **kwargs):
+        """Clear the controller state so the next episode starts from scratch."""
         self.agent.reset()
 
 
 async def serve(agent, port=8000):
+    """Listen on all interfaces at port and stay up until the enclosing task is cancelled."""
+
     async def new_connection(stream):
+        """Bind one accepted stream to an AgentServer and wait for the peer to drop."""
         server = capnp.TwoPartyServer(stream, bootstrap=AgentServer(agent))
         await server.on_disconnect()
 
@@ -142,7 +154,10 @@ async def serve(agent, port=8000):
 
 
 def start_server(agent, port=8000):
+    """Block on the RPC loop, swallowing a Ctrl-C so shutdown is silent."""
+
     async def run_with_kj():
+        """Open the capnp kj event loop, then serve inside it."""
         async with capnp.kj_loop():
             await serve(agent, port)
 

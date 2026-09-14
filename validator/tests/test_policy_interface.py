@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The contract file a submission zip must carry, and the one-step smoke run its controller must survive."""
 from __future__ import annotations
 
 import json
@@ -31,12 +32,14 @@ from swarm.policy_interface import (
 
 
 def _write_zip(path: Path, files: dict[str, str]) -> None:
+    """Create an archive at path whose members are the given name to content mapping."""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in files.items():
             zf.writestr(name, content)
 
 
 def _base_controller_source(action_body: str) -> str:
+    """Text of a minimal DroneFlightController whose act body is the given line."""
     return "\n".join(
         [
             "import numpy as np",
@@ -53,6 +56,7 @@ def _base_controller_source(action_body: str) -> str:
 
 
 def test_verify_policy_package_contract_accepts_generated_contract(tmp_path):
+    """A zip carrying what the renderer wrote passes, and hands back the canonical payload."""
     zip_path = tmp_path / "submission.zip"
     _write_zip(
         zip_path,
@@ -78,6 +82,7 @@ def test_verify_policy_package_contract_accepts_generated_contract(tmp_path):
 
 
 def test_verify_policy_package_contract_rejects_missing_contract(tmp_path):
+    """A zip with no contract fails, and the reason names the file it wanted."""
     zip_path = tmp_path / "submission.zip"
     _write_zip(
         zip_path,
@@ -96,6 +101,7 @@ def test_verify_policy_package_contract_rejects_missing_contract(tmp_path):
 
 
 def test_verify_policy_package_contract_rejects_unsupported_interface_version(tmp_path):
+    """An interface version the family does not list is refused, and nothing comes back."""
     zip_path = tmp_path / "submission.zip"
     payload = build_artifact_policy_contract(
         "cf_search_and_rescue",
@@ -120,6 +126,7 @@ def test_verify_policy_package_contract_rejects_unsupported_interface_version(tm
 
 
 def test_verify_policy_package_contract_rejects_observation_space_mismatch(tmp_path):
+    """Editing the depth shape in the shipped file no longer matches the canonical one."""
     zip_path = tmp_path / "submission.zip"
     payload = build_artifact_policy_contract(
         "cf_search_and_rescue",
@@ -144,6 +151,7 @@ def test_verify_policy_package_contract_rejects_observation_space_mismatch(tmp_p
 
 
 def test_smoke_test_policy_package_accepts_valid_controller(tmp_path):
+    """A controller returning a six-value action clears the imported single-step run."""
     zip_path = tmp_path / "submission.zip"
     _write_zip(
         zip_path,
@@ -162,6 +170,7 @@ def test_smoke_test_policy_package_accepts_valid_controller(tmp_path):
 
 
 def test_smoke_test_policy_package_rejects_invalid_action_shape(tmp_path):
+    """A four-value action is turned away, with both the size it gave and the size it owed."""
     zip_path = tmp_path / "submission.zip"
     _write_zip(
         zip_path,

@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Chain sync and weight submission share one subtensor lock, and both report into the runtime tracker."""
 from __future__ import annotations
 
 import threading
@@ -29,6 +30,7 @@ from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
 
 
 def test_base_neuron_sync_updates_chain_sync_tracker(tmp_path) -> None:
+    """A clean sync stamps last_success_at and leaves the error field empty."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     saved: list[str] = []
     dummy = SimpleNamespace(
@@ -48,6 +50,7 @@ def test_base_neuron_sync_updates_chain_sync_tracker(tmp_path) -> None:
 
 
 def test_base_neuron_sync_delegates_validator_weight_helper(tmp_path) -> None:
+    """Sync calls _maybe_set_weights with source "sync" instead of the older should_set_weights path."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     saved: list[str] = []
     weight_calls: list[dict] = []
@@ -66,6 +69,7 @@ def test_base_neuron_sync_delegates_validator_weight_helper(tmp_path) -> None:
 
 
 def test_set_weights_updates_weight_tracker(monkeypatch, tmp_path) -> None:
+    """An accepted submission records the attempt, the success and how many uids carried weight."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     dummy = SimpleNamespace(
         runtime_tracker=tracker,
@@ -98,6 +102,7 @@ def test_set_weights_updates_weight_tracker(monkeypatch, tmp_path) -> None:
 
 
 def _weight_helper_dummy(*, ready: bool, set_result: bool = True):
+    """Return a stand-in validator bound to the real weight methods, plus the list its set_weights appends to."""
     calls: list[str] = []
     dummy = SimpleNamespace(
         neuron_type="ValidatorNeuron",
@@ -125,6 +130,7 @@ def _weight_helper_dummy(*, ready: bool, set_result: bool = True):
 
 
 def test_background_weight_helper_sets_during_initial_step_when_ready(monkeypatch) -> None:
+    """Step zero submits once the backend weights have landed and the caller allows it."""
     monkeypatch.setattr(base_validator_mod, "WEIGHT_SETTER_RETRY_SEC", 0)
     dummy, calls = _weight_helper_dummy(ready=True)
 
@@ -134,6 +140,7 @@ def test_background_weight_helper_sets_during_initial_step_when_ready(monkeypatc
 
 
 def test_background_weight_helper_waits_for_backend_weights(monkeypatch) -> None:
+    """Nothing reaches the chain until the backend weights have been applied once."""
     monkeypatch.setattr(base_validator_mod, "WEIGHT_SETTER_RETRY_SEC", 0)
     dummy, calls = _weight_helper_dummy(ready=False)
 
@@ -149,6 +156,7 @@ def test_subtensor_lock_serializes_sync_and_set_weights(monkeypatch, tmp_path) -
     order: list[str] = []
 
     def blocking_check_registered():
+        """Record the sync entering, hold until the gate opens, then record it leaving."""
         order.append("sync_enter")
         gate.wait(timeout=3)
         order.append("sync_exit")
@@ -163,6 +171,7 @@ def test_subtensor_lock_serializes_sync_and_set_weights(monkeypatch, tmp_path) -
     )
 
     def mock_set_weights(**kwargs):
+        """Note the chain call in the order log and report success."""
         order.append("weights_call")
         return (True, "")
 
@@ -221,6 +230,7 @@ def test_maybe_set_weights_blocked_by_sync(monkeypatch, tmp_path) -> None:
     order: list[str] = []
 
     def blocking_check_registered():
+        """Record the sync entering, hold until the gate opens, then record it leaving."""
         order.append("sync_enter")
         gate.wait(timeout=3)
         order.append("sync_exit")

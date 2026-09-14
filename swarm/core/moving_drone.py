@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 # swarm/envs/moving_drone.py
+"""The PyBullet aviary a Swarm task is flown in: camera, control contract, physics extras and scoring all come from the task's family."""
 from __future__ import annotations
 
 import functools
@@ -133,6 +134,7 @@ def world_to_body(w, yaw):
 
 @functools.lru_cache(maxsize=4096)
 def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
+    """Number of 'f ' lines in an OBJ, keyed on path, mtime and size; 0 when it cannot be read."""
     try:
         with open(path, "rb") as f:
             data = f.read()
@@ -142,6 +144,7 @@ def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
 
 
 def _inside_safety_patch(contact_point, safety_patch) -> bool:
+    """True when a contact falls inside the disc and the height band a family has excused from clearance scoring."""
     cx, cy = safety_patch.xy
     dx = float(contact_point[0]) - float(cx)
     dy = float(contact_point[1]) - float(cy)
@@ -409,6 +412,7 @@ class MovingDroneAviary(BaseRLAviary):
         fam = getattr(getattr(self, "family_runtime", None), "family_id", "")
 
         def _reseed_buffer(width):
+            """Refill the action history with zero rows of this many columns."""
             # _reset_action_buffer reads action_space, which is not assigned yet
             self.action_buffer.clear()
             for _ in range(self.ACTION_BUFFER_SIZE):
@@ -805,6 +809,7 @@ class MovingDroneAviary(BaseRLAviary):
         return True
 
     def _drone_camera_view(self, nth_drone):
+        """View matrix along the body's forward axis, from an eye offset ahead of and above the hull."""
         cli = getattr(self, "CLIENT", 0)
         drone_pos = self.pos[nth_drone, :]
         rot_mat = np.array(p.getMatrixFromQuaternion(self.quat[nth_drone, :])).reshape(3, 3)
@@ -827,6 +832,7 @@ class MovingDroneAviary(BaseRLAviary):
         )
 
     def _drone_proj_matrix(self):
+        """Projection matrix at the episode's field of view and far plane, built once and kept."""
         cli = getattr(self, "CLIENT", 0)
         if self._cached_proj_matrix is None:
             aspect = self.IMG_RES[0] / self.IMG_RES[1]
@@ -1006,6 +1012,7 @@ class MovingDroneAviary(BaseRLAviary):
 
     @staticmethod
     def _count_mesh_faces(path: str) -> int:
+        """Face total for an OBJ on disk, served from the process cache; 0 when it is gone."""
         try:
             st = os.stat(path)
         except OSError:
@@ -1223,6 +1230,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._frozen[nth_drone] = True
 
     def _update_landing_state_multi(self, platform_contact: bool, nth_drone: int) -> None:
+        """One drone's landing latch in a swarm: level and slow on the pad for LANDING_STABLE_SEC, then claim it."""
         from swarm.protocol import FailureReason
 
         if self._d_success[nth_drone] or self._d_collision[nth_drone]:
@@ -1308,6 +1316,7 @@ class MovingDroneAviary(BaseRLAviary):
                 self._d_min_clearance[i] = min_dist
 
     def _process_step_updates_multi(self) -> None:
+        """Advance every drone still flying through contacts, tilt and landing, then park the ones that finished."""
         from swarm.protocol import FailureReason
 
         froze_any = False
@@ -1607,18 +1616,23 @@ class MovingDroneAviary(BaseRLAviary):
         self._apply_distance_cull()
 
     def _family_post_step_update(self) -> None:
+        """Hand the finished step to the active family's own bookkeeping."""
         self.family_runtime.post_step_update(self)
 
     def _legacy_sar_runtime(self):
+        """The active family runtime, reached under the name older callers use."""
         return self.family_runtime
 
     def _sar_drone_state(self):
+        """The drone's position and velocity, read through the family runtime."""
         return self._legacy_sar_runtime().legacy_sar_drone_state(self)
 
     def _sar_check_predicate(self) -> bool:
+        """Whether the drone is holding the confirm hover this step, decided by the family runtime."""
         return self._legacy_sar_runtime().legacy_sar_check_predicate(self)
 
     def _sar_step_update(self) -> None:
+        """Advance the dwell bookkeeping through the family runtime."""
         self._legacy_sar_runtime().legacy_sar_step_update(self)
 
     def _reset_action_buffer(self) -> None:
@@ -1698,6 +1712,7 @@ class MovingDroneAviary(BaseRLAviary):
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):
+        """The per-step dict the scorer reads: success, collision, clearance, timing and the family's extras."""
         if self.NUM_DRONES > 1:
             info = {
                 "num_drones": int(self.NUM_DRONES),

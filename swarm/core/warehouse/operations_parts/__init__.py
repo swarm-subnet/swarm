@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Warehouse operations builders re-exported flat: loading forklifts, the machining cell, the forklift parking row and the worker crew."""
+
 from .loading_ops import *
 from .machining import *
 from .parking import *

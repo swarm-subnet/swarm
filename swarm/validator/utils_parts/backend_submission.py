@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Validator hand-off to the backend: pushing finished epoch seed records, backing off while the API refuses them."""
+
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 
 from ._shared import *
@@ -23,6 +25,7 @@ PUBLISH_BACKOFF_CAP_CYCLES = 12
 
 
 def _seed_manager_method(seed_manager, method_name: str, *args, **kwargs):
+    """Call a named method on the seed manager, retrying positionally when the installed signature rejects the keywords."""
     method = getattr(seed_manager, method_name)
     try:
         return method(*args, **kwargs)

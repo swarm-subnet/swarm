@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Read-only accessors over the shipped benchmark domain model: challenge families, score schemas, policy interfaces and the legacy id aliases."""
 from __future__ import annotations
 
 import copy
@@ -40,15 +41,18 @@ class UnknownPolicyInterfaceError(KeyError):
 
 
 def domain_model_schema_path() -> Path:
+    """Filesystem location of the JSON resource shipped inside this package."""
     return Path(str(files(__package__).joinpath(_SCHEMA_RESOURCE)))
 
 
 def challenge_family_registry_path() -> Path:
+    """The same JSON file as the schema; the registry lives inside it."""
     return domain_model_schema_path()
 
 
 @lru_cache(maxsize=1)
 def load_domain_model_schema() -> dict[str, Any]:
+    """Parse the JSON resource, once per process."""
     schema_text = files(__package__).joinpath(_SCHEMA_RESOURCE).read_text(
         encoding="utf-8",
     )
@@ -56,10 +60,12 @@ def load_domain_model_schema() -> dict[str, Any]:
 
 
 def load_challenge_family_registry() -> dict[str, Any]:
+    """The parsed schema document, which doubles as the registry."""
     return load_domain_model_schema()
 
 
 def _deepcopy_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    """A private dict copy, so a caller cannot mutate the cached registry."""
     return copy.deepcopy(dict(mapping))
 
 
@@ -69,6 +75,7 @@ def filter_challenge_family_definitions(
     include_incubating: bool = True,
     include_archived: bool = True,
 ) -> dict[str, dict[str, Any]]:
+    """Copies of the given definitions, dropping incubating or archived families the caller excludes."""
     filtered: dict[str, dict[str, Any]] = {}
     for family_id, family_definition in family_definitions.items():
         family_state = str(family_definition["family_state"])
@@ -86,6 +93,7 @@ def list_challenge_family_definitions(
     include_archived: bool = True,
     registry: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], ...]:
+    """Every family entry in the registry, filtered by state."""
     active_registry = registry or load_challenge_family_registry()
     family_definitions = filter_challenge_family_definitions(
         active_registry["challenge_families"],
@@ -100,6 +108,7 @@ def get_challenge_family_definition(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A copy of one family's entry, raising UnknownChallengeFamilyError when the id is absent."""
     active_registry = registry or load_challenge_family_registry()
     family_definition = active_registry["challenge_families"].get(family_id)
     if family_definition is None:
@@ -112,6 +121,7 @@ def get_score_schema(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A copy of one scoring definition, raising UnknownScoreSchemaError when the id is absent."""
     active_registry = registry or load_challenge_family_registry()
     score_schema = active_registry["score_schemas"].get(score_schema_id)
     if score_schema is None:
@@ -124,6 +134,7 @@ def get_supported_interface_versions(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
+    """The policy interface versions a family accepts, as a tuple."""
     family_definition = get_challenge_family_definition(family_id, registry=registry)
     return tuple(family_definition["supported_interface_versions"])
 
@@ -133,6 +144,7 @@ def get_family_screening_policy(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A family's screening rules, empty when it declares none."""
     family_definition = get_challenge_family_definition(family_id, registry=registry)
     return _deepcopy_mapping(family_definition.get("screening_policy", {}))
 
@@ -142,6 +154,7 @@ def get_family_benchmark_admission_policy(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A family's rules for letting a model into the benchmark, empty when it declares none."""
     family_definition = get_challenge_family_definition(family_id, registry=registry)
     return _deepcopy_mapping(family_definition.get("benchmark_admission_policy", {}))
 
@@ -151,11 +164,13 @@ def get_family_visibility(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> str:
+    """Whether a family is public or private; public unless it says otherwise."""
     family_definition = get_challenge_family_definition(family_id, registry=registry)
     return str(family_definition.get("visibility", "public"))
 
 
 def policy_interface_key(family_id: str, interface_version: str) -> str:
+    """The registry lookup string joining a family id to a version."""
     return f"{family_id}:{interface_version}"
 
 
@@ -165,6 +180,7 @@ def get_policy_interface_contract(
     *,
     registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A copy of the contract for one family at one version, raising UnknownPolicyInterfaceError if unregistered."""
     active_registry = registry or load_challenge_family_registry()
     key = policy_interface_key(family_id, interface_version)
     contract = active_registry.get("policy_interfaces", {}).get(key)

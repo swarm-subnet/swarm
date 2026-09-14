@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The tail of the SAR observation: a two-wide clue slice sitting at the very end of the state."""
+
 from __future__ import annotations
 
 import contextlib
@@ -26,6 +28,7 @@ from swarm.protocol import MapTask
 
 
 def _task():
+    """Return a seed-99 search-and-rescue MapTask with a 60 s horizon at 30 Hz."""
     return MapTask(
         map_seed=99,
         start=(0.0, 0.0, 1.5),
@@ -39,6 +42,7 @@ def _task():
 
 
 def _build_aviary(sar_mode):
+    """Return a MovingDroneAviary on the stock task, already reset, with its chatter swallowed."""
     from swarm.core.moving_drone import MovingDroneAviary
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -50,6 +54,7 @@ def _build_aviary(sar_mode):
 
 
 def _close(env):
+    """Shut the environment down, swallowing whatever teardown raises."""
     try:
         env.close()
     except Exception:
@@ -72,6 +77,7 @@ def test_sar_state_dim_uses_2d_clue():
 
 @pytest.mark.timeout(180)
 def test_sar_clue_offset_is_2d():
+    """The last two entries of a live observation are the clue, just past the single flag element."""
     env = _build_aviary(sar_mode=True)
     try:
         obs = env._computeObs()

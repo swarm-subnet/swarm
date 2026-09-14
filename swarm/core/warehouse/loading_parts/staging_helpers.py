@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Closure factories the loading bay uses to measure, lay out and spawn its staged cargo."""
+
 from types import SimpleNamespace
 
 from ._shared import *
@@ -22,7 +24,9 @@ from .visuals import _spawn_obj_with_mtl_parts
 
 
 def make_build_spec_helper(loading_loader):
+    """Bind a loader into a spec builder taking model name and scale, so callers never pass it around."""
     def _build_spec(model_name, scale_xyz):
+        """Scaled bounds, world size and floor-centre anchor of one model, as a spec dict."""
         min_v, max_v = model_bounds_xyz(loading_loader, model_name, scale_xyz)
         return {
             "model_name": model_name,
@@ -45,13 +49,16 @@ def make_build_spec_helper(loading_loader):
 
 
 def make_staging_layout_helpers(*, along_axis, interior_edge, cross_to_dock_sign, seg_gap):
+    """Geometry closures bound to one dock wall: along/cross mapping, spans and section splitting."""
     def _xy_from_along_s(along, s_from_interior):
+        """World x, y for a point `s_from_interior` metres off the interior edge."""
         cross = interior_edge + (cross_to_dock_sign * s_from_interior)
         if along_axis == "x":
             return along, cross
         return cross, along
 
     def _oriented_xy(spec, yaw_deg):
+        """Axis-aligned x and y extents of a yawed footprint, then the same pair as along, cross."""
         sx, sy, _sz = spec["size_xyz"]
         yaw = math.radians(yaw_deg)
         c = abs(math.cos(yaw))
@@ -63,15 +70,19 @@ def make_staging_layout_helpers(*, along_axis, interior_edge, cross_to_dock_sign
         return ex, ey, along_extent, cross_extent
 
     def _range_len(rng_pair):
+        """Metres between the ends of a (lo, hi) span, never below zero."""
         return max(0.0, float(rng_pair[1]) - float(rng_pair[0]))
 
     def _clamp(v, lo, hi):
+        """Pin a value inside [lo, hi]."""
         return max(lo, min(hi, v))
 
     def _valid_range(rng_pair, min_len=0.5):
+        """True when the span is at least `min_len` metres wide."""
         return _range_len(rng_pair) >= float(min_len)
 
     def _split_outer_range(base_range, near_at_start):
+        """Cut a span into goods and container sections across seg_gap, halving it when it is tight."""
         base_len = _range_len(base_range)
         if base_len <= 0.5:
             return None, None
@@ -106,7 +117,9 @@ def make_staging_layout_helpers(*, along_axis, interior_edge, cross_to_dock_sign
 
 
 def make_staging_spawn_helpers(*, loading_loader, cli, container_spec):
+    """Spawn closures bound to one loader and client: staging props and the dock containers."""
     def _spawn_prop(spec, x, y, z_anchor, yaw_deg, with_collision):
+        """Place a spec'd model with its anchor at (x, y, z_anchor), one body per material part."""
         _spawn_obj_with_mtl_parts(
             loader=loading_loader,
             model_name=spec["model_name"],
@@ -120,6 +133,7 @@ def make_staging_spawn_helpers(*, loading_loader, cli, container_spec):
         )
 
     def _spawn_container(x, y, z_anchor, yaw_deg, with_collision=True, body_rgba=None):
+        """Place one shipping container: a single collision hull, then recoloured visual parts."""
         if container_spec is None:
             return
 
@@ -214,7 +228,9 @@ def make_staging_cargo_helpers(
     _range_len,
     _clamp,
 ):
+    """Cargo closures for the staging area: boxed pallets, barrel pallets and container stacks."""
     def _spawn_loaded_pallet_with_boxes(px, py, yaw_deg, stack_layers=1):
+        """Stack pallets of four boxes, two when the pallet is too small, each tier on the one below."""
         stack_layers = int(max(1, stack_layers))
         pallet_h = float(pallet_spec["size_xyz"][2])
         box_h = float(box_spec["size_xyz"][2])
@@ -305,6 +321,7 @@ def make_staging_cargo_helpers(
             next_pallet_z = cargo_top_z + pallet_over_cargo_gap
 
     def _spawn_barrel_pallet(px, py, yaw_deg, stack_layers=1):
+        """Stack pallets of barrels, tiers capped by config and every other barrel turned 90 degrees."""
         stack_layers = min(
             int(LOADING_BARREL_MAX_STACK_LAYERS), int(max(1, stack_layers))
         )
@@ -377,6 +394,7 @@ def make_staging_cargo_helpers(
             next_pallet_z = cargo_top_z + pallet_over_cargo_gap
 
     def _place_container_stack_in_range(target_range):
+        """Fit the richest base row and upper tier the span allows against the gate edge; False if none fit."""
         if container_state["spec"] is None or target_range is None:
             return False
         have_along = _range_len(target_range)
@@ -389,6 +407,7 @@ def make_staging_cargo_helpers(
         c_size_z = float(container_state["spec"]["size_xyz"][2])
 
         def _container_oriented_xy(yaw_deg):
+            """Along and cross extents the container occupies once turned to `yaw_deg`."""
             c = abs(math.cos(math.radians(yaw_deg)))
             s = abs(math.sin(math.radians(yaw_deg)))
             ex = (c * c_size_x) + (s * c_size_y)

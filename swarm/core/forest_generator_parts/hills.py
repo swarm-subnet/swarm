@@ -25,6 +25,7 @@ from .ground import _ground_texture_id
 # SECTION 13: Hills ring (surrounding terrain)
 # ---------------------------------------------------------------------------
 def _load_obj_triangles(obj_path: str) -> Tuple[list, list]:
+    """Read the vertices and fan-triangulated faces of an OBJ, memoised per path."""
     cached = _HILL_OBJ_TRI_CACHE.get(obj_path)
     if cached is not None:
         return cached
@@ -59,6 +60,7 @@ def _load_obj_triangles(obj_path: str) -> Tuple[list, list]:
 
 
 def _hill_obj_candidates() -> List[str]:
+    """Sorted mesh filenames in the mountain asset directory, minus the tall peak model."""
     if not os.path.isdir(MOUNTAIN_ASSET_DIR):
         return []
     return sorted(
@@ -68,6 +70,7 @@ def _hill_obj_candidates() -> List[str]:
 
 
 def _merged_hills_obj_path() -> str:
+    """Cache location of the version-stamped terrain mesh, one file per mesh revision."""
     return os.path.join(
         HILLS_MESH_CACHE_DIR,
         f"forest_hills_v{HILLS_MESH_VERSION}.obj",
@@ -75,6 +78,11 @@ def _merged_hills_obj_path() -> str:
 
 
 def _ensure_merged_hills_obj() -> Optional[str]:
+    """Bake a fixed-seed ring of scaled hill meshes and a far ground quad into one cached OBJ.
+
+    Returns the cached path, or None when the asset directory holds no hill meshes. The
+    ring geometry is identical on every map because the placement RNG is seeded fixed.
+    """
     hill_candidates = _hill_obj_candidates()
     if not hill_candidates:
         return None
@@ -153,6 +161,7 @@ def _ensure_merged_hills_obj() -> Optional[str]:
     merged_f: list = []
 
     def add_vertex(wx: float, wy: float, wz: float) -> int:
+        """Append a world-space point with its planar UV and return its 1-based OBJ index."""
         merged_v.append((wx, wy, wz))
         u = (wx + far_half) / (2.0 * far_half)
         v = (wy + far_half) / (2.0 * far_half)
@@ -189,6 +198,7 @@ def _ensure_merged_hills_obj() -> Optional[str]:
 def _spawn_hills(
     cli: int, rgba: Optional[List[float]] = None, apply_texture: bool = True,
 ) -> None:
+    """Add the merged terrain mesh as a visual-only body, optionally textured like the ground."""
     merged_obj = _ensure_merged_hills_obj()
     if merged_obj is None:
         return

@@ -46,6 +46,7 @@ AGENT = (
 
 
 def _submission_bytes() -> bytes:
+    """Return a zip holding one drone_agent.py, the smallest thing that reads as a submission."""
     import io
 
     buffer = io.BytesIO()
@@ -57,7 +58,9 @@ def _submission_bytes() -> bytes:
 # ── the fetch itself ─────────────────────────────────────────────────────────
 
 def _client_stub(handler):
+    """Return a BackendApiClient stand-in whose requests are answered by handler, signing stubbed out."""
     async def fence(_resp):
+        """Let every response through: the duplicate-instance guard has nothing to judge here."""
         return None
 
     return SimpleNamespace(
@@ -69,6 +72,7 @@ def _client_stub(handler):
 
 
 def test_private_fetch_writes_the_bytes_owner_only(tmp_path):
+    """The artifact lands byte for byte at mode 0600, so no other account on the box can read it."""
     body = _submission_bytes()
     stub = _client_stub(lambda request: httpx.Response(200, content=body))
     dest = tmp_path / "UID_7.zip"
@@ -81,6 +85,7 @@ def test_private_fetch_writes_the_bytes_owner_only(tmp_path):
 
 
 def test_private_fetch_refusal_leaves_nothing_on_disk(tmp_path):
+    """A 403 from the vault reports failure and leaves no partial file behind."""
     stub = _client_stub(lambda request: httpx.Response(403, json={"detail": "not trusted"}))
     dest = tmp_path / "UID_7.zip"
     assert asyncio.run(BackendApiClient.fetch_private_artifact(stub, "a" * 64, dest)) is False
@@ -88,6 +93,7 @@ def test_private_fetch_refusal_leaves_nothing_on_disk(tmp_path):
 
 
 def test_private_fetch_drops_an_oversized_artifact(tmp_path, monkeypatch):
+    """A stream that runs past the byte cap is cut off and the part already written is removed."""
     from swarm.validator import backend_api
 
     monkeypatch.setattr(backend_api, "MAX_MODEL_BYTES", 16)
@@ -100,13 +106,16 @@ def test_private_fetch_drops_an_oversized_artifact(tmp_path, monkeypatch):
 # ── discovery: a private entry never touches GitHub ──────────────────────────
 
 def _discovery_env(monkeypatch, tmp_path, fetched: bytes | None):
+    """Return a validator stand-in serving `fetched` as the private artifact, cache redirected to tmp_path."""
     async def fetch(model_hash, dest):
+        """Write the prepared bytes to dest, or report failure when there are none."""
         if fetched is None:
             return False
         dest.write_bytes(fetched)
         return True
 
     async def no_docker(*_args, **_kwargs):
+        """Stand in for the container verification step and do nothing at all."""
         return None
 
     monkeypatch.setattr(model_fetch, "MODEL_DIR", tmp_path)
@@ -116,6 +125,7 @@ def _discovery_env(monkeypatch, tmp_path, fetched: bytes | None):
 
 
 def _entry(model_hash: str, *, is_private: bool, github_url: str = "") -> dict:
+    """Return one backend discovery record for UID 7, shaped the way the fetcher reads them."""
     return {
         "uid": 7, "model_hash": model_hash, "family_id": "cf_search_and_rescue",
         "interface_version": SUBMISSION_INTERFACE_VERSION, "github_url": github_url,
@@ -124,6 +134,7 @@ def _entry(model_hash: str, *, is_private: bool, github_url: str = "") -> dict:
 
 
 def test_private_model_is_fetched_from_the_backend_and_marked(monkeypatch, tmp_path):
+    """A private entry comes from the vault, lands under its UID, and gets a .private marker beside it."""
     body = _submission_bytes()
     digest = hashlib.sha256(body).hexdigest()
     self = _discovery_env(monkeypatch, tmp_path, body)
@@ -146,6 +157,7 @@ def test_private_model_without_github_url_is_not_skipped(monkeypatch, tmp_path):
 
 
 def test_failed_private_fetch_clears_the_marker(monkeypatch, tmp_path):
+    """A download that fails leaves neither bytes nor marker, so nothing half-done is read as a cached model."""
     self = _discovery_env(monkeypatch, tmp_path, None)
     paths = asyncio.run(model_fetch._ensure_models_from_backend(self, [_entry("b" * 64, is_private=True)]))
     assert paths == {}
@@ -154,6 +166,7 @@ def test_failed_private_fetch_clears_the_marker(monkeypatch, tmp_path):
 
 
 def test_hash_mismatch_on_private_bytes_is_rejected(monkeypatch, tmp_path):
+    """Private bytes whose digest is not the one the backend announced are refused and wiped."""
     self = _discovery_env(monkeypatch, tmp_path, _submission_bytes())
     paths = asyncio.run(model_fetch._ensure_models_from_backend(self, [_entry("c" * 64, is_private=True)]))
     assert paths == {}
@@ -163,15 +176,18 @@ def test_hash_mismatch_on_private_bytes_is_rejected(monkeypatch, tmp_path):
 # ── after the task ───────────────────────────────────────────────────────────
 
 def _run(monkeypatch, tmp_path, *, is_private: bool) -> Path:
+    """Drive one BENCHMARK task over a pre-staged model file, fetch and phase stubbed, and return that path."""
     model_fp = tmp_path / "UID_7.zip"
     model_fp.write_bytes(_submission_bytes())
     model_fetch._set_private_marker(model_fp, is_private)
     digest = hashlib.sha256(model_fp.read_bytes()).hexdigest()
 
     async def ensure(_self, _entries):
+        """Hand back the pre-staged file as UID 7's model instead of downloading one."""
         return {7: (model_fp, "")}
 
     async def phase(*_args, **_kwargs):
+        """Check that the model bytes are still on disk while the evaluation phase runs."""
         assert model_fp.exists(), "the bytes must be present while the phase runs"
 
     monkeypatch.setattr(run_task_mod, "_ensure_models_from_backend", ensure)
@@ -184,12 +200,14 @@ def _run(monkeypatch, tmp_path, *, is_private: bool) -> Path:
 
 
 def test_private_bytes_are_deleted_once_the_task_is_done(monkeypatch, tmp_path):
+    """Both the archive and its marker are gone the moment the task returns: nothing private outlives it."""
     model_fp = _run(monkeypatch, tmp_path, is_private=True)
     assert not model_fp.exists()
     assert not model_fp.with_suffix(".private").exists()
 
 
 def test_public_bytes_stay_cached_between_tasks(monkeypatch, tmp_path):
+    """A public archive survives its task, so the next one reuses it rather than downloading again."""
     model_fp = _run(monkeypatch, tmp_path, is_private=False)
     assert model_fp.exists()
 
@@ -200,6 +218,7 @@ def test_private_bytes_are_dropped_when_the_fetch_itself_is_cancelled(monkeypatc
     model_fp = tmp_path / "UID_7.zip"
 
     async def ensure(_self, _entries):
+        """Stage the private bytes and their marker, then raise as if the download were cancelled."""
         model_fp.write_bytes(_submission_bytes())
         model_fetch._set_private_marker(model_fp, True)
         raise asyncio.CancelledError
@@ -218,6 +237,7 @@ def test_private_bytes_are_dropped_when_the_fetch_itself_is_cancelled(monkeypatc
 # ── forensics ────────────────────────────────────────────────────────────────
 
 def test_flagged_private_model_is_not_kept_for_analysis(monkeypatch, tmp_path):
+    """Saving a flagged submission for forensics copies public bytes and silently skips marked ones."""
     monkeypatch.setattr(model_verify, "MODEL_DIR", tmp_path)
     model_fp = tmp_path / "UID_9.zip"
     model_fp.write_bytes(_submission_bytes())

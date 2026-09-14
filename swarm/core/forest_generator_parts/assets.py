@@ -24,6 +24,7 @@ from ._shared import *
 # SECTION 8: Asset resolution
 # ---------------------------------------------------------------------------
 def _list_obj_names(category: str) -> List[str]:
+    """Sorted OBJ filenames in one forest asset folder, empty when it is absent."""
     cat_dir = os.path.join(FOREST_ASSET_DIR, category)
     if not os.path.isdir(cat_dir):
         return []
@@ -33,10 +34,17 @@ def _list_obj_names(category: str) -> List[str]:
 
 
 def _clamp_mode_id(mode_id: int) -> int:
+    """Pin a map mode into the 1 to 4 range the config defines."""
     return max(1, min(4, int(mode_id)))
 
 
 def _resolve_assets_for_class(mode_id: int) -> Dict[str, List[Tuple[str, str]]]:
+    """Cached model lists by role (trees, bushes, rocks, ground cover) for one map mode.
+
+    Snow, autumn and dead modes filter the kit differently; trees, rocks, stumps
+    and logs fall back to the normal category, while bushes, plants and cactus
+    can come back empty.
+    """
     mode_id = _clamp_mode_id(mode_id)
     cache_key = f"mode_{mode_id}"
     cached = _CLASS_ASSET_CACHE.get(cache_key)
@@ -168,12 +176,14 @@ def _resolve_assets_for_class(mode_id: int) -> Dict[str, List[Tuple[str, str]]]:
 # SECTION 9: Tree family selection helpers
 # ---------------------------------------------------------------------------
 def _map_half_extent() -> float:
+    """Distance from the centre to any edge of the ground plane, in metres."""
     return GROUND_SIZE_M * 0.5
 
 
 def _tree_spacing_radius(
     obj_name: str, canopy_radius: float, difficulty_id: int
 ) -> float:
+    """Centre-to-centre room a tree claims, from its canopy and the difficulty's overlap scale."""
     mul = TREE_SPACING_RADIUS_MULTIPLIER_DEFAULT_BY_DIFFICULTY.get(
         difficulty_id, TREE_SPACING_RADIUS_MULTIPLIER_DEFAULT
     )
@@ -187,6 +197,7 @@ def _tree_spacing_radius(
 
 
 def _tree_occupancy_radius(obj_name: str, canopy_radius: float) -> float:
+    """Ground a tree blocks for other props, scaled by the model's prefix."""
     mul = TREE_OCCUPANCY_RADIUS_MULTIPLIER_DEFAULT
     for prefix, ratio in TREE_OCCUPANCY_RADIUS_BY_PREFIX.items():
         if obj_name.startswith(prefix):
@@ -196,6 +207,7 @@ def _tree_occupancy_radius(obj_name: str, canopy_radius: float) -> float:
 
 
 def _tree_family_prefix(obj_name: str) -> str:
+    """Species a model belongs to, falling back to the part before its first underscore."""
     for prefix in TREE_FAMILY_PREFIXES:
         if obj_name.startswith(prefix):
             return prefix
@@ -205,6 +217,7 @@ def _tree_family_prefix(obj_name: str) -> str:
 def _build_tree_family_assets(
     assets: List[Tuple[str, str]],
 ) -> Dict[str, dict]:
+    """Group models by species with running cumulative weights ready for a weighted draw."""
     families: Dict[str, dict] = {}
     for category, obj_name in assets:
         family = _tree_family_prefix(obj_name)
@@ -222,6 +235,7 @@ def _build_tree_family_assets(
 def _pick_weighted_tree_from_family(
     rng: random.Random, family_info: dict
 ) -> Tuple[str, str]:
+    """Draw one (category, model) out of a species by its cumulative weights."""
     weighted = family_info.get("weighted_assets", [])
     total = float(family_info.get("total_weight", 0.0))
     if not weighted or total <= 0.0:
@@ -237,6 +251,7 @@ def _count_tree_family_neighbors(
     placed_families: List[Tuple[float, float, str]],
     *, x: float, y: float, family: str, radius_m: float,
 ) -> int:
+    """How many trees of that species already stand within radius_m of (x, y)."""
     radius_sq = radius_m * radius_m
     count = 0
     for ox, oy, other_family in placed_families:
@@ -256,6 +271,7 @@ def _rank_tree_families_for_point(
     placed_families: List[Tuple[float, float, str]],
     max_birch_count: int, birch_placed: int,
 ) -> List[str]:
+    """Species ordered by fit at (x, y): repeats, crowding and cluster limits weigh them down, birch is capped."""
     ranked: List[Tuple[float, str]] = []
     for family, info in family_assets.items():
         if family == BIRCH_TREE_PREFIX and birch_placed >= max_birch_count:

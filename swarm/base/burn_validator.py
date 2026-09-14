@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Validator entry point that burns emissions by sending the whole weight vector to UID 0."""
+
 from __future__ import annotations
 
 import os
@@ -31,16 +33,20 @@ STALL_TIMEOUT_SEC = int(os.getenv("BURN_VALIDATOR_STALL_TIMEOUT_SEC", "900"))
 
 
 def _restart_self(reason: str) -> None:
+    """Log why the process is being replaced, then exec a fresh image over it."""
     bt.logging.error(f"{reason}; restarting burn validator process")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 class Validator(BaseValidatorNeuron):
+    """Burn neuron: every step gives UID 0 weight 1.0 and every other miner zero."""
 
     def __init__(self, config=None):
+        """Construct the neuron with the base validator setup and nothing of its own."""
         super().__init__(config=config)
 
     async def forward(self) -> None:
+        """Wait five minutes, score UID 0 at 1.0 against the rest, and broadcast the weights."""
         time.sleep(300)
         miner_uids: List[int] = list(range(self.metagraph.n))
         weights = [1.0 if uid == 0 else 0.0 for uid in miner_uids]

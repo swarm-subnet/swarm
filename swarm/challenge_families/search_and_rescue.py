@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Search and rescue family: hover over the victim without touching it, and the score that follows."""
+
 from __future__ import annotations
 
 import inspect
@@ -66,6 +68,7 @@ SPAWN_FAILURE_PARK_Z = 200.0
 
 
 def _warn(message: str) -> None:
+    """Log a warning through bittensor, staying silent if it cannot be imported."""
     try:
         import bittensor as _bt
 
@@ -75,6 +78,7 @@ def _warn(message: str) -> None:
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
+    """True when callable_obj takes that keyword, and also when its signature cannot be read."""
     try:
         signature = inspect.signature(callable_obj)
     except (TypeError, ValueError):
@@ -83,6 +87,7 @@ def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
 
 
 def _build_sar_benchmark_template() -> tuple[dict[str, Any], ...]:
+    """The 100 benchmark slots, six per-type pools of banded distances interleaved so types alternate."""
     return interleave([
         banded_pool(1, (15, 28), n_slots=17, n_bands=3, moving_prob=0.0),
         banded_pool(2, (14, 22), n_slots=17, n_bands=3, moving_prob=0.0),
@@ -97,15 +102,18 @@ _SAR_BENCHMARK_TEMPLATE: tuple[dict[str, Any], ...] = _build_sar_benchmark_templ
 
 
 def _sar_drone_state(env: Any) -> tuple[Any, Any]:
+    """Position and linear velocity of drone 0, sliced out of its state vector."""
     state = env._getDroneStateVector(0)
     return state[0:3], state[10:13]
 
 
 class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
+    """Runtime for the victim hover task: it spawns the world, judges the dwell, and scores the rollout."""
     family_id = "cf_search_and_rescue"
     runtime_supported = True
 
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
+        """The container settings for SAR: sar_mode bootstrap, mission_search class and the wider eval budgets."""
         _ = task
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
@@ -137,6 +145,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         collision: bool,
         failure_reason: str,
     ) -> dict[str, Any]:
+        """The raw record of one flight: times, clearance, collision and why it ended."""
         challenge_type = int(getattr(task, "challenge_type", -1))
         target_time = _calculate_sar_target_time(task) if task is not None else None
         return {
@@ -160,6 +169,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         task: Any,
         metrics: dict[str, Any],
     ) -> dict[str, float]:
+        """Turn that record into the score terms: 0.45 confirm, 0.45 time, 0.10 clearance, or a participation crumb."""
         horizon = float(metrics["horizon_sec"])
         if horizon <= 0.0:
             raise ValueError("'horizon' must be positive")
@@ -224,14 +234,17 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         }
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
+        """The single keyword that puts the drone environment into SAR mode."""
         _ = task
         return {"sar_mode": True}
 
     def state_clue_dim(self, task: Any) -> int:
+        """Width of the clue the policy is handed: the search centre x and y."""
         _ = task
         return 2
 
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
+        """Switch the env into SAR mode once at construction and zero the per-episode counters."""
         _ = requested_mode
         env.sar_mode = True
         env.sar_world = None
@@ -240,6 +253,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         env._search_area_center = env.GOAL_POS.copy()
 
     def reset_env_state(self, env: Any) -> None:
+        """Drop the world handle and clear the dwell timer and closest-approach records for a new episode."""
         env._sar_predicate_active = False
         env._sar_dwell_time = 0.0
         env._sar_spawn_failed = False
@@ -250,12 +264,15 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         env._search_area_center = env.GOAL_POS.copy()
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
+        """A copy of the slot list miners are screened against, from swarm.constants."""
         return tuple(SAR_SCREENING_TEMPLATE)
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        """The 100 interleaved slots, built once when the module is imported."""
         return _SAR_BENCHMARK_TEMPLATE
 
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
+        """One seeded task from the legacy generator, tagged with this family id when it accepts one."""
         from swarm.validator import task_gen as legacy_task_gen
 
         kwargs = {"sim_dt": sim_dt, "seed": seed}
@@ -264,15 +281,18 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         return legacy_task_gen.random_task(**kwargs)
 
     def protected_body_uids(self, env: Any) -> set[int]:
+        """The victim bodies and the launch pad, which contact logic must not score as a crash."""
         base = set(env.sar_world.victim_uids) if env.sar_world is not None else set()
         return base | set(getattr(env, "_platform_uids", frozenset()))
 
     def safety_patch(self, env: Any) -> Any | None:
+        """The disc of support surface where touching down is forgiven, None until the world is built."""
         if env.sar_world is None:
             return None
         return env.sar_world.safety_patch
 
     def spawn_task_world(self, env: Any) -> None:
+        """Build the victim scene, stand the launch pad under the drone, hide the ground plane and record the search centre."""
         env.task.start = env._original_start
         env.task.goal = env._original_goal
         cli = getattr(env, "CLIENT", 0)
@@ -387,6 +407,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         env._build_cull_targets()
 
     def check_predicate(self, env: Any) -> bool:
+        """True while the drone hovers slowly inside the confirm cylinder and height band, outside the no-touch sphere."""
         if env.sar_world is None:
             return False
 
@@ -422,6 +443,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         return True
 
     def post_step_update(self, env: Any) -> None:
+        """Accumulate hover time each step and mark success once it reaches SAR_DWELL_SEC unbroken."""
         if env._sar_spawn_failed:
             if env._failure_reason == FailureReason.NONE.value:
                 env._failure_reason = FailureReason.SPAWN_FAILURE.value
@@ -442,6 +464,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
             env._sar_dwell_time = 0.0
 
     def compute_terminated(self, env: Any) -> bool:
+        """End the episode when the world failed to spawn or the drone breaks into the no-touch sphere."""
         if env._sar_spawn_failed:
             return True
         if env.sar_world is not None:
@@ -458,6 +481,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def infeasible(self, env: Any) -> bool:
+        """True when the time left cannot cover the flight to the search edge plus the remaining dwell."""
         if env.sar_world is None:
             return False
         time_left = env.EP_LEN_SEC - env._time_alive
@@ -481,6 +505,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         roll: float,
         pitch: float,
     ) -> bool:
+        """Cut the episode short on excess tilt, on the horizon expiring, or once the confirm can no longer be reached."""
         if abs(float(roll)) > float(env.MAX_TILT_RAD):
             if not terminal_already:
                 env._failure_reason = FailureReason.TILT.value
@@ -502,6 +527,7 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def build_info(self, env: Any) -> dict[str, Any]:
+        """Closest approach, longest dwell, spawn attempts and confirm time, for the episode report."""
         return {
             "sar_min_horizontal_distance": float(env._sar_min_horizontal_distance),
             "sar_min_sphere_distance": float(env._sar_min_sphere_distance),
@@ -517,13 +543,17 @@ class SearchAndRescueChallengeFamily(ChallengeFamilyRuntime):
         }
 
     def legacy_sar_drone_state(self, env: Any) -> tuple[Any, Any]:
+        """Position and velocity, under the name the environment still calls through."""
         return _sar_drone_state(env)
 
     def legacy_sar_check_predicate(self, env: Any) -> bool:
+        """The hover test, under the name the environment still calls through."""
         return self.check_predicate(env)
 
     def legacy_sar_step_update(self, env: Any) -> None:
+        """The per-step dwell bookkeeping, under the name the environment still calls through."""
         self.post_step_update(env)
 
     def legacy_sar_infeasible(self, env: Any) -> bool:
+        """The out-of-time test under its old name; nothing in the environment calls it any more."""
         return self.infeasible(env)

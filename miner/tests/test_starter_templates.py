@@ -57,6 +57,7 @@ def test_starter_imports_on_its_own(name, tmp_path):
 
 
 def _load(name):
+    """Execute one starter file from the template directory and return a fresh DroneFlightController out of it."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("starter", TEMPLATE_DIR / name)
@@ -76,6 +77,7 @@ def test_sar_starter_returns_the_six_element_action_its_family_declares():
 
 
 def test_office_starter_returns_the_four_stick_action_its_family_declares():
+    """Four RC sticks, not the six-element vector the search and rescue starter hands back."""
     controller = _load("office_drone_agent.py")
     action = np.asarray(
         controller.act({"state": np.zeros(64, dtype=np.float32)}), dtype=np.float32

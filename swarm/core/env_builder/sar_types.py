@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Body categories, the clearance-excused safety patch and the picklable SARWorld record."""
+
 from __future__ import annotations
 
 import pickle
@@ -26,6 +28,7 @@ Vec3 = Tuple[float, float, float]
 
 
 class BodyCategory(str, Enum):
+    """Tag given to every spawned body: a support surface, the victim, or an obstacle."""
     SUPPORT_TERRAIN = "SUPPORT_TERRAIN"
     SUPPORT_ROOFTOP = "SUPPORT_ROOFTOP"
     SUPPORT_FLOOR = "SUPPORT_FLOOR"
@@ -51,6 +54,7 @@ SUPPORT_CATEGORIES = frozenset(
 
 @dataclass
 class SafetyPatch:
+    """The disc around the victim spawn, and its vertical band, excused from clearance scoring."""
     support_uid: int
     xy: Tuple[float, float]
     surface_z: float
@@ -61,6 +65,7 @@ class SafetyPatch:
 
 @dataclass
 class SARWorld:
+    """Everything a rescue episode carries about its victim, its support surface and its tags."""
     victim_uids: List[int]
     victim_aabb: Tuple[Vec3, Vec3]
     victim_centre: Vec3
@@ -74,11 +79,14 @@ class SARWorld:
 
     @property
     def victim_centre_xy(self) -> Tuple[float, float]:
+        """The victim centre with its height dropped, for horizontal distance checks."""
         return (self.victim_centre[0], self.victim_centre[1])
 
     def to_bytes(self) -> bytes:
+        """The world pickled whole, for handing across a process boundary."""
         return pickle.dumps(self)
 
     @staticmethod
     def from_bytes(blob: bytes) -> "SARWorld":
+        """Unpickle a world produced by to_bytes."""
         return pickle.loads(blob)

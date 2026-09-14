@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The multi-drone autopilot family: one policy flies a fleet to a shared pool of landing pads."""
+
 from __future__ import annotations
 
 import math
@@ -51,6 +53,7 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
     runtime_supported = True
 
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
+        """Swarm navigation resource class on the base image, sar_mode off, and a 900 s per-seed budget under a three-hour cap."""
         _ = task
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
@@ -72,21 +75,26 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
         )
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
+        """The environment is built with sar_mode off: nothing is hidden, the drones only have pads to reach."""
         _ = task
         return {"sar_mode": False}
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
+        """The single-drone screening slots minus challenge type 5, each slot stamped with a fleet size."""
         return with_drone_counts(without_challenge_type(super().screening_template(), 5))
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        """The single-drone benchmark slots minus challenge type 5, each slot stamped with a fleet size."""
         return with_drone_counts(without_challenge_type(super().benchmark_template(), 5))
 
     def compute_terminated(self, env: Any) -> bool:
+        """Always False: the simulator alone decides when the flight is over."""
         # The simulator ends the episode when every drone is resolved (frozen).
         _ = env
         return False
 
     def build_info(self, env: Any) -> dict[str, Any]:
+        """Fields merged into the per-step info dict: both version stamps and the re-seated starts and goals."""
         return {
             "schema_version": SCHEMA_VERSION,
             "task_version": str(getattr(env.task, "version", "")),
@@ -95,6 +103,7 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
         }
 
     def spawn_task_world(self, env: Any) -> None:
+        """Build the map, one start and goal pad per drone, the shared noisy search clue, then sit each drone on its pad."""
         cli = getattr(env, "CLIENT", 0)
         task = env.task
         starts = [tuple(float(c) for c in s) for s in task.starts]
@@ -198,6 +207,7 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
         env._build_cull_targets()
 
     def protected_body_uids(self, env: Any) -> set[int]:
+        """Every start and goal platform, kept out of the fatal-collision check, the obstacle cull and the clearance metric."""
         return set(getattr(env, "_platform_uids", frozenset()))
 
     def score_swarm(self, task: Any, info: dict[str, Any]) -> dict[str, Any]:

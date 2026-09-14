@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The swarm CLI: doctor probes, benchmark and report commands, champion downloads."""
 from __future__ import annotations
 
 import hashlib
@@ -29,6 +30,7 @@ from swarm import cli
 
 
 def test_doctor_text_output_with_mocked_checks(monkeypatch, capsys):
+    """Doctor exits 0 when every probe passes, and prints one name-and-detail line each."""
     monkeypatch.setattr(
         cli,
         "_run_doctor_checks",
@@ -44,6 +46,7 @@ def test_doctor_text_output_with_mocked_checks(monkeypatch, capsys):
 
 
 def test_doctor_fails_if_required_check_fails(monkeypatch):
+    """A failed required probe makes the doctor command exit 1."""
     monkeypatch.setattr(
         cli,
         "_run_doctor_checks",
@@ -53,6 +56,7 @@ def test_doctor_fails_if_required_check_fails(monkeypatch):
 
 
 def test_doctor_optional_failure_does_not_fail_exit_code(monkeypatch, capsys):
+    """An optional probe that fails is still reported, and the exit code stays 0."""
     monkeypatch.setattr(
         cli,
         "_run_doctor_checks",
@@ -63,9 +67,11 @@ def test_doctor_optional_failure_does_not_fail_exit_code(monkeypatch, capsys):
 
 
 def test_doctor_checks_runtime_state_dir(monkeypatch):
+    """The writable-directory probes cover swarm/state first, then the model directory."""
     captured = []
 
     def fake_check(path, name):
+        """Record the directory and label asked for, and return a passing check for them."""
         captured.append((path, name))
         return cli.DoctorCheck(name, True, str(path), True)
 
@@ -84,12 +90,14 @@ def test_doctor_checks_runtime_state_dir(monkeypatch):
 
 
 def test_sandbox_lockdown_permissions_ok_for_root(monkeypatch):
+    """Root with nsenter and iptables on PATH passes the network-lockdown probe."""
     monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     assert cli._check_sandbox_lockdown_permissions().ok is True
 
 
 def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
+    """Benchmark calls the engine in-process and forwards --workers into the argv it builds."""
     model_path = tmp_path / "graph.zip"
     model_path.write_bytes(b"zip")
     captured = {}
@@ -99,11 +107,13 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
 
 
 def test_benchmark_fails_if_model_missing(capsys, tmp_path):
+    """A zip path that does not exist exits 1 and says so on stderr."""
     assert cli.main(["benchmark", "--model", str(tmp_path / "missing.zip")]) == 1
     assert "Model not found" in capsys.readouterr().err
 
 
 def test_report_text_output_parses_summary(tmp_path, capsys):
+    """Report pulls the summary fields out of a benchmark log and prints them as label-value lines."""
     log_path = tmp_path / "bench.log"
     log_path.write_text(
         "\n".join([
@@ -122,6 +132,7 @@ def test_report_text_output_parses_summary(tmp_path, capsys):
 
 
 def test_report_text_output_contains_results_block(tmp_path, capsys):
+    """A log carrying a RESULTS block has that block echoed back, per-scene rows included."""
     log_path = tmp_path / "bench.log"
     log_path.write_text(
         "[17:28:58] === RESULTS ===\n"
@@ -138,6 +149,7 @@ def test_report_text_output_contains_results_block(tmp_path, capsys):
 
 
 def test_extract_benchmark_results_block_strips_progress_noise():
+    """The extracted block carries no ANSI escapes and no tqdm progress lines."""
     raw = (
         "\x1b[34mnoise\x1b[0m\n\rSeed progress: 100%|####|\n"
         "[17:28:58] === RESULTS ===\n"
@@ -151,12 +163,14 @@ def test_extract_benchmark_results_block_strips_progress_noise():
 
 
 def test_report_fails_for_non_report_log(tmp_path):
+    """A log with neither a summary nor a RESULTS block exits 1."""
     log_path = tmp_path / "bad.log"
     log_path.write_text("nothing useful here\n")
     assert cli.main(["report", "--input", str(log_path)]) == 1
 
 
 def test_python_module_entrypoint_help_runs():
+    """Invoking the package with -m exits 0 and prints the Swarm CLI banner."""
     result = subprocess.run(
         [sys.executable, "-m", "swarm", "--help"],
         capture_output=True,
@@ -172,6 +186,7 @@ def test_python_module_entrypoint_help_runs():
 
 
 def _template_dir(tmp_path, names):
+    """Create swarm/submission_template under tmp_path with one empty file per name, and return it."""
     d = tmp_path / "swarm" / "submission_template"
     d.mkdir(parents=True)
     for name in names:
@@ -180,12 +195,14 @@ def _template_dir(tmp_path, names):
 
 
 def test_doctor_accepts_a_complete_submission_template(tmp_path, monkeypatch):
+    """A folder holding all four required files passes the template probe."""
     _template_dir(tmp_path, cli.REQUIRED_TEMPLATE_FILES)
     monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
     assert cli._check_submission_template().ok is True
 
 
 def test_doctor_rejects_a_template_missing_runtime_caps(tmp_path, monkeypatch):
+    """A folder without runtime_caps.py fails the probe, and the detail names the absent file."""
     names = set(cli.REQUIRED_TEMPLATE_FILES) - {"runtime_caps.py"}
     _template_dir(tmp_path, names)
     monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
@@ -215,26 +232,35 @@ ZIP_BYTES = b"champion-zip"
 
 
 def _fake_champion_client(monkeypatch, calls, uid=7):
+    """Patch httpx.Client with a stub serving a released crown record then the zip bytes, recording each url and params."""
     class FakeResponse:
+        """A stand-in httpx response: status 200 over either a JSON payload or raw bytes."""
         def __init__(self, payload=None, content=b""):
+            """Store the JSON payload and the body bytes the caller will read back."""
             self.status_code = 200
             self._payload = payload
             self.content = content
 
         def json(self):
+            """Return the payload the fake was constructed with."""
             return self._payload
 
     class FakeClient:
+        """A stand-in httpx client answering the crown lookup and the zip download."""
         def __init__(self, *args, **kwargs):
+            """Accept and discard the timeout and every other client argument."""
             pass
 
         def __enter__(self):
+            """Return the client itself so the with block binds the fake."""
             return self
 
         def __exit__(self, *exc):
+            """Return False so an exception raised inside the with block propagates."""
             return False
 
         def get(self, url, params=None):
+            """Record the call, answering /champion with the crown record and anything else with the zip bytes."""
             calls.append((url, params))
             if url.endswith("/champion"):
                 return FakeResponse(payload={
@@ -249,6 +275,7 @@ def _fake_champion_client(monkeypatch, calls, uid=7):
 
 
 def test_champion_scopes_both_requests_to_the_family(monkeypatch, tmp_path):
+    """The lookup and the download both carry family_id, and the zip is saved under a family-named file."""
     calls = []
     _fake_champion_client(monkeypatch, calls)
     monkeypatch.chdir(tmp_path)
@@ -262,6 +289,7 @@ def test_champion_scopes_both_requests_to_the_family(monkeypatch, tmp_path):
 
 
 def test_champion_without_a_family_keeps_the_old_filename(monkeypatch, tmp_path):
+    """With no family flag the requests send no params and the zip keeps its champion_UID_N name."""
     calls = []
     _fake_champion_client(monkeypatch, calls)
     monkeypatch.chdir(tmp_path)
@@ -272,17 +300,20 @@ def test_champion_without_a_family_keeps_the_old_filename(monkeypatch, tmp_path)
 
 
 def test_champion_rejects_an_unknown_family(capsys):
+    """A family id outside the registered choices dies in argparse before any request goes out."""
     with pytest.raises(SystemExit):
         cli.main(["champion", "--family-id", "cf_nope"])
     assert "invalid choice" in capsys.readouterr().err
 
 
 def test_benchmark_auto_download_uses_the_benchmark_family(monkeypatch, tmp_path):
+    """Benchmark without --model passes its --family-id through to the crown download."""
     model_path = tmp_path / "graph.zip"
     model_path.write_bytes(b"zip")
     captured = {}
 
     def fake_download(family_id=None):
+        """Record the family id it was asked for and return the prepared model path."""
         captured["family_id"] = family_id
         return model_path
 

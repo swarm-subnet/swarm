@@ -73,6 +73,13 @@ from .storage_parts.helpers import (
 def build_storage_racks(
     storage_loader, floor_top_z, area_layout, wall_info, cli, seed=0
 ):
+    """Fill the STORAGE zone with two banks of racks either side of a centre aisle and stock them.
+
+    Chooses the rack yaw, row count and slot spacing that fit the zone and the floor slab,
+    spawns the racks with optional endcaps, then pallets and their box or barrel cargo on
+    each shelf level. Returns the spawn tallies and rack entries, or a dict carrying
+    storage_rack_enabled False and the reason no layout was produced.
+    """
     if not ENABLE_STORAGE_RACK_LAYOUT:
         return {"storage_rack_enabled": False}
     if storage_loader is None:

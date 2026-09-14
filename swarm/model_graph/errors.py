@@ -28,6 +28,7 @@ from enum import Enum
 
 
 class ReasonCode(str, Enum):
+    """String enum of every admission and runtime outcome; one value per way a submission can be turned away."""
     OK = "MG_OK"
 
     ARCHIVE_REJECTED = "MG_ARCHIVE_REJECTED"
@@ -104,6 +105,7 @@ class ModelGraphError(Exception):
         node_id: str | None = None,
         model_id: str | None = None,
     ) -> None:
+        """Clip the detail to 500 characters and build the message from the code plus any node and model ids."""
         self.reason = reason
         self.detail = detail[:_DETAIL_MAX_CHARS]
         self.node_id = node_id
@@ -116,6 +118,7 @@ class ModelGraphError(Exception):
         super().__init__(f"{reason.value}{location}: {self.detail}")
 
     def to_record(self) -> dict:
+        """Flatten the failure into the four-field dict the backend and the validator log it as."""
         return {
             "reason_code": self.reason.value,
             "detail": self.detail,

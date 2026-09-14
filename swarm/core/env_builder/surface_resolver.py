@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Raycast lookup of the standable surface under an (x, y) point in a PyBullet world."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -34,6 +36,8 @@ RAYCAST_BOTTOM_Z = -5.0
 
 @dataclass
 class SurfaceHit:
+    """One accepted support body under a probe point, with the height and normal found there."""
+
     support_uid: int
     surface_z: float
     normal: Tuple[float, float, float]
@@ -42,6 +46,7 @@ class SurfaceHit:
 
 
 def _to_value(category) -> str:
+    """Normalise a BodyCategory or a raw tag into its plain string form."""
     if isinstance(category, BodyCategory):
         return category.value
     return str(category)
@@ -56,6 +61,11 @@ def resolve_surface(
     *,
     max_descent_iterations: int = 12,
 ) -> Optional[SurfaceHit]:
+    """Cast down at (x, y) and take the topmost hit whose body tag is accepted, else None.
+
+    A hit on an unaccepted body restarts the ray just below it, so a canopy or a roof
+    overhang does not hide the ground beneath.
+    """
     accepted: Set[str] = {_to_value(c) for c in accepted_categories}
     top_z = RAYCAST_TOP_Z
     for _ in range(max_descent_iterations):
@@ -88,6 +98,7 @@ def _classify_hit(
     body_tags: Dict[int, str],
     accepted: Set[str],
 ) -> Optional[SurfaceHit]:
+    """Turn a ray hit into a SurfaceHit, dropping tags out of scope and normals too steep to stand on."""
     category = body_tags.get(int(uid))
     if category is None:
         return None
@@ -116,6 +127,7 @@ def _classify_hit(
 
 
 def _on_surface(cli: int, uid: int, hit_pos, surface_z: float) -> bool:
+    """True when the hit sits near the body AABB top or in its upper half, not on a side face."""
     try:
         mn, mx = p.getAABB(uid, physicsClientId=cli)
     except p.error:

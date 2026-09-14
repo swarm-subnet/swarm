@@ -41,6 +41,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def env_str(name: str, default: Optional[str] = None) -> Optional[str]:
+    """The environment variable's value, or default when it is unset or empty."""
     value = os.getenv(name)
     if value is None or value == "":
         return default
@@ -48,6 +49,7 @@ def env_str(name: str, default: Optional[str] = None) -> Optional[str]:
 
 
 def env_bool(name: str, default: bool = False) -> bool:
+    """True when the variable reads 1, true, yes or on; default when it is unset or empty."""
     value = os.getenv(name)
     if value is None or value == "":
         return bool(default)
@@ -55,6 +57,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def env_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
+    """The variable parsed as an int, falling back to default on junk and raised to minimum."""
     try:
         value = int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
@@ -65,6 +68,7 @@ def env_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
 
 
 def env_float(name: str, default: float, *, minimum: Optional[float] = None) -> float:
+    """The variable parsed as a float, falling back to default on junk and raised to minimum."""
     try:
         value = float(os.getenv(name, str(default)))
     except (TypeError, ValueError):
@@ -76,12 +80,14 @@ def env_float(name: str, default: float, *, minimum: Optional[float] = None) -> 
 
 @dataclass(frozen=True)
 class RpcTraceSettings:
+    """Switches for the per-call RPC trace log: whether it runs, how often it prints, the heartbeat gap."""
     enabled: bool
     trace_every: int
     heartbeat_sec: float
 
     @classmethod
     def from_env(cls) -> "RpcTraceSettings":
+        """Read the trace switches from the SWARM_LOG_RPC_* variables, the interval floored at one."""
         return cls(
             enabled=env_bool("SWARM_LOG_RPC_TRACE", False),
             trace_every=env_int("SWARM_LOG_RPC_TRACE_EVERY", 25, minimum=1),
@@ -91,6 +97,7 @@ class RpcTraceSettings:
 
 @dataclass(frozen=True)
 class DockerBatchTimeoutSettings:
+    """How long a docker batch may run: the multiplier, the hard cap, and the terms for extending it while the run still reports progress."""
     multiplier: float
     hard_cap_sec: float
     extend_on_progress: bool
@@ -101,6 +108,7 @@ class DockerBatchTimeoutSettings:
 
     @classmethod
     def from_env(cls) -> "DockerBatchTimeoutSettings":
+        """Read the batch timeout policy from the SWARM_BATCH_TIMEOUT_* variables, a negative total cap read as no cap."""
         max_total_timeout_sec = env_float("SWARM_BATCH_TIMEOUT_MAX_TOTAL_SEC", 0.0)
         if max_total_timeout_sec < 0:
             max_total_timeout_sec = 0.0
@@ -147,6 +155,7 @@ def auto_worker_cpuset_map(
 
 @dataclass(frozen=True)
 class DockerWorkerLimits:
+    """The cpu share, memory ceiling and optional cpu pinning handed to one worker container."""
     cpus: str
     memory: str
     cpuset_cpus: Optional[str]
@@ -154,6 +163,7 @@ class DockerWorkerLimits:
 
 @dataclass(frozen=True)
 class DockerRuntimeSettings:
+    """Thread caps, cpu and memory overrides, and the cpuset map that pins each worker container."""
     thread_caps_enabled: bool
     torch_num_threads: Optional[str]
     torch_interop_threads: Optional[str]
@@ -163,6 +173,7 @@ class DockerRuntimeSettings:
 
     @classmethod
     def from_env(cls) -> "DockerRuntimeSettings":
+        """Read the worker container settings from the SWARM_DOCKER_* and SWARM_TORCH_* variables, computing a cpuset map when none is given."""
         cpuset_map = env_str("SWARM_DOCKER_WORKER_CPUSETS")
         if cpuset_map is None:
             cpuset_map = auto_worker_cpuset_map()
@@ -180,6 +191,7 @@ class DockerRuntimeSettings:
 
     @staticmethod
     def split_cpuset_map(raw: str) -> list[str]:
+        """Split a cpuset map on semicolons or pipes, dropping the empty entries."""
         return [entry.strip() for entry in re.split(r"[;|]", raw) if entry.strip()]
 
     @staticmethod
@@ -213,6 +225,7 @@ class DockerRuntimeSettings:
 
     @staticmethod
     def _bounded_thread_value(raw: Optional[str], ceiling: int, default: int) -> str:
+        """The raw count clamped to [1, ceiling] as a string, or the default clamped the same way when raw is unset or unparsable."""
         if raw not in (None, ""):
             try:
                 return str(max(1, min(int(str(raw)), ceiling)))
@@ -226,6 +239,12 @@ class DockerRuntimeSettings:
         *,
         thread_cap: Optional[int] = None,
     ) -> dict[str, str]:
+        """Thread-limit environment variables for one worker container.
+
+        With caps on, every listed variable and the torch knobs are clamped to the
+        worker's CPU ceiling; with caps off, only values explicitly set in this
+        process are passed through.
+        """
         envs: dict[str, str] = {}
         cap = max(1, int(thread_cap or cpus_per_docker_worker()))
         if self.thread_caps_enabled:
@@ -260,6 +279,7 @@ class DockerRuntimeSettings:
         return envs
 
     def resolve_worker_limits(self, worker_id: int) -> DockerWorkerLimits:
+        """CPU, memory and pinning for one container: the per-worker variable wins, else that worker's slot in the cpuset map."""
         cpuset = env_str(f"SWARM_DOCKER_WORKER_CPUSET_CPUS_{worker_id}")
         if cpuset is None and self.cpuset_map:
             entries = self.split_cpuset_map(self.cpuset_map)
@@ -274,17 +294,20 @@ class DockerRuntimeSettings:
 
 @dataclass(frozen=True)
 class HostWorkerLimits:
+    """Memory ceiling in MB and optional cpu pinning for one worker process run outside docker."""
     memory_mb: Optional[int]
     cpuset_cpus: Optional[str]
 
 
 @dataclass(frozen=True)
 class HostWorkerRuntimeSettings:
+    """Memory ceiling and cpuset map applied to the workers that run outside docker."""
     memory_mb: Optional[int]
     cpuset_map: Optional[str]
 
     @classmethod
     def from_env(cls) -> "HostWorkerRuntimeSettings":
+        """Read the host memory ceiling and cpuset map from the SWARM_HOST_WORKER_* variables, a non-positive or unparsable memory read as unset."""
         raw_memory_mb = env_str("SWARM_HOST_WORKER_MEMORY_MB")
         memory_mb: Optional[int] = None
         if raw_memory_mb is not None:
@@ -301,10 +324,12 @@ class HostWorkerRuntimeSettings:
 
     @staticmethod
     def split_cpuset_map(raw: str) -> list[str]:
+        """Split a host cpuset map by the same semicolon or pipe rule the docker settings use."""
         return DockerRuntimeSettings.split_cpuset_map(raw)
 
     @staticmethod
     def parse_cpuset_spec(raw: str) -> set[int]:
+        """Expand a spec like 0-3,7 into the set of cpu ids it names, a reversed range read either way round."""
         cpus: set[int] = set()
         for chunk in str(raw).split(","):
             part = chunk.strip()
@@ -323,6 +348,7 @@ class HostWorkerRuntimeSettings:
         return cpus
 
     def resolve_worker_limits(self, worker_id: int) -> HostWorkerLimits:
+        """Memory and pinning for one host process: the per-worker variable wins, else that worker's slot in the cpuset map."""
         cpuset = env_str(f"SWARM_HOST_WORKER_CPUSET_CPUS_{worker_id}")
         if cpuset is None and self.cpuset_map:
             entries = self.split_cpuset_map(self.cpuset_map)
@@ -336,8 +362,10 @@ class HostWorkerRuntimeSettings:
 
 @dataclass(frozen=True)
 class BackendApiSettings:
+    """Base URL of the Swarm backend API, unset where the deployment talks to no backend."""
     base_url: Optional[str]
 
     @classmethod
     def from_env(cls) -> "BackendApiSettings":
+        """Read the backend base URL from SWARM_BACKEND_API_URL, None when it is unset or empty."""
         return cls(base_url=env_str("SWARM_BACKEND_API_URL"))

@@ -40,6 +40,7 @@ class MeshKitLoader:
     """
 
     def __init__(self, obj_dir, texture_path, cli=0):
+        """Bind one asset kit and its colormap, with every cache starting empty."""
         self.obj_dir = obj_dir
         self.texture_path = texture_path
         self.cli = cli
@@ -54,6 +55,7 @@ class MeshKitLoader:
         self.up_fix_quat = p.getQuaternionFromEuler(MESH_UP_FIX_RPY)
 
     def _asset_path(self, model_name):
+        """Absolute location of a model inside the kit; raises when the file is absent."""
         cached = self.asset_path_cache.get(model_name)
         if cached is not None:
             return cached
@@ -64,6 +66,7 @@ class MeshKitLoader:
         return path
 
     def _scale_xyz(self, scale):
+        """Widen a scalar into a 3-axis factor, or validate one already given per axis."""
         if isinstance(scale, (tuple, list)):
             if len(scale) != 3:
                 raise ValueError("scale tuple/list must have exactly 3 components")
@@ -72,6 +75,7 @@ class MeshKitLoader:
         return (s, s, s)
 
     def _parse_vertices(self, model_name):
+        """Cached OBJ vertex list with the kit's Y-up axes rewritten as Z-up."""
         if model_name in self.vertices_cache:
             return self.vertices_cache[model_name]
         vertices = []
@@ -90,6 +94,7 @@ class MeshKitLoader:
         return vertices
 
     def _bounds(self, model_name, scale):
+        """Cached min and max corners of the model once scaled."""
         sxyz = self._scale_xyz(scale)
         key = (model_name, sxyz)
         if key in self.bounds_cache:
@@ -102,10 +107,12 @@ class MeshKitLoader:
         return min_v, max_v
 
     def model_size(self, model_name, scale):
+        """Width, depth and height the model occupies at the given scale."""
         min_v, max_v = self._bounds(model_name, scale)
         return (max_v[0] - min_v[0], max_v[1] - min_v[1], max_v[2] - min_v[2])
 
     def _shape_ids(self, model_name, scale, with_collision, double_sided=False):
+        """Cached visual and collision handles for the model at this scale, -1 for no collider."""
         sxyz = self._scale_xyz(scale)
         visual_key = (model_name, sxyz, bool(double_sided))
         visual_id = self.visual_shape_cache.get(visual_key)
@@ -148,6 +155,7 @@ class MeshKitLoader:
         return visual_id, collision_id
 
     def _ensure_texture(self):
+        """Load the kit's colormap once and hand back its PyBullet id."""
         if self.texture_id is None and self.texture_path:
             self.texture_id = p.loadTexture(
                 self.texture_path.replace("\\", "/"),
@@ -156,6 +164,7 @@ class MeshKitLoader:
         return self.texture_id
 
     def _spawn_basis(self, model_name, scale):
+        """Cached floor offset and footprint centre the placement maths works from."""
         sxyz = self._scale_xyz(scale)
         key = (model_name, sxyz)
         cached = self.spawn_basis_cache.get(key)
@@ -170,6 +179,7 @@ class MeshKitLoader:
         return cached
 
     def _yaw_components(self, yaw_deg):
+        """Cached radians, cosine, sine and quaternion for an angle in degrees."""
         yaw_key = float(yaw_deg)
         cached = self.yaw_cache.get(yaw_key)
         if cached is not None:
@@ -196,6 +206,7 @@ class MeshKitLoader:
         rgba=(1.0, 1.0, 1.0, 1.0),
         double_sided=False,
     ):
+        """Place a model with its footprint centred on (x, y) and its base resting on floor_z."""
         min_z, center_x, center_y = self._spawn_basis(model_name, scale)
         yaw_rad, cos_y, sin_y, yaw_quat = self._yaw_components(yaw_deg)
 
@@ -232,6 +243,7 @@ class MeshKitLoader:
 # Path utilities
 # ---------------------------------------------------------------------------
 def first_existing_path(candidates):
+    """Absolute location of the earliest candidate that exists, None when none do."""
     for path in candidates:
         if os.path.exists(path):
             return os.path.abspath(path)
@@ -239,6 +251,7 @@ def first_existing_path(candidates):
 
 
 def normalize_mtl_texture_paths(obj_dir):
+    """Point every map_Kd that already names a colormap.png at Textures/colormap.png, skipped when the stamp matches."""
     try:
         names = os.listdir(obj_dir)
     except OSError:

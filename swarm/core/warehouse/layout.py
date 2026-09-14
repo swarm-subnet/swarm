@@ -63,6 +63,10 @@ from .layout_parts.core_helpers import make_core_layout_helpers
 
 
 def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
+    """Seat every zone for this seed, walls first, and return name to {sx, sy, cx, cy}.
+
+    Also spawns the flat coloured tiles in the client when SHOW_AREA_LAYOUT_MARKERS is on.
+    """
     rng = random.Random(int(seed) + 991)
     floor_half_x, floor_half_y = _floor_spawn_half_extents(loader)
 
@@ -183,6 +187,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
     along_pref = (sum(door_centers) / float(len(door_centers))) if door_centers else 0.0
 
     def _loading_zone_covers_doors(candidate):
+        """True when every dock door centre sits inside the candidate span, inset by half a door."""
         if not door_centers:
             return True
         if loading_side in ("north", "south"):
@@ -260,6 +265,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
     office_wall_priority = [personnel_side] if personnel_side in WALL_SLOTS else list(WALL_SLOTS)
 
     def _office_along_for_wall(wall_name):
+        """Along offset on wall_name at the end closest to the personnel door, or the door itself."""
         if wall_name in ("north", "south"):
             if personnel_side == "east":
                 return float(max(0.0, attach_half_x - (fit_sx * 0.5)))
@@ -273,6 +279,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         return float(personnel_along if personnel_side in ("east", "west") else 0.0)
 
     def _office_pref_alongs_for_wall(wall_name):
+        """Ordered along offsets to try on wall_name, two of them stepped clear of the door."""
         along_center = _office_along_for_wall(wall_name)
         if wall_name in ("north", "south"):
             door_along_span = float(personnel_span if personnel_side in ("north", "south") else 0.0)
@@ -290,6 +297,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         return [along_center - door_clear_offset, along_center + door_clear_offset, along_center, 0.0]
 
     def _office_sweep_alongs_for_wall(wall_name):
+        """Evenly spaced offsets covering the legal span of wall_name; empty when nothing fits."""
         sx_o, sy_o = _orient_dims_long_side_on_wall(wall_name, fit_sx, fit_sy)
         lo, hi = _wall_along_limits(
             wall_name, sx_o, sy_o, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
@@ -307,6 +315,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         return out
 
     def _office_matches_personnel_side(candidate):
+        """Accept a rect only on the personnel door's wall, clear of the door and its passage."""
         if personnel_side not in WALL_SLOTS:
             return True
         attached_wall = _candidate_attached_wall(candidate)
@@ -322,6 +331,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
     office_seen = set()
 
     def _push_office_candidate(cand):
+        """Queue a rect unless one with the same rounded centre and size is already queued."""
         if cand is None:
             return
         key = (
@@ -396,12 +406,14 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
     ))
 
     def _utility_wall_priority():
+        """Walls in shuffled order, with the loading and personnel sides pushed to the back."""
         walls = list(WALL_SLOTS)
         rng.shuffle(walls)
         walls.sort(key=lambda w: (1 if w == loading_side else 0, 1 if w == personnel_side else 0))
         return walls
 
     def _utility_candidate_pool(name, gap):
+        """Capped list of rects one zone could take at this gap, biased to the walls it may use."""
         area = area_defs[name]
         base_sx = float(area["size_m"][0])
         base_sy = float(area["size_m"][1])
@@ -502,13 +514,16 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
     utility_orders = [base_order] + utility_orders
 
     def _place_all_utilities_for_current_state():
+        """Backtrack over zone orders until the whole utility set fits; restores on failure."""
         def _pool(name, gap):
+            """Memoized rect list for one zone and gap, built once per pair."""
             key = (name, float(gap))
             if key not in utility_pool_cache:
                 utility_pool_cache[key] = _utility_candidate_pool(name, gap)
             return utility_pool_cache[key]
 
         def _dfs_place(order, idx, gap):
+            """Recursively seat order[idx:], returning True when the whole tail fits at this gap."""
             if idx >= len(order):
                 return True
             name = order[idx]
@@ -688,6 +703,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
                 walls = preferred_walls + [w for w in walls if w not in preferred_walls]
 
         def _optional_along_pref_for_wall(wall_name):
+            """Offset to aim at on wall_name: the office centre, the door, or None for free choice."""
             if is_forklift_park and wall_name == personnel_side:
                 return None
             if office_ref is not None:
@@ -701,6 +717,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
         office_keepout_gap = 2.0 if require_wall_attachment else 0.0
 
         def _optional_zone_validator(candidate):
+            """Reject forklift bays that crowd the office or block the personnel door; other zones pass."""
             if require_wall_attachment and office_ref is not None:
                 if _rects_overlap(candidate, office_ref, office_keepout_gap):
                     return False
@@ -793,6 +810,7 @@ def build_area_layout_markers(loader, floor_top_z, wall_info, seed, cli):
 
     # --- Post-processing: centering isolated zones ---
     def _try_center_zone_if_isolated_on_wall(zone_name):
+        """Recentre a zone that has its wall to itself, putting it back when nothing fits."""
         zone_idx = next((i for i, a in enumerate(placed) if str(a.get("name", "")) == str(zone_name)), None)
         if zone_idx is None:
             return False

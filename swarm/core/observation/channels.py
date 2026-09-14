@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The named sensor channels a family can expose, each with how it is computed and sized."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -55,22 +57,27 @@ class SensorChannel:
 
 
 def _position(env, sv, ctx):
+    """World XYZ of the drone, read off the state vector."""
     return np.asarray(sv[0:3], dtype=np.float32)
 
 
 def _orientation(env, sv, ctx):
+    """Roll, pitch and yaw of the drone, read off the state vector."""
     return np.asarray(sv[7:10], dtype=np.float32)
 
 
 def _linear_velocity(env, sv, ctx):
+    """World-frame velocity XYZ, read off the state vector."""
     return np.asarray(sv[10:13], dtype=np.float32)
 
 
 def _angular_velocity(env, sv, ctx):
+    """World-frame angular velocity about X, Y and Z, read off the state vector."""
     return np.asarray(sv[13:16], dtype=np.float32)
 
 
 def _action_history(env, sv, ctx):
+    """The drone's buffered past actions flattened end to end; empty when the buffer is off."""
     n = int(getattr(env, "ACTION_BUFFER_SIZE", 0))
     if n <= 0:
         return np.zeros((0,), dtype=np.float32)
@@ -81,11 +88,13 @@ def _action_history(env, sv, ctx):
 
 
 def _altitude_norm(env, sv, ctx):
+    """Downward ray distance to the ground, divided by MAX_RAY_DISTANCE."""
     d = int(ctx.get("self_index", 0))
     return np.asarray([env._get_altitude_distance(d) / MAX_RAY_DISTANCE], dtype=np.float32)
 
 
 def _goal_offset(env, sv, ctx):
+    """Vector from the drone to the search-area centre, or to GOAL_POS when no area is set."""
     goal = getattr(env, "_search_area_center", None)
     if goal is None:
         goal = env.GOAL_POS
@@ -126,12 +135,14 @@ def _teammate_state(env, sv, ctx):
 
 
 def _search_clue_offset(env, sv, ctx):
+    """Planar XY vector from the drone to the centre of the area it must sweep."""
     return np.asarray((env._search_area_center - sv[0:3])[:2], dtype=np.float32)
 
 
 def _telemetry_slice(lo, hi):
     """Compute fn for a slice of the office telemetry packet (zeros before the first packet)."""
     def compute(env, sv, ctx):
+        """Columns lo:hi of this drone's latest packet, zeros until the first one arrives."""
         packets = getattr(env, "_office_telemetry", None)
         if packets is None:
             return np.zeros((hi - lo,), dtype=np.float32)
@@ -141,6 +152,7 @@ def _telemetry_slice(lo, hi):
 
 
 def _detection_block(env, sv, ctx):
+    """Latest emulated YOLO output: box count, age and the box rows, zeros before the first frame."""
     block = getattr(env, "_office_detection", None)
     if block is None:
         return np.zeros((_DETECTION_DIM,), dtype=np.float32)
@@ -148,10 +160,12 @@ def _detection_block(env, sv, ctx):
 
 
 def _depth_camera(env, sv, ctx):
+    """The depth frame the env already rendered this step, taken from the context."""
     return ctx["depth"]
 
 
 def _office_rgb(env, sv, ctx):
+    """Office colour frame: the cached one on a held step, a fresh render otherwise."""
     # Lazy: held steps return the cached frame, fresh steps render in place.
     return env._office_rgb_frame()
 
@@ -164,6 +178,7 @@ def _rgb_camera(env, sv, ctx):
 
 
 def _action_dim(env) -> int:
+    """Width of a single action in the env's action space."""
     return int(env.action_space.shape[-1])
 
 

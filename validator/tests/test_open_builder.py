@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Open-map terrain builder: the grass tint on the ground body, and the seeded mesh cache."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,6 +24,7 @@ from swarm.core.maps.open import builder as open_builder
 
 
 class _DummyPyBullet:
+    """PyBullet stand-in that records every shape and body call instead of driving a physics client."""
     GEOM_MESH = 1
     GEOM_BOX = 2
     GEOM_FORCE_CONCAVE_TRIMESH = 2
@@ -30,24 +32,29 @@ class _DummyPyBullet:
     VISUAL_SHAPE_DOUBLE_SIDED = 8
 
     def __init__(self) -> None:
+        """Open empty logs for the collision, visual, multibody and recolour calls."""
         self.collision_calls: list[dict] = []
         self.visual_calls: list[dict] = []
         self.multibody_calls: list[dict] = []
         self.change_visual_calls: list[dict] = []
 
     def createCollisionShape(self, *args, **kwargs) -> int:
+        """Log the keyword arguments and hand back a fixed collision shape id."""
         self.collision_calls.append(dict(kwargs))
         return 11
 
     def createVisualShape(self, *args, **kwargs) -> int:
+        """Log the keyword arguments, colour included, and hand back a fixed visual shape id."""
         self.visual_calls.append(dict(kwargs))
         return 12
 
     def createMultiBody(self, *args, **kwargs) -> int:
+        """Log the keyword arguments and hand back a fixed body id."""
         self.multibody_calls.append(dict(kwargs))
         return 13
 
     def changeVisualShape(self, body_id, link_id, **kwargs) -> None:
+        """Log which body and link were recoloured, alongside the keyword arguments."""
         self.change_visual_calls.append(
             {
                 "body_id": body_id,
@@ -57,10 +64,12 @@ class _DummyPyBullet:
         )
 
     def getQuaternionFromEuler(self, values):
+        """Pass the Euler triple straight through as a tuple, with no conversion applied."""
         return tuple(values)
 
 
 def test_spawn_terrain_keeps_grass_tint_when_applying_texture(monkeypatch) -> None:
+    """The ground keeps its base green and matte specular both on the visual shape and after the texture goes on."""
     dummy_p = _DummyPyBullet()
 
     monkeypatch.setattr(open_builder, "p", dummy_p)
@@ -79,6 +88,7 @@ def test_spawn_terrain_keeps_grass_tint_when_applying_texture(monkeypatch) -> No
 
 
 def test_open_terrain_cache_defaults_under_repo_state() -> None:
+    """Generated meshes live under the package state directory, never beside the shipped assets."""
     cache_dir = Path(open_builder._TERRAIN_CACHE_DIR)
 
     assert cache_dir == Path(open_builder._STATE_DIR) / "open_terrain"
@@ -86,6 +96,7 @@ def test_open_terrain_cache_defaults_under_repo_state() -> None:
 
 
 def test_terrain_obj_path_uses_state_cache_dir() -> None:
+    """A mesh filename carries the mesh version and its seed, and resolves inside the state cache."""
     terrain_path = Path(open_builder._terrain_obj_path(123))
 
     assert terrain_path == (
@@ -107,6 +118,7 @@ def test_terrain_cache_is_never_visible_half_written(tmp_path, monkeypatch):
     stop = threading.Event()
 
     def _watch() -> None:
+        """Poll for the published path and record whether the first file seen is a whole mesh."""
         # Anything published under the final name must already parse as a whole mesh.
         while not stop.is_set():
             if os.path.exists(path):
@@ -126,6 +138,7 @@ def test_terrain_cache_is_never_visible_half_written(tmp_path, monkeypatch):
 
 
 def test_terrain_cache_reuses_a_completed_mesh(tmp_path, monkeypatch):
+    """A second call on the same seed hands back the file already on disk, mtime untouched."""
     monkeypatch.setattr(open_builder, "_TERRAIN_CACHE_DIR", str(tmp_path))
     first = open_builder._generate_terrain_obj(99)
     stamp = Path(first).stat().st_mtime_ns

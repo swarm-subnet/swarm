@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Mountain terrain has to land on the same heights for a seed, and its mesh cache has to stay out of /tmp."""
+
 from __future__ import annotations
 
 import math
@@ -26,6 +28,7 @@ from swarm.core import mountain_generator as mg
 
 
 def test_get_global_scale_is_deterministic_and_bounded():
+    """One seed always yields the same map size factor, and it never leaves the configured range."""
     s1 = mg.get_global_scale(123)
     s2 = mg.get_global_scale(123)
     assert s1 == s2
@@ -33,12 +36,14 @@ def test_get_global_scale_is_deterministic_and_bounded():
 
 
 def test_make_noise_params_returns_expected_shape():
+    """The noise table has one entry per octave, each carrying amplitude, frequency and phase."""
     params = mg._make_noise_params(seed=7, gs=0.7)
     assert len(params) == mg.TERRAIN_N_OCTAVES
     assert all({"amp", "fx", "fy", "px", "py"} <= set(p.keys()) for p in params)
 
 
 def test_get_terrain_z_is_deterministic():
+    """The same point and seed give the same height to within 1e-12, which keeps validators agreeing."""
     gs = mg.get_global_scale(88)
     z1 = mg.get_terrain_z(10.0, -4.0, seed=88, gs=gs)
     z2 = mg.get_terrain_z(10.0, -4.0, seed=88, gs=gs)
@@ -46,6 +51,7 @@ def test_get_terrain_z_is_deterministic():
 
 
 def test_terrain_mesh_cache_dir_defaults_under_repo_state(monkeypatch):
+    """With no override the cache sits in a per-uid folder below the state dir, never in /tmp."""
     monkeypatch.delenv("SWARM_TERRAIN_CACHE_DIR", raising=False)
 
     uid_getter = getattr(os, "geteuid", None) or getattr(os, "getuid", None)
@@ -58,6 +64,7 @@ def test_terrain_mesh_cache_dir_defaults_under_repo_state(monkeypatch):
 
 
 def test_terrain_mesh_cache_dir_honors_env_override(monkeypatch, tmp_path):
+    """SWARM_TERRAIN_CACHE_DIR wins, and the directory it names is created on the spot."""
     override = tmp_path / "terrain-cache"
     monkeypatch.setenv("SWARM_TERRAIN_CACHE_DIR", str(override))
 
@@ -68,12 +75,14 @@ def test_terrain_mesh_cache_dir_honors_env_override(monkeypatch, tmp_path):
 
 
 def test_too_close_detects_overlap_threshold():
+    """A point crowding a claimed disc is refused, one well outside it accepted, at a 0.60 budget."""
     placed = [mg._Placed(x=0.0, y=0.0, radius=2.0)]
     assert mg._too_close(0.5, 0.0, radius=2.0, placed=placed, max_overlap=0.60) is True
     assert mg._too_close(10.0, 10.0, radius=1.0, placed=placed, max_overlap=0.60) is False
 
 
 def test_sample_point_square_within_half_range():
+    """Both coordinates land inside the square of the requested half-width."""
     rng = random.Random(1)
     x, y = mg._sample_point_square(rng, half=5.0)
     assert -5.0 <= x <= 5.0

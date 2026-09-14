@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Schema-version gate on a batch: which task versions the validator still accepts."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,6 +36,7 @@ from swarm.validator.docker.docker_evaluator_parts.batch import (
 
 
 def test_normalize_v_prefix():
+    """A leading V or v is stripped from a version string and the digits are left untouched."""
     assert normalize_version("V5.0.0") == "5.0.0"
     assert normalize_version("v5.0.0") == "5.0.0"
     assert normalize_version("5.0.0") == "5.0.0"
@@ -41,6 +44,7 @@ def test_normalize_v_prefix():
 
 
 def _make_task(version: str) -> MapTask:
+    """Build a MapTask carrying the given schema version, valid in every other field."""
     return MapTask(
         map_seed=1,
         start=(0.0, 0.0, 1.0),
@@ -53,6 +57,7 @@ def _make_task(version: str) -> MapTask:
 
 
 def _make_ctx(tasks):
+    """Return a mocked _BatchContext over tasks, plus the helpers mock attached to it."""
     helpers = MagicMock(spec=_BatchHelpers)
     helpers.notify_all_failed = MagicMock()
     ctx = MagicMock(spec=_BatchContext)
@@ -76,6 +81,8 @@ def test_v1_now_rejected_post_cutover():
 
 
 def test_v5_accepted():
+    """A task at the current SCHEMA_VERSION clears the allow-list.
+    The failure that follows is the missing model file, not the version."""
     tasks = [_make_task(SCHEMA_VERSION)]
     ctx, helpers = _make_ctx(tasks)
     result = _validate_inputs(ctx)
@@ -91,6 +98,7 @@ def test_missing_version_skipped():
     without a version attr) keep working. Production tasks always carry a
     version since task_gen.random_task emits SCHEMA_VERSION."""
     class _NoVersion:
+        """A task object with no version attribute at all."""
         pass
     ctx, helpers = _make_ctx([_NoVersion()])
     result = _validate_inputs(ctx)
@@ -102,6 +110,7 @@ def test_missing_version_skipped():
 
 
 def test_unknown_rejected():
+    """An unregistered version string is charged as an infra fault and the whole batch fails."""
     tasks = [_make_task("9.9.9")]
     ctx, helpers = _make_ctx(tasks)
     result = _validate_inputs(ctx)

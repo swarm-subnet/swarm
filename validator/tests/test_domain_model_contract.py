@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The frozen shape of swarm.domain_model: ids, enums and the registry behind them."""
+
 import json
 from copy import deepcopy
 
@@ -41,6 +43,8 @@ from swarm.domain_model import (
 
 
 def test_domain_model_schema_snapshot():
+    """Every exported id list and challenge-type mapping still matches a frozen literal.
+    Order counts, so an insertion or a rename cannot slip through unnoticed."""
     expected = {
         "challenge_family_ids": [
             "cf_autopilot",
@@ -131,6 +135,7 @@ def test_domain_model_schema_snapshot():
 
 
 def test_domain_model_schema_file_matches_runtime_exports():
+    """The shipped JSON schema and the Python constants never drift apart."""
     schema = json.loads(domain_model_schema_path().read_text(encoding="utf-8"))
 
     assert schema["entity_types"]["challenge_family"]["ids"] == list(CHALLENGE_FAMILY_IDS)
@@ -146,6 +151,7 @@ def test_domain_model_schema_file_matches_runtime_exports():
 
 
 def test_challenge_family_registry_contains_canonical_metadata():
+    """Each family carries its labels, its two states, a score schema and one interface."""
     registry = load_challenge_family_registry()
     autopilot = get_challenge_family_definition("cf_autopilot", registry=registry)
     sar = get_challenge_family_definition("cf_search_and_rescue", registry=registry)
@@ -176,6 +182,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
 
 
 def test_get_challenge_family_definition_rejects_unknown_family():
+    """An id outside the registry raises UnknownChallengeFamilyError, never a silent default."""
     try:
         get_challenge_family_definition("cf_unknown")
     except UnknownChallengeFamilyError as exc:
@@ -185,6 +192,8 @@ def test_get_challenge_family_definition_rejects_unknown_family():
 
 
 def test_filter_challenge_family_definitions_handles_incubating_and_archived():
+    """An incubating family drops out unless asked for; an archived one needs its own flag.
+    A completed family stays visible either way, because its page celebrates the winner."""
     registry = deepcopy(load_challenge_family_registry())
     registry["challenge_families"]["cf_archived_fixture"] = {
         **registry["challenge_families"]["cf_autopilot"],
@@ -233,6 +242,8 @@ def test_filter_challenge_family_definitions_handles_incubating_and_archived():
 
 
 def test_policy_interface_contracts_are_registry_backed():
+    """The entry point, camera shapes and action width all come from the registry.
+    A miner codes against that file, not against constants inside the evaluator."""
     contract = get_policy_interface_contract(
         "cf_search_and_rescue",
         "submission_zip.v1",

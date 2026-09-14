@@ -41,6 +41,7 @@ _CHALLENGE_TYPES = {
 
 
 def _assert_all_tagged(cli, tagger):
+    """Fail unless the tagger's uids and the bodies in the scene are the same set; return both sets."""
     scene = set(enumerate_bodies(cli))
     tagged = set(tagger.body_tags.keys())
     missing = scene - tagged
@@ -52,6 +53,7 @@ def _assert_all_tagged(cli, tagger):
 
 @pytest.mark.parametrize("name,ctype", list(_CHALLENGE_TYPES.items()))
 def test_per_map_all_bodies_tagged(sar_pybullet, name, ctype):
+    """Every one of the six maps tags each body it spawns and leaves at least one SUPPORT_* surface."""
     start = (0.0, 0.0, 1.5)
     goal = (10.0, 10.0, 1.5)
     tagger = build_and_tag_map(
@@ -84,6 +86,7 @@ def test_no_untagged_bodies_anywhere(sar_pybullet, name, ctype):
 # canopy, because a wide tree mesh tripped the >5x5 SUPPORT_TERRAIN heuristic.
 @pytest.mark.parametrize("seed", [1014, 1030, 1007])
 def test_forest_trees_never_classified_as_support(sar_pybullet, seed):
+    """Trees stay OBSTACLE_CANOPY and every standable body spans 15 m or more, so no victim is seated on a canopy."""
     p.resetSimulation(physicsClientId=sar_pybullet)
     world = build_sar_world(
         sar_pybullet, seed=seed, challenge_type=6,

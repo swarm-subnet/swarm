@@ -47,6 +47,7 @@ _RESYNC_TYPES = {"epoch_transition", "resync_required"}
 
 
 class SseListener:
+    """Subscribes to the backend event stream and raises the cancel and wake flags the forward loop watches."""
     def __init__(
         self,
         backend_api: BackendApiClient,
@@ -56,6 +57,7 @@ class SseListener:
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
     ) -> None:
+        """Store the API client, the two flags to raise, and the bounds of the reconnect backoff."""
         self.backend_api = backend_api
         self.cancel_flag = cancel_flag
         self.wake_flag = wake_flag
@@ -65,6 +67,7 @@ class SseListener:
         self.last_cancel_type: Optional[str] = None
 
     async def run_forever(self) -> None:
+        """Consume events until the process ends, reconnecting with capped exponential backoff; a protocol mismatch propagates."""
         backoff = self._initial_backoff
         # Minimum wait between reconnects so a misbehaving proxy that
         # closes the stream immediately can't pin the loop at 100% CPU.
@@ -111,6 +114,7 @@ class SseListener:
                     backoff = min(backoff * 2, self._max_backoff)
 
     def _handle(self, event: Dict[str, Any]) -> None:
+        """Record the replay anchor, then raise the cancel or the wake flag according to the event type."""
         event_id = event.get("event_id")
         if isinstance(event_id, int):
             self._last_event_id = event_id

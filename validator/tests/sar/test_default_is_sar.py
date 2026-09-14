@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A generated task must go out stamped with the schema version the protocol module holds."""
 from __future__ import annotations
 
 from swarm.protocol import SCHEMA_VERSION
@@ -22,6 +23,7 @@ from swarm.validator.task_gen import random_task
 
 
 def test_task_gen_emits_v5():
+    """A randomly drawn task carries the schema version the protocol module declares, and that version is still in the 5 series."""
     task = random_task(sim_dt=1 / 30, seed=42)
     assert task.version == SCHEMA_VERSION
     assert task.version.startswith("5.")

@@ -38,6 +38,7 @@ class ObservationDecoder:
     """Decode inline, compact-zero, and read-only shared-memory tensors."""
 
     def __init__(self, shm_path: str | None = None) -> None:
+        """Map shm_path read-only when a path is given and the file is there."""
         self._file = None
         self._shm = None
         if shm_path and os.path.isfile(shm_path):
@@ -45,12 +46,14 @@ class ObservationDecoder:
             self._shm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
     def close(self) -> None:
+        """Release the shared-memory mapping and the file handle behind it."""
         if self._shm is not None:
             self._shm.close()
         if self._file is not None:
             self._file.close()
 
     def decode(self, entries) -> dict[str, np.ndarray]:
+        """Turn wire entries into read-only float32 arrays keyed by observation name."""
         manifest: dict[str, tuple[int, int]] = {}
         tensors = []
         for entry in entries:
@@ -90,6 +93,7 @@ class ObservationDecoder:
 
 
 def _zero_action(family_id: str, observation: dict[str, np.ndarray]) -> np.ndarray:
+    """A no-op command of the family's contract shape, sized to the drone count where it has one."""
     num_drones = None
     if family_has_swarm_axis(family_id):
         num_drones = int(next(iter(observation.values())).shape[0])
@@ -103,11 +107,15 @@ def make_agent_server(agent_capnp, runner: GraphRunner, decoder: ObservationDeco
     """Create the pycapnp server class lazily so unit tests need no KJ loop."""
 
     class AgentServer(agent_capnp.Agent.Server):
+        """The Cap'n Proto Agent interface, answered from the loaded graph runner."""
+
         async def ping(self, message, **kwargs):
+            """Answer a liveness probe with 'pong'."""
             return "pong"
 
         @staticmethod
         def _tensor(value: np.ndarray):
+            """Wrap a float32 array as a Cap'n Proto Tensor message."""
             response = agent_capnp.Tensor.new_message()
             response.data = np.ascontiguousarray(value, dtype=np.float32).tobytes()
             response.shape = list(value.shape)
@@ -115,13 +123,16 @@ def make_agent_server(agent_capnp, runner: GraphRunner, decoder: ObservationDeco
             return response
 
         async def act(self, obs, **kwargs):
+            """Decode the observation, run one graph tick and return the action tensor."""
             observation = decoder.decode(list(obs.entries))
             return self._tensor(runner.act(observation))
 
         async def reset(self, **kwargs):
+            """Zero the runner's memory, caches and tick counter for a fresh episode."""
             runner.reset()
 
         async def calibrate(self, obs, **kwargs):
+            """A zero action of the contract shape and a 0 ns benchmark; the graph never runs."""
             observation = decoder.decode(list(obs.entries))
             return self._tensor(_zero_action(runner.manifest.family_id, observation)), 0
 
@@ -129,6 +140,7 @@ def make_agent_server(agent_capnp, runner: GraphRunner, decoder: ObservationDeco
 
 
 async def serve(artifact: Path, schema_path: Path, port: int, shm_path: str | None) -> None:
+    """Probe the artifact, load it into a runner and answer Cap'n Proto calls on port."""
     import capnp
 
     probe_artifact_subprocess(artifact)
@@ -138,6 +150,7 @@ async def serve(artifact: Path, schema_path: Path, port: int, shm_path: str | No
     bootstrap = make_agent_server(agent_capnp, runner, decoder)
 
     async def new_connection(stream):
+        """Serve one client over stream until it disconnects."""
         server = capnp.TwoPartyServer(stream, bootstrap=bootstrap)
         await server.on_disconnect()
 
@@ -150,6 +163,7 @@ async def serve(artifact: Path, schema_path: Path, port: int, shm_path: str | No
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse the command line and serve the artifact, exiting with the message on a graph error."""
     parser = argparse.ArgumentParser(description="Run a model_graph.v1 artifact")
     parser.add_argument("--artifact", required=True, type=Path)
     parser.add_argument("--schema", required=True, type=Path)
@@ -157,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     async def run() -> None:
+        """Open the KJ event loop and serve until it stops."""
         import capnp
 
         async with capnp.kj_loop():

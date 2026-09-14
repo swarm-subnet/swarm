@@ -15,11 +15,19 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Turns a generated city layout into PyBullet bodies.
+
+generate_city decides where the roads, plots and buildings go; everything here
+spawns them, choosing a mesh per lot from the measured footprint specs and keeping
+grass, props and buildings clear of the start and goal.
+"""
+
 from ._shared import *
 from .generation import SeededRNG, generate_city
 
 
 def ceil_half(x):
+    """Round x up to the next multiple of 0.5."""
     return math.ceil(x * 2) / 2
 
 
@@ -70,6 +78,7 @@ ASSET_SPECS: Dict[str, list] = {"house": [], "apt": [], "tower": []}
 
 
 def _init_specs():
+    """Fill ASSET_SPECS from RAW_DATA: each mesh keeps a 10% margin and a footprint rounded up to the half metre."""
     for cat, path, raw_w, raw_d in RAW_DATA:
         margin = 1.10
         final_w = ceil_half(raw_w * margin)
@@ -85,6 +94,7 @@ def _init_specs():
 
 
 def configure_templates():
+    """Rebuild TEMPLATES from ASSET_SPECS, keeping one entry per distinct footprint in each category."""
     new_templates = {"house": [], "apt": [], "tower": []}
     for cat in ASSET_SPECS:
         seen_dims = set()
@@ -101,6 +111,7 @@ def configure_templates():
 # SECTION 4: Zone-based building selection
 # ---------------------------------------------------------------------------
 def get_building_zone(x, y, map_size=200):
+    """Name the ring a point falls in: outer past 0.6 of the half-diagonal, middle past 0.3, center otherwise."""
     center = map_size / 2
     distance = math.sqrt((x - center) ** 2 + (y - center) ** 2)
     max_dist = math.sqrt(2) * (map_size / 2)
@@ -113,6 +124,7 @@ def get_building_zone(x, y, map_size=200):
 
 
 def get_zone_building_type(zone, city_type, rng):
+    """Draw house, apt or tower from the mix that ring and city type call for; a type 1 city is houses throughout."""
     if city_type == 1:
         return "house"
     r = rng.next_float()
@@ -158,6 +170,7 @@ def get_zone_building_type(zone, city_type, rng):
 
 
 def get_asset_for_zone(category, lot_w, lot_d, city_type, block_style, rng):
+    """Mesh path for a lot: an exact footprint match in either orientation, otherwise the candidate closest by area."""
     if category == "tower":
         skyscrapers = [
             s for s in ASSET_SPECS.get("tower", [])
@@ -220,6 +233,7 @@ _shape_cache: Dict[tuple, Tuple[int, int]] = {}
 
 
 def _resolve_asset_path(rel_path):
+    """Absolute path for a relative mesh name, under other_sources for a converted OBJ and under kenney for the rest."""
     rel_norm = rel_path.replace("\\", "/")
     if rel_norm.startswith("obj_converted/"):
         return os.path.join(OTHER_SOURCES_DIR, rel_path)
@@ -227,6 +241,7 @@ def _resolve_asset_path(rel_path):
 
 
 def _get_asset_path(name, rng):
+    """One mesh drawn from the variants listed for a map element, the straight road standing in for both orientations; None when nothing is listed."""
     variants = ASSET_MAP.get(name, [])
     if not variants and name in ["straight_v", "straight_h"]:
         variants = ASSET_MAP["straight"]
@@ -239,6 +254,7 @@ def _get_asset_path(name, rng):
 
 
 def spawn_asset_exact(cli, path, x, y, z, rotation_deg, scale_vec, rgba=None):
+    """Static zero-mass body for an OBJ at the given pose and scale, reusing the cached shapes; None when the file is missing."""
     if not os.path.exists(path):
         return None
     cache_key = (cli, path, tuple(scale_vec), tuple(rgba) if rgba else None)
@@ -266,6 +282,7 @@ def spawn_asset_exact(cli, path, x, y, z, rotation_deg, scale_vec, rgba=None):
 
 
 def spawn_asset_with_random_color(cli, path, x, y, z, rotation_deg, scale_vec, rng):
+    """Spawn the mesh, half the commercial ones through a temporary copy pointing at the green or orange material instead."""
     if "kenney_commercial" not in path:
         return spawn_asset_exact(cli, path, x, y, z, rotation_deg, scale_vec)
     color_choice = rng.next_float()
@@ -280,6 +297,7 @@ def spawn_asset_with_random_color(cli, path, x, y, z, rotation_deg, scale_vec, r
             obj_content = f.read()
 
         def replace_mtl(match):
+            """Rewrite one mtllib line to point at the suffixed material file."""
             original = match.group(1)
             base_name = original.replace(".mtl", "")
             return f"mtllib {base_name}{mtl_suffix}.mtl"
@@ -303,6 +321,7 @@ def spawn_asset_with_random_color(cli, path, x, y, z, rotation_deg, scale_vec, r
 # SECTION 6: Environment element spawners
 # ---------------------------------------------------------------------------
 def _in_safe_zone(x, y, safe_zones, safe_zone_radius):
+    """True when (x, y) lies within safe_zone_radius of a protected point, the start or the goal."""
     if not safe_zones:
         return False
     for sx, sy in safe_zones:
@@ -312,6 +331,7 @@ def _in_safe_zone(x, y, safe_zones, safe_zone_radius):
 
 
 def _rect_intersects_safe_zone(cx, cy, half_w, half_h, safe_zones, safe_zone_radius):
+    """True when an axis-aligned footprint comes within safe_zone_radius of a protected point."""
     if not safe_zones:
         return False
     x1 = cx - half_w
@@ -329,6 +349,7 @@ def _rect_intersects_safe_zone(cx, cy, half_w, half_h, safe_zones, safe_zone_rad
 
 
 def _body_intersects_safe_zone(cli, body_id, safe_zones, safe_zone_radius):
+    """True when a spawned body's AABB comes within safe_zone_radius of a protected point, catching a mesh wider than its lot."""
     if body_id is None or not safe_zones:
         return False
     mn, mx = p.getAABB(body_id, physicsClientId=cli)
@@ -345,6 +366,7 @@ def _body_intersects_safe_zone(cli, body_id, safe_zones, safe_zone_radius):
 
 
 def _spawn_grass(cli, blocks, offset):
+    """Lay a flat green slab over each city block, a centimetre above the ground plane."""
     for block in blocks:
         bx = block.rect.x - offset
         by = block.rect.y - offset
@@ -363,6 +385,7 @@ def _spawn_grass(cli, blocks, offset):
 
 def _spawn_roads(cli, tiles, tile_size, rng, offset,
                  safe_zones=None, safe_zone_radius=0.0):
+    """Lay the road mesh for every tile, skipping roundabout arms and dropping a green island in each roundabout."""
     half_tile = tile_size / 2
     scale_mod = 2.0
     visual_scale = 1.0
@@ -395,6 +418,11 @@ def _spawn_roads(cli, tiles, tile_size, rng, offset,
 
 def _spawn_buildings(cli, buildings, blocks, city_type, tile_size,
                      rng, safe_zones, safe_zone_radius, difficulty, offset):
+    """Place one mesh per building footprint, drawn from the style and type its block was dealt.
+
+    A plot that would crowd the goal clearance is skipped, and a body whose AABB
+    still reaches a safe zone is removed again after spawning.
+    """
     block_styles = {}
     block_types = {}
     for block in blocks:
@@ -462,6 +490,7 @@ def _spawn_buildings(cli, buildings, blocks, city_type, tile_size,
 
 def _spawn_streetlights(cli, tiles, tile_size, rng, offset,
                        safe_zones=None, safe_zone_radius=0.0):
+    """A lamp on both kerbs of the straight road tiles, one tile in every two, kept off the start and goal."""
     half_tile = tile_size / 2
     lamp_offset = half_tile - 0.425
     road_idx = 0
@@ -506,6 +535,7 @@ def _spawn_streetlights(cli, tiles, tile_size, rng, offset,
 
 def _spawn_traffic_lights(cli, tiles, tile_size, rng, offset,
                          safe_zones=None, safe_zone_radius=0.0):
+    """A light on each side of every crossing tile, set along the axis the crossing runs and kept off the start and goal."""
     half_tile = tile_size / 2
     tl_offset = half_tile - 0.425
     scale_mod = 0.8
@@ -544,6 +574,7 @@ def _spawn_traffic_lights(cli, tiles, tile_size, rng, offset,
 
 def _spawn_cars(cli, tiles, tile_size, rng, offset,
                 safe_zones=None, safe_zone_radius=0.0):
+    """Park a vehicle in one lane of roughly a third of the straight road tiles, facing the way that lane runs."""
     lane_offset_factor = 0.18
     scale_mod = 0.25
     s_val = SCALE_FACTOR * scale_mod
@@ -590,6 +621,7 @@ def _spawn_cars(cli, tiles, tile_size, rng, offset,
 
 
 def _spawn_trees(cli, buildings, rng, offset):
+    """Plant every park plot: a single trunk at the centre of a small one, otherwise one per 50 square metres scattered inside it."""
     for b in buildings:
         if b.type != "park":
             continue
@@ -622,6 +654,7 @@ def _spawn_trees(cli, buildings, rng, offset):
 # SECTION 7: Public API
 # ---------------------------------------------------------------------------
 def _pick_city_variant(rng):
+    """Draw a (city_type, difficulty) pair from CITY_VARIANT_DISTRIBUTION, variant 4 being the urban hard mode."""
     r = rng.next_float()
     cumulative = 0.0
     for variant_id, prob in CITY_VARIANT_DISTRIBUTION.items():
@@ -634,6 +667,7 @@ def _pick_city_variant(rng):
 
 
 def build_city(cli: int, seed: int, safe_zones: list, safe_zone_radius: float) -> None:
+    """Spawn a whole seeded city into the client: grass, roads, buildings, street furniture and parked vehicles."""
     global _shape_cache
     _shape_cache = {}
 

@@ -97,6 +97,7 @@ class KingEntry:
 
 
 def _clamp_unit(value: float) -> float:
+    """Pin a float into [0, 1]; a NaN or an infinity becomes 0.0."""
     v = float(value)
     if not math.isfinite(v):
         return 0.0
@@ -115,6 +116,7 @@ def jump_delta(score: float, prev_score: float) -> float:
 
 
 def headroom_gain(score: float, prev_score: float, eps: float = HEADROOM_EPS) -> float:
+    """Log ratio of the headroom left before and after the crowning, 0.0 when the score did not improve."""
     if float(eps) <= 0.0:
         raise ValueError(f"headroom eps must be > 0, got {eps!r}")
     s = _clamp_unit(float(score))
@@ -132,6 +134,7 @@ def rank_weight(rank: int, window: int = WINDOW_SIZE) -> float:
 
 
 def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
+    """Ladder seat for the rank scaled by the capped gain bonus, 0.0 when the king improved nothing."""
     # Bonus gain is capped: max factor 1 + GAIN_BONUS * CAP = 1.3, below the
     # ladder step 1/RANK_LADDER_RATIO ~= 1.43, so no gain can flip the order.
     gain = headroom_gain(king.score, king.prev_score, eps=eps)
@@ -141,6 +144,7 @@ def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
 
 
 def _ranks(rows: List[KingEntry]) -> List[int]:
+    """One seat index per row, 0 for the newest by (crowned_at_epoch, lineage_id), position breaking ties."""
     order = sorted(
         range(len(rows)),
         key=lambda i: (
@@ -242,6 +246,8 @@ def active_window(
 
 @dataclass(frozen=True)
 class CombinedWeights:
+    """Per-UID miner weights from the cross-family combine, with the burnt and dropped shares beside them."""
+
     miner_raw: Dict[int, float]
     burn_extra: float
     dropped_share: float

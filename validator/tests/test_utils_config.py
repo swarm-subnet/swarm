@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Neuron config surface: the CUDA probe, the log path it builds, and the argparse defaults."""
 from __future__ import annotations
 
 import argparse
@@ -24,7 +25,9 @@ from swarm.utils import config as config_mod
 
 
 def test_is_cuda_available_prefers_nvidia_smi(monkeypatch):
+    """A machine whose nvidia-smi lists a GPU resolves to the cuda device without consulting nvcc."""
     def _check_output(cmd, stderr=None):
+        """Answer the nvidia-smi probe with one listed GPU and raise on anything else."""
         _ = stderr
         if cmd[:2] == ["nvidia-smi", "-L"]:
             return b"GPU 0: NVIDIA A100"
@@ -35,9 +38,11 @@ def test_is_cuda_available_prefers_nvidia_smi(monkeypatch):
 
 
 def test_is_cuda_available_falls_back_to_nvcc(monkeypatch):
+    """A missing nvidia-smi is not fatal: the nvcc release banner still yields the cuda device, probed once."""
     calls = {"nvidia": 0}
 
     def _check_output(cmd, stderr=None):
+        """Fail the nvidia-smi probe, counting it, and answer nvcc with a release banner."""
         _ = stderr
         if cmd[:2] == ["nvidia-smi", "-L"]:
             calls["nvidia"] += 1
@@ -50,18 +55,22 @@ def test_is_cuda_available_falls_back_to_nvcc(monkeypatch):
 
 
 def test_is_cuda_available_returns_cpu_when_checks_fail(monkeypatch):
+    """Both probes raising leaves the device string at cpu rather than propagating the error."""
     monkeypatch.setattr(config_mod.subprocess, "check_output", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no")))
     assert config_mod.is_cuda_available() == "cpu"
 
 
 def test_check_config_sets_full_path_and_registers_events_logger(monkeypatch, tmp_path, bt_stub):
+    """The neuron log path nests cold key, hotkey, netuid and neuron name, and the events logger becomes the primary one."""
     registered = {"name": None}
     checked = {"called": False}
 
     def _check_config(_cfg):
+        """Record that bittensor was asked to validate the config namespace."""
         checked["called"] = True
 
     def _register(name):
+        """Record the logger name handed to bittensor as the primary logger."""
         registered["name"] = name
 
     monkeypatch.setattr(bt_stub.logging, "check_config", _check_config)
@@ -90,6 +99,7 @@ def test_check_config_sets_full_path_and_registers_events_logger(monkeypatch, tm
 
 
 def test_add_args_registers_common_flags(monkeypatch):
+    """Parsing an empty command line gives netuid 1, mock off, and the device the CUDA probe reported."""
     monkeypatch.setattr(config_mod, "is_cuda_available", lambda: "cpu")
     parser = argparse.ArgumentParser()
     config_mod.add_args(object, parser)
@@ -100,6 +110,7 @@ def test_add_args_registers_common_flags(monkeypatch):
 
 
 def test_add_miner_args_defaults():
+    """A miner parser demands a validator permit and 1000 TAO of stake unless told otherwise."""
     parser = argparse.ArgumentParser()
     config_mod.add_miner_args(object, parser)
     ns = parser.parse_args([])
@@ -108,6 +119,7 @@ def test_add_miner_args_defaults():
 
 
 def test_add_validator_args_defaults():
+    """A validator parser starts at a 10 second forward timeout and a 4096 TAO vpermit ceiling."""
     parser = argparse.ArgumentParser()
     config_mod.add_validator_args(object, parser)
     ns = parser.parse_args([])
@@ -116,9 +128,12 @@ def test_add_validator_args_defaults():
 
 
 def test_config_builds_namespace_from_cls_add_args(monkeypatch):
+    """Flags a neuron class registers for itself survive into the returned config namespace."""
     class _Dummy:
+        """Stand-in neuron class that registers a single integer flag."""
         @staticmethod
         def add_args(parser):
+            """Register the custom flag, which defaults to 7."""
             parser.add_argument("--custom-flag", type=int, default=7)
 
     ns = config_mod.config(_Dummy)

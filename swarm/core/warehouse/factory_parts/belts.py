@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""One winding conveyor line across the factory floor, with its supports and section decor."""
+
 from ._shared import *
 from .pathing import (
     _dir_to_yaw,
@@ -34,6 +36,7 @@ from .pathing import (
 def build_single_belt_network(
     loader, seed, cli, center_xy=(0.0, 0.0), size_xy=None, floor_z=0.0
 ):
+    """Lay a seeded conveyor path with supports, end caps and decor; returns a stats dict."""
     belt_rng = random.Random(int(seed) + 1701)
     (
         base_belt_model,
@@ -68,6 +71,7 @@ def build_single_belt_network(
     )
 
     def _to_world(cell_xy):
+        """Centre of a grid cell in world metres."""
         cx, cy = cell_xy
         return (
             center_x + x_min + (cx + 0.5) * cell,
@@ -87,6 +91,7 @@ def build_single_belt_network(
     support_choice_cache = {}
 
     def _support_for_height(target_top_z):
+        """Cached pick of the support model and scale whose top lands at target_top_z."""
         key = round(float(target_top_z), 2)
         if key in support_choice_cache:
             return support_choice_cache[key]
@@ -146,6 +151,7 @@ def build_single_belt_network(
     support_every_cells = max(1, int(round(SUPPORT_SPACING_M / cell)))
 
     def _z_at(_idx):
+        """Belt elevation above the floor, constant along the whole line."""
         return CONVEYOR_ELEVATION_M
 
     cell_world = []
@@ -202,6 +208,7 @@ def build_single_belt_network(
 
     # -- inner helpers for decor placement --
     def _is_straight_index(i):
+        """True when the path runs in the same direction into and out of this cell."""
         if i <= 0 or i >= (len(path_cells) - 1):
             return False
         if i in corner_indices:
@@ -210,6 +217,7 @@ def build_single_belt_network(
         return (b[0] - a[0], b[1] - a[1]) == (c[0] - b[0], c[1] - b[1])
 
     def _nearest_straight_index(start_i, lo, hi, max_radius=6):
+        """Search outward from start_i for a straight cell in [lo, hi], None past max_radius."""
         lo = max(1, lo)
         hi = min(len(path_cells) - 2, hi)
         if lo > hi:
@@ -226,6 +234,7 @@ def build_single_belt_network(
         return None
 
     def _worker_slot_clear(xw, yw, anchor_idx):
+        """True when the point keeps its distance from every belt cell and every placed worker."""
         min_clear = cell * ASSEMBLY_WORKER_MIN_CLEARANCE_CELLS
         for j, (px, py) in enumerate(cell_world):
             if j == anchor_idx:

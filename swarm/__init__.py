@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Holds the version string, the spec version derived from its first three parts, and a pkg_resources stand-in for setuptools 82."""
+
 import sys
 import warnings
 from pathlib import Path

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Reading OBJ geometry and spawning prebaked mesh parts as static PyBullet bodies."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,6 +31,7 @@ _PREBAKED_OPEN_FILE = open
 
 
 def obj_bounds(obj_path: str | Path) -> Tuple[Vec3, Vec3]:
+    """Min and max corner of the vertex cloud in an OBJ file; raises if it holds no vertices."""
     mn = [float("inf")] * 3
     mx = [float("-inf")] * 3
     with _PREBAKED_OPEN_FILE(str(obj_path), "r", encoding="utf-8", errors="ignore") as f:
@@ -51,11 +54,13 @@ def obj_bounds(obj_path: str | Path) -> Tuple[Vec3, Vec3]:
 
 
 def iter_prebaked_parts(prebaked_dir: str | Path) -> List[str]:
+    """Every .obj file in the directory, sorted by name, as path strings."""
     d = Path(prebaked_dir)
     return [str(p) for p in sorted(d.glob("*.obj"))]
 
 
 def prebaked_union_bounds(prebaked_dir: str | Path) -> Tuple[Vec3, Vec3]:
+    """Min and max corner enclosing every part in the directory; raises when none exist."""
     parts = iter_prebaked_parts(prebaked_dir)
     if not parts:
         raise FileNotFoundError(f"no prebaked parts in {prebaked_dir}")
@@ -77,6 +82,7 @@ def make_aabb_collision_shape(
     half_extents: Vec3,
     frame_position: Vec3,
 ) -> int:
+    """Create a box collision shape of the given half extents, offset to frame_position."""
     return p.createCollisionShape(
         p.GEOM_BOX,
         halfExtents=list(half_extents),
@@ -86,11 +92,13 @@ def make_aabb_collision_shape(
 
 
 def _srgb(c: float) -> float:
+    """Convert one linear colour channel to sRGB, clamped into [0, 1] first."""
     c = 0.0 if c < 0.0 else (1.0 if c > 1.0 else c)
     return 1.055 * (c ** (1.0 / 2.4)) - 0.055 if c > 0.0031308 else 12.92 * c
 
 
 def _part_rgba(obj_path: str | Path) -> List[float]:
+    """Diffuse colour from the sibling .mtl in sRGB; white when it is textured or absent."""
     mtl_path = Path(obj_path).with_suffix(".mtl")
     if not mtl_path.exists():
         return [1.0, 1.0, 1.0, 1.0]
@@ -119,6 +127,7 @@ def spawn_split_material_mesh(
     double_sided: bool = True,
     scale: float = 1.0,
 ) -> List[int]:
+    """Spawn one static body per prebaked part, only the first carrying the collision shape."""
     parts = iter_prebaked_parts(prebaked_dir)
     if not parts:
         raise ValueError(f"no prebaked parts in {prebaked_dir}")

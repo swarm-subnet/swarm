@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The runtime registry for challenge families: look one up by id, or route a task to the family that owns it."""
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -48,10 +49,12 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
 
 
 def list_registered_challenge_families() -> tuple[str, ...]:
+    """The ids that have a runtime object in this process."""
     return tuple(_REGISTERED_FAMILIES)
 
 
 def get_challenge_family(family_id: str) -> ChallengeFamilyRuntime:
+    """The registered runtime for an id, or ChallengeFamilyRuntimeError if there is none."""
     family = _REGISTERED_FAMILIES.get(family_id)
     if family is None:
         raise ChallengeFamilyRuntimeError(f"unknown_challenge_family:{family_id}")
@@ -59,6 +62,7 @@ def get_challenge_family(family_id: str) -> ChallengeFamilyRuntime:
 
 
 def require_runtime_family(family_id: str) -> ChallengeFamilyRuntime:
+    """The runtime for an id, refusing families that are registered but cannot be flown."""
     family = get_challenge_family(family_id)
     if not family.runtime_supported:
         raise ChallengeFamilyRuntimeError(f"runtime_not_implemented:{family_id}")
@@ -66,6 +70,7 @@ def require_runtime_family(family_id: str) -> ChallengeFamilyRuntime:
 
 
 def infer_task_family_id(task: Any) -> str:
+    """The id a task names, falling back to autopilot when it carries none."""
     family_id = getattr(task, "family_id", None)
     if isinstance(family_id, str) and family_id:
         return family_id
@@ -73,6 +78,7 @@ def infer_task_family_id(task: Any) -> str:
 
 
 def runtime_family_for_task(task: Any) -> ChallengeFamilyRuntime:
+    """The runtime that owns a task, resolved from the id it names."""
     return require_runtime_family(infer_task_family_id(task))
 
 
@@ -82,6 +88,7 @@ def build_random_task(
     seed: Optional[int] = None,
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
 ) -> Any:
+    """One seeded task from the named family, for a single evaluation."""
     return require_runtime_family(family_id).build_random_task(sim_dt=sim_dt, seed=seed)
 
 
@@ -93,6 +100,7 @@ def build_screening_tasks(
     offset: int = 0,
     total_seed_count: Optional[int] = None,
 ) -> list[Any]:
+    """The screening set for these seeds, laid out by the family runtime."""
     return require_runtime_family(family_id).build_screening_tasks(
         sim_dt=sim_dt,
         seeds=seeds,
@@ -109,6 +117,7 @@ def build_benchmark_tasks(
     offset: int = 0,
     total_seed_count: Optional[int] = None,
 ) -> list[Any]:
+    """The benchmark set for these seeds, laid out by the family runtime."""
     return require_runtime_family(family_id).build_benchmark_tasks(
         sim_dt=sim_dt,
         seeds=seeds,
@@ -118,22 +127,27 @@ def build_benchmark_tasks(
 
 
 def screening_policy_for_family(family_id: str) -> dict[str, Any]:
+    """The bar a model must clear before it is worth benchmarking."""
     return require_runtime_family(family_id).screening_policy()
 
 
 def benchmark_admission_policy_for_family(family_id: str) -> dict[str, Any]:
+    """The rules that decide whether a model is let into the benchmark."""
     return require_runtime_family(family_id).benchmark_admission_policy()
 
 
 def env_kwargs_for_task(task: Any) -> dict[str, Any]:
+    """The aviary constructor arguments a task's own family asks for."""
     return runtime_family_for_task(task).env_kwargs_for_task(task)
 
 
 def runtime_profile_for_task(task: Any) -> ChallengeFamilyRuntimeProfile:
+    """The container and timeout profile a task's own family needs to fly one evaluation."""
     return runtime_family_for_task(task).runtime_profile(task)
 
 
 def runtime_profile_for_tasks(tasks: list[Any]) -> ChallengeFamilyRuntimeProfile:
+    """The single profile shared by every task in the batch, refusing a mixed list."""
     if not tasks:
         raise ChallengeFamilyRuntimeError("runtime_profile_requires_tasks")
     profile = runtime_profile_for_task(tasks[0])
@@ -156,6 +170,7 @@ def evaluate_rollout(
     collision: bool,
     failure_reason: str,
 ) -> ChallengeFamilyEvaluation:
+    """Score one finished flight under the rules of the family that owns the task."""
     family = runtime_family_for_task(task)
     return family.evaluate_rollout(
         task=task,

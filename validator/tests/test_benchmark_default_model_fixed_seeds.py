@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The tracked default model over a frozen 100-seed run: the shape of the fixture and the score window an install must land in."""
 from __future__ import annotations
 
 import json
@@ -56,10 +57,12 @@ EXPECTED_SUCCESS_COUNT_RANGE: tuple[int, int] = (22, 26)
 
 
 def _load_fixed_seed_groups() -> dict[str, list[int]]:
+    """The frozen fixture parsed as a map of map-type name to its list of seeds."""
     return json.loads(FIXED_SEED_FILE.read_text())
 
 
 def _overall_avg_score(summary: dict[str, object]) -> float:
+    """Mean of every scored row in the summary, flattened across all benchmark groups."""
     group_results = summary.get("group_results")
     assert isinstance(group_results, dict), "Benchmark summary JSON missing group_results."
     rows = [
@@ -72,6 +75,7 @@ def _overall_avg_score(summary: dict[str, object]) -> float:
 
 
 def _success_count(summary: dict[str, object]) -> int:
+    """How many scored rows across all groups were marked a success."""
     group_results = summary.get("group_results")
     assert isinstance(group_results, dict), "Benchmark summary JSON missing group_results."
     rows = [
@@ -84,6 +88,7 @@ def _success_count(summary: dict[str, object]) -> int:
 
 
 def _clean_execution_count(summary: dict[str, object]) -> int:
+    """How many rows reported execution_ok, separating a bad model from a shaky rig."""
     group_results = summary.get("group_results")
     assert isinstance(group_results, dict), "Benchmark summary JSON missing group_results."
     rows = [
@@ -96,6 +101,7 @@ def _clean_execution_count(summary: dict[str, object]) -> int:
 
 
 def _execution_failure_modes(summary: dict[str, object]) -> dict[str, int]:
+    """The run's status tally with the healthy statuses dropped, so only what went wrong remains."""
     raw = summary.get("execution_status_counts", {})
     assert isinstance(raw, dict), "Benchmark summary JSON missing execution_status_counts."
     return {
@@ -106,6 +112,7 @@ def _execution_failure_modes(summary: dict[str, object]) -> dict[str, int]:
 
 
 def _require_docker() -> None:
+    """Skip the caller when the binary is absent or the daemon does not answer."""
     if shutil.which("docker") is None:
         pytest.skip("Docker binary not found in PATH.")
     info = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=20)
@@ -115,6 +122,7 @@ def _require_docker() -> None:
 
 
 def _require_benchmark_permissions() -> None:
+    """Skip the caller unless the current user can apply the sandbox lockdown."""
     check = swarm_cli._check_sandbox_lockdown_permissions()
     if not check.ok:
         pytest.skip(
@@ -125,6 +133,7 @@ def _require_benchmark_permissions() -> None:
 
 
 def test_default_model_fixed_seed_fixture_has_expected_shape() -> None:
+    """The frozen file still holds 100 seeds spread over the six outdoor autopilot maps."""
     seed_groups = _load_fixed_seed_groups()
 
     # the frozen 2026-04 fixture spans exactly the six outdoor autopilot maps

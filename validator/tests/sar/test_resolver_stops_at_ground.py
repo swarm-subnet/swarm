@@ -36,6 +36,7 @@ from swarm.core.env_builder.surface_resolver import resolve_surface
 
 
 def _ground(cli, tagger, *, z=0.0):
+    """Spawn a level 80m square slab tagged SUPPORT_TERRAIN at height z."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[40.0, 40.0, 0.1], physicsClientId=cli,
     )
@@ -48,6 +49,7 @@ def _ground(cli, tagger, *, z=0.0):
 
 
 def _steep_rock(cli, tagger, *, z, tilt_deg=60.0):
+    """Spawn a SUPPORT_TERRAIN slab at height z, pitched past the usable normal cutoff."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[6.0, 6.0, 0.1], physicsClientId=cli,
     )
@@ -61,6 +63,7 @@ def _steep_rock(cli, tagger, *, z, tilt_deg=60.0):
 
 
 def test_unusable_ground_does_not_expose_the_terrain_beneath(sar_pybullet):
+    """A rejected surface ends the search: nothing comes back, never the slab beneath it."""
     cli = sar_pybullet
     tagger = BodyTagger(cli)
     _ground(cli, tagger, z=0.0)
@@ -69,6 +72,7 @@ def test_unusable_ground_does_not_expose_the_terrain_beneath(sar_pybullet):
 
 
 def test_the_ray_starts_above_the_tallest_peak(sar_pybullet):
+    """A slab 120m up is still found, so the cast begins over everything in the scene."""
     cli = sar_pybullet
     tagger = BodyTagger(cli)
     _ground(cli, tagger, z=0.0)
@@ -79,6 +83,7 @@ def test_the_ray_starts_above_the_tallest_peak(sar_pybullet):
 
 
 def test_mountain_hits_have_open_sky_above_them(sar_pybullet):
+    """On a real mountain map no other body sits above a resolved surface, so no victim is buried under separate rock."""
     cli = sar_pybullet
     tagger = build_and_tag_map(
         cli, seed=80_020, challenge_type=3, start=(0.0, 0.0, 1.5), goal=(8.0, 8.0, 1.5),
@@ -103,6 +108,7 @@ def test_mountain_hits_have_open_sky_above_them(sar_pybullet):
 
 
 def test_the_warehouse_floor_is_still_found_under_its_roof(sar_pybullet):
+    """A roof overhead does not hide what it covers: most samples resolve to SUPPORT_FLOOR."""
     cli = sar_pybullet
     tagger = build_and_tag_map(
         cli, seed=80_000, challenge_type=5, start=(0.0, 0.0, 1.5), goal=(6.0, 6.0, 1.5),

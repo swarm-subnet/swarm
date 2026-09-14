@@ -27,6 +27,7 @@ from ._shared import *
 # SECTION 4: OBJ geometry parsing (cached, client-independent)
 # ---------------------------------------------------------------------------
 def _obj_bounds(path: str) -> Tuple[float, float, float, float, float, float]:
+    """The lowest and highest x, y and z over every ``v`` line; raises when the file holds none."""
     min_x = min_y = min_z = float("inf")
     max_x = max_y = max_z = float("-inf")
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -45,6 +46,7 @@ def _obj_bounds(path: str) -> Tuple[float, float, float, float, float, float]:
 
 
 def _obj_bounds_cached(path: str) -> Tuple[float, float, float, float, float, float]:
+    """The same six extents, read from the file once and held in memory for the rest of the run."""
     cached = _OBJ_BOUNDS_CACHE.get(path)
     if cached is None:
         cached = _obj_bounds(path)
@@ -53,6 +55,7 @@ def _obj_bounds_cached(path: str) -> Tuple[float, float, float, float, float, fl
 
 
 def _obj_planar_radius_cached(path: str) -> float:
+    """Half the wider of a mesh's X and Z extents, computed once and kept in memory."""
     cached = _OBJ_PLANAR_RADIUS_CACHE.get(path)
     if cached is not None:
         return cached
@@ -65,6 +68,7 @@ def _obj_planar_radius_cached(path: str) -> float:
 def _compute_vertex_normals(
     verts: List[List[float]], indices: List[int]
 ) -> List[List[float]]:
+    """Area-weighted normal at each vertex, summed over the triangles touching it; +Y where the sum cancels."""
     normals = [[0.0, 0.0, 0.0] for _ in verts]
     for i in range(0, len(indices), 3):
         ia, ib, ic = indices[i], indices[i + 1], indices[i + 2]
@@ -92,6 +96,7 @@ def _compute_vertex_normals(
 
 
 def _obj_mtl_path(obj_path: str) -> Optional[str]:
+    """The material library named in ``mtllib``, else the same-stem file beside it, else None."""
     obj_dir = os.path.dirname(obj_path)
     with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -105,6 +110,7 @@ def _obj_mtl_path(obj_path: str) -> Optional[str]:
 
 
 def _parse_mtl_diffuse_colors(mtl_path: Optional[str]) -> Dict[str, List[float]]:
+    """Every material name mapped to its Kd value as RGBA, after the gamma and brightness constants."""
     if not mtl_path or not os.path.exists(mtl_path):
         return {}
     out: Dict[str, List[float]] = {}
@@ -137,6 +143,7 @@ def _parse_mtl_diffuse_colors(mtl_path: Optional[str]) -> Dict[str, List[float]]
 def _parse_obj_material_meshes(
     obj_path: str,
 ) -> Dict[str, Tuple[List[List[float]], List[int], List[List[float]]]]:
+    """One triangulated mesh per material, kept in memory and in a pickle sidecar beside the source file."""
     cached = _OBJ_MATERIAL_MESH_CACHE.get(obj_path)
     if cached is not None:
         return cached
@@ -218,6 +225,7 @@ def _parse_obj_material_meshes(
 
 
 def _material_visual_obj_paths(obj_path: str) -> Dict[str, str]:
+    """Write one split mesh file per material into a temp cache keyed by the source's size and mtime."""
     material_meshes = _parse_obj_material_meshes(obj_path)
     if not material_meshes:
         return {}
@@ -262,6 +270,7 @@ def _material_visual_obj_paths(obj_path: str) -> Dict[str, str]:
 def _parse_obj_flat_mesh(
     obj_path: str,
 ) -> Tuple[List[List[float]], List[int], List[List[float]]]:
+    """The whole file as a single triangulated mesh with normals, materials ignored, cached in memory."""
     cached = _OBJ_FLAT_MESH_CACHE.get(obj_path)
     if cached is not None:
         return cached
@@ -311,6 +320,7 @@ def _parse_obj_flat_mesh(
 def _rect_from_points_xy(
     points_xy: List[Tuple[float, float]],
 ) -> Tuple[float, float, float, float]:
+    """The (min_x, max_x, min_y, max_y) box that encloses every point given."""
     min_x = min(px for px, _ in points_xy)
     max_x = max(px for px, _ in points_xy)
     min_y = min(py for _, py in points_xy)
@@ -324,6 +334,7 @@ def _expand_rect_to_min_size(
     min_w: float,
     min_h: float,
 ) -> Tuple[float, float, float, float]:
+    """Grow a box about its centre until it spans at least min_w across and min_h up."""
     min_x, max_x, min_y, max_y = rect
     cx = 0.5 * (min_x + max_x)
     cy = 0.5 * (min_y + max_y)
@@ -335,24 +346,28 @@ def _expand_rect_to_min_size(
 def _scale_rect(
     rect: Tuple[float, float, float, float], scale: float
 ) -> Tuple[float, float, float, float]:
+    """Multiply all four edges by a factor, which grows the box about the origin, not its centre."""
     return rect[0] * scale, rect[1] * scale, rect[2] * scale, rect[3] * scale
 
 
 def _shift_rect(
     rect: Tuple[float, float, float, float], dx: float, dy: float
 ) -> Tuple[float, float, float, float]:
+    """Translate a box by dx along X and dy along Y, its size unchanged."""
     return rect[0] + dx, rect[1] + dx, rect[2] + dy, rect[3] + dy
 
 
 def _circle_bounds_rect(
     x: float, y: float, radius: float
 ) -> Tuple[float, float, float, float]:
+    """The axis-aligned square that just contains a disc of this radius centred on (x, y)."""
     return x - radius, x + radius, y - radius, y + radius
 
 
 def _shrink_rect_from_center(
     rect: Tuple[float, float, float, float], factor: float
 ) -> Tuple[float, float, float, float]:
+    """Pull both spans in by a factor about the midpoint; 0.999 and above is a no-op, 0.05 the floor."""
     if factor >= 0.999:
         return rect
     factor = max(0.05, float(factor))
@@ -367,10 +382,14 @@ def _shrink_rect_from_center(
 def _rect_overlap(
     a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]
 ) -> bool:
+    """True when two boxes share area; edges that only touch are not counted."""
     return not (a[1] <= b[0] or a[0] >= b[1] or a[3] <= b[2] or a[2] >= b[3])
 
 
 def _tree_rect_template_unit(obj_path: str) -> Optional[Tuple[tuple, tuple]]:
+    """The unit-scale tree's ground-contact footprint and its full footprint, upright in world space.
+
+    None when the mesh holds fewer than three vertices to build one from."""
     cached = _TREE_RECT_TEMPLATE_CACHE.get(obj_path)
     if cached is not None:
         return cached
@@ -427,6 +446,7 @@ def _tree_rect_template_unit(obj_path: str) -> Optional[Tuple[tuple, tuple]]:
 def _tree_dual_rects_for_scale(
     obj_path: str, total_scale: float
 ) -> Optional[Tuple[tuple, tuple]]:
+    """The template footprints grown to one tree's size, the trunk one never under 0.35m square."""
     tpl = _tree_rect_template_unit(obj_path)
     if tpl is None:
         return None
@@ -440,6 +460,7 @@ def _tree_dual_rects_for_scale(
 def _tree_base_rects_from_instances(
     tree_instances: List[Tuple[float, float, str, str, float, float]],
 ) -> List[Tuple[float, float, float, float]]:
+    """Where each planted tree actually meets the ground, one footprint moved to its own position."""
     rects: List[Tuple[float, float, float, float]] = []
     for x, y, category, obj_name, total_scale, _radius in tree_instances:
         obj_path = os.path.join(FOREST_ASSET_DIR, category, obj_name)
@@ -453,6 +474,7 @@ def _tree_base_rects_from_instances(
 def _tree_span_rects_from_instances(
     tree_instances: List[Tuple[float, float, str, str, float, float]],
 ) -> List[Tuple[float, float, float, float]]:
+    """The full canopy footprint of every planted tree, moved to the position it stands at."""
     rects: List[Tuple[float, float, float, float]] = []
     for x, y, category, obj_name, total_scale, _radius in tree_instances:
         obj_path = os.path.join(FOREST_ASSET_DIR, category, obj_name)
@@ -466,6 +488,7 @@ def _tree_span_rects_from_instances(
 def _protected_tree_span_rects_from_instances(
     tree_instances: List[Tuple[float, float, str, str, float, float]],
 ) -> List[Tuple[float, float, float, float]]:
+    """The same canopy footprints, narrowed to the models listed as low-canopy protected."""
     rects: List[Tuple[float, float, float, float]] = []
     for x, y, category, obj_name, total_scale, _radius in tree_instances:
         if obj_name not in LOW_CANOPY_PROTECTED_TREE_NAMES:

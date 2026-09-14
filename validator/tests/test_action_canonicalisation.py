@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Guarantees canonicalize_action owes the simulator for whatever a miner returns."""
+
 import numpy as np
 import pytest
 
@@ -25,11 +27,13 @@ HIGH = np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
 
 
 def test_action_is_clipped_to_the_family_bounds():
+    """Values past LOW or HIGH come back pinned to the limit, element by element."""
     action = canonicalize_action([9.0, -9.0, 0.0, 5.0, -5.0], LOW, HIGH, act_dim=5)
     assert np.array_equal(action, np.array([1.0, -1.0, 0.0, 1.0, -1.0], dtype=np.float32))
 
 
 def test_non_finite_values_become_zero():
+    """NaN and both infinities land on 0.0 instead of propagating into the physics step."""
     action = canonicalize_action(
         [np.nan, np.inf, -np.inf, 0.5, 0.0], LOW, HIGH, act_dim=5
     )
@@ -38,6 +42,7 @@ def test_non_finite_values_become_zero():
 
 
 def test_wrong_length_falls_back_to_a_zero_action():
+    """An action of the wrong width is discarded whole: the drone gets zeros, never a pad."""
     assert np.array_equal(
         canonicalize_action([1.0, 2.0], LOW, HIGH, act_dim=5),
         np.zeros(5, dtype=np.float32),
@@ -54,11 +59,13 @@ def test_non_numeric_dtype_never_raises(dtype):
 
 
 def test_object_dtype_never_raises():
+    """An array of Python objects canonicalises to zeros rather than throwing on the cast."""
     action = canonicalize_action(np.array([None] * 5, dtype=object), LOW, HIGH, act_dim=5)
     assert np.array_equal(action, np.zeros(5, dtype=np.float32))
 
 
 def test_swarm_action_keeps_the_per_drone_shape():
+    """A flat 15-vector for three drones is reshaped to a (3, 5) float32 block, one row each."""
     low = np.tile(LOW, (3, 1))
     high = np.tile(HIGH, (3, 1))
     action = canonicalize_action(
@@ -69,6 +76,7 @@ def test_swarm_action_keeps_the_per_drone_shape():
 
 
 def test_swarm_wrong_length_falls_back_to_zeros():
+    """A mis-sized swarm action still yields a full (3, 5) block, so the shape contract holds."""
     low = np.tile(LOW, (3, 1))
     high = np.tile(HIGH, (3, 1))
     action = canonicalize_action([1.0, 2.0, 3.0], low, high, n_drones=3, act_dim=5)

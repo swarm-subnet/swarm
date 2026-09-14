@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Every environment type must produce a world a search run can actually be scored against."""
 from __future__ import annotations
 
 import math
@@ -39,6 +40,7 @@ _MAPS = {
 
 @pytest.mark.parametrize("name,ctype", list(_MAPS.items()))
 def test_per_map_well_formed(sar_pybullet, name, ctype):
+    """Each environment gives a tagged victim standing on a support body, a finite surface height, and a search centre within 30 m of the victim."""
     p.resetSimulation(physicsClientId=sar_pybullet)
     world = build_sar_world(
         sar_pybullet, seed=1234 + ctype, challenge_type=ctype,

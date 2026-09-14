@@ -33,6 +33,7 @@ AGENT = (
 
 
 def _report(compliant: bool) -> dict:
+    """A verification report that passes or fails only on the runtime smoke check."""
     return {
         "model": "x", "compliant": compliant, "size_bytes": 1, "size_limit_bytes": 2,
         "size_ok": True, "zip_safe": True, "status": "legitimate", "reason": "ok",
@@ -43,9 +44,11 @@ def _report(compliant: bool) -> dict:
 
 
 def _capture_submit(monkeypatch, exit_code: int = 0) -> dict:
+    """Patch the private upload with a recorder and return the dict its keyword arguments land in."""
     calls = {}
 
     def submit_private(**kwargs):
+        """Record the keyword arguments and hand back the canned exit code."""
         calls.update(kwargs)
         return exit_code
 
@@ -54,6 +57,7 @@ def _capture_submit(monkeypatch, exit_code: int = 0) -> dict:
 
 
 def test_submit_packages_the_source_verifies_and_submits(monkeypatch, tmp_path):
+    """A source directory is zipped, verified, then handed on with its family, wallet and backend URL."""
     source = tmp_path / "agent"
     source.mkdir()
     (source / "drone_agent.py").write_text(AGENT)
@@ -81,6 +85,7 @@ def test_submit_packages_the_source_verifies_and_submits(monkeypatch, tmp_path):
 
 
 def test_submit_stops_before_the_chain_when_verification_fails(monkeypatch, tmp_path):
+    """A failing report costs exit code 1 and nothing is ever handed to the upload."""
     artifact = tmp_path / "submission.zip"
     with zipfile.ZipFile(artifact, "w") as zf:
         zf.writestr("drone_agent.py", AGENT)
@@ -94,6 +99,7 @@ def test_submit_stops_before_the_chain_when_verification_fails(monkeypatch, tmp_
 
 
 def test_submit_upload_only_skips_packaging_and_verification(monkeypatch, tmp_path):
+    """With --upload-only an existing zip goes straight up and the verifier is not called at all."""
     artifact = tmp_path / "submission.zip"
     with zipfile.ZipFile(artifact, "w") as zf:
         zf.writestr("drone_agent.py", AGENT)
@@ -108,6 +114,7 @@ def test_submit_upload_only_skips_packaging_and_verification(monkeypatch, tmp_pa
 
 
 def test_submit_requires_a_family_when_there_is_no_terminal(monkeypatch, tmp_path, capsys):
+    """Without a TTY to prompt on, a missing --family-id fails with a message on stderr and no upload."""
     artifact = tmp_path / "submission.zip"
     with zipfile.ZipFile(artifact, "w") as zf:
         zf.writestr("drone_agent.py", AGENT)
@@ -120,6 +127,7 @@ def test_submit_requires_a_family_when_there_is_no_terminal(monkeypatch, tmp_pat
 
 
 def test_repo_commands_are_gone():
+    """The CLI no longer exposes a repo group, and submit now lives under model."""
     parser = cli.build_parser()
     commands = parser._subparsers._group_actions[0].choices
     assert "repo" not in commands

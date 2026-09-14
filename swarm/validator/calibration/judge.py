@@ -36,6 +36,7 @@ def act_hard_cap_sec(
 
 @dataclass(frozen=True)
 class StepVerdict:
+    """Outcome of one act() call: whether to discard it, whether the liveness cap was hit, and its normalized time."""
     strike: bool            # discard the returned action and count a strike
     hard_cap_hit: bool      # exceeded the liveness ceiling (harder failure)
     normalized_sec: float   # baseline-equivalent compute time

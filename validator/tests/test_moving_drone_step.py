@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The order MovingDroneAviary.step does its work in, which decides whether contacts are read from a stale frame."""
 from __future__ import annotations
 
 import gymnasium.spaces as spaces
@@ -24,6 +25,7 @@ from swarm.core import moving_drone as moving_drone_mod
 
 
 def test_step_runs_collision_bookkeeping_after_physics(monkeypatch) -> None:
+    """The platform moves before the world advances and contacts are read only once it has, so no check sees the previous frame."""
     env = moving_drone_mod.MovingDroneAviary.__new__(moving_drone_mod.MovingDroneAviary)
     env.RECORD = False
     env.GUI = False
@@ -70,6 +72,7 @@ def test_step_runs_collision_bookkeeping_after_physics(monkeypatch) -> None:
     env._updateAndStoreKinematicInformation = lambda: order.append("store_kin")
 
     def _check_collision():
+        """Stand-in for the real contact query, reporting no contact and refusing to run before the world has advanced."""
         assert flags["stepped"] is True
         order.append("collision_check")
         return False, False

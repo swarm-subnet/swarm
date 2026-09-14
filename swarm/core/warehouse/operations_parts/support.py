@@ -15,10 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Odds and ends of the warehouse operations pass: forklift facing, and disposal of generated model caches."""
 from ._shared import *
 
 
 def _forklift_yaw_back_to_wall(attached_wall):
+    """Degrees of yaw that back a forklift onto the named wall; 0.0 for an unknown side."""
     if attached_wall == "north":
         return 180.0
     if attached_wall == "south":
@@ -31,6 +33,7 @@ def _forklift_yaw_back_to_wall(attached_wall):
 
 
 def _purge_generated_model_artifacts(model_path):
+    """Drop one OBJ's cache entries and split-by-material folder, plus the shared texture cache and double-sided folder."""
     cache_key = os.path.abspath(model_path)
     _OBJ_MTL_SPLIT_CACHE.pop(cache_key, None)
     _OBJ_COLLISION_PROXY_CACHE.pop(cache_key, None)

@@ -40,6 +40,7 @@ _FLOAT_EPS = 1e-3
 
 
 def _task():
+    """Build the seeded SAR MapTask the leak checks fly."""
     return MapTask(
         map_seed=8181,
         start=(0.0, 0.0, 1.5),
@@ -54,6 +55,7 @@ def _task():
 
 @pytest.fixture
 def sar_env():
+    """A reset SAR aviary on seed 8181, closed again once the test finishes."""
     from swarm.core.moving_drone import MovingDroneAviary
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -69,16 +71,19 @@ def sar_env():
 
 
 def _approx_eq(a: float, b: float) -> bool:
+    """True when both floats are finite and sit within 1e-3 of one another."""
     return math.isfinite(a) and math.isfinite(b) and abs(a - b) <= _FLOAT_EPS
 
 
 def _contains_value(arr, target: float) -> bool:
+    """True when any element of arr sits within 1e-3 of target, whatever its shape."""
     flat = np.asarray(arr, dtype=np.float64).reshape(-1)
     return bool(np.any(np.abs(flat - target) <= _FLOAT_EPS))
 
 
 @pytest.mark.timeout(180)
 def test_first_obs_does_not_contain_victim_xy(sar_env):
+    """No array in the reset observation carries the true X or Y, to float32 precision."""
     env = sar_env
     obs = env._computeObs()
     vx, vy, vz = env.sar_world.victim_centre
@@ -94,6 +99,8 @@ def test_first_obs_does_not_contain_victim_xy(sar_env):
 
 @pytest.mark.timeout(180)
 def test_state_clue_slice_is_2d_and_offset(sar_env):
+    """The clue the miner reads is two numbers and nothing more:
+    the vector from the drone to the noisy search centre, never the victim's coordinates."""
     env = sar_env
     obs = env._computeObs()
     state = obs["state"]

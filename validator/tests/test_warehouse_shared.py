@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The warehouse mesh kit helpers: finding an asset, scaling it, and repointing its textures."""
 from __future__ import annotations
 
 import os
@@ -29,6 +30,7 @@ from swarm.core.warehouse.shared import (
 
 
 def test_first_existing_path_returns_first_hit(tmp_path):
+    """A candidate that is not on disk is skipped, and what comes back is absolute."""
     a = tmp_path / "a"
     b = tmp_path / "b"
     b.write_text("x")
@@ -37,6 +39,7 @@ def test_first_existing_path_returns_first_hit(tmp_path):
 
 
 def test_mesh_loader_scale_xyz_and_asset_path(tmp_path):
+    """One number spreads over three axes, a two-element one raises, and an unknown name raises."""
     obj_dir = tmp_path / "objs"
     obj_dir.mkdir()
     (obj_dir / "cube.obj").write_text("v 0 0 0\n")
@@ -53,6 +56,7 @@ def test_mesh_loader_scale_xyz_and_asset_path(tmp_path):
 
 
 def test_mesh_loader_vertex_parsing_and_bounds(tmp_path):
+    """Vertices arrive rotated to (x, -z, y), and extents and size are measured after scaling."""
     obj_dir = tmp_path / "objs"
     obj_dir.mkdir()
     (obj_dir / "shape.obj").write_text(
@@ -79,6 +83,7 @@ def test_mesh_loader_vertex_parsing_and_bounds(tmp_path):
 
 
 def test_normalize_mtl_texture_paths_rewrites_colormap_and_stamps(tmp_path):
+    """A map_Kd line is repointed at the Textures folder once; the stamp makes a rerun do nothing."""
     mtl = tmp_path / "material.mtl"
     mtl.write_text("newmtl mat\nmap_Kd some/path/colormap.png\n")
 

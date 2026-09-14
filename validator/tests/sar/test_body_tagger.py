@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Whichever way a body enters the world, its category has to reach the tag map the spawn reads."""
 from __future__ import annotations
 
 import os
@@ -51,6 +52,7 @@ _MINIMAL_URDF = """<?xml version='1.0'?>
 
 @pytest.fixture
 def urdf_path():
+    """Yield a temporary file holding a one-box robot, removed once the test finishes."""
     fd, path = tempfile.mkstemp(suffix=".urdf")
     with os.fdopen(fd, "w") as f:
         f.write(_MINIMAL_URDF)
@@ -59,6 +61,7 @@ def urdf_path():
 
 
 def test_three_creation_paths(sar_pybullet, urdf_path):
+    """Bodies built here, loaded from a URDF, or adopted afterwards all carry their category name."""
     tagger = BodyTagger(sar_pybullet)
 
     col = p.createCollisionShape(
@@ -95,6 +98,7 @@ def test_three_creation_paths(sar_pybullet, urdf_path):
 
 
 def test_tag_body_group(sar_pybullet):
+    """Tagging a multi-part object marks every piece, the collisionless ones included."""
     tagger = BodyTagger(sar_pybullet)
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[0.1, 0.1, 0.1], physicsClientId=sar_pybullet

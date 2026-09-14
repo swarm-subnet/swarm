@@ -15,12 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The events logger reaches disk, and ColoredLogger tints every level it forwards to bittensor."""
+
 from __future__ import annotations
 
 from swarm.utils.logging import ColoredLogger, setup_events_logger
 
 
 def test_setup_events_logger_writes_event_log(tmp_path):
+    """An event call reaches events.log in the given directory, tagged with the EVENT level name."""
     logger = setup_events_logger(str(tmp_path), events_retention_size=1024 * 1024)
     try:
         logger.event("validator heartbeat")
@@ -36,6 +39,7 @@ def test_setup_events_logger_writes_event_log(tmp_path):
 
 
 def test_colored_logger_wraps_messages(monkeypatch, bt_stub):
+    """Info, warning, error and success all reach bittensor wrapped in ANSI codes and closed by a reset."""
     captured = {"info": None, "warning": None, "error": None, "success": None}
     monkeypatch.setattr(bt_stub.logging, "info", lambda msg: captured.__setitem__("info", msg))
     monkeypatch.setattr(bt_stub.logging, "warning", lambda msg: captured.__setitem__("warning", msg))
@@ -55,4 +59,5 @@ def test_colored_logger_wraps_messages(monkeypatch, bt_stub):
 
 
 def test_colored_msg_unknown_color_returns_plain_text():
+    """A color outside the palette leaves the message untouched instead of raising."""
     assert ColoredLogger._colored_msg("plain", "not-a-color") == "plain"

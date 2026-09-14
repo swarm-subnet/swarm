@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The swarm search-and-rescue family: many drones, one hidden victim, one shared find."""
+
 from __future__ import annotations
 
 import math
@@ -75,6 +77,7 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
     runtime_supported = True
 
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
+        """Docker image, resource class and evaluation time budgets for a swarm SAR run."""
         _ = task
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
@@ -96,12 +99,15 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         )
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
+        """The inherited screening seeds with challenge_type 5 dropped and drone counts added."""
         return with_drone_counts(without_challenge_type(super().screening_template(), 5))
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        """The inherited benchmark seeds with challenge_type 5 dropped and drone counts added."""
         return with_drone_counts(without_challenge_type(super().benchmark_template(), 5))
 
     def reset_env_state(self, env: Any) -> None:
+        """Clear the per-drone dwell trackers and the shared team success and failure flags."""
         super().reset_env_state(env)
         n = int(getattr(env, "NUM_DRONES", 1))
         env._d_sar_predicate_active = [False] * n
@@ -114,6 +120,7 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         env._sar_team_failure_reason = FailureReason.TIMEOUT.value
 
     def spawn_task_world(self, env: Any) -> None:
+        """Build the SAR world, raise a launch pad under every drone and place the shared clue."""
         cli = getattr(env, "CLIENT", 0)
         task = env.task
         starts = [tuple(float(c) for c in s) for s in task.starts]
@@ -267,6 +274,7 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
             env._d_sar_dwell_time[i] = 0.0
 
     def compute_terminated(self, env: Any) -> bool:
+        """True once the team confirms the victim, the mission fails or the spawn gave up."""
         if getattr(env, "_sar_spawn_failed", False):
             return True
         if getattr(env, "_sar_mission_failed", False):
@@ -276,6 +284,7 @@ class SwarmSarChallengeFamily(SearchAndRescueChallengeFamily):
         return False
 
     def build_info(self, env: Any) -> dict[str, Any]:
+        """The rollout summary: team success and time, per-drone closest approach, schema version."""
         team_success = bool(
             getattr(env, "_sar_team_success", False)
             and not getattr(env, "_sar_mission_failed", False)

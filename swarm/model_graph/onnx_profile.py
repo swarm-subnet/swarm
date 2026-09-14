@@ -65,22 +65,28 @@ _ALLOWED_RESIZE_MODES = frozenset({"nearest", "linear"})
 
 @lru_cache(maxsize=1)
 def load_profile() -> dict:
+    """The parsed execution_profile.v1.json sitting beside this file, cached after first read."""
     return json.loads(_PROFILE_PATH.read_bytes().decode("utf-8"))
 
 
 @lru_cache(maxsize=1)
 def profile_digest() -> str:
+    """SHA-256 of the profile file, so a verdict can be pinned to the rules that produced it."""
     return hashlib.sha256(_PROFILE_PATH.read_bytes()).hexdigest()
 
 
 @dataclass(frozen=True)
 class TensorSignature:
+    """One graph input or output: its name and its resolved static shape."""
+
     name: str
     shape: tuple[int, ...]
 
 
 @dataclass(frozen=True)
 class ModelInspection:
+    """What a static pass over an ONNX graph found: IO signatures, counts and byte costs."""
+
     inputs: tuple[TensorSignature, ...]
     outputs: tuple[TensorSignature, ...]
     node_count: int
@@ -91,6 +97,7 @@ class ModelInspection:
 
 
 def _denied(reason: ReasonCode, detail: str, model_id: str | None) -> ModelGraphError:
+    """Build the ModelGraphError carrying a reason code, a detail string and the model id."""
     return ModelGraphError(reason, detail, model_id=model_id)
 
 
@@ -146,10 +153,12 @@ def _static_shape(value_info, model_id: str | None) -> tuple[int, ...]:
 
 
 def _node_flops(node, shapes: dict[str, tuple[int, ...]]) -> int:
+    """Rough FLOP count for one node, two per multiply-accumulate, taken at the widest drone axis."""
     if node.op_type == "Constant":
         return 0
 
     def elements(name: str) -> int:
+        """Worst-case element count of the named tensor, 0 when its shape is unknown."""
         shape = shapes.get(name)
         if not shape:
             return 0
@@ -180,6 +189,7 @@ def _node_flops(node, shapes: dict[str, tuple[int, ...]]) -> int:
 
 
 def inspect_onnx_bytes(data: bytes, *, model_id: str | None = None) -> ModelInspection:
+    """Validate a serialized ONNX model against the profile and return its IO and static costs."""
     profile = load_profile()
     unconditional = frozenset(profile["unconditional_ops"])
     restricted = frozenset(profile["restricted_ops"])

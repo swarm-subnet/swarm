@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Batch seed evaluation in one sandboxed container: per-model images, host calibration, warm starts."""
+
 import asyncio
 import json
 import math
@@ -166,6 +168,7 @@ def _read_calibration_cache(
 
 
 def _calibration_mp_context() -> mp.context.BaseContext:
+    """The start method for the measuring processes: fork where it is available, spawn otherwise."""
     try:
         return mp.get_context("fork")
     except ValueError:
@@ -173,6 +176,7 @@ def _calibration_mp_context() -> mp.context.BaseContext:
 
 
 def _prepared_calibration_evaluator(base_image: str):
+    """A DockerSecureEvaluator with every field set by hand, so no base image is built in the child."""
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 
     evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
@@ -191,6 +195,7 @@ def _prepared_calibration_evaluator(base_image: str):
 
 
 def _host_calibration_worker_main(worker_id: int, base_image: str, result_queue: Any) -> None:
+    """Child-process body: fly the baseline once and queue the speed factor, or the error that stopped it."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -223,6 +228,7 @@ def _host_calibration_worker_main(worker_id: int, base_image: str, result_queue:
 
 
 def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
+    """Run a cleanup command, swallowing its output and any failure or timeout it hits."""
     try:
         subprocess.run(cmd, capture_output=True, timeout=timeout_sec)
     except Exception:
@@ -238,10 +244,12 @@ _BUILD_CACHE_PRUNE_FREE_GB = 25.0
 
 
 def model_image_tag(model_hash: str) -> str:
+    """The docker name a submission's image takes, keyed by the first 12 hex of its zip hash."""
     return f"swarm_eval_model_{model_hash[:12]}:latest"
 
 
 def _image_exists(image_tag: str) -> bool:
+    """True when docker inspects the tag locally; a failed or slow daemon answers False."""
     try:
         result = subprocess.run(
             ["docker", "image", "inspect", image_tag],
@@ -537,6 +545,7 @@ _ACTIVE_CPU_SHARES = 1024
 
 
 def _init_batch_state(ctx: _BatchContext) -> None:
+    """Fill the context's trace flag, stop event, progress dict and the closures every phase shares."""
     uid = ctx.uid
     worker_id = ctx.worker_id
     tasks = ctx.tasks
@@ -561,6 +570,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
     completed_lock = ctx.completed_lock
 
     def _phase(msg: str) -> None:
+        """Print and log one trace line tagged with the worker and UID, or nothing when tracing is off."""
         if not trace_rpc:
             return
         line = f"[{time.strftime('%H:%M:%S')}] [RPC TRACE][Worker {worker_id}][UID {uid}] {msg}"
@@ -568,6 +578,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
         bt.logging.info(line)
 
     def _on_seed_complete_guarded(seed_meta: Optional[dict] = None) -> None:
+        """Forward one completion to the caller's callback, never more often than the batch has tasks."""
         nonlocal completed_count
         if on_seed_complete is None:
             return
@@ -586,6 +597,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
             pass
 
     def _build_failure_seed_meta(task_obj, *, status: str, error: str = "") -> dict:
+        """The progress record for a seed that never flew: zeroed timings under the given status."""
         return {
             "uid": int(uid),
             "map_seed": int(getattr(task_obj, "map_seed", -1)),
@@ -633,6 +645,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
         done = threading.Event()
 
         def _rm() -> None:
+            """Delete the directory tree, releasing the waiter even if the removal raises."""
             try:
                 shutil.rmtree(path, ignore_errors=True)
             finally:
@@ -662,6 +675,7 @@ def _init_batch_state(ctx: _BatchContext) -> None:
 def check_task_versions(
     uid: int, worker_id: int, tasks: list
 ) -> Optional[list]:
+    """Reject the whole batch when a task carries a schema outside the allow-list; None lets it fly."""
     for task in tasks:
         task_version = getattr(task, "version", None)
         if task_version is None:
@@ -685,6 +699,9 @@ def check_task_versions(
 
 
 def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
+    """Screen the batch before any container starts: task schema, model file, docker readiness, submission safety.
+
+    Returns the already-failed results for every seed, or None when the batch may proceed."""
     uid = ctx.uid
     worker_id = ctx.worker_id
     tasks = ctx.tasks
@@ -734,6 +751,7 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
 
 
 def _setup_pretry_state(ctx: _BatchContext) -> None:
+    """Name the container for this UID and worker, and claim the free host port it will publish on."""
     self = ctx.self
     uid = ctx.uid
     worker_id = ctx.worker_id
@@ -753,10 +771,12 @@ OBS_SHM_BYTES = 32 * 1024 * 1024
 
 
 def _obs_shm_host_path(host_port: int) -> str:
+    """The /dev/shm file that carries observations to the container published on this port."""
     return f"/dev/shm/swarm_obs_{host_port}.bin"
 
 
 def _create_obs_shm(host_port: int) -> Optional[str]:
+    """Allocate the 32 MiB world-readable observation buffer, or None when the file cannot be made."""
     path = _obs_shm_host_path(host_port)
     try:
         with open(path, "wb") as f:
@@ -845,6 +865,7 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
         rpc_payload: dict[str, object] = {}
 
         def _rpc_worker():
+            """Fly every seed over RPC on this thread, leaving the results or the exception in the payload."""
             try:
                 rpc_payload["results"] = self._run_multi_seed_rpc_sync(
                     tasks,
@@ -1077,6 +1098,7 @@ async def _run_baseline_calibration(self, worker_id: int):
     overhead = {"ms": 0.0}
 
     def _observer(event: dict) -> None:
+        """Collect the act() milliseconds of every step past the warmup ones."""
         if event.get("event") != "step":
             return
         if int(event.get("step_idx", 0)) > warmup:
@@ -1085,6 +1107,7 @@ async def _run_baseline_calibration(self, worker_id: int):
                 act_ms.append(value)
 
     def _on_seed(meta=None) -> None:
+        """Keep the RPC overhead the run reported, in milliseconds, so it can be subtracted per act."""
         if isinstance(meta, dict) and meta.get("calibration_overhead_sec") is not None:
             overhead["ms"] = float(meta["calibration_overhead_sec"]) * 1000.0
 
@@ -1135,6 +1158,7 @@ def _host_calibration_is_valid(
     worker_count: int,
     calibration_version: str,
 ) -> bool:
+    """True when a measurement matches the manifest, covers enough workers and is inside the max age."""
     if calibration is None:
         return False
     if calibration.calibration_version != str(calibration_version):
@@ -1145,6 +1169,7 @@ def _host_calibration_is_valid(
 
 
 def _average_host_speed(worker_speeds: list[SpeedFactor]) -> Optional[SpeedFactor]:
+    """One factor for the box, taken from the mean local p90 across its workers; None from an empty list."""
     if not worker_speeds:
         return None
     avg_local_p90 = math.fsum(

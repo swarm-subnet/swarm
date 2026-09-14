@@ -21,6 +21,7 @@ from swarm.validator.utils_parts.weights import compute_koth_weights_from_sync
 
 
 def _king(uid, score, prev, family_id, hotkey=None):
+    """One king row shaped as the sync payload carries it: uid, hotkey, score, previous score, crowning epoch and family."""
     return {
         "uid": uid, "hotkey": hotkey or f"hk{uid}", "score": score,
         "prev_score": prev, "crowned_at_epoch": uid, "family_id": family_id,
@@ -28,6 +29,7 @@ def _king(uid, score, prev, family_id, hotkey=None):
 
 
 def test_burn_seat_uid0_holds_denominator_and_burns():
+    """The reserved UID 0 keeps its place in the row-share denominator but is paid nothing, so the surviving king's share is untouched."""
     # A dropped/stale seat arrives as the reserved burn UID (0). It stays in the
     # row-share denominator but pays nobody, so the survivor's share is the same as
     # if the burn seat were a normal king — proving burn, not redistribution.
@@ -56,6 +58,7 @@ def test_burn_seat_uid0_holds_denominator_and_burns():
 
 
 def test_per_family_payload_combines_across_families():
+    """A family's whole slice goes to its sole king, so two families pay out 0.8 and 0.2 side by side."""
     sync = {
         "family_shares": {"cf_autopilot": 0.8, "cf_search_and_rescue": 0.2},
         "kings_by_family": {
@@ -69,6 +72,7 @@ def test_per_family_payload_combines_across_families():
 
 
 def test_empty_family_slice_is_absent_so_it_burns():
+    """A family with no king pays nobody and its slice is simply missing, so the weights total less than one."""
     # SAR active but no king -> its 0.2 is not paid to anyone (burns downstream).
     sync = {
         "family_shares": {"cf_autopilot": 0.8, "cf_search_and_rescue": 0.2},
@@ -83,6 +87,7 @@ def test_empty_family_slice_is_absent_so_it_burns():
 
 
 def test_recompute_matches_backend_combine_oracle():
+    """Recomputing weights from a sync payload reproduces combine_family_weights uid for uid, so validator and backend converge."""
     shares = {"cf_autopilot": 0.7, "cf_search_and_rescue": 0.3}
     kbf = {
         "cf_autopilot": [_king(1, 0.5, 0.0, "cf_autopilot"), _king(2, 0.6, 0.5, "cf_autopilot")],
@@ -98,6 +103,7 @@ def test_recompute_matches_backend_combine_oracle():
 
 
 def test_legacy_flat_payload_refused_when_no_family_fields():
+    """A payload carrying only the flat kings list yields None, so the caller holds its last good weights rather than paying or burning."""
     # A payload with only the flat `kings` list (no kings_by_family) is legacy;
     # V5 refuses it (None -> hold last weights) rather than paying or burning.
     sync = {"kings": [_king(5, 0.5, 0.0, "cf_autopilot"), _king(6, 0.7, 0.5, "cf_autopilot")]}
@@ -105,6 +111,7 @@ def test_legacy_flat_payload_refused_when_no_family_fields():
 
 
 def test_empty_family_shares_with_kings_burns_not_flat_fallback():
+    """No payable family burns everything even while the display kings list is present: the flat list is never a fallback."""
     # Every family score-gated to zero: backend sends family_shares={} but still
     # ships the display window. The modern per-family path must yield full burn,
     # NOT fall back to the flat `kings` list and pay those kings.
@@ -119,8 +126,10 @@ def test_empty_family_shares_with_kings_burns_not_flat_fallback():
 
 
 def test_reregistered_hotkey_is_dropped_to_burn():
+    """A king whose recorded hotkey no longer matches the live metagraph is dropped, so its slice burns rather than paying the new owner."""
     # uid 11's live hotkey no longer matches the king's recorded hotkey -> burn.
     class _MG:
+        """A metagraph whose hotkey at that uid is a different key from the one the king recorded."""
         hotkeys = ["hk0", "DIFFERENT", "hk2"]
     sync = {
         "family_shares": {"cf_autopilot": 1.0},
@@ -131,7 +140,9 @@ def test_reregistered_hotkey_is_dropped_to_burn():
 
 
 def test_uid_validator_never_raises_on_short_hotkeys():
+    """A uid past the end of the metagraph hotkey list burns quietly instead of raising IndexError."""
     class _MG:
+        """A metagraph carrying no hotkeys at all, so every uid is out of range."""
         hotkeys = []   # shorter than any uid
     sync = {
         "family_shares": {"cf_autopilot": 1.0},

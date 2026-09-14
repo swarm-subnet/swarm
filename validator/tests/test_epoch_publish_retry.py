@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Publishing pending epoch seed records: what marks one published, and the retry backoff."""
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +31,7 @@ from swarm.validator.utils_parts.backend_submission import (
 
 
 def _run(coro):
+    """Drive one coroutine to completion on a fresh event loop and give back its result."""
     return asyncio.run(coro)
 
 
@@ -41,6 +43,7 @@ def _write_epoch_file(
     family_id: str = "cf_autopilot",
     published: bool = False,
 ) -> None:
+    """Write one epoch seed record to disk under the name the seed manager expects for that family."""
     seeds_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".json" if family_id == "cf_autopilot" else f"__{family_id}.json"
     (seeds_dir / f"epoch_{epoch}{suffix}").write_text(json.dumps({
@@ -57,6 +60,7 @@ def _write_epoch_file(
 
 
 def _make_manager(monkeypatch, tmp_path):
+    """Point the seed manager's state and epoch-seed paths inside tmp_path, and return the seeds directory."""
     seeds_dir = tmp_path / "state" / "epoch_seeds"
     monkeypatch.setattr(seed_manager_mod, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(seed_manager_mod, "EPOCH_SEEDS_DIR", seeds_dir)
@@ -64,9 +68,11 @@ def _make_manager(monkeypatch, tmp_path):
 
 
 def _make_validator(manager, response_or_exc, *, forward_count: int = 0):
+    """Return a stub validator whose publish call replays the given dict, callable or exception, plus the list of kwargs it saw."""
     calls: list[dict] = []
 
     async def _publish_epoch_seeds(**kwargs):
+        """Record the call kwargs, then raise or return whatever the test supplied."""
         calls.append(kwargs)
         if isinstance(response_or_exc, Exception):
             raise response_or_exc
@@ -84,12 +90,14 @@ def _make_validator(manager, response_or_exc, *, forward_count: int = 0):
 def _is_published_on_disk(
     seeds_dir, epoch: int, *, family_id: str = "cf_autopilot"
 ) -> bool:
+    """Read that family's epoch file back off disk and return the published flag it carries."""
     suffix = ".json" if family_id == "cf_autopilot" else f"__{family_id}.json"
     data = json.loads((seeds_dir / f"epoch_{epoch}{suffix}").read_text())
     return bool(data.get("published", False))
 
 
 def test_marks_published_when_backend_returns_published_true(monkeypatch, tmp_path):
+    """A published-true reply flips the record's flag on disk, and only the closed epoch is offered."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 11, [1, 2, 3], published=False)
     _write_epoch_file(seeds_dir, 12, [9, 8, 7], published=False)
@@ -105,6 +113,7 @@ def test_marks_published_when_backend_returns_published_true(monkeypatch, tmp_pa
 
 
 def test_marks_published_when_backend_returns_accepted_true(monkeypatch, tmp_path):
+    """An accepted-true reply counts as confirmation exactly like published-true."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 5, [4, 5, 6], published=False)
     _write_epoch_file(seeds_dir, 6, [1, 1, 1], published=False)
@@ -118,6 +127,7 @@ def test_marks_published_when_backend_returns_accepted_true(monkeypatch, tmp_pat
 
 
 def test_leaves_file_pending_when_backend_returns_error_dict(monkeypatch, tmp_path):
+    """An error reply leaves the record unpublished and still queued for a later attempt."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 21, [7, 7, 7], published=False)
     _write_epoch_file(seeds_dir, 22, [8, 8, 8], published=False)
@@ -132,6 +142,7 @@ def test_leaves_file_pending_when_backend_returns_error_dict(monkeypatch, tmp_pa
 
 
 def test_leaves_file_pending_when_backend_returns_empty_dict(monkeypatch, tmp_path):
+    """Silence is not consent: an empty reply carries no confirmation, so the record stays unpublished."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 33, [3, 3], published=False)
     _write_epoch_file(seeds_dir, 34, [4, 4], published=False)
@@ -145,6 +156,7 @@ def test_leaves_file_pending_when_backend_returns_empty_dict(monkeypatch, tmp_pa
 
 
 def test_leaves_file_pending_when_publish_raises(monkeypatch, tmp_path):
+    """A raising backend call is swallowed and the record stays unpublished instead of killing the cycle."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 41, [0, 0], published=False)
     _write_epoch_file(seeds_dir, 42, [1, 1], published=False)
@@ -158,6 +170,7 @@ def test_leaves_file_pending_when_publish_raises(monkeypatch, tmp_path):
 
 
 def test_independent_results_for_mixed_responses(monkeypatch, tmp_path):
+    """Each pending epoch is judged on its own reply: one gets marked, the other keeps waiting."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 51, [1], published=False)
     _write_epoch_file(seeds_dir, 52, [2], published=False)
@@ -166,6 +179,7 @@ def test_independent_results_for_mixed_responses(monkeypatch, tmp_path):
     manager = seed_manager_mod.BenchmarkSeedManager()
 
     def _responder(kwargs):
+        """Confirm epoch 51 and reject anything else with a 422."""
         if kwargs["epoch_number"] == 51:
             return {"published": True}
         return {"error": "backend rejected", "status_code": 422}
@@ -180,6 +194,7 @@ def test_independent_results_for_mixed_responses(monkeypatch, tmp_path):
 
 
 def test_rejected_publish_retries_on_next_call_and_eventually_succeeds(monkeypatch, tmp_path):
+    """A rejection is retried on a later cycle and, once confirmed, the record leaves the queue."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 77, [5, 5, 5], published=False)
     _write_epoch_file(seeds_dir, 78, [6, 6, 6], published=False)
@@ -189,6 +204,7 @@ def test_rejected_publish_retries_on_next_call_and_eventually_succeeds(monkeypat
     attempts = {"count": 0}
 
     def _responder(_kwargs):
+        """Reject the first attempt with a 503 and confirm every attempt after it."""
         attempts["count"] += 1
         if attempts["count"] == 1:
             return {"error": "backend transient", "status_code": 503}
@@ -206,6 +222,7 @@ def test_rejected_publish_retries_on_next_call_and_eventually_succeeds(monkeypat
 
 
 def test_publish_backoff_cycles_doubles_and_caps():
+    """The wait doubles with each failure: 0, 1, 2, 4, 8, then holds at PUBLISH_BACKOFF_CAP_CYCLES."""
     assert _publish_backoff_cycles(0) == 0
     assert _publish_backoff_cycles(1) == 1
     assert _publish_backoff_cycles(2) == 2
@@ -216,6 +233,7 @@ def test_publish_backoff_cycles_doubles_and_caps():
 
 
 def test_repeated_rejection_skips_publish_until_backoff_elapses(monkeypatch, tmp_path):
+    """No call goes out while the skip window is open, and exactly one fires on the cycle it expires."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 90, [1], published=False)
     _write_epoch_file(seeds_dir, 91, [2], published=False)
@@ -248,6 +266,7 @@ def test_repeated_rejection_skips_publish_until_backoff_elapses(monkeypatch, tmp
 
 
 def test_successful_publish_clears_backoff_state(monkeypatch, tmp_path):
+    """Confirmation drops both the failure count and the skip-until entry for that epoch."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 100, [1], published=False)
     _write_epoch_file(seeds_dir, 101, [2], published=False)
@@ -256,6 +275,7 @@ def test_successful_publish_clears_backoff_state(monkeypatch, tmp_path):
     response_box = {"value": {"error": "transient", "status_code": 503}}
 
     def _responder(_kwargs):
+        """Return whatever reply the enclosing test currently holds in the box."""
         return response_box["value"]
 
     validator, _ = _make_validator(manager, _responder, forward_count=1)
@@ -273,6 +293,7 @@ def test_successful_publish_clears_backoff_state(monkeypatch, tmp_path):
 
 
 def test_exception_during_publish_also_triggers_backoff(monkeypatch, tmp_path):
+    """A thrown error feeds the same failure counter and skip cycle that a rejection does."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 110, [1], published=False)
     _write_epoch_file(seeds_dir, 111, [2], published=False)
@@ -288,6 +309,7 @@ def test_exception_during_publish_also_triggers_backoff(monkeypatch, tmp_path):
 
 
 def test_publish_pending_epoch_seeds_forwards_family_id(monkeypatch, tmp_path):
+    """The family stored on the record reaches the backend call as a keyword argument."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(
         seeds_dir, 51, [1], family_id="cf_autopilot", published=False
@@ -305,6 +327,7 @@ def test_publish_pending_epoch_seeds_forwards_family_id(monkeypatch, tmp_path):
 
 
 def test_publish_marks_only_matching_family_record_published(monkeypatch, tmp_path):
+    """Two families sharing an epoch number are tracked apart: only the confirmed one flips on disk."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 51, [1], family_id="cf_search_and_rescue", published=False)
     _write_epoch_file(seeds_dir, 51, [2], family_id="cf_autopilot", published=False)
@@ -313,6 +336,7 @@ def test_publish_marks_only_matching_family_record_published(monkeypatch, tmp_pa
     manager = seed_manager_mod.BenchmarkSeedManager()
 
     def _responder(kwargs):
+        """Confirm the cf_autopilot call and keep cf_search_and_rescue pending."""
         if kwargs["family_id"] == "cf_autopilot":
             return {"published": True}
         return {"error": "keep pending"}
@@ -326,6 +350,7 @@ def test_publish_marks_only_matching_family_record_published(monkeypatch, tmp_pa
 
 
 def test_publish_backoff_state_is_per_epoch_and_family(monkeypatch, tmp_path):
+    """Backoff is keyed on epoch and family together, so one family's failures never hold up another."""
     seeds_dir = _make_manager(monkeypatch, tmp_path)
     _write_epoch_file(seeds_dir, 90, [1], family_id="cf_search_and_rescue", published=False)
     _write_epoch_file(seeds_dir, 90, [2], family_id="cf_autopilot", published=False)
@@ -334,6 +359,7 @@ def test_publish_backoff_state_is_per_epoch_and_family(monkeypatch, tmp_path):
     manager = seed_manager_mod.BenchmarkSeedManager()
 
     def _responder(kwargs):
+        """Fail cf_search_and_rescue with a 503 and confirm cf_autopilot."""
         if kwargs["family_id"] == "cf_search_and_rescue":
             return {"error": "transient", "status_code": 503}
         return {"published": True}

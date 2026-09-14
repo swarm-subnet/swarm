@@ -22,6 +22,7 @@
 # configuration values, limits, and parameters used throughout the system.
 # =============================================================================
 
+"""Tuned values the whole subnet shares: physics, scoring weights, evaluation budgets and per-family map parameters."""
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +113,7 @@ DOCKER_WORKER_CPUS = "2"                # CPU limit per Docker worker container
 
 
 def available_vcpu_count() -> int:
+    """Usable CPU count from the process affinity mask, falling back to os.cpu_count and finally to 1."""
     try:
         if hasattr(os, "sched_getaffinity"):
             count = len(os.sched_getaffinity(0))
@@ -349,6 +351,7 @@ SAR_TIME_TERM_BUFFER = 1.03          # multiplier on the Candidate-C target time
 
 
 def _build_sar_screening_template() -> list[dict]:
+    """Interleave the six map pools into the 50 screening slots so consecutive seeds land on different maps."""
     slots: list[dict] = []
     city_slot      = dict(challenge_type=1, distance_range=(15, 25))
     open_slot      = dict(challenge_type=2, distance_range=(14, 20))

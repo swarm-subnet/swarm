@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""What the full Docker benchmark guarantees: seed files, RAM-aware dispatch, the worker pool and the printed report."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,6 +40,7 @@ pytestmark = pytest.mark.full
 
 
 def _argv_for_model(model_path, *extra: str) -> list[str]:
+    """A one-worker, one-seed-per-group command line for the given model, plus any extra flags."""
     return [
         "bench_full_eval.py",
         "--model",
@@ -51,6 +54,7 @@ def _argv_for_model(model_path, *extra: str) -> list[str]:
 
 
 def test_tee_write_ignores_closed_secondary_stream():
+    """A closed stream in the tee is skipped, and the primary still gets every byte."""
     primary = io.StringIO()
     secondary = io.StringIO()
     tee = bench_full_eval._Tee(primary, secondary)
@@ -65,12 +69,14 @@ def test_tee_write_ignores_closed_secondary_stream():
 
 
 def test_infer_uid_from_model_path():
+    """Both `UID_178` and `uid-42` yield the number; a plain filename yields None."""
     assert bench_full_eval._infer_uid_from_model_path(Path("model/UID_178.zip")) == 178
     assert bench_full_eval._infer_uid_from_model_path(Path("model/uid-42.zip")) == 42
     assert bench_full_eval._infer_uid_from_model_path(Path("model/submission.zip")) is None
 
 
 def test_batch_indices_creates_one_seed_per_batch():
+    """Five tasks become five single-element batches, so no two seeds ever share a worker."""
     assert bench_full_eval._batch_indices(5) == [
         [0],
         [1],
@@ -81,6 +87,7 @@ def test_batch_indices_creates_one_seed_per_batch():
 
 
 def test_parse_args_defaults_workers_to_dynamic_count(tmp_path):
+    """Omitting `--workers` leaves the count at N_DOCKER_WORKERS, the machine-derived default."""
     model_path = tmp_path / "submission.zip"
     model_path.write_bytes(b"x")
 
@@ -90,6 +97,7 @@ def test_parse_args_defaults_workers_to_dynamic_count(tmp_path):
 
 
 def test_build_worker_stall_seed_meta_marks_failure():
+    """The stall record carries the task's seed and type through, reports `worker_stall_timeout`, and is never a success."""
     task = SimpleNamespace(
         map_seed=123,
         challenge_type=5,
@@ -112,6 +120,7 @@ def test_build_worker_stall_seed_meta_marks_failure():
 
 
 def test_ram_estimates_are_defined_per_group():
+    """One row per benchmark group in the declared order, each with its own MiB prior."""
     rows = bench_full_eval._resource_model_rows()
 
     assert [row["group"] for row in rows] == list(bench_full_eval.BENCH_GROUP_ORDER)
@@ -127,6 +136,7 @@ def test_ram_estimates_are_defined_per_group():
 
 
 def test_scheduler_starts_at_configured_worker_width():
+    """Twelve requested workers survive the memory cap on a 64 GiB box, active and max alike."""
     scheduler = bench_full_eval._RamWorkerScheduler(
         requested_workers=12,
         machine_vcpus=32,
@@ -137,6 +147,7 @@ def test_scheduler_starts_at_configured_worker_width():
 
 
 def test_scheduler_does_not_limit_concurrency_by_map_type():
+    """Seven forest batches in flight do not block an eighth: there is no per-group quota, only RAM."""
     scheduler = bench_full_eval._RamWorkerScheduler(
         requested_workers=8,
         machine_vcpus=16,
@@ -148,6 +159,7 @@ def test_scheduler_does_not_limit_concurrency_by_map_type():
 
 
 def test_scheduler_reserves_ram_for_active_workers():
+    """Admission stops at the point where the priors of everything in flight would exceed the budget."""
     scheduler = bench_full_eval._RamWorkerScheduler(
         requested_workers=12,
         machine_vcpus=32,
@@ -167,6 +179,7 @@ def test_scheduler_reserves_ram_for_active_workers():
 
 
 def test_scheduler_uses_live_available_memory_as_emergency_guard():
+    """Free host memory short of one seed's prior plus the host reserve refuses the batch even with nothing in flight."""
     samples = iter(
         [
             {
@@ -200,6 +213,7 @@ def test_scheduler_uses_live_available_memory_as_emergency_guard():
 
 
 def test_scheduler_live_status_is_telemetry_only():
+    """CPU at 99% and a load of 2.0 reach the status line but never lower the cap or refuse a batch."""
     scheduler = bench_full_eval._RamWorkerScheduler(
         requested_workers=8,
         machine_vcpus=16,
@@ -222,6 +236,7 @@ def test_scheduler_live_status_is_telemetry_only():
 
 
 def test_select_next_batch_index_mixes_groups_fairly():
+    """A group already dispatched loses to one that has not, so batch 2 is picked over batch 1."""
     batch_plan = [[0], [1], [2]]
     task_meta = [
         {"group": "type1_city"},
@@ -248,6 +263,7 @@ def test_select_next_batch_index_mixes_groups_fairly():
 
 
 def test_save_and_load_type_seeds(tmp_path):
+    """A round trip through the v1 envelope gives back the same group-to-seed mapping."""
     seed_file = tmp_path / "seeds.json"
     groups = family_bench_groups("cf_autopilot")
     payload = {group: [i + 1] for i, group in enumerate(groups)}
@@ -256,6 +272,7 @@ def test_save_and_load_type_seeds(tmp_path):
 
 
 def test_load_type_seeds_accepts_legacy_payload(tmp_path):
+    """A bare mapping with no v1 envelope still loads, so old seed files keep working."""
     seed_file = tmp_path / "legacy-seeds.json"
     groups = family_bench_groups("cf_search_and_rescue")
     payload = {group: [i + 1] for i, group in enumerate(groups)}
@@ -273,11 +290,13 @@ def test_a_family_only_loads_its_own_groups():
 
 
 def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
+    """With no `--uid` flag, `UID_178.zip` reaches the benchmark as uid 178."""
     model_path = tmp_path / "UID_178.zip"
     model_path.write_bytes(b"zip")
     captured = {}
 
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
+        """Record the uid it was called with and hand back an empty result tuple."""
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
         return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
@@ -295,11 +314,13 @@ def test_main_infers_uid_from_model_filename(monkeypatch, tmp_path):
 
 
 def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
+    """An explicit `--uid 12` beats the 178 sitting in the filename."""
     model_path = tmp_path / "UID_178.zip"
     model_path.write_bytes(b"zip")
     captured = {}
 
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
+        """Record the uid it was called with and hand back an empty result tuple."""
         _ = model_path, type_seeds, num_workers, run_opts
         captured["uid"] = uid
         return ([], [], [], {}, {}, {}, [], 0.0, 0.0, 1)
@@ -317,6 +338,7 @@ def test_main_explicit_uid_overrides_model_inference(monkeypatch, tmp_path):
 
 
 def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
+    """A finished run prints the results block, the run summary and the complete footer."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     out = io.StringIO()
@@ -333,6 +355,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
+        """Return one finished warehouse seed with its timings, batch stat and launched-worker count."""
         _ = model_path, uid, type_seeds, num_workers, run_opts
         eval_start = 1000.0
         return (
@@ -368,6 +391,7 @@ def test_main_prints_results_and_completion_footer(monkeypatch, tmp_path):
 
 
 def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
+    """With `--log-out`, the same summary and footer land in the file, not only on the console."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     log_path = tmp_path / "bench.log"
@@ -385,6 +409,7 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
+        """Return one finished warehouse seed with its timings, batch stat and launched-worker count."""
         _ = model_path, uid, type_seeds, num_workers, run_opts
         eval_start = 1000.0
         return (
@@ -419,12 +444,14 @@ def test_main_writes_final_report_to_log_file(monkeypatch, tmp_path):
 
 
 def test_main_prints_failed_footer_when_benchmark_raises(monkeypatch, tmp_path):
+    """A run that dies mid-benchmark still prints the results block and the failed footer, then re-raises."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     out = io.StringIO()
     err = io.StringIO()
 
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
+        """Raise, standing in for a benchmark that dies before any report is built."""
         _ = model_path, uid, type_seeds, num_workers, run_opts
         raise RuntimeError("simulated benchmark failure")
 
@@ -448,6 +475,7 @@ def test_main_prints_failed_footer_when_benchmark_raises(monkeypatch, tmp_path):
 
 
 def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
+    """The report shows the 3 workers that actually launched, not the 2 that were asked for."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     out = io.StringIO()
@@ -464,6 +492,7 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
     fake_result = SimpleNamespace(success=False, score=0.01, time_sec=60.0)
 
     async def _fake_run_benchmark(model_path, uid, type_seeds, num_workers, run_opts, **kwargs):
+        """Return one finished warehouse seed with its timings, batch stat and launched-worker count."""
         _ = model_path, uid, type_seeds, num_workers, run_opts
         eval_start = 1000.0
         return (
@@ -495,12 +524,14 @@ def test_main_report_uses_runtime_worker_count(monkeypatch, tmp_path):
 
 
 def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_path):
+    """A failure before a single seed exists still reaches the results block and the failed footer."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     out = io.StringIO()
     err = io.StringIO()
 
     def _fake_find_seeds(seeds_per_group, **kwargs):
+        """Raise, standing in for seed selection failing before the benchmark starts."""
         _ = seeds_per_group
         raise ValueError("simulated seed selection failure")
 
@@ -519,14 +550,18 @@ def test_main_prints_failed_footer_when_seed_selection_raises(monkeypatch, tmp_p
 
 
 def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
+    """Thirty requested workers arrive at the process runner intact and come back as the launched count."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     captured = {}
 
     class _FakeEvaluator:
+        """Evaluator stand-in whose base image reports ready without one being built."""
+
         _base_ready = True
 
     def _fake_random_task(sim_dt, seed):
+        """Return a warehouse task for the given seed without building a map."""
         _ = sim_dt
         return SimpleNamespace(
             map_seed=seed,
@@ -541,6 +576,7 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
     monkeypatch.setattr(task_gen, "random_task", _fake_random_task)
     monkeypatch.setattr(docker_eval_mod, "DockerSecureEvaluator", _FakeEvaluator)
     async def _fake_process_mode(**kwargs):
+        """Record the worker count it was handed, report one seed and one batch, then give the count back."""
         captured["effective_workers"] = kwargs["effective_workers"]
         kwargs["on_seed_done"](
             {
@@ -577,14 +613,18 @@ def test_run_benchmark_keeps_requested_worker_count(monkeypatch, tmp_path):
 
 
 def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
+    """Seed events and batch results from the process runner come back in the returned tuple."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     captured = {}
 
     class _FakeEvaluator:
+        """Evaluator stand-in whose base image reports ready without one being built."""
+
         _base_ready = True
 
     def _fake_random_task(sim_dt, seed):
+        """Return a warehouse task for the given seed without building a map."""
         _ = sim_dt
         return SimpleNamespace(
             map_seed=seed,
@@ -594,6 +634,7 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
         )
 
     async def _fake_process_mode(**kwargs):
+        """Mark that the process runner was reached, then report one seed scored 0.5."""
         captured["called"] = True
         kwargs["on_seed_done"](
             {
@@ -643,13 +684,17 @@ def test_run_benchmark_uses_process_mode_runner(monkeypatch, tmp_path):
 def test_run_benchmark_heartbeat_uses_process_scheduler_status_provider(
     monkeypatch, tmp_path, capsys
 ):
+    """The heartbeat line carries the scheduler's own live figures, and the thread never errors."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
 
     class _FakeEvaluator:
+        """Evaluator stand-in whose base image reports ready without one being built."""
+
         _base_ready = True
 
     def _fake_random_task(sim_dt, seed):
+        """Return a warehouse task for the given seed without building a map."""
         _ = sim_dt
         return SimpleNamespace(
             map_seed=seed,
@@ -659,6 +704,7 @@ def test_run_benchmark_heartbeat_uses_process_scheduler_status_provider(
         )
 
     async def _fake_process_mode(**kwargs):
+        """Install a fixed status line for the heartbeat, then report one seed and one batch."""
         kwargs["set_heartbeat_status_provider"](
             lambda: "cap=3/3 cpu=12.3% load=0.45 mem_avail=12345MiB"
         )
@@ -800,6 +846,7 @@ def test_benchmark_worker_main_emits_progress_and_results(monkeypatch, tmp_path)
 
 
 def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp_path):
+    """A worker silent past the timeout has its batch written off as a failure and a fresh process takes the slot."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
 
@@ -807,9 +854,12 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
     monkeypatch.setattr(bench_full_eval, "_PARENT_WORKER_HEARTBEAT_SEC", 0.01)
 
     class _FakeProcess:
+        """A worker process stand-in on a thread: generation 0 hangs, every later one exits at once."""
+
         generations: dict[int, int] = {}
 
         def __init__(self, target, args, name=None, daemon=None):
+            """Unpack the three queues from the spawn arguments and stamp this slot's generation."""
             _ = target, name, daemon
             self.worker_slot = int(args[0])
             self.task_queue = args[1]
@@ -822,8 +872,10 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
             self.exitcode = None
 
         def start(self):
+            """Run the stalling body on the first generation and the quick one on every replacement."""
             if self.generation == 0:
                 def _stall():
+                    """Announce the batch started, then go quiet until terminate lands."""
                     request = self.task_queue.get()
                     if request is None:
                         self.exitcode = 0
@@ -844,6 +896,7 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
                 self._thread = threading.Thread(target=_stall, daemon=True)
             else:
                 def _idle():
+                    """Announce the batch started and exit cleanly, the replacement worker's whole life."""
                     request = self.task_queue.get()
                     if request is None:
                         self.exitcode = 0
@@ -862,23 +915,30 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
             self._thread.start()
 
         def is_alive(self):
+            """True while the backing thread is still running."""
             return bool(self._thread and self._thread.is_alive())
 
         def join(self, timeout=None):
+            """Wait on the backing thread, or return at once when none was started."""
             if self._thread is not None:
                 self._thread.join(timeout=timeout)
 
         def terminate(self):
+            """Set the SIGTERM exit code and release the waiting thread."""
             self.exitcode = -15
             self._stop.set()
 
     class _FakeCtx:
+        """Multiprocessing context stand-in handing back plain queues and thread-backed processes."""
+
         @staticmethod
         def Queue():
+            """Return an in-process queue, which needs no pickling between the fakes."""
             return queue.Queue()
 
         @staticmethod
         def Process(*args, **kwargs):
+            """Build the thread-backed worker stand-in instead of forking a real process."""
             return _FakeProcess(*args, **kwargs)
 
     monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: _FakeCtx())
@@ -887,6 +947,7 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
     seed_events = []
 
     def _record_batch_completion(worker_slot, batch_index, batch_indices, seed_results, batch_elapsed):
+        """Append one closed batch, with its slot, seeds and elapsed time, to the recorded list."""
         recorded.append(
             {
                 "worker_slot": worker_slot,
@@ -898,6 +959,7 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
         )
 
     def _on_seed_done(seed_meta):
+        """Collect every per-seed record the runner emits."""
         seed_events.append(seed_meta)
 
     task = SimpleNamespace(
@@ -928,12 +990,14 @@ def test_process_mode_discards_stalled_seed_and_replaces_worker(monkeypatch, tmp
 
 
 def test_process_mode_refreshes_resources_while_waiting(monkeypatch, tmp_path):
+    """Waiting on a busy worker still polls the host, so free memory is re-read at least twice."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"zip")
     refresh_calls = []
     original_refresh_resources = bench_full_eval._RamWorkerScheduler.refresh_resources
 
     def _counting_refresh_resources(self):
+        """Tally the call, then take the real reading."""
         refresh_calls.append(True)
         return original_refresh_resources(self)
 
@@ -950,7 +1014,10 @@ def test_process_mode_refreshes_resources_while_waiting(monkeypatch, tmp_path):
     )
 
     class _FakeProcess:
+        """A worker process stand-in on a thread: it starts a batch, works a while, then posts a result."""
+
         def __init__(self, target, args, name=None, daemon=None):
+            """Unpack the three queues from the spawn arguments and start with no exit code."""
             _ = target, name, daemon
             self.worker_slot = int(args[0])
             self.task_queue = args[1]
@@ -961,7 +1028,9 @@ def test_process_mode_refreshes_resources_while_waiting(monkeypatch, tmp_path):
             self.exitcode = None
 
         def start(self):
+            """Run the batch body on a thread so the parent keeps polling while it waits."""
             def _run():
+                """Announce the batch started, work for a quarter second, then post a scored result."""
                 request = self.task_queue.get()
                 if request is None:
                     self.exitcode = 0
@@ -992,23 +1061,30 @@ def test_process_mode_refreshes_resources_while_waiting(monkeypatch, tmp_path):
             self._thread.start()
 
         def is_alive(self):
+            """True while the backing thread is still running."""
             return bool(self._thread and self._thread.is_alive())
 
         def join(self, timeout=None):
+            """Wait on the backing thread, or return at once when none was started."""
             if self._thread is not None:
                 self._thread.join(timeout=timeout)
 
         def terminate(self):
+            """Set the SIGTERM exit code and release the waiting thread."""
             self.exitcode = -15
             self._stop.set()
 
     class _FakeCtx:
+        """Multiprocessing context stand-in handing back plain queues and thread-backed processes."""
+
         @staticmethod
         def Queue():
+            """Return an in-process queue, which needs no pickling between the fakes."""
             return queue.Queue()
 
         @staticmethod
         def Process(*args, **kwargs):
+            """Build the thread-backed worker stand-in instead of forking a real process."""
             return _FakeProcess(*args, **kwargs)
 
     monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: _FakeCtx())

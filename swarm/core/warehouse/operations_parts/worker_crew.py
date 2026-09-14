@@ -15,12 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Worker figure placement: a quota per zone, spaced apart and clear of the other props."""
+
 from ._shared import *
 
 
 def build_worker_crew(
     worker_loader, worker_model_name, floor_top_z, area_layout, wall_info, cli, seed=0
 ):
+    """Spawn the worker meshes across the LOADING and STORAGE zones and return their placement records."""
     if not ENABLE_WORKER_CREW:
         return {"worker_count": 0, "workers": []}
     if worker_loader is None or not worker_model_name:
@@ -58,6 +61,7 @@ def build_worker_crew(
     obstacle_discs = []
 
     def _add_obstacle_xy(x, y, radius):
+        """Record a keep-out disc at (x, y); a None coordinate is skipped and the radius floors at 0.2 m."""
         if x is None or y is None:
             return
         obstacle_discs.append((float(x), float(y), float(max(0.2, radius))))
@@ -92,6 +96,7 @@ def build_worker_crew(
         _add_obstacle_xy(ce.get("x"), ce.get("y"), 2.2)
 
     def _zone_bounds(name):
+        """Return (min_x, max_x, min_y, max_y) for a named area, or None when the layout has no such zone."""
         area = (area_layout or {}).get(name)
         if not area:
             return None
@@ -171,6 +176,7 @@ def build_worker_crew(
     rng.shuffle(candidate_pool)
 
     def _valid_xy(x, y, obstacle_pad=0.25, spacing_rule=None):
+        """True when (x, y) clears every worker already picked by the spacing and every obstacle disc."""
         spacing = float(spacing_min if spacing_rule is None else spacing_rule)
         for px, py in picked_xy:
             if ((x - px) ** 2 + (y - py) ** 2) < (spacing**2):

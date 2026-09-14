@@ -15,12 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Every per-seed score uploaded to the backend carries a failure reason beside its map key."""
+
 from __future__ import annotations
 
 import json
 
 
 def test_each_seed_has_failure_reason():
+    """The per-seed payload shape, built by hand: failure_reason sits beside the score, map type and metric key."""
     # Per-seed payload schema is a plain dict; build one and assert.
     item = {
         "seed_index": 7,
@@ -34,6 +37,7 @@ def test_each_seed_has_failure_reason():
 
 
 def test_mixed_failure_batch():
+    """A batch mixing five different reasons keeps each one, in order, across the JSON round trip."""
     reasons = ["NONE", "OBSTACLE_COLLISION", "INFEASIBLE", "TIMEOUT", "SPAWN_FAILURE"]
     batch = [
         {

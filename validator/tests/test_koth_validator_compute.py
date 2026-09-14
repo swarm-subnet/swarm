@@ -36,6 +36,7 @@ from swarm.validator.utils_parts.weights import (
 
 @pytest.fixture(autouse=True)
 def _reset_warn_state():
+    """Clear the advisory-divergence rate limiter around each test so a warning is never swallowed."""
     _advisory_warn_state["last_log_ts"] = 0.0
     yield
     _advisory_warn_state["last_log_ts"] = 0.0
@@ -44,6 +45,7 @@ def _reset_warn_state():
 def _king_dict(uid, *, hotkey=None, score, prev_score, crowned_at_epoch=1,
                lineage_id=None, weight=0.0, manual_override_drop=False, rank=0,
                family_id="cf_autopilot"):
+    """Build one crowned-miner row in the shape the backend sync payload delivers."""
     return {
         "lineage_id": lineage_id if lineage_id is not None else uid + 1000,
         "rank": rank,
@@ -59,6 +61,7 @@ def _king_dict(uid, *, hotkey=None, score, prev_score, crowned_at_epoch=1,
 
 
 def _family_sync(kings_by_family, family_shares, *, weights=None, fallback=False):
+    """Wrap kings and shares into a per-family sync payload, with optional advisory weights and fallback flag."""
     return {
         "fallback": fallback,
         "weights": weights or {},
@@ -68,6 +71,7 @@ def _family_sync(kings_by_family, family_shares, *, weights=None, fallback=False
 
 
 def test_compute_returns_weight_map_summing_to_one():
+    """A single fully allocated family pays out 1.0 in total, with the top seat taking more."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(7, score=0.85, prev_score=0.80),
                           _king_dict(5, score=0.50, prev_score=0.20)]},
@@ -79,6 +83,7 @@ def test_compute_returns_weight_map_summing_to_one():
 
 
 def test_compute_ignores_advisory_weights_on_apply_path():
+    """Backend advisory weights never enter the map that gets paid: only local kings do."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
         {"cf_autopilot": 1.0},
@@ -90,6 +95,7 @@ def test_compute_ignores_advisory_weights_on_apply_path():
 
 
 def test_compute_drops_malformed_rows_individually():
+    """One bad row is dropped on its own; the well-formed kings on either side still get paid."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0),
                           {"uid": 8, "hotkey": "hk8"},
@@ -103,11 +109,13 @@ def test_compute_drops_malformed_rows_individually():
 
 
 def test_compute_empty_family_returns_empty_map():
+    """A family with no kings yields an empty map, which is the valid full-burn state."""
     sync = _family_sync({"cf_autopilot": []}, {"cf_autopilot": 1.0})
     assert compute_koth_weights_from_sync(sync) == {}
 
 
 def test_compute_duplicate_uid_aggregates_weight():
+    """A uid appearing twice collapses into one entry and the family still pays out 1.0."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(42, hotkey="hk-old", score=0.30, prev_score=0.0),
                           _king_dict(99, hotkey="hk99", score=0.40, prev_score=0.30),
@@ -121,6 +129,7 @@ def test_compute_duplicate_uid_aggregates_weight():
 
 
 def test_compute_uid_zero_king_dropped():
+    """A king sitting on the reserved burn uid is refused and its slice is never paid out."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(0, score=0.40, prev_score=0.30)]},
         {"cf_autopilot": 1.0},
@@ -130,6 +139,7 @@ def test_compute_uid_zero_king_dropped():
 
 
 def test_legacy_flat_payload_refused():
+    """A payload without kings_by_family returns None and warns once, so the caller holds its last weights."""
     sync = {
         "fallback": False,
         "weights": {},
@@ -144,6 +154,7 @@ def test_legacy_flat_payload_refused():
 
 
 def test_advisory_divergence_skipped_on_fallback():
+    """Nothing is logged while the payload is flagged fallback, however far the weights differ."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
         {"cf_autopilot": 1.0},
@@ -156,6 +167,7 @@ def test_advisory_divergence_skipped_on_fallback():
 
 
 def test_advisory_divergence_warns_when_live_and_diverged():
+    """A live payload whose backend weights disagree with the local map logs exactly one warning."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
         {"cf_autopilot": 1.0},
@@ -169,6 +181,7 @@ def test_advisory_divergence_warns_when_live_and_diverged():
 
 
 def test_advisory_divergence_warns_when_local_empty_and_backend_nonempty():
+    """Paying nobody while the backend expects a payout still counts as divergence and warns."""
     sync = _family_sync(
         {"cf_autopilot": []},
         {"cf_autopilot": 1.0},
@@ -180,6 +193,7 @@ def test_advisory_divergence_warns_when_local_empty_and_backend_nonempty():
 
 
 def test_advisory_divergence_silent_when_live_and_matches():
+    """Agreement between backend and local weights produces no log line at all."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(7, score=0.50, prev_score=0.0)]},
         {"cf_autopilot": 1.0},
@@ -191,6 +205,7 @@ def test_advisory_divergence_silent_when_live_and_matches():
 
 
 def test_stamp_replaces_weight_with_local_per_row_share():
+    """The weight the backend sent is overwritten by locally computed row shares that sum to 1.0."""
     payload = [
         _king_dict(7, score=0.85, prev_score=0.80, weight=0.9),
         _king_dict(5, score=0.50, prev_score=0.20, weight=0.1),
@@ -202,6 +217,7 @@ def test_stamp_replaces_weight_with_local_per_row_share():
 
 
 def test_stamp_zeroes_weight_on_malformed_row():
+    """A row that cannot be parsed is zeroed and tagged local_weight_error; its neighbour keeps a share."""
     payload = [
         _king_dict(7, score=0.50, prev_score=0.0, weight=0.6),
         {"uid": 8, "hotkey": "hk8", "weight": 0.4},
@@ -213,6 +229,7 @@ def test_stamp_zeroes_weight_on_malformed_row():
 
 
 def test_stamp_handles_non_dict_entries():
+    """A string or None in the payload becomes an empty dict, and one slot per input row survives."""
     payload = [
         _king_dict(7, score=0.50, prev_score=0.0),
         "not-a-dict",
@@ -226,6 +243,7 @@ def test_stamp_handles_non_dict_entries():
 
 
 def test_stamp_does_not_mutate_input():
+    """Stamping works on copies: the caller's rows come back untouched."""
     original_weight = 0.42
     payload = [_king_dict(7, score=0.50, prev_score=0.0, weight=original_weight)]
     _ = stamp_local_weights_on_kings(payload)
@@ -233,10 +251,12 @@ def test_stamp_does_not_mutate_input():
 
 
 def test_stamp_empty_input_returns_empty_list():
+    """Nothing in gives nothing back, without reaching the row-weight maths."""
     assert stamp_local_weights_on_kings([]) == []
 
 
 def _make_validator_self(metagraph_n=256):
+    """Build the least a validator needs to receive weights: a metagraph size and a zeroed score vector."""
     obj = SimpleNamespace()
     obj.metagraph = SimpleNamespace(n=metagraph_n)
     obj.scores = np.zeros(metagraph_n, dtype=np.float32)
@@ -246,6 +266,7 @@ def _make_validator_self(metagraph_n=256):
 
 
 def test_compute_then_apply_routes_share_correctly():
+    """A computed share lands on that miner's own slot in the validator score vector."""
     sync = _family_sync(
         {"cf_autopilot": [_king_dict(50, score=0.60, prev_score=0.0)]},
         {"cf_autopilot": 1.0},
@@ -257,6 +278,7 @@ def test_compute_then_apply_routes_share_correctly():
 
 
 def test_empty_computed_map_burns_everything():
+    """With no payable king the whole emission goes to the burn uid and the scores still total 1.0."""
     from swarm.constants import UID_ZERO
 
     sync = _family_sync({"cf_autopilot": []}, {"cf_autopilot": 1.0})
@@ -269,6 +291,7 @@ def test_empty_computed_map_burns_everything():
 
 
 def test_unassigned_remainder_burns_to_uid_zero():
+    """Family shares are absolute: a 0.10 family pays 0.10 and the other 0.90 burns."""
     from swarm.constants import UID_ZERO
 
     sync = _family_sync(
@@ -285,6 +308,7 @@ def test_unassigned_remainder_burns_to_uid_zero():
 
 
 def test_backend_api_runtime_state_seed_includes_last_kings(tmp_path, monkeypatch):
+    """A runtime state file that does not exist yet reads back with an empty king list and weight map."""
     fake_state = tmp_path / "runtime_state.json"
     monkeypatch.setattr(backend_api_mod, "RUNTIME_STATE_FILE", fake_state)
     state = backend_api_mod._load_runtime_state()
@@ -295,6 +319,7 @@ def test_backend_api_runtime_state_seed_includes_last_kings(tmp_path, monkeypatc
 def test_backend_api_runtime_state_missing_last_kings_defaults_safely(
     tmp_path, monkeypatch
 ):
+    """An older state file with no last_kings key loads and reads back empty rather than raising."""
     fake_state = tmp_path / "runtime_state.json"
     legacy = {
         "last_weights": {"5": 0.6},
@@ -313,6 +338,7 @@ def test_backend_api_runtime_state_missing_last_kings_defaults_safely(
 
 
 def test_overallocated_shares_renormalize_and_burn_nothing():
+    """Shares adding up past 1.0 are scaled back down instead of burning, and nothing reaches the burn uid."""
     from swarm.constants import UID_ZERO
 
     sync = _family_sync(

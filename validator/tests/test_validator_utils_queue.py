@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Per-type score bookkeeping in the seed evaluator, and the queue snapshot the heartbeat sends."""
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ from swarm.validator.utils_parts import evaluation as validator_evaluation
 
 
 def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
+    """A score lands in the flat list and in its own challenge-type bucket, the others left empty."""
     model_path = tmp_path / "UID_9.zip"
     model_path.write_bytes(b"zip-bytes")
 
@@ -36,10 +38,12 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
     ]
 
     def _fake_random_task(*args, **kwargs):
+        """Hand back the next prepared forest task, ignoring what the real builder is called with."""
         _ = args, kwargs
         return tasks.pop(0)
 
     async def _fake_parallel(*args, **kwargs):
+        """Hand back two canned results for uid 9, one failed run and one successful one."""
         _ = args, kwargs
         return [
             ValidationResult(9, False, 1.0, 0.25),
@@ -68,6 +72,7 @@ def test_evaluate_seeds_tracks_forest_scores(monkeypatch, tmp_path: Path):
 
 
 def test_build_heartbeat_queue_snapshot_contains_full_queue_metadata(monkeypatch):
+    """Items become entries in order, each carrying its assignment, phase and reason for blocking."""
     monkeypatch.setattr(validator_utils.time, "time", lambda: 100.0)
 
     queue = {

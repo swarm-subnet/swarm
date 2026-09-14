@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Refreshing the model queue against the backend's current submissions: which entries wake up, which stay finished, and which fields survive."""
 from __future__ import annotations
 
 import json
@@ -29,6 +30,7 @@ from swarm.validator.utils_parts import state as state_mod
 
 @pytest.fixture
 def queue_env(tmp_path: Path, monkeypatch):
+    """Point both modules that hold the queue path at a file under tmp_path and return that path."""
     queue_file = tmp_path / "normal_model_queue.json"
     monkeypatch.setattr(state_mod, "STATE_DIR", tmp_path)
     monkeypatch.setattr(state_mod, "NORMAL_MODEL_QUEUE_FILE", queue_file)
@@ -38,14 +40,17 @@ def queue_env(tmp_path: Path, monkeypatch):
 
 
 def _seed_queue(queue_file: Path, items: dict) -> None:
+    """Write an items map to disk as the persisted state the refresh will read."""
     queue_file.write_text(json.dumps({"items": items}))
 
 
 def _key(uid: int, model_hash: str) -> str:
+    """The uid:model_hash string the queue indexes one submission by."""
     return f"{uid}:{model_hash}"
 
 
 def test_cancelled_item_reactivated_when_backend_reauthorizes(queue_env, tmp_path):
+    """A cancelled entry the backend lists again returns to pending with its error, retry count and backoff cleared, its created_at kept, and it is picked up for work."""
     key = _key(43, "abc123")
     _seed_queue(queue_env, {
         key: {
@@ -87,6 +92,7 @@ def test_cancelled_item_reactivated_when_backend_reauthorizes(queue_env, tmp_pat
 
 
 def test_cancelled_item_preserves_screening_recorded_when_reactivated(queue_env, tmp_path):
+    """Waking a cancelled entry keeps the screening already reported and its score, so the same model is not screened twice."""
     key = _key(118, "fa84")
     _seed_queue(queue_env, {
         key: {
@@ -119,6 +125,7 @@ def test_cancelled_item_preserves_screening_recorded_when_reactivated(queue_env,
 
 
 def test_terminal_rejected_item_not_reactivated(queue_env, tmp_path):
+    """A permanently rejected entry keeps its status and its error through the refresh, and is never handed out for work again."""
     key = _key(55, "deadbeef")
     _seed_queue(queue_env, {
         key: {
@@ -147,6 +154,7 @@ def test_terminal_rejected_item_not_reactivated(queue_env, tmp_path):
 
 
 def test_completed_item_not_reactivated(queue_env, tmp_path):
+    """A finished entry stays finished and is not queued for a second evaluation."""
     key = _key(77, "feedface")
     _seed_queue(queue_env, {
         key: {
@@ -174,6 +182,7 @@ def test_completed_item_not_reactivated(queue_env, tmp_path):
 
 
 def test_pending_item_unchanged_except_path_and_url(queue_env, tmp_path):
+    """A waiting entry keeps its retry count and created_at while the refresh freshens only the model path and the repo link."""
     key = _key(11, "hash11")
     _seed_queue(queue_env, {
         key: {
@@ -206,6 +215,7 @@ def test_pending_item_unchanged_except_path_and_url(queue_env, tmp_path):
 
 
 def test_fresh_uid_creates_new_pending_entry(queue_env, tmp_path):
+    """A uid the queue has never seen enters as pending, marked backend-sourced and not yet registered, and is ready for work."""
     _seed_queue(queue_env, {})
 
     new_path = tmp_path / "UID_99.zip"
@@ -226,6 +236,7 @@ def test_fresh_uid_creates_new_pending_entry(queue_env, tmp_path):
 
 
 def test_stale_hash_for_same_uid_removed_unless_terminal_rejected(queue_env, tmp_path):
+    """A new submission from a uid evicts that uid's older waiting entry but leaves the rejected one behind as a record."""
     old_key = _key(20, "old_hash")
     other_key = _key(20, "rejected_hash")
     _seed_queue(queue_env, {

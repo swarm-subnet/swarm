@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Rewrite OBJ and MTL files into the split, stripped and copied variants PyBullet can load."""
+
 from ._shared import *
 
 
 def _safe_token_name(name):
+    """Reduce name to filename-safe characters, falling back to the token mat when nothing survives."""
     out = []
     for ch in str(name):
         if ch.isalnum() or ch in ("-", "_", "."):
@@ -30,6 +33,7 @@ def _safe_token_name(name):
 
 
 def _purge_generated_model_artifacts(model_path):
+    """Drop every cached proxy for one OBJ and delete the split and double-sided folders on disk."""
     cache_key = os.path.abspath(model_path)
     _OBJ_MTL_SPLIT_CACHE.pop(cache_key, None)
     _OBJ_COLLISION_PROXY_CACHE.pop(cache_key, None)
@@ -50,6 +54,7 @@ def _purge_generated_model_artifacts(model_path):
 
 
 def _obj_double_sided_proxy_path(model_path):
+    """Write a copy of the OBJ with every face repeated in reverse winding; the original path when it has none."""
     cache_key = os.path.abspath(model_path)
     cached = _OBJ_DOUBLE_SIDED_PROXY_CACHE.get(cache_key)
     if cached and os.path.exists(cached):
@@ -90,6 +95,7 @@ def _obj_double_sided_proxy_path(model_path):
 
 
 def _obj_collision_proxy_path(model_path):
+    """Write a copy of the OBJ with the mtllib and usemtl lines removed, so only geometry is loaded."""
     cache_key = os.path.abspath(model_path)
     if cache_key in _OBJ_COLLISION_PROXY_CACHE:
         return _OBJ_COLLISION_PROXY_CACHE[cache_key]
@@ -125,6 +131,7 @@ def _obj_collision_proxy_path(model_path):
 
 
 def _resolve_mtl_texture_path(mtl_path, tex_ref):
+    """Locate a texture reference beside the MTL file, by bare filename as a fallback; empty string on a miss."""
     if not tex_ref:
         return ""
     ref = str(tex_ref).strip().strip("\"'").replace("\\", "/")
@@ -146,6 +153,7 @@ def _resolve_mtl_texture_path(mtl_path, tex_ref):
 
 
 def _obj_mtl_visual_proxy_path(model_path):
+    """Write an OBJ whose material library and its map_Kd images sit in one folder, so the renderer finds them."""
     cache_key = os.path.abspath(model_path)
     if (
         not MACHINING_FORCE_REFRESH_MTL_PROXY
@@ -223,6 +231,7 @@ def _obj_mtl_visual_proxy_path(model_path):
 
 
 def _parse_mtl_colors(mtl_path):
+    """Return per-material RGBA and resolved texture paths from an MTL, with Ka and a grey default filling gaps."""
     colors = {}
     texture_by_material = {}
     ka_colors = {}
@@ -233,6 +242,7 @@ def _parse_mtl_colors(mtl_path):
         return colors, texture_by_material
 
     def _color_from_texture_ref(tex_ref):
+        """Map a known image filename onto a hand-picked RGB tint, None when it is not in the palette."""
         key = os.path.basename(str(tex_ref).replace("\\", "/")).strip().lower()
         palette = {
             "trak-k3-kmx-left-side-view-zoom.jpg": (0.66, 0.78, 0.72),
@@ -329,6 +339,7 @@ def _parse_mtl_colors(mtl_path):
 
 
 def _obj_material_parts(model_path):
+    """Split an OBJ into one file per material, each carrying its RGBA and texture, cached through a manifest."""
     cache_key = os.path.abspath(model_path)
     if cache_key in _OBJ_MTL_SPLIT_CACHE:
         return _OBJ_MTL_SPLIT_CACHE[cache_key]
@@ -443,6 +454,7 @@ def _obj_material_parts(model_path):
         return []
 
     def _resolve_obj_index(token, count):
+        """Turn a one-based or negative OBJ face reference into a zero-based offset, None when out of range."""
         if not token:
             return None
         try:

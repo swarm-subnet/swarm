@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Tests for the validator's backend HTTP client: signing, heartbeats, sync and authorize retries."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,42 +28,52 @@ from swarm.validator import backend_api
 
 
 def _run(coro):
+    """Drive one coroutine to completion on a fresh event loop and return its result."""
     return asyncio.run(coro)
 
 
 class _DummyHotkey:
+    """A hotkey that signs anything as the two bytes 0102."""
     ss58_address = "validator_hotkey"
 
     def sign(self, message: bytes) -> bytes:
+        """Return a fixed two-byte signature, ignoring the message."""
         _ = message
         return b"\x01\x02"
 
 
 class _DummyWallet:
+    """A wallet carrying only the stub hotkey the client signs with."""
     hotkey = _DummyHotkey()
 
 
 class _FakeResponse:
+    """A minimal httpx-like response with a canned JSON body and status."""
     def __init__(
         self,
         payload: dict,
         status_code: int = 200,
         raise_error: Exception | None = None,
     ):
+        """Store the payload, the status code and the error raise_for_status should raise."""
         self._payload = payload
         self.status_code = status_code
         self._raise_error = raise_error
 
     def raise_for_status(self):
+        """Raise the configured error if one was given, otherwise do nothing."""
         if self._raise_error:
             raise self._raise_error
 
     def json(self):
+        """Return the canned payload the response was built with."""
         return self._payload
 
 
 class _FakeAsyncClient:
+    """An httpx client double that records the last POST and GET and replays canned answers."""
     def __init__(self):
+        """Start with empty 200 answers, no errors and no recorded calls."""
         self.post_response = _FakeResponse({})
         self.get_response = _FakeResponse({})
         self.post_error = None
@@ -70,22 +82,26 @@ class _FakeAsyncClient:
         self.last_get = None
 
     async def post(self, url, **kwargs):
+        """Record the POST, then raise the configured error or return the canned response."""
         self.last_post = (url, kwargs)
         if self.post_error:
             raise self.post_error
         return self.post_response
 
     async def get(self, url, **kwargs):
+        """Record the GET, then raise the configured error or return the canned response."""
         self.last_get = (url, kwargs)
         if self.get_error:
             raise self.get_error
         return self.get_response
 
     async def aclose(self):
+        """Return None; the double owns no socket to close."""
         return None
 
 
 def _build_client(monkeypatch, tmp_path, wallet=None):
+    """Return a BackendApiClient whose state directory and runtime state file sit in tmp_path."""
     monkeypatch.setattr(backend_api, "STATE_DIR", tmp_path)
     monkeypatch.setattr(
         backend_api, "RUNTIME_STATE_FILE", tmp_path / "runtime_state.json"
@@ -97,6 +113,7 @@ def _build_client(monkeypatch, tmp_path, wallet=None):
 
 
 def test_load_runtime_state_missing_file_returns_defaults(monkeypatch, tmp_path):
+    """A missing state file yields the full default dictionary, not an empty one."""
     monkeypatch.setattr(backend_api, "RUNTIME_STATE_FILE", tmp_path / "missing.json")
     state = backend_api._load_runtime_state()
     assert state == {
@@ -113,6 +130,7 @@ def test_load_runtime_state_missing_file_returns_defaults(monkeypatch, tmp_path)
 
 
 def test_save_runtime_state_writes_file(monkeypatch, tmp_path):
+    """Saving lands a real file on disk whose JSON holds the weights that were passed in."""
     monkeypatch.setattr(backend_api, "STATE_DIR", tmp_path)
     runtime_file = tmp_path / "runtime_state.json"
     monkeypatch.setattr(backend_api, "RUNTIME_STATE_FILE", runtime_file)
@@ -123,6 +141,7 @@ def test_save_runtime_state_writes_file(monkeypatch, tmp_path):
 
 
 def test_sign_request_without_wallet_returns_empty_headers(monkeypatch, tmp_path):
+    """Without a wallet the client sends no signature headers at all."""
     client = _build_client(monkeypatch, tmp_path, wallet=None)
     try:
         assert client._sign_request("POST", "/x", b"{}") == {}
@@ -131,6 +150,7 @@ def test_sign_request_without_wallet_returns_empty_headers(monkeypatch, tmp_path
 
 
 def test_sign_request_with_wallet_contains_expected_fields(monkeypatch, tmp_path):
+    """A signed request carries hotkey, hex signature, nonce, timestamp, session id and contract version."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
         headers = client._sign_request("POST", "/validators/sync", b"{}")
@@ -145,6 +165,7 @@ def test_sign_request_with_wallet_contains_expected_fields(monkeypatch, tmp_path
 
 
 def test_post_signed_success(monkeypatch, tmp_path):
+    """A 2xx POST hands back the decoded JSON body and hits base_url joined to the endpoint."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     fake_http.post_response = _FakeResponse({"ok": True})
@@ -159,11 +180,13 @@ def test_post_signed_success(monkeypatch, tmp_path):
 
 
 def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
+    """The heartbeat payload carries the active task, the backend decision version and the session id."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
         captured = {}
 
         async def _fake_post(endpoint, data):
+            """Record the endpoint and payload, then answer as the backend would."""
             captured["endpoint"] = endpoint
             captured["data"] = data
             return {"recorded": True}
@@ -191,6 +214,7 @@ def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
 
 
 def test_duplicate_session_response_exits_process(monkeypatch, tmp_path):
+    """A 409 naming DUPLICATE_VALIDATOR_INSTANCE kills the validator with exit code 1."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     response = httpx.Response(
@@ -215,17 +239,20 @@ class _SequencedAsyncClient(_FakeAsyncClient):
     """Answers each POST with the next response in the list, then repeats the last."""
 
     def __init__(self, responses):
+        """Queue the responses to hand out and start with an empty post log."""
         super().__init__()
         self._responses = list(responses)
         self.posts = []
 
     async def post(self, url, **kwargs):
+        """Record the decoded POST body and answer with the next queued response."""
         self.posts.append(json.loads(kwargs["content"]))
         response = self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
         return response
 
 
 def _duplicate_response():
+    """Return a 409 httpx response whose detail is DUPLICATE_VALIDATOR_INSTANCE."""
     return httpx.Response(
         status_code=409,
         json={"detail": "DUPLICATE_VALIDATOR_INSTANCE"},
@@ -234,6 +261,7 @@ def _duplicate_response():
 
 
 def test_announce_startup_waits_out_a_fresh_previous_session(monkeypatch, tmp_path):
+    """Startup keeps knocking through duplicate rejections until the backend accepts, then clears _announcing."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _SequencedAsyncClient(
         [_duplicate_response(), _duplicate_response(), _FakeResponse({"ok": True})]
@@ -252,6 +280,7 @@ def test_announce_startup_waits_out_a_fresh_previous_session(monkeypatch, tmp_pa
 
 
 def test_announce_startup_exits_when_the_rejection_outlives_the_window(monkeypatch, tmp_path):
+    """A duplicate rejection past the takeover window terminates the validator with exit code 1."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     client.client = _SequencedAsyncClient([_duplicate_response()])
     monkeypatch.setattr(backend_api, "DUPLICATE_SESSION_WAIT_SEC", 0)
@@ -267,6 +296,7 @@ def test_announce_startup_exits_when_the_rejection_outlives_the_window(monkeypat
 
 
 def test_stand_down_hands_back_and_silences_later_progress(monkeypatch, tmp_path):
+    """Standing down posts one idle heartbeat holding no seeds, and every later progress report is refused."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _SequencedAsyncClient([_FakeResponse({"ok": True})])
     client.client = fake_http
@@ -284,6 +314,7 @@ def test_stand_down_hands_back_and_silences_later_progress(monkeypatch, tmp_path
 
 
 def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
+    """A 400 comes back as its decoded body plus an error tag and the status code."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     response = httpx.Response(
@@ -306,10 +337,12 @@ def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
 
 
 def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
+    """A good sync maps current_champion onto current_top and passes the rest of the payload through."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
 
         async def _fake_get(endpoint, **kwargs):
+            """Assert the sync endpoint and header, then return a full backend payload."""
             assert endpoint == "/validators/sync"
             assert kwargs["extra_headers"] == {
                 "X-Benchmark-Version": backend_api.BENCHMARK_VERSION
@@ -386,6 +419,7 @@ def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
 
 
 def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
+    """When the backend errors, sync answers from cached state and flags the result as a fallback."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     client._runtime_state = {
         "current_top": {"uid": 7},
@@ -401,6 +435,7 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
     try:
 
         async def _fake_get(endpoint, **kwargs):
+            """Return a backend error so sync has to fall back to its cache."""
             _ = endpoint
             _ = kwargs
             return {"error": "backend down"}
@@ -419,10 +454,12 @@ def test_sync_fallback_returns_cached_runtime_state(monkeypatch, tmp_path):
 
 
 def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
+    """The publish call sends epoch number, family, seed list, window and benchmark version as one body."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     try:
 
         async def _fake_post(endpoint, data):
+            """Assert the endpoint and the exact body, then accept the publish."""
             assert endpoint == "/validators/epoch/publish"
             assert data == {
                 "epoch_number": 7,
@@ -451,6 +488,7 @@ def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
 
 
 def test_post_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
+    """A 502 is marked transport_failure so the caller knows it may retry."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     response = httpx.Response(
@@ -471,6 +509,7 @@ def test_post_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
 
 
 def test_post_signed_4xx_does_not_tag_transport_failure(monkeypatch, tmp_path):
+    """A 409 is a real rejection: no retry marker, and the body reaches the caller intact."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     response = httpx.Response(
@@ -492,6 +531,7 @@ def test_post_signed_4xx_does_not_tag_transport_failure(monkeypatch, tmp_path):
 
 
 def test_post_signed_connection_error_tags_transport_failure(monkeypatch, tmp_path):
+    """A refused socket comes back as a marked error dict rather than an exception."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     fake_http.post_error = httpx.ConnectError("cannot connect")
@@ -505,6 +545,7 @@ def test_post_signed_connection_error_tags_transport_failure(monkeypatch, tmp_pa
 
 
 def test_post_signed_timeout_tags_transport_failure(monkeypatch, tmp_path):
+    """A read timeout counts as retryable, exactly like a 5xx."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     fake_http.post_error = httpx.ReadTimeout("read timed out")
@@ -517,6 +558,7 @@ def test_post_signed_timeout_tags_transport_failure(monkeypatch, tmp_path):
 
 
 def test_get_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
+    """The GET path marks a 503 retryable and keeps its status code in the body."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
     fake_http = _FakeAsyncClient()
     response = httpx.Response(
@@ -537,7 +579,9 @@ def test_get_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
 
 
 def test_authorize_with_retry_passes_through_success():
+    """An authorized answer is handed back untouched on the first attempt."""
     async def _auth():
+        """Return an authorized result on every call."""
         return {"authorized": True, "task_id": 42}
 
     result = _run(
@@ -547,9 +591,11 @@ def test_authorize_with_retry_passes_through_success():
 
 
 def test_authorize_with_retry_does_not_retry_real_denial():
+    """A denial without a transport marker is final: the authorize call runs exactly once."""
     calls = {"n": 0}
 
     async def _auth():
+        """Count the call and return a plain denial with no transport marker."""
         calls["n"] += 1
         return {"authorized": False, "reason": "epoch rotated"}
 
@@ -561,9 +607,11 @@ def test_authorize_with_retry_does_not_retry_real_denial():
 
 
 def test_authorize_with_retry_recovers_after_transient_failures():
+    """Transport failures are retried until an authorization lands, here on the third call."""
     calls = {"n": 0}
 
     async def _auth():
+        """Fail twice with a transport error, then authorize on the third call."""
         calls["n"] += 1
         if calls["n"] < 3:
             return {"error": "502 Bad Gateway", "transport_failure": True}
@@ -577,9 +625,11 @@ def test_authorize_with_retry_recovers_after_transient_failures():
 
 
 def test_authorize_with_retry_raises_after_exhausting_transients():
+    """Transport failures on every attempt raise BackendTransportError carrying the last error text."""
     calls = {"n": 0}
 
     async def _auth():
+        """Count the call and always report a transport failure."""
         calls["n"] += 1
         return {"error": "read timed out", "transport_failure": True}
 

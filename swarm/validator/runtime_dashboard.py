@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Renders the validator telemetry snapshot as a terminal dashboard, redrawn in place."""
 from __future__ import annotations
 
 import sys
@@ -31,6 +32,7 @@ from .runtime_telemetry import (
 
 
 def _fmt_age(ts: float | None, now: float) -> str:
+    """Render a timestamp as how long before now it was, or "never" when it is unset."""
     if ts in (None, 0):
         return "never"
     delta = max(0.0, now - float(ts))
@@ -44,6 +46,10 @@ def _fmt_age(ts: float | None, now: float) -> str:
 
 
 def _fmt_duration(value: Any) -> str:
+    """Scale a count of seconds to ms, s or m for display.
+
+    A blank value prints as a dash and anything unparsable prints as itself.
+    """
     if value in (None, "", 0):
         return "0s" if value == 0 else "-"
     try:
@@ -58,6 +64,7 @@ def _fmt_duration(value: Any) -> str:
 
 
 def _health_label(alerts: list[dict[str, str]]) -> str:
+    """Return CRITICAL, WARNING or HEALTHY for the worst severity among the alerts."""
     if any(alert.get("severity") == "critical" for alert in alerts):
         return "CRITICAL"
     if any(alert.get("severity") == "warning" for alert in alerts):
@@ -66,6 +73,7 @@ def _health_label(alerts: list[dict[str, str]]) -> str:
 
 
 def _render_section(title: str, rows: Iterable[tuple[str, str]]) -> list[str]:
+    """Return the title followed by one indented, column-aligned line per row."""
     lines = [f"{title}"]
     for key, value in rows:
         lines.append(f"  {key:<22} {value}")
@@ -78,6 +86,11 @@ def render_runtime_dashboard(
     events: list[dict[str, Any]] | None = None,
     now: float | None = None,
 ) -> str:
+    """Lay out one frame of text from a telemetry snapshot.
+
+    The health header, the alerts, a section per subsystem, the king-of-the-hill
+    window, the queue items and the recent events, ending in one newline.
+    """
     current_time = time.time() if now is None else float(now)
     alerts = list(snapshot.get("alerts", []))
     process = snapshot.get("process", {})
@@ -338,6 +351,10 @@ def run_runtime_dashboard(
     max_events: int = 8,
     stream: Any = None,
 ) -> int:
+    """Redraw the snapshot file to stream every refresh_sec until interrupted.
+
+    Returns 1 when the snapshot file is absent, and 0 after one frame under once.
+    """
     target_snapshot = Path(snapshot_path) if snapshot_path is not None else RUNTIME_SNAPSHOT_FILE
     target_events = Path(events_path) if events_path is not None else RUNTIME_EVENTS_FILE
     stream = stream if stream is not None else sys.stdout

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Which batch runs next and how many may run at once, decided from live host memory and a per-group RAM prior."""
+
 from __future__ import annotations
 
 import os
@@ -42,6 +44,8 @@ from ._shared import (
 
 @dataclass(frozen=True)
 class _ResourceSnapshot:
+    """One reading of host CPU, load average and free memory, stamped with the monotonic clock."""
+
     cpu_percent: float
     load_ratio: float
     mem_available_mb: float
@@ -88,6 +92,7 @@ _INFRA_FAILURE_STATUSES = frozenset(
 
 
 def _detect_total_ram_mb() -> float:
+    """Installed host memory in MiB, read from psutil then /proc/meminfo, falling back to 8192 when neither answers."""
     try:
         if psutil is not None:
             return float(psutil.virtual_memory().total) / (1024.0 * 1024.0)
@@ -106,6 +111,7 @@ def _detect_total_ram_mb() -> float:
 
 
 def _read_mem_available_mb() -> float:
+    """Free host memory in MiB from psutil or /proc/meminfo, 0.0 when neither source can be reached."""
     try:
         if psutil is not None:
             return float(psutil.virtual_memory().available) / (1024.0 * 1024.0)
@@ -124,6 +130,7 @@ def _read_mem_available_mb() -> float:
 
 
 def _read_cpu_percent() -> float:
+    """Host CPU utilisation since the previous psutil sample, 0.0 without psutil or on any error."""
     try:
         if psutil is not None:
             return float(psutil.cpu_percent(interval=None))
@@ -133,6 +140,7 @@ def _read_cpu_percent() -> float:
 
 
 def _read_load_ratio(machine_vcpus: int) -> float:
+    """One-minute load average divided by the vCPU count, 0.0 where getloadavg is unavailable."""
     try:
         if hasattr(os, "getloadavg"):
             return float(os.getloadavg()[0]) / float(max(1, machine_vcpus))
@@ -142,6 +150,7 @@ def _read_load_ratio(machine_vcpus: int) -> float:
 
 
 def _sample_resource_snapshot(machine_vcpus: int) -> _ResourceSnapshot:
+    """Read CPU, load, free memory and installed memory once and stamp them with the monotonic clock."""
     return _ResourceSnapshot(
         cpu_percent=_read_cpu_percent(),
         load_ratio=_read_load_ratio(machine_vcpus),
@@ -152,10 +161,12 @@ def _sample_resource_snapshot(machine_vcpus: int) -> _ResourceSnapshot:
 
 
 def _default_ram_reserve_mb(total_ram_mb: float) -> float:
+    """Headroom kept for the host: 12% of installed memory, clamped between 2 GiB and 6 GiB."""
     return max(2048.0, min(6144.0, float(total_ram_mb) * 0.12))
 
 
 def _ram_estimate_for_group(group_name: str) -> float:
+    """Memory one seed of that map type is assumed to take, defaulting to the heaviest prior for an unknown name."""
     return float(
         _GROUP_RAM_ESTIMATES_MB.get(
             str(group_name),
@@ -165,10 +176,12 @@ def _ram_estimate_for_group(group_name: str) -> float:
 
 
 def _resource_cost_dict_for_group(group_name: str) -> Dict[str, Any]:
+    """The group's memory prior wrapped as a single-key mapping, the shape the benchmark report records."""
     return {"ram_mb": _ram_estimate_for_group(group_name)}
 
 
 def _resource_model_rows() -> List[Dict[str, Any]]:
+    """One row per benchmark group carrying its memory prior, in the order the groups are declared."""
     return [
         {
             "group": group_name,
@@ -179,18 +192,22 @@ def _resource_model_rows() -> List[Dict[str, Any]]:
 
 
 def _is_clean_execution_status(status: str) -> bool:
+    """True only for 'seed_done', the one outcome that means the seed flew to the end without interference."""
     return status == "seed_done"
 
 
 def _is_timeout_retry_status(status: str) -> bool:
+    """True for a batch that ran out of time and the seeds cancelled with it, which bucket as timeouts, not failures."""
     return status in _TIMEOUT_RETRY_STATUSES
 
 
 def _is_rpc_transport_status(status: str) -> bool:
+    """True when the link to the model container broke: connect refused, ping unanswered, or the socket died mid-seed."""
     return status in _RPC_TRANSPORT_RETRY_STATUSES
 
 
 def _is_infra_failure_status(status: str) -> bool:
+    """True for a batch that raised or a worker that went silent: the host misbehaved, not the model."""
     return status in _INFRA_FAILURE_STATUSES
 
 
@@ -201,6 +218,7 @@ def _build_worker_stall_seed_meta(
     elapsed_sec: float,
     error: str,
 ) -> Dict[str, Any]:
+    """The per-seed record written when a worker goes quiet: no success, zero sim time, and the stall message."""
     return {
         "uid": int(uid),
         "map_seed": int(getattr(task, "map_seed", -1)),
@@ -230,6 +248,7 @@ class _RamWorkerScheduler:
     group_dispatch_counts: Counter = field(default_factory=Counter)
 
     def __post_init__(self) -> None:
+        """Resolve vCPUs and installed memory, then cap the slots at what the lightest seed prior fits in the budget."""
         if self.machine_vcpus is None:
             self.machine_vcpus = available_vcpu_count()
         self.machine_vcpus = max(1, int(self.machine_vcpus))
@@ -262,12 +281,15 @@ class _RamWorkerScheduler:
 
     @property
     def enabled(self) -> bool:
+        """True once more than one worker slot survived the memory cap, so batches can overlap."""
         return self.max_worker_cap > 1
 
     def cost_model(self) -> List[Dict[str, Any]]:
+        """Memory prior per benchmark group, the table admission is weighed against."""
         return _resource_model_rows()
 
     def _snapshot_from_provider(self) -> _ResourceSnapshot:
+        """Take a reading from the injected provider where one was supplied, otherwise measure the real host."""
         if callable(self.resource_provider):
             raw = self.resource_provider()
             if isinstance(raw, _ResourceSnapshot):
@@ -301,9 +323,11 @@ class _RamWorkerScheduler:
         return _sample_resource_snapshot(self.machine_vcpus)
 
     def refresh_resources(self) -> None:
+        """Store a fresh reading so the next admission decision weighs current free memory."""
         self.latest_snapshot = self._snapshot_from_provider()
 
     def _status_dict(self, snapshot: Optional[_ResourceSnapshot]) -> Dict[str, Any]:
+        """Worker caps alongside the reading's CPU, load and free memory, zeros where no reading was taken."""
         return {
             "active_worker_cap": int(self.active_worker_cap),
             "max_worker_cap": int(self.max_worker_cap),
@@ -319,12 +343,15 @@ class _RamWorkerScheduler:
         }
 
     def status_dict(self) -> Dict[str, Any]:
+        """Caps and machine figures from the last stored reading, without touching the host again."""
         return self._status_dict(self.latest_snapshot)
 
     def live_status_dict(self) -> Dict[str, Any]:
+        """Caps and machine figures measured on the spot, ignoring whatever was last stored."""
         return self._status_dict(self._snapshot_from_provider())
 
     def _format_status_line(self, state: Dict[str, Any]) -> str:
+        """Render caps, CPU, load and free memory as the single line the dispatch log prints."""
         return (
             f"cap={state['active_worker_cap']}/{state['max_worker_cap']} "
             f"cpu={state['cpu_percent']:.1f}% "
@@ -333,12 +360,15 @@ class _RamWorkerScheduler:
         )
 
     def format_status_line(self) -> str:
+        """The last stored reading rendered for the log, printed beside every dispatch."""
         return self._format_status_line(self.status_dict())
 
     def format_live_status_line(self) -> str:
+        """A reading taken now and rendered for the log, handed to the heartbeat printer as a callback."""
         return self._format_status_line(self.live_status_dict())
 
     def describe_configuration_lines(self) -> List[str]:
+        """Startup banner: vCPUs, installed and reserved memory, worker slots, then one entry per group prior."""
         lines = [
             (
                 "Scheduler machine: "
@@ -358,6 +388,7 @@ class _RamWorkerScheduler:
         return lines
 
     def note_group_dispatched(self, group_name: str) -> None:
+        """Count one more batch sent out for that map type, which feeds the fairness term of the sort key."""
         self.group_dispatch_counts[str(group_name)] += 1
 
     def dispatch_sort_key(
@@ -365,6 +396,7 @@ class _RamWorkerScheduler:
         group_name: str,
         batch_id: int,
     ) -> Tuple[int, float, int]:
+        """Order candidates by fewest batches already sent for the map type, then heaviest memory prior, then lowest id."""
         return (
             int(self.group_dispatch_counts.get(str(group_name), 0)),
             -_ram_estimate_for_group(group_name),
@@ -372,15 +404,18 @@ class _RamWorkerScheduler:
         )
 
     def _ram_budget_mb(self) -> float:
+        """Installed memory minus the host headroom, the ceiling everything in flight must stay under."""
         return max(
             0.0,
             float(self.machine_total_ram_mb) - float(self.ram_reserve_mb),
         )
 
     def _reserved_ram_mb(self, active_groups: List[str]) -> float:
+        """Sum of the memory priors for the map types currently in flight."""
         return sum(_ram_estimate_for_group(group) for group in active_groups)
 
     def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
+        """True only when a slot is free, the priors of everything in flight still fit the budget, and the host has the memory spare."""
         if len(active_groups) >= self.active_worker_cap:
             return False
 
@@ -410,6 +445,7 @@ def _select_next_batch_index(
     active_worker_cap: int,
     scheduler: Optional[_RamWorkerScheduler] = None,
 ) -> Optional[int]:
+    """Pick the pending batch to dispatch: the lowest id without a scheduler, otherwise the best admissible one, or None when nothing fits."""
     if not pending_batch_ids:
         return None
 
