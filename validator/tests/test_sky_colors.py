@@ -8,7 +8,7 @@ import pytest
 
 from swarm.challenge_families import get_challenge_family, list_registered_challenge_families
 from swarm.challenge_families.base import ChallengeFamilyRuntime
-from swarm.core.daylight import seeded_sun
+from swarm.core.daylight import seeded_sun, sky_render_kwargs
 from swarm.core.moving_drone import MovingDroneAviary
 
 SKY_SUN_FLAG = 2048
@@ -81,12 +81,14 @@ def test_clouds_carry_the_map_seed(monkeypatch):
     assert env._sky_kwargs() == {"skyCloudSeed": 4242}
 
 
-def test_night_keeps_the_family_sky(monkeypatch):
-    """A seed whose light is a moon gets no daylight sky, whatever the family asked for."""
-    moon = SimpleNamespace(night=True)
+def test_night_paints_the_moon_sky_and_no_daylight_one(monkeypatch):
+    """A seed whose light is a moon never gets the daylight sky or its clouds: the renderer flag
+    stays off and the camera takes the moon's own dark gradient instead."""
+    moon = seeded_sun(3, night_share=1.0)
     env = _env_for_sun(monkeypatch, moon, sky_clouds=True)
     assert env._sky_flags == 0
-    assert env._sky_kwargs() == {}
+    assert env._sky_kwargs() == sky_render_kwargs(moon)
+    assert "skyCloudSeed" not in env._sky_kwargs()
 
 
 def test_sun_sky_refuses_a_wheel_without_the_flag(monkeypatch):
