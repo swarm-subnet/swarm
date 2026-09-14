@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 
 from swarm.constants import BACKEND_GRACE_PERIOD_SEC
 from swarm.validator import backend_api
+from swarm.validator.utils_parts import heartbeat as heartbeat_module
 
 
 def _run(coro):
@@ -144,3 +146,30 @@ def test_heartbeat_finish_removes_uid_and_sends_idle():
 
     loop.run_until_complete(run_test())
     loop.close()
+
+
+def test_heartbeat_timer_ends_quietly_when_its_loop_is_closed(monkeypatch):
+    """The timer thread stops instead of raising once the loop it feeds is gone."""
+    monkeypatch.setattr(heartbeat_module, "_TIMER_INTERVAL_SECONDS", 0.01)
+
+    class FakeApi:
+        """Stands in for the backend client the manager posts to."""
+
+        async def post_heartbeat(self, **kw):
+            """Accept any heartbeat and return nothing."""
+
+    escaped: list = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: escaped.append(args.exc_value))
+
+    loop = asyncio.new_event_loop()
+    hb = heartbeat_module.HeartbeatManager(FakeApi(), loop)
+    hb._active = True
+    hb._session_id = 1
+    loop.close()
+
+    thread = threading.Thread(target=hb._timer_loop, args=(1,), daemon=True)
+    thread.start()
+    thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert escaped == []

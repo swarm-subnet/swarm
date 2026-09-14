@@ -33,10 +33,14 @@ pygame==2.6.1
 pytest==8.4.2
 pytest-xdist==3.8.0
 pytest-asyncio==1.3.0
+pytest-timeout==2.4.0
 build==1.4.2
 twine==6.2.0
 # Backend contract tests import the validator API app to exercise real HTTP flows.
-fastapi==0.110.3
+fastapi==0.116.2
+# Pinned explicitly: this is the first line of starlette that imports python_multipart under
+# its own name, which is what stops the legacy alias warning the form parser used to raise.
+starlette==0.47.3
 uvicorn==0.42.0
 sqlmodel==0.0.37
 sqlalchemy==2.0.48
