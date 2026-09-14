@@ -22,8 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Full history because the docstring hook diffs against the merge base with the
+      # target branch, which a shallow clone does not contain.
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-python@v7
