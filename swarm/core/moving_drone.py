@@ -290,6 +290,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._sun = None
         if getattr(self.family_runtime, "seeded_sun", False):
             apply_seeded_sun(self, seed)
+        self._apply_sun_sky(seed)
+
         if physics is None:
             physics = Physics(self.family_runtime.physics_mode)
 
@@ -884,7 +886,7 @@ class MovingDroneAviary(BaseRLAviary):
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
             lightDirection=self._light_direction,
-            flags=seg_flag | self._render_flags,
+            flags=seg_flag | self._render_flags | self._sky_flags,
             physicsClientId=cli,
             **extra_kwargs
         )
@@ -892,12 +894,29 @@ class MovingDroneAviary(BaseRLAviary):
         dep = np.reshape(dep, (h, w))
         return (np.reshape(rgb, (h, w, 4)) if office else None), dep, None
 
+    def _apply_sun_sky(self, seed: int) -> None:
+        """Ask the renderer for the sky of this seed's sun, and its clouds, when the family opted
+        in and the seed is a daytime sun; a night seed and every other family keep their sky."""
+        self._sky_flags = 0
+        self._sky_cloud_seed = None
+        runtime = self.family_runtime
+        if self._sun is None or not getattr(runtime, "sky_from_sun", False) or getattr(self._sun, "night", False):
+            return
+        if not hasattr(p, "ER_SWARM_SKY_SUN"):
+            raise RuntimeError("sky_from_sun needs a swarm-bullet3 wheel with ER_SWARM_SKY_SUN")
+        self._sky_flags = p.ER_SWARM_SKY_SUN
+        if getattr(runtime, "sky_clouds", False):
+            self._sky_cloud_seed = int(seed)
+
     def _sky_kwargs(self) -> dict:
         """getCameraImage arguments for the family's sky; empty when it keeps the white background."""
-        if self._sky_colors is None:
-            return {}
-        horizon, zenith = self._sky_colors
-        return {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
+        kwargs = {}
+        if self._sky_colors is not None:
+            horizon, zenith = self._sky_colors
+            kwargs = {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
+        if getattr(self, "_sky_cloud_seed", None) is not None:
+            kwargs["skyCloudSeed"] = self._sky_cloud_seed
+        return kwargs
 
     def _get_altitude_distance(self, nth_drone: int = 0) -> float:
         """Cast single ray downward for ground/altitude detection."""
@@ -1471,7 +1490,7 @@ class MovingDroneAviary(BaseRLAviary):
                 viewMatrix=self.CAM_VIEW,
                 projectionMatrix=self.CAM_PRO,
                 renderer=p.ER_TINY_RENDERER,
-                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX | self._sky_flags,
                 physicsClientId=self.CLIENT,
                 **self._sky_kwargs(),
             )
@@ -1884,7 +1903,7 @@ class MovingDroneAviary(BaseRLAviary):
         _w, _h, rgb, _dep, _seg = p.getCameraImage(
             width=res, height=res, shadow=0, renderer=p.ER_TINY_RENDERER,
             viewMatrix=view, projectionMatrix=proj, lightDirection=self._light_direction,
-            flags=p.ER_NO_SEGMENTATION_MASK, physicsClientId=cli, **sun_kwargs,
+            flags=p.ER_NO_SEGMENTATION_MASK | self._sky_flags, physicsClientId=cli, **sun_kwargs,
             **self._sky_kwargs(),
         )
         return np.reshape(rgb, (res, res, 4))[:, :, :3].astype(np.float32) / 255.0
