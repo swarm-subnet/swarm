@@ -98,7 +98,7 @@ SUN_AMBIENT_RANGE = (0.28, 0.60)        # renderer ambient coefficient across th
 # Night for families that set ChallengeFamilyRuntime.night_share: a moon lights the map instead.
 MOON_ELEVATION_RANGE_DEG = (10.0, 60.0) # where the moon may sit, degrees above the horizon
 MOON_COLOR = (0.62, 0.70, 0.90)         # renderer light colour of the moon: cool blue-grey
-MOON_DIFFUSE_RANGE = (0.04, 0.16)       # renderer diffuse coefficient from a crescent to a full moon
+MOON_DIFFUSE_RANGE = (0.03, 0.10)       # renderer diffuse coefficient from a crescent to a full moon
 MOON_AMBIENT_RANGE = (0.10, 0.24)       # renderer ambient coefficient from a crescent to a full moon
 # Propulsion efficiency
 
