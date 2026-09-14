@@ -188,6 +188,10 @@ class ChallengeFamilyRuntime:
     runtime_supported: bool = True
     # Opt in to the seeded daylight sun (swarm.core.daylight); off keeps today's light.
     seeded_sun: bool = False
+    # With seeded_sun: the renderer computes the sky from that sun (ER_SWARM_SKY_SUN), and
+    # seeds a cloud layer into it; off keeps the family's sky_colors or the white background.
+    sky_from_sun: bool = False
+    sky_clouds: bool = False
     # Depth camera backend: "tiny" is TinyRenderer, "raycast" the Embree ray caster in the same wheel.
     render_backend: str = "tiny"
     # Drone physics mode, a gym_pybullet_drones Physics value: "pyb" is rotor thrust only,
