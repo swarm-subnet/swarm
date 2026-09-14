@@ -188,6 +188,8 @@ class ChallengeFamilyRuntime:
     runtime_supported: bool = True
     # Opt in to the seeded daylight sun (swarm.core.daylight); off keeps today's light.
     seeded_sun: bool = False
+    # Share of seeds the moon lights instead of the sun, 0 to 1; only read with seeded_sun.
+    night_share: float = 0.0
     # With seeded_sun: the renderer computes the sky from that sun (ER_SWARM_SKY_SUN), and
     # seeds a cloud layer into it; off keeps the family's sky_colors or the white background.
     sky_from_sun: bool = False
