@@ -52,6 +52,7 @@ from swarm.protocol import MapTask
 
 @contextlib.contextmanager
 def _hide_gui_rendering(cli: int, enabled: bool):
+    """Suspend viewer redraw inside the block so a world spawns unseen; a pass-through when enabled is False."""
     if not enabled:
         yield
         return

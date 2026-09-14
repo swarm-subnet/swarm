@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Autopilot family: fly from the start pad to the goal platform, and the score that weighs arrival time against clearance."""
+
 from __future__ import annotations
 
 import inspect
@@ -45,12 +47,14 @@ AUTOPILOT_GOAL_REACH_RADIUS_M = 1.0
 
 
 def _build_autopilot_screening_template() -> tuple[dict[str, Any], ...]:
+    """Fixed screening slots: one hand-written pool per map, round-robined so consecutive seeds land on different maps."""
     def slot(
         challenge_type: int,
         distance_range: tuple[float, float],
         goal_height_range: Optional[tuple[float, float]],
         moving: bool,
     ) -> dict[str, Any]:
+        """One template entry: the map, its start-to-goal distance band, the goal height window and the moving flag."""
         return {
             "challenge_type": challenge_type,
             "distance_range": distance_range,
@@ -85,6 +89,7 @@ _AUTOPILOT_SCREENING_TEMPLATE: tuple[dict[str, Any], ...] = _build_autopilot_scr
 
 
 def _build_autopilot_benchmark_template() -> tuple[dict[str, Any], ...]:
+    """Six distance-banded pools, one per map, interleaved into exactly 100 seeds for the full run."""
     return interleave([
         banded_pool(1, (22, 45),  n_slots=17, n_bands=3, moving_prob=0.25, goal_height_range=(0.2, 1.0)),
         banded_pool(2, (28, 72),  n_slots=17, n_bands=3, moving_prob=0.80, goal_height_range=(4.0, 14.0)),
@@ -99,6 +104,7 @@ _AUTOPILOT_BENCHMARK_TEMPLATE: tuple[dict[str, Any], ...] = _build_autopilot_ben
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
+    """Return True when the callable accepts that parameter, and True as well when its signature cannot be read."""
     try:
         signature = inspect.signature(callable_obj)
     except (TypeError, ValueError):
@@ -107,15 +113,19 @@ def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
 
 
 def _navigation_distance_to_goal(env: Any) -> float:
+    """Straight-line metres from the drone body to env.GOAL_POS, read off the live state vector."""
     state = env._getDroneStateVector(0)
     return float(np.linalg.norm(state[0:3] - env.GOAL_POS))
 
 
 class AutopilotChallengeFamily(ChallengeFamilyRuntime):
+    """Point-to-point flight across an outdoor map: land on the goal platform without hitting anything on the way."""
+
     family_id = "cf_autopilot"
     runtime_supported = True
 
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
+        """Navigation resource class on the base image, sar_mode off, and a 240 s per-seed evaluation budget under a one-hour cap."""
         _ = task
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
@@ -146,6 +156,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         collision: bool,
         failure_reason: str,
     ) -> dict[str, Any]:
+        """Raw record of one flight: the map, the clock beside its target time and horizon, closest clearance, and how it ended."""
         challenge_type = int(getattr(task, "challenge_type", -1))
         target_time = _calculate_target_time(task) if task is not None else None
         return {
@@ -169,6 +180,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         task: Any,
         metrics: dict[str, Any],
     ) -> dict[str, float]:
+        """Weight a clean arrival 0.45 reaching it, 0.45 on the clock and 0.10 on clearance; a crash or a miss pays the participation reward only."""
         horizon = float(metrics["horizon_sec"])
         if horizon <= 0.0:
             raise ValueError("'horizon' must be positive")
@@ -231,15 +243,18 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         }
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
+        """The environment is constructed with sar_mode off: there is no victim to search for, only a platform to reach."""
         _ = task
         return {"sar_mode": False}
 
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
+        """Pin sar_mode off on a freshly built env whatever was requested, then lay down the per-episode attributes."""
         _ = requested_mode
         env.sar_mode = False
         self.reset_env_state(env)
 
     def reset_env_state(self, env: Any) -> None:
+        """Restore the reach radius, seed the closest-approach record with the full start-to-goal span, and drop the body tags."""
         env._autopilot_goal_reach_radius_m = AUTOPILOT_GOAL_REACH_RADIUS_M
         env._autopilot_min_goal_distance = float(
             np.linalg.norm(np.asarray(env.task.start, dtype=float) - env.GOAL_POS)
@@ -247,12 +262,15 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         env._autopilot_world_tags = {}
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
+        """The hand-written slot tuple laid out once at import, six maps deep."""
         return _AUTOPILOT_SCREENING_TEMPLATE
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        """The 100-slot tuple laid out once at import, banded by distance across all six maps."""
         return _AUTOPILOT_BENCHMARK_TEMPLATE
 
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
+        """Draw one freely sampled flight from validator.task_gen, stamped with this family id where that generator takes one."""
         from swarm.validator import task_gen as legacy_task_gen
 
         kwargs = {"sim_dt": sim_dt, "seed": seed}
@@ -261,6 +279,10 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         return legacy_task_gen.random_task(**kwargs)
 
     def spawn_task_world(self, env: Any) -> None:
+        """Build the map and both platforms, sit the drone on the start pad, and hide the ground plane the map replaces.
+
+        Start and goal are re-seated on the surfaces that came back, and a seeded offset from the goal becomes the
+        search-area centre the miner is given."""
         env.task.start = env._original_start
         env.task.goal = env._original_goal
         cli = getattr(env, "CLIENT", 0)
@@ -361,9 +383,11 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         env._search_area_center = center
 
     def protected_body_uids(self, env: Any) -> set[int]:
+        """Both platform bodies, kept out of the fatal-collision check, the obstacle cull and the clearance metric."""
         return set(getattr(env, "_platform_uids", frozenset()))
 
     def post_step_update(self, env: Any) -> None:
+        """Track the closest the drone has come to the goal and advance the landing state, unless it has already crashed."""
         if env._collision:
             return
 
@@ -376,6 +400,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
             env._failure_reason = FailureReason.NONE.value
 
     def compute_terminated(self, env: Any) -> bool:
+        """Never ends a flight early: it only stamps OBSTACLE_COLLISION on a crash that happened short of the goal."""
         if env._collision and not env._success:
             if env._failure_reason == FailureReason.NONE.value:
                 env._failure_reason = FailureReason.OBSTACLE_COLLISION.value
@@ -389,6 +414,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         roll: float,
         pitch: float,
     ) -> bool:
+        """Cut the flight once roll or pitch passes MAX_TILT_RAD, or the clock reaches EP_LEN_SEC, recording TILT or TIMEOUT."""
         if abs(float(roll)) > float(env.MAX_TILT_RAD):
             if not terminal_already:
                 env._failure_reason = FailureReason.TILT.value
@@ -404,6 +430,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def build_info(self, env: Any) -> dict[str, Any]:
+        """Fields merged into the per-step info dict: the reach radius, the closest approach so far, and both version stamps."""
         return {
             "autopilot_goal_reach_radius_m": float(env._autopilot_goal_reach_radius_m),
             "autopilot_min_goal_distance": float(env._autopilot_min_goal_distance),

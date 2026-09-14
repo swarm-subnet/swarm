@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Wall-slot geometry for the office room: local frames, corner points and wall spawning."""
+
 from ._shared import *
 
 
 def slot_config(slot):
+    """Inward normal, tangent and wall yaw of one of the four perimeter slots."""
     if slot == "north":
         return {"normal": (0.0, -1.0), "tangent": (1.0, 0.0), "wall_yaw": 0.0}
     if slot == "south":
@@ -31,28 +34,34 @@ def slot_config(slot):
 
 
 def snap_cardinal(yaw_deg):
+    """Round a yaw to the nearest quarter turn, wrapped into [0, 360)."""
     return (round(yaw_deg / 90.0) * 90.0) % 360.0
 
 
 def snap_octant(yaw_deg):
+    """Round a yaw to the nearest 45 degrees, wrapped into [0, 360)."""
     return (round(yaw_deg / 45.0) * 45.0) % 360.0
 
 
 def wall_face_yaw(slot):
+    """Yaw that turns a wall model's front toward the room interior."""
     return {"north": 180.0, "south": 0.0, "east": 90.0, "west": 270.0}[slot]
 
 
 def wall_tangent_yaw(slot):
+    """Yaw of the axis a wall runs along: 0 on the north and south sides, 90 on east and west."""
     return {"north": 0.0, "south": 0.0, "east": 90.0, "west": 90.0}[slot]
 
 
 def desk_lr_along_offsets(slot, separation):
+    """Left and right desk positions along the wall, ordered for a worker seated facing it."""
     if slot in ("north", "west"):
         return -separation, separation
     return separation, -separation
 
 
 def slot_xy(slot, along, inward):
+    """World x, y of a point `along` a wall and `inward` from it, measured off that wall's midpoint."""
     cfg = slot_config(slot)
     nx, ny = cfg["normal"]
     tx, ty = cfg["tangent"]
@@ -70,6 +79,7 @@ def slot_xy(slot, along, inward):
 
 
 def corner_points():
+    """The four room corners, each inset 1.05 m from the walls."""
     cx0, cy0 = ROOM_CENTER
     return [
         (cx0 - FLOOR_SIZE[0] / 2.0 + 1.05, cy0 + FLOOR_SIZE[0] / 2.0 - 1.05),
@@ -80,6 +90,7 @@ def corner_points():
 
 
 def nearest_corner_index(x, y, corners):
+    """Position in `corners` of the point closest to (x, y) by squared distance."""
     best_i = 0
     best_d2 = None
     for i, (cx, cy) in enumerate(corners):
@@ -91,14 +102,17 @@ def nearest_corner_index(x, y, corners):
 
 
 def workstation_l_corner_index(slot):
+    """Which room corner an L-shaped workstation on this wall wraps into."""
     return {"north": 1, "south": 3, "east": 1, "west": 0}[slot]
 
 
 def adjacent_slot_for_l(slot):
+    """The perpendicular wall the short arm of an L workstation runs against."""
     return {"north": "east", "south": "east", "east": "north", "west": "north"}[slot]
 
 
 def along_sign_for_corner(slot, corner_idx):
+    """Direction to walk the wall to reach that corner, +1 for corners not on this wall."""
     sign_map = {
         "north": {0: -1.0, 1: 1.0},
         "south": {2: -1.0, 3: 1.0},
@@ -109,10 +123,12 @@ def along_sign_for_corner(slot, corner_idx):
 
 
 def workstation_right_is_positive_along(slot):
+    """True where a seated worker's right hand points up the wall's tangent."""
     return slot in ("north", "west")
 
 
 def _corner_trim_from_model(loader):
+    """Metres a corner piece eats off each wall run, join gap included; 0 when corners are disabled."""
     if not ENABLE_PERIMETER_WALL_CORNERS:
         return 0.0
     corner_model = ASSETS.get("wall_corner", "")
@@ -132,6 +148,7 @@ def _corner_trim_from_model(loader):
 
 
 def _wall_segment_plan(loader):
+    """Centre offset and length scale of each segment tiling one side, corner trim taken off first."""
     wall_len, _, _ = loader.model_size(ASSETS["wall"])
     if wall_len <= 1e-6:
         raise ValueError("Invalid wall length from wall.obj")
@@ -158,6 +175,7 @@ def _wall_segment_plan(loader):
 
 
 def spawn_wall_corners(loader, floor_top_z):
+    """Place the four corner pieces so each one's wall-centreline anchor lands on the room corner."""
     if not ENABLE_PERIMETER_WALL_CORNERS:
         return
     corner_model = ASSETS.get("wall_corner", "")
@@ -199,6 +217,7 @@ def spawn_wall_corners(loader, floor_top_z):
 def spawn_walls_with_entry(
     loader, floor_top_z, entry_slot, door_along=0.0, open_mode=ENTRY_WALL_OPENING_MODE
 ):
+    """Tile all four sides, with a door model or an open gap at the segment nearest `door_along`."""
     if entry_slot not in WALL_SLOTS:
         raise ValueError(f"Unknown entry slot: {entry_slot}")
     seg_plan = _wall_segment_plan(loader)

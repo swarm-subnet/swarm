@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Singleton wiring and base-image upkeep for the Docker evaluator: hash the build inputs, rebuild when they move."""
+
 import hashlib
 import os
 import stat
@@ -34,23 +36,28 @@ from .batch import remove_all_model_images
 
 
 def __new__(cls):
+    """Return the one shared evaluator, creating it on the first call."""
     if cls._instance is None:
         cls._instance = super().__new__(cls)
     return cls._instance
 
 
 def _docker_dir() -> Path:
+    """Path holding the Dockerfile and its requirements file."""
     return Path(__file__).resolve().parent.parent
 
 
 def _swarm_package_dir() -> Path:
+    """Path of the source tree that COPY carries into the image."""
     return _docker_dir().parent.parent
 
 
 def _repo_root() -> Path:
+    """Path used as the build context, one level above the package."""
     return _swarm_package_dir().parent
 
 def __init__(self):
+    """Fill in the image defaults the singleton lacks, and build the base image once per class."""
     evaluator_cls = self.__class__
     # Only initialize attributes on first instantiation
     if not hasattr(self, "base_image"):
@@ -98,6 +105,7 @@ def _check_docker_available(self):
 
 @classmethod
 def _docker_env_overrides(cls, thread_cap: Optional[int] = None) -> dict[str, str]:
+    """Thread-limit variables for one worker container, clamped to thread_cap when caps are on."""
     settings = DockerRuntimeSettings.from_env()
     return settings.docker_env_overrides(
         _THREAD_CAP_ENV_VARS,
@@ -107,6 +115,7 @@ def _docker_env_overrides(cls, thread_cap: Optional[int] = None) -> dict[str, st
 
 @staticmethod
 def _coerce_runtime_profile(profile: Optional[Any]) -> Optional[ChallengeFamilyRuntimeProfile]:
+    """Turn a mapping into a ChallengeFamilyRuntimeProfile; None and a ready profile pass through, anything else raises."""
     if profile is None:
         return None
     if isinstance(profile, ChallengeFamilyRuntimeProfile):
@@ -117,6 +126,7 @@ def _coerce_runtime_profile(profile: Optional[Any]) -> Optional[ChallengeFamilyR
 
 @staticmethod
 def _split_worker_cpuset_map(raw: str) -> list[str]:
+    """Break the configured cpuset string into one core list per worker."""
     return DockerRuntimeSettings.split_cpuset_map(raw)
 
 @classmethod
@@ -125,6 +135,11 @@ def _resolve_worker_limits(
     worker_id: int,
     runtime_profile: Optional[Any] = None,
 ) -> dict[str, Optional[str]]:
+    """CPU, memory and pinned cores for one worker, the family profile overriding the defaults.
+
+    A CPU quota is dropped when cores are already pinned and none was asked for,
+    since the quota only adds mid-step throttling stalls.
+    """
     profile = cls._coerce_runtime_profile(runtime_profile)
     settings = DockerRuntimeSettings.from_env()
     limits = settings.resolve_worker_limits(worker_id)
@@ -153,6 +168,7 @@ def _resolve_worker_limits(
 
 
 def _resolve_base_image_for_key(self, image_key: str) -> str:
+    """Image tag registered under a named variant, overridable by SWARM_DOCKER_BASE_IMAGE_<NAME>."""
     normalized = str(image_key or "base").strip() or "base"
     env_name = f"SWARM_DOCKER_BASE_IMAGE_{normalized.upper()}"
     env_override = os.getenv(env_name)
@@ -283,6 +299,7 @@ def _should_rebuild_base_image(self) -> bool:
     return True
 
 def _setup_base_container(self):
+    """Rebuild the base image when its code hash moved, clearing stale containers and images first."""
     evaluator_cls = self.__class__
     try:
         if not self._check_docker_available():

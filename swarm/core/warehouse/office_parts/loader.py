@@ -15,11 +15,16 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Turns the office furniture OBJ meshes into PyBullet bodies through generated URDFs."""
+
 from ._shared import *
 
 
 class AssetLoader:
+    """Turns furniture OBJ files into PyBullet bodies, caching bounds, material splits and URDFs."""
+
     def __init__(self, asset_dir, temp_dir, uniform_scale, cli=0):
+        """Store the asset and temp directories and the default scale, and create temp_dir on disk."""
         self.asset_dir = asset_dir
         self.temp_dir = temp_dir
         self.uniform_scale = uniform_scale
@@ -35,6 +40,7 @@ class AssetLoader:
 
     @staticmethod
     def _normalize_scale(scale):
+        """Return a scale as an (sx, sy, sz) float tuple; a scalar expands to all three axes."""
         if isinstance(scale, (tuple, list)):
             if len(scale) != 3:
                 raise ValueError("Scale tuple must have 3 values (sx, sy, sz).")
@@ -43,9 +49,11 @@ class AssetLoader:
         return (s, s, s)
 
     def _asset_path(self, filename):
+        """Return the absolute location of filename inside the configured asset directory."""
         return os.path.join(self.asset_dir, filename)
 
     def _parse_obj_vertices(self, filename):
+        """Return the raw v-line positions of an OBJ; raises when the file holds none."""
         path = self._asset_path(filename)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Asset not found: {path}")
@@ -64,10 +72,12 @@ class AssetLoader:
 
     @staticmethod
     def _rotate_y_up_to_z_up(v):
+        """Map a Y-up mesh vertex into the Z-up world convention PyBullet expects."""
         x, y, z = v
         return (x, -z, y)
 
     def _mesh_bounds(self, filename, scale):
+        """Return the (min, max) XYZ corners of a mesh after the Z-up rotation and scaling, cached."""
         scale_xyz = self._normalize_scale(scale)
         key = (filename, scale_xyz)
         if key in self.bounds_cache:
@@ -85,6 +95,7 @@ class AssetLoader:
         return min_v, max_v
 
     def _parse_obj_vertices_faces(self, filename):
+        """Return an OBJ's vertices plus its polygons fanned into zero-based triangles."""
         path = self._asset_path(filename)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Asset not found: {path}")
@@ -115,6 +126,7 @@ class AssetLoader:
         return verts, faces
 
     def shelf_surface_levels(self, filename, scale=None):
+        """Return the Z heights of a bookcase's usable boards, excluding its floor and its top."""
         if scale is None:
             scale = self.uniform_scale
         key = (filename, scale)
@@ -184,6 +196,7 @@ class AssetLoader:
         return row_levels
 
     def _create_urdf_for_mesh(self, mesh_path, mesh_tag, scale, rgba):
+        """Write a fixed-base URDF wrapping one mesh at a given scale and colour, and return its path."""
         scale_xyz = self._normalize_scale(scale)
         mesh_key = mesh_path.replace("\\", "/")
         rgba_key = tuple(round(v, 6) for v in rgba)
@@ -234,6 +247,7 @@ class AssetLoader:
         return urdf_path
 
     def _sanitize_name(self, text):
+        """Replace every character that is not alphanumeric, underscore or dash with an underscore."""
         out = []
         for ch in text:
             if ch.isalnum() or ch in ("_", "-"):
@@ -243,6 +257,7 @@ class AssetLoader:
         return "".join(out)
 
     def _retile_obj_uv_single_image(self, obj_path):
+        """Rewrite an OBJ in place with planar UVs over its two widest axes so one image covers it."""
         if not os.path.exists(obj_path):
             return
         v_lines = []
@@ -315,6 +330,7 @@ class AssetLoader:
             f.writelines(out_lines)
 
     def _read_material_usage(self, filename):
+        """Return an OBJ's mtllib name, its v/vt/vn lines, and its face lines grouped by usemtl."""
         path = self._asset_path(filename)
         mtllib = None
         v_lines = []
@@ -343,6 +359,7 @@ class AssetLoader:
         return mtllib, v_lines, vt_lines, vn_lines, faces_by_mat
 
     def _read_mtl_colors(self, mtllib_name):
+        """Return the Kd diffuse triple of each material in an MTL file, keyed by material name."""
         colors = {}
         if not mtllib_name:
             return colors
@@ -365,6 +382,7 @@ class AssetLoader:
         return colors
 
     def _material_parts(self, filename):
+        """Return one (mesh path, colour, material name) triple per material, splitting a multi-material OBJ into separate files first."""
         if filename in self.material_parts_cache:
             return self.material_parts_cache[filename]
         mtllib, v_lines, vt_lines, vn_lines, faces_by_mat = self._read_material_usage(
@@ -415,6 +433,7 @@ class AssetLoader:
         return parts
 
     def _foreground_bbox_against_corner_bg(self, pil_image):
+        """Return the box of pixels that differ from the image's top-left corner colour."""
         rgb = pil_image.convert("RGB")
         corner_rgb = rgb.getpixel((0, 0))
         bg = Image.new("RGB", rgb.size, corner_rgb)
@@ -425,6 +444,7 @@ class AssetLoader:
         return bbox
 
     def _pick_best_logo_path(self, candidates):
+        """Return the candidate logo with the widest empty margin, and its foreground box."""
         best_path = None
         best_bbox = None
         best_score = -1
@@ -446,6 +466,7 @@ class AssetLoader:
         return best_path, best_bbox
 
     def _ensure_brand_screen_texture(self):
+        """Render the 512x320 monitor image into temp_dir and return its path, None without PIL."""
         if Image is None or ImageDraw is None or ImageOps is None or ImageChops is None:
             return None
         tex_path = os.path.join(self.temp_dir, "screen_swarm_logo.png")
@@ -486,6 +507,7 @@ class AssetLoader:
         return tex_path
 
     def _load_texture_cached(self, tex_path):
+        """Return the PyBullet texture id for a PNG path, reading the file only the first time."""
         key = tex_path.replace("\\", "/")
         if key in self.texture_id_cache:
             return self.texture_id_cache[key]
@@ -494,6 +516,7 @@ class AssetLoader:
         return tid
 
     def _brand_texture_for_monitor(self):
+        """Return the texture id of the screen branding image, building it once on first call."""
         if self.brand_screen_texture_id is not None:
             return self.brand_screen_texture_id
         tex_path = self._ensure_brand_screen_texture()
@@ -503,6 +526,7 @@ class AssetLoader:
         return self.brand_screen_texture_id
 
     def spawn(self, filename, x, y, yaw_deg, floor_z, extra_z=0.0, scale=None):
+        """Load a mesh centred on (x, y) with its base resting on floor_z, and return the first body id."""
         if scale is None:
             scale = self.uniform_scale
         scale_xyz = self._normalize_scale(scale)
@@ -572,6 +596,7 @@ class AssetLoader:
         return first_body
 
     def back_offset(self, filename, yaw_deg, inward_normal, scale=None):
+        """Return how far the rearmost vertex reaches opposite the inward normal once yawed, so a piece can sit flush against a wall."""
         if scale is None:
             scale = self.uniform_scale
         scale_xyz = self._normalize_scale(scale)
@@ -603,12 +628,14 @@ class AssetLoader:
         return back
 
     def top_height_from_floor(self, filename, scale=None):
+        """Return the mesh's Z extent, which is how tall it stands once seated on a surface."""
         if scale is None:
             scale = self.uniform_scale
         min_v, max_v = self._mesh_bounds(filename, scale)
         return max_v[2] - min_v[2]
 
     def model_size(self, filename, scale=None):
+        """Return the mesh's width, depth and height in metres at the given scale."""
         if scale is None:
             scale = self.uniform_scale
         min_v, max_v = self._mesh_bounds(filename, scale)
@@ -619,6 +646,7 @@ class AssetLoader:
         )
 
     def _local_front_angle_rad(self, filename, scale=None):
+        """Return the direction a model faces in its own frame, taken from ASSET_FRONT_DEG or inferred from where its topmost vertices sit."""
         if filename in ASSET_FRONT_DEG:
             return math.radians(ASSET_FRONT_DEG[filename])
         if scale is None:
@@ -649,6 +677,7 @@ class AssetLoader:
         return front_angle
 
     def yaw_to_face_point(self, filename, x, y, tx, ty, scale=None):
+        """Return the yaw in degrees that turns a model standing at (x, y) to look at (tx, ty)."""
         local_front = self._local_front_angle_rad(filename, scale=scale)
         desired = math.atan2(ty - y, tx - x)
         yaw_rad = desired - local_front

@@ -31,6 +31,7 @@ SCALE = office_scale(SEED)
 
 @pytest.fixture()
 def office_client():
+    """A DIRECT pybullet client with seed 0's office built, plus the builder's info dict."""
     cli = p.connect(p.DIRECT)
     info = build_office_map(seed=SEED, cli=cli)
     yield cli, info
@@ -44,11 +45,13 @@ def _at(x=0.0, y=0.0, z=0.0):
 
 
 def _ray_hit(cli, start, end):
+    """Return the body uid the segment from start to end struck and the world point of it."""
     hit = p.rayTest(start, end, physicsClientId=cli)[0]
     return hit[0], hit[3]
 
 
 def test_office_map_bodies(office_client):
+    """The build reports one body per catalogue piece, plus floor, shell, LED and backdrop."""
     cli, info = office_client
     names = set(info["bodies"])
     assert {"floor", "shell", "led", "backdrop"} <= names
@@ -59,6 +62,8 @@ def test_office_map_bodies(office_client):
 
 
 def test_office_map_shell_geometry(office_client):
+    """The floor stays at z=0 whatever the room size.
+    The ceiling and the column move with the seed's scale instead."""
     cli, info = office_client
     _, floor_pt = _ray_hit(cli, _at(9, 3.8, 2.0), _at(9, 3.8, -1))
     assert abs(floor_pt[2] - 0.0) < 1e-3, "the floor stays at z=0 whatever the room size"
@@ -80,6 +85,7 @@ def test_office_map_furniture_collision(office_client):
 
 
 def test_office_map_window_plug(office_client):
+    """The glazing is solid: a ray through the window band stops on the plug, not outdoors."""
     cli, info = office_client
     for y, z in [(3.2, 1.8), (4.4, 1.2)]:
         body, pt = _ray_hit(cli, _at(16.5, y, z), _at(21, y, z))
@@ -88,6 +94,7 @@ def test_office_map_window_plug(office_client):
 
 
 def _aabbs(seed):
+    """Return the bounding box of every body in a freshly built room, ordered by name."""
     cli = p.connect(p.DIRECT)
     info = build_office_map(seed=seed, cli=cli)
     out = [p.getAABB(b, physicsClientId=cli) for _, b in sorted(info["bodies"].items())]

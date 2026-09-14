@@ -15,10 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Warehouse shell above the walls: the arched roof with its gable fillers, and the truss mesh under it."""
 from ._shared import *
 
 
 def build_curved_roof(loader, roof_base_z, shell_meshes, cli):
+    """Spawn the arched shell and its wall fillers at the base height, both collidable and flat-coloured."""
     shell_sx, shell_sy = _shell_mesh_scale_xy(shell_meshes)
     _spawn_generated_mesh(
         shell_meshes["roof"],
@@ -45,6 +47,7 @@ def build_curved_roof(loader, roof_base_z, shell_meshes, cli):
 
 
 def build_roof_truss_system(floor_top_z, roof_base_z, shell_meshes, cli):
+    """Spawn the truss mesh and return its rib and member tallies, or zeros when the trusses are switched off."""
     _ = floor_top_z
     if not ENABLE_ROOF_TRUSS_SYSTEM:
         return {

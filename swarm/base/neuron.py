@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Base neuron behind the Swarm miner and validator: wallet, chain objects and epoch sync."""
+
 import contextlib
 import copy
 import re
@@ -45,14 +47,17 @@ class BaseNeuron(ABC):
 
     @classmethod
     def check_config(cls, config: "bt.Config"):
+        """Validate the namespace and create the log directory this neuron writes under."""
         check_config(cls, config)
 
     @classmethod
     def add_args(cls, parser):
+        """Register the neuron's command-line arguments on parser."""
         add_args(cls, parser)
 
     @classmethod
     def config(cls):
+        """Bittensor config assembled from the neuron's own argument parser."""
         return config(cls)
 
     subtensor: "bt.Subtensor"
@@ -62,9 +67,11 @@ class BaseNeuron(ABC):
 
     @property
     def block(self):
+        """Current chain block, cached for a short TTL so hot loops do not hammer the RPC."""
         return ttl_get_block(self)
 
     def __init__(self, config=None):
+        """Build the wallet, subtensor and metagraph, retrying the chain, and record the UID."""
         base_config = copy.deepcopy(config or BaseNeuron.config())
         self.config = self.config()
         self.config.merge(base_config)
@@ -123,10 +130,12 @@ class BaseNeuron(ABC):
 
     @abstractmethod
     async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
+        """Handle one incoming synapse and return the reply sent back to the caller."""
         ...
 
     @abstractmethod
     def run(self):
+        """Enter the neuron's main loop and stay there until the process is stopped."""
         ...
 
     @abstractmethod
@@ -140,6 +149,7 @@ class BaseNeuron(ABC):
 
     @abstractmethod
     def set_weights(self):
+        """Submit this neuron's weight vector to the chain."""
         pass
 
     def sync(self):
@@ -181,6 +191,7 @@ class BaseNeuron(ABC):
                 time.sleep(5)
 
     def check_registered(self):
+        """Exit the process when the hotkey is not registered on the configured netuid."""
         # --- Check for registration.
         if not self.subtensor.is_hotkey_registered(
             netuid=self.config.netuid,
@@ -205,6 +216,7 @@ class BaseNeuron(ABC):
         return (self.block - last_update) > self.config.neuron.epoch_length
 
     def should_set_weights(self) -> bool:
+        """True once an epoch of blocks has passed since the last update, and never for a miner."""
         # Don't set weights on initialization.
         if self.step == 0:
             return False
@@ -219,16 +231,19 @@ class BaseNeuron(ABC):
         ) > self.config.neuron.epoch_length and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
 
     def save_state(self):
+        """Persist neuron state; the base keeps nothing and only logs a trace."""
         bt.logging.trace(
             "save_state() not implemented for this neuron. You can implement this function to save model checkpoints or other useful data."
         )
 
     def load_state(self):
+        """Restore neuron state; the base reads nothing and only logs a trace."""
         bt.logging.trace(
             "load_state() not implemented for this neuron. You can implement this function to load model checkpoints or other useful data."
         )
 
     def parse_versions(self):
+        """Set self.version from the published version file, keeping the local one on any failure."""
         self.version = __version__
 
         bt.logging.info("Parsing versions...")

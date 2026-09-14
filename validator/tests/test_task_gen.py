@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Task generation: seed determinism, and the bounds a start and a goal must respect for each challenge type."""
 from __future__ import annotations
 
 import math
@@ -27,10 +28,12 @@ from swarm.validator import task_gen
 
 
 def test_get_type_params_returns_default_for_unknown_type():
+    """An unrecognised challenge type falls back to the type 1 parameter set instead of raising."""
     assert task_gen.get_type_params(999) == task_gen.TYPE_PARAMS[1]
 
 
 def test_random_start_for_warehouse_stays_within_bounds():
+    """A warehouse start sits inside the world rectangle, at a height band lifted by the takeoff buffer above its platform."""
     rng = random.Random(1234)
     params = task_gen.get_type_params(5)
     x, y, z = task_gen._random_start(rng, params, challenge_type=5, seed=7)
@@ -42,6 +45,7 @@ def test_random_start_for_warehouse_stays_within_bounds():
 
 
 def test_goal_from_start_warehouse_respects_distance_and_bounds():
+    """A warehouse goal stays in the world rectangle and the height band, and never lands closer than r_min to the start."""
     rng = random.Random(7)
     params = task_gen.get_type_params(5)
     start = (0.0, 0.0, 1.0)
@@ -55,6 +59,7 @@ def test_goal_from_start_warehouse_respects_distance_and_bounds():
 
 
 def test_goal_from_start_type1_respects_world_bounds_and_min_distance():
+    """A type 1 goal lands inside the square world and the height band, at least r_min away from the start."""
     rng = random.Random(9)
     params = task_gen.get_type_params(1)
     start = (0.0, 0.0, 1.0)
@@ -67,6 +72,7 @@ def test_goal_from_start_type1_respects_world_bounds_and_min_distance():
 
 
 def test_random_task_is_deterministic_for_fixed_seed():
+    """One seed rebuilds an identical task, and the family it lands in is cf_autopilot."""
     t1 = task_gen.random_task(sim_dt=0.02, seed=12345)
     t2 = task_gen.random_task(sim_dt=0.02, seed=12345)
     assert t1 == t2
@@ -74,6 +80,7 @@ def test_random_task_is_deterministic_for_fixed_seed():
 
 
 def test_task_for_seed_and_type_is_deterministic():
+    """One seed with a pinned challenge type rebuilds an identical task, and the type is carried through."""
     t1 = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=12345, challenge_type=6)
     t2 = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=12345, challenge_type=6)
 
@@ -82,6 +89,7 @@ def test_task_for_seed_and_type_is_deterministic():
 
 
 def test_screening_task_preserves_explicit_family_id():
+    """An explicit family_id survives into the screening task, here cf_search_and_rescue on a type 3 map."""
     task = task_gen.screening_task(
         sim_dt=0.02,
         seed=777,
@@ -94,6 +102,7 @@ def test_screening_task_preserves_explicit_family_id():
 
 
 def test_screening_task_is_deterministic_for_fixed_seed_and_range():
+    """One seed and one distance range rebuild an identical screening task, so every validator screens the same map."""
     first = task_gen.screening_task(
         sim_dt=0.02,
         seed=888,
@@ -113,6 +122,7 @@ def test_screening_task_is_deterministic_for_fixed_seed_and_range():
 
 
 def test_challenge_type_distribution_is_uniform():
+    """Six challenge types each carry 1/6 of the draw and the weights sum to one."""
     values = list(CHALLENGE_TYPE_DISTRIBUTION.values())
     assert len(values) == 6
     assert all(math.isclose(value, 1 / 6, rel_tol=1e-12, abs_tol=1e-12) for value in values)
@@ -120,6 +130,7 @@ def test_challenge_type_distribution_is_uniform():
 
 
 def test_random_task_can_be_forced_to_warehouse(monkeypatch):
+    """Pinning the distribution to type 5 yields a warehouse map whose start and goal both sit inside the warehouse bounds."""
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {5: 1.0})
     task = task_gen.random_task(sim_dt=0.02, seed=111)
 
@@ -135,6 +146,7 @@ def test_random_task_can_be_forced_to_warehouse(monkeypatch):
 
 
 def test_random_task_type3_uses_terrain_surface(monkeypatch):
+    """On type 3 the start sits one takeoff buffer above the sampled ground and the goal sits exactly on it, never at a fixed height."""
     monkeypatch.setattr(task_gen, "CHALLENGE_TYPE_DISTRIBUTION", {3: 1.0})
     task = task_gen.random_task(sim_dt=0.02, seed=321)
 

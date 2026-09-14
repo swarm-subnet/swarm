@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Assembly point for ``DockerSecureEvaluator``: a singleton shell with every method bound in from the parts modules."""
+
 import subprocess
 import time
 
@@ -49,6 +51,7 @@ class DockerSecureEvaluator:
     _base_ready = False
 
     def __new__(cls):
+        """Return the one shared evaluator, creating it on the first call."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance

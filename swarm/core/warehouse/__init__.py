@@ -83,6 +83,7 @@ _NORMALIZED_MTL_DIRS = set()
 
 
 def _resolve_optional_model(candidates, model_names):
+    """The first (folder, filename) that exists, matched case-insensitively; ("", "") on a miss."""
     for root in candidates:
         if not root or not os.path.exists(root):
             continue
@@ -104,6 +105,11 @@ def _resolve_optional_model(candidates, model_names):
 
 
 def _resolve_kit_paths():
+    """Locate the mesh folders and textures every enabled feature needs.
+
+    Raises FileNotFoundError at the first gap, so a half-built map is never
+    handed back to the caller.
+    """
     conveyor_obj = CONVEYOR_KIT_OBJ_DIR
     conveyor_tex = CONVEYOR_KIT_TEXTURE
     truck_obj = VEHICLE_DIR
@@ -175,6 +181,7 @@ def _resolve_kit_paths():
 
 
 def _resolve_shell_mesh_paths():
+    """The baked roof, filler and truss meshes with their metadata config; raises if any is absent."""
     root = os.path.abspath(WAREHOUSE_SHELL_DIR)
     roof = os.path.join(root, WAREHOUSE_SHELL_FILES["roof"])
     fillers = os.path.join(root, WAREHOUSE_SHELL_FILES["fillers"])
@@ -215,6 +222,7 @@ _OVERHEAD_CRANE_ASSET_CANDIDATES = (CRANE_DIR,)
 
 
 def _clear_loader_spawn_caches(loader):
+    """Drop a loader's visual, collision and texture handles: they belong to one client only."""
     if loader is None:
         return
     if hasattr(loader, "visual_shape_cache"):
@@ -229,6 +237,7 @@ def _clear_loader_spawn_caches(loader):
 # Runtime context
 # ---------------------------------------------------------------------------
 def _create_runtime_context(cli=0):
+    """Resolve the asset paths and open one mesh loader per enabled feature group."""
     kit_paths = _resolve_kit_paths()
     shell_meshes = _resolve_shell_mesh_paths()
 
@@ -313,6 +322,7 @@ def _create_runtime_context(cli=0):
 
 
 def _reset_runtime_context(ctx):
+    """Clear the spawn caches of every loader the context holds."""
     for key in (
         "conveyor_loader",
         "truck_loader",
@@ -361,6 +371,7 @@ def build_warehouse_map(seed, cli=0, start=None, goal=None):
     build_stage_timings = {}
 
     def _stage(name, fn):
+        """Run one build step, record its wall-clock seconds, and pass its result through."""
         t0 = time.perf_counter()
         out = fn()
         build_stage_timings[name] = time.perf_counter() - t0

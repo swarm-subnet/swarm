@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Spawning OBJ props as one coloured body per material group, and the truss rib line-up they use."""
+
 from ._shared import *
 
 
@@ -30,7 +32,9 @@ def _spawn_obj_with_mtl_parts(
     fallback_rgba=(0.78, 0.78, 0.78, 1.0),
     rgba_gain=1.0,
 ):
+    """Spawn one visual body per OBJ material group plus an optional invisible collision hull, and return how many parts."""
     def _gain_rgba(c):
+        """Scale the colour channels by rgba_gain and clamp to [0, 1], leaving alpha untouched."""
         r = max(0.0, min(1.0, float(c[0]) * float(rgba_gain)))
         g = max(0.0, min(1.0, float(c[1]) * float(rgba_gain)))
         b = max(0.0, min(1.0, float(c[2]) * float(rgba_gain)))
@@ -90,6 +94,7 @@ def _spawn_obj_with_mtl_parts(
 
 
 def _truss_rib_x_positions(shell_meshes):
+    """Evenly spaced rib centres along X, the baked end margin rescaled to the current warehouse length."""
     cfg = (shell_meshes or {}).get("config", {}) or {}
     rib_count = max(1, int(cfg.get("truss_rib_count", 5)))
     base_x = float(cfg.get("warehouse_size_x", WAREHOUSE_BASE_SIZE_X))

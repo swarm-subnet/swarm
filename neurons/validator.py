@@ -17,6 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 
+"""Validator process entrypoint: builds the neuron, watches its worker thread and hands leased seeds back on exit."""
 import asyncio
 import os
 import signal
@@ -182,6 +183,7 @@ class Validator(BaseValidatorNeuron):
     """
 
     def __init__(self, config=None):
+        """Load saved state, start W&B logging, kill leftover eval containers and bring the Docker evaluator up."""
         super(Validator, self).__init__(config=config)
 
         # Log validator version info
@@ -290,6 +292,7 @@ if __name__ == "__main__":
     logger.add(lambda msg: print(msg, end=""), level="WARNING")
 
     def _terminate(signum, frame):
+        """Turn a signal into the KeyboardInterrupt the shutdown path already handles."""
         raise KeyboardInterrupt
 
     # pm2 stops with SIGINT by default; SIGTERM covers systemd and a custom kill signal.

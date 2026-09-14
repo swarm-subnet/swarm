@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The retired two-word wording for a benchmark group must not survive anywhere in the docs, scripts or map sources."""
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ BANNED_PHRASES = (_LEGACY_MAP_FAMILY, _LEGACY_MAP_FAMILY_HYPHEN)
 
 
 def _iter_text_files():
+    """Yield every .md, .py and .txt under the scanned roots, plus any root that is itself a file."""
     for base_path in SCAN_PATHS:
         if base_path.is_file():
             yield base_path
@@ -58,6 +60,7 @@ def test_each_scanned_root_contributes_files(base):
 
 
 def test_benchmark_domain_docs_do_not_use_ambiguous_family_wording():
+    """No scanned file carries the retired phrase, and a scan that read nothing fails instead of passing empty."""
     offenders = []
     scanned = 0
     for path in _iter_text_files():

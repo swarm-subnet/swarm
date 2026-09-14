@@ -93,6 +93,7 @@ class PhaseTimer:
     """Accumulates wall time of selected env methods via instance wrappers."""
 
     def __init__(self, env):
+        """Swap the timed methods on this env instance for wrappers, keeping the originals."""
         self.ms = defaultdict(float)
         self._env = env
         self._orig = {}
@@ -104,7 +105,9 @@ class PhaseTimer:
             setattr(env, name, self._wrap(phase, fn))
 
     def _wrap(self, phase, fn):
+        """Return fn wrapped so its wall time accrues to the named phase."""
         def timed(*args, **kwargs):
+            """Call the wrapped method and add its elapsed milliseconds to the phase total."""
             t0 = time.perf_counter()
             out = fn(*args, **kwargs)
             self.ms[phase] += (time.perf_counter() - t0) * 1000.0
@@ -113,9 +116,11 @@ class PhaseTimer:
         return timed
 
     def snapshot(self):
+        """Return a copy of the per-phase millisecond totals accumulated so far."""
         return dict(self.ms)
 
     def restore(self):
+        """Put the original unwrapped methods back on the env instance."""
         for name, fn in self._orig.items():
             setattr(self._env, name, fn)
 
@@ -124,12 +129,15 @@ class BulletTimer:
     """Accumulates wall time spent inside selected pybullet C calls."""
 
     def __init__(self):
+        """Create the empty millisecond and call-count tables; patching happens on enter."""
         self.ms = defaultdict(float)
         self.calls = defaultdict(int)
         self._orig = {}
 
     def _wrap(self, name, fn):
+        """Return fn wrapped to accrue its wall time and one call under name."""
         def timed(*args, **kwargs):
+            """Call the patched pybullet function and record its elapsed time and one call."""
             t0 = time.perf_counter()
             out = fn(*args, **kwargs)
             self.ms[name] += (time.perf_counter() - t0) * 1000.0
@@ -139,6 +147,7 @@ class BulletTimer:
         return timed
 
     def __enter__(self):
+        """Patch the selected pybullet calls onto the module and return self."""
         for name in _TIMED_CALLS:
             fn = getattr(p, name, None)
             if fn is None:
@@ -148,19 +157,23 @@ class BulletTimer:
         return self
 
     def __exit__(self, *exc):
+        """Restore the original pybullet functions on the module."""
         for name, fn in self._orig.items():
             setattr(p, name, fn)
         self._orig.clear()
 
     def snapshot(self):
+        """Return copies of the millisecond totals and the call counts, keyed by call name."""
         return dict(self.ms), dict(self.calls)
 
 
 def _delta(after, before):
+    """Per-key difference between two accumulator tables, a missing key counting as zero."""
     return {k: after.get(k, 0.0) - before.get(k, 0.0) for k in set(after) | set(before)}
 
 
 def seed_with_drone_count(target_n, start=1000):
+    """Scan upward from start for the first seed whose swarm RNG draws target_n drones."""
     seed = start
     while True:
         rng = random.Random((seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
@@ -170,6 +183,7 @@ def seed_with_drone_count(target_n, start=1000):
 
 
 def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
+    """Time one family/map/seed end to end and return its per-stage millisecond breakdown."""
     t0 = time.perf_counter()
     task = task_for_seed_and_type(SIM_DT, seed=seed, challenge_type=ctype, family_id=family)
     task_ms = (time.perf_counter() - t0) * 1000.0
@@ -255,6 +269,7 @@ def profile_config(agent_capnp, family, ctype, seed, steps, warmup):
         env.close()
 
     def _avg(table, name):
+        """Mean of the recorded per-step values for name, 0.0 when it was never timed."""
         return float(np.mean(table.get(name, [0.0])))
 
     step = float(np.mean(step_ms))
@@ -327,6 +342,7 @@ def terrain_rebuild_check(steps_seed_a=13, seed_b=42):
 
 
 def build_sweep(quick):
+    """List the (family, challenge type, seed) configs to profile; quick trims it to five."""
     sweep = []
     if quick:
         sweep.append(("cf_autopilot", 2, 4))
@@ -352,6 +368,7 @@ def build_sweep(quick):
 
 
 def print_table(results):
+    """Print one aligned row of stage timings per profiled config."""
     hdr = (
         f"{'family':<20} {'map':<9} {'n':>2} {'batch':>5} {'step':>7} {'render':>7} "
         f"{'ctrl':>6} {'obsbld':>7} {'physic':>7} {'apply':>6} {'kin':>6} "
@@ -372,6 +389,7 @@ def print_table(results):
 
 
 def print_family_totals(results):
+    """Print each family's average seconds per seed and the core-hours a full eval costs."""
     per_family = defaultdict(list)
     for r in results:
         per_family[r["family"]].append(r["per_seed_s"])
@@ -385,6 +403,7 @@ def print_family_totals(results):
 
 
 def _next_seed_same_count(family, prev_seed):
+    """Next seed to profile, holding the drone count fixed for the swarm families."""
     if family in SWARM_FAMILIES:
         rng = random.Random((prev_seed + SWARM_COUNT_SEED_OFFSET) & 0xFFFFFFFF)
         n = rng.randint(SWARM_MIN_DRONES, SWARM_MAX_DRONES)
@@ -393,6 +412,7 @@ def _next_seed_same_count(family, prev_seed):
 
 
 def _aggregate_seed_runs(runs):
+    """Mean every numeric field across the profiled runs, plus the min and max step time."""
     agg = dict(runs[0])
     numeric = [k for k, v in runs[0].items() if isinstance(v, (int, float)) and k != "seed"]
     for k in numeric:
@@ -404,6 +424,7 @@ def _aggregate_seed_runs(runs):
 
 
 def main():
+    """Parse the CLI flags, profile the whole sweep, print the tables and write the JSON."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--steps", type=int, default=60)

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Wire format between validator and miner: MapTask packing and what PolicySynapse carries."""
+
 from __future__ import annotations
 
 import msgpack
@@ -23,6 +25,7 @@ from swarm.protocol import MapTask, PolicyRef, PolicySynapse, ValidationResult
 
 
 def test_map_task_pack_round_trip():
+    """A packed MapTask survives msgpack whole, family_id and version included."""
     task = MapTask(
         map_seed=123,
         start=(1.0, 2.0, 3.0),
@@ -42,6 +45,8 @@ def test_map_task_pack_round_trip():
 
 
 def test_map_task_unpack_infers_family_id_for_legacy_payloads():
+    """A blob written before the field existed reads back as cf_autopilot.
+    The stored challenge_type has no say in it."""
     sar_blob = msgpack.packb(
         {
             "map_seed": 1,
@@ -72,6 +77,7 @@ def test_map_task_unpack_infers_family_id_for_legacy_payloads():
 
 
 def test_policy_ref_as_dict_includes_github_url():
+    """The dict form keeps the digest and the source repository link the validator logs."""
     ref = PolicyRef(
         sha256="abc",
         size_bytes=42,
@@ -89,12 +95,14 @@ def test_policy_ref_as_dict_includes_github_url():
 
 
 def test_policy_synapse_request_ref():
+    """A request carries neither a reference nor a result, only the ask itself."""
     syn = PolicySynapse.request_ref()
     assert syn.ref is None
     assert syn.result is None
 
 
 def test_policy_synapse_accessors_for_ref_and_result():
+    """The accessors hand back exactly the PolicyRef or ValidationResult it was built from."""
     ref = PolicyRef(
         sha256="h",
         size_bytes=1,
@@ -116,5 +124,6 @@ def test_policy_synapse_accessors_for_ref_and_result():
 
 
 def test_policy_synapse_deserialize_returns_self():
+    """Deserialising hands back the same object, so the decode step never copies a payload."""
     syn = PolicySynapse()
     assert syn.deserialize() is syn

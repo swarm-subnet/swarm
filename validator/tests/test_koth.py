@@ -43,6 +43,7 @@ from swarm.validator.koth import (
 def _king(
     uid: int, score: float, prev: float, *, epoch: int = 0, lineage_id: int | None = None
 ) -> KingEntry:
+    """Build one lineage row with the fields the weight formula reads."""
     return KingEntry(
         uid=uid,
         hotkey=f"hk{uid}",
@@ -54,10 +55,12 @@ def _king(
 
 
 def test_empty_lineage_returns_empty_map():
+    """No crownings means no payout map, never a division by zero."""
     assert compute_weights([]) == {}
 
 
 def test_single_first_king_takes_100_percent():
+    """The only king ever crowned holds the whole emission share."""
     king = _king(uid=178, score=0.50, prev=0.0)
     weights = compute_weights([king])
     assert weights == {178: 1.0}
@@ -121,16 +124,19 @@ def test_miguel_question_late_jump_outearns_early_same_size():
 
 
 def test_headroom_gain_matches_log_headroom():
+    """Halving the distance left to a perfect score is worth exactly log 2."""
     gain = headroom_gain(score=0.5, prev_score=0.0)
     assert math.isclose(gain, math.log(2.0), abs_tol=1e-12)
 
 
 def test_headroom_gain_same_or_lower_score_is_zero():
+    """A re-crowning that fails to improve on the previous king earns nothing."""
     assert headroom_gain(score=0.5, prev_score=0.5) == 0.0
     assert headroom_gain(score=0.4, prev_score=0.5) == 0.0
 
 
 def test_headroom_gain_inside_eps_floor_is_zero():
+    """Both ends of a jump into the last 1% sit on the eps floor, so the ratio is 1."""
     assert headroom_gain(score=1.0, prev_score=0.995) == 0.0
 
 
@@ -187,11 +193,13 @@ def test_weights_always_sum_to_one():
 
 
 def test_active_window_smaller_than_window_returns_all():
+    """A short lineage is kept whole: nobody is trimmed before the window fills."""
     kings = [_king(uid=i, score=0.1 * i, prev=0.1 * (i - 1)) for i in range(1, 4)]
     assert active_window(kings) == kings
 
 
 def test_active_window_exactly_window_returns_all():
+    """A lineage sitting on the boundary loses none of its entries."""
     kings = [_king(uid=i, score=0.1 * i, prev=0.1 * (i - 1)) for i in range(1, WINDOW_SIZE + 1)]
     assert active_window(kings) == kings
 
@@ -205,20 +213,24 @@ def test_active_window_larger_than_window_takes_tail():
 
 
 def test_active_window_zero_or_negative_returns_empty():
+    """A non-positive window selects nobody instead of slicing from the wrong end."""
     kings = [_king(uid=1, score=0.5, prev=0.0)]
     assert active_window(kings, window=0) == []
     assert active_window(kings, window=-1) == []
 
 
 def test_headroom_eps_is_a_module_constant():
+    """The headroom floor is pinned at 0.01, the value the backend mirrors."""
     assert HEADROOM_EPS == 0.01
 
 
 def test_window_size_is_a_module_constant():
+    """Five kings share the emissions, and that number lives in one place."""
     assert WINDOW_SIZE == 5
 
 
 def test_rank_weight_tapers_by_window_position():
+    """Every seat holds 0.7 of the one above it, and the sixth holds nothing."""
     assert rank_weight(0) == 1.0
     assert math.isclose(rank_weight(1), 0.7, abs_tol=1e-12)
     assert math.isclose(rank_weight(4), 0.7 ** 4, abs_tol=1e-12)
@@ -227,6 +239,7 @@ def test_rank_weight_tapers_by_window_position():
 
 
 def test_canonical_log_headroom_rank_taper_example():
+    """The worked two-king case from the spec: 0.399 to the older seat, 0.601 to the crown."""
     older = _king(uid=1, score=0.5, prev=0.0, epoch=1, lineage_id=1)
     newest = _king(uid=2, score=0.8, prev=0.5, epoch=2, lineage_id=2)
     weights = compute_weights([older, newest])
@@ -239,6 +252,7 @@ def test_canonical_log_headroom_rank_taper_example():
 
 
 def test_rank_decay_shifts_share_to_the_champion():
+    """The ladder pays the reigning king more than a pure gain split would."""
     older = _king(uid=1, score=0.5, prev=0.0, epoch=1, lineage_id=1)
     newest = _king(uid=2, score=0.8, prev=0.5, epoch=2, lineage_id=2)
     tapered = compute_weights([older, newest])
@@ -249,6 +263,7 @@ def test_rank_decay_shifts_share_to_the_champion():
 
 
 def test_newer_king_outearns_equal_older_one():
+    """Two identical jumps do not tie: the later crowning takes the higher seat."""
     older = _king(uid=1, score=0.5, prev=0.0, epoch=1, lineage_id=1)
     newest = _king(uid=2, score=0.5, prev=0.0, epoch=2, lineage_id=2)
     weights = compute_weights([older, newest])
@@ -256,6 +271,7 @@ def test_newer_king_outearns_equal_older_one():
 
 
 def test_oldest_king_in_full_window_still_earns():
+    """The bottom seat is taxed, not zeroed, and the shares keep summing to 1.0."""
     kings = [
         _king(uid=1, score=0.20, prev=0.00, epoch=1, lineage_id=1),
         _king(uid=2, score=0.35, prev=0.20, epoch=2, lineage_id=2),
@@ -269,6 +285,7 @@ def test_oldest_king_in_full_window_still_earns():
 
 
 def test_formula_is_independent_of_input_order():
+    """Seats come from the crowning epoch, so reversing the rows changes no share."""
     oldest_to_newest = [
         _king(uid=1, score=0.5, prev=0.0, epoch=10, lineage_id=100),
         _king(uid=2, score=0.8, prev=0.5, epoch=20, lineage_id=200),
@@ -333,6 +350,7 @@ def test_headroom_gain_rejects_non_positive_eps():
 
 
 def test_from_sync_dict_full_payload():
+    """A complete backend sync row maps field for field onto the entry."""
     entry = KingEntry.from_sync_dict(
         {
             "lineage_id": 42,
@@ -356,6 +374,7 @@ def test_from_sync_dict_full_payload():
 
 
 def test_from_sync_dict_optional_fields_default():
+    """A row with no lineage id and no drop flag lands as None and False."""
     entry = KingEntry.from_sync_dict(
         {
             "uid": 1,
@@ -370,6 +389,7 @@ def test_from_sync_dict_optional_fields_default():
 
 
 def test_from_sync_dict_raises_on_missing_prev_score():
+    """An absent baseline is rejected, never quietly defaulted to 0 and paid as a first crowning."""
     with pytest.raises(MalformedKingEntry):
         KingEntry.from_sync_dict(
             {
@@ -382,6 +402,7 @@ def test_from_sync_dict_raises_on_missing_prev_score():
 
 
 def test_from_sync_dict_raises_on_non_numeric_score():
+    """A value that will not parse as a float fails at the boundary, not inside the formula."""
     with pytest.raises(MalformedKingEntry):
         KingEntry.from_sync_dict(
             {
@@ -395,6 +416,7 @@ def test_from_sync_dict_raises_on_non_numeric_score():
 
 
 def test_from_sync_dict_raises_on_bad_lineage_id():
+    """A lineage id that is not an integer fails the row rather than degrading to None and shuffling the seats."""
     with pytest.raises(MalformedKingEntry):
         KingEntry.from_sync_dict(
             {
@@ -409,6 +431,7 @@ def test_from_sync_dict_raises_on_bad_lineage_id():
 
 
 def test_from_sync_dict_raises_on_empty_hotkey():
+    """A blank owner string is refused: a king with no wallet cannot be paid."""
     with pytest.raises(MalformedKingEntry):
         KingEntry.from_sync_dict(
             {
@@ -422,10 +445,12 @@ def test_from_sync_dict_raises_on_empty_hotkey():
 
 
 def test_malformed_king_entry_subclasses_value_error():
+    """Callers already catching ValueError keep catching a bad sync payload."""
     assert issubclass(MalformedKingEntry, ValueError)
 
 
 def test_from_sync_dict_uid_zero_is_preserved():
+    """UID 0 survives parsing and weighting; filtering the burn slot is the combine step's job."""
     entry = KingEntry.from_sync_dict(
         {
             "uid": 0,

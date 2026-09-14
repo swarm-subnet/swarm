@@ -15,12 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The MapTask wire format carries the search centre and falls back to the origin when unset."""
 from __future__ import annotations
 
 from swarm.protocol import MapTask
 
 
 def _base(**over):
+    """Return the minimum MapTask keyword arguments, with any overrides folded in."""
     base = dict(
         map_seed=1,
         start=(0.0, 0.0, 1.0),
@@ -34,6 +36,7 @@ def _base(**over):
 
 
 def test_round_trip():
+    """A search centre packed and unpacked comes back unchanged, alongside the seed and the goal."""
     task = MapTask(**_base(search_centre=(7.5, -3.25)))
     blob = task.pack()
     back = MapTask.unpack(blob)
@@ -43,6 +46,7 @@ def test_round_trip():
 
 
 def test_default_zero():
+    """A task that never set a search centre reads as the origin, on the object and over the wire."""
     task = MapTask(**_base())
     assert task.search_centre == (0.0, 0.0)
     back = MapTask.unpack(task.pack())

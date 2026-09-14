@@ -27,6 +27,7 @@ from swarm.protocol import FailureReason, ValidationResult
 
 
 def test_pack_widens_to_five_tuple():
+    """The packed tuple carries a fifth slot holding the failure reason as a string."""
     vr = ValidationResult(
         uid=3, success=False, time_sec=11.2, score=0.01,
         failure_reason=FailureReason.SPAWN_FAILURE.value,
@@ -37,6 +38,7 @@ def test_pack_widens_to_five_tuple():
 
 
 def test_unpack_roundtrip_preserves_reason():
+    """INFEASIBLE survives the queue trip back to the parent with the uid intact."""
     vr = ValidationResult(
         uid=4, success=False, time_sec=8.7, score=0.01,
         failure_reason=FailureReason.INFEASIBLE.value,
@@ -47,6 +49,7 @@ def test_unpack_roundtrip_preserves_reason():
 
 
 def test_unpack_backward_compatible_4_tuple():
+    """A legacy 4-tuple from an older worker still rebuilds, defaulting the reason to NONE."""
     legacy = (5, True, 12.5, 0.85)
     back = _unpack_validation_result(legacy)
     assert back.uid == 5

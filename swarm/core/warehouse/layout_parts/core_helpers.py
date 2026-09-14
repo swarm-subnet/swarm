@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Placement primitives the warehouse area layout uses to seat zones against walls and around what is already down."""
 from bisect import bisect_right
 from types import SimpleNamespace
 
@@ -48,7 +49,9 @@ def make_core_layout_helpers(
     opposite_personnel_side,
     rng,
 ):
+    """Build the zone-placement closures bound to one warehouse area, its walls and its rng."""
     def _scaled_dims_for_zone(name, base_sx, base_sy, shrink):
+        """Zone footprint after shrinking, keeping the short side fixed for the major zones."""
         sx0 = float(base_sx)
         sy0 = float(base_sy)
         k = max(0.01, float(shrink))
@@ -63,6 +66,7 @@ def make_core_layout_helpers(
         return long_try, fixed_short
 
     def _candidate_attached_wall(candidate):
+        """The wall a candidate is pressed against, worked out once and cached on it."""
         cached = candidate.get("_attached_wall")
         if cached is not None:
             return cached
@@ -80,6 +84,7 @@ def make_core_layout_helpers(
         *,
         fits_attach_span=None,
     ):
+        """The placement dict for a zone centred at (cx, cy), with its bounds precomputed."""
         sx_f = float(sx)
         sy_f = float(sy)
         cx_f = float(cx)
@@ -100,6 +105,7 @@ def make_core_layout_helpers(
         return cand
 
     def _is_far_from_personnel_door_on_same_wall(candidate):
+        """True unless the candidate shares the personnel door's wall and sits inside its keep-clear span."""
         if personnel_side not in WALL_SLOTS:
             return True
         attached_wall = _candidate_attached_wall(candidate)
@@ -117,6 +123,7 @@ def make_core_layout_helpers(
         return abs(cand_along - personnel_along) >= (min_center_distance - 1e-6)
 
     def _opposite_wall_end_targets(wall, sx, sy):
+        """Lowest and highest centre a zone of this size can take along the wall, None if it cannot fit."""
         lo, hi = _wall_along_limits(
             wall, float(sx), float(sy),
             attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
@@ -126,6 +133,7 @@ def make_core_layout_helpers(
         return float(lo), float(hi)
 
     def _is_at_wall_end(candidate, end_tol_factor=0.16):
+        """True when the candidate sits within tolerance of either extreme of its run."""
         attached_wall = _candidate_attached_wall(candidate)
         if attached_wall not in WALL_SLOTS:
             return False
@@ -147,6 +155,7 @@ def make_core_layout_helpers(
         return abs(along_val - lo) <= tol or abs(along_val - hi) <= tol
 
     def _wall_forbidden_along_intervals(wall, sx, sy, gap, lo, hi):
+        """Merged spans a zone of this size may not occupy, clipped to [lo, hi], with their starts for bisect."""
         intervals = []
 
         test_cx, test_cy = _wall_attached_center(
@@ -203,6 +212,7 @@ def make_core_layout_helpers(
         return merged, starts
 
     def _can_place_static(candidate, gap):
+        """True when the candidate fits its wall span and keeps gap from every rect already down."""
         if not bool(candidate.get("_fits_attach_span", True)):
             return False
         cand_bounds = candidate.get("_rect_bounds")
@@ -229,6 +239,7 @@ def make_core_layout_helpers(
         return True
 
     def _can_place(candidate, gap):
+        """The rect test plus the personnel-door clearance rule."""
         if not _can_place_static(candidate, gap):
             return False
         if not _is_far_from_personnel_door_on_same_wall(candidate):
@@ -248,6 +259,7 @@ def make_core_layout_helpers(
         validator=None,
         deterministic_first=True,
     ):
+        """First position along the wall that clears everything: the preferred offset, then the fixed and random offsets in the order deterministic_first sets."""
         if wall not in WALL_SLOTS:
             return None
         sx = float(sx)
@@ -265,12 +277,14 @@ def make_core_layout_helpers(
         forbidden, forbidden_starts = _wall_forbidden_along_intervals(wall, sx, sy, gap, lo, hi)
 
         def _is_forbidden_along(along):
+            """True when the value falls strictly inside one of the merged blocked spans."""
             if not forbidden_starts:
                 return False
             j = bisect_right(forbidden_starts, along) - 1
             return j >= 0 and forbidden[j][0] < along < forbidden[j][1]
 
         def _candidate_for_along(along):
+            """The wall-attached candidate at this offset, or None when it is rejected."""
             cx, cy = _wall_attached_center(
                 wall, along, sx, sy, attach_half_x, attach_half_y, AREA_LAYOUT_EDGE_MARGIN,
             )
@@ -288,6 +302,7 @@ def make_core_layout_helpers(
         seen = set()
 
         def _push_along(value):
+            """Clamp a value into [lo, hi] and queue it for trial, skipping duplicates."""
             if value is None:
                 return
             along = max(float(lo), min(float(hi), float(value)))
@@ -321,6 +336,7 @@ def make_core_layout_helpers(
     def _place_anywhere(
         name, sx, sy, color, tries=1200, gap=AREA_LAYOUT_MIN_GAP, validator=None
     ):
+        """First randomly sampled centre that satisfies the validator and clears everything already down."""
         for _ in range(int(tries)):
             cx, cy = _sample_random_center(
                 rng, float(sx), float(sy), attach_half_x, attach_half_y,
@@ -342,6 +358,7 @@ def make_core_layout_helpers(
         along_pref=None,
         validator=None,
     ):
+        """Try the preferred walls then open floor, shrinking the zone step by step until something fits."""
         preferred_walls = tuple(preferred_walls or ())
         preferred_alongs = ()
         if along_pref is None:

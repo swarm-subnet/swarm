@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Base class every challenge family runtime subclasses, plus the helpers that lay out its seed templates."""
+
 from __future__ import annotations
 
 import inspect
@@ -31,6 +33,7 @@ from swarm.domain_model import (
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
+    """Return True when the callable accepts that parameter, and True as well when its signature cannot be read."""
     try:
         signature = inspect.signature(callable_obj)
     except (TypeError, ValueError):
@@ -47,6 +50,7 @@ def banded_pool(
     moving_prob: float,
     goal_height_range: Optional[tuple[float, float]] = None,
 ) -> list[dict[str, Any]]:
+    """Lay out n_slots entries cycling through n_bands equal-width distance bands, the leading moving_prob share on moving platforms."""
     lo, hi = distance
     width = (hi - lo) / n_bands
     n_moving = round(n_slots * moving_prob)
@@ -63,6 +67,7 @@ def banded_pool(
 
 
 def interleave(pools: list[list[dict[str, Any]]], expected: int) -> tuple[dict[str, Any], ...]:
+    """Round-robin the pools into a single slot tuple, raising RuntimeError when the total is not the expected count."""
     slots: list[dict[str, Any]] = []
     for i in range(max(len(p) for p in pools)):
         for pool in pools:
@@ -85,6 +90,7 @@ def without_challenge_type(
 
 
 def with_drone_counts(slots: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    """Copy each slot with an n_drones value cycling from SWARM_MIN_DRONES up to SWARM_MAX_DRONES."""
     span = SWARM_MAX_DRONES - SWARM_MIN_DRONES + 1
     return tuple(dict(slot, n_drones=SWARM_MIN_DRONES + (i % span)) for i, slot in enumerate(slots))
 
@@ -95,6 +101,8 @@ class ChallengeFamilyRuntimeError(ValueError):
 
 @dataclass(frozen=True)
 class ChallengeFamilyEvaluation:
+    """One scored rollout: the outcome flag, the final score, the failure reason and both metric dicts."""
+
     family_id: str
     success: bool
     score: float
@@ -105,6 +113,8 @@ class ChallengeFamilyEvaluation:
 
 @dataclass(frozen=True)
 class ChallengeFamilyRuntimeProfile:
+    """The container image, worker environment and RPC timeout budget a family needs to fly one evaluation."""
+
     family_id: str
     profile_name: str = "default"
     resource_class: str = "standard"
@@ -123,10 +133,12 @@ class ChallengeFamilyRuntimeProfile:
     batch_timeout_multiplier: float = 1.0
 
     def as_dict(self) -> Dict[str, Any]:
+        """Flatten the profile into a plain mapping, the form sent across a process or RPC boundary."""
         return asdict(self)
 
     @classmethod
     def from_mapping(cls, payload: Dict[str, Any]) -> "ChallengeFamilyRuntimeProfile":
+        """Rebuild a profile from such a mapping, coercing each field and reading an empty string as unset."""
         return cls(
             family_id=str(payload.get("family_id", "")),
             profile_name=str(payload.get("profile_name", "default")),
@@ -170,6 +182,8 @@ class ChallengeFamilyRuntimeProfile:
 
 
 class ChallengeFamilyRuntime:
+    """Hooks the environment and the evaluator call per family: world spawning, episode state, termination and scoring."""
+
     family_id: str
     runtime_supported: bool = True
     # Opt in to the seeded daylight sun (swarm.core.daylight); off keeps today's light.
@@ -178,12 +192,15 @@ class ChallengeFamilyRuntime:
     render_backend: str = "tiny"
 
     def screening_policy(self) -> Dict[str, Any]:
+        """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
         return get_family_screening_policy(self.family_id)
 
     def benchmark_admission_policy(self) -> Dict[str, Any]:
+        """Registry rules that decide whether a screened model earns a place in the full benchmark run."""
         return get_family_benchmark_admission_policy(self.family_id)
 
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
+        """Default container settings: the standard resource class, the base image, and the family id stamped into the worker env."""
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
             profile_name=self.family_id,
@@ -199,6 +216,7 @@ class ChallengeFamilyRuntime:
         )
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
+        """Extra constructor arguments the environment needs for this family, empty where no special mode applies."""
         _ = task
         return {}
 
@@ -209,10 +227,12 @@ class ChallengeFamilyRuntime:
         return None
 
     def observation_interface_version(self, task: Any) -> str:
+        """First entry in the registry's supported version list, the contract a policy is held to by default."""
         _ = task
         return get_supported_interface_versions(self.family_id)[0]
 
     def observation_assembly(self, task: Any) -> dict[str, Any]:
+        """Channel layout from the registry contract: which sensors are stacked, in what order, for the policy input."""
         contract = get_policy_interface_contract(
             self.family_id,
             self.observation_interface_version(task),
@@ -220,19 +240,24 @@ class ChallengeFamilyRuntime:
         return contract["observation_assembly"]
 
     def state_clue_dim(self, task: Any) -> int:
+        """How many trailing floats of the state vector carry the goal or search clue, three for a plain flight."""
         _ = task
         return 3
 
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
+        """Attach the family's own attributes to a freshly constructed env; a plain flight needs none."""
         _ = env, requested_mode
 
     def reset_env_state(self, env: Any) -> None:
+        """Clear the family's per-episode attributes on reset, before the world is spawned again."""
         _ = env
 
     def spawn_task_world(self, env: Any) -> None:
+        """Build this family's world on reset: the map itself, then its own bodies. Nothing by default."""
         _ = env
 
     def post_step_update(self, env: Any) -> None:
+        """Refresh family-owned bookkeeping after the control step's physics has run, such as dwell timers."""
         _ = env
 
     def advance_world(self, env: Any) -> None:
@@ -247,14 +272,17 @@ class ChallengeFamilyRuntime:
         _ = env
 
     def protected_body_uids(self, env: Any) -> set[int]:
+        """PyBullet uids excluded from the fatal-collision check, the obstacle cull and the clearance metric."""
         _ = env
         return set()
 
     def safety_patch(self, env: Any) -> Any | None:
+        """A region on one support body whose contacts the clearance metric ignores, or None when the family declares none."""
         _ = env
         return None
 
     def compute_terminated(self, env: Any) -> bool:
+        """Family-specific end of episode on top of the shared success and collision checks; never fires by default."""
         _ = env
         return False
 
@@ -266,6 +294,7 @@ class ChallengeFamilyRuntime:
         roll: float,
         pitch: float,
     ) -> bool:
+        """Cut the episode short once roll or pitch exceeds MAX_TILT_RAD, or the flight reaches EP_LEN_SEC."""
         _ = terminal_already
         if abs(float(roll)) > float(env.MAX_TILT_RAD):
             return True
@@ -274,16 +303,20 @@ class ChallengeFamilyRuntime:
         return bool(env._time_alive >= env.EP_LEN_SEC)
 
     def build_info(self, env: Any) -> dict[str, Any]:
+        """Extra fields merged into the env's per-step info dict, empty where the family logs nothing of its own."""
         _ = env
         return {}
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
+        """Per-slot settings the screening seeds are cut from, empty until a family supplies its own."""
         return ()
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        """Per-slot settings the benchmark seeds are cut from, empty where every seed is drawn at random instead."""
         return ()
 
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
+        """Draw one freely sampled task for the given seed; unimplemented here, every family defines it."""
         raise NotImplementedError
 
     def _build_template_tasks(
@@ -295,6 +328,7 @@ class ChallengeFamilyRuntime:
         offset: int,
         total_seed_count: Optional[int],
     ) -> list[Any]:
+        """Repeat the template to cover total_seed_count, take the window starting at offset, and emit one task per seed."""
         from swarm.validator import task_gen as legacy_task_gen
 
         template = list(template)
@@ -335,6 +369,7 @@ class ChallengeFamilyRuntime:
         offset: int = 0,
         total_seed_count: Optional[int] = None,
     ) -> list[Any]:
+        """Cut the screening seeds from the family template, raising NotImplementedError when it declares none."""
         template = self.screening_template()
         if not template:
             raise NotImplementedError
@@ -373,6 +408,7 @@ class ChallengeFamilyRuntime:
         collision: bool,
         failure_reason: str,
     ) -> ChallengeFamilyEvaluation:
+        """Score a finished flight: collect the raw metrics, normalize them, and package final_score with both dicts."""
         metrics = self.build_rollout_metrics(
             task=task,
             success=success,
@@ -404,6 +440,7 @@ class ChallengeFamilyRuntime:
         collision: bool,
         failure_reason: str,
     ) -> Dict[str, Any]:
+        """Raw measurements the family records for one flight, before any weighting; unimplemented here."""
         raise NotImplementedError
 
     def normalize_rollout_metrics(
@@ -412,6 +449,7 @@ class ChallengeFamilyRuntime:
         task: Any,
         metrics: Dict[str, Any],
     ) -> Dict[str, float]:
+        """Turn raw measurements into the family's weighted terms and the final_score they sum to; unimplemented here."""
         raise NotImplementedError
 
     def compute_training_reward(
@@ -421,5 +459,6 @@ class ChallengeFamilyRuntime:
         evaluation: ChallengeFamilyEvaluation,
         previous_score: float,
     ) -> float:
+        """Per-step reward as the gain in score since the last step, so a flat episode pays nothing."""
         _ = env
         return float(evaluation.score - previous_score)

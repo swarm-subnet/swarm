@@ -27,15 +27,19 @@ from swarm.validator.backend_api import BackendApiClient
 
 
 class FakeWallet:
+    """A wallet stand-in carrying only what request signing reads off it."""
     class hotkey:
+        """The hotkey namespace: a fixed ss58 address and a signature that costs nothing."""
         ss58_address = "5FakeHotkey"
         @staticmethod
         def sign(msg):
+            """Return 64 zero bytes in place of a real signature."""
             return b"\x00" * 64
 
 
 @pytest.fixture
 def client():
+    """A BackendApiClient wired for offline use: fake wallet, mocked transport, empty runtime state."""
     c = BackendApiClient.__new__(BackendApiClient)
     c.base_url = "http://fake"
     c.timeout = 1.0
@@ -47,9 +51,11 @@ def client():
 
 @patch("asyncio.sleep", return_value=None)
 def test_retry_succeeds_on_second_attempt(mock_sleep, client):
+    """A batch the backend does not confirm is posted again, and the second reply is what the caller gets."""
     call_count = 0
 
     async def mock_post(endpoint, data):
+        """Fail the first post with an error payload, then confirm five recorded scores."""
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -71,7 +77,9 @@ def test_retry_succeeds_on_second_attempt(mock_sleep, client):
 
 @patch("asyncio.sleep", return_value=None)
 def test_retry_exhausted_returns_error(mock_sleep, client):
+    """Once the attempt budget is spent the caller receives the backend's last rejection, not a success."""
     async def mock_post(endpoint, data):
+        """Refuse every post with a connection failure so no attempt ever records."""
         return {"error": "connection refused"}
 
     client._post_signed = mock_post
@@ -89,9 +97,11 @@ def test_retry_exhausted_returns_error(mock_sleep, client):
 
 @patch("asyncio.sleep", return_value=None)
 def test_retry_on_detail_key(mock_sleep, client):
+    """A rejection carried under `detail` rather than `error` is still treated as unrecorded and resent."""
     call_count = 0
 
     async def mock_post(endpoint, data):
+        """Reject the first post with a `detail` message, then confirm one recorded score."""
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -112,9 +122,11 @@ def test_retry_on_detail_key(mock_sleep, client):
 
 
 def test_task_id_included_in_payload(client):
+    """A task_id given to the upload reaches the body the backend is sent, so rows land against that task."""
     captured: list[dict] = []
 
     async def mock_post(endpoint, data):
+        """Keep the posted body for inspection and answer with one recorded score."""
         captured.append(data)
         return {"recorded": 1, "message": "ok"}
 
@@ -132,9 +144,11 @@ def test_task_id_included_in_payload(client):
 
 
 def test_task_id_omitted_when_not_provided(client):
+    """Leaving the task_id out sends no such key at all, never a null the backend would have to reject."""
     captured: list[dict] = []
 
     async def mock_post(endpoint, data):
+        """Keep the posted body for inspection and answer with one recorded score."""
         captured.append(data)
         return {"recorded": 1, "message": "ok"}
 
@@ -151,9 +165,11 @@ def test_task_id_omitted_when_not_provided(client):
 
 
 def test_family_id_included_in_seed_score_payload(client):
+    """The batch names its family, and a score giving only map_type gets the matching metric_key filled in."""
     captured: list[dict] = []
 
     async def mock_post(endpoint, data):
+        """Keep the posted body for inspection and answer with one recorded score."""
         captured.append(data)
         return {"recorded": 1, "message": "ok"}
 
@@ -173,9 +189,11 @@ def test_family_id_included_in_seed_score_payload(client):
 
 
 def test_no_retry_on_success(client):
+    """A batch the backend confirms first time is sent exactly once, so scores are never written twice."""
     call_count = 0
 
     async def mock_post(endpoint, data):
+        """Count the posts and confirm one recorded score every time."""
         nonlocal call_count
         call_count += 1
         return {"recorded": 1, "message": "ok"}
@@ -194,13 +212,16 @@ def test_no_retry_on_success(client):
 
 
 def test_evaluate_seeds_failed_result_gets_real_map_type():
+    """A seed with no result of its own still reports the map name its task was built for, never 'unknown'."""
     challenge_type_to_name = {
         1: "city", 2: "open", 3: "mountain",
         4: "village", 5: "warehouse", 6: "forest",
     }
 
     class FakeTask:
+        """A task cut down to the one attribute the map-name lookup reads."""
         def __init__(self, ct):
+            """Store the challenge type this stand-in reports."""
             self.challenge_type = ct
     tasks = [FakeTask(1), FakeTask(3), FakeTask(5)]
     results = [MagicMock(score=0.8)]

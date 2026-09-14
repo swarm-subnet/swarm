@@ -21,6 +21,7 @@ from swarm.core.forest_generator import build_forest
 
 
 def build_forest_map(cli, seed, safe_zones, safe_zone_radius):
+    """Build the forest for a seed with hill terrain switched on, which build_forest leaves off by default."""
     return build_forest(
         cli,
         seed,

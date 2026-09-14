@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The benchmark engine must read its group tables from the domain model registry, never keep a second copy."""
 from swarm.benchmark.engine_parts import dispatch, seeds
 from swarm.domain_model import (
     BENCHMARK_GROUP_ORDER,
@@ -23,6 +24,7 @@ from swarm.domain_model import (
 
 
 def test_seed_group_inference_uses_domain_model_mappings():
+    """Every challenge type resolves to the group the registry declares, so the engine holds no private table."""
     observed = {
         challenge_type: seeds._infer_bench_group(challenge_type, 123456)
         for challenge_type in CHALLENGE_TYPE_TO_BENCHMARK_GROUP
@@ -32,4 +34,5 @@ def test_seed_group_inference_uses_domain_model_mappings():
 
 
 def test_dispatch_ram_estimates_cover_all_benchmark_groups():
+    """A new map group cannot ship without its own memory prior, and a retired one cannot linger in the table."""
     assert set(dispatch._GROUP_RAM_ESTIMATES_MB) == set(BENCHMARK_GROUP_ORDER)

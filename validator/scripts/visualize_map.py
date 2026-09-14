@@ -65,6 +65,7 @@ _FOLLOW_CAMERA_FOV = 45.0
 
 @dataclass(frozen=True)
 class _MapVisualProfile:
+    """The render scale, draw distance and frame rates one map type is shown at."""
     render_scale: float
     render_distance: float
     render_fps: float
@@ -73,12 +74,14 @@ class _MapVisualProfile:
 
 @dataclass(frozen=True)
 class _RenderBackend:
+    """Which Bullet renderer draws the frames, plus the EGL plugin handle to unload at exit."""
     label: str
     renderer_id: int
     plugin_id: int | None = None
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """The viewer's command line: which map to open, and the flight and render settings."""
     parser = argparse.ArgumentParser(
         description="Open a Swarm map in a live render window and manually fly the drone.",
     )
@@ -171,12 +174,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _ensure_local_ansible_temp() -> None:
+    """Point ANSIBLE_LOCAL_TEMP at a folder that exists, creating /tmp/swarm_ansible by default."""
     ansible_tmp = Path(os.environ.get("ANSIBLE_LOCAL_TEMP", "/tmp/swarm_ansible"))
     ansible_tmp.mkdir(parents=True, exist_ok=True)
     os.environ["ANSIBLE_LOCAL_TEMP"] = str(ansible_tmp)
 
 
 def _default_gpu_adapter_name() -> str | None:
+    """NVIDIA when nvidia-smi is on a Linux PATH and nothing was pinned already, otherwise None."""
     if os.environ.get("MESA_D3D12_DEFAULT_ADAPTER_NAME"):
         return None
     if sys.platform.startswith("linux") and shutil.which("nvidia-smi"):
@@ -185,6 +190,7 @@ def _default_gpu_adapter_name() -> str | None:
 
 
 def _prepare_gpu_env(enabled: bool) -> str | None:
+    """Pin the Mesa adapter variable when hardware rendering was asked for, and return what is in force."""
     if not enabled:
         return None
     adapter_name = _default_gpu_adapter_name()
@@ -194,6 +200,7 @@ def _prepare_gpu_env(enabled: bool) -> str | None:
 
 
 def _sync_observation_space(env, obs) -> None:
+    """Widen the env's state Box to the width the first reset actually handed back."""
     if obs is None or "state" not in obs:
         return
     actual_state_dim = obs["state"].shape[0]
@@ -216,6 +223,7 @@ def _sync_observation_space(env, obs) -> None:
 def _motion_from_pressed_keys(
     pressed: Iterable[str], speed: float, boost: float
 ) -> Tuple[np.ndarray, float]:
+    """Body-frame velocity in metres per second and a yaw rate, from the keys currently held."""
     pressed_set = set(pressed)
     translation = np.zeros(3, dtype=np.float32)
     yaw = 0.0
@@ -244,6 +252,7 @@ def _motion_from_pressed_keys(
 
 
 def _normalise_keysym(keysym: str) -> str:
+    """Lowercase a Tk key symbol, folding the two shift keys onto a single name."""
     lowered = (keysym or "").lower()
     if lowered in {"shift_l", "shift_r"}:
         return "shift"
@@ -255,12 +264,14 @@ def _normalise_keysym(keysym: str) -> str:
 
 
 def _compute_render_size(width: int, height: int, scale: float) -> Tuple[int, int]:
+    """The off-screen buffer for a window at the given scale, floored at 320 by 180."""
     render_w = max(320, int(round(width * scale)))
     render_h = max(180, int(round(height * scale)))
     return render_w, render_h
 
 
 def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
+    """The stock render settings for a map type; the office draws closer and sharper than the rest."""
     profiles = {
         1: _MapVisualProfile(
             render_scale=0.65,
@@ -311,6 +322,7 @@ def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
 
 
 def _resolve_visual_profile(args) -> _MapVisualProfile:
+    """The map type's stock settings, with any flag the caller passed overriding its field."""
     defaults = _default_visual_profile(int(args.type))
     return _MapVisualProfile(
         render_scale=float(args.render_scale)
@@ -329,6 +341,7 @@ def _resolve_visual_profile(args) -> _MapVisualProfile:
 def _choose_random_seed(
     challenge_type: int, family_id: str = "cf_autopilot", max_attempts: int = 128
 ) -> int:
+    """Draw seeds until one builds a valid task for the map type, giving up after max_attempts."""
     from validator.scripts.generate_video import build_task
 
     rng = random.SystemRandom()
@@ -350,12 +363,14 @@ def _choose_random_seed(
 def _resolve_seed(
     seed: int | None, challenge_type: int, family_id: str = "cf_autopilot"
 ) -> int:
+    """The seed as given, or a freshly drawn one that is known to build a map."""
     if seed is not None:
         return int(seed)
     return _choose_random_seed(int(challenge_type), family_id=family_id)
 
 
 def _get_drone_pose(env, pybullet_module) -> Tuple[np.ndarray, float]:
+    """The drone body's world position and heading, read straight out of Bullet."""
     drone_id = int(env.DRONE_IDS[0])
     pos, quat = pybullet_module.getBasePositionAndOrientation(
         drone_id, physicsClientId=env.getPyBulletClient()
@@ -365,6 +380,7 @@ def _get_drone_pose(env, pybullet_module) -> Tuple[np.ndarray, float]:
 
 
 def _set_drone_pose(env, pybullet_module, position: np.ndarray, yaw: float) -> None:
+    """Teleport the drone body to a position and heading, and zero both of its velocities."""
     drone_id = int(env.DRONE_IDS[0])
     quat = pybullet_module.getQuaternionFromEuler([0.0, 0.0, yaw])
     pybullet_module.resetBasePositionAndOrientation(
@@ -388,6 +404,7 @@ def _advance_free_fly(
     yaw_input: float,
     dt: float,
 ) -> None:
+    """Move the drone one frame of manual flight, reading the pose from Bullet and writing it back."""
     position, yaw = _get_drone_pose(env, pybullet_module)
     next_position, next_yaw = _advance_free_fly_pose(
         position, yaw, translation, yaw_input, dt
@@ -402,6 +419,7 @@ def _advance_free_fly_pose(
     yaw_input: float,
     dt: float,
 ) -> Tuple[np.ndarray, float]:
+    """Integrate one frame of manual flight in body axes, never letting the drone below 0.15 m."""
     yaw += yaw_input * 1.8 * dt
     cos_yaw = float(np.cos(yaw))
     sin_yaw = float(np.sin(yaw))
@@ -423,6 +441,7 @@ def _advance_free_fly_pose(
 def _camera_eye_and_target(
     env, pybullet_module, mode: str
 ) -> Tuple[list[float], list[float]]:
+    """Eye and look-at points for the chosen mode: a chase rig on the drone, or a fixed diagonal offset that still follows it."""
     position, yaw = _get_drone_pose(env, pybullet_module)
     cos_yaw = float(np.cos(yaw))
     sin_yaw = float(np.sin(yaw))
@@ -447,6 +466,7 @@ def _render_frame(
     render_distance: float,
     backend: _RenderBackend,
 ) -> np.ndarray:
+    """One RGB image from the viewer camera, with shadows off and the segmentation mask skipped."""
     cli = env.getPyBulletClient()
     eye, target = _camera_eye_and_target(env, pybullet_module, mode)
     view = pybullet_module.computeViewMatrix(
@@ -483,6 +503,11 @@ def _apply_visualizer_cull(
     visual_radius: float,
     physics_radius: float,
 ) -> None:
+    """Hide distant bodies and take them out of collision, putting both back as the drone returns.
+
+    Visibility is dropped past the first radius and collision past the second, both measured
+    from the body surface in the ground plane.
+    """
     if not hasattr(env, "_cull_targets"):
         return
 
@@ -524,6 +549,7 @@ def _apply_visualizer_cull(
 
 
 def _capture_pose_snapshot(env, pybullet_module) -> Tuple[float, float, float, float]:
+    """The drone pose flattened to (x, y, z, yaw) so two frames can be compared cheaply."""
     position, yaw = _get_drone_pose(env, pybullet_module)
     return float(position[0]), float(position[1]), float(position[2]), float(yaw)
 
@@ -534,6 +560,7 @@ def _pose_changed(
     position_epsilon: float = 0.04,
     yaw_epsilon: float = 0.04,
 ) -> bool:
+    """True when the drone has moved or turned past the epsilons, or there was nothing to compare."""
     if previous is None:
         return True
 
@@ -557,6 +584,10 @@ def _should_render_frame(
     idle_fps: float,
     force: bool = False,
 ) -> bool:
+    """Gate a redraw on the target rate while the drone moves and the idle rate while it is parked.
+
+    Always true when there is no cached frame to put on screen.
+    """
     if force or not has_frame or last_render_at is None:
         return True
 
@@ -567,16 +598,19 @@ def _should_render_frame(
 
 
 def _resolve_idle_render_fps(render_fps: float, backend: _RenderBackend) -> float:
+    """The standing-still frame rate: unchanged on EGL, 1 to 2 per second on the CPU renderer."""
     if backend.label == "gpu-egl":
         return float(render_fps)
     return max(1.0, min(2.0, float(render_fps) / 3.0))
 
 
 def _task_requires_live_simulation(task) -> bool:
+    """True only for a task with a moving platform, the one thing that keeps changing on its own."""
     return bool(getattr(task, "moving_platform", False))
 
 
 def _effective_sim_fps(task, profile: _MapVisualProfile) -> float:
+    """The profile's physics rate when something in the map moves, 0 for a map that never changes."""
     if not _task_requires_live_simulation(task):
         return 0.0
     return max(1.0, float(profile.sim_fps))
@@ -588,6 +622,7 @@ def _should_step_world(
     sim_fps: float,
     force: bool = False,
 ) -> bool:
+    """Gate the next physics step on the simulation rate; never true when that rate is zero."""
     if sim_fps <= 0.0:
         return False
     if force or last_step_at is None:
@@ -596,6 +631,7 @@ def _should_step_world(
 
 
 def _print_controls(type_label: str, seed: int) -> None:
+    """Print the opening banner: which map, which seed, and the key bindings for flying it."""
     print("=" * 72)
     print(" Swarm Map Visualizer")
     print("=" * 72)
@@ -613,7 +649,9 @@ def _print_controls(type_label: str, seed: int) -> None:
 
 
 class _FpsTracker:
+    """Counts drawn frames and hands back a rate line once per reporting window."""
     def __init__(self, report_every_sec: float = 1.0) -> None:
+        """Open the counting window; report_every_sec is how often a line is produced."""
         self._report_every_sec = float(report_every_sec)
         self._window_start = time.perf_counter()
         self._last_report = self._window_start
@@ -621,6 +659,7 @@ class _FpsTracker:
         self.last_fps = 0.0
 
     def tick(self) -> str | None:
+        """Count one frame and return the rate line when the window has elapsed, else None."""
         self._frames += 1
         now = time.perf_counter()
         elapsed = now - self._last_report
@@ -635,7 +674,9 @@ class _FpsTracker:
 
 
 class _PygameViewer:
+    """The pygame window: blits rendered frames and tracks which keys the pilot is holding."""
     def __init__(self, width: int, height: int, title: str):
+        """Open a resizable pygame window of the given size under the given caption."""
         import pygame
 
         self._pygame = pygame
@@ -650,9 +691,11 @@ class _PygameViewer:
 
     @property
     def pressed(self) -> set[str]:
+        """A copy of the key names currently held down, safe for the caller to keep."""
         return set(self._pressed)
 
     def _key_name(self, key: int) -> str:
+        """The viewer's own label for a pygame key code, empty for the keys it ignores."""
         pygame = self._pygame
         mapping = {
             pygame.K_w: "w",
@@ -671,6 +714,7 @@ class _PygameViewer:
         return mapping.get(key, "")
 
     def _handle_keydown(self, key: int) -> None:
+        """Record a key as held, or latch the quit and reset requests for Esc and R."""
         name = self._key_name(key)
         if not name:
             return
@@ -683,12 +727,14 @@ class _PygameViewer:
         self._pressed.add(name)
 
     def _handle_keyup(self, key: int) -> None:
+        """Drop a key from the held set once it has been released."""
         name = self._key_name(key)
         if not name:
             return
         self._pressed.discard(name)
 
     def draw(self, frame: np.ndarray) -> None:
+        """Scale an RGB frame up to the current window size and flip it onto the screen."""
         pygame = self._pygame
         frame_surface = pygame.image.frombuffer(
             frame.tobytes(),
@@ -700,6 +746,7 @@ class _PygameViewer:
         pygame.display.flip()
 
     def pump(self) -> None:
+        """Drain the event queue, updating held keys, the quit flag and the window size."""
         pygame = self._pygame
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -713,18 +760,21 @@ class _PygameViewer:
                 self.screen = pygame.display.set_mode(self._size, pygame.RESIZABLE)
 
     def consume_reset(self) -> bool:
+        """True once for each R press, clearing the request so it fires a single time."""
         if self.reset_requested:
             self.reset_requested = False
             return True
         return False
 
     def close(self) -> None:
+        """Shut the window down, swallowing a teardown that has already happened."""
         try:
             self._pygame.quit()
         except Exception:
             pass
 
     def set_title(self, title: str) -> None:
+        """Put a new caption on the window, ignoring a display that will not take it."""
         try:
             self._title = title
             self._pygame.display.set_caption(title)
@@ -733,6 +783,7 @@ class _PygameViewer:
 
 
 def _enable_gpu_backend(pybullet_module, physics_client_id: int) -> _RenderBackend:
+    """Load the Bullet EGL plugin and hand back the hardware backend; raises if it will not load."""
     egl = pkgutil.get_loader("eglRenderer")
     if egl:
         plugin_id = pybullet_module.loadPlugin(
@@ -755,6 +806,11 @@ def _enable_gpu_backend(pybullet_module, physics_client_id: int) -> _RenderBacke
 
 
 def _build_visualizer_env(task, prefer_gpu: bool):
+    """Bring the aviary up on the task at the rate the benchmark scores it, and pick a renderer.
+
+    Returns the reset environment together with the render backend, EGL where it loaded and
+    the tiny CPU renderer otherwise.
+    """
     import pybullet as p
     import pybullet_data
     from gym_pybullet_drones.utils.enums import ActionType, ObservationType
@@ -823,6 +879,11 @@ def _build_visualizer_env(task, prefer_gpu: bool):
 
 
 def main(argv: Iterable[str] | None = None) -> None:
+    """Build the map, open the window, and fly it by keyboard until Esc.
+
+    Frames are drawn only when the pose or the idle clock calls for one, and the window, the
+    EGL plugin and the environment are torn down on the way out.
+    """
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
     adapter_name = _prepare_gpu_env(args.gpu)
 

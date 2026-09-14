@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""On-demand onboard RGB: blank until a drone asks, identical when it asks twice, and capped per drone."""
+
 import numpy as np
 
 from swarm.constants import SAR_RGB_REQUEST_CAP, SAR_RGB_RES
@@ -25,6 +27,7 @@ SIM_DT = 1 / 50
 
 
 def _env(family_id, seed=7, challenge_type=2):
+    """Build the family's task at a seed and return the environment with its first observation."""
     task = task_gen._build_task_for_type(
         sim_dt=SIM_DT, seed=seed, challenge_type=challenge_type, family_id=family_id,
     )
@@ -32,12 +35,14 @@ def _env(family_id, seed=7, challenge_type=2):
 
 
 def _act(env, request):
+    """A zero action for every drone, with channel 5 carrying the RGB request value."""
     a = np.zeros((env.NUM_DRONES, 6), dtype=np.float32)
     a[:, 5] = request
     return a
 
 
 def test_rgb_present_and_blank_without_request():
+    """The camera slot always has its full shape but stays all zeros while nobody asks for a frame."""
     env, obs = _env("cf_search_and_rescue")
     try:
         assert obs["rgb"].shape == (SAR_RGB_RES, SAR_RGB_RES, 3)
@@ -49,6 +54,7 @@ def test_rgb_present_and_blank_without_request():
 
 
 def test_rgb_renders_on_request_in_range():
+    """A requested frame comes back non-empty with every channel inside [0, 1]."""
     env, _ = _env("cf_search_and_rescue")
     try:
         obs, *_ = env.step(_act(env, 0.9))
@@ -59,6 +65,7 @@ def test_rgb_renders_on_request_in_range():
 
 
 def test_rgb_render_is_deterministic():
+    """Two renders of one unchanged state give identical pixels, which keeps validators in consensus."""
     env, _ = _env("cf_search_and_rescue")
     try:
         env.step(_act(env, 0.9))
@@ -71,6 +78,7 @@ def test_rgb_render_is_deterministic():
 
 
 def test_swarm_rgb_is_per_drone():
+    """Only the asking drone gets a frame and spends a request; its team mate's slot stays blank."""
     env, obs = _env("cf_swarm_sar")
     try:
         n = env.NUM_DRONES
@@ -88,6 +96,7 @@ def test_swarm_rgb_is_per_drone():
 
 
 def test_rgb_request_cap_is_enforced():
+    """The counter stops at the per-episode budget and every ask past it comes back blank."""
     env, _ = _env("cf_search_and_rescue")
     try:
         for _ in range(SAR_RGB_REQUEST_CAP + 5):

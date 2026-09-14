@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The swarm autopilot family: seeded fleet layouts, an observation row that does not depend on fleet size, and per-drone scoring borrowed from the single-drone formula."""
 from __future__ import annotations
 
 import math
@@ -30,6 +31,7 @@ from swarm.validator import task_gen
 
 @pytest.mark.parametrize("challenge_type", [1, 2, 3, 4, 5, 6])
 def test_swarm_task_gen_deterministic_and_distinct(challenge_type):
+    """One seed rebuilds the fleet exactly on every map type: count in range, drone 0 leading the start and goal lists, and no two starts on top of each other."""
     kwargs = dict(sim_dt=0.02, seed=4242, challenge_type=challenge_type, family_id="cf_swarm_autopilot")
     t1 = task_gen.task_for_seed_and_type(**kwargs)
     t2 = task_gen.task_for_seed_and_type(**kwargs)
@@ -49,6 +51,7 @@ def test_swarm_task_gen_deterministic_and_distinct(challenge_type):
 
 
 def test_swarm_count_varies_with_seed_and_stays_in_range():
+    """Fleet size is drawn per seed, it is not one constant across 50 of them, and it never leaves the configured bounds."""
     counts = {
         task_gen.task_for_seed_and_type(
             sim_dt=0.02, seed=s, challenge_type=2, family_id="cf_swarm_autopilot",
@@ -60,12 +63,14 @@ def test_swarm_count_varies_with_seed_and_stays_in_range():
 
 
 def test_swarm_task_gen_seed_changes_layout():
+    """Two seeds place the fleet differently, so a miner cannot memorise one spawn pattern."""
     a = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=1, challenge_type=2, family_id="cf_swarm_autopilot")
     b = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=2, challenge_type=2, family_id="cf_swarm_autopilot")
     assert a.starts != b.starts
 
 
 def _rollout(seed, steps=40):
+    """Step a seeded fleet with zero actions and return its swarm score, the state row width and the drone count."""
     task = task_gen.task_for_seed_and_type(
         sim_dt=1 / 30, seed=seed, challenge_type=2, family_id="cf_swarm_autopilot",
     )
@@ -88,6 +93,7 @@ def _rollout(seed, steps=40):
 
 
 def test_swarm_rollout_scores_for_random_count():
+    """A scored rollout stays in [0, 1], carries one entry per drone, and the fleet number is exactly their mean."""
     result, _width, n = _rollout(2025)
     assert 0.0 <= result["final_score"] <= 1.0
     assert len(result["per_drone_final_score"]) == n
@@ -97,6 +103,7 @@ def test_swarm_rollout_scores_for_random_count():
 
 
 def test_swarm_obs_row_width_is_count_invariant():
+    """A policy sees the same row width for a small fleet and a large one, so one network handles every drone count."""
     seed_for_n = {}
     for s in range(60):
         t = task_gen.task_for_seed_and_type(
@@ -113,6 +120,7 @@ def test_swarm_obs_row_width_is_count_invariant():
 
 
 def test_swarm_smoke_obs_batches_and_action_validates():
+    """The offline smoke observation stacks depth and state by fleet size, and an action with the wrong number of rows is refused."""
     from swarm.domain_model import get_policy_interface_contract
     from swarm.policy_interface import (
         PolicyInterfaceError,
@@ -133,6 +141,7 @@ def test_swarm_smoke_obs_batches_and_action_validates():
 
 
 def test_score_single_drone_matches_autopilot_formula():
+    """One drone in a fleet is graded by the same normalised metrics the autopilot family uses, across timing, clearance, collision and failure cases."""
     from swarm.challenge_families.autopilot import AutopilotChallengeFamily
     from swarm.protocol import MapTask
     from swarm.validator.reward import _calculate_target_time, _score_single_drone
@@ -168,6 +177,7 @@ def test_score_single_drone_matches_autopilot_formula():
 
 
 def test_swarm_uses_shared_search_clue_and_platform_pool():
+    """The fleet shares one noisy clue near the goal centroid, and the landing pads open as an unclaimed pool of one per drone."""
     task = task_gen.task_for_seed_and_type(
         sim_dt=1 / 30, seed=2025, challenge_type=2, family_id="cf_swarm_autopilot",
     )
@@ -186,6 +196,7 @@ def test_swarm_uses_shared_search_clue_and_platform_pool():
 
 
 def test_swarm_rollout_is_deterministic():
+    """Two runs on one seed give the same fleet number and the same per-drone numbers, so a re-evaluation cannot drift."""
     r1, _w1, _n1 = _rollout(2025)
     r2, _w2, _n2 = _rollout(2025)
     assert r1["final_score"] == r2["final_score"]

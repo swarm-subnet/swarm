@@ -28,6 +28,7 @@ from enum import Enum
 
 
 class ReasonCode(str, Enum):
+    """Every fault code: LOAD_FAILED belongs to the miner, each INFRA_ one to the validator."""
     LOAD_FAILED = "LOAD_FAILED"
 
     INFRA_DOCKER = "INFRA_DOCKER"
@@ -50,6 +51,7 @@ class EvaluationFault(Exception):
     """Raised when evaluation cannot proceed; carries the code that classifies it."""
 
     def __init__(self, reason: ReasonCode, detail: str = "") -> None:
+        """Keep the classifying code and the detail, falling back to the code as the message."""
         super().__init__(detail or reason.value)
         self.reason = reason
         self.detail = detail

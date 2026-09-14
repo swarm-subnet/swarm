@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Picks the victim spawn point: level ground with clear air above and room around it."""
 from __future__ import annotations
 
 import random
@@ -37,6 +38,8 @@ _RELAXED_STAGES = ((0.6, 0.5, 1.0), (0.3, 0.25, 1.5))
 
 
 class SARSpawnError(RuntimeError):
+    """Raised when no candidate survives the strict pass or the relaxed ones after it."""
+
     pass
 
 
@@ -60,6 +63,7 @@ def _hover_column_clear(
     support_uid: int,
     top_z: float = HOVER_COLUMN_TOP_Z,
 ) -> bool:
+    """True when a ray up to top_z over (x, y) hits nothing but the support or a victim."""
     bottom = (x, y, surface_z + 0.05)
     top = (x, y, surface_z + top_z)
     hits = p.rayTest(bottom, top, physicsClientId=cli)
@@ -87,6 +91,11 @@ def _sphere_obstacle_clear(
     support_uid: int,
     radius: float = NO_TOUCH_SPHERE_RADIUS,
 ) -> bool:
+    """True when nothing solid sits within radius of the spot the victim would rest on.
+
+    The support body itself, victims, untagged bodies and other support-tagged
+    bodies do not count as obstacles.
+    """
     r = radius
     aabb_min = (x - r, y - r, surface_z + 0.01)
     aabb_max = (x + r, y + r, surface_z + r)
@@ -109,6 +118,7 @@ def _sphere_obstacle_clear(
 def _sample_candidate(
     map_seed: int, attempt: int, bounds: float,
 ) -> Tuple[float, float]:
+    """Draw one (x, y) inside bounds from a stream mixed out of map_seed and attempt."""
     rng = random.Random((map_seed * 1_000_003) ^ (attempt * 9_176_531))
     x = rng.uniform(-bounds, bounds)
     y = rng.uniform(-bounds, bounds)
@@ -125,6 +135,12 @@ def find_spawn_xy(
     near: Optional[Tuple[float, float]] = None,
     max_dist: Optional[float] = None,
 ) -> Tuple[float, float, SurfaceHit]:
+    """Return a spawn (x, y) with the surface hit it rests on, for one map seed.
+
+    Strict attempts run first, then attempts with the clearance and the sampling
+    bounds progressively relaxed. When none pass, the closest candidate to near,
+    the flattest, or merely a grounded one is taken before the search gives up.
+    """
     bound = float(bounds) if bounds is not None else _DEFAULT_MAP_BOUNDS.get(challenge_type, 20.0)
     accepted = accepted_categories_for(challenge_type)
     last_reason = "no_attempts"

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Search for, read and store the map seeds that fix which maps a benchmark run is scored on."""
+
 from __future__ import annotations
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, build_random_task
@@ -38,6 +40,7 @@ from ._shared import (
 
 
 def family_bench_groups(family_id: str) -> List[str]:
+    """The benchmark groups whose environment type this family flies, in the canonical display order."""
     environment_types = set(CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES[family_id])
     return [
         group
@@ -47,6 +50,7 @@ def family_bench_groups(family_id: str) -> List[str]:
 
 
 def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
+    """Pull the miner uid out of a downloaded artifact filename, None when the pattern does not appear."""
     for candidate in (model_path.stem, model_path.name):
         match = _UID_RE.search(candidate)
         if match:
@@ -58,6 +62,7 @@ def _infer_uid_from_model_path(model_path: Path) -> Optional[int]:
 
 
 def _normalize_type_seeds(raw: Any, *, family_id: str) -> Dict[str, List[int]]:
+    """Unwrap the v1 envelope when present and hand back every group as a non-empty list of ints, raising on a gap."""
     if not isinstance(raw, dict):
         raise ValueError(
             "Seed file must contain a JSON object mapping benchmark groups to seed lists."
@@ -93,6 +98,7 @@ def _load_type_seeds(
     *,
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
 ) -> Dict[str, List[int]]:
+    """Read the JSON at seed_file and return its validated group-to-seed mapping."""
     return _normalize_type_seeds(json.loads(seed_file.read_text()), family_id=family_id)
 
 
@@ -102,6 +108,7 @@ def _save_type_seeds(
     *,
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
 ) -> None:
+    """Write the groups out as a v1 envelope, creating the parent directory if it is not there."""
     seed_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "challenge_family_seed_file.v1",
@@ -112,6 +119,7 @@ def _save_type_seeds(
 
 
 def _infer_bench_group(challenge_type: int, seed: int) -> Optional[str]:
+    """Look the challenge type up in the group table, None when it is not mapped; the seed is ignored."""
     _ = seed
     return CHALLENGE_TYPE_TO_BENCHMARK_GROUP.get(challenge_type)
 
@@ -121,6 +129,7 @@ def _find_seeds(
     *,
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
 ) -> Dict[str, List[int]]:
+    """Walk consecutive seeds from a random start until every group has its quota, raising after 500000 tries."""
     from swarm.constants import SIM_DT
 
     groups: Dict[str, List[int]] = {g: [] for g in family_bench_groups(family_id)}
@@ -152,6 +161,7 @@ def _find_seeds(
 
 
 def _batch_indices(total_tasks: int) -> List[List[int]]:
+    """One task per batch: every position gets its own single-element group, empty when there is nothing to run."""
     if total_tasks <= 0:
         return []
     return [[index] for index in range(total_tasks)]

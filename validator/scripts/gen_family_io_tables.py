@@ -38,16 +38,19 @@ END = "<!-- io-tables:end -->"
 
 
 def _fmt(value) -> str:
+    """Render a value for a table cell, dropping the trailing .0 from a whole float."""
     if isinstance(value, float) and value == int(value):
         return str(int(value))
     return str(value)
 
 
 def _shape(value) -> str:
+    """Format a dimension sequence as a parenthesised, comma-separated tuple."""
     return "(" + ", ".join(str(v) for v in value) + ")"
 
 
 def render_block(schema: dict, family_id: str) -> str:
+    """The io-tables block, markers included: contract, observation keys and action bounds."""
     interface = schema["policy_interfaces"][f"{family_id}:submission_zip.v1"]
     family = schema["challenge_families"][family_id]
     obs = interface["observation_space"]
@@ -96,10 +99,12 @@ def render_block(schema: dict, family_id: str) -> str:
 
 
 def doc_path(family_id: str) -> Path:
+    """Where a family's page lives under docs/families, named without the cf_ prefix."""
     return DOCS_DIR / f"{family_id.removeprefix('cf_')}.md"
 
 
 def main() -> int:
+    """Print, write or check every family block and return 1 when a doc is missing or stale."""
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--write", action="store_true", help="update docs in place")

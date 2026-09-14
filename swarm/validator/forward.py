@@ -61,6 +61,7 @@ from .utils_parts.run_task import run_task
 
 
 async def forward(self) -> None:
+    """Run one validator iteration under a lock so two callers never overlap."""
     if not hasattr(self, "_forward_lock"):
         self._forward_lock = asyncio.Lock()
     async with self._forward_lock:
@@ -68,6 +69,11 @@ async def forward(self) -> None:
 
 
 async def _forward_iteration(self) -> None:
+    """Sync with the backend, then lease one task from /next-task and run it.
+
+    A backend protocol mismatch propagates and stops the validator: every other
+    error is logged and followed by a sleep.
+    """
     try:
         self.forward_count = getattr(self, "forward_count", 0) + 1
         tracker_call(self, "mark_forward_started", forward_count=self.forward_count)
@@ -165,6 +171,10 @@ async def _forward_iteration(self) -> None:
 
 
 async def _ensure_components(self) -> None:
+    """Create the seed manager, backend client, flags and SSE listener on first use.
+
+    A Docker evaluator that is missing or has no base image raises instead.
+    """
     if not hasattr(self, "seed_manager"):
         self.seed_manager = BenchmarkSeedManager()
         _invalidate_local_state_for_regenerated_seeds(self)
@@ -207,6 +217,11 @@ async def _ensure_components(self) -> None:
 
 
 def _record_sse_listener_exit(self, task: asyncio.Task) -> None:
+    """Log why the SSE listener task ended, if it ended in anything but a cancel.
+
+    A protocol mismatch is latched on the validator and raises both flags, so the
+    foreground loop stops waiting and fails fast.
+    """
     if task.cancelled():
         return
     exc = task.exception()
@@ -224,6 +239,7 @@ def _record_sse_listener_exit(self, task: asyncio.Task) -> None:
 
 
 def _image_provenance_ok(self) -> bool:
+    """Return True when the runner image label matches the hash of the build inputs."""
     evaluator = self.docker_evaluator
     try:
         label = str(evaluator._get_image_hash_label() or "")
@@ -283,6 +299,7 @@ async def _announce_calibrating(self) -> None:
 
 
 async def _idle_until_wake(self, timeout: float) -> None:
+    """Sleep up to timeout seconds, returning as soon as the wake flag is set."""
     try:
         await asyncio.wait_for(self._wake_flag.wait(), timeout=timeout)
     except asyncio.TimeoutError:
@@ -292,6 +309,7 @@ async def _idle_until_wake(self, timeout: float) -> None:
 
 
 def _invalidate_local_state_for_regenerated_seeds(self) -> None:
+    """Consume the seed manager's regeneration flag and warn that local state is gone."""
     seed_manager = getattr(self, "seed_manager", None)
     if seed_manager is None:
         return

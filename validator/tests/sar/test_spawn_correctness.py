@@ -61,6 +61,7 @@ _MAX_SLOPE_SINK_M = 2.0
 
 
 def _audit_one(cli: int, seed: int, ctype: int) -> Dict[str, float]:
+    """Place a victim for a single seed and return its spawn metrics, failing on floating feet, an intruding obstacle or a blocked hover column."""
     p.resetSimulation(physicsClientId=cli)
 
     tagger = build_and_tag_map(
@@ -158,6 +159,7 @@ def _audit_one(cli: int, seed: int, ctype: int) -> Dict[str, float]:
 @pytest.mark.timeout(600)
 @pytest.mark.parametrize("name,ctype", list(_MAPS.items()))
 def test_50_seeds_produce_valid_spawns(sar_pybullet, name, ctype):
+    """At most one seed in ten may refuse a placement on any environment, and every placement that happens is physically clean."""
     failures = []
     rows = []
     started = time.time()

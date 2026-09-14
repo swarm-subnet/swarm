@@ -42,6 +42,7 @@ BOUNDS = (38.0, 23.0)
 
 
 def _floor(cli, half=20.0, top=0.0):
+    """Create a static slab whose upper face sits at top, and return its body uid."""
     col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[half, half, 0.1],
                                  physicsClientId=cli)
     return p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col,
@@ -49,6 +50,7 @@ def _floor(cli, half=20.0, top=0.0):
 
 
 def _box(cli, x, y, half_z, *, solid=True):
+    """Create a 1.6 m square obstruction on the floor at (x, y), visual only when solid is False."""
     half = [0.8, 0.8, half_z]
     col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half,
                                  physicsClientId=cli) if solid else -1
@@ -59,6 +61,7 @@ def _box(cli, x, y, half_z, *, solid=True):
 
 
 def _resolve(cli, tags, sx=0.0, sy=0.0, exclude=()):
+    """Run the pad search from (sx, sy) accepting only floor bodies, inside the warehouse bounds."""
     return resolve_warehouse_pad_spot(
         cli, sx, sy, body_tags=tags,
         accepted_categories={BodyCategory.SUPPORT_FLOOR},
@@ -102,6 +105,7 @@ def test_no_resolvable_floor_is_not_treated_as_ground(sar_pybullet):
 
 
 def test_a_fully_blocked_world_reports_failure(sar_pybullet):
+    """With every probe point occupied the search says None rather than naming a blocked spot."""
     cli = sar_pybullet
     floor = _floor(cli, half=3.0)
     tags = {floor: BodyCategory.SUPPORT_FLOOR.value}
@@ -148,6 +152,7 @@ def test_the_pad_never_relocates_past_the_limit(sar_pybullet):
 
 
 def test_placement_is_deterministic(sar_pybullet):
+    """The same world resolved twice gives the same spot, so a map seed replays identically."""
     cli = sar_pybullet
     floor = _floor(cli)
     _box(cli, 0.0, 0.0, 0.15)

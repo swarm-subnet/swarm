@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The stress harness that reruns a benchmark: seed splitting, averages and the report."""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +25,7 @@ from types import SimpleNamespace
 
 
 def test_screening_count_matches_validator_ratio(reload_module):
+    """The screening slice keeps the validator's 3-in-11 share of the seeds at any size."""
     mod = reload_module("validator.scripts.stress_benchmark_compare")
 
     assert mod._screening_count_for_total(1100) == 300
@@ -32,6 +35,8 @@ def test_screening_count_matches_validator_ratio(reload_module):
 
 
 def test_classify_raw_seeds_preserves_order_and_phase(reload_module, monkeypatch):
+    """Seeds keep the order given and land in the group their challenge type names.
+    Only the leading few are marked screening, the rest benchmark."""
     mod = reload_module("validator.scripts.stress_benchmark_compare")
 
     monkeypatch.setattr(
@@ -61,6 +66,8 @@ def test_classify_raw_seeds_preserves_order_and_phase(reload_module, monkeypatch
 
 
 def test_summarize_run_computes_expected_averages(reload_module):
+    """Screening and benchmark rows are averaged apart as well as together.
+    A group with no seeds counts zero rather than dropping out of the table."""
     mod = reload_module("validator.scripts.stress_benchmark_compare")
 
     manifest = [
@@ -106,6 +113,8 @@ def test_summarize_run_computes_expected_averages(reload_module):
 
 
 def test_main_writes_report_with_fake_benchmark(reload_module, monkeypatch, tmp_path):
+    """A two-repetition run ends with report.json and report.txt on disk.
+    Each repetition carries its own score average and the tally of runs that finished."""
     mod = reload_module("validator.scripts.stress_benchmark_compare")
 
     model_path = tmp_path / "UID_178.zip"
@@ -156,6 +165,8 @@ def test_main_writes_report_with_fake_benchmark(reload_module, monkeypatch, tmp_
     monkeypatch.setattr(mod, "_build_seed_set", lambda count, rng, screening_count: bundles.pop(0))
 
     def _fake_run(argv: list[str]) -> None:
+        """Stand in for the benchmark subprocess, scoring every seed as seed/100.
+        Reads the seed file named in argv and writes the summary JSON it asks for."""
         seed_file = Path(argv[argv.index("--seed-file") + 1])
         summary_path = Path(argv[argv.index("--summary-json-out") + 1])
         grouped = json.loads(seed_file.read_text())

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Which UIDs a validator is allowed to query, and what random selection does to a thin pool."""
+
 from __future__ import annotations
 
 import random
@@ -26,6 +28,7 @@ from swarm.utils.uids import check_uid_availability, get_random_uids
 
 
 def _make_metagraph():
+    """Return a four-UID stub metagraph where uid 1 is not serving and uids 2 and 3 hold permits."""
     return SimpleNamespace(
         axons=[
             SimpleNamespace(is_serving=True),
@@ -40,21 +43,25 @@ def _make_metagraph():
 
 
 def test_check_uid_availability_filters_non_serving_uid():
+    """An axon that is not serving is unavailable, whatever its stake or permit."""
     metagraph = _make_metagraph()
     assert check_uid_availability(metagraph, uid=1, vpermit_tao_limit=100) is False
 
 
 def test_check_uid_availability_filters_validator_with_too_much_stake():
+    """A permit plus stake above the tao limit rules the UID out even while its axon serves."""
     metagraph = _make_metagraph()
     assert check_uid_availability(metagraph, uid=3, vpermit_tao_limit=100) is False
 
 
 def test_check_uid_availability_allows_serving_validator_below_limit():
+    """A permitted validator whose stake sits under the tao limit stays in the pool."""
     metagraph = _make_metagraph()
     assert check_uid_availability(metagraph, uid=2, vpermit_tao_limit=100) is True
 
 
 def test_get_random_uids_applies_exclusions_and_caps_k():
+    """Asking for more than the pool holds gives back what is available, minus the excluded UID."""
     metagraph = _make_metagraph()
     self_obj = SimpleNamespace(
         metagraph=metagraph,

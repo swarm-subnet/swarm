@@ -44,15 +44,19 @@ _UNIX_LINK_MODE = 0xA000
 
 @dataclass(frozen=True)
 class ArchiveContents:
+    """The manifest bytes, with every remaining entry keyed by its path inside the zip."""
+
     manifest_bytes: bytes
     files: dict[str, bytes]
 
 
 def _rejected(detail: str) -> ModelGraphError:
+    """Wrap a detail string in a ModelGraphError carrying the ARCHIVE_REJECTED reason code."""
     return ModelGraphError(ReasonCode.ARCHIVE_REJECTED, detail)
 
 
 def _validate_entry_name(name: str) -> None:
+    """Raise unless the path is the root manifest or a models/*.onnx file, with no traversal or backslash."""
     if name.endswith("/"):
         raise ModelGraphError(ReasonCode.ARCHIVE_BAD_LAYOUT, f"directory entry '{name}' not allowed")
     if "\\" in name or name.startswith("/") or ".." in Path(name).parts:
@@ -67,6 +71,7 @@ def _validate_entry_name(name: str) -> None:
 
 
 def read_archive(zip_path: Path) -> ArchiveContents:
+    """Read the package under the size, entry-count and expansion caps, returning its manifest and model bytes."""
     size = zip_path.stat().st_size
     if size > MAX_COMPRESSED_ARCHIVE_BYTES:
         raise ModelGraphError(

@@ -15,9 +15,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The benchmark summary must account for every challenge type, not a stale subset."""
 from swarm.benchmark.engine_parts.reporting import _print_results
 
 
 def test_print_results_extrapolation_covers_all_challenge_types(capsys):
+    """Even an empty run names type7_office, so a newly added type is never left out."""
     _print_results([], [], [], {}, {}, {}, [], elapsed=1.0, eval_start=0.0, num_workers=1)
     assert "type7_office" in capsys.readouterr().out

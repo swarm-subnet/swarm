@@ -42,6 +42,7 @@ _MAP_THRESHOLDS = {
 
 
 def _fuzz_one_map(cli, name, challenge_type, sample_lo_hi, min_accept):
+    """Resolve 2000 random XY points against one built map, failing if a hit lands off a SUPPORT_ body or acceptance drops below min_accept."""
     p.resetSimulation(physicsClientId=cli)
     tagger = build_and_tag_map(
         cli, seed=20_000 + challenge_type, challenge_type=challenge_type,
@@ -73,5 +74,6 @@ def _fuzz_one_map(cli, name, challenge_type, sample_lo_hi, min_accept):
 
 @pytest.mark.parametrize("name,info", list(_MAP_THRESHOLDS.items()))
 def test_per_map_acceptance(sar_pybullet, name, info):
+    """Each environment keeps its own floor on resolved points, and not one resolved point sits on a body that cannot hold a victim."""
     challenge_type, sample_box, min_accept = info
     _fuzz_one_map(sar_pybullet, name, challenge_type, sample_box, min_accept)

@@ -41,6 +41,7 @@ _BASELINE = json.loads(
 
 
 def _task(ct=1, start=(0.0, 0.0, 0.0), goal=(3.0, 4.0, 0.0), horizon=60.0) -> MapTask:
+    """A single-drone cf_autopilot MapTask on map seed 1 with the given endpoints and horizon."""
     return MapTask(
         map_seed=1, start=start, goal=goal, sim_dt=0.02,
         horizon=horizon, challenge_type=ct, family_id="cf_autopilot",
@@ -69,6 +70,7 @@ _SCORING_CASES = {
 
 @pytest.mark.parametrize("name", sorted(_SCORING_CASES))
 def test_single_drone_scoring_unchanged(name):
+    """Each recorded rollout still scores to the baseline value, metric for metric."""
     evaluation = _AP.evaluate_rollout(**_SCORING_CASES[name])
     expected = _BASELINE["scoring"][name]
     assert evaluation.score == expected["score"]
@@ -76,11 +78,13 @@ def test_single_drone_scoring_unchanged(name):
 
 
 def _taskgen_id(entry):
+    """The pytest id for one baseline entry: family, challenge type, seed and how it was drawn."""
     return f"{entry['family_id']}-t{entry['challenge_type']}-s{entry['seed']}-{entry.get('via', 'type')}"
 
 
 @pytest.mark.parametrize("entry", _BASELINE["taskgen"], ids=_taskgen_id)
 def test_single_drone_task_gen_unchanged(entry):
+    """Regenerating a baseline task reproduces its start, goal, platform flag and horizon exactly."""
     if entry.get("via") == "random_task":
         task = task_gen.random_task(sim_dt=0.02, seed=entry["seed"], family_id=entry["family_id"])
     else:

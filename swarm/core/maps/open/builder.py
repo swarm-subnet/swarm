@@ -61,6 +61,7 @@ _CLI_TEX_CACHE: dict = {}
 # Fractal noise
 # ---------------------------------------------------------------------------
 def _hash_noise(x: float, y: float, seed: int) -> float:
+    """Value noise at (x, y): four hashed lattice corners blended with a smoothstep."""
     ix, iy = int(math.floor(x)), int(math.floor(y))
     fx, fy = x - ix, y - iy
     fx = fx * fx * (3.0 - 2.0 * fx)
@@ -75,6 +76,7 @@ def _hash_noise(x: float, y: float, seed: int) -> float:
 
 
 def _fbm(x: float, y: float, seed: int, octaves: int = 5, gain: float = 0.5) -> float:
+    """Sum octaves of value noise, scaling amplitude by gain and doubling frequency each pass."""
     value = 0.0
     amp = 1.0
     freq = 1.0
@@ -89,6 +91,7 @@ _FBM_MAX = sum(0.5 ** i for i in range(_TERRAIN_OCTAVES))
 
 
 def _terrain_z(x: float, y: float, seed: int) -> float:
+    """Ground height at (x, y), faded to flat inside the central spawn disc."""
     h = _fbm(x * _TERRAIN_FREQUENCY, y * _TERRAIN_FREQUENCY, seed,
              octaves=_TERRAIN_OCTAVES, gain=0.5)
     h = (h / _FBM_MAX - 0.5) * 2.0 * _TERRAIN_AMPLITUDE
@@ -102,6 +105,7 @@ def _terrain_z(x: float, y: float, seed: int) -> float:
 # Terrain mesh generation
 # ---------------------------------------------------------------------------
 def _terrain_obj_path(seed: int, size: float = _TERRAIN_SIZE) -> str:
+    """Cache filename for the mesh of one seed and size, creating the cache directory."""
     os.makedirs(_TERRAIN_CACHE_DIR, exist_ok=True)
     suffix = "" if size == _TERRAIN_SIZE else f"_z{int(round(size))}"
     return os.path.join(_TERRAIN_CACHE_DIR, f"open_terrain_v{_TERRAIN_MESH_VERSION}_s{seed}{suffix}.obj")
@@ -125,6 +129,7 @@ def _atomic_write(path: str, mode: str = "w"):
 
 
 def _generate_terrain_obj(seed: int, size: float = _TERRAIN_SIZE) -> str:
+    """Write the cached OBJ grid for this seed when it is absent, and return where it sits."""
     path = _terrain_obj_path(seed, size)
     if os.path.exists(path):
         return path
@@ -155,15 +160,18 @@ def _generate_terrain_obj(seed: int, size: float = _TERRAIN_SIZE) -> str:
 # Grass texture generation
 # ---------------------------------------------------------------------------
 def _texture_path() -> str:
+    """Cache filename of the shared grass bitmap, creating the cache directory."""
     os.makedirs(_TERRAIN_CACHE_DIR, exist_ok=True)
     return os.path.join(_TERRAIN_CACHE_DIR, "open_grass.bmp")
 
 
 def _clamp_u8(v: float) -> int:
+    """Round v and pin it inside the 0..255 byte range."""
     return max(0, min(255, int(round(v))))
 
 
 def _generate_grass_texture() -> str:
+    """Write the grass BMP once: a fractal noise base with dirt patches blended over it."""
     path = _texture_path()
     if os.path.exists(path):
         return path
@@ -215,6 +223,7 @@ def _generate_grass_texture() -> str:
 
 
 def _write_bmp24(path: str, width: int, height: int, rgb_data: bytearray) -> None:
+    """Serialise rgb_data as an uncompressed 24-bit BMP, bottom-up with padded rows."""
     row_stride = width * 3
     row_pad = (4 - (row_stride % 4)) % 4
     image_size = (row_stride + row_pad) * height
@@ -246,6 +255,7 @@ def _write_bmp24(path: str, width: int, height: int, rgb_data: bytearray) -> Non
 
 
 def _load_texture(cli: int) -> Optional[int]:
+    """Grass texture id for one physics client, cached; None when PyBullet refuses the file."""
     if cli in _CLI_TEX_CACHE:
         return _CLI_TEX_CACHE[cli]
     tex_path = _generate_grass_texture()
@@ -263,6 +273,7 @@ def _load_texture(cli: int) -> Optional[int]:
 # Terrain spawning
 # ---------------------------------------------------------------------------
 def _spawn_terrain(cli: int, seed: int, size: float = _TERRAIN_SIZE) -> None:
+    """Create the static ground body from the cached mesh and skin it with the grass texture."""
     obj_path = _generate_terrain_obj(seed, size)
     kwargs = {}
     if hasattr(p, "GEOM_FORCE_CONCAVE_TRIMESH"):
@@ -295,6 +306,7 @@ def _spawn_terrain(cli: int, seed: int, size: float = _TERRAIN_SIZE) -> None:
 # Obstacles (kept for compatibility, currently TYPE_2_N_OBSTACLES = 0)
 # ---------------------------------------------------------------------------
 def _add_box(cli: int, pos, size, yaw) -> None:
+    """Spawn one static blue obstacle at pos, sized by size and turned about Z by yaw."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[s / 2 for s in size], physicsClientId=cli
     )
@@ -326,6 +338,7 @@ def build_open_world(
     sar_mode: bool = True,
     terrain_size: float = _TERRAIN_SIZE,
 ) -> None:
+    """Spawn the open-world ground, then TYPE_2_N_OBSTACLES obstacles clear of the start and goal pads, a count that is zero today."""
     _spawn_terrain(cli, seed, terrain_size)
     rng = random.Random(seed)
     sx = sy = gx = gy = None
@@ -362,6 +375,7 @@ def build_open_world(
                 obj_r = r
 
             def _violates_zone(cx, cy):
+                """True when the sampled obstacle lands inside the safe radius around (cx, cy)."""
                 if cx is None:
                     return False
                 required_clearance = obj_r + TYPE_2_SAFE_ZONE + 0.5

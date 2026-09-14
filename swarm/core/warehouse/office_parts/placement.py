@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Furniture layout for the office map: one routine per wall slot, plus centre and corners."""
+
 from ._shared import *
 from .geometry import (
     corner_points,
@@ -31,6 +33,7 @@ from .geometry import (
 
 
 def place_entry_wall(loader, floor_top_z, slot, seed, corners=None, spawn_doorway=True):
+    """Spawn the coat rack and plant, plus the doorway when asked; returns the corner styles they rule out."""
     if corners is None:
         corners = corner_points()
     rng = random.Random(seed + 5100 + WALL_SLOTS.index(slot))
@@ -57,6 +60,7 @@ def place_entry_wall(loader, floor_top_z, slot, seed, corners=None, spawn_doorwa
 
 
 def place_workstations_wall(loader, floor_top_z, slot, seed):
+    """Spawn a row of five desks with chairs, monitors, keyboards and mice against one wall."""
     rng = random.Random(seed + 1700 + WALL_SLOTS.index(slot))
     desk_w, desk_d, _ = loader.model_size(ASSETS["desk"])
     _, chair_d, _ = loader.model_size(ASSETS["desk_chair"])
@@ -106,6 +110,7 @@ def place_workstations_wall(loader, floor_top_z, slot, seed):
     unified_keyboard_inward = base_desk_inward + base_keyboard_offset
 
     def spawn_station(st_slot, along, desk_model, chair_along_nudge=0.0):
+        """Place one desk with its chair, monitor, keyboard and mouse at the given along offset."""
         key_along_offset, mouse_along_offset = desk_lr_along_offsets(
             st_slot, separation=0.28
         )
@@ -180,6 +185,7 @@ def place_workstations_wall(loader, floor_top_z, slot, seed):
 
 
 def place_files_wall(loader, floor_top_z, slot, seed):
+    """Spawn a seeded run of bookcases with books on their shelves and a box at each end."""
     rng = random.Random(seed + 3100 + WALL_SLOTS.index(slot))
     face_yaw = wall_face_yaw(slot)
     tangent_yaw = wall_tangent_yaw(slot)
@@ -275,6 +281,7 @@ def place_files_wall(loader, floor_top_z, slot, seed):
 
 
 def place_services_wall(loader, floor_top_z, slot, seed, corners=None):
+    """Fridge, cabinet, coffee machine, storage, bin and plant; returns used corner styles."""
     rng = random.Random(seed + 7300 + WALL_SLOTS.index(slot))
     cab_h = loader.model_size(ASSETS["cabinet"])[2]
     face_yaw = wall_face_yaw(slot)
@@ -329,6 +336,7 @@ def place_corner_decor(
     forbidden_styles_by_corner=None,
     blocked_corner_indices=None,
 ):
+    """Fill up to three free corners with a plant, a bin and a tall accent, avoiding repeats."""
     rng = random.Random(seed + 9007)
     if forbidden_styles_by_corner is None:
         forbidden_styles_by_corner = {}
@@ -384,6 +392,7 @@ def place_corner_decor(
 
 
 def build_center_meeting(loader, floor_top_z, seed):
+    """Two tables joined end to end in the middle of the room, ringed by eight chairs."""
     cx, cy = ROOM_CENTER
     rng = random.Random(seed + 5200)
     table_model = ASSETS["meeting_table"]

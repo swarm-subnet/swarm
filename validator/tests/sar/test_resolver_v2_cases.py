@@ -33,6 +33,7 @@ from swarm.core.env_builder.surface_resolver import resolve_surface
 
 
 def _make_box(cli, tagger, category, *, position, half_extents, yaw=0.0):
+    """Spawn a static box of the given half extents at position under category, and return its uid."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=half_extents, physicsClientId=cli,
     )
@@ -48,6 +49,7 @@ def _make_box(cli, tagger, category, *, position, half_extents, yaw=0.0):
 
 
 def _make_slope(cli, tagger, category, *, position, half_extents, tilt_rad):
+    """Spawn a static box pitched by tilt_rad about Y under category, and return its uid."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=half_extents, physicsClientId=cli,
     )
@@ -63,6 +65,7 @@ def _make_slope(cli, tagger, category, *, position, half_extents, tilt_rad):
 
 
 def test_all_20_synthetic_cases(sar_pybullet):
+    """A downward probe takes the topmost accepted body with its height, normal and slope flag, descends past bodies whose tag is not accepted, and gives None where nothing standable lies under the point."""
     cli = sar_pybullet
     tagger = BodyTagger(cli)
 

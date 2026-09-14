@@ -15,12 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The 50 rescue screening slots: their shape, their spread over the maps, and the constant they replaced."""
+
 from __future__ import annotations
 
 from swarm.constants import SAR_SCREENING_TEMPLATE
 
 
 def test_50_slots():
+    """All 50 carry a challenge type and a distance range, and none carries the autopilot-only keys."""
     assert len(SAR_SCREENING_TEMPLATE) == 50
     for slot in SAR_SCREENING_TEMPLATE:
         assert "moving_platform" not in slot
@@ -30,6 +33,7 @@ def test_50_slots():
 
 
 def test_map_distribution():
+    """Screening reaches all six challenge types, leaving no map unvisited."""
     seen = {slot["challenge_type"] for slot in SAR_SCREENING_TEMPLATE}
     assert seen == {1, 2, 3, 4, 5, 6}
 

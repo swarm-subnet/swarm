@@ -21,10 +21,12 @@ from swarm.validator.utils import accept_sync_version
 
 
 class _Validator:
+    """A bare stand-in for the validator, carrying only the applied leaderboard version."""
     pass
 
 
 def test_stale_payload_is_ignored_and_newer_one_applies():
+    """Versions 7, then 5, then 8: only the two that move the fence forward are accepted."""
     validator = _Validator()
 
     assert accept_sync_version(validator, {"leaderboard_version": 7}) is True
@@ -34,6 +36,7 @@ def test_stale_payload_is_ignored_and_newer_one_applies():
 
 
 def test_offline_fallback_does_not_reset_applied_weights():
+    """The version 0 a cached replay reports is refused and leaves the fence at 12."""
     validator = _Validator()
     accept_sync_version(validator, {"leaderboard_version": 12})
 
@@ -43,6 +46,7 @@ def test_offline_fallback_does_not_reset_applied_weights():
 
 
 def test_missing_or_malformed_version_is_treated_as_zero():
+    """An absent version is accepted from a fresh fence; a non-numeric one counts as 0 and loses to an applied 3."""
     validator = _Validator()
 
     assert accept_sync_version(validator, {}) is True

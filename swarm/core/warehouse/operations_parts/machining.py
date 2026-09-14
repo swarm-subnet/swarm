@@ -15,11 +15,18 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Two rows of mills and lathes facing a central aisle in the warehouse machining area."""
+
 from ._shared import *
 from .support import _purge_generated_model_artifacts
 
 
 def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
+    """Fill six slots in two rows either side of an aisle with mills and lathes, plus one work table.
+
+    Returns what was spawned, the slots whose model was missing on disk, and a reason string
+    when the loader is absent, no machine model was found, or the area is missing or too narrow.
+    """
     if not ENABLE_MACHINING_CELL_LAYOUT:
         return {
             "machining_mills": [],
@@ -134,16 +141,19 @@ def build_machining_cell_layout(industry_loader, floor_top_z, area_layout, cli):
         }
 
     def _slot_xy(along_off, row_sign):
+        """World position for an offset down the long axis on the given side of the aisle."""
         if along_axis == "x":
             return (area_cx + along_off, area_cy + (row_sign * row_offset))
         return (area_cx + (row_sign * row_offset), area_cy + along_off)
 
     def _yaw_to_aisle(row_sign):
+        """Heading in degrees that turns a machine on the given row to face the centre lane."""
         if along_axis == "x":
             return 0.0 if row_sign < 0 else 180.0
         return 90.0 if row_sign < 0 else 270.0
 
     def _spawn_machine_instance(spec, x, y, yaw_deg):
+        """Put one machine down at x, y under whichever of the three visual modes the flags select."""
         if MACHINING_FORCE_SIMPLE_VISUALS:
             _spawn_mesh_with_anchor(
                 loader=industry_loader,

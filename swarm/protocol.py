@@ -46,6 +46,7 @@ SCHEMA_VERSION = "5.0.0"
 
 
 class FailureReason(str, Enum):
+    """Why a flight ended without a landing, carried on every ValidationResult."""
     NONE = "NONE"
     OBSTACLE_COLLISION = "OBSTACLE_COLLISION"
     NO_TOUCH_SPHERE = "NO_TOUCH_SPHERE"
@@ -63,6 +64,7 @@ _SUPPORTED_SCHEMA_VERSIONS: set[str] = {SCHEMA_VERSION}
 
 
 def normalize_version(s) -> str:
+    """Strip a leading V from a version string; anything else is coerced to str first."""
     if not isinstance(s, str):
         s = str(s) if s is not None else ""
     if not s:
@@ -71,6 +73,7 @@ def normalize_version(s) -> str:
 
 
 def is_supported_schema(version) -> bool:
+    """Return True when the normalized version is one this build still speaks."""
     return normalize_version(version) in _SUPPORTED_SCHEMA_VERSIONS
 
 
@@ -79,6 +82,7 @@ def is_supported_schema(version) -> bool:
 # --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class MapTask:
+    """One flight assignment: the seed that rebuilds the world, the pads, timing and wind."""
     map_seed: int
     start: Tuple[float, float, float]
     goal: Tuple[float, float, float]
@@ -100,10 +104,12 @@ class MapTask:
     wind_gusts: int = 0
 
     def pack(self) -> bytes:
+        """Serialise the task to a msgpack blob for the wire."""
         return msgpack.packb(asdict(self), use_bin_type=True)
 
     @staticmethod
     def unpack(blob: bytes) -> "MapTask":
+        """Rebuild a MapTask from msgpack bytes, restoring the search centre and pad tuples and the default family_id."""
         data = msgpack.unpackb(blob, raw=False)
         if not data.get("family_id"):
             data["family_id"] = "cf_autopilot"
@@ -119,6 +125,7 @@ class MapTask:
 
 @dataclass(slots=True)
 class ValidationResult:
+    """One miner's score on one flight, with the code and metrics behind it."""
     uid: int
     success: bool
     time_sec: float
@@ -132,6 +139,7 @@ class ValidationResult:
 # --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class PolicyRef:
+    """A miner's model manifest: digest, size, GitHub location and the runtime it needs."""
     sha256: str
     size_bytes: int
     github_url: str
@@ -144,6 +152,7 @@ class PolicyRef:
     version: str = "1"
 
     def as_dict(self) -> Dict[str, Any]:
+        """Flatten the manifest fields into a plain dict for the synapse payload."""
         return asdict(self)
 
 
@@ -167,15 +176,18 @@ class PolicySynapse(Synapse):
     timeout: float = 5.0
 
     def deserialize(self) -> "PolicySynapse":
+        """Return the synapse unchanged, as bittensor expects on receipt."""
         return self
 
     # -------- convenience accessors ---------------------------------
     @property
     def policy_ref(self) -> Optional[PolicyRef]:
+        """Rebuild the manifest from the ref payload, None when the miner sent nothing."""
         return PolicyRef(**self.ref) if self.ref else None  # type: ignore[arg-type]
 
     @property
     def validation_result(self) -> Optional[ValidationResult]:
+        """Rebuild the score object from the result payload, None when unset."""
         return ValidationResult(**self.result) if self.result else None  # type: ignore[arg-type]
 
     # -------- static builders ---------------------------------------
@@ -186,10 +198,12 @@ class PolicySynapse(Synapse):
 
     @staticmethod
     def from_ref(ref: PolicyRef) -> "PolicySynapse":
+        """Miner -> Validator: carry the model manifest back to the caller."""
         return PolicySynapse(ref=ref.as_dict())
 
     @staticmethod
     def from_result(res: ValidationResult) -> "PolicySynapse":
+        """Validator -> Miner: carry the evaluation score of a submission."""
         return PolicySynapse(result=asdict(res))
 
 

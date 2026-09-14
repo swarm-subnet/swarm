@@ -168,6 +168,7 @@ class BackendApiClient:
     def __init__(
         self, wallet: "bt.wallet" = None, base_url: str = None, timeout: float = 60.0
     ):
+        """Open the httpx session, mint a session id and load the cached runtime state."""
         self.base_url = base_url or BackendApiSettings.from_env().base_url
         if not self.base_url:
             raise ValueError(
@@ -191,6 +192,7 @@ class BackendApiClient:
 
     @property
     def last_sync_ts(self) -> float:
+        """Wall-clock time of the most recent successful sync, 0 before the first one."""
         return self._runtime_state.get("last_sync", 0)
 
     @property
@@ -240,6 +242,7 @@ class BackendApiClient:
         }
 
     async def _fence_duplicate_instance(self, response: httpx.Response) -> None:
+        """Exit the process on a 409 saying another live process already holds this hotkey, except while announcing startup."""
         if response.status_code != 409:
             return
         try:
@@ -499,6 +502,7 @@ class BackendApiClient:
         backend_decision_version: Optional[int] = None,
         in_flight_seeds: Optional[list] = None,
     ) -> Dict[str, Any]:
+        """Report progress, queue and the seeds still held to the backend; once standing down, only an idle report is still sent."""
         if self._standing_down and status != "idle":
             return {"error": "standing_down"}
         data: Dict[str, Any] = {"status": status, "session_id": self.session_id}
@@ -533,6 +537,7 @@ class BackendApiClient:
         provenance: Optional[Dict[str, Any]] = None,
         retries: int = 3,
     ) -> Dict[str, Any]:
+        """Upload one batch of per-seed results, retried up to ``retries`` times for the backend's confirmation."""
         retries = max(retries, 1)
         last_reason = ""
         result: Dict[str, Any] = {}
@@ -588,6 +593,7 @@ class BackendApiClient:
         ended_at: str,
         benchmark_version: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Tell the backend which seeds a family ran for an epoch and the window they covered."""
         data: Dict[str, Any] = {
             "epoch_number": epoch_number,
             "family_id": family_id,

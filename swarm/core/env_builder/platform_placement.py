@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Siting of the take-off and landing pads on a world that is already built."""
+
 from __future__ import annotations
 
 import math
@@ -54,6 +56,7 @@ def _find_flat_platform_spot(
     """
 
     def _sample(cx, cy):
+        """Probe the centre and three rings around it; returns centre z, peak z, their gap and all hits."""
         center_z = _raycast_surface_z(cli, cx, cy)
         edge_zs = [center_z]
         for ring in (0.5 * radius, radius, 1.15 * radius):
@@ -126,6 +129,7 @@ def _find_flat_platform_spot(
 
 
 def _raycast_surface_z(cli: int, x: float, y: float) -> float:
+    """Top-down raycast for the surface Z under (x, y); 0.0 on a miss."""
     result = p.rayTest(
         rayFromPosition=[x, y, 500.0],
         rayToPosition=[x, y, -100.0],
@@ -156,6 +160,11 @@ def _find_clear_platform_position(
     allow_candidate_fallback: bool = True,
     min_obstacle_height: float = 0.0,
 ) -> Tuple[float, float, float]:
+    """Return a pad spot clear of the world bodies and inside the required distance band.
+
+    Falls back to the candidate position when allow_candidate_fallback is set,
+    and raises RuntimeError otherwise.
+    """
     clearance = C.TYPE_4_PLATFORM_CLEARANCE
     platform_r = C.START_PLATFORM_RADIUS
     check_r = platform_r + clearance
@@ -181,6 +190,7 @@ def _find_clear_platform_position(
         y2: float,
         z2: float,
     ) -> float:
+        """Separation of two points, planar when distance_mode is xy."""
         dx = x1 - x2
         dy = y1 - y2
         if distance_mode == "xy":
@@ -189,6 +199,7 @@ def _find_clear_platform_position(
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     def _overlaps(x: float, y: float, z: float) -> bool:
+        """True when a probe sphere at (x, y, z) touches any scanned world body."""
         probe_col = p.createCollisionShape(
             p.GEOM_SPHERE,
             radius=check_r,
@@ -219,11 +230,13 @@ def _find_clear_platform_position(
         return overlapping
 
     def _too_close(x: float, y: float, z: float) -> bool:
+        """True when the point sits nearer to avoid_pos than min_distance."""
         if avoid_pos is None or min_distance <= 0:
             return False
         return _distance(x, y, z, avoid_pos[0], avoid_pos[1], avoid_pos[2]) < min_distance
 
     def _within_distance_bounds(x: float, y: float, z: float) -> bool:
+        """True when the gap to avoid_pos falls inside the required min and max."""
         if avoid_pos is None:
             return True
         dist = _distance(x, y, z, avoid_pos[0], avoid_pos[1], avoid_pos[2])
@@ -234,6 +247,7 @@ def _find_clear_platform_position(
         return True
 
     def _candidate_is_valid(x: float, y: float, z: float) -> bool:
+        """True when the point is in bounds, free of bodies and correctly spaced from avoid_pos."""
         if not (-wx <= x <= wx and -wy <= y <= wy):
             return False
         if _overlaps(x, y, z):
@@ -243,6 +257,7 @@ def _find_clear_platform_position(
         return _within_distance_bounds(x, y, z)
 
     def _sample_bounded_candidate() -> Optional[Tuple[float, float, float]]:
+        """Draw a point from the required distance ring, then sweep it deterministically before giving up."""
         if avoid_pos is None:
             return None
         if required_distance_min is None and required_distance_max is None:
@@ -254,6 +269,7 @@ def _find_clear_platform_position(
         max_bound = float(required_distance_max)
 
         def _target_xy_radius(z: float, min_xy: float, max_xy: float) -> float:
+            """Planar radius to aim for at height z, clamped into [min_xy, max_xy]."""
             if preferred_distance is None:
                 return min_xy + 0.5 * (max_xy - min_xy)
             target = float(preferred_distance)
@@ -347,6 +363,7 @@ def _find_clear_platform_position(
 
 
 def _goal_distance_bounds(challenge_type: int) -> Optional[Tuple[float, float, str]]:
+    """Return the (min, max, mode) spacing rule for a challenge type, None when it has none."""
     if challenge_type == 1:
         return (C.TYPE_1_R_MIN, C.TYPE_1_R_MAX, "xy")
     if challenge_type == 4:
@@ -359,6 +376,7 @@ def _goal_distance_bounds(challenge_type: int) -> Optional[Tuple[float, float, s
 
 
 def _distance_between_points(a, b, *, mode: str) -> float:
+    """Separation of a and b, planar under mode xy and full 3D otherwise."""
     dx = float(b[0]) - float(a[0])
     dy = float(b[1]) - float(a[1])
     if mode == "xy":

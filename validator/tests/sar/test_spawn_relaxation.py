@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The spawn search loosens its rules before giving up: a shorter hover column, then any support."""
 from __future__ import annotations
 
 import pybullet as p
@@ -29,6 +30,7 @@ from swarm.core.env_builder.spawn_pipeline import (
 
 
 def _slab(cli, half_extents, position, tags, category):
+    """Create a static box at position, record its category in tags, and return the body uid."""
     shape = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=half_extents, physicsClientId=cli
     )
@@ -48,6 +50,7 @@ def _canopy_world(cli, ceiling_z):
 
 
 def test_relaxed_pass_places_under_a_low_canopy(sar_pybullet):
+    """A ceiling too low for the full hover column still yields a spot on the ground."""
     tags = _canopy_world(sar_pybullet, ceiling_z=HOVER_COLUMN_TOP_Z * 0.8)
 
     x, y, hit = find_spawn_xy(
@@ -59,6 +62,7 @@ def test_relaxed_pass_places_under_a_low_canopy(sar_pybullet):
 
 
 def test_places_on_an_off_type_support_when_nothing_else_exists(sar_pybullet):
+    """With only a walkway in the world, a terrain-only challenge lands on it rather than raising."""
     tags: dict[int, str] = {}
     _slab(sar_pybullet, [60.0, 60.0, 0.05], [0.0, 0.0, -0.05], tags, BodyCategory.SUPPORT_WALKWAY)
 
@@ -72,6 +76,7 @@ def test_places_on_an_off_type_support_when_nothing_else_exists(sar_pybullet):
 
 
 def test_still_raises_when_there_is_no_ground(sar_pybullet):
+    """A canopy with nothing underneath raises SARSpawnError instead of inventing a placement."""
     tags: dict[int, str] = {}
     _slab(sar_pybullet, [60.0, 60.0, 0.05], [0.0, 0.0, 4.0], tags, BodyCategory.OBSTACLE_CANOPY)
 

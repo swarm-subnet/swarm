@@ -60,16 +60,22 @@ _MAX_NODE_INPUTS = 16
 
 @dataclass(frozen=True)
 class ObsBinding:
+    """A reference to one observation key of the family contract."""
+
     key: str
 
 
 @dataclass(frozen=True)
 class MemoryBinding:
+    """A reference to a declared memory slot, read as it stood on the previous tick."""
+
     name: str
 
 
 @dataclass(frozen=True)
 class NodeBinding:
+    """A reference to one named output tensor of another node."""
+
     node_id: str
     output: str
 
@@ -79,6 +85,8 @@ Binding = ObsBinding | MemoryBinding | NodeBinding
 
 @dataclass(frozen=True)
 class ModelDecl:
+    """One ONNX file, the id the graph refers to it by and the sha256 it must hash to."""
+
     model_id: str
     file: str
     sha256: str
@@ -86,6 +94,8 @@ class ModelDecl:
 
 @dataclass(frozen=True)
 class MemoryDecl:
+    """One memory slot: its declared shape and the node output that writes it whenever that node fires."""
+
     name: str
     shape: tuple[int, ...]
     writer: NodeBinding
@@ -93,6 +103,8 @@ class MemoryDecl:
 
 @dataclass(frozen=True)
 class NodeDecl:
+    """One graph node: the model it runs, its bound inputs and how often it fires."""
+
     node_id: str
     model_id: str
     inputs: dict[str, Binding]
@@ -101,6 +113,8 @@ class NodeDecl:
 
 @dataclass(frozen=True)
 class GraphManifest:
+    """A parsed, validated manifest; nodes stay in declaration order and topo_order gives the execution order."""
+
     family_id: str
     models: tuple[ModelDecl, ...]
     memory: tuple[MemoryDecl, ...]
@@ -120,6 +134,7 @@ class GraphManifest:
         return total
 
     def node(self, node_id: str) -> NodeDecl:
+        """Look a node up by id, raising KeyError when the graph declares no such node."""
         for n in self.nodes:
             if n.node_id == node_id:
                 return n
@@ -127,10 +142,12 @@ class GraphManifest:
 
 
 def _invalid(detail: str) -> ModelGraphError:
+    """A MANIFEST_INVALID error carrying detail, ready to raise."""
     return ModelGraphError(ReasonCode.MANIFEST_INVALID, detail)
 
 
 def _require(obj: dict, key: str, kind: type, detail: str):
+    """Return obj[key] once it exists and has type kind, raising otherwise; a bool is not an int."""
     if key not in obj:
         raise _invalid(f"missing key '{key}' in {detail}")
     value = obj[key]
@@ -142,18 +159,21 @@ def _require(obj: dict, key: str, kind: type, detail: str):
 
 
 def _check_no_extra_keys(obj: dict, allowed: set[str], detail: str) -> None:
+    """Raise when obj carries a key outside allowed, so the contract stays closed."""
     extra = set(obj) - allowed
     if extra:
         raise _invalid(f"unknown keys {sorted(extra)} in {detail}")
 
 
 def _identifier(value, detail: str) -> str:
+    """Return value once it matches IDENTIFIER_RE, raising on anything else."""
     if not isinstance(value, str) or not IDENTIFIER_RE.match(value):
         raise _invalid(f"invalid identifier in {detail}")
     return value
 
 
 def _parse_binding(raw, detail: str) -> Binding:
+    """Turn an 'obs.x', 'memory.x' or 'node.output' string into the matching Binding."""
     if not isinstance(raw, str):
         raise _invalid(f"binding must be a string in {detail}")
     if raw.startswith(OBS_PREFIX):
@@ -174,6 +194,7 @@ def _parse_binding(raw, detail: str) -> Binding:
 
 
 def parse_manifest(raw_bytes: bytes) -> GraphManifest:
+    """Validate manifest.json bytes and return the topologically sorted GraphManifest."""
     if len(raw_bytes) > MAX_GRAPH_MANIFEST_BYTES:
         raise ModelGraphError(
             ReasonCode.RESOURCE_CAP_EXCEEDED,

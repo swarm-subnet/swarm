@@ -15,11 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Imports that still have to work on an interpreter where setuptools left nothing behind."""
 import subprocess
 import sys
 
 
 def test_gym_imports_when_pkg_resources_is_absent():
+    """Importing swarm installs a shim that still resolves cf2x.urdf on disk."""
     code = """
 import sys
 class _Block:

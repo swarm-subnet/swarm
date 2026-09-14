@@ -50,6 +50,7 @@ _REQUIRED_KEYS = (
 
 
 def load_baseline_manifest() -> dict:
+    """Parse baseline_manifest.json and raise ValueError when a required key is absent."""
     data = json.loads(_MANIFEST_PATH.read_text())
     missing = [key for key in _REQUIRED_KEYS if key not in data]
     if missing:
@@ -58,6 +59,7 @@ def load_baseline_manifest() -> dict:
 
 
 def baseline_model_path() -> Path:
+    """Absolute path to the committed artifact named by the manifest."""
     manifest = load_baseline_manifest()
     return _CALIBRATION_DIR / manifest["baseline_model"]["artifact"]
 
@@ -79,6 +81,7 @@ def baseline_model_available() -> bool:
 
 @dataclass(frozen=True)
 class SpeedFactor:
+    """One host's act-time ratio against the owner baseline, plus its eligibility verdict."""
     raw: float           # local_p90 / owner_p90, unbounded
     factor: float        # value used for scoring (low-guarded, never upper-clamped)
     eligible: bool       # False -> host is too slow to score fairly and must self-exclude
@@ -87,6 +90,7 @@ class SpeedFactor:
 
 
 def percentile(values, pct: float) -> float:
+    """Linear-interpolated percentile of the values; 0.0 for an empty sequence."""
     ordered = sorted(float(v) for v in values)
     if not ordered:
         return 0.0
@@ -125,6 +129,7 @@ def normalize_speed_factor(
 
 @dataclass
 class CalibrationEntry:
+    """One worker's speed factor and container overhead, with the wall-clock time it was taken."""
     speed: SpeedFactor
     overhead_ms: float
     calibration_version: str
@@ -135,11 +140,13 @@ class CalibrationState:
     """In-memory speed-factor state kept only for process-local callers."""
 
     def __init__(self, cache_path: Optional[Path] = None) -> None:
+        """Start with an empty per-worker map; cache_path is accepted and ignored."""
         _ = cache_path
         self._lock = threading.Lock()
         self._by_worker: Dict[int, CalibrationEntry] = {}
 
     def get(self, worker_id: int) -> Optional[CalibrationEntry]:
+        """The entry recorded for worker_id, or None when it has not been measured."""
         with self._lock:
             return self._by_worker.get(int(worker_id))
 
@@ -150,6 +157,7 @@ class CalibrationState:
         overhead_ms: float,
         calibration_version: str,
     ) -> CalibrationEntry:
+        """Record a worker's measurement stamped with the current time and return the entry."""
         entry = CalibrationEntry(
             speed=speed,
             overhead_ms=float(overhead_ms),

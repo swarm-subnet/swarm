@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""CLI arguments, run options, log teeing and progress bars for the full Docker evaluation."""
+
 from __future__ import annotations
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
@@ -41,11 +43,13 @@ class _Tee(io.TextIOBase):
     """Write to multiple file objects simultaneously."""
 
     def __init__(self, *files):
+        """Keep the given streams, treat the first as primary, and guard writes with a lock."""
         self.files = files
         self._primary = files[0] if files else sys.__stdout__
         self._lock = threading.Lock()
 
     def write(self, data):
+        """Send data to every stream still open, skipping any that raise, and report its length."""
         with self._lock:
             for f in self.files:
                 try:
@@ -58,6 +62,7 @@ class _Tee(io.TextIOBase):
         return len(data)
 
     def flush(self):
+        """Push every stream still open, skipping any that raise."""
         with self._lock:
             for f in self.files:
                 try:
@@ -69,17 +74,21 @@ class _Tee(io.TextIOBase):
 
     @property
     def buffer(self):
+        """Return the primary stream's binary view, None when it does not expose one."""
         return getattr(self._primary, "buffer", None)
 
     @property
     def encoding(self):
+        """Return the primary stream's text codec, utf-8 when it declares none."""
         return getattr(self._primary, "encoding", "utf-8")
 
     @property
     def errors(self):
+        """Return the primary stream's decode error policy, strict when it declares none."""
         return getattr(self._primary, "errors", "strict")
 
     def reconfigure(self, *args, **kwargs):
+        """Pass the call on to every stream that supports one, skipping any that raise."""
         for f in self.files:
             try:
                 reconfigure = getattr(f, "reconfigure", None)
@@ -89,35 +98,46 @@ class _Tee(io.TextIOBase):
                 continue
 
     def fileno(self):
+        """Return the primary stream's OS descriptor number."""
         return self._primary.fileno()
 
     def isatty(self):
+        """Report whether the primary stream is a terminal."""
         return self._primary.isatty()
 
     def writable(self):
+        """Return True; a tee always accepts output."""
         return True
 
     def __getattr__(self, name: str):
+        """Delegate every unknown attribute to the primary stream."""
         return getattr(self._primary, name)
 
 
 def _ts() -> str:
+    """Return the local clock as HH:MM:SS for the prefix on every log line."""
     return time.strftime("%H:%M:%S")
 
 
 class _NoopProgressBar:
+    """Stands in for tqdm when it is not installed, swallowing every call the run makes."""
+
     def update(self, _n: int) -> None:
+        """Ignore the step count; there is no bar to advance."""
         return None
 
     def set_postfix_str(self, _text: str, refresh: bool = True) -> None:
+        """Ignore the trailing text; there is no bar to show it on."""
         _ = refresh
         return None
 
     def close(self) -> None:
+        """Do nothing: there is no bar to tear down."""
         return None
 
 
 def _build_progress_bar(total_seeds: int):
+    """Return a tqdm bar counting seeds, or the silent stand-in when tqdm is unavailable."""
     if _tqdm is None:
         return _NoopProgressBar()
     return _tqdm(
@@ -131,6 +151,7 @@ def _build_progress_bar(total_seeds: int):
 
 
 def _debug_profile_options() -> _RunOptions:
+    """Return the _RunOptions of the debug profile: verbose RPC tracing, a 300 s batch cap and a 1800 s per-seed cap."""
     return _RunOptions(
         heartbeat_sec=15.0,
         rpc_trace=True,
@@ -151,6 +172,7 @@ def _debug_profile_options() -> _RunOptions:
 
 @contextmanager
 def _temporary_env(overrides: Dict[str, Optional[str]]):
+    """Apply the given environment variables for the block, then put the earlier values back; a None value unsets."""
     previous = {k: os.environ.get(k) for k in overrides}
     try:
         for key, value in overrides.items():
@@ -168,6 +190,7 @@ def _temporary_env(overrides: Dict[str, Optional[str]]):
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Return the command line namespace for a full Docker evaluation: model, UID, family, seeds and output paths."""
     parser = argparse.ArgumentParser(
         description="Full Docker evaluation benchmark across all challenge types.",
     )
@@ -238,6 +261,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
+    """Return the debug profile with its RPC tracing tuned to the chosen verbosity level."""
     opts = _debug_profile_options()
     if args.rpc_verbosity == "low":
         opts.rpc_trace = False
@@ -255,6 +279,7 @@ def _resolve_run_options(args: argparse.Namespace) -> _RunOptions:
 
 
 def _apply_relaxed_overrides() -> Dict[str, Any]:
+    """Loosen the timing and worker constants in swarm.constants in place for slow machines, and return what was set."""
     import swarm.constants as _c
 
     overrides = {
@@ -274,6 +299,7 @@ def _apply_relaxed_overrides() -> Dict[str, Any]:
 
 
 def _active_runtime_overrides() -> Dict[str, str]:
+    """Return the worker thread, CPU, memory and cpuset environment variables that currently carry a value."""
     keys = [
         "SWARM_DOCKER_THREAD_CAPS",
         "OMP_NUM_THREADS",

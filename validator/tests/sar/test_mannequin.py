@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The victim mannequin ships complete: raw mesh, licence, pre-split parts, and no writes at load time."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,6 +31,7 @@ _SPLIT_DIR = _ASSET_DIR / "split"
 
 
 def _obj_bounds(path):
+    """Min and max corner of the vertex cloud in an OBJ file."""
     mn = [float("inf")] * 3
     mx = [float("-inf")] * 3
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -49,6 +52,7 @@ def _obj_bounds(path):
 
 
 def _materials_in_mtl(path):
+    """Every material name declared by a newmtl line, in file order."""
     mats = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -58,6 +62,7 @@ def _materials_in_mtl(path):
 
 
 def test_loadable():
+    """The raw mesh is on disk and stands 1.5 to 2.1 m on the OBJ Y axis, with real width and depth."""
     assert _RAW_OBJ.is_file(), f"missing raw mannequin: {_RAW_OBJ}"
     mn, mx = _obj_bounds(_RAW_OBJ)
     # OBJ is Y-up so "standing height" is the Y extent
@@ -69,12 +74,14 @@ def test_loadable():
 
 
 def test_license_present():
+    """The asset carries a licence naming CC0 or the public domain, so it can be redistributed."""
     assert _LICENSE.is_file()
     text = _LICENSE.read_text()
     assert "CC0" in text or "public domain" in text.lower()
 
 
 def test_prebaked_parts_present():
+    """Every material in the MTL already has its own split OBJ and MTL sitting on disk."""
     assert _RAW_MTL.is_file()
     materials = _materials_in_mtl(_RAW_MTL)
     assert materials, "MTL has no newmtl entries"
@@ -88,6 +95,7 @@ def test_prebaked_parts_present():
 
 
 def test_no_runtime_writes():
+    """Reading the pre-split parts creates no directories, so evaluation is not rebuilding the split asset tree."""
     from swarm.core.env_builder import mesh_loader
 
     with mock.patch("os.makedirs") as mk_mkdir:

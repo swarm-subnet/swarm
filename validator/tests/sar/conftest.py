@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The headless physics client the search and rescue tests build their maps inside."""
 from __future__ import annotations
 
 import pybullet as p
@@ -23,6 +24,7 @@ import pytest
 
 @pytest.fixture
 def sar_pybullet():
+    """A DIRECT-mode physics client id, torn down at the end even when the test left the simulation broken."""
     cli = p.connect(p.DIRECT)
     try:
         yield cli

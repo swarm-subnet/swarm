@@ -26,22 +26,28 @@ from .geometry import *
 # SECTION 3: Spatial grid for placement collision
 # ---------------------------------------------------------------------------
 class _SpatialGrid:
+    """Uniform-cell bucket grid holding circles, for overlap and neighbour-count queries."""
+
     __slots__ = ('cells', 'cell_size', 'max_radius')
 
     def __init__(self, cell_size: float = 4.0):
+        """Start with no occupied cells and the given bucket size in metres."""
         self.cells: dict = {}
         self.cell_size = cell_size
         self.max_radius = 0.0
 
     def _key(self, x: float, y: float) -> Tuple[int, int]:
+        """Grid cell coordinates holding the point (x, y)."""
         return (int(x // self.cell_size), int(y // self.cell_size))
 
     def insert(self, x: float, y: float, radius: float) -> None:
+        """Record a circle of the given radius at (x, y) and track the largest one seen."""
         if radius > self.max_radius:
             self.max_radius = radius
         self.cells.setdefault(self._key(x, y), []).append((x, y, radius))
 
     def has_conflict(self, x: float, y: float, radius: float, clearance: float) -> bool:
+        """True when a circle at (x, y) comes within clearance of any recorded circle."""
         if not self.cells:
             return False
         search_dist = radius + self.max_radius + clearance
@@ -61,6 +67,7 @@ class _SpatialGrid:
         return False
 
     def count_neighbors(self, x: float, y: float, search_radius: float) -> int:
+        """Number of recorded circle centres lying within search_radius of (x, y)."""
         if not self.cells:
             return 0
         search_cells = int(search_radius / self.cell_size) + 1
@@ -85,6 +92,7 @@ class _SpatialGrid:
 def _tree_candidate_points(
     rng: random.Random, count: int
 ) -> List[Tuple[float, float]]:
+    """Jittered row-offset grid points covering the map, followed by count*3 random extras."""
     half = _map_half_extent() - FOREST_EDGE_MARGIN_M
     width = half * 2.0
     cells_side = max(8, int(math.ceil(math.sqrt(count * 1.18))))
@@ -110,6 +118,7 @@ def _tree_candidate_points(
 
 
 def _small_asset_half_extent() -> float:
+    """Half map extent pulled in by the wider of the forest and small-asset edge margins."""
     return _map_half_extent() - max(FOREST_EDGE_MARGIN_M, SMALL_ASSET_EDGE_MARGIN_M)
 
 
@@ -117,6 +126,7 @@ def _normalize_safe_zone_circles(
     safe_zones: Optional[List[Tuple[float, float, float]]],
     safe_zone_radius: float,
 ) -> List[Tuple[float, float, float]]:
+    """Turn the safe zone centres into (x, y, radius) circles, empty when the radius is 0."""
     if not safe_zones or safe_zone_radius <= 0.0:
         return []
 
@@ -131,6 +141,7 @@ def _normalize_safe_zone_circles(
 def _safe_zone_rects(
     safe_zone_circles: List[Tuple[float, float, float]]
 ) -> List[Tuple[float, float, float, float]]:
+    """Axis-aligned bounding rectangle of each safe zone circle."""
     return [_circle_bounds_rect(x, y, radius) for x, y, radius in safe_zone_circles]
 
 
@@ -140,6 +151,7 @@ def _circle_conflicts_safe_zones(
     radius: float,
     safe_zone_circles: List[Tuple[float, float, float]],
 ) -> bool:
+    """True when a circle of the given radius at (x, y) overlaps any safe zone."""
     for zx, zy, zradius in safe_zone_circles:
         dx = x - zx
         dy = y - zy
@@ -153,6 +165,7 @@ def _rect_conflicts_safe_zones(
     rect: Tuple[float, float, float, float],
     safe_zone_rects: List[Tuple[float, float, float, float]],
 ) -> bool:
+    """True when the rectangle overlaps any of the safe zone bounding rectangles."""
     return any(_rect_overlap(rect, safe_rect) for safe_rect in safe_zone_rects)
 
 
@@ -161,6 +174,7 @@ def _extend_small_asset_candidates(
     candidates: List[Tuple[float, float]],
     *, count: int, half: float,
 ) -> None:
+    """Append count more points to candidates, biased toward the middle of the map."""
     inner_half = half * SMALL_ASSET_CENTER_REGION_RATIO
     for _ in range(count):
         if rng.random() < SMALL_ASSET_CENTER_BIAS:
@@ -177,6 +191,7 @@ def _scaled_occupied_instances(
     *, radius_scale: float, min_radius: float = 0.0,
     max_radius: Optional[float] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
+    """Copy the instances with every radius multiplied and clamped to the given bounds."""
     scaled: List[Tuple[float, float, str, str, float, float]] = []
     for x, y, category, obj_name, total_scale, radius in instances:
         out_r = max(min_radius, radius * radius_scale)
@@ -192,6 +207,7 @@ def _pick_tree_instances(
     safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
+    """Place up to count trees on jittered candidate points, relaxing spacing over three passes."""
     if not assets or count <= 0:
         return []
 
@@ -342,6 +358,7 @@ def _pick_shrub_instances(
     safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
+    """Scatter up to count shrubs, ringed around the trees and capped per distribution cell."""
     if not assets or count <= 0:
         return []
 
@@ -442,6 +459,7 @@ def _pick_rock_stump_instances(
     safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
+    """Place rocks and stumps, seeding one of each priority model first, then filling to count."""
     if not assets or count <= 0:
         return []
 
@@ -561,6 +579,7 @@ def _pick_log_instances(
     safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
+    """Scatter up to count logs on ground clear of the trees, safe zones and placed assets."""
     if not assets or count <= 0:
         return []
 
@@ -621,6 +640,7 @@ def _pick_ground_cover_instances(
     safe_zone_circles: Optional[List[Tuple[float, float, float]]] = None,
     safe_zone_rects: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Tuple[float, float, str, str, float, float]]:
+    """Place ground cover, one of each model whose weight bonus is above 1.0 first, then a weighted fill to count."""
     if not assets or count <= 0:
         return []
 
@@ -763,6 +783,7 @@ def _split_asset_count(
     *, primary_ratio: Optional[float] = None,
     secondary_cap: Optional[int] = None,
 ) -> Tuple[int, int]:
+    """Divide total between the primary and secondary asset lists, honouring the ratio and cap."""
     if total <= 0 or (not primary and not secondary):
         return 0, 0
     if not secondary:
