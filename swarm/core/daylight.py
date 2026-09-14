@@ -18,11 +18,11 @@
 """Seeded daylight: one sun per seed, chosen from a real sun arc, never below the horizon.
 
 A family opts in with ``seeded_sun = True``; nothing here runs for the families that do not.
-The seed picks an hour between sunrise and sunset and a heading for the map. The hour sets
-how high the sun is, and the height sets its colour and strength: white and strong at noon,
-orange and weak near the horizon. A family that also sets ``night_share`` hands that share of
-its seeds to the moon instead: a cool, weak light from high up under a dark sky. Every value
-is rounded to fixed decimals so each validator hands the renderer the same numbers.
+The seed picks how high the sun stands and which way it faces, and the hour that puts it
+there is read back off the arc. The height sets its colour and strength: white and strong at
+the noon peak, orange and weak near the horizon. A family that also sets ``night_share`` hands
+that share of its seeds to the moon instead: a cool, weak light from high up under a dark sky.
+Every value is rounded to fixed decimals so each validator hands the renderer the same numbers.
 """
 
 from __future__ import annotations
@@ -46,7 +46,8 @@ from swarm.constants import (
     SUN_SEED_OFFSET,
 )
 
-RGB = Tuple[float, float, float]
+Vec3 = Tuple[float, float, float]
+RGB = Vec3
 ColorTable = Tuple[Tuple[float, RGB], ...]
 
 # Sun colour by elevation, linearly interpolated between rows: warm near the horizon, white
@@ -82,7 +83,7 @@ class SunLight:
     hour: float
     elevation_deg: float
     azimuth_deg: float
-    direction: RGB
+    direction: Vec3
     color: RGB
     ambient: float
     diffuse: float
@@ -147,7 +148,7 @@ def day_sky(elevation_deg: float) -> Tuple[RGB, RGB]:
     return _table_color(SKY_HORIZON_TABLE, elevation_deg), _table_color(SKY_ZENITH_TABLE, elevation_deg)
 
 
-def _direction(elevation_deg: float, azimuth_deg: float) -> RGB:
+def _direction(elevation_deg: float, azimuth_deg: float) -> Vec3:
     """Unit vector toward a light at an elevation and heading, rounded to fixed decimals."""
     el = math.radians(elevation_deg)
     az = math.radians(azimuth_deg)
