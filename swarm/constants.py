@@ -94,12 +94,12 @@ SUN_DECLINATION_DEG = 10.0              # sun declination: noon peak of 60 deg, 
 SUN_MIN_ELEVATION_DEG = 3.0             # lowest sun a seed may pick (degrees above the horizon)
 SUN_DIFFUSE_MAX = 0.35                  # renderer diffuse coefficient with the sun overhead
 SUN_EXTINCTION = 0.06                   # per-air-mass loss of sun strength toward the horizon
-SUN_AMBIENT_RANGE = (0.40, 0.60)        # renderer ambient coefficient from a low sun to 20 deg and above
+SUN_AMBIENT_RANGE = (0.28, 0.60)        # renderer ambient coefficient across the whole arc
 # Night for families that set ChallengeFamilyRuntime.night_share: a moon lights the map instead.
 MOON_ELEVATION_RANGE_DEG = (10.0, 60.0) # where the moon may sit, degrees above the horizon
 MOON_COLOR = (0.62, 0.70, 0.90)         # renderer light colour of the moon: cool blue-grey
-MOON_DIFFUSE = 0.12                     # renderer diffuse coefficient under the moon
-MOON_AMBIENT = 0.18                     # renderer ambient coefficient at night
+MOON_DIFFUSE_RANGE = (0.04, 0.16)       # renderer diffuse coefficient from a crescent to a full moon
+MOON_AMBIENT_RANGE = (0.10, 0.24)       # renderer ambient coefficient from a crescent to a full moon
 # Propulsion efficiency
 
 # =============================================================================

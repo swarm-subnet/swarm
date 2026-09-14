@@ -27,9 +27,9 @@ import pytest
 
 from swarm.challenge_families.base import ChallengeFamilyRuntime
 from swarm.constants import (
-    MOON_AMBIENT,
+    MOON_AMBIENT_RANGE,
     MOON_COLOR,
-    MOON_DIFFUSE,
+    MOON_DIFFUSE_RANGE,
     MOON_ELEVATION_RANGE_DEG,
     SUN_AMBIENT_RANGE,
     SUN_DIFFUSE_MAX,
@@ -37,21 +37,17 @@ from swarm.constants import (
 )
 from swarm.core.daylight import (
     NIGHT_SKY,
+    _elevation_deg,
     apply_seeded_sun,
     day_sky,
     daylight_hours,
+    max_elevation_deg,
     seeded_sun,
     sky_render_kwargs,
     sun_color,
     sun_render_kwargs,
 )
 from swarm.core.moving_drone import MovingDroneAviary
-
-# The suns two seeds drew before the moon existed; a share of zero must still draw them.
-CARD_TEN_SUNS = {
-    25: (5.708, 3.099, 124.065, (-0.559319, 0.827188, 0.054065), (1.0, 0.6554, 0.4116), 0.431, 0.1225),
-    96: (12.006, 60.0, 116.472, (-0.22288, 0.447578, 0.866024), (1.0, 1.0, 1.0), 0.6, 0.3468),
-}
 
 
 def test_same_seed_same_sun():
@@ -78,14 +74,35 @@ def test_sun_never_below_the_horizon():
 
 def test_low_sun_is_warm_and_weak_high_sun_is_white_and_strong():
     """Sun colour and strength follow elevation: orange and dim low, white and full at noon."""
-    assert sun_color(0.0) == (1.0, 0.55, 0.3)
-    assert sun_color(50.0) == (1.0, 1.0, 1.0)
+    assert sun_color(SUN_MIN_ELEVATION_DEG) == (1.0, 0.5, 0.24)
+    assert sun_color(max_elevation_deg()) == (1.0, 1.0, 1.0)
     assert sun_color(80.0) == (1.0, 1.0, 1.0)
     low = min((seeded_sun(seed) for seed in range(200)), key=lambda s: s.elevation_deg)
     high = max((seeded_sun(seed) for seed in range(200)), key=lambda s: s.elevation_deg)
     assert low.color[2] < high.color[2]
     assert low.diffuse < high.diffuse <= SUN_DIFFUSE_MAX
     assert SUN_AMBIENT_RANGE[0] <= low.ambient < high.ambient <= SUN_AMBIENT_RANGE[1]
+
+
+def test_every_height_of_sun_is_equally_likely():
+    """The seed draws the sun's height, not its hour, so a low golden sun is as common as noon:
+    each quarter of the arc takes roughly a quarter of the seeds and no setting saturates."""
+    peak = max_elevation_deg()
+    edges = [SUN_MIN_ELEVATION_DEG + (peak - SUN_MIN_ELEVATION_DEG) * q / 4.0 for q in range(5)]
+    suns = [seeded_sun(seed) for seed in range(4000)]
+    for lo, hi in zip(edges, edges[1:]):
+        share = sum(lo <= sun.elevation_deg < hi for sun in suns) / len(suns)
+        assert 0.2 < share < 0.3, f"{lo:.0f} to {hi:.0f} deg took {share:.0%} of seeds"
+    ambients = [sun.ambient for sun in suns]
+    assert sum(a >= SUN_AMBIENT_RANGE[1] - 1e-6 for a in ambients) / len(suns) < 0.01
+    assert max(ambients) - min(ambients) > 0.9 * (SUN_AMBIENT_RANGE[1] - SUN_AMBIENT_RANGE[0])
+
+
+def test_the_hour_matches_the_height_it_was_drawn_for():
+    """The hour is read back off the arc, so putting it through the arc returns the same height."""
+    for seed in range(300):
+        sun = seeded_sun(seed)
+        assert math.isclose(_elevation_deg(sun.hour), sun.elevation_deg, abs_tol=0.01)
 
 
 def test_render_kwargs_carry_colour_ambient_and_diffuse():
@@ -117,13 +134,11 @@ def test_families_are_off_by_default():
         assert cls.night_share == 0.0, cls.__name__
 
 
-def test_zero_night_share_draws_the_same_suns_as_before():
-    """Without a night share every seed draws the sun it drew before the moon existed."""
-    for seed, (hour, el, az, direction, color, ambient, diffuse) in CARD_TEN_SUNS.items():
+def test_zero_night_share_is_always_day():
+    """Without a night share a seed draws a sun, and the default argument is that same share."""
+    for seed in range(300):
         sun = seeded_sun(seed)
         assert sun == seeded_sun(seed, night_share=0.0)
-        assert (sun.hour, sun.elevation_deg, sun.azimuth_deg) == (hour, el, az)
-        assert (sun.direction, sun.color, sun.ambient, sun.diffuse) == (direction, color, ambient, diffuse)
         assert sun.night is False
 
 
@@ -158,23 +173,37 @@ def test_moon_is_high_dim_cool_and_after_sunset():
         assert moon.azimuth_deg == seeded_sun(seed).azimuth_deg
         assert moon.hour > last or moon.hour < first
         assert moon.color == MOON_COLOR and moon.color[2] > moon.color[0]
-        assert moon.diffuse == MOON_DIFFUSE < weakest_sun
-        assert moon.ambient == MOON_AMBIENT < SUN_AMBIENT_RANGE[0]
+        assert MOON_DIFFUSE_RANGE[0] <= moon.diffuse <= MOON_DIFFUSE_RANGE[1] < weakest_sun
+        assert MOON_AMBIENT_RANGE[0] <= moon.ambient <= MOON_AMBIENT_RANGE[1] < SUN_AMBIENT_RANGE[0]
         assert moon.sky == NIGHT_SKY
+
+
+def test_the_moon_has_phases():
+    """Nights differ from each other: the moon's strength spans its band, and a brighter moon
+    carries a brighter ambient with it."""
+    moons = [seeded_sun(seed, night_share=1.0) for seed in range(2000)]
+    diffuses = [moon.diffuse for moon in moons]
+    span = MOON_DIFFUSE_RANGE[1] - MOON_DIFFUSE_RANGE[0]
+    assert max(diffuses) - min(diffuses) > 0.9 * span
+    assert len(set(diffuses)) > 500
+    brightest = max(moons, key=lambda m: m.diffuse)
+    dimmest = min(moons, key=lambda m: m.diffuse)
+    assert brightest.ambient > dimmest.ambient
 
 
 def test_sky_follows_the_light():
     """The day sky warms at the horizon for a low sun, is blue for a high one, and night is dark."""
-    low_horizon, low_zenith = day_sky(3.0)
-    high_horizon, high_zenith = day_sky(60.0)
+    low_horizon, low_zenith = day_sky(SUN_MIN_ELEVATION_DEG)
+    high_horizon, high_zenith = day_sky(max_elevation_deg())
     assert low_horizon[0] > low_horizon[2] and high_horizon[2] > high_horizon[0]
     assert high_zenith[2] > high_zenith[0] and high_zenith[2] > low_zenith[2]
-    assert seeded_sun(96).sky == day_sky(60.0)
+    sun = seeded_sun(96)
+    assert sun.sky == day_sky(sun.elevation_deg)
     night_horizon, night_zenith = NIGHT_SKY
     assert max(night_horizon) < 0.2 and max(night_zenith) < 0.1
-    assert sky_render_kwargs(seeded_sun(96)) == {
-        "skyHorizonColor": list(high_horizon),
-        "skyZenithColor": list(high_zenith),
+    assert sky_render_kwargs(sun) == {
+        "skyHorizonColor": list(sun.sky[0]),
+        "skyZenithColor": list(sun.sky[1]),
     }
 
 

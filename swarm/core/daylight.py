@@ -33,9 +33,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 from swarm.constants import (
-    MOON_AMBIENT,
+    MOON_AMBIENT_RANGE,
     MOON_COLOR,
-    MOON_DIFFUSE,
+    MOON_DIFFUSE_RANGE,
     MOON_ELEVATION_RANGE_DEG,
     SUN_AMBIENT_RANGE,
     SUN_DECLINATION_DEG,
@@ -49,26 +49,26 @@ from swarm.constants import (
 RGB = Tuple[float, float, float]
 ColorTable = Tuple[Tuple[float, RGB], ...]
 
-# Sun colour by elevation, linearly interpolated between rows: warm near the horizon,
-# white once the sun is high.
+# Sun colour by elevation, linearly interpolated between rows: warm near the horizon, white
+# only at the noon peak, so the whole arc keeps changing rather than saturating halfway up.
 SUN_COLOR_TABLE: ColorTable = (
-    (0.0, (1.00, 0.55, 0.30)),
-    (5.0, (1.00, 0.72, 0.48)),
-    (15.0, (1.00, 0.88, 0.72)),
-    (30.0, (1.00, 0.96, 0.90)),
-    (50.0, (1.00, 1.00, 1.00)),
+    (3.0, (1.00, 0.50, 0.24)),
+    (10.0, (1.00, 0.64, 0.38)),
+    (20.0, (1.00, 0.77, 0.56)),
+    (35.0, (1.00, 0.89, 0.77)),
+    (60.0, (1.00, 1.00, 1.00)),
 )
 # Day sky by sun elevation, same interpolation: a warm horizon and a deep zenith at sunrise,
 # pale blue over blue by mid-morning.
 SKY_HORIZON_TABLE: ColorTable = (
-    (0.0, (1.00, 0.62, 0.40)),
-    (10.0, (0.95, 0.82, 0.68)),
-    (30.0, (0.80, 0.88, 0.97)),
+    (3.0, (1.00, 0.58, 0.36)),
+    (12.0, (0.96, 0.78, 0.62)),
+    (30.0, (0.84, 0.88, 0.96)),
     (60.0, (0.74, 0.86, 0.98)),
 )
 SKY_ZENITH_TABLE: ColorTable = (
-    (0.0, (0.25, 0.32, 0.58)),
-    (10.0, (0.36, 0.52, 0.82)),
+    (3.0, (0.22, 0.30, 0.56)),
+    (12.0, (0.34, 0.50, 0.80)),
     (30.0, (0.30, 0.55, 0.92)),
     (60.0, (0.24, 0.48, 0.90)),
 )
@@ -97,6 +97,22 @@ def _elevation_deg(hour: float) -> float:
     hour_angle = math.radians(15.0 * (hour - 12.0))
     sin_el = math.sin(lat) * math.sin(dec) + math.cos(lat) * math.cos(dec) * math.cos(hour_angle)
     return math.degrees(math.asin(max(-1.0, min(1.0, sin_el))))
+
+
+def max_elevation_deg() -> float:
+    """The noon peak of the arc: the highest sun a seed can draw."""
+    return _elevation_deg(12.0)
+
+
+def _hour_for_elevation(elevation_deg: float, morning: bool) -> float:
+    """The solar hour at which the sun reaches an elevation, before noon or after it."""
+    lat = math.radians(SUN_LATITUDE_DEG)
+    dec = math.radians(SUN_DECLINATION_DEG)
+    cos_h = (math.sin(math.radians(elevation_deg)) - math.sin(lat) * math.sin(dec)) / (
+        math.cos(lat) * math.cos(dec)
+    )
+    half_day = math.degrees(math.acos(max(-1.0, min(1.0, cos_h)))) / 15.0
+    return 12.0 - half_day if morning else 12.0 + half_day
 
 
 def daylight_hours() -> Tuple[float, float]:
@@ -142,18 +158,22 @@ def _direction(elevation_deg: float, azimuth_deg: float) -> RGB:
     )
 
 
-def _moon(rng: random.Random, azimuth_deg: float, first: float, last: float) -> SunLight:
-    """A night for a seed: the moon somewhere high, an hour between sunset and sunrise."""
+def _moon(rng: random.Random, azimuth_deg: float) -> SunLight:
+    """A night for a seed: the moon somewhere high, as bright as its phase, after sunset."""
     elevation_deg = rng.uniform(*MOON_ELEVATION_RANGE_DEG)
+    phase = rng.random()
+    first, last = daylight_hours()
     hour = (last + rng.uniform(0.0, 24.0 - (last - first))) % 24.0
+    diffuse_lo, diffuse_hi = MOON_DIFFUSE_RANGE
+    ambient_lo, ambient_hi = MOON_AMBIENT_RANGE
     return SunLight(
         hour=round(hour, 3),
         elevation_deg=round(elevation_deg, 3),
         azimuth_deg=round(azimuth_deg, 3),
         direction=_direction(elevation_deg, azimuth_deg),
         color=MOON_COLOR,
-        ambient=MOON_AMBIENT,
-        diffuse=MOON_DIFFUSE,
+        ambient=round(ambient_lo + (ambient_hi - ambient_lo) * phase, 4),
+        diffuse=round(diffuse_lo + (diffuse_hi - diffuse_lo) * phase, 4),
         night=True,
         sky=NIGHT_SKY,
     )
@@ -162,23 +182,25 @@ def _moon(rng: random.Random, azimuth_deg: float, first: float, last: float) -> 
 def seeded_sun(seed: int, night_share: float = 0.0) -> SunLight:
     """The light for a seed: a sun on the day arc, or with the given share a moon instead.
 
-    The hour and heading are drawn first, so a share of zero draws exactly the sun it
-    always did; the night draw only happens when a family asks for one."""
+    The sun's height is drawn directly, not its hour, so a low golden sun is as likely as
+    noon; the hour is then read back off the arc. The heading is drawn before the day or
+    night coin, so a seed keeps its heading either way."""
     if not 0.0 <= night_share <= 1.0:
         raise ValueError(f"night_share must be between 0 and 1, got {night_share}")
     rng = random.Random((int(seed) ^ SUN_SEED_OFFSET) & 0xFFFFFFFF)
-    first, last = daylight_hours()
-    hour = rng.uniform(first, last)
     azimuth_deg = rng.uniform(0.0, 360.0)
     if night_share > 0.0 and rng.random() < night_share:
-        return _moon(rng, azimuth_deg, first, last)
-    elevation_deg = max(SUN_MIN_ELEVATION_DEG, _elevation_deg(hour))
+        return _moon(rng, azimuth_deg)
+    peak = max_elevation_deg()
+    elevation_deg = rng.uniform(SUN_MIN_ELEVATION_DEG, peak)
+    hour = _hour_for_elevation(elevation_deg, rng.random() < 0.5)
 
     # Air mass thins the sun near the horizon; the sky dims with it.
     air_mass = 1.0 / math.sin(math.radians(elevation_deg))
     diffuse = SUN_DIFFUSE_MAX * math.exp(-SUN_EXTINCTION * (air_mass - 1.0))
     ambient_lo, ambient_hi = SUN_AMBIENT_RANGE
-    ambient = ambient_lo + (ambient_hi - ambient_lo) * min(1.0, elevation_deg / 20.0)
+    climb = (elevation_deg - SUN_MIN_ELEVATION_DEG) / (peak - SUN_MIN_ELEVATION_DEG)
+    ambient = ambient_lo + (ambient_hi - ambient_lo) * climb
     return SunLight(
         hour=round(hour, 3),
         elevation_deg=round(elevation_deg, 3),
@@ -221,6 +243,7 @@ __all__: List[str] = [
     "apply_seeded_sun",
     "day_sky",
     "daylight_hours",
+    "max_elevation_deg",
     "seeded_sun",
     "sky_render_kwargs",
     "sun_color",
