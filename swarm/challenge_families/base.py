@@ -176,6 +176,9 @@ class ChallengeFamilyRuntime:
     seeded_sun: bool = False
     # Depth camera backend: "tiny" is TinyRenderer, "raycast" the Embree ray caster in the same wheel.
     render_backend: str = "tiny"
+    # Drone physics mode, a gym_pybullet_drones Physics value: "pyb" is rotor thrust only,
+    # "pyb_gnd_drag_dw" adds the URDF's air drag, ground effect and downwash.
+    physics_mode: str = "pyb"
 
     def screening_policy(self) -> Dict[str, Any]:
         return get_family_screening_policy(self.family_id)
