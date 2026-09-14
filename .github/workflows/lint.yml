@@ -22,14 +22,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
       # pre-commit runs every hook in this repo's config from one place, so
       # what CI checks and what a commit checks cannot drift apart.
-      - uses: pre-commit/action@v3.0.1
+      # Run inline: pre-commit/action pins actions/cache@v4 and ships no new tags.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-3|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - run: python -m pip install pre-commit
+
+      - run: pre-commit run --all-files --show-diff-on-failure --color=always
