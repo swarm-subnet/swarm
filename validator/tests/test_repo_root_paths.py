@@ -84,6 +84,7 @@ def _steps(expr: str) -> int:
 
 
 def _label(path: Path) -> str:
+    """The short name for a resolved directory: REPO_ROOT, SIBLING, or its path inside the repository."""
     if path == REPO_ROOT:
         return "REPO_ROOT"
     if path == REPO_ROOT.parent:
@@ -118,6 +119,7 @@ def _targets(source: Path) -> list[str]:
 
 @pytest.mark.parametrize("relative", sorted(EXPECTED), ids=lambda p: p)
 def test_every_resolver_lands_where_it_should(relative):
+    """A listed file's walks up still land on exactly the directories EXPECTED pins."""
     source = VALIDATOR / relative
     assert source.is_file(), f"{relative} is listed here but not in the tree"
     assert _targets(source) == sorted(EXPECTED[relative]), (

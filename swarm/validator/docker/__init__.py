@@ -15,4 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Sandboxed evaluation of miner policies: the secure evaluator and the image it runs them inside."""
+
 # Docker-based secure evaluation components for Swarm validator

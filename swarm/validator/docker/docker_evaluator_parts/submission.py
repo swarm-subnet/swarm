@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Requirements whitelisting and the Cap'n Proto observation encoding sent to a miner container."""
+
 import json
 import re
 from pathlib import Path
@@ -26,6 +28,7 @@ from swarm.constants import DOCKER_PIP_WHITELIST
 
 
 def _normalize_package_name(name: str) -> str:
+    """PEP 503 form of a requirement: runs of dash, underscore and dot collapse to one dash, lowercased."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
@@ -88,6 +91,7 @@ def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
 
 
 def _all_zero_bits(arr):
+    """True only when every byte is zero, so a -0.0 payload still counts as data."""
     if arr.flags["C_CONTIGUOUS"]:
         return not arr.view(np.uint8).any()
     return not arr.any() and not np.signbit(arr).any()

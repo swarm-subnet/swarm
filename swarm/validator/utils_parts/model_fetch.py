@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Fetching miner submissions into the validator's model cache, from GitHub or the private backend."""
+
 from ._shared import *
 
 
@@ -49,6 +51,7 @@ def _set_private_marker(model_fp: Path, is_private: bool) -> None:
 
 
 def _admitted(path: Path, expected_family: str | None = None) -> bool:
+    """True when the archive passes its safety checks and declares nothing other than the expected family."""
     if is_model_graph_artifact(path):
         # a legacy graph artifact declares its family in the graph manifest and
         # is admitted against the ONNX rules by the runner, inside the sandbox
@@ -92,6 +95,7 @@ async def _download_model_from_github(
     dest: Path,
     uid: int,
 ) -> bool:
+    """Pull the artifact from its raw GitHub URLs into dest, keep it only if hash and family match, then hand it to the Docker fake-model check."""
     validated = validate_github_url(github_url, uid=uid)
     if not validated:
         return False
@@ -117,6 +121,7 @@ async def _download_model_from_github(
 async def _download_private_model(
     self, uid: int, model_hash: str, expected_family: str, dest: Path
 ) -> bool:
+    """Fetch a private artifact through the backend API into dest and keep it only if hash and family check out."""
     ok = await self.backend_api.fetch_private_artifact(model_hash, dest)
     if not ok or not dest.is_file():
         dest.unlink(missing_ok=True)
@@ -131,6 +136,7 @@ async def _download_private_model(
 async def _ensure_models_from_backend(
     self, pending_models: list[dict]
 ) -> Dict[int, Tuple[Path, str]]:
+    """Return {uid: (path, github_url)} for the pending entries whose bytes are already cached or newly fetched."""
     if not pending_models:
         return {}
     ensure_model_dir()

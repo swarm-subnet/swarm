@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The warehouse perimeter: tiled wall segments, windows, corner columns, dock gates and the personnel door."""
+
 from ._shared import *
 
 
 def build_columns(loader, floor_top_z, cli):
+    """Spawn a structural column at each warehouse corner, inset by its own footprint."""
     hx = WAREHOUSE_SIZE_X * 0.5
     hy = WAREHOUSE_SIZE_Y * 0.5
     column_size = loader.model_size(CONVEYOR_ASSETS["column"], UNIFORM_SCALE)
@@ -42,6 +45,12 @@ def build_columns(loader, floor_top_z, cli):
 
 
 def build_walls(conveyor_loader, floor_top_z, seed, cli):
+    """Tile the four sides, cut three dock gates into one corner of the loading wall and a personnel door into the middle of another side, and report the layout.
+
+    Picks the personnel side and the loading side from the seed, spaces the
+    three gates so they still fit inside the LOADING zone, then fills the rest
+    of each tier with plain, windowed or wide-windowed segments.
+    """
     rng = random.Random(seed)
 
     wall_model = CONVEYOR_ASSETS["wall"]
@@ -383,6 +392,7 @@ def build_walls(conveyor_loader, floor_top_z, seed, cli):
         ]
 
     def _triplet_key(tri):
+        """Sort key ordering gate triplets by mean index, nearest the chosen loading corner first."""
         i, j, k = tri[0], tri[1], tri[2]
         mean_idx = (i + j + k) / 3.0
         if loading_corner_side == "left":

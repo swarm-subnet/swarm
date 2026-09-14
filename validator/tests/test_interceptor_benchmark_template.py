@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The interceptor slot tables must stay inside the start distances the constants declare, in benchmark and in screening."""
 from swarm.challenge_families import get_challenge_family
 from swarm.constants import (
     BENCHMARK_FULL_SEED_COUNT,
@@ -24,6 +25,7 @@ from swarm.constants import (
 
 
 def test_benchmark_template_has_fixed_open_map_bands():
+    """Three distance bands sit inside the declared start range and touch end to end, and the slot count divides the seed count evenly."""
     family = get_challenge_family("cf_interceptor")
     template = family.benchmark_template()
 
@@ -40,6 +42,7 @@ def test_benchmark_template_has_fixed_open_map_bands():
 
 
 def test_screening_template_uses_actual_interceptor_gap_range():
+    """All eight screening slots span the full start distance, so screening never samples a narrower spread than the benchmark."""
     family = get_challenge_family("cf_interceptor")
     template = family.screening_template()
 

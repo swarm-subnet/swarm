@@ -44,6 +44,7 @@ LOGGER = logging.getLogger("swarm.rl.test")
 
 
 def _parse_args() -> argparse.Namespace:
+    """Command-line options for the run: model zip, uid, family, seeds, workers and timeout behaviour."""
     parser = argparse.ArgumentParser(
         description=(
             "Run validator-faithful Docker + Cap'n Proto RPC evaluation across "
@@ -180,6 +181,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _setup_logging(level: str) -> None:
+    """Send timestamped console output at the requested level."""
     logging.basicConfig(
         level=getattr(logging, level),
         format="%(asctime)s | %(levelname)-7s | %(message)s",
@@ -187,6 +189,7 @@ def _setup_logging(level: str) -> None:
 
 
 def _resolve_uid(model_path: Path, uid_arg: int | None) -> int:
+    """The explicit uid when one was given, else the number in a UID_<n>.zip filename, else 0."""
     if uid_arg is not None:
         return uid_arg
 
@@ -197,6 +200,7 @@ def _resolve_uid(model_path: Path, uid_arg: int | None) -> int:
 
 
 def _task_meta(task: Any) -> Dict[str, Any]:
+    """A JSON-safe record of one task: seed, map type, platform motion, start, goal and horizon."""
     return {
         "map_seed": int(task.map_seed),
         "challenge_type": int(task.challenge_type),
@@ -208,6 +212,7 @@ def _task_meta(task: Any) -> Dict[str, Any]:
 
 
 def _build_seed_list(seed_arg: int | None, num_seeds: int) -> List[int]:
+    """The seeds to evaluate: the exact one for a single run, otherwise that seed and distinct draws from it, or system-random draws when no seed was given."""
     count = max(1, int(num_seeds))
     if count == 1 and seed_arg is not None:
         return [int(seed_arg)]
@@ -249,6 +254,11 @@ async def _evaluate_seeds(
     timeout_progress_min_sim_advance: float,
     max_seed_walltime_sec: float,
 ) -> Tuple[List[Dict[str, Any]], List[Any], float]:
+    """Run every seed through the Docker evaluator in worker-sized waves.
+
+    Returns the task metadata, the evaluation results and the elapsed wall time. The
+    SWARM_* logging and timeout variables it sets are restored before it returns.
+    """
     tasks = []
     task_infos: List[Dict[str, Any]] = []
     LOGGER.info("Generating %d task(s)", len(seeds))
@@ -429,6 +439,7 @@ async def _evaluate_seeds(
 
 
 def main() -> None:
+    """Evaluate the chosen model across the seed list and print the aggregate stats, as text or JSON."""
     args = _parse_args()
     _setup_logging(args.log_level)
 

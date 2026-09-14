@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Chain check: did a validator hotkey submit weights inside the epoch containing a given block."""
+
 from __future__ import annotations
 
 import argparse
@@ -75,6 +77,7 @@ def has_set_weights_current_epoch(
 
 
 def parse_args() -> argparse.Namespace:
+    """Command-line namespace carrying the netuid, the hotkey, the chain target and a block."""
     parser = argparse.ArgumentParser(
         description="Check whether a validator has set weights in the current epoch."
     )
@@ -100,6 +103,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Print true or false for the hotkey's current-epoch submission and always exit 0."""
     args = parse_args()
     result = has_set_weights_current_epoch(
         netuid=args.netuid,

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Staged cargo for the LOADING bay: loaded pallets, empty pallet stacks and the container block."""
+
 from ._shared import *
 from .staging_helpers import (
     make_build_spec_helper,
@@ -27,6 +29,14 @@ from .staging_helpers import (
 def build_loading_staging(
     loading_loader, floor_top_z, area_layout, wall_info, cli, seed=0
 ):
+    """Place the loading bay's cargo and report what was spawned.
+
+    Loaded pallet bundles fill a lane behind each dock truck, support rows take
+    the spans either side, and the empty pallet stacks share the far side with
+    the container block. Returns ``loading_staging_enabled`` False and a reason
+    when the assets, the zone or the depth left after truck clearance cannot
+    carry them.
+    """
     if not ENABLE_LOADING_STAGING:
         return {"loading_staging_enabled": False}
     if loading_loader is None:

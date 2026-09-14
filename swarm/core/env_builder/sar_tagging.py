@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Build a challenge map and give every PyBullet body it creates a SAR category tag."""
+
 from __future__ import annotations
 
 import contextlib
@@ -48,6 +50,7 @@ def _muted_stderr():
 
 
 def classify_body(cli: int, uid: int, *, challenge_type: int) -> str:
+    """Read a body's collision shape and AABB to decide if it is terrain, a floor, a rooftop or an obstacle."""
     with _muted_stderr():
         try:
             shape_data = p.getCollisionShapeData(uid, -1, physicsClientId=cli)
@@ -108,6 +111,7 @@ def tag_world_after_build(
     victim_uids: Optional[Iterable[int]] = None,
     support_uid: Optional[int] = None,
 ) -> None:
+    """Classify and tag each body id in body_range, marking victims outright and skipping ones already tagged."""
     victim_set: Set[int] = set(int(u) for u in (victim_uids or []))
     pre_tagged = set(tagger.body_tags.keys())
     for uid in body_range:
@@ -123,6 +127,7 @@ def tag_world_after_build(
 
 
 def enumerate_bodies(cli: int) -> list[int]:
+    """Every unique id currently registered on the physics client, in creation order."""
     n = p.getNumBodies(physicsClientId=cli)
     return [int(p.getBodyUniqueId(i, physicsClientId=cli)) for i in range(n)]
 
@@ -138,6 +143,11 @@ def build_and_tag_map(
     sar_mode: bool = False,
     terrain_size=None,
 ) -> BodyTagger:
+    """Populate the client with the map for a challenge type and return a tagger holding every category.
+
+    Trees and props come back named from the forest builder and keep those tags; everything
+    else the build added is classified from its shape. Unknown challenge types raise ValueError.
+    """
     from swarm.core.maps.city import build_city as build_city_map
     from swarm.core.maps.forest import build_forest_map
     from swarm.core.maps.mountain import build_mountain_map

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Embedded office generator re-exported flat for office.py: wall-slot geometry, the URDF asset loader, the per-slot furniture placement, and build_embedded_office in entry."""
+
 from .entry import *
 from .geometry import *
 from .loader import *

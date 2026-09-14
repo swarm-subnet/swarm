@@ -15,10 +15,17 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Delivery trucks backed up to the dock doors on the warehouse loading wall."""
+
 from ._shared import *
 
 
 def build_loading_trucks(truck_loader, floor_top_z, wall_info, cli):
+    """Back one truck up to each dock door, clamped inside the floor, and return the scale plus a record per truck.
+
+    Gap to the wall grows with the gate model parked in that doorway, so a
+    closed shutter leaves the tail further out than an open one.
+    """
     if not ENABLE_LOADING_TRUCKS:
         return {"truck_scale_xyz": LOADING_TRUCK_SCALE_XYZ, "loading_trucks": []}
 

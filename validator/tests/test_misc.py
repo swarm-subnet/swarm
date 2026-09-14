@@ -15,12 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The TTL cache: its time bucket, expiry, typed keys, and the cached current-block lookup."""
 from __future__ import annotations
 
 from swarm.utils import misc
 
 
 def test_ttl_hash_gen_advances_when_window_changes(monkeypatch):
+    """The bucket number holds steady inside one window and steps up the instant the window rolls over."""
     now = {"t": 100.0}
     monkeypatch.setattr(misc.time, "time", lambda: now["t"])
     gen = misc._ttl_hash_gen(2)
@@ -33,12 +35,14 @@ def test_ttl_hash_gen_advances_when_window_changes(monkeypatch):
 
 
 def test_ttl_cache_returns_cached_value_before_expiry(monkeypatch):
+    """Repeat calls inside the TTL reuse the first result; once it lapses the wrapped function runs again."""
     now = {"t": 50.0}
     monkeypatch.setattr(misc.time, "time", lambda: now["t"])
     calls = {"count": 0}
 
     @misc.ttl_cache(ttl=5)
     def fn(x):
+        """Count the call and return x offset by how many times it has run."""
         calls["count"] += 1
         return x + calls["count"]
 
@@ -52,12 +56,14 @@ def test_ttl_cache_returns_cached_value_before_expiry(monkeypatch):
 
 
 def test_ttl_cache_typed_distinguishes_argument_types(monkeypatch):
+    """Under typed keys, 1 and 1.0 are separate entries and each one reaches the wrapped function."""
     now = {"t": 10.0}
     monkeypatch.setattr(misc.time, "time", lambda: now["t"])
     calls = {"count": 0}
 
     @misc.ttl_cache(ttl=100, typed=True)
     def fn(x):
+        """Count the call and return the running total, ignoring the argument."""
         calls["count"] += 1
         return calls["count"]
 
@@ -67,16 +73,22 @@ def test_ttl_cache_typed_distinguishes_argument_types(monkeypatch):
 
 
 def test_ttl_get_block_uses_cache_for_repeated_calls():
+    """Two lookups inside the same 12 second window reach the chain only once."""
     class _Subtensor:
+        """Chain stub that counts every lookup and answers with the running count."""
         def __init__(self):
+            """Start the lookup counter at zero."""
             self.calls = 0
 
         def get_current_block(self):
+            """Tick the counter and hand it back as the block number."""
             self.calls += 1
             return self.calls
 
     class _Obj:
+        """Validator stand-in carrying nothing but the counting chain stub."""
         def __init__(self):
+            """Attach a fresh counting chain stub."""
             self.subtensor = _Subtensor()
 
     obj = _Obj()

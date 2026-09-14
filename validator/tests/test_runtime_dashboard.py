@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A rendered monitor frame must carry every section it promises, whether it comes from the renderer or from the CLI."""
 from __future__ import annotations
 
 import json
@@ -26,6 +27,7 @@ from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
 
 
 def test_render_runtime_dashboard_includes_sections(tmp_path: Path) -> None:
+    """A frame built from a real tracker snapshot still shows the alerts, the backend state, the queue and the recent events."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     tracker.mark_worker_thread_alive(True)
     tracker.mark_forward_started(5)
@@ -53,6 +55,7 @@ def test_render_runtime_dashboard_includes_sections(tmp_path: Path) -> None:
 
 
 def test_monitor_cli_once_renders_snapshot(monkeypatch, tmp_path: Path, capsys) -> None:
+    """A single-shot run exits 0 and prints the frame to stdout, forward and chain sections included, so no live loop is needed."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)
     tracker.mark_worker_thread_alive(True)
     tracker.mark_forward_started(2)

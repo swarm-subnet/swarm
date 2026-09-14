@@ -56,6 +56,7 @@ def test_every_trainer_is_listed_here():
     "source", REACH_THE_REPO_ROOT, ids=lambda p: str(p.relative_to(REPO_ROOT))
 )
 def test_the_walk_up_still_lands_on_the_repo_root(source):
+    """Each listed file keeps a `parents[n]` reaching the directory `swarm` is imported from."""
     depths = {int(d) for d in PARENTS.findall(source.read_text())}
     assert depths, f"{source} no longer computes a path from its own location"
     landed = {source.resolve().parents[d] for d in depths}

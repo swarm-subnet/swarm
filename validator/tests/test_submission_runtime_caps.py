@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Inference thread ceilings hold over miner-supplied options and late runtime imports."""
+
 from __future__ import annotations
 
 import importlib
@@ -25,13 +27,18 @@ from swarm.submission_template import runtime_caps
 
 
 def test_onnxruntime_default_session_gets_worker_thread_options():
+    """A session built with no options still receives the capped intra and inter op counts."""
     class Options:
+        """Stub session options holding only the two thread-count attributes."""
         def __init__(self):
+            """Leave both counts at 0, the value onnxruntime reads as unset."""
             self.intra_op_num_threads = 0
             self.inter_op_num_threads = 0
 
     class Session:
+        """Stub InferenceSession that keeps the path and the options it was handed."""
         def __init__(self, path, options=None, *args, **kwargs):
+            """Store the model path and the session options for later inspection."""
             self.path = path
             self.options = options
 
@@ -45,13 +52,18 @@ def test_onnxruntime_default_session_gets_worker_thread_options():
 
 
 def test_onnxruntime_preserves_safe_explicit_value_and_clamps_high_value():
+    """An explicit thread request below the ceiling is kept, one above it is pulled down."""
     class Options:
+        """Stub session options that start both counts at the same requested number."""
         def __init__(self, intra):
+            """Set the intra-op and inter-op counts to the caller's requested value."""
             self.intra_op_num_threads = intra
             self.inter_op_num_threads = intra
 
     class Session:
+        """Stub InferenceSession that keeps only the options it was constructed with."""
         def __init__(self, path, options=None, *args, **kwargs):
+            """Store the session options and drop the model path."""
             self.options = options
 
     module = SimpleNamespace(
@@ -70,13 +82,16 @@ def test_onnxruntime_preserves_safe_explicit_value_and_clamps_high_value():
 
 
 def test_torch_defaults_and_future_public_setters_are_capped():
+    """Patching torch applies both ceilings at once and clamps every later setter call."""
     intra_calls = []
     inter_calls = []
 
     def set_num_threads(value):
+        """Record the intra-op count torch was asked to use."""
         intra_calls.append(value)
 
     def set_num_interop_threads(value):
+        """Record the inter-op count torch was asked to use."""
         inter_calls.append(value)
 
     module = SimpleNamespace(
@@ -94,6 +109,7 @@ def test_torch_defaults_and_future_public_setters_are_capped():
 
 
 def test_caps_are_disabled_only_by_absent_canonical_env(monkeypatch):
+    """No thread variable in the environment means no ceilings; the canonical one with the per-runtime ones gives all four counts."""
     monkeypatch.delenv("SWARM_INFERENCE_THREADS", raising=False)
     monkeypatch.delenv("SWARM_TORCH_NUM_THREADS", raising=False)
     monkeypatch.delenv("SWARM_TORCH_THREADS", raising=False)
@@ -108,6 +124,7 @@ def test_caps_are_disabled_only_by_absent_canonical_env(monkeypatch):
 
 
 def test_explicit_legacy_torch_cap_does_not_enable_onnxruntime(monkeypatch):
+    """The legacy torch variables alone bound torch and leave ONNX Runtime unpatched."""
     monkeypatch.delenv("SWARM_INFERENCE_THREADS", raising=False)
     monkeypatch.setenv("SWARM_TORCH_THREADS", "1")
     monkeypatch.setenv("SWARM_TORCH_INTEROP_THREADS", "1")
@@ -122,12 +139,14 @@ def test_explicit_legacy_torch_cap_does_not_enable_onnxruntime(monkeypatch):
 
 
 def test_post_import_finder_patches_module_after_execution(tmp_path, monkeypatch):
+    """The finder runs its patcher once the module body has already run, and the change sticks."""
     module_name = "_swarm_runtime_caps_import_probe"
     (tmp_path / f"{module_name}.py").write_text("loaded = True\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     patched = []
 
     def patcher(module, caps):
+        """Note the executed module's state and the ceiling, then mark the module capped."""
         patched.append((module.loaded, caps.intra_op))
         module.capped = True
 

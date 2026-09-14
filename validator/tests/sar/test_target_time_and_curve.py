@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The SAR reward curve: how the per-map target time is built, where the time term stops paying, and which failures still earn the participation floor."""
 from __future__ import annotations
 
 import math
@@ -37,6 +38,7 @@ from swarm.validator.reward import (
 
 
 def _task(start=(0.0, 0.0, 1.5), search_centre=(0.0, 0.0)):
+    """A SAR MapTask on a fixed map, with only the start and the search centre varied."""
     return MapTask(
         map_seed=1,
         start=start,
@@ -50,11 +52,13 @@ def _task(start=(0.0, 0.0, 1.5), search_centre=(0.0, 0.0)):
 
 
 def _expected(d):
+    """The target time written out longhand: cruise over distance d, a 70% sweep of the search disc, the dwell, all scaled by the buffer."""
     sweep = 0.70 * math.pi * (SAR_SEARCH_RADIUS ** 2) / (SAR_SWEEP_WIDTH * SPEED_LIMIT)
     return SAR_TIME_TERM_BUFFER * (d / SPEED_LIMIT + sweep + SAR_DWELL_SEC)
 
 
 def test_target_time_per_map_distances():
+    """Target time follows the straight-line run to the search centre at every distance tried, matching the closed form exactly."""
     for d in (0.0, 5.0, 15.0, 30.0, 55.0):
         sx, sy = d, 0.0
         task = _task(start=(sx, sy, 1.5), search_centre=(0.0, 0.0))
@@ -64,6 +68,7 @@ def test_target_time_per_map_distances():
 
 
 def test_time_term_plateau_until_target():
+    """Finishing early pays no more than finishing on the target, so racing below it buys a miner nothing."""
     task = _task(start=(0.0, 0.0, 1.5), search_centre=(0.0, 0.0))
     target = _calculate_sar_target_time(task)
     score_inside = flight_reward(
@@ -78,6 +83,7 @@ def test_time_term_plateau_until_target():
 
 
 def test_time_term_linear_decay_beyond_target():
+    """Past the target the payout falls with elapsed time: on target beats the midpoint, which beats arriving at the horizon."""
     task = _task(start=(0.0, 0.0, 1.5), search_centre=(0.0, 0.0))
     target = _calculate_sar_target_time(task)
     midpoint = (target + HORIZON_SEC) / 2.0
@@ -97,6 +103,7 @@ def test_time_term_linear_decay_beyond_target():
 
 
 def test_participation_reward_per_failure_reason():
+    """Each of the six participation reasons, collision through timeout, still pays the 0.01 floor."""
     task = _task()
     for reason in (
         "OBSTACLE_COLLISION", "NO_TOUCH_SPHERE", "INFEASIBLE",
@@ -110,6 +117,7 @@ def test_participation_reward_per_failure_reason():
 
 
 def test_spawn_failure_t_zero_returns_participation():
+    """A spawn failure at t=0 is not mistaken for an instant finish, it pays the 0.01 floor."""
     task = _task()
     r = flight_reward(
         success=False, t=0.0, horizon=HORIZON_SEC, task=task,
@@ -119,6 +127,7 @@ def test_spawn_failure_t_zero_returns_participation():
 
 
 def test_sar_collision_labeled_gives_participation():
+    """A crash that arrives with its OBSTACLE_COLLISION label still pays the 0.01 floor, not nothing."""
     task = _task()
     r = flight_reward(
         success=False, t=5.0, horizon=HORIZON_SEC, task=task,
@@ -141,6 +150,7 @@ def test_sar_collision_unlabeled_returns_zero():
 
 
 def test_eval_error_returns_zero():
+    """An EVAL_ERROR pays nothing at all, not even the participation floor."""
     task = _task()
     r = flight_reward(
         success=False, t=5.0, horizon=HORIZON_SEC, task=task,

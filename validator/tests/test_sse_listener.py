@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The SSE listener: which flags each backend event raises, and how the replay anchor survives a dropped stream."""
 from __future__ import annotations
 
 import asyncio
@@ -29,17 +30,21 @@ from swarm.validator.backend_api import (
 
 
 class _StubBackendApi:
+    """A backend whose events() replays one scripted sequence per call and records every last_event_id it was given."""
     def __init__(self, sequences: list):
+        """Hold the scripted per-connection sequences and the log of requested last_event_ids."""
         self._sequences = sequences
         self._call_count = 0
         self.last_event_ids: list = []
 
     def events(self, last_event_id=None):
+        """An async iterator over the next scripted sequence, which raises instead when that entry is an exception."""
         self.last_event_ids.append(last_event_id)
         sequence = self._sequences[self._call_count]
         self._call_count += 1
 
         async def _gen():
+            """Yield the scripted events, or raise the scripted exception on the first pull."""
             if isinstance(sequence, Exception):
                 raise sequence
             for event in sequence:
@@ -49,11 +54,13 @@ class _StubBackendApi:
 
 
 def _flags():
+    """A fresh cancel event and wake event pair for one listener."""
     return asyncio.Event(), asyncio.Event()
 
 
 @pytest.mark.asyncio
 async def test_handle_cancel_event_sets_both_flags():
+    """A screening_failed event cancels the running evaluation, releases the loop and stores its id as the replay anchor."""
     cancel, wake = _flags()
     listener = sse_module.SseListener(_StubBackendApi([]), cancel, wake)
     listener._handle({"type": "screening_failed", "event_id": 5})
@@ -64,6 +71,7 @@ async def test_handle_cancel_event_sets_both_flags():
 
 @pytest.mark.asyncio
 async def test_handle_wake_only_sets_wake():
+    """A wake event never cancels the running evaluation, it only releases the loop."""
     cancel, wake = _flags()
     listener = sse_module.SseListener(_StubBackendApi([]), cancel, wake)
     listener._handle({"type": "wake", "event_id": 3})
@@ -87,6 +95,7 @@ async def test_handle_resync_keeps_last_event_id():
 
 @pytest.mark.asyncio
 async def test_handle_epoch_transition_cancels_and_wakes():
+    """An epoch_transition drops the running evaluation and releases the loop to resync."""
     cancel, wake = _flags()
     listener = sse_module.SseListener(_StubBackendApi([]), cancel, wake)
     listener._handle({"type": "epoch_transition", "epoch_number": 8, "event_id": 7})
@@ -96,10 +105,12 @@ async def test_handle_epoch_transition_cancels_and_wakes():
 
 @pytest.mark.asyncio
 async def test_run_forever_consumes_events_then_reconnects(monkeypatch):
+    """A clean close waits the 0.5 s floor, a transport error waits the configured backoff, and each reconnect resumes from the last id seen."""
     cancel, wake = _flags()
     sleeps: list[float] = []
 
     async def _fake_sleep(seconds):
+        """Record each backoff instead of sleeping, and abort the loop on the second one."""
         sleeps.append(seconds)
         if len(sleeps) >= 2:
             raise RuntimeError("stop test loop")
@@ -129,6 +140,7 @@ async def test_run_forever_consumes_events_then_reconnects(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_forever_propagates_protocol_mismatch():
+    """A backend too old to speak the event protocol is never retried, the error leaves the loop."""
     cancel, wake = _flags()
     backend = _StubBackendApi([
         BackendProtocolMismatchError("backend too old"),

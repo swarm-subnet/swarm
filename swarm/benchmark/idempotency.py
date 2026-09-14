@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Replays one seed through the Docker evaluator and reports whether score, sim time and success ever move."""
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ from swarm.validator.task_gen import task_for_seed_and_type
 
 
 def summarize_idempotency_runs(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Collapse repeated runs into their distinct score, timing and success values, flagging whether score, sim time and success each held."""
     if not runs:
         raise ValueError("At least one run is required for idempotency summary.")
 
@@ -61,6 +63,7 @@ def run_idempotency(
     runs: int,
     worker_id: int = 0,
 ) -> Dict[str, Any]:
+    """Evaluate the same seed the requested number of times and return the summary tagged with the uid, seed and map type."""
     if runs <= 0:
         raise ValueError("runs must be positive")
 

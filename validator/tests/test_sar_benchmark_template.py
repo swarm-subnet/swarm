@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The frozen SAR benchmark seed table: its size, how evenly it spreads the map types, and how its distances relate to screening."""
 from collections import Counter
 
 from swarm.challenge_families.search_and_rescue import _SAR_BENCHMARK_TEMPLATE as T
@@ -24,14 +25,17 @@ VALID_TYPES = {1, 2, 3, 4, 5, 6}
 
 
 def test_template_has_100_entries():
+    """The SAR benchmark table is exactly 100 seeds long."""
     assert len(T) == 100
 
 
 def test_benchmark_range_divides_template_cleanly():
+    """The full seed budget is a whole number of passes, so no entry is sampled more often than the rest."""
     assert BENCHMARK_FULL_SEED_COUNT % len(T) == 0
 
 
 def test_covers_all_types_evenly():
+    """All six challenge types appear, none with fewer than 16 seeds or more than 17."""
     counts = Counter(s["challenge_type"] for s in T)
     assert set(counts) == VALID_TYPES
     for ct in VALID_TYPES:
@@ -39,6 +43,7 @@ def test_covers_all_types_evenly():
 
 
 def test_three_distance_bands_per_type():
+    """Each challenge type is sampled at three distinct ranges, near through far."""
     bands = {ct: set() for ct in VALID_TYPES}
     for s in T:
         bands[s["challenge_type"]].add(s["distance_range"])
@@ -47,6 +52,7 @@ def test_three_distance_bands_per_type():
 
 
 def test_distance_ranges_valid_and_platforms_static():
+    """Every range is positive and ordered, and no benchmark seed asks for a moving platform."""
     for s in T:
         lo, hi = s["distance_range"]
         assert 0 < lo < hi
@@ -54,10 +60,12 @@ def test_distance_ranges_valid_and_platforms_static():
 
 
 def test_first_six_cover_all_types():
+    """The opening entries already span every challenge type, so a truncated run stays balanced."""
     assert set(s["challenge_type"] for s in T[:6]) == VALID_TYPES
 
 
 def test_benchmark_ranges_start_at_screening_lo_and_widen_hi():
+    """Per type the full phase opens on the screening minimum and reaches past its maximum."""
     screening = {s["challenge_type"]: s["distance_range"] for s in SAR_SCREENING_TEMPLATE}
     bands = {ct: [] for ct in VALID_TYPES}
     for s in T:
@@ -69,4 +77,5 @@ def test_benchmark_ranges_start_at_screening_lo_and_widen_hi():
 
 
 def test_benchmark_template_is_distinct_from_screening_template():
+    """Screening and the full phase are separate seed sets, not one list reused."""
     assert len(T) != len(SAR_SCREENING_TEMPLATE)

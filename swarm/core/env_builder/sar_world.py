@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Assembly of a search-and-rescue world: tagged map, victim placement and the search clue."""
+
 from __future__ import annotations
 
 import random
@@ -39,6 +41,13 @@ def build_sar_world(
     start: Optional[Tuple[float, float, float]] = None,
     goal: Optional[Tuple[float, float, float]] = None,
 ) -> SARWorld:
+    """Build the tagged map, place a victim on it and return the assembled SARWorld.
+
+    The victim goes near the start, inside SAR_MAX_VICTIM_DISTANCE_M when a spot that close
+    passes the checks, as a character the seed picks among those the map and the local terrain
+    slope allow. The search centre is drawn from a disc around the victim, so it marks the area
+    to sweep rather than the victim itself.
+    """
     n_before = p.getNumBodies(physicsClientId=cli)
     tagger = build_and_tag_map(
         cli, seed=seed, challenge_type=challenge_type,

@@ -15,12 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""FailureReason travels over the wire, so its membership is pinned here rather than left to whoever edits the enum."""
 from __future__ import annotations
 
 from swarm.protocol import FailureReason
 
 
 def test_failure_reason_members_exist():
+    """Eleven codes, each with a string value equal to its own label, looked up both ways so a rename cannot pass quietly."""
     expected = {
         "NONE": "NONE",
         "OBSTACLE_COLLISION": "OBSTACLE_COLLISION",

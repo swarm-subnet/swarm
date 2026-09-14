@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Ski village subtype: the road grid, the blocks it leaves, and the props spawned into them."""
+
 from ._shared import *
 from .mountains_only import _hill_objs
 from .terrain import _cache, _ShapeCache
@@ -22,6 +24,7 @@ from .terrain import _cache, _ShapeCache
 
 @dataclass
 class _Rect:
+    """An axis-aligned rectangle in village coordinates: lower corner, width and height."""
     x: float
     y: float
     w: float
@@ -30,6 +33,7 @@ class _Rect:
 
 @dataclass
 class _RoadTile:
+    """One road cell: its lower corner, the asset to spawn there and the yaw in degrees."""
     x: float
     y: float
     type: str
@@ -38,25 +42,32 @@ class _RoadTile:
 
 @dataclass
 class _Block:
+    """A buildable plot enclosed by roads, flagged when its area falls under the target."""
     id: int
     rect: _Rect
     too_small: bool
 
 
 class _SeededRNG:
+    """Deterministic draws for the village layout, wrapping random.Random behind a small API."""
     def __init__(self, seed: int):
+        """Start the generator from seed so the same map replays identically."""
         self._rng = random.Random(seed)
 
     def range(self, min_val, max_val):
+        """A uniform float in [min_val, max_val]."""
         return self._rng.uniform(min_val, max_val)
 
     def rand_int(self, min_val, max_val):
+        """A uniform integer in [min_val, max_val], both ends included."""
         return self._rng.randint(min_val, max_val)
 
     def next_float(self):
+        """A uniform draw in [0.0, 1.0)."""
         return self._rng.random()
 
     def choice(self, seq):
+        """A random element of seq, or None when seq is empty."""
         if not seq:
             return None
         return self._rng.choice(seq)
@@ -69,6 +80,7 @@ def _village_road_positions(
     tile_size: float,
     map_size: float,
 ) -> List[float]:
+    """Seeded road coordinates along one axis, snapped to whole tiles and kept far enough apart for a block of target_area."""
     min_side = math.sqrt(target_area)
     needed_gap = max(min_spacing, min_side)
     raw_min_step = needed_gap + tile_size
@@ -113,6 +125,7 @@ def _village_road_tiles(
     tile_size: float,
     map_size: float,
 ) -> Tuple[List[_RoadTile], list, list, list, list]:
+    """Lay the crossing coordinates into road tiles, drop or shift about one interior segment in five, and return the tiles with those edits."""
     num_tiles = round(map_size / tile_size)
     eff_size = num_tiles * tile_size
     max_block_size = 18
@@ -177,12 +190,14 @@ def _village_road_tiles(
     add_v_set = set(added_v)
 
     def _seg_overlaps(seg_coord, seg_a, seg_b, check_set):
+        """True when a span on seg_coord shares ground with any entry of check_set."""
         for c, a, b in check_set:
             if c == seg_coord and seg_a < b and seg_b > a:
                 return True
         return False
 
     def is_v_road(x, y1, y2):
+        """True when a vertical road survives at x between y1 and y2, shifted segments included."""
         if _seg_overlaps(x, y1, y2, add_v_set):
             return True
         if x in v_set:
@@ -192,6 +207,7 @@ def _village_road_tiles(
         return False
 
     def is_h_road(y, x1, x2):
+        """True when a horizontal road survives at y between x1 and x2, shifted segments included."""
         if _seg_overlaps(y, x1, x2, add_h_set):
             return True
         if y in h_set:
@@ -244,6 +260,7 @@ def _village_road_tiles(
 def _village_extract_blocks(
     v_pos, h_pos, min_area, removed_h, removed_v, added_h, added_v, tile_size
 ) -> List[_Block]:
+    """Merge grid cells across the removed roads, cut each merged region into rectangles, and split any rectangle a shifted road crosses."""
     h_rm_set = set(removed_h)
     v_rm_set = set(removed_v)
     n_cols = len(v_pos) - 1
@@ -257,11 +274,13 @@ def _village_extract_blocks(
             parent[(i, j)] = (i, j)
 
     def find(cell):
+        """The root of cell's group, compressing the path on the way up."""
         if parent[cell] != cell:
             parent[cell] = find(parent[cell])
         return parent[cell]
 
     def union(c1, c2):
+        """Join two cells into one group, as a removed road makes them one plot."""
         r1, r2 = find(c1), find(c2)
         if r1 != r2:
             parent[r1] = r2
@@ -443,6 +462,7 @@ def _spawn_village_asset(
     scale,
     rgba: Optional[list] = None,
 ) -> Optional[int]:
+    """Place one OBJ mesh as a static body at (x, y, z); None when the file is absent."""
     if not os.path.exists(path):
         return None
     if isinstance(scale, (list, tuple)):
@@ -463,6 +483,7 @@ def _spawn_village_roads(
     safe_zones: Optional[List[Tuple[float, float]]] = None,
     safe_zone_radius: float = 0.0,
 ):
+    """Drop the mesh for each tile's road type, shifted by offset so the grid sits around the origin."""
     for tile in tiles:
         if tile.type == "roundabout_arm":
             continue
@@ -494,6 +515,7 @@ def _spawn_village_buildings(
     safe_zones: Optional[List[Tuple[float, float]]] = None,
     safe_zone_radius: float = 0.0,
 ):
+    """Line each block with rows of houses, skipping any that would sit on a road, a roundabout or a house already placed."""
     row_depth = 3.0
     corner_reserve = row_depth + 0.5
 
@@ -509,6 +531,7 @@ def _spawn_village_buildings(
             road_rects.append((rx, ry, rx + rw, ry + rw))
 
     def get_house(target_depth):
+        """A random spec scaled to metres, drawn from those no deeper than target_depth plus half a metre, or from all when none fit."""
         candidates = []
         for fn, raw_w, raw_d in HOUSE_SPECS:
             scaled_d = raw_d * HOUSE_SCALE / 5.0
@@ -519,6 +542,7 @@ def _spawn_village_buildings(
     placed_aabbs = []
 
     def spawn_house_at(x, y, rotation, filename):
+        """Place the building and its snow roof unless its footprint hits a road, a roundabout or an earlier one."""
         for ra_x, ra_y in roundabout_centers:
             if math.hypot(x - ra_x, y - ra_y) < 10.0:
                 return
@@ -558,6 +582,7 @@ def _spawn_village_buildings(
             _spawn_village_asset(cli, cache, sub_path, x, y, 0, final_rot, HOUSE_SCALE)
 
     def fill_row(start, end, fixed_pos, rotation, is_vertical=False):
+        """Centre as many houses as fit between start and end along one side of a block."""
         available = end - start
         if available < 2.0:
             return
@@ -614,6 +639,7 @@ def _spawn_village_lanterns(
     safe_zones: Optional[List[Tuple[float, float]]] = None,
     safe_zone_radius: float = 0.0,
 ):
+    """Stand a pair of lanterns on the kerbs of every fourth straight road tile."""
     half_tile = ROAD_WIDTH / 2
     lamp_offset_val = half_tile - 0.3
     lantern_scale = [1.05, 1.62, 1.05]
@@ -670,6 +696,7 @@ def _spawn_village_cars(
     safe_zones: Optional[List[Tuple[float, float]]] = None,
     safe_zone_radius: float = 0.0,
 ):
+    """Park a vehicle in one lane of roughly a third of the straight road tiles."""
     lane_off = ROAD_WIDTH * 0.18
     for tile in tiles:
         if tile.type not in ("straight_v", "straight_h"):
@@ -692,6 +719,7 @@ def _spawn_village_cars(
 
 
 def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache, rng: random.Random):
+    """Encircle the village with hills at 220 m and 320 m out and textured peaks at 550 m."""
     hills = _hill_objs()
     if not hills:
         return
@@ -701,6 +729,7 @@ def _spawn_village_mountain_rings(cli: int, cache: _ShapeCache, rng: random.Rand
         tex_id = p.loadTexture(PEAK_TEX, physicsClientId=cli)
 
     def snap_to_ground(bid, x, y, orn, sink=0.0):
+        """Move a body so the bottom of its AABB rests on z = 0, buried by sink metres."""
         mn, _ = p.getAABB(bid, physicsClientId=cli)
         z_corr = -mn[2] - sink
         p.resetBasePositionAndOrientation(bid, [x, y, z_corr], orn, physicsClientId=cli)
@@ -763,6 +792,7 @@ def _build_ski_village(
     safe_zones: List[Tuple[float, float]],
     safe_zone_radius: float,
 ) -> Tuple[Callable, List]:
+    """Lay the snow slab, the road grid and every prop for one seed, and return a flat height lookup with no peak list."""
     rng = random.Random(seed)
 
     ground_size = VILLAGE_SIZE * 20
@@ -839,6 +869,7 @@ def _build_ski_village(
     _spawn_village_mountain_rings(cli, _cache, rng)
 
     def get_z_flat(x: float, y: float) -> float:
+        """Ground height anywhere in the village, which is 0.0 everywhere."""
         return 0.0
 
     return get_z_flat, []

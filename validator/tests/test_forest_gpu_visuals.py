@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The forest generator's split of a tree mesh into one OBJ per material."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,6 +24,7 @@ from swarm.core.forest_generator_parts import geometry as forest_geometry
 
 
 def test_material_visual_obj_paths_generate_split_objs(tmp_path, monkeypatch) -> None:
+    """A tree becomes one file per material, each a real mesh with vertices, normals and faces."""
     monkeypatch.setattr(
         forest_geometry.tempfile, "gettempdir", lambda: str(tmp_path)
     )

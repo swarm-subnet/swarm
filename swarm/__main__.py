@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Entry point for ``python -m swarm``: runs the console script in swarm.cli and exits with its status."""
+
 from swarm.cli import main
 
 if __name__ == "__main__":

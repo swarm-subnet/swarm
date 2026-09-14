@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Screening and benchmark phases: seed evaluation, streamed score uploads and heartbeats."""
+
 import asyncio
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
@@ -93,16 +95,19 @@ def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
 
 
 def _utils_facade():
+    """The swarm.validator.utils module, imported on call so the lookup goes through the facade."""
     from swarm.validator import utils as validator_utils
 
     return validator_utils
 
 
 def _empty_per_type() -> Dict[str, List[float]]:
+    """A fresh score bucket for every environment type plus moving_platform."""
     return {name: [] for name in _EMPTY_PER_TYPE}
 
 
 def _seed_manager_call(seed_manager, method_name: str, family_id: str, epoch: Optional[int] = None):
+    """Fetch seeds for the family, asking for a named epoch only when it runs ahead of the manager's."""
     method = getattr(seed_manager, method_name)
     if epoch is not None and epoch > getattr(seed_manager, "epoch_number", 0):
         # A pre-evaluation task is scored on its own epoch's seeds, not today's.
@@ -175,6 +180,7 @@ async def _evaluate_seeds(
     valid_positions = [i for i, t in enumerate(tasks) if t is not None]
 
     def _forward_seed_result(valid_idx: int, result: Any, status: str) -> None:
+        """Translate an engine index back to its slot in `seeds` and pass the caller a detail dict."""
         if on_seed_result is None or result is None:
             return
         if not (0 <= int(valid_idx) < len(valid_positions)):
@@ -206,6 +212,7 @@ async def _evaluate_seeds(
 
         if on_held_seeds is not None:
             def engine_held(valid_indexes: List[int]) -> None:
+                """Report the seeds still leased by the engine as absolute seed positions."""
                 on_held_seeds([
                     valid_positions[int(i)]
                     for i in valid_indexes
@@ -213,6 +220,7 @@ async def _evaluate_seeds(
                 ])
 
         async def engine_feeder(free_slots: int):
+            """Lease seeds from the caller's feeder and hand the engine its own indexes for them."""
             granted, drained = await seed_feeder(free_slots)
             return (
                 [abs_to_valid[int(i)] for i in granted if int(i) in abs_to_valid],
@@ -357,6 +365,7 @@ async def _run_streaming_phase(
     provenance = _seed_upload_provenance(self, model_path)
 
     async def _safe_upload(batch: List[dict]) -> None:
+        """Post one score batch, three attempts with backoff; a batch never recorded is parked."""
         for delay in (0.0, 2.0, 4.0):
             if delay:
                 await asyncio.sleep(delay)
@@ -376,6 +385,7 @@ async def _run_streaming_phase(
         failed_batches.append(batch)
 
     async def _wait_for_slot() -> None:
+        """Block until an upload finishes and the in-flight list is back under `max_inflight`."""
         while len(inflight) >= max_inflight:
             done, _pending = await asyncio.wait(
                 inflight, return_when=asyncio.FIRST_COMPLETED,
@@ -385,6 +395,7 @@ async def _run_streaming_phase(
                     inflight.remove(task)
 
     async def _drain_inflight() -> None:
+        """Await every outstanding upload, swallowing their errors, and empty the list."""
         if inflight:
             await asyncio.gather(*inflight, return_exceptions=True)
             inflight.clear()
@@ -392,6 +403,7 @@ async def _run_streaming_phase(
     upload_queue: asyncio.Queue = asyncio.Queue()
 
     async def _upload_pump() -> None:
+        """Gather queued rows into `chunk_size` uploads until the None sentinel, then send the tail."""
         group: List[dict] = []
         while True:
             row = await upload_queue.get()
@@ -414,6 +426,7 @@ async def _run_streaming_phase(
     }
 
     def _fire_chunk_complete() -> None:
+        """Hand the open window of scores to `on_chunk_complete` and start an empty one."""
         if on_chunk_complete is None or not window["scores"]:
             return
         chunk_scores = window["scores"]
@@ -437,6 +450,7 @@ async def _run_streaming_phase(
             bt.logging.warning(f"on_chunk_complete callback failed for UID {uid}: {exc}")
 
     def _on_result(idx: int, detail: dict) -> None:
+        """Book one finished seed once: running stats, the open window, and a row for upload."""
         if idx in seen or not isinstance(detail, dict):
             return
         seen.add(idx)
@@ -472,6 +486,7 @@ async def _run_streaming_phase(
             _fire_chunk_complete()
 
     def _combined_stop() -> Optional[str]:
+        """The reason to stop dispatching, from a failed re-auth or the backend, None to carry on."""
         if stop_state["cancel"] is not None:
             return stop_state["cancel"]
         if should_stop is not None:
@@ -484,6 +499,7 @@ async def _run_streaming_phase(
     reauth_task: Optional[asyncio.Task] = None
     if re_authorize is not None:
         async def _reauth_loop() -> None:
+            """Re-check the task on an interval and record a cancel reason once the backend refuses."""
             while stop_state["cancel"] is None:
                 await asyncio.sleep(re_auth_interval_sec)
                 try:
@@ -673,6 +689,7 @@ async def _run_screening(
     )
 
     def _on_chunk(**info) -> None:
+        """Publish the screening checkpoint, its running average included, to the runtime tracker."""
         evaluated = int(info["evaluated"])
         running_avg = float(info["running_avg"])
         tracker_call(
@@ -686,6 +703,7 @@ async def _run_screening(
         )
 
     def _should_stop() -> Optional[str]:
+        """Halt screening when the SSE cancel flag is raised or the heartbeat asks the validator to."""
         if cancel_flag is not None and cancel_flag.is_set():
             return "cancel_flag_set"
         return hb.should_stop()
@@ -864,6 +882,7 @@ async def _run_full_benchmark(
     )
 
     def _on_chunk(**info) -> None:
+        """Publish the benchmark checkpoint, seeds done out of the total, to the runtime tracker."""
         tracker_call(
             self,
             "mark_benchmark_progress",
@@ -874,6 +893,7 @@ async def _run_full_benchmark(
         )
 
     def _should_stop() -> Optional[str]:
+        """Halt the benchmark when the SSE cancel flag is raised or the heartbeat asks it to stop."""
         if cancel_flag is not None and cancel_flag.is_set():
             return "cancel_flag_set"
         return hb.should_stop()

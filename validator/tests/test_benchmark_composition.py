@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The benchmark map and drone count come from the slot index, never from the seed value."""
+
 from swarm.challenge_families import build_benchmark_tasks
 
 
 def _composition(family_id: str, seeds: list[int]) -> list[tuple[int, int]]:
+    """The (challenge_type, num_drones) pairs a family lays out for these seeds at offset 40 of 800."""
     tasks = build_benchmark_tasks(
         sim_dt=0.02,
         seeds=seeds,
@@ -30,6 +33,7 @@ def _composition(family_id: str, seeds: list[int]) -> list[tuple[int, int]]:
 
 
 def test_benchmark_composition_is_fixed_per_absolute_index():
+    """Each family under test lays out the same maps and drone counts at a given slot, whatever the seeds are."""
     seeds_a = list(range(1000, 1010))
     seeds_b = list(range(777000, 777010))
 
@@ -44,6 +48,7 @@ def test_benchmark_composition_is_fixed_per_absolute_index():
 
 
 def test_search_and_rescue_benchmark_challenge_sequence_is_template_driven():
+    """The rescue benchmark draws its map order from the template slots, not from the seed values."""
     seeds_a = list(range(1000, 1010))
     seeds_b = list(range(777000, 777010))
 

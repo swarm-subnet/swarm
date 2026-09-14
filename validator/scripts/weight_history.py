@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Per-epoch history of the weights one validator set on a subnet, as a table or JSON."""
+
 from __future__ import annotations
 
 import argparse
@@ -30,6 +32,7 @@ U16_MAX = 65535.0
 
 @dataclass
 class EpochRecord:
+    """One epoch of a validator: registration, last-update block and the weight row it set."""
     row: int
     epoch_start: int
     epoch_end: int
@@ -48,6 +51,7 @@ class EpochRecord:
 
 
 def parse_args() -> argparse.Namespace:
+    """Command-line options for the dump: netuid, hotkey, how many epochs and where to read them."""
     parser = argparse.ArgumentParser(
         description=(
             "Inspect historical validator weights per epoch. "
@@ -106,6 +110,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_subtensor(target: str):
+    """Connect to a network name or websocket endpoint through whichever constructor the SDK exposes."""
     import bittensor as bt
 
     subtensor_ctor = getattr(bt, "Subtensor", None) or getattr(bt, "subtensor", None)
@@ -115,15 +120,18 @@ def build_subtensor(target: str):
 
 
 def scalar_value(result: Any) -> Any:
+    """Unwrap a chain query wrapper to its `.value`, passing plain results straight through."""
     return getattr(result, "value", result)
 
 
 def query_subtensor_value(subtensor: Any, name: str, block: int | None, params: list[Any]) -> Any:
+    """Read one storage item at `block` and unwrap it to a plain value."""
     result = subtensor.query_subtensor(name=name, block=block, params=params)
     return scalar_value(result)
 
 
 def normalize_uid(value: Any) -> int | None:
+    """Coerce a raw uid to int, or None when it is absent or absurdly out of range."""
     if value is None:
         return None
     uid = int(value)
@@ -133,11 +141,13 @@ def normalize_uid(value: Any) -> int | None:
 
 
 def get_uid_for_hotkey(subtensor: Any, netuid: int, hotkey: str, block: int) -> int | None:
+    """The hotkey's uid on the subnet at `block`, None when it was not registered then."""
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey, netuid, block=block)
     return normalize_uid(uid)
 
 
 def get_subnet_epoch_state(subtensor: Any, netuid: int, block: int) -> tuple[int, int]:
+    """Tempo and blocks elapsed in the epoch at `block`, tried across the SDK and raw storage shapes."""
     subnet_info_fn = getattr(subtensor, "get_subnet_info", None)
     if callable(subnet_info_fn):
         subnet_info = subnet_info_fn(netuid, block=block)
@@ -185,6 +195,7 @@ def get_subnet_epoch_state(subtensor: Any, netuid: int, block: int) -> tuple[int
 
 
 def get_last_update_vector(subtensor: Any, netuid: int, block: int) -> list[int]:
+    """The LastUpdate storage vector, one block number per uid, empty when the chain has none."""
     raw = query_subtensor_value(subtensor, "LastUpdate", block=block, params=[netuid])
     if raw is None:
         return []
@@ -198,6 +209,7 @@ def get_last_update_vector(subtensor: Any, netuid: int, block: int) -> list[int]
 
 
 def get_weight_map(subtensor: Any, netuid: int, mechid: int, block: int) -> list[tuple[int, Any]]:
+    """Every setter's weight row at `block`, retried without `mechid` on older SDKs."""
     try:
         rows = subtensor.weights(netuid=netuid, mechid=mechid, block=block)
     except TypeError:
@@ -206,6 +218,7 @@ def get_weight_map(subtensor: Any, netuid: int, mechid: int, block: int) -> list
 
 
 def normalize_weight_row(raw_pairs: Any) -> list[tuple[int, int]]:
+    """Turn dict or tuple pairs into (uid, raw u16) ints ordered by target uid."""
     if raw_pairs is None:
         return []
 
@@ -227,6 +240,7 @@ def normalize_weight_row(raw_pairs: Any) -> list[tuple[int, int]]:
 
 
 def extract_weight_row(weight_map: Iterable[tuple[Any, Any]], validator_uid: int | None) -> list[tuple[int, int]]:
+    """The pairs set by one validator uid, empty when it has no row in the map."""
     if validator_uid is None:
         return []
 
@@ -237,6 +251,7 @@ def extract_weight_row(weight_map: Iterable[tuple[Any, Any]], validator_uid: int
 
 
 def hash_weight_row(weight_row: list[tuple[int, int]]) -> str | None:
+    """Twelve hex characters of the row's SHA-256, used to spot epochs that repeat; None when empty."""
     if not weight_row:
         return None
     encoded = json.dumps(weight_row, separators=(",", ":"), sort_keys=False).encode("utf-8")
@@ -244,6 +259,7 @@ def hash_weight_row(weight_row: list[tuple[int, int]]) -> str | None:
 
 
 def summarize_top_weights(weight_row: list[tuple[int, int]], top_k: int) -> list[dict[str, float | int]]:
+    """The `top_k` heaviest targets, each as uid with its raw u16 and its share of 65535."""
     top_pairs = [pair for pair in weight_row if pair[1] > 0]
     top_pairs.sort(key=lambda item: (-item[1], item[0]))
     top_pairs = top_pairs[:top_k]
@@ -258,6 +274,7 @@ def summarize_top_weights(weight_row: list[tuple[int, int]], top_k: int) -> list
 
 
 def format_top_weights(top_weights: list[dict[str, float | int]]) -> str:
+    """Render the summarized targets as `uid:share` pairs, or a dash for an empty row."""
     if not top_weights:
         return "-"
     return ", ".join(
@@ -272,6 +289,7 @@ def build_epoch_blocks(
     epochs: int,
     include_current_epoch: bool,
 ) -> list[tuple[int, int, int]]:
+    """Walk back from the chain head and return (start, end, tempo) for each epoch, oldest first."""
     current_block = subtensor.get_current_block()
     _, current_blocks_since = get_subnet_epoch_state(subtensor, netuid, current_block)
     current_epoch_start = current_block - current_blocks_since
@@ -301,6 +319,7 @@ def collect_history(
     top_k: int,
     include_current_epoch: bool,
 ) -> list[EpochRecord]:
+    """One record per epoch for the hotkey, each read at that epoch's final block."""
     epoch_blocks = build_epoch_blocks(
         subtensor=subtensor,
         netuid=netuid,
@@ -365,6 +384,7 @@ def collect_history(
 
 
 def render_table(records: list[EpochRecord]) -> str:
+    """Lay the records out as fixed-width columns under a header, one line per epoch."""
     headers = (
         "row",
         "start",
@@ -409,6 +429,7 @@ def render_table(records: list[EpochRecord]) -> str:
 
 
 def main() -> int:
+    """Print the collected history in the chosen format; 1 when the chain or the collection fails."""
     args = parse_args()
     target = args.chain_endpoint or args.network
 

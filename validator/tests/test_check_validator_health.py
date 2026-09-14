@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Judging a validator by whether it set weights inside an epoch, and the hourly and per-epoch reports built on it."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -34,14 +35,18 @@ from validator.scripts.health.check_validator_health import (
 
 
 class DummySubtensor:
+    """A chain connection stand-in: one fixed block height, and a note of having been closed."""
     def __init__(self, current_block: int) -> None:
+        """Hold the block height to report and start out open."""
         self._current_block = current_block
         self.closed = False
 
     def get_current_block(self) -> int:
+        """Report the height this stand-in was built with."""
         return self._current_block
 
     def close(self) -> None:
+        """Record that the caller released the connection."""
         self.closed = True
 
 
@@ -54,6 +59,7 @@ def _install_mocks(
     uid: int | None,
     last_updates: list[int],
 ):
+    """Answer all four chain queries the check makes with fixed values, and return the connection stub."""
     subtensor = DummySubtensor(current_block=current_block)
 
     monkeypatch.setattr(
@@ -76,6 +82,7 @@ def _install_mocks(
 
 
 def test_latest_completed_epoch_is_ok_when_last_update_is_inside_epoch(monkeypatch):
+    """Weights set inside the last finished epoch read as healthy, and that window is reported back with the verdict."""
     subtensor = _install_mocks(
         monkeypatch,
         current_block=7756745,
@@ -101,6 +108,7 @@ def test_latest_completed_epoch_is_ok_when_last_update_is_inside_epoch(monkeypat
 
 
 def test_latest_completed_epoch_is_error_when_last_update_is_stale(monkeypatch):
+    """A last update from before the window fails the check, however alive the box otherwise looks."""
     subtensor = _install_mocks(
         monkeypatch,
         current_block=7756745,
@@ -126,6 +134,7 @@ def test_latest_completed_epoch_is_error_when_last_update_is_stale(monkeypatch):
 
 
 def test_current_epoch_mode_checks_against_current_block(monkeypatch):
+    """Current-epoch mode judges the epoch still running, from its first block up to the one just read."""
     subtensor = _install_mocks(
         monkeypatch,
         current_block=7756745,
@@ -152,6 +161,7 @@ def test_current_epoch_mode_checks_against_current_block(monkeypatch):
 
 
 def test_unregistered_validator_returns_error(monkeypatch):
+    """A hotkey holding no UID on the subnet fails with no verdict on weights, and says it is not registered."""
     subtensor = _install_mocks(
         monkeypatch,
         current_block=100,
@@ -175,6 +185,7 @@ def test_unregistered_validator_returns_error(monkeypatch):
 
 
 def test_no_completed_epoch_returns_error(monkeypatch):
+    """Before any epoch has closed there is nothing to judge, and the window comes back as -1 rather than 0."""
     subtensor = _install_mocks(
         monkeypatch,
         current_block=0,
@@ -199,6 +210,7 @@ def test_no_completed_epoch_returns_error(monkeypatch):
 
 
 def test_boolean_wrapper_matches_health_status(monkeypatch):
+    """The yes-or-no shortcut agrees with the full verdict it wraps, True for a healthy epoch."""
     _install_mocks(
         monkeypatch,
         current_block=7756745,
@@ -219,6 +231,7 @@ def test_boolean_wrapper_matches_health_status(monkeypatch):
 
 
 def test_historical_block_error_message_suggests_archive():
+    """A node that has pruned the state it was asked for turns into advice to use an archive endpoint."""
     message = format_health_check_error(
         RuntimeError('UnknownBlock("State already discarded for 0xabc")')
     )
@@ -227,6 +240,7 @@ def test_historical_block_error_message_suggests_archive():
 
 
 def test_parse_args_uses_hardcoded_defaults():
+    """Run with no flags, the tool aims at subnet 124 through an archive node and reports the last ten hours."""
     args = parse_args([])
 
     assert args.netuid == DEFAULT_NETUID
@@ -238,6 +252,7 @@ def test_parse_args_uses_hardcoded_defaults():
 
 
 def test_render_hourly_health_table_includes_status_and_blocks():
+    """Every row reaches the printed table with its verdict, sampled block and epoch range intact."""
     rows = [
         type(
             "Row",
@@ -281,6 +296,7 @@ def test_render_hourly_health_table_includes_status_and_blocks():
 
 
 def test_collect_recent_hourly_health_checks_returns_requested_rows(monkeypatch):
+    """Three hours asked for gives three rows, oldest first, over a single connection that is closed at the end."""
     subtensor = DummySubtensor(current_block=500)
 
     monkeypatch.setattr(
@@ -298,6 +314,7 @@ def test_collect_recent_hourly_health_checks_returns_requested_rows(monkeypatch)
     )
 
     def fake_check(subtensor, netuid, hotkey, checked_at_block, current_epoch):
+        """Report a healthy verdict for whichever block the hourly walk hands over."""
         return HealthCheckResult(
             ok=True,
             status="OK",
@@ -341,6 +358,7 @@ def test_collect_recent_hourly_health_checks_returns_requested_rows(monkeypatch)
 
 
 def test_were_last_epochs_healthy_returns_true_when_all_epochs_are_healthy(monkeypatch):
+    """Registered and setting weights in every epoch of the run gives True, and the connection is released."""
     subtensor = DummySubtensor(current_block=500)
 
     monkeypatch.setattr(
@@ -361,6 +379,7 @@ def test_were_last_epochs_healthy_returns_true_when_all_epochs_are_healthy(monke
 
 
 def test_were_last_epochs_healthy_returns_false_when_any_epoch_is_stale(monkeypatch):
+    """A single epoch without weights sinks the whole run, whatever the epochs either side of it did."""
     subtensor = DummySubtensor(current_block=500)
 
     monkeypatch.setattr(

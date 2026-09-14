@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The validator's shell scripts: which ones exist, that they parse and stay safe to run, and that the path PM2 registered still forwards."""
 from __future__ import annotations
 
 import subprocess
@@ -46,6 +47,7 @@ EXPECTED_SCRIPTS = {
 
 
 def test_all_shell_scripts_discovered():
+    """Exactly the four named files live under the validator's script directory."""
     found = {str(p.relative_to(SCRIPTS_DIR)) for p in _all_shell_scripts() if p != LEGACY_UPDATER}
     assert found == EXPECTED_SCRIPTS, (
         f"expected {sorted(EXPECTED_SCRIPTS)} under {SCRIPTS_DIR}, found {sorted(found)}"
@@ -56,6 +58,7 @@ def test_all_shell_scripts_discovered():
     "script_path", _all_shell_scripts(), ids=lambda p: str(p.relative_to(REPO_ROOT))
 )
 def test_shell_script_has_shebang(script_path: Path):
+    """Every script names its interpreter, so PM2 and cron can execute it directly."""
     first_line = script_path.read_text(encoding="utf-8", errors="ignore").splitlines()[
         0
     ]
@@ -66,6 +69,7 @@ def test_shell_script_has_shebang(script_path: Path):
     "script_path", _all_shell_scripts(), ids=lambda p: str(p.relative_to(REPO_ROOT))
 )
 def test_shell_script_parses_with_bash_n(script_path: Path):
+    """Every script is syntactically valid, caught here instead of halfway through a deploy."""
     result = subprocess.run(
         ["bash", "-n", str(script_path)],
         capture_output=True,
@@ -76,6 +80,7 @@ def test_shell_script_parses_with_bash_n(script_path: Path):
 
 
 def test_shell_scripts_use_strict_mode_for_deploy_scripts():
+    """Both deploy paths abort on an unset variable or a failed stage in a pipe."""
     deploy_scripts = [
         SCRIPTS_DIR / "update" / "update_deploy.sh",
         SCRIPTS_DIR / "update" / "auto_update_deploy.sh",
@@ -86,6 +91,7 @@ def test_shell_scripts_use_strict_mode_for_deploy_scripts():
 
 
 def test_setup_scripts_define_main_entrypoint():
+    """Miner and validator setup both wrap their work in main and pass the arguments through."""
     setup_scripts = [
         REPO_ROOT / "miner" / "src" / "scripts" / "setup.sh",
         SCRIPTS_DIR / "main" / "setup.sh",
@@ -97,6 +103,7 @@ def test_setup_scripts_define_main_entrypoint():
 
 
 def test_scripts_are_not_world_writable():
+    """No script may be edited by other users, since the updater runs them as root."""
     for script in _all_shell_scripts():
         mode = script.stat().st_mode
         assert not (mode & 0o002), f"{script} is world-writable"
@@ -129,6 +136,7 @@ def test_the_miner_tests_are_actually_collected():
 
 
 def test_the_legacy_updater_path_still_answers():
+    """The path operators registered with PM2 is a real executable file, not a leftover."""
     assert LEGACY_UPDATER.is_file(), (
         f"{LEGACY_UPDATER} is what operators registered with PM2; removing it breaks "
         "their updater on the next pull"
@@ -137,6 +145,7 @@ def test_the_legacy_updater_path_still_answers():
 
 
 def test_the_forwarder_points_at_the_real_updater():
+    """The old path still names a script that exists, so the hand-off leads somewhere."""
     target = SCRIPTS_DIR / "update" / "auto_update_deploy.sh"
     assert target.is_file(), f"{target} is missing, so the forwarder leads nowhere"
     assert "validator/scripts/update/auto_update_deploy.sh" in LEGACY_UPDATER.read_text(), (

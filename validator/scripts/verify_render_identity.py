@@ -62,6 +62,7 @@ EPISODE_STEPS = 60
 
 
 def _orbit_hash(env):
+    """SHA-256 over the depth buffers of a fixed camera orbit, with no physics stepped."""
     cli = getattr(env, "CLIENT", 0)
     w, h = int(env.IMG_RES[0]), int(env.IMG_RES[1])
     far = float(getattr(env, "_depth_far_m", 20.0))
@@ -92,6 +93,7 @@ def _orbit_hash(env):
 
 
 def _episode_hash(env, obs):
+    """SHA-256 over every observation of a fixed sinusoidal rollout, cut short on termination."""
     digest = hashlib.sha256()
     n_act = int(np.prod(env.action_space.shape))
     for t in range(EPISODE_STEPS):
@@ -111,6 +113,7 @@ def _episode_hash(env, obs):
 
 
 def main():
+    """Build every configuration in CONFIGS and write its orbit and episode digests to JSON."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", default="render_identity.json")
     args = ap.parse_args()

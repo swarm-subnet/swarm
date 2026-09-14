@@ -56,6 +56,7 @@ async def run_task(
     cancel_flag: asyncio.Event,
     wake_flag: asyncio.Event,
 ) -> None:
+    """Fetch and hash-check the miner model for one backend task, run its phase, and wipe private bytes afterwards."""
     uid = int(task.get("uid", -1))
     phase = str(task.get("phase", ""))
     task_id = task.get("task_id")
@@ -112,6 +113,7 @@ async def _run_phase(
     model_path: Path,
     cancel_flag: asyncio.Event,
 ) -> None:
+    """Dispatch to the screening or the benchmark evaluator, then submit the sanity score, seed count and per-type means."""
     seeds_from = int(task.get("seeds_from", 0))
     seeds_to_raw = task.get("seeds_to")
     seeds_to = int(seeds_to_raw) if seeds_to_raw is not None else None
@@ -132,6 +134,7 @@ async def _run_phase(
         bt.logging.info(f"[seed-flow] UID {uid}: joined the {phase.lower()} pool")
 
         async def seed_feeder(free_slots: int):
+            """Claim up to free_slots seed indexes from the shared pool; returns the granted list and whether the pool is empty."""
             resp = await self.backend_api.claim_seeds(
                 int(task_id), count=max(1, int(free_slots)),
             )
@@ -244,6 +247,7 @@ async def _run_phase(
 
 
 def _per_type_means(per_type_raw: Dict[str, list]) -> Dict[str, float]:
+    """Average the seed scores collected for each challenge type, dropping the types that got none."""
     return {
         name: float(np.mean(values))
         for name, values in per_type_raw.items()

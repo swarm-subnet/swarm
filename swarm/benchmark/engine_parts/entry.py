@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Command-line front door of the benchmark: option parsing, seed selection, run, report."""
+
 from __future__ import annotations
 
 from ._shared import (
@@ -46,6 +48,11 @@ from .seeds import (
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    """Run one full evaluation: resolve the options, pick seeds, evaluate, then print the report.
+
+    Output is teed to the log file while the run proceeds. A failure part-way still prints
+    whatever results were collected before the exception is re-raised at the end.
+    """
     import swarm.benchmark.engine as engine
 
     args = _parse_args(argv)

@@ -33,6 +33,7 @@ EXPECTED = {"setup.sh", "install_dependencies.sh"}
 
 
 def _miner_shell_scripts() -> list[Path]:
+    """Return the .sh files in the miner's src/scripts directory, in path order."""
     return sorted(MINER_SCRIPTS_DIR.glob("*.sh"))
 
 
@@ -43,18 +44,21 @@ def test_the_expected_scripts_are_there():
 
 @pytest.mark.parametrize("script", _miner_shell_scripts(), ids=lambda p: p.name)
 def test_shell_script_has_shebang(script: Path):
+    """Line one names the interpreter, so a direct run does not inherit whatever shell called it."""
     first = script.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
     assert first.startswith("#!"), f"missing shebang in {script}"
 
 
 @pytest.mark.parametrize("script", _miner_shell_scripts(), ids=lambda p: p.name)
 def test_shell_script_parses_with_bash_n(script: Path):
+    """A syntax error is caught here rather than halfway through a miner's first install."""
     result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, f"{script} does not parse:\n{result.stderr}"
 
 
 @pytest.mark.parametrize("script", _miner_shell_scripts(), ids=lambda p: p.name)
 def test_shell_script_is_not_world_writable(script: Path):
+    """The world-write bit is off on every script the miner is about to run as itself."""
     assert not (script.stat().st_mode & 0o002), f"{script} is world-writable"
 
 

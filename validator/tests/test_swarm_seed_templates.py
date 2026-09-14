@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Drone counts in the swarm family templates, and the seeded fallback when a slot omits one."""
+
 import random
 
 from swarm.challenge_families import get_challenge_family
@@ -23,6 +25,7 @@ from swarm.validator.task_gen import screening_task
 
 
 def _strip_n_drones(slots: tuple[dict, ...]) -> list[dict]:
+    """Return copies of the template slots with the drone-count key removed."""
     stripped = []
     for slot in slots:
         copy = dict(slot)
@@ -32,6 +35,7 @@ def _strip_n_drones(slots: tuple[dict, ...]) -> list[dict]:
 
 
 def test_swarm_templates_carry_deterministic_drone_counts():
+    """Each slot's fleet size follows its position in the template, so a rerun never changes it."""
     span = SWARM_MAX_DRONES - SWARM_MIN_DRONES + 1
     for family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
         family = get_challenge_family(family_id)
@@ -43,12 +47,14 @@ def test_swarm_templates_carry_deterministic_drone_counts():
 
 
 def test_swarm_templates_match_parent_templates_without_drone_counts():
+    """Apart from the added fleet size, a swarm template is its parent's with warehouse slots gone."""
     swarm_autopilot = get_challenge_family("cf_swarm_autopilot")
     autopilot = get_challenge_family("cf_autopilot")
     swarm_sar = get_challenge_family("cf_swarm_sar")
     sar = get_challenge_family("cf_search_and_rescue")
 
     def no_warehouse(template):
+        """Return the template slots that are not the warehouse challenge type."""
         return [slot for slot in template if slot["challenge_type"] != 5]
 
     assert _strip_n_drones(swarm_autopilot.screening_template()) == no_warehouse(autopilot.screening_template())
@@ -58,6 +64,7 @@ def test_swarm_templates_match_parent_templates_without_drone_counts():
 
 
 def test_screening_task_accepts_template_drone_count_and_keeps_random_fallback():
+    """An explicit count sizes the starts and goals; omitting it draws one from the shifted seed."""
     explicit = screening_task(
         sim_dt=0.02,
         seed=4242,

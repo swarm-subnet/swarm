@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Working forklifts placed in the loading area of the warehouse map."""
+
 from ._shared import *
 from .support import _forklift_yaw_back_to_wall
 
@@ -22,6 +24,11 @@ from .support import _forklift_yaw_back_to_wall
 def build_loading_operation_forklifts(
     forklift_loader, floor_top_z, area_layout, wall_info, cli, seed=0
 ):
+    """Scatter forklifts through the corridor between the staged pallets and the docked trucks.
+
+    Returns how many were spawned and a record of each, with a reason string when the loader
+    is missing, the layout has no LOADING area, or that area is too tight to stand one in.
+    """
     if not ENABLE_LOADING_OPERATION_FORKLIFTS:
         return {
             "loading_operation_forklift_count": 0,
@@ -93,18 +100,21 @@ def build_loading_operation_forklifts(
     cross_depth_total = abs(dock_edge - interior_edge)
 
     def _xy_from_along_s(along, s_from_interior):
+        """Convert a dock-axis position and a depth measured from the interior edge to world x, y."""
         cross = interior_edge + (cross_to_dock_sign * s_from_interior)
         if along_axis == "x":
             return along, cross
         return cross, along
 
     def _along_s_from_xy(x, y):
+        """Inverse mapping: world x, y back to a dock-axis position and depth from the interior edge."""
         along = float(x) if along_axis == "x" else float(y)
         cross = float(y) if along_axis == "x" else float(x)
         s_from_interior = (cross - interior_edge) * cross_to_dock_sign
         return along, s_from_interior
 
     def _clamp(v, lo, hi):
+        """Return v pinned inside [lo, hi]."""
         return max(lo, min(hi, v))
 
     along_margin = (along_size * 0.5) + 0.30
@@ -284,6 +294,7 @@ def build_loading_operation_forklifts(
     soft_obstacle_clearance = 0.0
 
     def _try_place(along_base, s_base):
+        """Jitter around a target until an offset clears the trucks, goods and earlier spawns; None if none does."""
         ds_candidates = [0.0, -0.45, 0.45, -0.90, 0.90, -1.40, 1.40, -2.00, 2.00]
         da_candidates = [0.0, -1.6, 1.6, -3.2, 3.2, -4.8, 4.8, -6.4, 6.4]
         rng.shuffle(ds_candidates)

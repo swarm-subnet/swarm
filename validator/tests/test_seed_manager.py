@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Unit tests for swarm.validator.seed_manager: per-family seed sets, publication and the epoch clock."""
 from __future__ import annotations
 
 import json
@@ -25,10 +26,12 @@ import pytest
 
 @pytest.fixture
 def seed_manager_module(reload_module):
+    """A freshly imported seed_manager, so patched paths never leak between tests."""
     return reload_module("swarm.validator.seed_manager")
 
 
 def _patch_paths(monkeypatch, module, tmp_path):
+    """Point the module's state directories at tmp_path and return the epoch seeds folder."""
     state_dir = tmp_path / "state"
     seeds_dir = state_dir / "epoch_seeds"
     monkeypatch.setattr(module, "STATE_DIR", state_dir)
@@ -44,6 +47,7 @@ def _write_epoch_file(
     family_id: str = "cf_autopilot",
     published: bool = False,
 ) -> None:
+    """Write a stored seed payload under the on-disk name the manager expects for that epoch and family."""
     seeds_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".json" if family_id == "cf_autopilot" else f"__{family_id}.json"
     (seeds_dir / f"epoch_{epoch}{suffix}").write_text(json.dumps({
@@ -55,6 +59,7 @@ def _write_epoch_file(
 
 
 def test_generate_random_seeds_returns_correct_count(seed_manager_module):
+    """A request for n seeds yields exactly n, every one inside the 32-bit range."""
     m = seed_manager_module
     seeds = m._generate_random_seeds(100)
     assert len(seeds) == 100
@@ -62,6 +67,7 @@ def test_generate_random_seeds_returns_correct_count(seed_manager_module):
 
 
 def test_generate_random_seeds_are_not_identical_across_calls(seed_manager_module):
+    """Two draws from the system source do not repeat each other."""
     m = seed_manager_module
     seeds_a = m._generate_random_seeds(50)
     seeds_b = m._generate_random_seeds(50)
@@ -69,6 +75,7 @@ def test_generate_random_seeds_are_not_identical_across_calls(seed_manager_modul
 
 
 def test_manager_cold_boot_starts_at_epoch_zero(seed_manager_module, monkeypatch, tmp_path):
+    """With nothing on disk there are no seeds and nothing waiting to publish."""
     m = seed_manager_module
     _patch_paths(monkeypatch, m, tmp_path)
 
@@ -79,6 +86,7 @@ def test_manager_cold_boot_starts_at_epoch_zero(seed_manager_module, monkeypatch
 
 
 def test_manager_adopts_highest_local_epoch_on_boot(seed_manager_module, monkeypatch, tmp_path):
+    """A stored seed set is picked up intact after a restart, with no score invalidation raised."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
@@ -93,6 +101,7 @@ def test_manager_adopts_highest_local_epoch_on_boot(seed_manager_module, monkeyp
 
 
 def test_manager_picks_latest_epoch_when_multiple_files_present(seed_manager_module, monkeypatch, tmp_path):
+    """The highest epoch number on disk wins, not whichever file the glob returned first."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 2)
@@ -108,6 +117,7 @@ def test_manager_picks_latest_epoch_when_multiple_files_present(seed_manager_mod
 
 
 def test_manager_regenerates_seeds_when_file_is_corrupt(seed_manager_module, monkeypatch, tmp_path):
+    """Unreadable JSON costs the seeds, not the boot: fresh ones are drawn and scores flagged stale."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 3)
@@ -123,6 +133,7 @@ def test_manager_regenerates_seeds_when_file_is_corrupt(seed_manager_module, mon
 
 
 def test_pending_publications_and_mark_published(seed_manager_module, monkeypatch, tmp_path):
+    """An unsent epoch queues for the backend, and marking it flips the stored flag and clears the queue."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
@@ -142,6 +153,7 @@ def test_pending_publications_and_mark_published(seed_manager_module, monkeypatc
 
 
 def test_epoch_time_range_returns_utc_datetimes(seed_manager_module, monkeypatch, tmp_path):
+    """Both ends come back tz-aware in UTC, spanning one long-epoch duration."""
     m = seed_manager_module
     _patch_paths(monkeypatch, m, tmp_path)
 
@@ -155,6 +167,7 @@ def test_epoch_time_range_returns_utc_datetimes(seed_manager_module, monkeypatch
 def test_align_to_epoch_from_cold_boot_sets_epoch_and_generates_seeds(
     seed_manager_module, monkeypatch, tmp_path
 ):
+    """Aligning a fresh validator writes the target epoch's seed file and reports where it came from."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 3)
@@ -173,6 +186,7 @@ def test_align_to_epoch_from_cold_boot_sets_epoch_and_generates_seeds(
 def test_align_to_epoch_switches_local_epoch_and_preserves_pending_publications(
     seed_manager_module, monkeypatch, tmp_path
 ):
+    """Moving forward does not lose the old epoch's unsent seeds: they stay in the queue."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
@@ -191,6 +205,7 @@ def test_align_to_epoch_switches_local_epoch_and_preserves_pending_publications(
 
 
 def test_align_to_epoch_only_ignores_same_or_invalid_targets(seed_manager_module, monkeypatch, tmp_path):
+    """Realigning to the epoch already held, or to 0, is a no-op that reports None."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 2)
@@ -206,6 +221,7 @@ def test_align_to_epoch_only_ignores_same_or_invalid_targets(seed_manager_module
 
 
 def test_align_to_epoch_realigns_backward_when_local_is_ahead(seed_manager_module, monkeypatch, tmp_path):
+    """A validator running ahead of the backend is pulled back and writes that epoch's seeds."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 3)
@@ -225,6 +241,7 @@ def test_align_to_epoch_realigns_backward_when_local_is_ahead(seed_manager_modul
 def test_manager_keeps_distinct_seed_sets_per_family_same_epoch(
     seed_manager_module, monkeypatch, tmp_path,
 ):
+    """One epoch carries an independent set for each family, screening and benchmark split apart."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
@@ -249,6 +266,7 @@ def test_manager_keeps_distinct_seed_sets_per_family_same_epoch(
 def test_mark_epoch_published_scopes_to_epoch_and_family(
     seed_manager_module, monkeypatch, tmp_path,
 ):
+    """Publishing one family's seeds leaves the other family's file and queue untouched."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
@@ -281,6 +299,7 @@ def test_mark_epoch_published_scopes_to_epoch_and_family(
 def test_align_to_epoch_preserves_pending_publications_per_family(
     seed_manager_module, monkeypatch, tmp_path,
 ):
+    """A rollover keeps every family's unsent seed set queued, not only the default one."""
     m = seed_manager_module
     seeds_dir = _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "BENCHMARK_TOTAL_SEED_COUNT", 4)
@@ -308,6 +327,7 @@ def test_align_to_epoch_preserves_pending_publications_per_family(
 
 
 def test_epoch_windows_match_the_backend_schedule():
+    """Epochs tile the clock with no gap across the short-to-long switch, pinned to the agreed dates."""
     from swarm.constants import (
         EPOCH_DURATION_LONG_SECONDS,
         EPOCH_DURATION_SECONDS,
@@ -337,6 +357,7 @@ def test_epoch_windows_match_the_backend_schedule():
 
 
 def test_next_epoch_seeds_do_not_move_the_boot_epoch(seed_manager_module, monkeypatch, tmp_path):
+    """Drawing seeds ahead is stable across calls and leaves what a restart adopts untouched."""
     m = seed_manager_module
     _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "PREEVAL_SEEDS_DIR", tmp_path / "preeval_seeds")
@@ -357,6 +378,7 @@ def test_next_epoch_seeds_do_not_move_the_boot_epoch(seed_manager_module, monkey
 def test_rollover_adopts_the_seeds_the_preeval_actually_flew(
     seed_manager_module, monkeypatch, tmp_path,
 ):
+    """An epoch keeps the seeds miners were already scored on, and publishes them only once it ends."""
     m = seed_manager_module
     _patch_paths(monkeypatch, m, tmp_path)
     monkeypatch.setattr(m, "PREEVAL_SEEDS_DIR", tmp_path / "preeval_seeds")
@@ -382,6 +404,7 @@ def test_rollover_adopts_the_seeds_the_preeval_actually_flew(
 
 
 def test_preeval_seeds_for_a_skipped_epoch_are_dropped(seed_manager_module, monkeypatch, tmp_path):
+    """Seeds built for an epoch the backend jumped over are deleted, not left to linger on disk."""
     m = seed_manager_module
     _patch_paths(monkeypatch, m, tmp_path)
     preeval_dir = tmp_path / "preeval_seeds"
@@ -399,6 +422,7 @@ def test_preeval_seeds_for_a_skipped_epoch_are_dropped(seed_manager_module, monk
 
 
 def test_seed_lookup_picks_the_task_epoch(seed_manager_module, monkeypatch, tmp_path):
+    """A job tagged with a future epoch is flown on that epoch's seeds, not the live ones."""
     from swarm.validator.utils_parts.evaluation import _seed_manager_call
 
     m = seed_manager_module

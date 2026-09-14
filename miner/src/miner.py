@@ -190,6 +190,7 @@ def _submission_status(backend_url: str, digest: str) -> dict | None:
 
 
 def _sha256_file(path: str) -> str:
+    """Hex sha256 of a file, streamed in 1 MiB chunks."""
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -223,6 +224,7 @@ def _fetch_backend_families(backend_url: str) -> dict | None:
 
 
 def _known_families(backend_url: str) -> dict | None:
+    """The visibility map from the backend, falling back to the local schema, warning on each miss."""
     families = _fetch_backend_families(backend_url)
     if families is None:
         bt.logging.warning(
@@ -235,6 +237,7 @@ def _known_families(backend_url: str) -> dict | None:
 
 
 def _normalize_package_name(name: str) -> str:
+    """PEP 503 form: runs of dashes, underscores and dots collapse to one dash, lowercased."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
@@ -310,6 +313,7 @@ def _validate_artifact(path: str, *, family_id: str | None = None) -> str | None
 
 
 def _response_detail(response) -> str:
+    """The backend's own message: the JSON detail field, or the raw body when there is none."""
     try:
         payload = response.json()
     except ValueError:
@@ -410,6 +414,7 @@ def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, 
 
 
 def _open_wallet(wallet_name: str, wallet_hotkey: str):
+    """A bittensor wallet for the given coldkey name and hotkey, across both SDK casings."""
     _WalletCls = bt.Wallet if hasattr(bt, "Wallet") else bt.wallet
     return _WalletCls(name=wallet_name, hotkey=wallet_hotkey)
 
@@ -555,6 +560,11 @@ def submit_private(
 
 
 def _submit_public(args: argparse.Namespace) -> int:
+    """Check the repo URL and its manifest, then commit the URL on-chain; 0 on success.
+
+    A family that has moved to the private track is refused here, so nothing is
+    committed for a submission the scanner would drop anyway.
+    """
     github_url = _validate_github_url(args.github_url or "")
     if not github_url:
         bt.logging.error("Invalid GitHub URL. Must be https://github.com/{owner}/{repo}")
@@ -609,6 +619,7 @@ def _submit_public(args: argparse.Namespace) -> int:
 
 
 def main(argv=None):
+    """Parse the CLI arguments and route to the private or public track; the process exit code."""
     parser = argparse.ArgumentParser(
         description="Swarm Miner — commit a model to the Bittensor chain"
     )

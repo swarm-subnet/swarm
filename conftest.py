@@ -29,6 +29,7 @@ from filelock import FileLock
 
 
 def _ensure_repo_on_syspath() -> None:
+    """Put the checkout first on sys.path so tests import it over an installed copy."""
     repo_root = Path(__file__).resolve().parent
     repo_str = str(repo_root)
     if repo_str not in sys.path:
@@ -36,6 +37,7 @@ def _ensure_repo_on_syspath() -> None:
 
 
 def _configure_xdist_worker() -> None:
+    """Give each parallel worker its own terrain cache and hold BLAS to one thread."""
     worker = os.getenv("PYTEST_XDIST_WORKER")
     if not worker:
         return
@@ -52,6 +54,7 @@ _configure_xdist_worker()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register --run-e2e and --run-full, the flags that unskip the opt-in suites."""
     parser.addoption(
         "--run-e2e",
         action="store_true",
@@ -69,6 +72,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
+    """Skip items marked e2e or full unless their flag or environment variable is on."""
     run_e2e = config.getoption("--run-e2e") or os.getenv("SWARM_RUN_E2E") == "1"
     run_full = config.getoption("--run-full") or os.getenv("SWARM_RUN_FULL") == "1"
 
@@ -111,6 +115,7 @@ def selected_files() -> set[str]:
 
 @pytest.fixture(scope="session")
 def setuptools_config() -> dict:
+    """The [tool.setuptools] table as pyproject.toml declares it."""
     import tomllib
 
     repo_root = Path(__file__).resolve().parent
@@ -130,6 +135,7 @@ def wheel_source_ignore():
     points at the interpreter that created them, so copying one from a mounted
     repository into a container follows a symlink to a path that is not there."""
     def ignore(directory, names):
+        """Return the names copytree must skip here: the junk patterns plus virtualenvs."""
         ignored = set(_WHEEL_SOURCE_JUNK(directory, names))
         for name in names:
             if (Path(directory) / name / "pyvenv.cfg").is_file():

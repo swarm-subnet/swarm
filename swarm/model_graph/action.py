@@ -41,6 +41,11 @@ from .errors import ModelGraphError, ReasonCode
 def canonicalize_action(
     raw: np.ndarray, family_id: str, num_drones: int | None = None
 ) -> np.ndarray:
+    """Return raw checked against the family contract, clipped to its bounds and quantized.
+
+    A wrong dtype, a wrong shape or a non-finite value raises ModelGraphError. The SAR RGB
+    request component is driven to 0.0 or 1.0 so the simulator reads a flag, not a float.
+    """
     contract = FAMILY_GRAPH_CONTRACTS[family_id]
     expected = resolve_shape(contract["action_shape"], num_drones)
 

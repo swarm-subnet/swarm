@@ -21,6 +21,7 @@ from swarm.core import mountain_generator as _mountain_generator
 
 
 def build_mountain_map(cli, seed, safe_zones, safe_zone_radius):
+    """Run the mountain generator with the subtype pinned to 1, bare peaks, never the ski village."""
     return _mountain_generator.build_mountains(
         cli,
         seed,

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Streaming evaluation phase: chunked seed uploads, re-authorization, cancellation and heartbeat stops."""
+
 from __future__ import annotations
 
 import asyncio
@@ -37,15 +39,18 @@ def _make_validator(
     upload_results=None,
     heartbeat_calls=None,
 ) -> SimpleNamespace:
+    """A validator stub carrying a backend client and a docker evaluator with fixed image hashes."""
     heartbeat_calls = heartbeat_calls if heartbeat_calls is not None else []
 
     async def _post_heartbeat(**kwargs):
+        """Record the heartbeat payload and acknowledge it."""
         heartbeat_calls.append(kwargs)
         return {"ok": True}
 
     upload_sequence = iter(upload_results) if upload_results is not None else None
 
     async def _post_seed_scores_batch(**kwargs):
+        """Answer from the scripted upload results, falling back to a recorded acknowledgement."""
         if upload_sequence is None:
             return {"recorded": True}
         try:
@@ -54,6 +59,7 @@ def _make_validator(
             return {"recorded": True}
 
     async def _authorize_task(*_args, **_kwargs):
+        """Approve every task check, with reason ok."""
         return {"authorized": True, "reason": "ok"}
 
     return SimpleNamespace(
@@ -70,6 +76,7 @@ def _make_validator(
 
 
 def _heartbeat(validator) -> HeartbeatManager:
+    """Return a HeartbeatManager wired to the stub backend and the running event loop."""
     return HeartbeatManager(validator.backend_api, asyncio.get_event_loop())
 
 
@@ -88,6 +95,7 @@ def _make_evaluate_stub(
     ``_evaluate_seeds``."""
 
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        """Walk the seeds, halting on ``should_stop``, and return the scores, the per-type buckets and the details."""
         on_seed_result = kwargs.get("on_seed_result")
         should_stop = kwargs.get("should_stop")
         scores: list = []
@@ -117,7 +125,9 @@ def _make_evaluate_stub(
 
 
 def _make_evaluate_stub_with_infra(infra_local_index: int, score_per_seed: float = 0.75, map_type: str = "city"):
+    """An evaluate stub where every tenth seed, at ``infra_local_index``, fails with INFRA."""
     def _detail(i):
+        """Return one seed's result dict, marked INFRA at the chosen slot of every ten."""
         return {
             "score": score_per_seed,
             "map_type": map_type,
@@ -127,18 +137,21 @@ def _make_evaluate_stub_with_infra(infra_local_index: int, score_per_seed: float
 
 
 def test_streaming_phase_excludes_infra_seeds_from_upload(monkeypatch):
+    """A seed that failed on infrastructure never reaches the backend; every other index does."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub_with_infra(2))
 
     uploaded_indices: list = []
 
     async def _capture(**kwargs):
+        """Collect the seed indexes of every uploaded row and acknowledge the batch."""
         uploaded_indices.extend(s["seed_index"] for s in kwargs.get("scores", []))
         return {"recorded": True}
 
     validator.backend_api.post_seed_scores_batch = _capture
 
     async def _run():
+        """Stream 20 seeds through the phase in two chunks of ten."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -161,9 +174,11 @@ def test_streaming_phase_excludes_infra_seeds_from_upload(monkeypatch):
 
 
 def test_streaming_phase_uploads_slow_act_strikes_as_valid_zero(monkeypatch):
+    """A SLOW_ACT_STRIKES seed uploads as a genuine zero score, not as an excluded infra failure."""
     validator = _make_validator()
 
     def _detail(i):
+        """Return a struck-out mountain seed at index 1, a scoring city seed otherwise."""
         if i == 1:
             return {"score": 0.0, "map_type": "mountain",
                     "failure_reason": "SLOW_ACT_STRIKES"}
@@ -176,12 +191,14 @@ def test_streaming_phase_uploads_slow_act_strikes_as_valid_zero(monkeypatch):
     rows: list[dict] = []
 
     async def _capture(**kwargs):
+        """Accumulate the uploaded rows and report them recorded."""
         rows.extend(kwargs["scores"])
         return {"recorded": True}
 
     validator.backend_api.post_seed_scores_batch = _capture
 
     async def _run():
+        """Stream three seeds in one chunk and hand back the phase result."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -215,18 +232,21 @@ def test_streaming_phase_uploads_slow_act_strikes_as_valid_zero(monkeypatch):
 
 
 def test_streaming_phase_forwards_task_id_to_upload(monkeypatch):
+    """Every score batch carries the task id the phase was started with."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     posted_task_ids: list = []
 
     async def _capture(**kwargs):
+        """Record the task id seen on each upload call and acknowledge it."""
         posted_task_ids.append(kwargs.get("task_id"))
         return {"recorded": True}
 
     validator.backend_api.post_seed_scores_batch = _capture
 
     async def _run():
+        """Stream 20 seeds with task id 555 attached."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -249,12 +269,14 @@ def test_streaming_phase_forwards_task_id_to_upload(monkeypatch):
 
 
 def test_streaming_phase_final_retry_carries_task_id(monkeypatch):
+    """A batch that failed once keeps the task id on its retry."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     attempts: list[int | None] = []
 
     async def _flaky(**kwargs):
+        """Reject the first upload as transient, then acknowledge, logging the task id each time."""
         attempts.append(kwargs.get("task_id"))
         if len(attempts) == 1:
             return {"recorded": False, "detail": "transient"}
@@ -263,6 +285,7 @@ def test_streaming_phase_final_retry_carries_task_id(monkeypatch):
     validator.backend_api.post_seed_scores_batch = _flaky
 
     async def _run():
+        """Stream ten seeds as one chunk with task id 777."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -285,10 +308,12 @@ def test_streaming_phase_final_retry_carries_task_id(monkeypatch):
 
 
 def test_streaming_phase_happy_path(monkeypatch):
+    """Twenty-five seeds upload as chunks of 10, 10 and 5, their indexes offset by 100."""
     posted_batches: list[list[dict]] = []
     validator = _make_validator()
 
     async def _capture_upload(**kwargs):
+        """Store each posted batch of score rows and acknowledge it."""
         posted_batches.append(list(kwargs["scores"]))
         return {"recorded": True}
 
@@ -296,6 +321,7 @@ def test_streaming_phase_happy_path(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Stream 25 seeds from offset 100 in chunks of ten."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -326,6 +352,7 @@ def test_streaming_phase_happy_path(monkeypatch):
 
 
 def test_streaming_phase_re_authorize_cancels(monkeypatch):
+    """A denied re-authorization stops dispatch mid-run and returns the partial scores with its reason."""
     validator = _make_validator()
     monkeypatch.setattr(
         validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
@@ -334,12 +361,14 @@ def test_streaming_phase_re_authorize_cancels(monkeypatch):
     authorize_calls = {"n": 0}
 
     async def _re_authorize():
+        """Approve the first check, deny the second with an epoch rotation."""
         authorize_calls["n"] += 1
         if authorize_calls["n"] >= 2:
             return {"authorized": False, "reason": "epoch rotated"}
         return {"authorized": True}
 
     async def _run():
+        """Stream 30 slow seeds while re-authorizing every 10 ms."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -366,12 +395,14 @@ def test_streaming_phase_re_authorize_cancels(monkeypatch):
 
 
 def test_streaming_phase_retries_failed_batches(monkeypatch):
+    """An upload the backend did not record is posted again, unchanged and in full."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     attempts: list[int] = []
 
     async def _flaky_upload(**kwargs):
+        """Report the first batch as not recorded, every later one as recorded."""
         attempts.append(len(kwargs["scores"]))
         if len(attempts) == 1:
             return {"recorded": False, "detail": "transient backend error"}
@@ -380,6 +411,7 @@ def test_streaming_phase_retries_failed_batches(monkeypatch):
     validator.backend_api.post_seed_scores_batch = _flaky_upload
 
     async def _run():
+        """Stream ten seeds as a single chunk against the flaky backend."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -404,12 +436,14 @@ def test_streaming_phase_retries_failed_batches(monkeypatch):
 
 
 def test_streaming_phase_retries_upload_exception(monkeypatch):
+    """An upload that raises is retried rather than lost, and the phase still completes."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     calls: list[str] = []
 
     async def _failing_then_succeed(**kwargs):
+        """Raise on the first call, acknowledge on every call after it."""
         calls.append("call")
         if len(calls) == 1:
             raise RuntimeError("network down")
@@ -418,6 +452,7 @@ def test_streaming_phase_retries_upload_exception(monkeypatch):
     validator.backend_api.post_seed_scores_batch = _failing_then_succeed
 
     async def _run():
+        """Stream five seeds against a backend that throws once."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -442,6 +477,7 @@ def test_streaming_phase_retries_upload_exception(monkeypatch):
 
 
 def test_streaming_phase_respects_inflight_cap(monkeypatch):
+    """No more than ``max_inflight`` uploads are ever in the air at once."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
@@ -449,6 +485,7 @@ def test_streaming_phase_respects_inflight_cap(monkeypatch):
     currently_inflight = {"n": 0}
 
     async def _slow_upload(**kwargs):
+        """Hold the upload for 10 ms while counting how many are running together."""
         currently_inflight["n"] += 1
         inflight_counts.append(currently_inflight["n"])
         await asyncio.sleep(0.01)
@@ -458,6 +495,7 @@ def test_streaming_phase_respects_inflight_cap(monkeypatch):
     validator.backend_api.post_seed_scores_batch = _slow_upload
 
     async def _run():
+        """Stream 80 seeds with at most two uploads allowed in flight."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -483,15 +521,18 @@ def test_streaming_phase_respects_inflight_cap(monkeypatch):
 
 
 def test_streaming_phase_invokes_on_chunk_complete(monkeypatch):
+    """The chunk callback fires once per upload group, each time with the running and final seed counts."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     records: list[dict] = []
 
     def _on_chunk(**info):
+        """Keep the evaluated and total counts reported by the callback."""
         records.append({"evaluated": info["evaluated"], "total": info["total"]})
 
     async def _run():
+        """Stream 23 screening seeds in chunks of ten with the callback attached."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -516,9 +557,11 @@ def test_streaming_phase_invokes_on_chunk_complete(monkeypatch):
 
 
 def test_streaming_phase_empty_seeds():
+    """An empty seed list returns empty scores and details with no cancel reason."""
     validator = _make_validator()
 
     async def _run():
+        """Stream nothing at all and hand back the phase result."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -543,16 +586,19 @@ def test_streaming_phase_empty_seeds():
 
 
 def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
+    """A seed whose map type is not one of the six known families is scored but never uploaded."""
     validator = _make_validator()
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Save the rows of every posted batch and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
     validator.backend_api.post_seed_scores_batch = _capture_upload
 
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        """Score even seeds as city and odd seeds as an unknown map type."""
         scores = [0.5] * len(seeds)
         per_type = {name: [] for name in (
             "city", "open", "mountain", "village", "warehouse", "forest",
@@ -569,6 +615,7 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
 
     async def _run():
+        """Stream ten seeds from offset 100 in a single chunk."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -602,6 +649,7 @@ def test_streaming_phase_filters_unknown_map_type_from_uploads(monkeypatch):
 
 
 def test_streaming_phase_reauthorize_passes_first_then_fails(monkeypatch):
+    """Evaluation continues while re-authorization passes and stops the moment it is refused."""
     validator = _make_validator()
     monkeypatch.setattr(
         validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
@@ -610,12 +658,14 @@ def test_streaming_phase_reauthorize_passes_first_then_fails(monkeypatch):
     calls = {"n": 0}
 
     async def _re_authorize():
+        """Approve the first two checks, then refuse with a banned model."""
         calls["n"] += 1
         if calls["n"] <= 2:
             return {"authorized": True}
         return {"authorized": False, "reason": "model banned"}
 
     async def _run():
+        """Stream 40 delayed seeds with re-authorization every 10 ms."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -641,15 +691,18 @@ def test_streaming_phase_reauthorize_passes_first_then_fails(monkeypatch):
 
 
 def test_streaming_phase_final_retry_also_fails_does_not_raise(monkeypatch):
+    """A batch the backend never records is parked quietly; the phase still returns all its scores."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _always_fail(**kwargs):
+        """Report every batch as not recorded because the backend is offline."""
         return {"recorded": False, "detail": "backend offline"}
 
     validator.backend_api.post_seed_scores_batch = _always_fail
 
     async def _run():
+        """Stream ten seeds against a backend that records nothing."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -672,11 +725,13 @@ def test_streaming_phase_final_retry_also_fails_does_not_raise(monkeypatch):
 
 
 def test_streaming_phase_forwards_evaluator_prior_done(monkeypatch):
+    """The evaluator is told how many seeds were already done and how many the whole run holds."""
     validator = _make_validator()
 
     evaluator_calls: list[dict] = []
 
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        """Record the prior-progress kwargs, then return city scores for every seed."""
         evaluator_calls.append({
             "seeds_len": len(seeds),
             "prior_seeds_done": kwargs.get("prior_seeds_done"),
@@ -693,6 +748,7 @@ def test_streaming_phase_forwards_evaluator_prior_done(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
 
     async def _run():
+        """Stream 20 seeds declaring 300 already done out of 1000."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -719,10 +775,12 @@ def test_streaming_phase_forwards_evaluator_prior_done(monkeypatch):
 
 
 def test_streaming_phase_passes_all_pre_built_tasks_in_one_call(monkeypatch):
+    """The whole task list goes to the evaluator in a single call, never sliced per chunk."""
     validator = _make_validator()
     slices: list[list[object]] = []
 
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        """Record the pre-built task slice it was handed and score every seed as city."""
         slices.append(list(kwargs.get("pre_built_tasks") or []))
         scores = [0.5] * len(seeds)
         per_type = {name: [] for name in (
@@ -737,6 +795,7 @@ def test_streaming_phase_passes_all_pre_built_tasks_in_one_call(monkeypatch):
     tasks = [f"task-{i}" for i in range(25)]
 
     async def _run():
+        """Stream 25 screening seeds with all 25 tasks supplied up front."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -760,6 +819,7 @@ def test_streaming_phase_passes_all_pre_built_tasks_in_one_call(monkeypatch):
 
 
 def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
+    """A re-evaluation over 20 supplied seeds averages 0.75 and uploads indexes 0 to 19."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=11,
@@ -769,6 +829,7 @@ def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Keep every posted batch of score rows and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
@@ -778,6 +839,7 @@ def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
     )
 
     async def _run():
+        """Benchmark UID 42 over 20 seeds as a re-evaluation."""
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
@@ -798,6 +860,7 @@ def test_run_full_benchmark_streams_reeval_seeds(monkeypatch):
 
 
 def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
+    """With no seeds supplied the benchmark indexes start at 300, past the screening range."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=11,
@@ -807,6 +870,7 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Collect the rows of every uploaded batch and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
@@ -814,6 +878,7 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Benchmark UID 42 without naming any seeds."""
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
@@ -827,6 +892,7 @@ def test_run_full_benchmark_uses_offset_when_seeds_none(monkeypatch):
 
 
 def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
+    """A range starting at seed 0 spans both halves: screening tasks then benchmark tasks, offsets 0 to 4 each."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=11,
@@ -841,10 +907,12 @@ def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
     benchmark_offsets: list[int] = []
 
     def _screening_tasks(sim_dt, seeds, family_id, offset, total_seed_count):
+        """Record the offset asked for and return one placeholder task."""
         screening_offsets.append(offset)
         return [f"scr-{offset}"]
 
     def _benchmark_tasks(sim_dt, seeds, family_id, offset, total_seed_count):
+        """Note the offset requested and hand back a single placeholder task."""
         benchmark_offsets.append(offset)
         return [f"bench-{offset}"]
 
@@ -854,6 +922,7 @@ def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Keep the rows of each posted batch and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
@@ -861,6 +930,7 @@ def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Benchmark UID 42 across the whole seed range, 0 through 10."""
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
@@ -880,6 +950,7 @@ def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
 
 
 def test_run_screening_streams_with_unified_chunks(monkeypatch):
+    """Screening 25 seeds uploads them as three chunks, indexes 0 to 24, all scored on forest maps."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=3,
@@ -889,6 +960,7 @@ def test_run_screening_streams_with_unified_chunks(monkeypatch):
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Store every uploaded batch of rows and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
@@ -898,6 +970,7 @@ def test_run_screening_streams_with_unified_chunks(monkeypatch):
     )
 
     async def _run():
+        """Screen UID 99 over the epoch's screening seeds."""
         return await validator_evaluation._run_screening(
             validator,
             uid=99,
@@ -921,9 +994,11 @@ def test_run_screening_streams_with_unified_chunks(monkeypatch):
 
 
 def _make_docker_evaluator(score: float = 0.73):
+    """A docker evaluator stub that returns one successful ValidationResult per task at a fixed score."""
     from swarm.protocol import ValidationResult
 
     async def _evaluate_seeds_parallel(tasks, uid, model_path, **kwargs):
+        """Return a passing result for each task, padding with None once ``should_stop`` fires."""
         on_seed_result = kwargs.get("on_seed_result")
         should_stop = kwargs.get("should_stop")
         results: list = []
@@ -945,16 +1020,19 @@ def _make_docker_evaluator(score: float = 0.73):
 
 
 def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
+    """The real evaluation path, only docker and HTTP faked, uploads 25 scores as 10, 10 and 5 from index 300."""
     model_path = tmp_path / "UID_42.zip"
     model_path.write_bytes(b"fake-model")
 
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Keep each posted batch of score rows and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
     async def _post_heartbeat(**kwargs):
+        """Acknowledge the heartbeat without asking for a stop."""
         return {"ok": True}
 
     validator = SimpleNamespace(
@@ -970,6 +1048,7 @@ def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
     )
 
     async def _run():
+        """Benchmark UID 42 through the real streaming path."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=model_path,
         )
@@ -987,16 +1066,19 @@ def test_run_full_benchmark_real_flow_streams_chunks(tmp_path):
 
 
 def test_run_screening_real_flow_streams_chunks(tmp_path):
+    """Real-path screening of 15 seeds uploads them as 10 then 5, averaging the evaluator's score."""
     model_path = tmp_path / "UID_55.zip"
     model_path.write_bytes(b"fake-model")
 
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Save every posted batch of rows and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
     async def _post_heartbeat(**kwargs):
+        """Acknowledge the heartbeat and ask for no stop."""
         return {"ok": True}
 
     validator = SimpleNamespace(
@@ -1012,6 +1094,7 @@ def test_run_screening_real_flow_streams_chunks(tmp_path):
     )
 
     async def _run():
+        """Screen UID 55 through the real streaming path."""
         return await validator_evaluation._run_screening(
             validator, uid=55, model_path=model_path,
         )
@@ -1045,6 +1128,7 @@ def test_run_full_benchmark_reeval_does_not_authorize_per_chunk(monkeypatch):
     auth_calls: list[str] = []
 
     async def _authorize(*args, **kwargs):
+        """Record that the legacy authorize endpoint was called and allow the task."""
         auth_calls.append("called")
         return {"authorized": True, "reason": "ok"}
 
@@ -1052,6 +1136,7 @@ def test_run_full_benchmark_reeval_does_not_authorize_per_chunk(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Re-evaluate UID 42 over 30 supplied seeds."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             seeds=list(range(30)), reeval=True,
@@ -1065,6 +1150,7 @@ def test_run_full_benchmark_reeval_does_not_authorize_per_chunk(monkeypatch):
 
 
 def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
+    """Setting the SSE cancel flag mid-run halts the re-evaluation at the next seed, with 20 scores kept."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=11,
@@ -1074,6 +1160,7 @@ def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Keep every batch of uploaded rows and acknowledge it."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
@@ -1082,6 +1169,7 @@ def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
     cancel_flag = asyncio.Event()
 
     def _detail(i):
+        """Score a city seed, setting the cancel flag once seed 19 is reached."""
         if i >= 19:
             cancel_flag.set()
         return {"score": 0.5, "map_type": "city"}
@@ -1092,6 +1180,7 @@ def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
     )
 
     async def _run():
+        """Re-evaluate 30 seeds with the cancel flag wired in."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             seeds=list(range(30)), reeval=True,
@@ -1105,6 +1194,7 @@ def test_run_full_benchmark_reeval_cancels_via_cancel_flag(monkeypatch):
 
 
 def test_run_full_benchmark_non_reeval_skips_authorize(monkeypatch):
+    """An ordinary benchmark never calls the authorize endpoint either."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=11,
@@ -1114,6 +1204,7 @@ def test_run_full_benchmark_non_reeval_skips_authorize(monkeypatch):
     auth_calls: list[str] = []
 
     async def _authorize(*args, **kwargs):
+        """Note the call and answer authorized."""
         auth_calls.append("called")
         return {"authorized": True}
 
@@ -1121,6 +1212,7 @@ def test_run_full_benchmark_non_reeval_skips_authorize(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Benchmark UID 42 with no re-evaluation flag."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=_FAKE_MODEL_ZIP,
         )
@@ -1133,6 +1225,7 @@ def test_run_full_benchmark_non_reeval_skips_authorize(monkeypatch):
 
 
 def test_run_screening_reeval_does_not_authorize_per_chunk(monkeypatch):
+    """Screening a re-evaluation streams all 25 seeds without one authorize call."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=3,
@@ -1142,6 +1235,7 @@ def test_run_screening_reeval_does_not_authorize_per_chunk(monkeypatch):
     auth_calls: list[str] = []
 
     async def _authorize(*args, **kwargs):
+        """Log the call and report the task authorized."""
         auth_calls.append("called")
         return {"authorized": True}
 
@@ -1149,6 +1243,7 @@ def test_run_screening_reeval_does_not_authorize_per_chunk(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Screen UID 99 as a re-evaluation."""
         return await validator_evaluation._run_screening(
             validator, uid=99, model_path=_FAKE_MODEL_ZIP, reeval=True,
         )
@@ -1161,6 +1256,7 @@ def test_run_screening_reeval_does_not_authorize_per_chunk(monkeypatch):
 
 
 def test_run_screening_reeval_cancels_via_cancel_flag(monkeypatch):
+    """The SSE cancel flag stops screening after 10 seeds and reports the backend's stop reason."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=3,
@@ -1170,6 +1266,7 @@ def test_run_screening_reeval_cancels_via_cancel_flag(monkeypatch):
     cancel_flag = asyncio.Event()
 
     def _detail(i):
+        """Score a city seed, raising the cancel flag from seed 9 on."""
         if i >= 9:
             cancel_flag.set()
         return {"score": 0.5, "map_type": "city"}
@@ -1180,6 +1277,7 @@ def test_run_screening_reeval_cancels_via_cancel_flag(monkeypatch):
     )
 
     async def _run():
+        """Screen 25 seeds as a re-evaluation with the cancel flag wired in."""
         return await validator_evaluation._run_screening(
             validator, uid=99, model_path=_FAKE_MODEL_ZIP, reeval=True,
             cancel_flag=cancel_flag,
@@ -1192,6 +1290,7 @@ def test_run_screening_reeval_cancels_via_cancel_flag(monkeypatch):
 
 
 def test_run_screening_non_reeval_skips_authorize(monkeypatch):
+    """A plain screening run reaches all 15 seeds with the authorize endpoint untouched."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=3,
@@ -1201,6 +1300,7 @@ def test_run_screening_non_reeval_skips_authorize(monkeypatch):
     auth_calls: list[str] = []
 
     async def _authorize(*args, **kwargs):
+        """Count the call and answer that the task may proceed."""
         auth_calls.append("called")
         return {"authorized": True}
 
@@ -1208,6 +1308,7 @@ def test_run_screening_non_reeval_skips_authorize(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Screen UID 99 with no re-evaluation flag set."""
         return await validator_evaluation._run_screening(
             validator, uid=99, model_path=_FAKE_MODEL_ZIP,
         )
@@ -1220,6 +1321,7 @@ def test_run_screening_non_reeval_skips_authorize(monkeypatch):
 
 
 def test_heartbeat_manager_honors_stop_required():
+    """A heartbeat answering ``stop_required`` latches a reason naming the backend's conflict code and message."""
     responses = [
         {"recorded": True, "stop_required": False},
         {
@@ -1236,11 +1338,15 @@ def test_heartbeat_manager_honors_stop_required():
     ]
 
     async def _run():
+        """Send two heartbeats and hand back the stop reason after the second."""
         class _Api:
+            """A backend stub that walks the scripted heartbeat responses in order."""
             def __init__(self):
+                """Start the response cursor at the first scripted reply."""
                 self._idx = 0
 
             async def post_heartbeat(self, **_kwargs):
+                """Return the next scripted response, repeating the last one forever."""
                 resp = responses[min(self._idx, len(responses) - 1)]
                 self._idx += 1
                 return resp
@@ -1259,9 +1365,13 @@ def test_heartbeat_manager_honors_stop_required():
 
 
 def test_heartbeat_manager_start_resets_stop_flag():
+    """Opening a new session clears a stop latched during the previous one."""
     async def _run():
+        """Latch a stop, open a second session, and report the flag afterwards."""
         class _Api:
+            """A backend stub that always demands a stop."""
             async def post_heartbeat(self, **_kwargs):
+                """Answer every post with a stop_required conflict."""
                 return {"stop_required": True, "conflicts": [{"code": "X", "message": "y"}]}
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
@@ -1276,18 +1386,21 @@ def test_heartbeat_manager_start_resets_stop_flag():
 
 
 def test_streaming_phase_stops_when_should_stop_fires(monkeypatch):
+    """A stop reason from the poll ends dispatch at the next seed and surfaces as the cancel reason."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     call_count = {"n": 0}
 
     def _should_stop():
+        """Stay clear for two polls, then report a failed benchmark."""
         call_count["n"] += 1
         if call_count["n"] >= 3:
             return "INVALID_BENCHMARK_IN_FLIGHT: model failed"
         return None
 
     async def _run():
+        """Stream 40 seeds behind a stop poll that trips on the third call."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1312,10 +1425,12 @@ def test_streaming_phase_stops_when_should_stop_fires(monkeypatch):
 
 
 def test_streaming_phase_runs_when_should_stop_clear(monkeypatch):
+    """A poll that never returns a reason lets all 20 seeds evaluate."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Stream 20 seeds behind a poll that always answers None."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1340,16 +1455,19 @@ def test_streaming_phase_runs_when_should_stop_clear(monkeypatch):
 
 
 def test_run_full_benchmark_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
+    """A heartbeat stop mid-benchmark ends the run after one seed and carries the backend's code out."""
     model_path = tmp_path / "UID_66.zip"
     model_path.write_bytes(b"fake-model")
 
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Keep the posted batches of score rows and acknowledge each."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
     async def _post_heartbeat(**_kwargs):
+        """Acknowledge the heartbeat with no stop requested."""
         return {"recorded": True, "stop_required": False}
 
     validator = SimpleNamespace(
@@ -1368,6 +1486,7 @@ def test_run_full_benchmark_stops_on_heartbeat_stop_required(tmp_path, monkeypat
     original_should_stop = HeartbeatManager.should_stop
 
     def _should_stop(self):
+        """Defer to the real check once, then demand a benchmark stop."""
         should_stop_calls["n"] += 1
         if should_stop_calls["n"] >= 2:
             return "INVALID_BENCHMARK_IN_FLIGHT: BENCHMARK_FAILED"
@@ -1376,6 +1495,7 @@ def test_run_full_benchmark_stops_on_heartbeat_stop_required(tmp_path, monkeypat
     monkeypatch.setattr(HeartbeatManager, "should_stop", _should_stop)
 
     async def _run():
+        """Benchmark UID 66 through the real streaming path."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=66, model_path=model_path,
         )
@@ -1389,16 +1509,19 @@ def test_run_full_benchmark_stops_on_heartbeat_stop_required(tmp_path, monkeypat
 
 
 def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
+    """A heartbeat stop during screening ends the run after one seed, carrying the conflict code out."""
     model_path = tmp_path / "UID_66.zip"
     model_path.write_bytes(b"fake-model")
 
     uploads: list[list[dict]] = []
 
     async def _capture_upload(**kwargs):
+        """Save the posted batches of score rows and acknowledge each."""
         uploads.append(list(kwargs["scores"]))
         return {"recorded": True}
 
     async def _post_heartbeat(**_kwargs):
+        """Acknowledge the heartbeat and request no stop."""
         return {"recorded": True, "stop_required": False}
 
     validator = SimpleNamespace(
@@ -1417,6 +1540,7 @@ def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
     original_should_stop = HeartbeatManager.should_stop
 
     def _should_stop(self):
+        """Defer to the real check once, then demand a screening stop."""
         should_stop_calls["n"] += 1
         if should_stop_calls["n"] >= 2:
             return "INVALID_SCREENING_IN_FLIGHT: SCREENING_FAILED"
@@ -1425,6 +1549,7 @@ def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
     monkeypatch.setattr(HeartbeatManager, "should_stop", _should_stop)
 
     async def _run():
+        """Screen UID 66 through the real streaming path."""
         return await validator_evaluation._run_screening(
             validator, uid=66, model_path=model_path,
         )
@@ -1437,9 +1562,13 @@ def test_run_screening_stops_on_heartbeat_stop_required(tmp_path, monkeypatch):
 
 
 def test_heartbeat_manager_ignores_none_response():
+    """A backend that answers nothing at all leaves the evaluation running."""
     async def _run():
+        """Post one heartbeat and report the stop state afterwards."""
         class _Api:
+            """A backend stub whose heartbeat post returns nothing."""
             async def post_heartbeat(self, **_kwargs):
+                """Answer with None instead of a response body."""
                 return None
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
@@ -1451,9 +1580,13 @@ def test_heartbeat_manager_ignores_none_response():
 
 
 def test_heartbeat_manager_ignores_response_without_stop_required():
+    """A response with no ``stop_required`` key leaves the evaluation running."""
     async def _run():
+        """Post one heartbeat and hand back the stop state."""
         class _Api:
+            """A backend stub that acknowledges without ever asking for a halt."""
             async def post_heartbeat(self, **_kwargs):
+                """Answer recorded and accepted, with no stop key."""
                 return {"recorded": True, "accepted": True}
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
@@ -1465,9 +1598,13 @@ def test_heartbeat_manager_ignores_response_without_stop_required():
 
 
 def test_heartbeat_manager_stop_without_conflicts_uses_default_reason():
+    """A stop carrying no conflicts still latches, under the bare reason ``stop_required``."""
     async def _run():
+        """Post one heartbeat and return the latched reason."""
         class _Api:
+            """A backend stub demanding a stop but listing no conflicts."""
             async def post_heartbeat(self, **_kwargs):
+                """Answer with stop_required set and no conflict list."""
                 return {"recorded": True, "stop_required": True}
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
@@ -1479,9 +1616,13 @@ def test_heartbeat_manager_stop_without_conflicts_uses_default_reason():
 
 
 def test_heartbeat_manager_handles_post_exception():
+    """A heartbeat post that raises is swallowed and never latches a stop."""
     async def _run():
+        """Post one heartbeat into a failing backend and report the stop state."""
         class _Api:
+            """A backend stub whose heartbeat post raises a network error."""
             async def post_heartbeat(self, **_kwargs):
+                """Raise a RuntimeError instead of answering."""
                 raise RuntimeError("network down")
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
@@ -1493,9 +1634,13 @@ def test_heartbeat_manager_handles_post_exception():
 
 
 def test_heartbeat_manager_ignores_stale_session_response():
+    """A stop that arrives for a superseded session is discarded."""
     async def _run():
+        """Post under an old session id after a new session opened, then report the stop state."""
         class _Api:
+            """A backend stub that always answers with a stale conflict."""
             async def post_heartbeat(self, **_kwargs):
+                """Answer with stop_required and a STALE conflict."""
                 return {"recorded": True, "stop_required": True,
                         "conflicts": [{"code": "STALE", "message": "old"}]}
 
@@ -1510,7 +1655,9 @@ def test_heartbeat_manager_ignores_stale_session_response():
 
 
 def test_heartbeat_manager_stop_latches_until_next_session():
+    """Once latched, a stop survives later clean heartbeats until a new session opens."""
     async def _run():
+        """Post a stopping heartbeat then a clean one, reporting the latched reason after each."""
         responses = [
             {"stop_required": True, "conflicts": [{"code": "X", "message": "first"}]},
             {"stop_required": False},
@@ -1518,10 +1665,13 @@ def test_heartbeat_manager_stop_latches_until_next_session():
         ]
 
         class _Api:
+            """A backend stub replaying one stop then clean acknowledgements."""
             def __init__(self):
+                """Start the cursor at the first scripted response."""
                 self._idx = 0
 
             async def post_heartbeat(self, **_kwargs):
+                """Return the next scripted reply, holding on the last one."""
                 resp = responses[min(self._idx, len(responses) - 1)]
                 self._idx += 1
                 return resp
@@ -1542,16 +1692,19 @@ def test_heartbeat_manager_stop_latches_until_next_session():
 
 
 def test_streaming_phase_polls_stop_per_seed(monkeypatch):
+    """The stop poll is consulted once for every seed, 50 times over 50 seeds."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     call_log: list[int] = []
 
     def _should_stop():
+        """Log the poll and never ask for a halt."""
         call_log.append(len(call_log))
         return None
 
     async def _run():
+        """Stream 50 seeds behind a poll that counts its calls."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1577,9 +1730,11 @@ def test_streaming_phase_polls_stop_per_seed(monkeypatch):
 
 
 def _patch_fast_authorize(monkeypatch):
+    """Strip the backoff out of ``authorize_with_retry`` so retry tests do not sleep."""
     real_authorize = validator_evaluation.authorize_with_retry
 
     async def _fast_authorize(auth_fn, **kwargs):
+        """Call the real retry wrapper with the backoff delay forced to zero."""
         kwargs["base_delay"] = 0.0
         return await real_authorize(auth_fn, **kwargs)
 
@@ -1587,6 +1742,7 @@ def _patch_fast_authorize(monkeypatch):
 
 
 def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatch):
+    """A 502 on the authorization check is retried, not treated as a denial, and the run finishes."""
     validator = _make_validator()
     monkeypatch.setattr(
         validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
@@ -1596,12 +1752,14 @@ def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatc
     calls = {"n": 0}
 
     async def _re_authorize():
+        """Fail twice as a transport error, then approve."""
         calls["n"] += 1
         if calls["n"] <= 2:
             return {"error": "502 Bad Gateway", "transport_failure": True}
         return {"authorized": True}
 
     async def _run():
+        """Stream 20 delayed seeds with a flaky authorization check."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1628,6 +1786,7 @@ def test_streaming_phase_reauthorize_recovers_after_transport_failure(monkeypatc
 
 
 def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
+    """Transport failures that never clear raise BackendTransportError rather than cancelling the task."""
     from swarm.validator.backend_api import BackendTransportError
 
     validator = _make_validator()
@@ -1639,10 +1798,12 @@ def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
     calls = {"n": 0}
 
     async def _re_authorize():
+        """Report a transport failure on every attempt."""
         calls["n"] += 1
         return {"error": "connection reset", "transport_failure": True}
 
     async def _run():
+        """Stream 20 delayed seeds against an authorization check that never recovers."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1672,6 +1833,7 @@ def test_streaming_phase_reauthorize_transport_exhaustion_raises(monkeypatch):
 
 
 def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
+    """A genuine denial is not retried: the first refusal cancels the run."""
     validator = _make_validator()
     monkeypatch.setattr(
         validator_utils, "_evaluate_seeds", _make_evaluate_stub(per_seed_delay=0.02),
@@ -1681,10 +1843,12 @@ def test_streaming_phase_reauthorize_real_denial_still_cancels(monkeypatch):
     calls = {"n": 0}
 
     async def _re_authorize():
+        """Refuse the task outright, blaming a rotated epoch."""
         calls["n"] += 1
         return {"authorized": False, "reason": "epoch rotated"}
 
     async def _run():
+        """Stream 30 delayed seeds against a check that refuses at once."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1723,6 +1887,7 @@ def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Screen UID 314 under assignment 4242."""
         return await validator_evaluation._run_screening(
             validator, uid=314, model_path=_FAKE_MODEL_ZIP,
             task_id=4242,
@@ -1741,6 +1906,7 @@ def test_run_screening_heartbeat_includes_assignment_id(monkeypatch):
 
 
 def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
+    """Benchmark heartbeats name the assignment, the UID, the BENCHMARK phase, the family and the epoch."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
     validator.seed_manager = SimpleNamespace(
@@ -1750,6 +1916,7 @@ def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Benchmark UID 271 under assignment 8888."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=271, model_path=_FAKE_MODEL_ZIP,
             task_id=8888,
@@ -1768,6 +1935,7 @@ def test_run_full_benchmark_heartbeat_includes_assignment_id(monkeypatch):
 
 
 def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch):
+    """A re-evaluation labels its heartbeat phase REEVAL while still carrying the assignment and family."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
     validator.seed_manager = SimpleNamespace(
@@ -1777,6 +1945,7 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Re-evaluate UID 42 under assignment 999."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             task_id=999, reeval=True,
@@ -1806,6 +1975,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Benchmark UID 42 resuming from seed 400 of 800."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             task_id=8888, seeds_from=400,
@@ -1821,6 +1991,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
 
 
 def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
+    """A screening resumed at seed 50 reports 200 total and 50 already done, not a fresh start."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
     validator.seed_manager = SimpleNamespace(
@@ -1830,6 +2001,7 @@ def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Screen UID 314 resuming from seed 50 of 200."""
         return await validator_evaluation._run_screening(
             validator, uid=314, model_path=_FAKE_MODEL_ZIP,
             task_id=4242, seeds_from=50,
@@ -1845,6 +2017,7 @@ def test_run_screening_resume_reports_cumulative_progress(monkeypatch):
 
 
 def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
+    """Resuming screening slices the seed list of the named family, not the default one."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=12,
@@ -1857,6 +2030,7 @@ def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
     captured_tasks: list[tuple[list[int], str]] = []
 
     def _fake_screening_tasks(*, sim_dt, seeds, family_id, offset, total_seed_count):
+        """Record the seeds and family it was asked for and return one task each."""
         _ = sim_dt, offset, total_seed_count
         captured_tasks.append((list(seeds), family_id))
         return [SimpleNamespace(challenge_type=1) for _ in seeds]
@@ -1864,6 +2038,7 @@ def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
     monkeypatch.setattr(validator_evaluation, "build_screening_tasks", _fake_screening_tasks)
 
     async def _run():
+        """Screen the cf_autopilot family from seed 50 onward."""
         return await validator_evaluation._run_screening(
             validator,
             uid=314,
@@ -1878,6 +2053,7 @@ def test_run_screening_resume_uses_family_specific_seed_slice(monkeypatch):
 
 
 def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
+    """Resuming a benchmark reads the named family's own seed list, giving five seeds from index 305."""
     validator = _make_validator()
     validator.seed_manager = SimpleNamespace(
         epoch_number=12,
@@ -1888,6 +2064,7 @@ def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
+        """Benchmark the cf_autopilot family from seed 305 onward."""
         return await validator_evaluation._run_full_benchmark(
             validator,
             uid=42,
@@ -1903,18 +2080,21 @@ def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
 
 
 def test_run_streaming_phase_uploads_family_local_seed_indices(monkeypatch):
+    """Uploaded indexes are family-local: the seed offset is added, giving 205 through 209."""
     validator = _make_validator()
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     uploads: list[list[int]] = []
 
     async def _capture(**kwargs):
+        """Collect the seed indexes of one upload and acknowledge it."""
         uploads.append([item["seed_index"] for item in kwargs["scores"]])
         return {"recorded": True}
 
     validator.backend_api.post_seed_scores_batch = _capture
 
     async def _run():
+        """Stream five seeds for cf_autopilot at offset 205."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(
@@ -1953,6 +2133,7 @@ def test_a_scored_seed_stays_in_flight_until_the_backend_acks_it(monkeypatch):
     }
 
     async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        """Hold seed 0, deliver its score, release it, and return the single result."""
         on_held = kwargs["on_held_seeds"]
         on_held([0])
         kwargs["on_seed_result"](0, dict(detail))
@@ -1962,9 +2143,11 @@ def test_a_scored_seed_stays_in_flight_until_the_backend_acks_it(monkeypatch):
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
 
     async def _feeder(_free_slots):
+        """Offer no further seeds and report the source exhausted."""
         return [], True
 
     async def _run():
+        """Stream one seed with a feeder that has nothing left to give."""
         hb = _heartbeat(validator)
         try:
             return await validator_evaluation._run_streaming_phase(

@@ -39,15 +39,18 @@ MINER_IN_THE_WHEEL = [
 
 @pytest.mark.parametrize("relative_path", MINER_DATA_FILES)
 def test_manifest_selects_the_miner_scripts(relative_path, selected_files):
+    """Each shell script is named by MANIFEST.in, the only way a non-Python file reaches the build."""
     assert relative_path in selected_files, f"{relative_path} is not selected for the package"
 
 
 def test_the_miner_package_is_discovered(setuptools_config):
+    """Package discovery includes the miner tree, so an installed copy can run its code."""
     include = setuptools_config.get("packages", {}).get("find", {}).get("include", [])
     assert "miner*" in include, "the miner package would not be discovered"
 
 
 def test_the_miner_tests_do_not_ship(selected_files, setuptools_config):
+    """Discovery excludes the miner tests and MANIFEST.in selects none, so neither route ships them."""
     exclude = setuptools_config.get("packages", {}).get("find", {}).get("exclude", [])
     assert "miner.tests*" in exclude, "miner tests would be discovered as a package"
     shipped = [p for p in selected_files if p.startswith("miner/tests/")]
@@ -55,6 +58,7 @@ def test_the_miner_tests_do_not_ship(selected_files, setuptools_config):
 
 
 def test_the_wheel_carries_the_miner_side(wheel_contents):
+    """A real build holds the entry point, submission template and scripts, and none of the tests."""
     missing = [p for p in MINER_IN_THE_WHEEL if p not in wheel_contents]
     assert missing == [], f"the wheel is missing {missing}"
 

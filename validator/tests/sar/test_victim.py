@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Spawning the SAR victim: what a seed pins down, how the bodies are tagged, and which meshes reach disk."""
 from __future__ import annotations
 
 import random
@@ -28,6 +29,7 @@ from swarm.core.env_builder.victim import spawn_victim
 
 
 def _make_floor(cli, tagger, z=0.0):
+    """Add a static 20m box as terrain at height z and return its body uid."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[10.0, 10.0, 0.05], physicsClientId=cli,
     )
@@ -40,6 +42,7 @@ def _make_floor(cli, tagger, z=0.0):
 
 
 def test_deterministic_per_seed(sar_pybullet):
+    """The same RNG seed puts the same number of bodies at the same centre."""
     cli = sar_pybullet
     p.resetSimulation(physicsClientId=cli)
     tagger = BodyTagger(cli)
@@ -63,6 +66,7 @@ def test_deterministic_per_seed(sar_pybullet):
 
 
 def test_different_seeds_differ(sar_pybullet):
+    """Two seeds pose the victim two ways, so the world bounds do not match."""
     cli = sar_pybullet
     p.resetSimulation(physicsClientId=cli)
     tagger = BodyTagger(cli)
@@ -82,6 +86,7 @@ def test_different_seeds_differ(sar_pybullet):
 
 
 def test_returns_uid_list_tagged_victim(sar_pybullet):
+    """At least five bodies come back and every one of them carries the VICTIM tag."""
     cli = sar_pybullet
     p.resetSimulation(physicsClientId=cli)
     tagger = BodyTagger(cli)
@@ -96,6 +101,7 @@ def test_returns_uid_list_tagged_victim(sar_pybullet):
 
 
 def test_uses_prebaked_parts(sar_pybullet, monkeypatch):
+    """The raw mannequin OBJ is never opened: only the prebaked split parts are read."""
     cli = sar_pybullet
     p.resetSimulation(physicsClientId=cli)
     tagger = BodyTagger(cli)
@@ -103,6 +109,7 @@ def test_uses_prebaked_parts(sar_pybullet, monkeypatch):
     open_calls: list[str] = []
     real_open = open
     def _tracked_open(path, *args, **kwargs):
+        """Record every path opened and hand back the real file object."""
         open_calls.append(str(path))
         return real_open(path, *args, **kwargs)
     monkeypatch.setattr("swarm.core.env_builder.mesh_loader._PREBAKED_OPEN_FILE", _tracked_open)
@@ -117,6 +124,7 @@ def test_uses_prebaked_parts(sar_pybullet, monkeypatch):
 
 
 def test_collision_centred_on_bounds(sar_pybullet):
+    """The physics box sits on the reported victim centre, within five centimetres."""
     cli = sar_pybullet
     p.resetSimulation(physicsClientId=cli)
     tagger = BodyTagger(cli)
@@ -136,6 +144,7 @@ def test_collision_centred_on_bounds(sar_pybullet):
 
 
 def test_loads_from_arbitrary_cwd(sar_pybullet, tmp_path, monkeypatch):
+    """Mesh paths resolve off the package, so the working directory does not matter."""
     cli = sar_pybullet
     p.resetSimulation(physicsClientId=cli)
     tagger = BodyTagger(cli)

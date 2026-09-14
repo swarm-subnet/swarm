@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Slot maths for the warehouse storage racks: what rides on a pallet, which shelf heights the rack mesh offers, and how the grid is packed."""
 from types import SimpleNamespace
 
 from ._shared import *
@@ -41,10 +42,13 @@ def make_storage_layout_helpers(
     barrel_layout_profile_cache,
     box_layout_profile_cache,
 ):
+    """Build the pallet-content and slot-packing closures for one storage area, sharing the caches passed in."""
     def _yaw_key(yaw_deg):
+        """Yaw folded into [0, 360) and rounded, so equal angles share a cache entry."""
         return round(float(yaw_deg) % 360.0, 6)
 
     def _oriented_xy_cached(model_name, scale_xyz, yaw_deg):
+        """Footprint of a model at this scale and angle, memoised for the run."""
         key = (str(model_name), tuple(float(v) for v in scale_xyz), _yaw_key(yaw_deg))
         cached = oriented_xy_local_cache.get(key)
         if cached is not None:
@@ -54,6 +58,7 @@ def make_storage_layout_helpers(
         return out
 
     def _barrel_layout_profile_for_slot_yaw(slot_yaw):
+        """Where the bottom course of barrels sits on a pallet at this angle: four in a square, or two when they do not fit."""
         key = _yaw_key(slot_yaw)
         cached = barrel_layout_profile_cache.get(key)
         if cached is not None:
@@ -128,6 +133,7 @@ def make_storage_layout_helpers(
         return out
 
     def _box_layout_profile_for_slot_yaw(slot_yaw):
+        """Where the bottom course of cartons sits on a pallet at this angle: four in a square, or two when they do not fit."""
         key = _yaw_key(slot_yaw)
         cached = box_layout_profile_cache.get(key)
         if cached is not None:
@@ -191,6 +197,7 @@ def make_storage_layout_helpers(
         return out
 
     def _packed_centers(lo, hi, size, gap):
+        """Centres of as many size-wide items as fit between lo and hi, the leftover split evenly at both ends."""
         span = float(hi) - float(lo)
         if span < (float(size) - 1e-6):
             return []
@@ -219,12 +226,15 @@ def make_storage_support_helpers(
     rack_size_z,
     rng,
 ):
+    """Build the closures that read shelf heights off the rack mesh and decide how full each level is."""
     def _to_world_xy(along_v, cross_v):
+        """Map along/cross coordinates onto world x and y for the row direction."""
         if along_axis == "x":
             return float(along_v), float(cross_v)
         return float(cross_v), float(along_v)
 
     def _cluster_level_area(area_map, merge_eps=0.03):
+        """Group heights closer than merge_eps into one level, each carrying its summed triangle area."""
         points = sorted(
             (float(z), float(a)) for z, a in area_map.items() if float(a) > 1e-8
         )
@@ -242,6 +252,7 @@ def make_storage_support_helpers(
         return [{"z": float(cl["z_avg"]), "area": float(cl["area"])} for cl in clusters]
 
     def _rack_support_surface_levels_m():
+        """Shelf heights above the rack base, found in the OBJ by pairing each up-facing deck with the underside below it."""
         model_path = os.path.join(str(storage_loader.obj_dir), str(rack_model))
         if not os.path.exists(model_path):
             return []
@@ -387,6 +398,7 @@ def make_storage_support_helpers(
         return [float(v) for v in dedup]
 
     def _level_slot_count(slot_total, level_density):
+        """How many of a pallet's cargo positions to fill at this density: the rounded target, or one fewer."""
         if slot_total <= 1:
             return 1
         target = int(round(float(slot_total) * float(level_density)))
@@ -404,6 +416,7 @@ def make_storage_support_helpers(
 
 
 def storage_plan_score(plan, primary_along_axis):
+    """Ranking key for a candidate rack plan: long side first, then primary axis, rows, columns and slots."""
     return (
         1 if bool(plan.get("is_long_along", False)) else 0,
         1 if str(plan.get("along_axis", "")) == str(primary_along_axis) else 0,
@@ -427,6 +440,7 @@ def append_storage_endcaps(
     along_axis,
     _packed_centers,
 ):
+    """Add the cross-aisle racks capping both ends of the bank, spread evenly across the area."""
     if not (
         endcap_enabled
         and (left_endcap_center is not None)
@@ -435,6 +449,7 @@ def append_storage_endcaps(
         return
 
     def _to_world_xy(along_v, cross_v):
+        """Map along/cross coordinates onto world x and y for the row direction."""
         if along_axis == "x":
             return float(along_v), float(cross_v)
         return float(cross_v), float(along_v)
@@ -477,6 +492,7 @@ def append_storage_endcaps(
 
 
 def rotate_selected_slots(selected, *, group_rotate_deg, area_cx, area_cy):
+    """Turn every slot position and its yaw about the area centre by group_rotate_deg."""
     if not selected or abs(group_rotate_deg) <= 1e-6:
         return
     rot_rad = math.radians(group_rotate_deg)
@@ -495,6 +511,7 @@ def rotate_selected_slots(selected, *, group_rotate_deg, area_cx, area_cy):
 
 
 def pick_barrel_slot_keys(selected_rows, selected, *, barrel_prob, rng):
+    """Which slots carry barrels rather than cartons: every third row is favoured and nudged to hold at least one."""
     barrel_slot_keys = set()
     barrel_phase = rng.randint(0, 2)
     for row_key in sorted(

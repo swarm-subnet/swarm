@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Live envs for the seeds that once failed: each one builds, and the mountain and autopilot maps also step and return finite observations."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -25,6 +27,7 @@ from swarm.validator.task_gen import task_for_seed_and_type
 
 
 def test_village_env_builds_for_reported_seed() -> None:
+    """Seed 657398 on the village map yields an env with a 3-vector goal and a start above ground."""
     task = task_for_seed_and_type(sim_dt=SIM_DT, seed=657398, challenge_type=4)
     env = make_env(task, gui=False)
     try:
@@ -37,6 +40,7 @@ def test_village_env_builds_for_reported_seed() -> None:
 
 
 def test_mountain_env_renders_depth_without_er_depth_only() -> None:
+    """The mountain camera gives finite depth on reset and on step, with a finite reward and a distance in info."""
     task = task_for_seed_and_type(sim_dt=SIM_DT, seed=657393, challenge_type=3)
     env = make_env(task, gui=False)
     try:
@@ -58,6 +62,7 @@ def test_mountain_env_renders_depth_without_er_depth_only() -> None:
 
 
 def test_autopilot_env_bootstrap_uses_runtime_profile() -> None:
+    """A cf_autopilot task builds with rescue mode off and steps on a 5-channel action without NaNs."""
     task = task_for_seed_and_type(
         sim_dt=SIM_DT,
         seed=657392,
