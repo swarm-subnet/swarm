@@ -175,7 +175,7 @@ class MovingDroneAviary(BaseRLAviary):
         self,
         task,
         drone_model : DroneModel   = DroneModel.CF2X,
-        physics     : Physics      = Physics.PYB,
+        physics     : Physics | None = None,
         pyb_freq    : int          = 240,
         ctrl_freq   : int          = 30,
         gui         : bool         = False,
@@ -193,6 +193,8 @@ class MovingDroneAviary(BaseRLAviary):
         sar_mode : bool
             Backward-compatible family runtime hint. The active challenge
             family may normalize or ignore it.
+        physics : Physics | None
+            Drone physics mode; None takes the family's ``physics_mode``.
         """
         self.task       = task
         n_drones = max(1, int(getattr(task, "num_drones", 0) or num_drones))
@@ -288,6 +290,8 @@ class MovingDroneAviary(BaseRLAviary):
         self._sun = None
         if getattr(self.family_runtime, "seeded_sun", False):
             apply_seeded_sun(self, seed)
+        if physics is None:
+            physics = Physics(self.family_runtime.physics_mode)
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -1556,14 +1560,17 @@ class MovingDroneAviary(BaseRLAviary):
                     self._groundEffect(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.PYB_DRAG:
                     self._physics(clipped_action[i, :], i)
-                    self._drag(self.last_clipped_action[i, :], i)
+                    # Wind already applies the same rotor drag on the relative air.
+                    if wind is None:
+                        self._drag(self.last_clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.PYB_DW:
                     self._physics(clipped_action[i, :], i)
                     self._downwash(i)
                 elif self.PHYSICS == Physics.PYB_GND_DRAG_DW:
                     self._physics(clipped_action[i, :], i)
                     self._groundEffect(clipped_action[i, :], i)
-                    self._drag(self.last_clipped_action[i, :], i)
+                    if wind is None:
+                        self._drag(self.last_clipped_action[i, :], i)
                     self._downwash(i)
                 if wind is not None and self.PHYSICS != Physics.DYN:
                     self._apply_wind(clipped_action[i, :], i, wind)
@@ -1581,6 +1588,22 @@ class MovingDroneAviary(BaseRLAviary):
         info = self._computeInfo()
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return obs, reward, terminated, truncated, info
+
+    def _groundEffect(self, rpm, nth_drone: int) -> None:
+        """Ground effect of the drone's URDF model with the height read from the downward
+        ray, so terrain, roofs and pads above or below z = 0 cushion the drone like the
+        world plane does. Scalar math so every CPU produces the same bytes."""
+        roll, pitch = float(self.rpy[nth_drone, 0]), float(self.rpy[nth_drone, 1])
+        if abs(roll) >= math.pi / 2 or abs(pitch) >= math.pi / 2:
+            return
+        height = max(float(self._get_altitude_distance(nth_drone)), float(self.GND_EFF_H_CLIP))
+        gain = float(self.KF) * float(self.GND_EFF_COEFF) * (float(self.PROP_RADIUS) / (4.0 * height)) ** 2
+        uid = int(self.DRONE_IDS[nth_drone])
+        for i in range(4):
+            p.applyExternalForce(
+                uid, i, [0.0, 0.0, gain * float(rpm[i]) ** 2], [0.0, 0.0, 0.0],
+                p.LINK_FRAME, physicsClientId=self.CLIENT,
+            )
 
     def _apply_wind(self, rpm, nth_drone: int, wind) -> None:
         """Rotor drag on the air moving relative to the drone, the drone's own URDF
