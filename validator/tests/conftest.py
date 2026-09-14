@@ -24,6 +24,7 @@ import multiprocessing as mp
 import os
 import queue
 import sys
+import threading
 import types
 from pathlib import Path
 from typing import Any
@@ -282,6 +283,23 @@ def pytest_sessionstart(session: pytest.Session) -> None:
                 "pycapnp is required for the default test run. "
                 "Install requirements or set SWARM_TEST_USE_STUB_CAPNP=1."
             ) from exc
+
+
+# TIMER_THREAD_NAME in swarm/validator/utils_parts/heartbeat.py. Matched as a literal so this
+# file does not import swarm before pytest_sessionstart has installed the bittensor stubs.
+_HEARTBEAT_TIMER_THREAD = "swarm-heartbeat-timer"
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_heartbeat_timer():
+    """Fail the test that leaves a heartbeat timer running, not whichever test is running 15s later."""
+    yield
+    leaked = [t for t in threading.enumerate() if t.name == _HEARTBEAT_TIMER_THREAD and t.is_alive()]
+    assert not leaked, (
+        "this test left a heartbeat timer thread running. Once its event loop closes the thread "
+        "raises 'Event loop is closed' against whatever test happens to be running then. "
+        "Call hb._stop_timer() in a finally, or hb.finish()."
+    )
 
 
 @pytest.fixture

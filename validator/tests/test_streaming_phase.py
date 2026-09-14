@@ -1353,10 +1353,13 @@ def test_heartbeat_manager_honors_stop_required():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_screening", uid=66, total=200)
-        await hb._safe_heartbeat(0, hb._session_id)
-        assert hb.should_stop() is None
-        await hb._safe_heartbeat(10, hb._session_id)
-        return hb.should_stop()
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            assert hb.should_stop() is None
+            await hb._safe_heartbeat(10, hb._session_id)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     reason = asyncio.run(_run())
     assert reason is not None
@@ -1376,11 +1379,14 @@ def test_heartbeat_manager_start_resets_stop_flag():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_screening", uid=1, total=10)
-        await hb._safe_heartbeat(0, hb._session_id)
-        assert hb.should_stop() is not None
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            assert hb.should_stop() is not None
 
-        hb.start("evaluating_screening", uid=2, total=10)
-        return hb.should_stop()
+            hb.start("evaluating_screening", uid=2, total=10)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     assert asyncio.run(_run()) is None
 
@@ -1573,8 +1579,11 @@ def test_heartbeat_manager_ignores_none_response():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_benchmark", uid=5, total=10)
-        await hb._safe_heartbeat(0, hb._session_id)
-        return hb.should_stop()
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     assert asyncio.run(_run()) is None
 
@@ -1591,8 +1600,11 @@ def test_heartbeat_manager_ignores_response_without_stop_required():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_benchmark", uid=5, total=10)
-        await hb._safe_heartbeat(0, hb._session_id)
-        return hb.should_stop()
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     assert asyncio.run(_run()) is None
 
@@ -1609,8 +1621,11 @@ def test_heartbeat_manager_stop_without_conflicts_uses_default_reason():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_benchmark", uid=5, total=10)
-        await hb._safe_heartbeat(0, hb._session_id)
-        return hb.should_stop()
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     assert asyncio.run(_run()) == "stop_required"
 
@@ -1627,8 +1642,11 @@ def test_heartbeat_manager_handles_post_exception():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_benchmark", uid=5, total=10)
-        await hb._safe_heartbeat(0, hb._session_id)
-        return hb.should_stop()
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     assert asyncio.run(_run()) is None
 
@@ -1646,10 +1664,13 @@ def test_heartbeat_manager_ignores_stale_session_response():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_benchmark", uid=5, total=10)
-        stale_session = hb._session_id
-        hb.start("evaluating_benchmark", uid=6, total=10)
-        await hb._safe_heartbeat(0, stale_session)
-        return hb.should_stop()
+        try:
+            stale_session = hb._session_id
+            hb.start("evaluating_benchmark", uid=6, total=10)
+            await hb._safe_heartbeat(0, stale_session)
+            return hb.should_stop()
+        finally:
+            hb._stop_timer()
 
     assert asyncio.run(_run()) is None
 
@@ -1678,11 +1699,14 @@ def test_heartbeat_manager_stop_latches_until_next_session():
 
         hb = HeartbeatManager(_Api(), asyncio.get_event_loop())
         hb.start("evaluating_benchmark", uid=5, total=10)
-        await hb._safe_heartbeat(0, hb._session_id)
-        first = hb.should_stop()
-        await hb._safe_heartbeat(10, hb._session_id)
-        second = hb.should_stop()
-        return first, second
+        try:
+            await hb._safe_heartbeat(0, hb._session_id)
+            first = hb.should_stop()
+            await hb._safe_heartbeat(10, hb._session_id)
+            second = hb.should_stop()
+            return first, second
+        finally:
+            hb._stop_timer()
 
     first, second = asyncio.run(_run())
     assert first is not None

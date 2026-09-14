@@ -39,6 +39,10 @@ def _format_stop_reason(conflicts: list) -> str:
 
 _TIMER_INTERVAL_SECONDS = 15
 
+# Named so a test that leaves one of these running can be identified by name alone, without the
+# test suite having to import this module before its bittensor stubs are in place.
+TIMER_THREAD_NAME = "swarm-heartbeat-timer"
+
 
 class HeartbeatManager:
     """Thread-safe heartbeat progress manager for evaluation tracking.
@@ -127,7 +131,7 @@ class HeartbeatManager:
         self._stop_timer()
         self._timer_stop = threading.Event()
         self._timer_thread = threading.Thread(
-            target=self._timer_loop, args=(self._session_id,), daemon=True
+            target=self._timer_loop, args=(self._session_id,), daemon=True, name=TIMER_THREAD_NAME
         )
         self._timer_thread.start()
 
@@ -169,9 +173,13 @@ class HeartbeatManager:
                 return
             self._last_sent = progress
 
-        self.main_loop.call_soon_threadsafe(
-            lambda p=progress, s=session_id: asyncio.create_task(self._safe_heartbeat(p, s))
-        )
+        try:
+            self.main_loop.call_soon_threadsafe(
+                lambda p=progress, s=session_id: asyncio.create_task(self._safe_heartbeat(p, s))
+            )
+        except RuntimeError:
+            # the loop closed under the worker; there is no lease left to renew
+            return
 
     def remove_uid_from_queue(self, uid: int) -> None:
         """Drop that miner's entry from the pending list reported to the backend."""
