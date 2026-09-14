@@ -909,15 +909,13 @@ class MovingDroneAviary(BaseRLAviary):
             self._sky_cloud_seed = int(seed)
 
     def _sky_kwargs(self) -> dict:
-        """getCameraImage arguments for the family's sky, or the seeded light's own sky when the
-        family sets none; empty when it keeps the white background."""
-        kwargs = {}
+        """getCameraImage arguments for the family's sky, falling back to the dark sky a seeded
+        moon carries; empty when the family keeps the white background."""
         if self._sky_colors is not None:
             horizon, zenith = self._sky_colors
             kwargs = {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
         else:
-            sun = getattr(self, "_sun", None)
-            kwargs = (sky_render_kwargs(sun) if sun is not None else None) or {}
+            kwargs = sky_render_kwargs(getattr(self, "_sun", None)) or {}
         if getattr(self, "_sky_cloud_seed", None) is not None:
             kwargs["skyCloudSeed"] = self._sky_cloud_seed
         return kwargs

@@ -39,7 +39,6 @@ from swarm.core.daylight import (
     NIGHT_SKY,
     _elevation_deg,
     apply_seeded_sun,
-    day_sky,
     daylight_hours,
     max_elevation_deg,
     seeded_sun,
@@ -191,24 +190,27 @@ def test_the_moon_has_phases():
     assert brightest.ambient > dimmest.ambient
 
 
-def test_sky_follows_the_light():
-    """The day sky warms at the horizon for a low sun, is blue for a high one, and night is dark."""
-    low_horizon, low_zenith = day_sky(SUN_MIN_ELEVATION_DEG)
-    high_horizon, high_zenith = day_sky(max_elevation_deg())
-    assert low_horizon[0] > low_horizon[2] and high_horizon[2] > high_horizon[0]
-    assert high_zenith[2] > high_zenith[0] and high_zenith[2] > low_zenith[2]
-    sun = seeded_sun(96)
-    assert sun.sky == day_sky(sun.elevation_deg)
+def test_only_a_moon_carries_a_sky():
+    """A moon brings a dark sky so night reads as night; a sun leaves the background alone,
+    because the daylight sky belongs to the renderer, not to this module."""
     night_horizon, night_zenith = NIGHT_SKY
     assert max(night_horizon) < 0.2 and max(night_zenith) < 0.1
-    assert sky_render_kwargs(sun) == {
-        "skyHorizonColor": list(sun.sky[0]),
-        "skyZenithColor": list(sun.sky[1]),
+    moon = seeded_sun(7, night_share=1.0)
+    assert moon.sky == NIGHT_SKY
+    assert sky_render_kwargs(moon) == {
+        "skyHorizonColor": list(night_horizon),
+        "skyZenithColor": list(night_zenith),
     }
+    for seed in range(200):
+        sun = seeded_sun(seed)
+        assert sun.sky is None
+        assert sky_render_kwargs(sun) is None
+    assert sky_render_kwargs(None) is None
 
 
-def test_env_sky_comes_from_the_sun_unless_the_family_sets_one():
-    """With a seeded sun and no family sky the camera paints the sun's sky; a family sky wins."""
+def test_env_takes_the_moon_sky_only_when_the_family_sets_none():
+    """A night with no family sky paints the moon's dark sky; a family sky wins over it; a day
+    seed and a family with neither keep today's white background."""
     env = MovingDroneAviary.__new__(MovingDroneAviary)
     env._sky_colors = None
     env._sun = seeded_sun(7, night_share=1.0)
@@ -219,6 +221,8 @@ def test_env_sky_comes_from_the_sun_unless_the_family_sets_one():
         "skyZenithColor": [0.15, 0.35, 0.95],
     }
     env._sky_colors = None
+    env._sun = seeded_sun(7)
+    assert env._sky_kwargs() == {}
     env._sun = None
     assert env._sky_kwargs() == {}
 

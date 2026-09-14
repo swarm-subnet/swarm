@@ -30,7 +30,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from swarm.constants import (
     MOON_AMBIENT_RANGE,
@@ -59,26 +59,15 @@ SUN_COLOR_TABLE: ColorTable = (
     (35.0, (1.00, 0.89, 0.77)),
     (60.0, (1.00, 1.00, 1.00)),
 )
-# Day sky by sun elevation, same interpolation: a warm horizon and a deep zenith at sunrise,
-# pale blue over blue by mid-morning.
-SKY_HORIZON_TABLE: ColorTable = (
-    (3.0, (1.00, 0.58, 0.36)),
-    (12.0, (0.96, 0.78, 0.62)),
-    (30.0, (0.84, 0.88, 0.96)),
-    (60.0, (0.74, 0.86, 0.98)),
-)
-SKY_ZENITH_TABLE: ColorTable = (
-    (3.0, (0.22, 0.30, 0.56)),
-    (12.0, (0.34, 0.50, 0.80)),
-    (30.0, (0.30, 0.55, 0.92)),
-    (60.0, (0.24, 0.48, 0.90)),
-)
+# A moon needs a dark background or night does not read as night. Daylight skies are not set
+# here: the sky card computes them in the renderer from the light it is already given.
 NIGHT_SKY: Tuple[RGB, RGB] = ((0.06, 0.07, 0.14), (0.01, 0.02, 0.05))
 
 
 @dataclass(frozen=True)
 class SunLight:
-    """One seed's light: where it is, what colour it is, how strong it is and the sky under it."""
+    """One seed's light: where it is, what colour it is, how strong it is, and for a moon the
+    dark sky that goes with it."""
 
     hour: float
     elevation_deg: float
@@ -88,7 +77,7 @@ class SunLight:
     ambient: float
     diffuse: float
     night: bool
-    sky: Tuple[RGB, RGB]
+    sky: Optional[Tuple[RGB, RGB]]
 
 
 def _elevation_deg(hour: float) -> float:
@@ -141,11 +130,6 @@ def _table_color(table: ColorTable, elevation_deg: float) -> RGB:
 def sun_color(elevation_deg: float) -> RGB:
     """Sun colour for an elevation, read off the colour table."""
     return _table_color(SUN_COLOR_TABLE, elevation_deg)
-
-
-def day_sky(elevation_deg: float) -> Tuple[RGB, RGB]:
-    """Horizon and zenith colours of the day sky for a sun elevation."""
-    return _table_color(SKY_HORIZON_TABLE, elevation_deg), _table_color(SKY_ZENITH_TABLE, elevation_deg)
 
 
 def _direction(elevation_deg: float, azimuth_deg: float) -> Vec3:
@@ -211,7 +195,7 @@ def seeded_sun(seed: int, night_share: float = 0.0) -> SunLight:
         ambient=round(ambient, 4),
         diffuse=round(diffuse, 4),
         night=False,
-        sky=day_sky(elevation_deg),
+        sky=None,
     )
 
 
@@ -224,8 +208,13 @@ def sun_render_kwargs(sun: SunLight) -> Dict[str, Any]:
     }
 
 
-def sky_render_kwargs(sun: SunLight) -> Dict[str, Any]:
-    """The renderer arguments that paint this sun's sky behind the map."""
+def sky_render_kwargs(sun: Optional[SunLight]) -> Optional[Dict[str, Any]]:
+    """The renderer arguments that paint this light's own sky, or None when it has none.
+
+    Only a moon carries a sky here: a daylight sky is the renderer's to compute from the
+    light it already receives, so a sun leaves the background to the family."""
+    if sun is None or sun.sky is None:
+        return None
     horizon, zenith = sun.sky
     return {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
 
@@ -242,7 +231,6 @@ def apply_seeded_sun(env: Any, seed: int, night_share: float = 0.0) -> SunLight:
 __all__: List[str] = [
     "SunLight",
     "apply_seeded_sun",
-    "day_sky",
     "daylight_hours",
     "max_elevation_deg",
     "seeded_sun",
