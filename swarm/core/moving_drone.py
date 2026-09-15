@@ -99,8 +99,9 @@ from swarm.constants import (
     SOLVER_ITERATIONS,
     SOLVER_MIN_ISLAND_SIZE,
 )
-from swarm.core.daylight import apply_seeded_sun, sky_render_kwargs, sun_render_kwargs
+from swarm.core.daylight import apply_seeded_sun, daylight_render_kwargs, sky_render_kwargs, sun_render_kwargs
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
+from swarm.core.sky_pack import load_sky_pack, pick_sky
 from swarm.core.wind import SeededWind
 
 # Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
@@ -354,6 +355,7 @@ class MovingDroneAviary(BaseRLAviary):
             if not hasattr(p, "ER_SWARM_RAYCAST"):
                 raise RuntimeError("render_backend 'raycast' needs a swarm-bullet3 wheel with ER_SWARM_RAYCAST")
             self._render_flags = p.ER_SWARM_RAYCAST
+        self._apply_daylight(seed)
 
         # on-demand RGB state (SAR only): per-drone request budget + the frame served this step
         if self._sar_rgb_enabled:
@@ -878,15 +880,18 @@ class MovingDroneAviary(BaseRLAviary):
         if self._sun is not None:
             extra_kwargs.update(sun_render_kwargs(self._sun))
         extra_kwargs.update(self._sky_kwargs())
+        daylight_flags = 0 if office else self._daylight_flags
+        if daylight_flags:
+            extra_kwargs.update(self._daylight_kwargs(cli))
         [w, h, rgb, dep, _seg] = p.getCameraImage(
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
-            shadow=0,
+            shadow=1 if daylight_flags else 0,
             renderer=p.ER_TINY_RENDERER,
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
             lightDirection=self._light_direction,
-            flags=seg_flag | self._render_flags | self._sky_flags,
+            flags=seg_flag | self._render_flags | self._sky_flags | daylight_flags,
             physicsClientId=cli,
             **extra_kwargs
         )
@@ -907,6 +912,40 @@ class MovingDroneAviary(BaseRLAviary):
         self._sky_flags = p.ER_SWARM_SKY_SUN
         if getattr(runtime, "sky_clouds", False):
             self._sky_cloud_seed = int(seed)
+
+    def _apply_daylight(self, seed: int) -> None:
+        """Decide the daylight model for this episode: on when the family asks for it under a daytime
+        seeded sun on the ray caster with the sun sky, off otherwise; picks the seed's sky photo."""
+        self._daylight_flags = 0
+        self._daylight_sky = None
+        self._daylight_texture = None
+        runtime = self.family_runtime
+        if not getattr(runtime, "daylight", False):
+            return
+        if not self._raycast_enabled or not getattr(runtime, "sky_from_sun", False):
+            raise RuntimeError("daylight needs render_backend 'raycast', seeded_sun and sky_from_sun on the family")
+        if self._sun is None or getattr(self._sun, "night", False):
+            return
+        needed = ("ER_SWARM_DAYLIGHT", "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS",
+                  "ER_ALPHA_CUTOUT", "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")
+        missing = [name for name in needed if not hasattr(p, name)]
+        if missing:
+            raise RuntimeError("daylight needs a swarm-bullet3 wheel with " + ", ".join(missing))
+        self._daylight_flags = functools.reduce(lambda a, b: a | b, (getattr(p, name) for name in needed))
+        self._daylight_sky = pick_sky(seed, self._sun, load_sky_pack())
+
+    def _daylight_kwargs(self, cli: int) -> dict:
+        """getCameraImage arguments of a colour frame under the daylight model: the sun's strength and
+        the film settings, plus the seed's sky photo, loaded into the engine once per world."""
+        if not self._daylight_flags:
+            return {}
+        kwargs = daylight_render_kwargs(self._sun)
+        if self._daylight_sky is not None:
+            photo, yaw = self._daylight_sky
+            if self._daylight_texture is None:
+                self._daylight_texture = p.loadTexture(photo.path, physicsClientId=cli)
+            kwargs.update(skyTextureId=self._daylight_texture, skyYaw=yaw)
+        return kwargs
 
     def _sky_kwargs(self) -> dict:
         """getCameraImage sky arguments: the family's own sky colours, or the dark sky a seeded
@@ -1382,6 +1421,7 @@ class MovingDroneAviary(BaseRLAviary):
             seed = getattr(self.task, 'map_seed', None)
 
         p.resetSimulation(physicsClientId=self.CLIENT)
+        self._daylight_texture = None
         self._housekeeping()
         self._updateAndStoreKinematicInformation()
         self._startVideoRecording()
@@ -1493,9 +1533,11 @@ class MovingDroneAviary(BaseRLAviary):
                 viewMatrix=self.CAM_VIEW,
                 projectionMatrix=self.CAM_PRO,
                 renderer=p.ER_TINY_RENDERER,
-                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX | self._sky_flags,
+                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX | self._sky_flags | self._daylight_flags,
+                lightDirection=self._light_direction,
                 physicsClientId=self.CLIENT,
                 **self._sky_kwargs(),
+                **self._daylight_kwargs(self.CLIENT),
             )
             (Image.fromarray(np.reshape(rgb, (h, w, 4)), 'RGBA')).save(
                 os.path.join(self.IMG_PATH, "frame_" + str(self.FRAME_NUM) + ".png")
@@ -1903,10 +1945,11 @@ class MovingDroneAviary(BaseRLAviary):
             farVal=getattr(self, "_depth_far_m", DEPTH_FAR), physicsClientId=cli,
         )
         sun_kwargs = sun_render_kwargs(self._sun) if self._sun is not None else {}
+        sun_kwargs.update(self._daylight_kwargs(cli))
         _w, _h, rgb, _dep, _seg = p.getCameraImage(
-            width=res, height=res, shadow=0, renderer=p.ER_TINY_RENDERER,
+            width=res, height=res, shadow=1 if self._daylight_flags else 0, renderer=p.ER_TINY_RENDERER,
             viewMatrix=view, projectionMatrix=proj, lightDirection=self._light_direction,
-            flags=p.ER_NO_SEGMENTATION_MASK | self._sky_flags, physicsClientId=cli, **sun_kwargs,
+            flags=p.ER_NO_SEGMENTATION_MASK | self._sky_flags | self._daylight_flags, physicsClientId=cli, **sun_kwargs,
             **self._sky_kwargs(),
         )
         return np.reshape(rgb, (res, res, 4))[:, :, :3].astype(np.float32) / 255.0

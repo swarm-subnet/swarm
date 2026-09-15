@@ -33,6 +33,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from swarm.constants import (
+    DAYLIGHT_AMBIENT,
+    DAYLIGHT_EXPOSURE,
+    DAYLIGHT_EXPOSURE_GAIN_MAX,
+    DAYLIGHT_HAZE_M,
+    DAYLIGHT_SHADOW_CORE_M,
+    DAYLIGHT_SKY_DUSK_SHARE,
+    DAYLIGHT_SUN_DIFFUSE_MAX,
     MOON_AMBIENT_RANGE,
     MOON_COLOR,
     MOON_DIFFUSE_RANGE,
@@ -208,6 +215,41 @@ def sun_render_kwargs(sun: SunLight) -> Dict[str, Any]:
     }
 
 
+def _daylight_sun_strength(elevation_deg: float) -> float:
+    """The renderer's sun coefficient at an elevation: the maximum thinned by the air mass, as the seeded sun is."""
+    air_mass = 1.0 / math.sin(math.radians(elevation_deg))
+    return round(DAYLIGHT_SUN_DIFFUSE_MAX * math.exp(-SUN_EXTINCTION * (air_mass - 1.0)), 4)
+
+
+def _daylight_level(elevation_deg: float) -> float:
+    """Light on level ground in sky units: the sky, dimmer as the sun sinks, plus the sun by its height."""
+    sun_up = math.sin(math.radians(elevation_deg))
+    sky = DAYLIGHT_SKY_DUSK_SHARE + (1.0 - DAYLIGHT_SKY_DUSK_SHARE) * min(1.0, sun_up / 0.5)
+    return DAYLIGHT_AMBIENT * sky + _daylight_sun_strength(elevation_deg) * sun_up
+
+
+def daylight_exposure(elevation_deg: float) -> float:
+    """The exposure for a sun height: the noon setting, opened up as the light falls, as a camera
+    does at dusk, by at most the gain cap."""
+    gain = _daylight_level(max_elevation_deg()) / _daylight_level(elevation_deg)
+    return round(DAYLIGHT_EXPOSURE * min(DAYLIGHT_EXPOSURE_GAIN_MAX, max(1.0, gain)), 4)
+
+
+def daylight_render_kwargs(sun: SunLight) -> Dict[str, Any]:
+    """The renderer arguments of a colour frame under the daylight model, lit by this sun: the sun
+    several times the sky and thinned by the air mass as the seeded sun is, a full shadow, the
+    exposure for its height, and the haze and fine shadow grid the map asks for. Not for a moon."""
+    return {
+        "lightColor": list(sun.color),
+        "lightAmbientCoeff": DAYLIGHT_AMBIENT,
+        "lightDiffuseCoeff": _daylight_sun_strength(sun.elevation_deg),
+        "shadowLightCoeff": 0.0,
+        "exposure": daylight_exposure(sun.elevation_deg),
+        "hazeDistance": DAYLIGHT_HAZE_M,
+        "shadowCoreRadius": DAYLIGHT_SHADOW_CORE_M,
+    }
+
+
 def sky_render_kwargs(sun: Optional[SunLight]) -> Optional[Dict[str, Any]]:
     """The renderer arguments that paint this light's own sky, or None when it has none.
 
@@ -231,7 +273,9 @@ def apply_seeded_sun(env: Any, seed: int, night_share: float = 0.0) -> SunLight:
 __all__: List[str] = [
     "SunLight",
     "apply_seeded_sun",
+    "daylight_exposure",
     "daylight_hours",
+    "daylight_render_kwargs",
     "max_elevation_deg",
     "seeded_sun",
     "sky_render_kwargs",

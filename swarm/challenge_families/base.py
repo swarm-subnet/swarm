@@ -194,6 +194,8 @@ class ChallengeFamilyRuntime:
     # seeds a cloud layer into it; off keeps the family's sky_colors or the white background.
     sky_from_sun: bool = False
     sky_clouds: bool = False
+    # With raycast, seeded_sun and sky_from_sun: colour frames use ER_SWARM_DAYLIGHT under a sky photo turned to the seed's sun; night keeps the moon.
+    daylight: bool = False
     # Depth camera backend: "tiny" is TinyRenderer, "raycast" the Embree ray caster in the same wheel.
     render_backend: str = "tiny"
     # Drone physics mode, a gym_pybullet_drones Physics value: "pyb" is rotor thrust only,

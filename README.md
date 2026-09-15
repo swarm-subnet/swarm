@@ -164,6 +164,8 @@ None of these worlds exist until the benchmark builds them. Every 14-day epoch, 
 </tr>
 </table>
 
+The per-family options that steer the simulation engine, the environment variables, and the steps a new map follows to get the full picture are in [Simulation engine switches](docs/simulation.md).
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
