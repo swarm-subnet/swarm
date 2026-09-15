@@ -100,6 +100,16 @@ MOON_ELEVATION_RANGE_DEG = (10.0, 60.0) # where the moon may sit, degrees above 
 MOON_COLOR = (0.62, 0.70, 0.90)         # renderer light colour of the moon: cool blue-grey
 MOON_DIFFUSE_RANGE = (0.03, 0.10)       # renderer diffuse coefficient from a crescent to a full moon
 MOON_AMBIENT_RANGE = (0.10, 0.24)       # renderer ambient coefficient from a crescent to a full moon
+# Daylight model (ChallengeFamilyRuntime.daylight): ER_SWARM_DAYLIGHT shading under a photographed sky turned to the seed's sun.
+DAYLIGHT_SUN_DIFFUSE_MAX = 5.0          # renderer diffuse coefficient with the sun overhead; the sky's own light is 1
+DAYLIGHT_AMBIENT = 0.5                  # share of the sky's light a surface receives; under 1 stands for the sky the map itself hides
+DAYLIGHT_EXPOSURE = 0.45                # scale on the linear light before the film curve, under the noon sun
+DAYLIGHT_EXPOSURE_GAIN_MAX = 3.0        # how far the exposure opens for a low sun, as a camera would
+DAYLIGHT_SKY_DUSK_SHARE = 0.2           # the renderer's sky brightness at the horizon relative to a high sun
+DAYLIGHT_HAZE_M = 4000.0                # metres at which a surface is 63 % haze
+DAYLIGHT_SHADOW_CORE_M = 200.0          # half side, metres, of the fine shadow grid about the world origin
+DAYLIGHT_SKY_SEED_OFFSET = 0x5C1E       # decorrelates the sky photo choice from the other streams
+DAYLIGHT_SKY_ELEVATION_TOLERANCE_DEG = 12.0  # a photo is a candidate when its sun stands within this of the seed's sun
 # Propulsion efficiency
 
 # =============================================================================

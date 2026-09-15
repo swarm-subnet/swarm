@@ -16,6 +16,7 @@ Class attributes on `ChallengeFamilyRuntime` in `swarm/challenge_families/base.p
 | `sky_from_sun` | `False` | With `seeded_sun` and a daytime sun, the renderer computes the sky from that sun; a night seed keeps the moon's sky | `ER_SWARM_SKY_SUN` |
 | `sky_clouds` | `False` | With `seeded_sun` and `sky_from_sun` on a daytime sun, the map seed seeds a cloud layer into that sky | `skyCloudSeed` |
 | `sky_colors(task)` | returns `None` | A hook a family overrides to return `(horizon, zenith)` RGB triples for a fixed or seed-dependent two-colour sky; wins over the moon's sky | `skyHorizonColor`, `skyZenithColor` |
+| `daylight` | `False` | With `render_backend = "raycast"`, `seeded_sun` and `sky_from_sun`: every colour frame of a daytime seed uses the renderer's daylight model with the picture flags and `shadow=1`, lit by the seed's sun at several times the sky, with the exposure opened up for a low sun as a camera does (`swarm/core/daylight.py`, `daylight_render_kwargs`), under a photograph from the worlds package sky pack picked by the seed among the skies whose sun stands about as high, turned so its sun shares the seed's heading (`swarm/core/sky_pack.py`); the photo is loaded into the engine once per world; a night seed keeps the moon | `ER_SWARM_DAYLIGHT` with `ER_SWARM_SHADOW_MAP`, `ER_SWARM_MOVER_SHADOW`, `ER_EDGE_ANTIALIAS`, `ER_ALPHA_CUTOUT`, `ER_TEXTURE_FILTER`, `ER_SPECULAR_GLINT`, `ER_SWARM_LINEAR_LIGHT`; `exposure`, `hazeDistance`, `shadowCoreRadius`, `skyTextureId`, `skyYaw` |
 | `physics_mode` | `"pyb"` | A `gym_pybullet_drones` `Physics` value; `"pyb_gnd_drag_dw"` adds the URDF's air drag, ground effect and downwash; the ground effect height is read from the altitude ray, not world z, so it works on a map whose floor is not at zero; with wind on, the library's still-air drag is skipped because the wind force already applies it on the relative air | none, drone model only |
 
 Measured on the open map at 50 Hz: the aerodynamic terms cost +0.05 ms per substep and shorten a 10 s cruise at 1.5 m/s by 2.6 %.
@@ -49,6 +50,7 @@ All in `swarm/constants.py`.
 | Distance cull | `CULL_VISUAL_RADIUS` (35 m), `CULL_PHYSICS_RADIUS` (50 m), `CULL_INTERVAL_STEPS`, `CULL_MIN_AABB_SPAN`, `CULL_MIN_FACES`, `CULL_MIN_TOTAL_FACES` |
 | Old seeded light | `LIGHT_RANDOMIZATION_ENABLED`: the light direction every family uses today, a point on a circle that half the time sits below the ground |
 | Seeded sun and moon | `SUN_SEED_OFFSET`, `SUN_LATITUDE_DEG`, `SUN_DECLINATION_DEG`, `SUN_MIN_ELEVATION_DEG`, `SUN_DIFFUSE_MAX`, `SUN_EXTINCTION`, `SUN_AMBIENT_RANGE`, `MOON_ELEVATION_RANGE_DEG`, `MOON_COLOR`, `MOON_DIFFUSE_RANGE`, `MOON_AMBIENT_RANGE` |
+| Daylight | `DAYLIGHT_SUN_DIFFUSE_MAX`, `DAYLIGHT_AMBIENT`, `DAYLIGHT_EXPOSURE`, `DAYLIGHT_EXPOSURE_GAIN_MAX`, `DAYLIGHT_SKY_DUSK_SHARE`, `DAYLIGHT_HAZE_M`, `DAYLIGHT_SHADOW_CORE_M`, `DAYLIGHT_SKY_SEED_OFFSET`, `DAYLIGHT_SKY_ELEVATION_TOLERANCE_DEG` |
 | Wind | `WIND_BY_MAP`, `WIND_SEED_OFFSET`, `WIND_MEAN_FRACTION`, `WIND_TURB_SIGMA_XY`, `WIND_TURB_SIGMA_Z`, `WIND_TURB_TAU_XY_SEC`, `WIND_TURB_TAU_Z_SEC`, `WIND_GUST_PEAK`, `WIND_GUST_DURATION_SEC` |
 | Workers | `DOCKER_WORKER_CPUS` |
 
@@ -65,10 +67,10 @@ Two things every world gets whatever the family, from `swarm/utils/env_factory.p
 
 | Call | Who | Flags | Arguments from the options |
 |---|---|---|---|
-| Drone observation, `getCameraImage` | every family, one drone | `ER_NO_SEGMENTATION_MASK`, plus `ER_DEPTH_ONLY` for depth families, plus the backend flag and the sky flag | office: the episode light colour; with a sun: `sun_render_kwargs`; the sky kwargs |
+| Drone observation, `getCameraImage` | every family, one drone | `ER_NO_SEGMENTATION_MASK`, plus `ER_DEPTH_ONLY` for depth families, plus the backend flag, the sky flag and, for a colour observer under `daylight`, the daylight flags | office: the episode light colour; with a sun: `sun_render_kwargs`; the sky kwargs; under `daylight`: `daylight_render_kwargs` and the sky photo |
 | Multi-drone depth, `getDepthImagesBatch` | swarm families | the backend flag | none |
-| On-demand RGB, `getCameraImage` | search and rescue | `ER_NO_SEGMENTATION_MASK` plus the sky flag | `sun_render_kwargs`, the sky kwargs |
-| Video frame, `getCameraImage` | recordings only | `ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX` plus the sky flag, `shadow=1` | the sky kwargs |
+| On-demand RGB, `getCameraImage` | search and rescue | `ER_NO_SEGMENTATION_MASK` plus the sky flag, plus the daylight flags under `daylight` | `sun_render_kwargs`, the sky kwargs; under `daylight`: `daylight_render_kwargs` and the sky photo, with `shadow=1` |
+| Video frame, `getCameraImage` | recordings only | `ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX` plus the sky flag, `shadow=1`, plus the daylight flags under `daylight` | the sky kwargs; under `daylight`: the light direction, `daylight_render_kwargs` and the sky photo |
 
 Scored renders run with `shadow=0` and `renderer=ER_TINY_RENDERER`; the ray caster is selected by the flag, not by the renderer argument.
 
@@ -82,7 +84,8 @@ seed
  |- apply_seeded_sun(env, ...)              sets _light_direction, _light_color, _sun
  |- sun_render_kwargs(sun)                  lightColor, lightAmbientCoeff, lightDiffuseCoeff
  |- _apply_sun_sky(seed)                    sky_from_sun and a day sun: ER_SWARM_SKY_SUN, sky_clouds: skyCloudSeed = seed
- '- _sky_kwargs()                           family sky_colors, else the moon's sky, plus the cloud seed
+ |- _sky_kwargs()                           family sky_colors, else the moon's sky, plus the cloud seed
+ '- _apply_daylight(seed)                   daylight and a day sun: ER_SWARM_DAYLIGHT with the picture flags, pick_sky(seed, sun, pack) for the photo and its turn
 ```
 
 Same seed, same sun, same sky on every validator: every value is rounded to fixed decimals, and the renderer computes the sky from plain double arithmetic with its own polynomials, no maths library.
@@ -91,7 +94,7 @@ Same seed, same sun, same sky on every validator: every value is rounded to fixe
 
 1. Export it with `validator/scripts/check_blender_export.py` clean: the engine loads a broken export without a word.
 2. Load the pieces with `VISUAL_SHAPE_MATERIALS_FROM_MTL` if they carry several materials, `VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY` on thin shapes, `VISUAL_SHAPE_RENDER_TREE_CACHE` on the big static pieces, `GEOM_CONCAVE_BVH_CACHE` on the concave collision shapes, and `specularColor=[0, 0, 0]` on matte pieces if the glint will be on.
-3. On the family runtime: `render_backend = "raycast"`, `seeded_sun = True`, `sky_from_sun = True`, and `sky_clouds`, `night_share`, `physics_mode` as the challenge wants; a `WIND_BY_MAP` entry if it wants wind.
+3. On the family runtime: `render_backend = "raycast"`, `seeded_sun = True`, `sky_from_sun = True`, `daylight = True` for a colour camera, and `sky_clouds`, `night_share`, `physics_mode` as the challenge wants; a `WIND_BY_MAP` entry if it wants wind.
 4. For a colour camera on the ray caster, add the picture flags to its render call: `ER_SWARM_SHADOW_MAP | ER_SWARM_MOVER_SHADOW` with `shadow=1`, `ER_EDGE_ANTIALIAS`, `ER_ALPHA_CUTOUT`, `ER_TEXTURE_FILTER`, `ER_SPECULAR_GLINT`, `ER_SWARM_LINEAR_LIGHT`, and `shadowLightCoeff` below 0.8 for real shadows. Measured together on the solar-park slice: about 30 ms per 256 px frame at 2 threads.
 5. Pin the frames: a test like `validator/tests/test_sky_sun.py` that renders one frame of the map at 1, 2 and 4 threads and compares it to committed hashes.
 6. Bump the version: the family's pixels and flights are new.
@@ -110,6 +113,7 @@ Same seed, same sun, same sky on every validator: every value is rounded to fixe
 | `validator/tests/test_sky_sun.py` | the sun sky frames pinned to hashes on both paths |
 | `validator/tests/test_sky_colors.py` | `sky_colors`, `sky_from_sun`, `sky_clouds` and the camera kwargs |
 | `validator/tests/test_daylight.py` | the sun arc, the moon, determinism per seed |
+| `validator/tests/test_daylight_family.py` | the `daylight` option: off everywhere today, its render arguments, the sky photo pick and turn per seed, the flags and the photo load in the environment |
 | `validator/tests/test_wind.py` | the wind model, the cap, the off path |
 | `validator/tests/test_family_physics_mode.py` | the physics mode, the ray-height ground effect, wind replacing the still-air drag |
 | `validator/tests/test_bvh_cache.py` | the collision cache flag and the epoch folder |
