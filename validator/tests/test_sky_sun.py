@@ -19,20 +19,23 @@ _needs_wheel = pytest.mark.skipif(
     not hasattr(p, "ER_SWARM_SKY_SUN"), reason="swarm-bullet3 wheel without the sun sky"
 )
 SEED = 101
+# A seed whose sun stands high, so the sky it paints is blue on average rather than a sunset glow.
+HIGH_SUN_SEED = 7
 EYE, TARGET = (3.0, -4.0, 2.5), (0.0, 0.5, 4.0)
 # SHA-256 of the colour frame under the seed's sun and clouds, rasterised and ray cast. Every machine
-# and thread count must reproduce them; a renderer change that moves one pixel updates them on purpose.
-TINY_SKY_SHA256 = "925967e56cea4365a712d3d73164af374c6d0c3a1c4a677a3066df231e228891"
-RAYCAST_SKY_SHA256 = "749c8d406c8d71b547cf6eecca65bc7b28988ab8910bf220e4739ad992e76b6a"
+# and thread count must reproduce them; a renderer change that moves one pixel, or a change to the sun
+# a seed draws, updates them on purpose.
+TINY_SKY_SHA256 = "fce1fc542f02989f0099ae43f962f1276baff6795105889116bfdf926f8fcc7e"
+RAYCAST_SKY_SHA256 = "e8f727f4015e72e5cf64a0105853398c499dcac84d70daf6b261b2a333320721"
 
 
-def _sky_frame(cli, view, proj, flags):
+def _sky_frame(cli, view, proj, flags, seed=SEED):
     """RGB of one frame lit by the seed's sun with the sun sky and its clouds painted."""
-    sun = seeded_sun(SEED)
+    sun = seeded_sun(seed)
     image = p.getCameraImage(
         SIZE, SIZE, viewMatrix=view, projectionMatrix=proj, renderer=p.ER_TINY_RENDERER, shadow=0,
         lightDirection=list(sun.direction), flags=flags | p.ER_NO_SEGMENTATION_MASK | p.ER_SWARM_SKY_SUN,
-        skyCloudSeed=SEED, physicsClientId=cli, **sun_render_kwargs(sun),
+        skyCloudSeed=seed, physicsClientId=cli, **sun_render_kwargs(sun),
     )
     return np.asarray(image[2], dtype=np.uint8).reshape(SIZE, SIZE, 4)[:, :, :3]
 
@@ -65,7 +68,9 @@ def test_sun_sky_replaces_the_white_background():
         sky = _sky_frame(cli, view, proj, 0)
         assert not np.all(sky[empty] == 255)
         # A high sun gives a blue sky on average; the glow around the sun itself is warmer.
-        assert sky[empty][:, 2].mean() > sky[empty][:, 0].mean() + 10
+        assert seeded_sun(HIGH_SUN_SEED).elevation_deg > 45
+        blue_sky = _sky_frame(cli, view, proj, 0, HIGH_SUN_SEED)
+        assert blue_sky[empty][:, 2].mean() > blue_sky[empty][:, 0].mean() + 10
     finally:
         p.disconnect(cli)
 
