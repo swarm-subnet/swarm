@@ -36,6 +36,7 @@ Measured on the open map at 50 Hz: the aerodynamic terms cost +0.05 ms per subst
 | `SWARM_BATCH_DEPTH` | `1` | the environment | `0` renders multi-drone depth one camera at a time instead of through `getDepthImagesBatch` |
 | `SWARM_BVH_CACHE_DIR` | set by the seed manager | the engine | The seed manager points it at `state/bvh_cache/epoch_<n>` when it loads or generates an epoch's seeds, creates that folder and deletes the older epochs' folders; the host workers inherit it. Unset it and every shape and tree builds fresh |
 | `SWARM_TERRAIN_CACHE_DIR` | a per-uid folder under `state` | the mountain generator | Where the generated terrain meshes are kept |
+| `SWARM_FOREST_FILE_VISUALS_ONLY` | `0` | the forest spawner | `1` loads each tree's per-material visuals straight from the split OBJ files instead of building them from the parsed mesh |
 | `SWARM_DOCKER_PREWARM` | on | the benchmark and validator workers | `0` restores the serial container start; on, the next seed's container starts while the current seed flies, at the lowest CPU weight and a half-core quota until it is adopted. The batch plan puts one seed per container (`_batch_indices` in `swarm/benchmark/engine_parts/seeds.py`), so one clean container per seed stays the rule |
 
 ## Constants that steer the engine
