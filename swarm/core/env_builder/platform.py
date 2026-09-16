@@ -54,6 +54,7 @@ _PAD_PARK = (0.0, 0.0, 1.0e4)
 
 
 def _tao_texture(cli: int) -> int:
+    """Texture id of the TAO badge, loaded once per physics client and cached after that."""
     if cli not in _TAO_TEX:
         tex_path = Path(swarm_worlds.textures_dir()) / "tao.png"
         _TAO_TEX[cli] = p.loadTexture(str(tex_path))
@@ -125,6 +126,7 @@ def _pad_candidates(sx: float, sy: float, legacy_xy, bounds, keep_out):
     seen: set = set()
 
     def _emit(x, y):
+        """Return the candidate, or None when it is out of bounds, too far, in the keep-out or a repeat."""
         if abs(x) > bx or abs(y) > by:
             return None
         if math.hypot(x - sx, y - sy) > PAD_MAX_RELOCATION:

@@ -24,6 +24,8 @@ This directory contains repository-level executable utilities.
   - Records a baseline policy's success/failure profile on SAR seeds so the network has a "minimum competence" reference point.
 - `sar_horizon_audit.py`
   - Sweeps episode horizons and reports per-environment confirm rates; used to validate the chosen horizon.
+- `check_blender_export.py`
+  - Checks a Blender OBJ export folder against the rules the Bullet importer enforces without saying so: one material per file, triangles only, Z-up, applied transforms, outward closed faces, no alpha textures, baseline JPEG or 8-bit PNG, no line over 1023 characters. Prints every broken rule with the file, the line and the fix, and exits non-zero on errors. Run it on a map before it enters the engine, e.g. `python3 validator/scripts/check_blender_export.py swarm/assets/maps/custom/office`.
 - `prebake_mannequin_parts.py`
   - One-shot mannequin prebake — splits a MakeHuman raw OBJ/MTL into the per-material parts the runtime loads. Run when adding a new character asset.
 

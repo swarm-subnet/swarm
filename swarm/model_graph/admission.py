@@ -55,6 +55,7 @@ from .resource_accounting import account_resources
 
 @dataclass(frozen=True)
 class AdmissionResult:
+    """The outcome of one static check: a verdict, a reason code, and the measured totals."""
     accepted: bool
     reason_code: str
     detail: str = ""
@@ -69,6 +70,7 @@ class AdmissionResult:
     memory_floats: int = 0
 
     def to_record(self) -> dict:
+        """The result as a plain dict, safe to send back through a process pipe."""
         return {
             "accepted": self.accepted,
             "reason_code": self.reason_code,
@@ -91,6 +93,11 @@ def _expected_shape(
     inspections: dict[str, ModelInspection],
     num_drones: int | None = None,
 ) -> tuple[int, ...] | None:
+    """The dimensions a binding resolves to, from the family contract, a memory slot or a node output.
+
+    None when a memory slot is named that the manifest does not declare; a node
+    output that does not exist raises instead.
+    """
     contract = FAMILY_GRAPH_CONTRACTS[manifest.family_id]
     if isinstance(binding, ObsBinding):
         return resolve_shape(contract["observations"][binding.key], num_drones)
@@ -118,6 +125,12 @@ def _check_graph_against_models(
     inspections: dict[str, ModelInspection],
     num_drones: int | None = None,
 ) -> int:
+    """Raise on the first binding or dimension mismatch, else return the summed FLOPs.
+
+    Every node input must be bound, every bound source must carry the shape the
+    ONNX file declares, each memory slot must match its writer, and the final
+    action must match the family contract.
+    """
     total_flops = 0
     for node in manifest.nodes:
         inspection = inspections[node.model_id]
@@ -171,6 +184,7 @@ def _check_graph_against_models(
 
 
 def _consumed_outputs(manifest: GraphManifest) -> set[tuple[str, str]]:
+    """Every (node, output) pair some input, memory slot or the action reads."""
     consumed: set[tuple[str, str]] = {(manifest.action.node_id, manifest.action.output)}
     for node in manifest.nodes:
         for binding in node.inputs.values():
@@ -182,6 +196,12 @@ def _consumed_outputs(manifest: GraphManifest) -> set[tuple[str, str]]:
 
 
 def admit_artifact(zip_path: Path) -> AdmissionResult:
+    """Run every static check over a submission zip and return one accept or reject record.
+
+    Layout, per-model hashes, ONNX inspection, dangling outputs, shapes and the
+    resource budget are checked in that order; the first failure is the reason
+    code reported.
+    """
     artifact_sha = hashlib.sha256(Path(zip_path).read_bytes()).hexdigest()
     digest = profile_digest()
     try:
@@ -248,6 +268,7 @@ def admit_artifact(zip_path: Path) -> AdmissionResult:
 
 
 def _admission_child(zip_path: str, connection) -> None:
+    """Body of the spawned worker: cap the address space, admit the zip, send the record back."""
     try:
         if os.name == "posix":
             resource.setrlimit(

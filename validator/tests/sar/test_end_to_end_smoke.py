@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""One SAR episode end to end: the dwell that confirms a rescue, and the two failures that floor the score."""
+
 from __future__ import annotations
 
 import contextlib
@@ -29,6 +31,7 @@ from swarm.validator.reward import flight_reward
 
 
 def _task():
+    """A fixed search-and-rescue MapTask on seed 2718, flying from the origin to (8, 8) at 1.5 m."""
     return MapTask(
         map_seed=2718,
         start=(0.0, 0.0, 1.5),
@@ -43,6 +46,7 @@ def _task():
 
 @pytest.fixture
 def sar_env():
+    """A MovingDroneAviary in SAR mode, reset on the fixed task's seed and closed when the test ends."""
     from swarm.core.moving_drone import MovingDroneAviary
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -58,6 +62,7 @@ def sar_env():
 
 
 def _build_upload_item(env, uid: int) -> dict:
+    """Score the environment's current state through flight_reward and return the row the validator uploads."""
     info = env._computeInfo()
     score = flight_reward(
         success=bool(info["success"]),
@@ -79,6 +84,7 @@ def _build_upload_item(env, uid: int) -> dict:
 
 
 def _place(env, x, y, z, vel=(0.0, 0.0, 0.0)):
+    """Teleport drone 0 to a pose and velocity, then refresh the cached kinematics."""
     p.resetBasePositionAndOrientation(
         env.DRONE_IDS[0], [float(x), float(y), float(z)],
         p.getQuaternionFromEuler([0, 0, 0]),
@@ -93,6 +99,7 @@ def _place(env, x, y, z, vel=(0.0, 0.0, 0.0)):
 
 @pytest.mark.timeout(180)
 def test_confirmed_success_path(sar_env):
+    """Holding the hover band over the victim for the full dwell confirms the rescue and scores above zero."""
     env = sar_env
     vx, vy, _ = env.sar_world.victim_centre
     top_z = env.sar_world.victim_aabb[1][2]
@@ -111,6 +118,7 @@ def test_confirmed_success_path(sar_env):
 
 @pytest.mark.timeout(180)
 def test_no_touch_sphere_failure_path(sar_env):
+    """Breaking into the sphere around the victim ends the run immediately and pays the 0.01 floor."""
     env = sar_env
     vc = env.sar_world.victim_centre
     _place(env, vc[0], vc[1], vc[2] + 0.2)
@@ -125,6 +133,7 @@ def test_no_touch_sphere_failure_path(sar_env):
 
 @pytest.mark.timeout(180)
 def test_infeasible_failure_path(sar_env):
+    """A drone too far out to reach the victim before the horizon is truncated and pays the 0.01 floor."""
     env = sar_env
     _place(env, 200.0, 200.0, 5.0)
     env._time_alive = env.EP_LEN_SEC - 1.0

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Weight-vector preparation for chain submission: max-limit capping and u16 quantization."""
+
 from typing import Any, List, Tuple, Union
 
 import bittensor
@@ -167,6 +169,12 @@ def process_weights_for_netuid(
     tuple[ndarray[Any, dtype[Any]], ndarray],
     tuple[Any, ndarray],
 ]:
+    """Return the chain-ready (uids, weights) pair for one netuid.
+
+    Keeps only the non-zero entries, drops the lowest ``exclude_quantile`` of them and
+    caps the rest at the subnet's max weight limit. When fewer entries survive than the
+    subnet's minimum, it falls back to a near-uniform vector over every neuron instead.
+    """
     bittensor.logging.debug("process_weights_for_netuid()")
     bittensor.logging.debug("weights", weights)
     bittensor.logging.debug("netuid", netuid)

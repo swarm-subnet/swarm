@@ -15,10 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Warehouse ground: the inset slab everything else sits on, plus the optional painted personnel walkway."""
 from ._shared import *
 
 
 def build_floor(loader, cli):
+    """Spawn the slab inset by one tile from each wall and return its top surface Z of 0.02 m."""
     tile_x, tile_y, _ = loader.model_size(CONVEYOR_ASSETS["floor"], UNIFORM_SCALE)
     margin_x = tile_x * 1
     margin_y = tile_y * 1
@@ -59,6 +61,7 @@ def build_floor(loader, cli):
 
 
 def build_personnel_floor_lane(loader, floor_top_z, wall_info, cli):
+    """Tile a walkway from the personnel door across to the opposite wall and report the tiles laid, or why none were."""
     if not ENABLE_PERSONNEL_FLOOR_LANE:
         return {"personnel_floor_lane_enabled": False}
 

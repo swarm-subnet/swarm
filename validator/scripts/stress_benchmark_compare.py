@@ -16,6 +16,19 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""
+Run one submission through the benchmark repeatedly and measure how far its score moves.
+
+Each repetition draws its own set of raw validator-style seeds, unless --same-seeds pins
+one set for all of them, and every seed is classified into its benchmark group so that no
+group is left empty. The report carries the mean, variance and range of the run averages,
+split by screening phase, benchmark phase and map group.
+
+Usage:
+    python3 validator/scripts/stress_benchmark_compare.py --model sub.zip
+    python3 validator/scripts/stress_benchmark_compare.py --model sub.zip --same-seeds
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -57,15 +70,18 @@ _MAX_SEED_EXCLUSIVE = 2**32
 
 
 def _ts() -> str:
+    """Current wall-clock time as HH:MM:SS, used as the console log prefix."""
     return time.strftime("%H:%M:%S")
 
 
 def _default_run_dir() -> Path:
+    """Timestamped artifact directory under bench_logs for one stress comparison."""
     stamp = time.strftime("%Y%m%d_%H%M%S")
     return Path("bench_logs") / f"stress_benchmark_{stamp}"
 
 
 def _resolve_run_dir(requested: Path | None) -> Path:
+    """Absolute artifact directory, suffixed with a timestamp when the path already exists."""
     if requested is None:
         return _default_run_dir().resolve()
 
@@ -77,6 +93,7 @@ def _resolve_run_dir(requested: Path | None) -> Path:
 
 
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Command-line options for the stress comparison: model, repetitions, seeds, workers."""
     parser = argparse.ArgumentParser(
         description=(
             "Run repeated validator-style benchmark samples for one model and compare "
@@ -145,6 +162,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def _infer_uid_from_model_path(model_path: Path) -> int:
+    """UID read off the submission filename by the benchmark's own rule, 0 when it finds none."""
     from swarm.benchmark.engine_parts.seeds import _infer_uid_from_model_path as _real_infer_uid
 
     inferred = _real_infer_uid(model_path)
@@ -152,6 +170,7 @@ def _infer_uid_from_model_path(model_path: Path) -> int:
 
 
 def _screening_count_for_total(total: int) -> int:
+    """How many of the total seeds go to screening, in the validator's own screening ratio."""
     if total <= 0:
         raise ValueError("seed-count must be positive")
     ratio = float(BENCHMARK_SCREENING_SEED_COUNT) / float(BENCHMARK_TOTAL_SEED_COUNT)
@@ -162,12 +181,14 @@ def _screening_count_for_total(total: int) -> int:
 
 
 def _make_rng(seed: Optional[int]) -> random.Random:
+    """SystemRandom when no seed is given, otherwise a Random pinned for reproducibility."""
     if seed is None:
         return random.SystemRandom()
     return random.Random(int(seed))
 
 
 def _generate_unique_raw_seeds(count: int, rng: random.Random) -> List[int]:
+    """Draw count distinct values below 2**32, rejecting any repeat as it comes up."""
     if count <= 0:
         raise ValueError("count must be positive")
     if count > _MAX_SEED_EXCLUSIVE:
@@ -185,6 +206,7 @@ def _generate_unique_raw_seeds(count: int, rng: random.Random) -> List[int]:
 
 
 def _classify_raw_seeds(raw_seeds: List[int], screening_count: int) -> tuple[Dict[str, List[int]], List[Dict[str, Any]]]:
+    """Bucket the seeds by the map group their generated task lands in, with a per-seed manifest."""
     grouped: Dict[str, List[int]] = {group: [] for group in BENCH_GROUP_ORDER}
     manifest: List[Dict[str, Any]] = []
 
@@ -208,6 +230,7 @@ def _classify_raw_seeds(raw_seeds: List[int], screening_count: int) -> tuple[Dic
 
 
 def _build_seed_set(count: int, rng: random.Random, screening_count: int) -> tuple[List[int], Dict[str, List[int]], List[Dict[str, Any]]]:
+    """Draw seeds until every map group is represented, giving up after 128 attempts."""
     if count < len(BENCH_GROUP_ORDER):
         raise ValueError(f"seed-count must be at least {len(BENCH_GROUP_ORDER)} to cover all map groups.")
 
@@ -220,11 +243,13 @@ def _build_seed_set(count: int, rng: random.Random, screening_count: int) -> tup
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    """Write payload as indented, key-sorted JSON, creating the parent directory first."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def _metric_stats(values: List[float]) -> Dict[str, Any]:
+    """Count, mean, variance, stdev, min, max, median and range; all zero for an empty list."""
     if not values:
         return {
             "count": 0,
@@ -249,6 +274,7 @@ def _metric_stats(values: List[float]) -> Dict[str, Any]:
 
 
 def _average(rows: List[Dict[str, Any]]) -> float:
+    """Mean of the score field over the result rows, 0.0 when there are no rows."""
     if not rows:
         return 0.0
     return float(statistics.fmean(float(row["score"]) for row in rows))
@@ -261,6 +287,7 @@ def _summarize_run(
     raw_seed_count: int,
     screening_count: int,
 ) -> Dict[str, Any]:
+    """Result rows back in manifest order, with the overall, screening and per-group averages."""
     rows_by_seed: Dict[int, Dict[str, Any]] = {}
     group_averages: Dict[str, float] = {}
     group_counts: Dict[str, int] = {}
@@ -319,6 +346,7 @@ def _summarize_run(
 
 
 def _aggregate_successful_runs(successful_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Spread of each headline metric across the repetitions that finished, per map group too."""
     overall_avgs = [float(run["metrics"]["overall_avg_score"]) for run in successful_runs]
     screening_avgs = [float(run["metrics"]["screening_avg_score"]) for run in successful_runs]
     benchmark_avgs = [float(run["metrics"]["benchmark_avg_score"]) for run in successful_runs]
@@ -356,6 +384,7 @@ def _build_benchmark_argv(
     rpc_verbosity: str,
     relax_timeouts: bool,
 ) -> List[str]:
+    """Command-line arguments handed to the benchmark engine for one repetition."""
     argv = [
         "--model", str(model_path),
         "--uid", str(uid),
@@ -371,10 +400,12 @@ def _build_benchmark_argv(
 
 
 def _run_single_benchmark(argv: List[str]) -> None:
+    """Invoke the benchmark engine in-process with the given argv."""
     benchmark_main(argv)
 
 
 def _write_report_text(path: Path, payload: Dict[str, Any]) -> None:
+    """Write the human-readable report: config, per-run averages and the aggregate statistics."""
     args = payload["config"]
     agg = payload["aggregate"]
     runs = payload["runs"]
@@ -436,6 +467,7 @@ def _write_report_text(path: Path, payload: Dict[str, Any]) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Execute every repetition, write the JSON and text reports, return 1 if any run failed."""
     args = _parse_args(argv)
     model_path = args.model.resolve()
     if not model_path.exists():

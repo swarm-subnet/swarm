@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Common imports, asset paths and runtime-profile helpers for the split docker evaluator."""
+
 import asyncio
 import gc
 import hashlib
@@ -68,14 +70,17 @@ _THREAD_CAP_ENV_VARS = (
 
 
 def _swarm_package_dir() -> Path:
+    """The installed swarm package directory, three levels above the parts folder."""
     return Path(__file__).resolve().parents[3]
 
 
 def _submission_template_dir() -> Path:
+    """Folder holding the submission scaffold shipped inside the package."""
     return _swarm_package_dir() / "submission_template"
 
 
 def _graph_runtime_template_dir() -> Path:
+    """Folder holding the model-graph runner scaffold shipped inside the package."""
     return _swarm_package_dir() / "graph_runtime_template"
 
 
@@ -106,12 +111,14 @@ def _run_multi_seed_rpc_sync_isolated_payload(
 
 
 def _docker_evaluator_facade():
+    """The docker_evaluator module, imported at call time rather than at module load."""
     from swarm.validator.docker import docker_evaluator as docker_evaluator_mod
 
     return docker_evaluator_mod
 
 
 def _cleanup_env_quietly(env: object) -> None:
+    """Close the environment, swallowing any error, then force a garbage collection."""
     try:
         close_fn = getattr(env, "close", None)
         if callable(close_fn):
@@ -125,12 +132,14 @@ def _runtime_profile_from_payload(
     payload: Optional[dict[str, object]],
     tasks: list,
 ) -> ChallengeFamilyRuntimeProfile:
+    """Rebuild the profile from a mapping when one is given, else derive it from the tasks."""
     if isinstance(payload, dict) and payload:
         return ChallengeFamilyRuntimeProfile.from_mapping(payload)
     return runtime_profile_for_tasks(tasks)
 
 
 def _runtime_profile_env(profile: ChallengeFamilyRuntimeProfile) -> dict[str, str]:
+    """Container variables for a profile, including its SWARM_BOOTSTRAP_* entries."""
     env = dict(profile.docker_env)
     env.setdefault("SWARM_CHALLENGE_FAMILY_ID", str(profile.family_id))
     env.setdefault("SWARM_RUNTIME_PROFILE", str(profile.profile_name))

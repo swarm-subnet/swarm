@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Starter agent for the V5 search-and-rescue family: copy it into your submission zip and replace the random action with a real policy."""
+
 import numpy as np
 
 

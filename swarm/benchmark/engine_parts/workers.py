@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The benchmark's worker processes: host precalibration, RAM-aware dispatch and the stall watchdog."""
+
 from __future__ import annotations
 
 import ctypes
@@ -22,12 +24,23 @@ import os
 import signal
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.config import HostWorkerRuntimeSettings
-from swarm.constants import MINER_COMPUTE_BUDGET_SEC
+from swarm.config import HostWorkerRuntimeSettings, env_bool
+from swarm.constants import (
+    AGENT_STARTUP_WALL_SEC,
+    MINER_COMPUTE_BUDGET_SEC,
+    WARM_CONTAINER_GRACE_SEC,
+)
 from swarm.validator.calibration.speed_factor import baseline_model_available
+from swarm.validator.docker.docker_evaluator_parts._shared import (
+    _runtime_profile_from_payload,
+)
 from swarm.validator.docker.docker_evaluator_parts.batch import (
+    WarmContainer,
+    WarmContainerStart,
     _ensure_host_speed_factor,
+    discard_warm_container,
     host_speed_factor_is_fresh,
+    warm_container_key,
 )
 
 from ._shared import (
@@ -68,6 +81,15 @@ except Exception:  # pragma: no cover - non-glibc platform
 
 _PR_SET_PDEATHSIG = 1
 
+# A spare start has its own deadlines; this only bounds the wait after a flight,
+# and stays well inside the parent's stall timeout for the next batch.
+_WARM_CONTAINER_WAIT_SEC = AGENT_STARTUP_WALL_SEC + WARM_CONTAINER_GRACE_SEC
+
+
+def _prewarm_enabled() -> bool:
+    """Whether a worker may start the next seed's container during the current flight."""
+    return env_bool("SWARM_DOCKER_PREWARM", True)
+
 
 def _release_freed_memory() -> None:
     """Return freed allocator pages to the OS; glibc hoards them otherwise."""
@@ -80,12 +102,14 @@ def _release_freed_memory() -> None:
 
 
 def _engine_facade():
+    """The swarm.benchmark.engine module, imported on call so its attributes resolve at use time."""
     import swarm.benchmark.engine as engine
 
     return engine
 
 
 def _benchmark_mp_context() -> mp.context.BaseContext:
+    """The start method for the worker pool: fork everywhere but Windows, spawn as the fallback."""
     if sys.platform != "win32":
         try:
             return mp.get_context("fork")
@@ -95,6 +119,7 @@ def _benchmark_mp_context() -> mp.context.BaseContext:
 
 
 def _create_prepared_benchmark_evaluator():
+    """A DockerSecureEvaluator whose fields are filled in directly, taking the base image as already built."""
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 
     evaluator = DockerSecureEvaluator.__new__(DockerSecureEvaluator)
@@ -141,6 +166,7 @@ async def _precalibrate_host(worker_count: int) -> bool:
 
 
 def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
+    """Flatten a ValidationResult into the plain tuple that survives the queue back to the parent."""
     reason = getattr(result, "failure_reason", "NONE")
     reason_str = reason.value if hasattr(reason, "value") else str(reason)
     return (
@@ -153,6 +179,7 @@ def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
 
 
 def _unpack_validation_result(packed):
+    """Rebuild a ValidationResult from a queued tuple, taking the failure reason when one was sent."""
     from swarm.protocol import ValidationResult
     if len(packed) >= 5:
         return ValidationResult(
@@ -166,6 +193,7 @@ def _unpack_validation_result(packed):
 
 
 def _apply_host_worker_limits(process_slot: int) -> None:
+    """Pin the process to the cpuset configured for its slot and cap its address space and data segment."""
     settings = HostWorkerRuntimeSettings.from_env()
     limits = settings.resolve_worker_limits(process_slot)
 
@@ -227,22 +255,46 @@ def _benchmark_worker_main(
     result_queue: Any,
     progress_queue: Any,
 ) -> None:
+    """Worker process body: fly each batch from the queue in its own container."""
     _die_with_parent()
     _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         evaluator = _engine_facade()._create_prepared_benchmark_evaluator()
+        spare: Optional[WarmContainer] = None
 
         while True:
             request = task_queue.get()
             if request is None:
+                discard_warm_container(spare)
                 return
+
+            key = warm_container_key(
+                request.uid,
+                request.model_path,
+                process_slot,
+                _runtime_profile_from_payload(
+                    getattr(request, "runtime_profile", None), request.tasks
+                ).as_dict(),
+                getattr(request, "model_image", None),
+            )
+            warm = spare if spare is not None and spare.key == key else None
+            if spare is not None and warm is None:
+                discard_warm_container(spare)
+            spare = None
+            next_start: dict[str, WarmContainerStart] = {}
+
+            def _prewarm_next() -> None:
+                """Start the next seed's container now that this one is serving."""
+                if getattr(request, "prewarm_next", False) and _prewarm_enabled():
+                    next_start["start"] = WarmContainerStart(evaluator, key)
 
             batch_start = time.time()
             heartbeat_stop = threading.Event()
 
             def _on_seed_complete(seed_meta: Optional[Dict[str, Any]] = None) -> None:
+                """Post one finished seed's record to the parent, dropping it if the queue refuses."""
                 try:
                     progress_queue.put(
                         _ProcessSeedEvent(
@@ -255,6 +307,7 @@ def _benchmark_worker_main(
                     pass
 
             def _emit_worker_heartbeat(event_type: str) -> None:
+                """Tell the parent this batch is still alive, tagged with the event type it reports."""
                 try:
                     progress_queue.put(
                         _ProcessWorkerHeartbeat(
@@ -268,6 +321,7 @@ def _benchmark_worker_main(
                     pass
 
             def _heartbeat_loop() -> None:
+                """Beat at the engine's interval until the batch finishes and sets the stop event."""
                 while not heartbeat_stop.wait(
                     timeout=_engine_facade()._PARENT_WORKER_HEARTBEAT_SEC
                 ):
@@ -294,6 +348,8 @@ def _benchmark_worker_main(
                         runtime_profile_payload=getattr(request, "runtime_profile", None),
                         host_speed_factor=getattr(request, "host_speed_factor", None),
                         model_image=getattr(request, "model_image", None),
+                        warm_container=warm,
+                        on_container_ready=_prewarm_next,
                     )
                 )
                 result_queue.put(
@@ -317,12 +373,18 @@ def _benchmark_worker_main(
                         traceback_text=traceback.format_exc(),
                     )
                 )
+                if "start" in next_start:
+                    discard_warm_container(next_start["start"].wait(_WARM_CONTAINER_WAIT_SEC))
                 return
             finally:
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)
                 gc.collect()
                 _release_freed_memory()
+
+            # The result is already on its way; only the next request needs the spare.
+            if "start" in next_start:
+                spare = next_start["start"].wait(_WARM_CONTAINER_WAIT_SEC)
     finally:
         asyncio.set_event_loop(None)
         loop.close()
@@ -341,6 +403,7 @@ async def _run_benchmark_process_mode(
     run_opts: _RunOptions,
     set_heartbeat_status_provider: Optional[Any] = None,
 ) -> int:
+    """Run the batch plan over a pool of worker processes with RAM-aware admission."""
     engine = _engine_facade()
     await _precalibrate_host(effective_workers)
     ctx = engine._benchmark_mp_context()
@@ -370,6 +433,7 @@ async def _run_benchmark_process_mode(
     last_resource_poll_at = 0.0
 
     def _spawn_worker(worker_slot: int) -> Any:
+        """Start the daemon process for one slot and record it in the pool under that slot."""
         worker = ctx.Process(
             target=_benchmark_worker_main,
             args=(worker_slot, task_queue, result_queue, progress_queue),
@@ -381,6 +445,7 @@ async def _run_benchmark_process_mode(
         return worker
 
     def _maybe_poll_scheduler(*, force: bool = False) -> None:
+        """Refresh the RAM scheduler's view of the box, at most once per interval unless forced."""
         nonlocal last_resource_poll_at
         now = time.monotonic()
         if (
@@ -410,6 +475,7 @@ async def _run_benchmark_process_mode(
     )
 
     def _drain_progress_events() -> None:
+        """Empty the queue: a heartbeat refreshes the worker's liveness, anything else is a finished seed."""
         while True:
             try:
                 event = progress_queue.get_nowait()
@@ -425,6 +491,7 @@ async def _run_benchmark_process_mode(
             on_seed_done(seed_meta)
 
     def _restart_worker(worker_slot: int) -> None:
+        """Terminate whatever process holds a slot, if it still lives, and spawn a fresh one there."""
         worker = workers.get(worker_slot)
         if worker is not None:
             try:
@@ -436,6 +503,7 @@ async def _run_benchmark_process_mode(
         _spawn_worker(worker_slot)
 
     def _dispatch_available_batches() -> None:
+        """Queue pending batches while the scheduler admits more workers."""
         while pending_batch_ids and len(inflight_batches) < scheduler.active_worker_cap:
             batch_index = _select_next_batch_index(
                 pending_batch_ids=pending_batch_ids,
@@ -467,12 +535,14 @@ async def _run_benchmark_process_mode(
                 uid=uid,
                 model_path=str(model_path),
                 task_total=len(all_tasks),
+                prewarm_next=bool(pending_batch_ids),
             )
             inflight_batches[batch_index] = request
             scheduler.note_group_dispatched(group_name)
             task_queue.put(request)
 
     def _check_for_stalled_workers() -> int:
+        """Write off the batch of any worker past the heartbeat timeout, replace it, and count what closed."""
         completed_now = 0
         now = time.time()
         for worker_slot, batch_index in list(worker_active_batches.items()):
@@ -616,6 +686,7 @@ async def _run_benchmark(
     run_opts: _RunOptions,
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
 ) -> tuple:
+    """Fly every requested seed for one UID and return the task meta, results, per-seed timings and batch stats."""
     from swarm.challenge_families import build_random_task
     from swarm.constants import SIM_DT
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
@@ -663,12 +734,14 @@ async def _run_benchmark(
     heartbeat_status_provider: Optional[Any] = None
 
     def _eta_minutes(elapsed_sec: float, done: int) -> float:
+        """Minutes left at the pace measured so far, infinity before the first seed lands."""
         if done <= 0:
             return float("inf")
         remaining = max(0, total_seeds - done)
         return (elapsed_sec / done) * remaining / 60.0
 
     def _on_seed_done(seed_meta: Optional[Dict[str, Any]] = None):
+        """File one finished seed's wall time and status by key, and advance the progress bar."""
         nonlocal done_count, last_done_at
         now = time.time()
         with progress_lock:
@@ -706,11 +779,13 @@ async def _run_benchmark(
             )
 
     def _set_heartbeat_status_provider(provider: Optional[Any]) -> None:
+        """Swap the callable whose line the heartbeat appends, holding the lock that guards it."""
         nonlocal heartbeat_status_provider
         with heartbeat_status_lock:
             heartbeat_status_provider = provider
 
     def _heartbeat() -> None:
+        """Print seeds done, elapsed, idle time and ETA on a fixed period until the run ends."""
         try:
             if heartbeat_sec <= 0:
                 return
@@ -817,6 +892,7 @@ async def _run_benchmark(
                 seed_results: List[Any],
                 batch_elapsed: float,
             ) -> None:
+                """Store a finished batch's results and share its startup overhead evenly over the seeds it flew."""
                 if len(seed_results) != len(batch_indices):
                     raise RuntimeError(
                         f"Worker {worker_slot}: unexpected result count {len(seed_results)} "

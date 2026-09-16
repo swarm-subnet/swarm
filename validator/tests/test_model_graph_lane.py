@@ -38,6 +38,7 @@ from swarm.validator.docker.docker_evaluator_parts import batch
 
 
 def _graph_manifest(family_id: str = "cf_autopilot") -> dict:
+    """A minimal valid model-graph manifest naming one ONNX policy node."""
     return {
         "model_graph_version": MODEL_GRAPH_INTERFACE_VERSION,
         "family_id": family_id,
@@ -51,6 +52,7 @@ def _graph_manifest(family_id: str = "cf_autopilot") -> dict:
 
 
 def _write_graph_artifact(path, manifest: dict | None = None) -> object:
+    """Zip a manifest and a dummy policy file to path, and give path back."""
     body = _graph_manifest() if manifest is None else manifest
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("manifest.json", json.dumps(body))
@@ -59,6 +61,7 @@ def _write_graph_artifact(path, manifest: dict | None = None) -> object:
 
 
 def _write_code_agent(path, extra: dict | None = None) -> object:
+    """Zip a drone_agent.py entry point plus any extra members to path, and give path back."""
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("drone_agent.py", "class DroneFlightController:\n    pass\n")
         for name, body in (extra or {}).items():
@@ -69,11 +72,13 @@ def _write_code_agent(path, extra: dict | None = None) -> object:
 # ── detection ────────────────────────────────────────────────────────────────
 
 def test_graph_artifact_is_detected(tmp_path):
+    """An archive with a v1 manifest and no entry point reads as the legacy lane."""
     artifact = _write_graph_artifact(tmp_path / "graph.zip")
     assert is_model_graph_artifact(artifact) is True
 
 
 def test_code_agent_is_not_a_graph_artifact(tmp_path):
+    """An archive holding only drone_agent.py never reads as the legacy lane."""
     agent = _write_code_agent(tmp_path / "agent.zip")
     assert is_model_graph_artifact(agent) is False
 
@@ -95,6 +100,7 @@ def test_drone_agent_wins_over_a_planted_graph_manifest(tmp_path):
     ],
 )
 def test_manifest_without_the_graph_marker_is_not_a_graph_artifact(tmp_path, manifest):
+    """A manifest missing the v1 version string, or not even an object, falls out of the lane."""
     path = tmp_path / "other.zip"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("manifest.json", json.dumps(manifest))
@@ -102,6 +108,7 @@ def test_manifest_without_the_graph_marker_is_not_a_graph_artifact(tmp_path, man
 
 
 def test_unreadable_or_corrupt_archive_is_not_a_graph_artifact(tmp_path):
+    """Bytes that are no zip at all, and a path that does not exist, both answer False."""
     corrupt = tmp_path / "corrupt.zip"
     corrupt.write_bytes(b"not a zip at all")
     assert is_model_graph_artifact(corrupt) is False
@@ -109,6 +116,7 @@ def test_unreadable_or_corrupt_archive_is_not_a_graph_artifact(tmp_path):
 
 
 def test_oversized_manifest_is_refused_without_reading_it(tmp_path):
+    """A 2 MB manifest is turned away on its declared size, before anything is decompressed."""
     path = tmp_path / "bomb.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", " " * (2 * 1024 * 1024))
@@ -116,6 +124,7 @@ def test_oversized_manifest_is_refused_without_reading_it(tmp_path):
 
 
 def test_declared_family_comes_from_the_graph_manifest(tmp_path):
+    """The family binding is read out of the archive itself, and a code agent declares none."""
     artifact = _write_graph_artifact(
         tmp_path / "sar.zip", _graph_manifest("cf_search_and_rescue")
     )
@@ -124,6 +133,7 @@ def test_declared_family_comes_from_the_graph_manifest(tmp_path):
 
 
 def test_both_lanes_are_runnable():
+    """Exactly two interface versions may be executed: the code agent and model_graph.v1."""
     assert RUNNABLE_INTERFACE_VERSIONS == {
         SUBMISSION_INTERFACE_VERSION,
         MODEL_GRAPH_INTERFACE_VERSION,
@@ -142,6 +152,7 @@ def test_graph_artifact_verifies_instead_of_failing_as_missing_drone_agent(tmp_p
 
 
 def test_a_code_agent_without_its_entry_point_is_still_rejected(tmp_path):
+    """An archive carrying neither lane's marker is classified missing_drone_agent."""
     path = tmp_path / "empty.zip"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("README.md", "nothing here")
@@ -152,6 +163,7 @@ def test_a_code_agent_without_its_entry_point_is_still_rejected(tmp_path):
 # ── fetch admission ──────────────────────────────────────────────────────────
 
 def test_fetch_admits_a_graph_champion_and_binds_its_family(tmp_path):
+    """A graph champion is let through only for the family its manifest declares."""
     from swarm.validator.utils_parts.model_fetch import _admitted
 
     artifact = _write_graph_artifact(
@@ -164,6 +176,7 @@ def test_fetch_admits_a_graph_champion_and_binds_its_family(tmp_path):
 # ── container staging ────────────────────────────────────────────────────────
 
 def test_graph_lane_skips_the_per_model_dependency_image(tmp_path):
+    """No image is built for a graph artifact, since it ships no dependencies of its own."""
     artifact = _write_graph_artifact(tmp_path / "graph.zip")
     assert batch.prepare_model_image(SimpleNamespace(), 1, artifact) is None
 
@@ -196,6 +209,7 @@ def _staged(tmp_path, artifact):
 
 
 def test_graph_lane_stages_the_runner_bootstrap_and_never_unpacks_the_archive(tmp_path):
+    """Staging leaves the miner's zip sealed and writes only a bootstrap that points at it."""
     artifact = _write_graph_artifact(tmp_path / "graph.zip")
     ctx = _staged(tmp_path, artifact)
 
@@ -217,6 +231,7 @@ def test_graph_bootstrap_waits_for_the_start_gate(tmp_path):
 
 
 def test_code_agent_lane_still_unpacks_and_stages_the_rpc_server(tmp_path):
+    """A code agent is unpacked beside the RPC server, with no graph variable in its environment."""
     agent = _write_code_agent(tmp_path / "agent.zip")
     ctx = _staged(tmp_path, agent)
 

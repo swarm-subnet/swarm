@@ -78,6 +78,7 @@ from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
 
 
 def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
+    """Location of the recorded-action JSON for one seed, named after its map label."""
     label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office"}.get(
         challenge_type, f"type{challenge_type}"
     )
@@ -87,12 +88,14 @@ def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
 def _save_action_log(
     path: Path, seed: int, challenge_type: int, actions: List[List[float]],
 ) -> None:
+    """Write the per-step actions to disk as JSON, tagged with the seed and challenge type."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump({"seed": seed, "challenge_type": challenge_type, "actions": actions}, f)
 
 
 def _load_action_log(path: Path) -> List[np.ndarray]:
+    """Read a saved action log back as float32 arrays, one per simulation step."""
     with open(path, "r") as f:
         data = json.load(f)
     return [np.asarray(a, dtype=np.float32) for a in data["actions"]]
@@ -182,22 +185,28 @@ class VideoResult:
 
 @dataclass(frozen=True, slots=True)
 class VideoJob:
+    """One seed and map type to render, as produced by the CLI flags or a benchmark seed file."""
+
     seed: int
     challenge_type: int
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkExpectation:
+    """The outcome, score and simulated duration a benchmark summary recorded for one seed."""
+
     success: bool
     score: float
     sim_time_sec: float
 
 
 def _outcome_label(success: bool) -> str:
+    """Return SUCCESS or FAILED for printing how a flight ended."""
     return "SUCCESS" if bool(success) else "FAILED"
 
 
 def _summary_tag(*, success: bool, verified: bool) -> str:
+    """Return the bracketed tag for a closing summary line; the MATCH_ prefix marks a checked replay."""
     if verified:
         return "MATCH_OK" if bool(success) else "MATCH_FAIL"
     return "OK" if bool(success) else "FAILED"
@@ -205,6 +214,7 @@ def _summary_tag(*, success: bool, verified: bool) -> str:
 
 @contextmanager
 def _temporary_env(overrides: Dict[str, Optional[str]]):
+    """Apply the given environment variables for the duration of the block, then restore what was there."""
     previous = {k: os.environ.get(k) for k in overrides}
     try:
         for key, value in overrides.items():
@@ -267,6 +277,7 @@ def _load_seed_jobs(seed_file: Path, family_id: str = "cf_autopilot") -> List[Vi
 
 
 def _extract_zip(zip_path: Path, dest: Path) -> Path:
+    """Unpack a submission zip into a freshly emptied directory, refusing one without drone_agent.py."""
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -401,6 +412,7 @@ class _CameraBase:
     """Common interface for all camera modes."""
 
     def __init__(self, cli: int, width: int, height: int, fov: float):
+        """Bind the pybullet client and keep the frame size and field of view for the subclass."""
         import pybullet as p
 
         self._p = p
@@ -410,6 +422,7 @@ class _CameraBase:
         self._fov = fov
 
     def _proj(self, near: float = 0.1, far: float = 500.0):
+        """Perspective projection matrix at this camera's field of view and aspect ratio."""
         return self._p.computeProjectionMatrixFOV(
             fov=self._fov,
             aspect=self._w / self._h,
@@ -419,6 +432,7 @@ class _CameraBase:
         )
 
     def _view(self, eye, target, up=(0, 0, 1)):
+        """Look-at matrix from eye towards target, with up fixing the roll."""
         return self._p.computeViewMatrix(
             cameraEyePosition=list(eye),
             cameraTargetPosition=list(target),
@@ -429,6 +443,7 @@ class _CameraBase:
     def capture(
         self, drone_pos: np.ndarray, drone_quat: np.ndarray, rot: np.ndarray, dt: float
     ) -> np.ndarray:
+        """Return the RGB frame for one simulation step; each mode places its own eye and target."""
         raise NotImplementedError
 
 
@@ -436,6 +451,7 @@ class DepthCamera(_CameraBase):
     """Replicates the drone's onboard 128x128 depth sensor, colourised."""
 
     def __init__(self, cli: int, width: int, height: int):
+        """Take the far plane and clip range from the shared depth constants, keeping the output size for upscaling."""
         super().__init__(cli, DEPTH_SENSOR_RES, DEPTH_SENSOR_RES, fov=90.0)
         from swarm.constants import DEPTH_FAR, DEPTH_MAX_M, DEPTH_MIN_M
 
@@ -447,6 +463,7 @@ class DepthCamera(_CameraBase):
         self._out_h = height
 
     def capture(self, drone_pos, drone_quat, rot, dt):
+        """Render the sensor-sized depth view from the nose, colourise it, and scale it to the output size."""
         fwd = rot @ np.array([1.0, 0.0, 0.0])
         fwd /= np.linalg.norm(fwd) + 1e-9
         up = rot @ np.array([0.0, 0.0, 1.0])
@@ -478,11 +495,13 @@ class FPVCamera(_CameraBase):
     """First-person view with exponential smoothing for stable footage."""
 
     def __init__(self, cli: int, width: int, height: int, fov: float = FPV_FOV_DEG):
+        """Start with no smoothing history, so the first frame uses the raw airframe attitude."""
         super().__init__(cli, width, height, fov)
         self._smooth_fwd: Optional[np.ndarray] = None
         self._smooth_up: Optional[np.ndarray] = None
 
     def capture(self, drone_pos, drone_quat, rot, dt):
+        """Render from just ahead of the airframe, heading and roll exponentially smoothed against jitter."""
         cur_fwd = rot @ np.array([1.0, 0.0, 0.0])
         cur_fwd /= np.linalg.norm(cur_fwd) + 1e-9
         cur_up = rot @ np.array([0.0, 0.0, 1.0])
@@ -518,12 +537,14 @@ class ChaseCamera(_CameraBase):
         back: float = CHASE_DISTANCE_BACK_M,
         up: float = CHASE_HEIGHT_ABOVE_M,
     ):
+        """Keep the follow distance and height, with the smoothed heading starting empty."""
         super().__init__(cli, width, height, fov)
         self._back = back
         self._up = up
         self._smooth_fwd: Optional[np.ndarray] = None
 
     def capture(self, drone_pos, drone_quat, rot, dt):
+        """Render from behind and above the airframe, aimed slightly over its centre."""
         cur_fwd = rot @ np.array([1.0, 0.0, 0.0])
         cur_fwd /= np.linalg.norm(cur_fwd) + 1e-9
 
@@ -553,11 +574,13 @@ class OverviewCamera(_CameraBase):
         goal: Tuple[float, float, float],
         fov: float = OVERVIEW_FOV_DEG,
     ):
+        """Hold the goal the orbit centre is measured against, with the orbit starting at zero yaw."""
         super().__init__(cli, width, height, fov)
         self._goal = np.asarray(goal)
         self._yaw = 0.0
 
     def capture(self, drone_pos, drone_quat, rot, dt):
+        """Render the orbit frame centred midway to the goal, pulling back as that gap widens."""
         mid = (drone_pos + self._goal) * 0.5
         span = float(np.linalg.norm(drone_pos - self._goal))
         cam_dist = max(15.0, span * 1.3)
@@ -582,6 +605,7 @@ class _Cv2VideoWriter:
     """Small adapter matching the `imageio` writer API used below."""
 
     def __init__(self, path: Path, fps: int, width: int, height: int):
+        """Open an mp4v stream at path and raise when OpenCV will not take the file."""
         import cv2
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -591,6 +615,7 @@ class _Cv2VideoWriter:
             raise RuntimeError(f"OpenCV failed to open video writer for {path}")
 
     def append_data(self, frame: np.ndarray) -> None:
+        """Coerce the frame to 8-bit colour and write it as BGR, the channel order OpenCV expects."""
         if frame.dtype != np.uint8:
             frame = np.clip(frame, 0, 255).astype(np.uint8)
         if frame.ndim == 2:
@@ -598,10 +623,12 @@ class _Cv2VideoWriter:
         self._writer.write(self._cv2.cvtColor(frame, self._cv2.COLOR_RGB2BGR))
 
     def close(self) -> None:
+        """Release the OpenCV writer so the file on disk is finalised."""
         self._writer.release()
 
 
 def _open_video_writer(path: Path, fps: int, width: int, height: int) -> Any:
+    """Return an imageio writer for path, falling back to the OpenCV adapter when imageio cannot supply one."""
     # imageio without imageio-ffmpeg imports fine and only fails when asked for a writer,
     # so fall back on any failure here rather than only on a missing module.
     try:
@@ -613,12 +640,15 @@ def _open_video_writer(path: Path, fps: int, width: int, height: int) -> Any:
 
 
 def _ensure_local_ansible_temp() -> None:
+    """Create the directory ANSIBLE_LOCAL_TEMP names, defaulting to /tmp/swarm_ansible, and export that path."""
     ansible_tmp = Path(os.environ.get("ANSIBLE_LOCAL_TEMP", "/tmp/swarm_ansible"))
     ansible_tmp.mkdir(parents=True, exist_ok=True)
     os.environ["ANSIBLE_LOCAL_TEMP"] = str(ansible_tmp)
 
 
 class _FlightRecorder:
+    """Host-side frame capture for the Docker replay path: one video writer per camera mode, fed by rollout events."""
+
     def __init__(
         self,
         *,
@@ -636,6 +666,7 @@ class _FlightRecorder:
         overview_fov: float,
         progress_file: Optional[Path],
     ) -> None:
+        """Store the render settings and create the output directory; no camera exists until start()."""
         self._seed = int(seed)
         self._challenge_type = int(challenge_type)
         self._modes = list(modes)
@@ -665,6 +696,7 @@ class _FlightRecorder:
 
     @property
     def expected_paths(self) -> List[Path]:
+        """The final .mp4 name for every requested mode, whether or not the render has reached it yet."""
         type_label = TYPE_LABELS.get(self._challenge_type, f"type{self._challenge_type}")
         return [
             self._out_dir / f"seed{self._seed}_{type_label}_{mode}.mp4"
@@ -672,6 +704,7 @@ class _FlightRecorder:
         ]
 
     def start(self, env: object, goal: Tuple[float, float, float], horizon: float) -> None:
+        """Build the cameras and writers once the seeded environment exists; a second call does nothing."""
         if self._initialized:
             return
         cli = getattr(env, "CLIENT", 0)
@@ -729,6 +762,7 @@ class _FlightRecorder:
         self._initialized = True
 
     def capture_step(self, env: object, sim_time_sec: float) -> None:
+        """Render one frame per camera for every frame slot the simulation clock has passed."""
         if not self._initialized or self._frame_dt <= 0:
             self._last_sim_time = float(sim_time_sec)
             return
@@ -758,6 +792,7 @@ class _FlightRecorder:
         self._last_sim_time = float(sim_time_sec)
 
     def finish(self, success: bool, sim_time_sec: float) -> List[VideoResult]:
+        """Close the writers, move each temp file onto its final name, and return one VideoResult per mode."""
         wall_sec = max(0.0, time.time() - self._t_wall_start) if self._initialized else 0.0
         video_sec = self._frame_count / float(self._fps) if self._fps > 0 else 0.0
 
@@ -800,6 +835,7 @@ class _FlightRecorder:
         return results
 
     def abort(self) -> None:
+        """Close the writers and delete the partial files so a failed run leaves no .mp4 behind."""
         for writer in self._writers.values():
             try:
                 writer.close()
@@ -814,6 +850,7 @@ class _FlightRecorder:
 
 
 def _infer_uid_from_model_path(model_path: Path) -> int:
+    """Pull the miner UID out of a filename such as UID_178.zip, or 0 when it carries no number."""
     for candidate in (Path(model_path).stem, Path(model_path).name):
         match = re.search(r"uid[_-]?(\d+)", candidate, re.IGNORECASE)
         if match:
@@ -825,6 +862,7 @@ def _infer_uid_from_model_path(model_path: Path) -> int:
 
 
 def _load_benchmark_expectations(summary_json: Path) -> Dict[Tuple[int, int], BenchmarkExpectation]:
+    """Read group_results out of a benchmark summary file into one expectation per seed and map type."""
     payload = json.loads(Path(summary_json).read_text())
     raw_groups = payload.get("group_results")
     if not isinstance(raw_groups, dict):
@@ -858,6 +896,7 @@ def _assert_replay_matches_expected(
     score_tol: float = 1e-6,
     sim_tol: float = 1e-6,
 ) -> None:
+    """Raise RuntimeError naming every field where this replay drifted from the benchmark summary."""
     mismatches: List[str] = []
     if bool(success) != bool(expected.success):
         mismatches.append(f"success expected={expected.success} actual={success}")
@@ -875,6 +914,7 @@ def _assert_replay_matches_expected(
 
 
 def _video_benchmark_env_overrides() -> Dict[str, Optional[str]]:
+    """The batch timeout envelope that keeps host-side frame capture from tripping the evaluator's limits."""
     # Video rendering runs inside the same Docker/RPC evaluator path as benchmark,
     # but host-side frame capture makes each seed much slower than pure scoring.
     # Use a generous timeout envelope while preserving the exact simulation logic.
@@ -908,6 +948,7 @@ def record_flight_benchmark(
     save_actions_dir: Optional[Path] = None,
     progress_file: Optional[Path] = None,
 ) -> Tuple[List[VideoResult], bool, float, float]:
+    """Fly one seed through the Docker evaluator, capturing frames as it goes, and return the videos with the scored outcome."""
     from swarm.constants import SIM_DT
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
     from swarm.validator.task_gen import task_for_seed_and_type
@@ -935,6 +976,7 @@ def record_flight_benchmark(
     recorded_actions: List[List[float]] = []
 
     def _rollout_observer(event: Dict[str, object]) -> None:
+        """Start the recorder on seed_ready, then capture a frame and the chosen action on every step."""
         event_type = str(event.get("event", ""))
         env = event.get("env")
         if env is None:
@@ -1000,6 +1042,7 @@ def record_flight_benchmark(
 
 
 def _write_progress(progress_file: Optional[Path], data: dict) -> None:
+    """Replace the progress JSON atomically through a .tmp file; any failure is swallowed."""
     if not progress_file:
         return
     try:
@@ -1262,6 +1305,7 @@ def record_flight(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """The CLI parser: model and seed selection, video options, camera tuning and action replay."""
     ap = argparse.ArgumentParser(
         prog="generate_video",
         description="Swarm V4 — render drone flight videos for a given model + seed.",
@@ -1431,6 +1475,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_modes(raw_mode: str) -> List[str]:
+    """Expand "all" or a comma-separated list into camera modes, rejecting anything outside VALID_MODES."""
     raw = raw_mode.strip().lower()
     if raw == "all":
         modes = list(VALID_MODES)
@@ -1445,6 +1490,7 @@ def _resolve_modes(raw_mode: str) -> List[str]:
 
 
 def _resolve_jobs(args: argparse.Namespace) -> List[VideoJob]:
+    """Turn the parsed arguments into the seeds to fly, from a seed file or from --seed with --type."""
     if args.seed_file is not None:
         if args.seed is not None or args.type is not None:
             raise ValueError("--seed-file cannot be combined with --seed or --type")
@@ -1459,6 +1505,7 @@ def _expected_output_paths(
     jobs: Iterable[VideoJob],
     modes: List[str],
 ) -> Dict[VideoJob, List[Path]]:
+    """Map every job to the .mp4 files it would write, which is what --skip-existing tests against."""
     out_dir = Path(out_dir)
     expected: Dict[VideoJob, List[Path]] = {}
     for job in jobs:
@@ -1471,6 +1518,7 @@ def _expected_output_paths(
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    """Parse the command line, render every requested seed, and exit 1 when any job failed."""
     args = _build_parser().parse_args(argv)
 
     model = args.model.resolve()

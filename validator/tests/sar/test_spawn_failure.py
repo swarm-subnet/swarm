@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A SAR world that cannot spawn: the episode still observes, ends at once, and pays participation."""
 from __future__ import annotations
 
 import contextlib
@@ -26,6 +27,7 @@ from swarm.protocol import FailureReason, MapTask
 
 
 def _task():
+    """A search-and-rescue MapTask on seed 4242, running 60 seconds at 30 Hz."""
     return MapTask(
         map_seed=4242,
         start=(0.0, 0.0, 1.5),
@@ -39,10 +41,12 @@ def _task():
 
 
 def _build_env(monkeypatch):
+    """A reset SAR environment whose victim spawn search always raises, so no world is built."""
     from swarm.core import moving_drone as md
     from swarm.core.env_builder.spawn_pipeline import SARSpawnError
 
     def _always_raise(*args, **kwargs):
+        """Raise SARSpawnError in place of the real spawn search."""
         raise SARSpawnError("forced for test")
 
     monkeypatch.setattr(
@@ -59,6 +63,7 @@ def _build_env(monkeypatch):
 
 
 def _close(env):
+    """Shut the environment down, swallowing whatever PyBullet raises on the way out."""
     try:
         env.close()
     except Exception:
@@ -67,6 +72,7 @@ def _close(env):
 
 @pytest.mark.timeout(180)
 def test_env_reset_returns_valid_obs_on_spawn_failure(monkeypatch):
+    """With no world built, the reason is recorded and reset still hands back a correctly shaped state."""
     env = _build_env(monkeypatch)
     try:
         assert env._sar_spawn_failed is True
@@ -80,6 +86,7 @@ def test_env_reset_returns_valid_obs_on_spawn_failure(monkeypatch):
 
 @pytest.mark.timeout(180)
 def test_first_step_terminates_on_spawn_failure(monkeypatch):
+    """The very first step ends the episode and reports SPAWN_FAILURE in the info dict."""
     env = _build_env(monkeypatch)
     try:
         import numpy as np
@@ -94,6 +101,7 @@ def test_first_step_terminates_on_spawn_failure(monkeypatch):
 
 @pytest.mark.timeout(180)
 def test_score_is_participation_on_spawn_failure(monkeypatch):
+    """A world that would not build scores 0.01, so a miner is never punished for a bad seed."""
     env = _build_env(monkeypatch)
     try:
         from swarm.validator.reward import flight_reward
@@ -108,17 +116,20 @@ def test_score_is_participation_on_spawn_failure(monkeypatch):
 
 
 def test_all_steep_map_spawns_on_flattest_spot(monkeypatch):
+    """When every candidate surface is too steep, the search settles on the flattest rather than giving up."""
     from swarm.core.env_builder import spawn_pipeline as sp
 
     slopes = {}
 
     def _fake_resolve(cli, x, y, body_tags, accepted):
+        """Answer every probe with the same support hit at z = 1.0, flagged as sloped."""
         return sp.SurfaceHit(
             surface_z=1.0, support_uid=7, category="SUPPORT_TERRAIN",
             normal=(0.0, 0.0, 1.0), is_slope=True,
         )
 
     def _fake_slope(cli, x, y, surface_z, radius=0.4):
+        """Give every probe an angle of at least 30 degrees, over the 22 degree cap, and remember it per (x, y)."""
         key = (round(x, 6), round(y, 6))
         slopes.setdefault(key, 30.0 + (len(slopes) % 17))
         return slopes[key]
@@ -137,6 +148,7 @@ def test_all_steep_map_spawns_on_flattest_spot(monkeypatch):
 
 
 def test_spawn_still_fails_without_any_valid_surface(monkeypatch):
+    """When nothing resolves under the raycast at all, the search raises rather than inventing a spot."""
     from swarm.core.env_builder import spawn_pipeline as sp
 
     monkeypatch.setattr(sp, "resolve_surface", lambda *a, **k: None)

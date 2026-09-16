@@ -17,6 +17,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""A TTL-bounded LRU cache decorator, and the cached current-block lookup built on it."""
+
 import time
 from functools import lru_cache, update_wrapper
 from math import floor
@@ -56,11 +58,14 @@ def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
     hash_gen = _ttl_hash_gen(ttl)
 
     def wrapper(func: Callable) -> Callable:
+        """Bind func to the time-keyed cache and return a stand-in that keeps its metadata."""
         @lru_cache(maxsize, typed)
         def ttl_func(_ttl_hash, *args, **kwargs):
+            """Call func, memoised on the arguments plus the time-bucket hash passed in."""
             return func(*args, **kwargs)
 
         def wrapped(*args, **kwargs) -> Any:
+            """Read the current time bucket and serve the call through the memoised inner."""
             th = next(hash_gen)
             return ttl_func(th, *args, **kwargs)
 

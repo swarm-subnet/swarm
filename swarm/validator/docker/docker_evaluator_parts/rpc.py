@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Flying a batch of seeds against a miner container over one Cap'n Proto connection."""
+
 import asyncio
 import mmap
 import os
@@ -105,6 +107,7 @@ def _run_multi_seed_rpc_sync(
             shm_buf = None
 
     def _build_observation(obs):
+        """Serialize obs through the mmapped /dev/shm buffer, falling back to an in-message copy."""
         if shm_buf is not None:
             try:
                 return _serialize_observation_shm(agent_capnp, obs, shm_buf)
@@ -150,6 +153,7 @@ def _run_multi_seed_rpc_sync(
         calibration_cpu_factor: Optional[float] = None,
         calibrated_timeout_sec: Optional[float] = None,
     ) -> None:
+        """Hand the per-seed progress payload to the caller's callback, swallowing its errors."""
         if on_seed_complete is None:
             return
 
@@ -193,12 +197,14 @@ def _run_multi_seed_rpc_sync(
             pass
 
     def _trace(msg: str) -> None:
+        """Print and log one timestamped RPC trace line when tracing is enabled."""
         if trace_rpc:
             line = f"[{time.strftime('%H:%M:%S')}] [RPC TRACE][UID {uid}][port {rpc_port}] {msg}"
             print(line, flush=True)
             bt.logging.info(line)
 
     def _emit_rollout_event(event: str, **payload: object) -> None:
+        """Forward a named event and its payload to the rollout observer, ignoring its errors."""
         if rollout_observer is None:
             return
         try:
@@ -207,6 +213,7 @@ def _run_multi_seed_rpc_sync(
             pass
 
     def _task_type_label(task_obj) -> str:
+        """Render the task's challenge_type as a string for trace lines."""
         raw_type = int(getattr(task_obj, "challenge_type", -1))
         # With schema v2 challenge_type is already explicit:
         # 1=city, 2=open, 3=mountain, 4=village, 5=warehouse.
@@ -226,6 +233,7 @@ def _run_multi_seed_rpc_sync(
     def _set_phase(
         phase: str, task: str = "n/a", step: int = 0, sim_t: float = 0.0
     ) -> None:
+        """Record where the run has reached, for the watchdog and for progress_state."""
         with phase_lock:
             phase_state["phase"] = phase
             phase_state["task"] = task
@@ -240,6 +248,7 @@ def _run_multi_seed_rpc_sync(
             progress_state["ts"] = time.time()
 
     def _watchdog_loop() -> None:
+        """Emit a trace heartbeat with the last recorded phase every trace_heartbeat_sec."""
         if not trace_rpc or trace_heartbeat_sec <= 0:
             return
         while not watchdog_stop.wait(timeout=trace_heartbeat_sec):
@@ -257,6 +266,7 @@ def _run_multi_seed_rpc_sync(
             )
 
     async def run_all_seeds():
+        """Connect to the agent, then fly every task in turn on the same connection."""
         results = []
         async with capnp.kj_loop():
             stream = None
@@ -298,6 +308,8 @@ def _run_multi_seed_rpc_sync(
                             f"Unexpected ping response (attempt {attempt}/{max_ping_attempts})"
                         )
 
+                    if progress_state is not None:
+                        progress_state["ping_ok_ts"] = time.time()
                     _trace(
                         f"ping ok (attempt {attempt}) response={ping_response.response}"
                     )
@@ -376,6 +388,7 @@ def _run_multi_seed_rpc_sync(
             calibrated = False
 
             def _ref_hard_caps(overhead_sec: float) -> tuple[float, float]:
+                """Baseline-equivalent act() and first-step wall-clock ceilings at this overhead."""
                 return (
                     act_hard_cap_sec(
                         speed_factor, overhead_sec,

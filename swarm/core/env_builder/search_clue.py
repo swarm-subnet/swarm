@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Sampling of the search-area centre a rescue task hands over in place of the victim position."""
+
 from __future__ import annotations
 
 import math
@@ -29,6 +31,7 @@ def sample_search_centre(
     victim_centre_xy: Tuple[float, float],
     radius: float = SEARCH_RADIUS_M,
 ) -> Tuple[float, float]:
+    """Uniform point in the disc of ``radius`` about the victim; the sqrt spreads it by area."""
     u = rng.random()
     v = rng.random()
     r = radius * math.sqrt(u)

@@ -21,9 +21,8 @@ env:
   TEST_IMAGE: ghcr.io/swarm-subnet/swarm:base
 
 jobs:
-  # Rebuilds the test image when the Dockerfile or requirements.txt changed, so
-  # the jobs below run on the image this commit describes rather than whichever
-  # one was pushed last.
+  # Rebuilds the test image when the Dockerfile or requirements changed, so the jobs
+  # below run on the image this commit describes rather than whichever one was pushed last.
   push-docker-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -31,7 +30,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -47,17 +46,19 @@ jobs:
           esac
           # An unknown base (first push, force push) also lands here: rebuilding
           # when unsure costs minutes, skipping when unsure costs a stale image.
+          # requirements.txt is baked into the image, so a dependency added there
+          # is absent from the run unless the image is rebuilt with it.
           if [ -n "$base" ] && git diff --quiet "$base" "$GITHUB_SHA" -- .docker/Dockerfile requirements.txt; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Dockerfile and requirements.txt unchanged, keeping the image on GHCR"
+            echo "Image inputs unchanged, keeping the image on GHCR"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Dockerfile or requirements.txt changed, rebuilding"
+            echo "Image inputs changed, rebuilding"
           fi
 
       - name: Log in to GHCR
         if: steps.check.outputs.changed == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -77,12 +78,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -115,7 +116,7 @@ jobs:
       # On pull_request this checks out the MERGE commit: the PR branch
       # already merged into the base branch. That is the state that would
       # exist after merging, which is what you want to test.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -127,7 +128,7 @@ jobs:
           git log --oneline -1
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

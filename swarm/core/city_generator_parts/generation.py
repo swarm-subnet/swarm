@@ -15,11 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Seeded road grid, block extraction and building placement for the OBJ mesh city map."""
+
 from ._shared import *
 
 
 @dataclass
 class Rect:
+    """Axis-aligned box given by its lower corner plus a width and a height."""
     x: float
     y: float
     w: float
@@ -27,19 +30,23 @@ class Rect:
 
     @property
     def x2(self):
+        """Right edge: the x coordinate where the box ends."""
         return self.x + self.w
 
     @property
     def y2(self):
+        """Top edge: the y coordinate where the box ends."""
         return self.y + self.h
 
     @property
     def area(self):
+        """Width times height of the box."""
         return self.w * self.h
 
 
 @dataclass
 class Building:
+    """Footprint rectangle plus the asset category, facing angle and colour to spawn it with."""
     rect: Rect
     type: str
     facing: int = 0
@@ -48,6 +55,7 @@ class Building:
 
 @dataclass
 class Block:
+    """A buildable plot enclosed by roads, flagged when its area falls under the target."""
     id: int
     rect: Rect
     too_small: bool
@@ -55,6 +63,7 @@ class Block:
 
 @dataclass
 class RoadTile:
+    """One road cell: its lower corner, the mesh variant to spawn there and the yaw in degrees."""
     x: float
     y: float
     type: str
@@ -63,26 +72,33 @@ class RoadTile:
 
 
 class SeededRNG:
+    """Deterministic random source: one seed reproduces the same city on every run."""
     def __init__(self, seed):
+        """Open a private Random on the given seed, drawing one at random when it is None."""
         self._seed = seed if seed is not None else random.randint(0, 999999)
         self._rng = random.Random(self._seed)
 
     def range(self, min_val, max_val):
+        """Uniform float between min_val and max_val."""
         return self._rng.uniform(min_val, max_val)
 
     def rand_int(self, min_val, max_val):
+        """Uniform integer between min_val and max_val, both ends included."""
         return self._rng.randint(min_val, max_val)
 
     def next_float(self):
+        """Draw the next value in [0.0, 1.0) from the seeded stream."""
         return self._rng.random()
 
     def choice(self, seq):
+        """Pick one element of seq, or None when seq is empty."""
         if not seq:
             return None
         return self._rng.choice(seq)
 
 
 def generate_road_positions(rng, min_spacing, target_area, tile_size=None):
+    """Road line offsets on one axis, snapped to the tile grid so every gap holds a plot of target_area."""
     if tile_size is None:
         tile_size = TILE_SIZE
     min_side_from_area = math.sqrt(target_area)
@@ -96,6 +112,7 @@ def generate_road_positions(rng, min_spacing, target_area, tile_size=None):
     effective_map_size = num_tiles_f * tile_size
 
     def get_auto_positions():
+        """Walk the axis in random tile-aligned jumps, dropping any line that leaves too narrow a gap."""
         raw_positions = [0]
         current_pos = 0
         safety = 0
@@ -133,6 +150,7 @@ def generate_road_positions(rng, min_spacing, target_area, tile_size=None):
 def extract_blocks(v_pos, h_pos, min_area, removed_h_segments=None,
                    removed_v_segments=None, added_h_segments=None,
                    added_v_segments=None, effective_tile_size=None):
+    """Merge grid cells across removed road segments, split what is left on the added ones, and flag every plot under min_area."""
     if effective_tile_size is None:
         effective_tile_size = TILE_SIZE
     if removed_h_segments is None:
@@ -153,11 +171,13 @@ def extract_blocks(v_pos, h_pos, min_area, removed_h_segments=None,
             parent[(i, j)] = (i, j)
 
     def find(cell):
+        """Union-find root of cell, compressing the path on the way up."""
         if parent[cell] != cell:
             parent[cell] = find(parent[cell])
         return parent[cell]
 
     def union(cell1, cell2):
+        """Join the two cells' sets so they end up in the same plot."""
         root1, root2 = find(cell1), find(cell2)
         if root1 != root2:
             parent[root1] = root2
@@ -242,6 +262,11 @@ def extract_blocks(v_pos, h_pos, min_area, removed_h_segments=None,
 
 def generate_road_tiles(v_pos, h_pos, rng, max_block_size=60,
                         tile_size=None, difficulty=1):
+    """Build every road cell with its mesh type and yaw, cutting or branching segments at random.
+
+    Returns the cells together with the blocked positions and the removed and added segments,
+    which extract_blocks needs to carve the plots out of the grid.
+    """
     if tile_size is None:
         tile_size = TILE_SIZE
     num_tiles = round(MAP_SIZE / tile_size)
@@ -334,6 +359,7 @@ def generate_road_tiles(v_pos, h_pos, rng, max_block_size=60,
                         added_v_segments.append((branch_x, y1, y2))
 
     def to_grid_key(x, y):
+        """Integer-rounded 'x,y' string that indexes the tile map."""
         return f"{int(round(x))},{int(round(y))}"
 
     blocked_positions = set()
@@ -359,6 +385,7 @@ def generate_road_tiles(v_pos, h_pos, rng, max_block_size=60,
         added_intersections[(x, y2)] = added_intersections.get((x, y2), "") + "N"
 
     def get_neighbors(x, y):
+        """Which of N, S, E and W still carry road out of (x, y) once cuts and branches are applied."""
         neighbors = {"N": False, "S": False, "E": False, "W": False}
         if x in v_set:
             if y > 0:
@@ -418,6 +445,7 @@ def generate_road_tiles(v_pos, h_pos, rng, max_block_size=60,
         return neighbors
 
     def classify_intersection(neighbors):
+        """Map the four direction flags to the mesh variant and the yaw that lines it up."""
         n, s, e, w = neighbors["N"], neighbors["S"], neighbors["E"], neighbors["W"]
         count = sum([n, s, e, w])
         if count == 4:
@@ -622,6 +650,7 @@ TEMPLATES = {
 
 
 def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
+    """Fill each plot with rows of house, apt and tower footprints, retrying at tighter road margins when a plot comes out sparse."""
     buildings = []
     occupied_rects = []
     min_gap = 1.0 if difficulty == 3 else 1.5
@@ -641,15 +670,18 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
         ultra_center_gap = 0
 
     def rects_overlap(r1, r2):
+        """True when the two footprints share any area; touching edges do not count."""
         return not (r1.x2 <= r2.x or r2.x2 <= r1.x or r1.y2 <= r2.y or r2.y2 <= r1.y)
 
     def can_place(new_rect, current_occupied):
+        """True when new_rect clears every footprint already taken on the plot."""
         for existing in current_occupied:
             if rects_overlap(new_rect, existing):
                 return False
         return True
 
     def get_category_for_block(_block_h, rng_inst, c_type, diff=1, block_tier=None):
+        """Pick house, apt or tower: tower at difficulty 3, else the plot tier when it names one, otherwise the c_type mix."""
         if diff == 3:
             return "tower"
         if block_tier in ["house", "apt", "tower"]:
@@ -668,6 +700,7 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
 
     def fill_row_justified(start_val, end_val, fixed_val, depth, axis, category,
                            facing, rng_inst, current_builds, current_occupied):
+        """Lay templates of the given depth end to end along one edge until the run is used up, skipping any that collide."""
         length = end_val - start_val
         if length < 5:
             return
@@ -706,6 +739,7 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
             curr_pos += tmpl["w"] + final_gap
 
     def process_block(block, road_margin=4, center_gap=1.5, block_tier="commercial"):
+        """Ring the plot with a north row, a south row and side rows, returning them and how many of the two long rows landed."""
         local_builds = []
         local_occupied = []
         valid_rect = Rect(
@@ -778,6 +812,7 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
         return local_builds, score
 
     def process_block_centered(block, road_margin=4, block_tier="commercial"):
+        """Last-resort layout: one row down the middle of the plot, running along its longer side."""
         local_builds = []
         valid_rect = Rect(
             block.rect.x + road_margin, block.rect.y + road_margin,
@@ -815,6 +850,7 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
         return local_builds
 
     def process_block_chaotic(block):
+        """Scatter towers at random non-overlapping spots over the whole plot, the difficulty 3 layout."""
         local_builds = []
         local_occupied = []
         valid_rect = Rect(block.rect.x, block.rect.y, block.rect.w, block.rect.h)
@@ -892,6 +928,7 @@ def generate_buildings(blocks, rng, city_type=2, _b_margin=4, difficulty=1):
 
 def generate_city(seed=42, min_spacing=20, target_area=1000, city_type=2,
                   max_block_size=2000, difficulty=1, road_scale=1.0):
+    """Roads, plots and buildings for one seed, with any building that touches a road tile or sits inside a roundabout dropped."""
     rng = SeededRNG(seed)
     effective_tile_size = TILE_SIZE * road_scale
     max_block_dimension = int(math.sqrt(max_block_size))

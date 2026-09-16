@@ -15,11 +15,18 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Forklift parking row: painted bay lines along a wall, with only some of the slots occupied."""
+
 from ._shared import *
 from .support import _forklift_yaw_back_to_wall
 
 
 def build_forklift_parking(forklift_loader, floor_top_z, area_layout, cli, seed=0):
+    """Paint a row of bays against the wall of the first preferred area and park vehicles in a seeded subset of its slots.
+
+    Slot count shrinks until the row fits the area, and the whole thing is
+    skipped with a reason when even one bay is too wide or too long for it.
+    """
     if not ENABLE_FORKLIFT_PARKING:
         return {"forklift_scale": FORKLIFT_SCALE_UNIFORM, "forklifts": []}
     if forklift_loader is None:

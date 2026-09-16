@@ -17,6 +17,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Validator neuron base: the step loop, score bookkeeping and weight submission to chain."""
 
 import argparse
 import asyncio
@@ -53,10 +54,12 @@ class BaseValidatorNeuron(BaseNeuron):
 
     @classmethod
     def add_args(cls, parser: argparse.ArgumentParser):
+        """Register the neuron and validator command-line options on the parser."""
         super().add_args(parser)
         add_validator_args(cls, parser)
 
     def __init__(self, config=None):
+        """Build the dendrite, score vector and locks, then sync the chain and serve the axon."""
         super().__init__(config=config)
 
         # Save a copy of the hotkeys to local memory.
@@ -124,6 +127,7 @@ class BaseValidatorNeuron(BaseNeuron):
             pass
 
     async def concurrent_forward(self):
+        """Run the configured number of forwards together, keeping scores refreshed meanwhile."""
         refresh_task = asyncio.create_task(self._periodic_weight_refresh())
         coroutines = [
             self.forward() for _ in range(self.config.neuron.num_concurrent_forwards)
@@ -172,6 +176,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self._weight_setter_wakeup.set()
 
     def _should_set_weights_due(self, *, allow_initial_step: bool = False) -> bool:
+        """True when a full epoch has elapsed both on chain and locally since the last submission."""
         if self.neuron_type == "MinerNeuron":
             return False
         if self.config.neuron.disable_set_weights:
@@ -192,6 +197,7 @@ class BaseValidatorNeuron(BaseNeuron):
         return True
 
     def should_set_weights(self) -> bool:
+        """True when this neuron is due to submit weights, never on the very first step."""
         return self._should_set_weights_due(allow_initial_step=False)
 
     def _maybe_set_weights(
@@ -200,6 +206,7 @@ class BaseValidatorNeuron(BaseNeuron):
         source: str,
         allow_initial_step: bool = False,
     ) -> bool:
+        """Submit weights when they are due and no other caller holds the lock; True once the chain accepts."""
         with self._subtensor_lock:
             if not self._weights_ready_for_setting:
                 return False
@@ -226,6 +233,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 self._set_weights_lock.release()
 
     def _weight_setter_loop(self) -> None:
+        """Poll for a due submission until shutdown, waking early when scores change."""
         bt.logging.info(
             f"⚖️ Background weight setter started "
             f"(poll={WEIGHT_SETTER_POLL_SEC:.0f}s, retry={WEIGHT_SETTER_RETRY_SEC:.0f}s)"
@@ -245,6 +253,7 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("⚖️ Background weight setter stopped")
 
     def _start_weight_setter_thread(self) -> None:
+        """Launch the background submission thread unless one is already alive."""
         thread = self._weight_setter_thread
         if thread is not None and thread.is_alive():
             return
@@ -257,6 +266,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self._weight_setter_thread.start()
 
     def _stop_weight_setter_thread(self) -> None:
+        """Wake the background submission thread and wait up to five seconds for it to end."""
         self._weight_setter_wakeup.set()
         thread = self._weight_setter_thread
         if thread is not None and thread.is_alive():
@@ -362,6 +372,7 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.debug("Stopped")
 
     def __enter__(self):
+        """Start the validator in its background thread and hand it to the with block."""
         self.run_in_background_thread()
         return self
 

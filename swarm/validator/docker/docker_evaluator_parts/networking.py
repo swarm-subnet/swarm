@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Host-side networking for the evaluator: port bands, readiness probes, and the egress lockdown on a container."""
+
 import socket
 import subprocess
 from typing import Optional
@@ -27,6 +29,7 @@ _PORT_STRIDE = 20
 
 
 def _find_free_port(self, worker_id: int = 0) -> int:
+    """Bind-test this worker's own band and hand back the first port that takes, or an ephemeral one if the band is full."""
     base = _PORT_BASE + int(worker_id) * _PORT_STRIDE
     for candidate in range(base, base + _PORT_STRIDE):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

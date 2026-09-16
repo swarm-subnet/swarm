@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Interceptor family: the miner chases a validator-flown evader across the open map, and the score that follows the catch."""
+
 from __future__ import annotations
 
 import inspect
@@ -94,6 +96,7 @@ _INTERCEPTOR_BENCHMARK_TEMPLATE: tuple[dict[str, Any], ...] = tuple(banded_pool(
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
+    """Return True when the callable accepts that parameter, and True as well when its signature cannot be read."""
     try:
         return keyword in inspect.signature(callable_obj).parameters
     except (TypeError, ValueError):
@@ -137,6 +140,8 @@ def make_interceptor_control(env: Any) -> DSLPIDControl:
 
 
 class InterceptorChallengeFamily(ChallengeFamilyRuntime):
+    """Open-map pursuit: the miner hunts an evading drone the validator flies, and wins by ramming it or closing inside the kill radius."""
+
     family_id = "cf_interceptor"
     runtime_supported = True
 
@@ -144,6 +149,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
     # profile / contract
     # ------------------------------------------------------------------ #
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
+        """Navigation resource class on the base image, 300 s per seed, and a 1.3 timeout multiplier because a chase runs long."""
         _ = task
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
@@ -165,10 +171,12 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         )
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
+        """The environment is constructed with sar_mode off: the quarry is the live target drone, not a victim on the ground."""
         _ = task
         return {"sar_mode": False}
 
     def state_clue_dim(self, task: Any) -> int:
+        """Two trailing floats only, the XY search clue; altitude is never handed over, the camera has to supply it."""
         _ = task
         return 2
 
@@ -176,6 +184,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
     # per-episode state
     # ------------------------------------------------------------------ #
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
+        """Clear the target handles on a freshly built env and widen the tilt limit to INTERCEPTOR_MAX_TILT_DEG before the first reset."""
         _ = requested_mode
         env.sar_mode = False
         env._target_uid = None
@@ -184,6 +193,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         self.reset_env_state(env)
 
     def reset_env_state(self, env: Any) -> None:
+        """Wipe the catch and crash flags, then draw the evader's jink rate, phase, cruise heading and clue radius from the map seed."""
         env._target_pos = np.asarray(env.GOAL_POS, dtype=float).copy()
         env._target_vel = np.zeros(3, dtype=float)
         env._target_rpm = np.zeros(4, dtype=float)
@@ -208,6 +218,10 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
     # world spawn
     # ------------------------------------------------------------------ #
     def spawn_task_world(self, env: Any) -> None:
+        """Load the target below the world, build the map, then raise the chaser's takeoff pad on the start surface.
+
+        The target is set at a seeded altitude over the floor resolved under its XY and becomes the scored goal, and
+        the cull list is built last so it can never be removed."""
         env.task.start = env._original_start
         env.task.goal = env._original_goal
         cli = getattr(env, "CLIENT", 0)
@@ -281,6 +295,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._build_cull_targets()
 
     def protected_body_uids(self, env: Any) -> set[int]:
+        """The takeoff pad bodies plus the target itself, so neither is culled nor counted as a fatal obstacle."""
         base = set(getattr(env, "_platform_uids", frozenset()))
         if getattr(env, "_target_uid", None) is not None:
             base.add(int(env._target_uid))
@@ -290,6 +305,10 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
     # the evader: validator flies the target each control step
     # ------------------------------------------------------------------ #
     def _evader_velocity(self, env: Any, chaser_pos: np.ndarray, tpos: np.ndarray) -> np.ndarray:
+        """The velocity command the target is flown at, set by how close the chaser has come.
+
+        It turns for home beyond the patrol circle, cruises on a slowly weaving heading while the chaser is far off, and
+        runs flat out with a sinusoidal jink inside react range; the Z term holds it in the band above the floor."""
         flee_speed = INTERCEPTOR_MINER_SPEED * INTERCEPTOR_TARGET_FLEE_FRAC
         cruise_speed = INTERCEPTOR_MINER_SPEED * INTERCEPTOR_TARGET_CRUISE_FRAC
         t = float(env._time_alive)
@@ -329,6 +348,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         return np.array([dir2[0] * speed, dir2[1] * speed, vz], dtype=float)
 
     def advance_world(self, env: Any) -> None:
+        """Once per control step: re-track the ground under the target with a downward ray, then turn its desired velocity into rotor RPM."""
         if getattr(env, "_target_uid", None) is None or getattr(env, "_target_ctrl", None) is None:
             return
         cli = getattr(env, "CLIENT", 0)
@@ -353,6 +373,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._target_rpm = np.asarray(rpm, dtype=float)
 
     def apply_world_physics(self, env: Any) -> None:
+        """Push the target's four rotor thrusts and its yaw torque into PyBullet each substep; a Physics.DYN env is left alone."""
         if getattr(env, "_target_uid", None) is None:
             return
         if getattr(env, "PHYSICS", None) == Physics.DYN:
@@ -385,6 +406,8 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         )
 
     def post_step_update(self, env: Any) -> None:
+        """Read the target's pose back, refresh the clue, and call the catch on a ram or a pass inside INTERCEPTOR_KILL_RADIUS_M.
+        A hard contact between the target and anything but the chaser marks it self-crashed, which ends the episode as INFEASIBLE."""
         if getattr(env, "_target_uid", None) is None:
             return
         cli = getattr(env, "CLIENT", 0)
@@ -422,6 +445,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
                     break
 
     def compute_terminated(self, env: Any) -> bool:
+        """Ends the episode only when the target has flown itself into something; a chaser crash just stamps OBSTACLE_COLLISION."""
         if getattr(env, "_target_crashed", False) and not env._success:
             if env._failure_reason == FailureReason.NONE.value:
                 env._failure_reason = FailureReason.INFEASIBLE.value
@@ -432,6 +456,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def compute_truncated(self, env: Any, *, terminal_already: bool, roll: float, pitch: float) -> bool:
+        """Cut the chase once roll or pitch passes MAX_TILT_RAD, or the clock reaches EP_LEN_SEC, recording TILT or TIMEOUT."""
         if abs(float(roll)) > float(env.MAX_TILT_RAD) or abs(float(pitch)) > float(env.MAX_TILT_RAD):
             if not terminal_already:
                 env._failure_reason = FailureReason.TILT.value
@@ -443,6 +468,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def build_info(self, env: Any) -> dict[str, Any]:
+        """Fields merged into the per-step info dict: caught or self-crashed, the closest pass, both radii, the catch time and the version stamps."""
         return {
             "intercept_caught": bool(getattr(env, "_intercept_caught", False)),
             "target_crashed": bool(getattr(env, "_target_crashed", False)),
@@ -463,6 +489,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         self, *, task: Any, success: bool, t: float, horizon: float,
         min_clearance: Optional[float], collision: bool, failure_reason: str,
     ) -> dict[str, Any]:
+        """Raw record of one chase: the map, the clock beside the pursuit target time and horizon, clearance, and how it ended."""
         challenge_type = int(getattr(task, "challenge_type", -1))
         target_time = _calculate_interceptor_target_time(task) if task is not None else None
         return {
@@ -478,6 +505,9 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         }
 
     def normalize_rollout_metrics(self, *, task: Any, metrics: dict[str, Any]) -> dict[str, float]:
+        """Weight a catch by INTERCEPTOR_W_SUCCESS and its clock by INTERCEPTOR_W_TIME, clearance carrying nothing here.
+
+        A chase that ends without a catch pays the participation reward only when the failure reason allows it."""
         horizon = float(metrics["horizon_sec"])
         if horizon <= 0.0:
             raise ValueError("'horizon' must be positive")
@@ -508,6 +538,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
     # task builders
     # ------------------------------------------------------------------ #
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
+        """Draw one freely sampled chase from validator.task_gen, stamped with this family id where that generator takes one."""
         from swarm.validator import task_gen as legacy_task_gen
 
         kwargs = {"sim_dt": sim_dt, "seed": seed}
@@ -516,6 +547,7 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         return legacy_task_gen.random_task(**kwargs)
 
     def screening_template(self) -> tuple[dict[str, Any], ...]:
+        """Eight identical slots on the open map, each spanning the full start-distance range."""
         # interceptor runs on the open map only (challenge_type 2)
         return tuple(
             {
@@ -526,4 +558,5 @@ class InterceptorChallengeFamily(ChallengeFamilyRuntime):
         )
 
     def benchmark_template(self) -> tuple[dict[str, Any], ...]:
+        """The 100-slot tuple laid out once at import, open map throughout, banded into three start distances."""
         return _INTERCEPTOR_BENCHMARK_TEMPLATE

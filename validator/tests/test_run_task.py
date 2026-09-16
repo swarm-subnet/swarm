@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""What one backend task does end to end: fetch the model, check its hash, run the phase, submit or drop."""
 from __future__ import annotations
 
 import asyncio
@@ -28,10 +29,12 @@ from swarm.validator.utils_parts import run_task as run_task_module
 
 
 def _seed_manager(epoch: int = 5) -> SimpleNamespace:
+    """Return a stub carrying only the epoch number the phase falls back to."""
     return SimpleNamespace(epoch_number=epoch)
 
 
 def _validator(*, backend_api: Any, seed_manager: Any | None = None) -> SimpleNamespace:
+    """Return the validator stand-in a task needs: a backend client and a seed manager."""
     return SimpleNamespace(
         backend_api=backend_api,
         seed_manager=seed_manager or _seed_manager(),
@@ -39,11 +42,14 @@ def _validator(*, backend_api: Any, seed_manager: Any | None = None) -> SimpleNa
 
 
 class _RecordingBackend:
+    """A backend client that files every submission it is handed and answers with a canned reply."""
     def __init__(self):
+        """Start with nothing filed and a reply that accepts the next submission."""
         self.submissions: list[dict] = []
         self.next_response: dict = {"recorded": True, "task_status": "SUBMITTED"}
 
     async def submit_task_result(self, **kwargs):
+        """File the keyword arguments as one submission and answer with the canned reply."""
         self.submissions.append(kwargs)
         return self.next_response
 
@@ -56,7 +62,9 @@ def _patch_helpers(
     screening_result: tuple | None = None,
     benchmark_result: tuple | None = None,
 ):
+    """Swap the model fetch, the digest and the two evaluators for outcomes fixed by the caller."""
     async def _fake_fetch(_self, _models):
+        """Return the prepared uid-to-path map rather than downloading anything."""
         return fetch_paths or {}
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", _fake_fetch)
 
@@ -68,17 +76,20 @@ def _patch_helpers(
 
     if screening_result is not None:
         async def _fake_screening(_self, _uid, _path, **_kw):
+            """Return the screening outcome the caller fixed, without flying a seed."""
             return screening_result
         monkeypatch.setattr(run_task_module, "_run_screening", _fake_screening)
 
     if benchmark_result is not None:
         async def _fake_benchmark(_self, _uid, _path, **_kw):
+            """Return the benchmark outcome the caller fixed, without flying a seed."""
             return benchmark_result
         monkeypatch.setattr(run_task_module, "_run_full_benchmark", _fake_benchmark)
 
 
 @pytest.fixture
 def fake_model_path(tmp_path) -> Path:
+    """A file standing in for UID 42's fetched submission on disk."""
     p = tmp_path / "UID_42.zip"
     p.write_bytes(b"fake")
     return p
@@ -88,6 +99,7 @@ def fake_model_path(tmp_path) -> Path:
 async def test_run_task_screening_happy_path_submits_score(
     monkeypatch, fake_model_path,
 ):
+    """One screening ends in exactly one submission: the averaged score, the seeds flown, no early failure."""
     target_hash = ("abc" * 22)[:64]
     backend = _RecordingBackend()
     _patch_helpers(
@@ -131,6 +143,7 @@ async def test_run_task_screening_happy_path_submits_score(
 async def test_run_task_screening_early_fail_marks_flag(
     monkeypatch, fake_model_path,
 ):
+    """A screening cut short carries the early-fail flag and counts only the seeds actually flown."""
     target_hash = ("abc" * 22)[:64]
     backend = _RecordingBackend()
     _patch_helpers(
@@ -170,6 +183,7 @@ async def test_run_task_screening_early_fail_marks_flag(
 async def test_run_task_aborts_when_cancel_flag_signal(
     monkeypatch, fake_model_path,
 ):
+    """A phase that stops on the cancel signal reaches the backend with nothing: no partial score is filed."""
     target_hash = ("abc" * 22)[:64]
     backend = _RecordingBackend()
     _patch_helpers(
@@ -205,6 +219,7 @@ async def test_run_task_aborts_when_cancel_flag_signal(
 
 @pytest.mark.asyncio
 async def test_run_task_benchmark_happy_path(monkeypatch, fake_model_path):
+    """A benchmark reports the window offset plus the seeds it flew, so seeds 200 to 1000 submit as 1000."""
     target_hash = ("abc" * 22)[:64]
     backend = _RecordingBackend()
     _patch_helpers(
@@ -254,6 +269,7 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
     captured = {}
 
     async def _fake_benchmark(_self, _uid, _path, **kwargs):
+        """Keep the seeds_from it was called with and answer with a full thousand-seed result."""
         captured["seeds_from"] = kwargs.get("seeds_from")
         return (
             0.6,
@@ -264,6 +280,7 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
         )
 
     async def _fake_fetch(_self, _models):
+        """Hand back the staged file as UID 42's model rather than downloading one."""
         return {42: (fake_model_path, "https://github.com/x/y")}
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", _fake_fetch)
     monkeypatch.setattr(run_task_module, "sha256sum", lambda _path: target_hash)
@@ -293,6 +310,7 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
 
 @pytest.mark.asyncio
 async def test_run_task_drops_when_model_fetch_fails(monkeypatch):
+    """A UID whose bytes never arrive is abandoned before any phase starts, with nothing filed for it."""
     backend = _RecordingBackend()
     _patch_helpers(monkeypatch, fetch_paths={})
 
@@ -317,6 +335,7 @@ async def test_run_task_drops_when_model_fetch_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_task_drops_on_hash_mismatch(monkeypatch, fake_model_path):
+    """A file whose digest is not the one the task named is never evaluated and never scored."""
     backend = _RecordingBackend()
     _patch_helpers(
         monkeypatch,
@@ -347,6 +366,7 @@ async def test_run_task_drops_on_hash_mismatch(monkeypatch, fake_model_path):
 async def test_run_task_logs_seed_gap_response_without_raising(
     monkeypatch, fake_model_path, caplog,
 ):
+    """A backend reply reporting a missing seed is only logged: the run still ends cleanly after one send."""
     target_hash = ("abc" * 22)[:64]
     backend = _RecordingBackend()
     backend.next_response = {

@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The cf_interceptor family end to end: task generation, the scoring split and the chase env."""
+
 import math
 
 import numpy as np
@@ -34,14 +36,17 @@ SIM_DT = 1.0 / 30.0
 
 
 def _task(seed):
+    """One cf_interceptor task for the given seed at the shared 30 Hz sim step."""
     return task_gen.random_task(sim_dt=SIM_DT, seed=seed, family_id="cf_interceptor")
 
 
 def test_registered():
+    """The interceptor family is present in the challenge-family registry."""
     assert "cf_interceptor" in list_registered_challenge_families()
 
 
 def test_task_open_map_distance_horizon():
+    """Every seed yields an open-map task at the fixed horizon with the gap inside its bounds."""
     for seed in range(20):
         t = _task(seed)
         assert t.family_id == "cf_interceptor"
@@ -52,17 +57,20 @@ def test_task_open_map_distance_horizon():
 
 
 def test_task_deterministic():
+    """The same seed rebuilds the same start and goal, so a rerun scores the same chase."""
     a, b = _task(11), _task(11)
     assert a.start == b.start and a.goal == b.goal
 
 
 def test_target_time_under_horizon():
+    """The intercept reference time always leaves room before the episode runs out."""
     for seed in range(40):
         t = _task(seed)
         assert _calculate_interceptor_target_time(t) < t.horizon
 
 
 def test_scoring_is_50_50():
+    """A catch splits evenly between success and speed, with no safety term; a timed-out miss pays the 0.01 participation reward."""
     fam = get_challenge_family("cf_interceptor")
     t = _task(3)
     base = dict(task=t, min_clearance=1.0, collision=False)
@@ -83,11 +91,13 @@ def test_scoring_is_50_50():
 
 # ---- env-backed checks (render-light) ----
 def _env(seed):
+    """A built interceptor environment and its first observation, for the given seed."""
     from swarm.utils.env_factory import make_env_with_initial_obs
     return make_env_with_initial_obs(_task(seed))
 
 
 def test_env_obs_and_airborne_target():
+    """The first observation carries a 1024-pixel depth frame and the quarry spawns off the floor."""
     env, obs = _env(7)
     assert obs["depth"].shape == (1024, 1024, 1)
     assert obs["state"].ndim == 1
@@ -97,6 +107,7 @@ def test_env_obs_and_airborne_target():
 
 
 def test_catch_on_contact():
+    """Putting the chaser on the quarry marks the episode a success and an intercept."""
     env, _ = _env(8)
     cli = env.CLIENT
     p.resetBasePositionAndOrientation(env.DRONE_IDS[0], list(env._target_pos),
@@ -108,6 +119,7 @@ def test_catch_on_contact():
 
 
 def test_ram_is_a_catch_not_a_chaser_crash():
+    """Real contact with the quarry body never counts as an obstacle collision against the drone."""
     env, _ = _env(9)
     cli = env.CLIENT
     # drop the chaser onto the target so the bodies physically collide
@@ -125,13 +137,16 @@ def test_ram_is_a_catch_not_a_chaser_crash():
 
 
 def test_target_not_culled_and_protected():
+    """The quarry body is kept out of the cull list and named protected by the family runtime."""
     env, _ = _env(10)
     assert int(env._target_uid) not in [t[0] for t in env._cull_targets]
     assert int(env._target_uid) in env.family_runtime.protected_body_uids(env)
 
 
 def test_rollout_determinism():
+    """Two chases from one seed trace the same quarry positions, step for step."""
     def trace(seed, steps):
+        """Fly the chaser straight at the quarry for n steps and return the quarry position after each one."""
         env, _ = _env(seed)
         out = []
         for _ in range(steps):
@@ -147,6 +162,7 @@ def test_rollout_determinism():
 
 
 def test_other_families_unaffected_drone_size():
+    """A cf_autopilot env keeps the stock 0.027 kg Crazyflie, so interceptor scaling never leaks."""
     # cf_autopilot still uses the 12 cm drone (no interceptor scaling leak)
     from swarm.utils.env_factory import make_env_with_initial_obs
     t = task_gen.random_task(sim_dt=SIM_DT, seed=1, family_id="cf_autopilot")

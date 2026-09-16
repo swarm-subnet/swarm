@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Tests for the swarm search-and-rescue family: mission generation, rollout shape, team scoring, dwell confirm."""
 from __future__ import annotations
 
 import math
@@ -39,6 +40,7 @@ from swarm.validator import task_gen
 
 @pytest.mark.parametrize("challenge_type", [1, 2, 3, 4, 5, 6])
 def test_swarm_sar_task_gen_deterministic_and_distinct(challenge_type):
+    """A seed and type rebuild the identical mission, with a legal team size and no two drones stacked."""
     kwargs = dict(sim_dt=0.02, seed=4242, challenge_type=challenge_type, family_id="cf_swarm_sar")
     t1 = task_gen.task_for_seed_and_type(**kwargs)
     t2 = task_gen.task_for_seed_and_type(**kwargs)
@@ -57,6 +59,7 @@ def test_swarm_sar_task_gen_deterministic_and_distinct(challenge_type):
 
 
 def test_swarm_sar_count_varies_with_seed_and_stays_in_range():
+    """Team size moves with the seed and never leaves the allowed band."""
     counts = {
         task_gen.task_for_seed_and_type(
             sim_dt=0.02, seed=s, challenge_type=2, family_id="cf_swarm_sar",
@@ -68,12 +71,14 @@ def test_swarm_sar_count_varies_with_seed_and_stays_in_range():
 
 
 def test_swarm_sar_seed_changes_layout():
+    """Two seeds place the drones differently, so a memorised formation buys nothing."""
     a = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=1, challenge_type=2, family_id="cf_swarm_sar")
     b = task_gen.task_for_seed_and_type(sim_dt=0.02, seed=2, challenge_type=2, family_id="cf_swarm_sar")
     assert a.starts != b.starts
 
 
 def _rollout(seed, steps=50):
+    """Fly a seed on neutral sticks and return its team score, the state row width and the drone count."""
     task = task_gen.task_for_seed_and_type(
         sim_dt=1 / 30, seed=seed, challenge_type=2, family_id="cf_swarm_sar",
     )
@@ -98,12 +103,14 @@ def _rollout(seed, steps=50):
 
 
 def test_swarm_sar_rollout_scores_for_random_count():
+    """Whatever team size a seed deals, the score stays in [0, 1] with one entry per drone."""
     result, _width, n = _rollout(2025)
     assert 0.0 <= result["final_score"] <= 1.0
     assert len(result["per_drone_final_score"]) == n
 
 
 def test_swarm_sar_obs_row_width_is_count_invariant():
+    """A policy sees the same state row whether it flies the smallest team or the largest."""
     seed_for_n = {}
     for s in range(60):
         t = task_gen.task_for_seed_and_type(
@@ -120,6 +127,7 @@ def test_swarm_sar_obs_row_width_is_count_invariant():
 
 
 def test_swarm_sar_smoke_obs_batches_and_action_validates():
+    """The smoke observation is batched per drone at both team extremes, and a wrong-sized reply is refused."""
     from swarm.domain_model import get_policy_interface_contract
     from swarm.policy_interface import (
         PolicyInterfaceError,
@@ -141,6 +149,7 @@ def test_swarm_sar_smoke_obs_batches_and_action_validates():
 
 
 def test_swarm_sar_shared_clue_and_single_victim():
+    """Every drone is given the one goal, and the search centre sits within its radius of the body."""
     task = task_gen.task_for_seed_and_type(
         sim_dt=1 / 30, seed=2025, challenge_type=2, family_id="cf_swarm_sar",
     )
@@ -161,6 +170,7 @@ def test_swarm_sar_shared_clue_and_single_victim():
 
 
 def test_swarm_sar_rollout_is_deterministic():
+    """One seed flies to the same team and per-drone score twice over."""
     r1, _w1, _n1 = _rollout(2025)
     r2, _w2, _n2 = _rollout(2025)
     assert r1["final_score"] == r2["final_score"]
@@ -168,6 +178,7 @@ def test_swarm_sar_rollout_is_deterministic():
 
 
 def _sar_task(n=4):
+    """Build an n-drone mission with the starts on a line and a fixed search centre."""
     starts = tuple((float(i), 0.0, 1.0) for i in range(n))
     goals = tuple((10.0, 0.0, 0.0) for _ in range(n))
     t = MapTask(
@@ -179,6 +190,7 @@ def _sar_task(n=4):
 
 
 def _base_info(n, **over):
+    """The rollout summary of a clean n-drone timeout, with any field overridden by keyword."""
     info = {
         "num_drones": n,
         "per_drone_success": [False] * n,
@@ -196,6 +208,7 @@ def _base_info(n, **over):
 
 
 def test_score_swarm_team_find_clean():
+    """A clean find pays above 0.9, and every drone takes the same number home."""
     fam = SwarmSarChallengeFamily()
     task = _sar_task(4)
     info = _base_info(4, sar_team_success=True, sar_team_t=5.0)
@@ -207,6 +220,7 @@ def test_score_swarm_team_find_clean():
 
 
 def test_score_swarm_crash_zeros_safety_but_keeps_find():
+    """One wreck costs the whole 0.10 safety slice and no more: the find and its time still pay."""
     fam = SwarmSarChallengeFamily()
     task = _sar_task(4)
     col = [False, False, True, False]
@@ -219,6 +233,7 @@ def test_score_swarm_crash_zeros_safety_but_keeps_find():
 
 
 def test_score_swarm_no_touch_fails_mission():
+    """A breach of the victim's sphere turns a confirmed find into a failure paying the 0.01 floor."""
     fam = SwarmSarChallengeFamily()
     task = _sar_task(4)
     info = _base_info(
@@ -231,6 +246,7 @@ def test_score_swarm_no_touch_fails_mission():
 
 
 def test_score_swarm_timeout_participation():
+    """Running out of clock without a find still pays the 0.01 floor, under its own reason."""
     fam = SwarmSarChallengeFamily()
     task = _sar_task(4)
     info = _base_info(4)  # never found
@@ -241,6 +257,7 @@ def test_score_swarm_timeout_participation():
 
 
 def test_score_swarm_all_crash_reports_collision():
+    """When every drone is wrecked, the run is reported as a collision, not the timeout behind it."""
     fam = SwarmSarChallengeFamily()
     task = _sar_task(3)
     info = _base_info(
@@ -254,6 +271,7 @@ def test_score_swarm_all_crash_reports_collision():
 
 
 def test_score_swarm_spawn_failure_reports_reason():
+    """A mission that never got off the pad is surfaced under its own label, not hidden as a timeout."""
     fam = SwarmSarChallengeFamily()
     task = _sar_task(4)
     info = _base_info(4, sar_team_failure_reason="SPAWN_FAILURE")
@@ -264,7 +282,9 @@ def test_score_swarm_spawn_failure_reports_reason():
 
 
 class _FakeEnv:
+    """A stand-in carrying the victim geometry and dwell bookkeeping the family reads and writes."""
     def __init__(self, n, victim_centre, victim_top_z, drone_pos, drone_vel):
+        """Place the victim and park every drone at one shared position and velocity."""
         self.NUM_DRONES = n
         self._sim_dt = 0.1
         self._time_alive = 0.0
@@ -287,6 +307,7 @@ class _FakeEnv:
         self._vel = np.asarray(drone_vel, dtype=float)
 
     def _getDroneStateVector(self, i):
+        """Return the 20-slot row with only the position and velocity slices filled."""
         s = np.zeros(20, dtype=float)
         s[0:3] = self._pos
         s[10:13] = self._vel
@@ -294,6 +315,7 @@ class _FakeEnv:
 
 
 def test_update_sar_dwell_multi_confirms_after_dwell():
+    """Holding the hover predicate long enough confirms the victim for the whole team."""
     fam = SwarmSarChallengeFamily()
     # hover 3 m above a victim whose top is z=2 (centre z=1), within 2 m, near-zero speed
     env = _FakeEnv(2, victim_centre=(0.0, 0.0, 1.0), victim_top_z=2.0,
@@ -308,6 +330,7 @@ def test_update_sar_dwell_multi_confirms_after_dwell():
 
 
 def test_update_sar_dwell_multi_no_touch_fails():
+    """Entering the victim's sphere kills the mission at once and names that as the reason."""
     fam = SwarmSarChallengeFamily()
     # inside the 0.8 m no-touch sphere of the victim
     env = _FakeEnv(2, victim_centre=(0.0, 0.0, 1.0), victim_top_z=1.2,
@@ -319,6 +342,7 @@ def test_update_sar_dwell_multi_no_touch_fails():
 
 
 def test_no_touch_overrides_same_step_confirm_regardless_of_order():
+    """A breach still sinks the mission when a teammate already confirmed earlier in the same step."""
     # A teammate may have already confirmed earlier in the same step; a no-touch
     # breach by any drone must still fail the mission (no order dependence).
     fam = SwarmSarChallengeFamily()

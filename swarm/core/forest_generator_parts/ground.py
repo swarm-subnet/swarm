@@ -25,10 +25,12 @@ from .assets import _clamp_mode_id
 # SECTION 6: Ground texture generation
 # ---------------------------------------------------------------------------
 def _clamp_u8(v: float) -> int:
+    """Round a float and pin it into the 0..255 byte range."""
     return max(0, min(255, int(round(v))))
 
 
 def _hash_noise_01(x: int, y: int, seed: int) -> float:
+    """Deterministic value noise in [-1, 1] from integer pixel coordinates and a seed."""
     n = (x * 73856093) ^ (y * 19349663) ^ (seed * 83492791)
     n = (n << 13) ^ n
     return (
@@ -39,6 +41,7 @@ def _hash_noise_01(x: int, y: int, seed: int) -> float:
 
 
 def _write_bmp24(path: str, width: int, height: int, rgb_data: bytearray) -> None:
+    """Write RGB bytes as an uncompressed 24-bit BMP: bottom-up rows, padded to 4 bytes."""
     row_stride = width * 3
     row_pad = (4 - (row_stride % 4)) % 4
     image_size = (row_stride + row_pad) * height
@@ -70,6 +73,7 @@ def _write_bmp24(path: str, width: int, height: int, rgb_data: bytearray) -> Non
 
 
 def _ensure_ground_texture() -> str:
+    """Paint the grass and dirt BMP on the first call, then return its path unchanged."""
     if os.path.exists(GROUND_TEXTURE_PATH):
         return GROUND_TEXTURE_PATH
     os.makedirs(os.path.dirname(GROUND_TEXTURE_PATH), exist_ok=True)
@@ -130,6 +134,7 @@ def _ensure_ground_texture() -> str:
 
 
 def _ground_texture_id(cli: int) -> Optional[int]:
+    """Load the grass BMP into one physics client, caching the handle; None when loading fails."""
     if cli in _CLI_TEX_CACHE:
         return _CLI_TEX_CACHE[cli]
     tex_path = _ensure_ground_texture()
@@ -145,6 +150,7 @@ def _ground_texture_id(cli: int) -> Optional[int]:
 # SECTION 7: Ground spawning
 # ---------------------------------------------------------------------------
 def _ground_rgba_for_mode(mode_id: int) -> List[float]:
+    """The colour keyed to a map mode's primary category: autumn, dead, snow, else the default."""
     cat = MAP_MODE_CONFIG[_clamp_mode_id(mode_id)]["primary_category"]
     if cat == "autumn":
         return GROUND_RGBA_AUTUMN
@@ -156,6 +162,7 @@ def _ground_rgba_for_mode(mode_id: int) -> List[float]:
 
 
 def _spawn_ground(cli: int, mode_id: int = 1) -> None:
+    """Create the static floor box with its top face at z=0; only mode 1 gets the grass texture."""
     rgba = _ground_rgba_for_mode(mode_id)
     half = GROUND_SIZE_M * 0.5
     col = p.createCollisionShape(

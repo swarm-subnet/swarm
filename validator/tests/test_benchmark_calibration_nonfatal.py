@@ -31,21 +31,25 @@ from swarm.benchmark.engine_parts import workers
 
 @pytest.fixture(autouse=True)
 def _reset_flag():
+    """Pin workers.host_timings_normalized True around every test so one run cannot leak into the next."""
     workers.host_timings_normalized = True
     yield
     workers.host_timings_normalized = True
 
 
 def _run(coro):
+    """Drive a coroutine to completion on a fresh event loop."""
     return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
 
 
 def test_failed_calibration_does_not_abort_the_run(monkeypatch):
+    """A host that cannot be timed still benchmarks: precalibration reports False instead of raising."""
     monkeypatch.setattr(workers, "baseline_model_available", lambda: True)
     monkeypatch.setattr(workers, "host_speed_factor_is_fresh", lambda n: False)
     monkeypatch.setattr(workers, "_create_prepared_benchmark_evaluator", lambda: object())
 
     async def _no_speed(evaluator, count):
+        """Stand in for a host speed measurement that came back with nothing."""
         return None
 
     monkeypatch.setattr(workers, "_ensure_host_speed_factor", _no_speed)
@@ -57,11 +61,13 @@ def test_failed_calibration_does_not_abort_the_run(monkeypatch):
 
 
 def test_successful_calibration_marks_timings_normalized(monkeypatch):
+    """A speed factor that measures cleanly sets the module flag the rest of the benchmark reads."""
     monkeypatch.setattr(workers, "baseline_model_available", lambda: True)
     monkeypatch.setattr(workers, "host_speed_factor_is_fresh", lambda n: False)
     monkeypatch.setattr(workers, "_create_prepared_benchmark_evaluator", lambda: object())
 
     async def _speed(evaluator, count):
+        """Stand in for a host measurement that produced a usable factor of 1.0."""
         return 1.0
 
     monkeypatch.setattr(workers, "_ensure_host_speed_factor", _speed)
@@ -71,10 +77,12 @@ def test_successful_calibration_marks_timings_normalized(monkeypatch):
 
 
 def test_a_fresh_cache_skips_calibration_entirely(monkeypatch):
+    """A cached speed factor still in date short-circuits: the measurement is never awaited."""
     monkeypatch.setattr(workers, "baseline_model_available", lambda: True)
     monkeypatch.setattr(workers, "host_speed_factor_is_fresh", lambda n: True)
 
     async def _boom(evaluator, count):
+        """Fail loudly if a measurement is attempted while the cached factor is still valid."""
         raise AssertionError("calibration must not run when the cache is fresh")
 
     monkeypatch.setattr(workers, "_ensure_host_speed_factor", _boom)

@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The shipped package version and the protocol schema version must not drift on to different majors."""
 from __future__ import annotations
 
 import swarm
@@ -22,5 +23,6 @@ from swarm import protocol
 
 
 def test_schema_and_package_versions_aligned():
+    """Both sit on major 5, so bumping one major without the other fails here instead of at a miner."""
     assert protocol.SCHEMA_VERSION == "5.0.0"
     assert swarm.__version__.startswith("5.")

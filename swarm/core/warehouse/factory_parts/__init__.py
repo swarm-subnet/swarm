@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Embedded factory generator re-exported flat for factory.py: the seeded conveyor route and its model lookups, the belt network, the safety barrier ring, and build_embedded_factory in entry."""
+
 from .barriers import *
 from .belts import *
 from .entry import *

@@ -16,6 +16,8 @@
 # DEALINGS IN THE SOFTWARE.
 
 # swarm/validator/task_gen.py
+"""Seeded MapTask generation: start, goal, horizon and wind for every challenge family."""
+
 from __future__ import annotations
 
 import math
@@ -103,6 +105,7 @@ from swarm.constants import (
     TYPE_6_WORLD_RANGE,
     VILLAGE_R_MAX,
     VILLAGE_R_MIN,
+    WIND_BY_MAP,
 )
 from swarm.core.mountain_generator import get_global_scale, get_terrain_z
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
@@ -150,10 +153,12 @@ TYPE_PARAMS = {
 
 
 def get_type_params(challenge_type: int) -> dict:
+    """Geometry bounds for one challenge type, falling back to type 1 when it is unknown."""
     return TYPE_PARAMS.get(challenge_type, TYPE_PARAMS[1])
 
 
 def _resolve_params(seed: int, challenge_type: int) -> dict:
+    """Per-type geometry, where type 3 takes the seed-scaled mountain range and type 4 the fixed village one."""
     if challenge_type == 3:
         return {
             'world_range': _get_type3_world_range(seed),
@@ -190,6 +195,7 @@ def _swarm_pads(
     rng = random.Random((seed + SWARM_LAYOUT_SEED_OFFSET) & 0xFFFFFFFF)
 
     def _min_gap(pt, placed) -> float:
+        """Planar distance from pt to the nearest pad already down; inf while none are."""
         if not placed:
             return float("inf")
         return min(math.hypot(pt[0] - q[0], pt[1] - q[1]) for q in placed)
@@ -246,6 +252,18 @@ def _max_search_radius(distance: float, horizon: float) -> float:
     return math.sqrt(budget * SEARCH_DETECT_WIDTH * SPEED_LIMIT / (SEARCH_SWEEP_ALPHA * math.pi))
 
 
+def _wind_for_map(family_id: str, challenge_type: int) -> dict:
+    """MapTask wind fields for this family on this map; empty (no wind) unless the map opted in."""
+    spec = WIND_BY_MAP.get((family_id, int(challenge_type)))
+    if not spec:
+        return {}
+    return {
+        "wind_max_mps": float(spec["max_mps"]),
+        "wind_turbulence": float(spec.get("turbulence", 0.0)),
+        "wind_gusts": int(spec.get("gusts", 0)),
+    }
+
+
 def _build_task_with_params(
     sim_dt: float,
     seed: int,
@@ -256,6 +274,8 @@ def _build_task_with_params(
     moving_platform: bool = False,
     n_drones: Optional[int] = None,
 ) -> MapTask:
+    """Assemble the MapTask for one family: pads, goal, horizon, wind and search radius."""
+    wind = _wind_for_map(family_id, challenge_type)
     if family_id == "cf_interceptor":
         # chaser and target on opposite sides of a near-centre midpoint, 60-100 m apart,
         # so the chase fits inside the (larger) open terrain. z values are placeholders;
@@ -271,7 +291,7 @@ def _build_task_with_params(
         return MapTask(
             map_seed=seed, start=start, goal=goal, sim_dt=sim_dt,
             horizon=INTERCEPTOR_HORIZON_SEC, challenge_type=challenge_type,
-            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False, **wind,
         )
 
     if family_id == "cf_interceptor_office":
@@ -286,7 +306,7 @@ def _build_task_with_params(
         return MapTask(
             map_seed=seed, start=start, goal=goal, sim_dt=sim_dt,
             horizon=params['horizon'], challenge_type=OFFICE_CHALLENGE_TYPE,
-            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
+            family_id=family_id, version=SCHEMA_VERSION, moving_platform=False, **wind,
         )
 
     if family_id in ("cf_swarm_autopilot", "cf_swarm_sar"):
@@ -300,7 +320,7 @@ def _build_task_with_params(
             map_seed=seed, start=starts[0], goal=goals[0], sim_dt=sim_dt,
             horizon=params['horizon'], challenge_type=challenge_type,
             family_id=family_id, version=SCHEMA_VERSION, moving_platform=False,
-            num_drones=n_drones, starts=starts, goals=goals,
+            num_drones=n_drones, starts=starts, goals=goals, **wind,
         )
 
     rng = random.Random(seed)
@@ -337,12 +357,14 @@ def _build_task_with_params(
         version=SCHEMA_VERSION,
         search_radius=search_radius,
         moving_platform=moving_platform,
+        **wind,
     )
 
 
 def _resolve_moving_platform(
     seed: int, challenge_type: int, family_id: str, moving_platform: Optional[bool],
 ) -> bool:
+    """Whether this seed gets a moving landing pad: only cf_autopilot can, an explicit flag winning over the per-type draw."""
     if family_id != "cf_autopilot":
         return False
     if moving_platform is not None:
@@ -359,6 +381,7 @@ def _build_task_for_type(
     family_id: str = "cf_autopilot",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
+    """Resolve the geometry for a family and type, then hand it to the task assembler."""
     if family_id == "cf_interceptor":
         challenge_type = 2
         params = _resolve_params(seed, challenge_type)
@@ -382,12 +405,14 @@ def _build_task_for_type(
 
 
 def _get_type3_world_range(seed: int) -> float:
+    """Half-extent of the mountain map at this seed, shrunk by the spawn ratio."""
     gs = get_global_scale(seed)
     half = 250.0 * gs
     return half * TYPE_3_WORLD_RANGE_RATIO
 
 
 def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
+    """Height of the mountain terrain under (x, y) at this seed's global scale."""
     gs = get_global_scale(seed)
     return get_terrain_z(x, y, seed, gs)
 
@@ -395,6 +420,7 @@ def _get_type3_surface_z(x: float, y: float, seed: int) -> float:
 def _random_start(seed_rng: random.Random, params: dict,
                   challenge_type: int = 1, seed: int = 0,
                   family_id: str = "cf_autopilot") -> Tuple[float, float, float]:
+    """Draw a start position inside the world bounds, lifted by the take-off buffer where the map spawns on a pad."""
     if challenge_type == 5:
         x = seed_rng.uniform(-params['world_range_x'], params['world_range_x'])
         y = seed_rng.uniform(-params['world_range_y'], params['world_range_y'])
@@ -428,6 +454,7 @@ def _goal_from_start_warehouse(
     start: Tuple[float, float, float],
     params: dict,
 ) -> Tuple[float, float, float]:
+    """Goal r_min to r_max away from the start, kept inside the rectangular warehouse bounds."""
     start_x, start_y, _ = start
     wx, wy = params['world_range_x'], params['world_range_y']
     r_min, r_max = params['r_min'], params['r_max']
@@ -500,6 +527,10 @@ def _goal_from_start(
     challenge_type: int = 1,
     seed: int = 0,
 ) -> Tuple[float, float, float]:
+    """Goal drawn r_min to r_max from the start and clamped into the square world range.
+
+    Types 3 and 4 land it on the terrain surface instead of inside a free height band.
+    """
     if challenge_type == 5:
         return _goal_from_start_warehouse(seed_rng, start, params)
 
@@ -621,6 +652,7 @@ def _goal_from_start(
 
 
 def _goal_from_origin(seed_rng: random.Random, params: dict) -> Tuple[float, float, float]:
+    """Goal drawn at a random bearing and radius about the world origin, used when RANDOM_START is off."""
     r_min, r_max = params['r_min'], params['r_max']
     h_min, h_max = params['h_min'], params['h_max']
 
@@ -637,6 +669,7 @@ def random_task(
     *,
     family_id: str = "cf_autopilot",
 ) -> MapTask:
+    """Task for a fresh or given seed, its challenge type drawn from the weighted distribution."""
     if seed is None:
         seed = random.randrange(2**32)
     challenge_types = list(CHALLENGE_TYPE_DISTRIBUTION.keys())
@@ -660,6 +693,7 @@ def task_for_seed_and_type(
     family_id: str = "cf_autopilot",
     moving_platform: Optional[bool] = None,
 ) -> MapTask:
+    """Task pinned to one seed and challenge type; raises ValueError on a type no map serves."""
     if challenge_type not in CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE:
         raise ValueError(f"Unsupported challenge type: {challenge_type}")
     return _build_task_for_type(

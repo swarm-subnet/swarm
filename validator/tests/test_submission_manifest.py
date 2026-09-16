@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Manifest rules: one artifact, a supported interface version, and a zip matching its recorded hash and size."""
+
 from __future__ import annotations
 
 import json
@@ -52,6 +54,7 @@ class DroneFlightController:
 
 
 def _artifact(tmp_path: Path, family_id="cf_autopilot"):
+    """Package a one-file agent zip under repo/artifacts/<family_id>/ and return the packaged result."""
     source = tmp_path / "source"
     source.mkdir(parents=True, exist_ok=True)
     action_dim = 6 if "search_and_rescue" in family_id or "sar" in family_id else 5
@@ -67,6 +70,7 @@ def _artifact(tmp_path: Path, family_id="cf_autopilot"):
 
 
 def _entry(packaged) -> SubmissionArtifact:
+    """A manifest entry describing the packaged zip: its repo-relative path, hash and size."""
     return SubmissionArtifact(
         family_id=packaged.family_id,
         interface_version=packaged.interface_version,
@@ -78,6 +82,7 @@ def _entry(packaged) -> SubmissionArtifact:
 
 
 def test_parse_accepts_exact_single_artifact(tmp_path):
+    """A payload carrying one artifact round-trips through the parser with its interface version intact."""
     packaged = _artifact(tmp_path)
     parsed = parse_submission_manifest_payload(build_submission_manifest_payload([_entry(packaged)]))
     assert parsed.artifacts[0].interface_version == "submission_zip.v1"
@@ -85,6 +90,7 @@ def test_parse_accepts_exact_single_artifact(tmp_path):
 
 @pytest.mark.parametrize("artifacts", [[], [{}, {}]])
 def test_parse_requires_exactly_one_artifact(artifacts):
+    """Zero artifacts and two artifacts are both refused: a manifest describes one submission only."""
     payload = {
         "manifest_version": SUBMISSION_MANIFEST_VERSION,
         "repo_layout_rules": dict(REPO_LAYOUT_RULES),
@@ -95,6 +101,7 @@ def test_parse_requires_exactly_one_artifact(artifacts):
 
 
 def test_parse_rejects_old_interface():
+    """A submission_zip.v0 entry is refused, so a stale packager never reaches evaluation."""
     payload = {
         "manifest_version": SUBMISSION_MANIFEST_VERSION,
         "repo_layout_rules": dict(REPO_LAYOUT_RULES),
@@ -109,6 +116,7 @@ def test_parse_rejects_old_interface():
 
 
 def test_validate_repo_checks_size_hash_and_inner_family(tmp_path):
+    """A repo passes only while the recorded size still matches the zip on disk; one byte out fails it."""
     packaged = _artifact(tmp_path)
     repo = packaged.output_zip.parents[2]
     write_submission_manifest(repo, [_entry(packaged)])
@@ -120,6 +128,7 @@ def test_validate_repo_checks_size_hash_and_inner_family(tmp_path):
 
 
 def test_manifest_is_mandatory_even_when_root_zip_exists(tmp_path):
+    """A bare submission.zip at the repo root is no substitute; validation still fails on the missing manifest."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "submission.zip").write_bytes(b"not used")
@@ -136,6 +145,7 @@ def _normalize_imports(source: str) -> str:
 
 
 def test_backend_mirror_matches_apart_from_imports():
+    """The backend's copy of the module and its schema stay identical once import roots are normalized."""
     swarm_pkg = Path(__file__).resolve().parents[2] / "swarm" / "submission_manifest"
     backend = Path(__file__).resolve().parents[3] / "swarm-backend" / "app"
     if not backend.is_dir():

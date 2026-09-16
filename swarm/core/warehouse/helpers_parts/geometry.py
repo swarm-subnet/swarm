@@ -15,11 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Warehouse floor geometry: wall slots, mesh extents, area placement and window layout."""
+
 from ._shared import *
 from .mesh_spawn import _loader_runtime_key
 
 
 def slot_point(slot, along, inward):
+    """Point on the named wall: along runs parallel to it, inward steps toward the floor centre."""
     if slot == "north":
         return along, HALF_Y - inward
     if slot == "south":
@@ -32,6 +35,7 @@ def slot_point(slot, along, inward):
 
 
 def dock_inward_yaw_for_slot(slot):
+    """Yaw in degrees that turns a dock model on that wall to face the building interior."""
     if slot == "north":
         return 180.0
     if slot == "south":
@@ -44,10 +48,12 @@ def dock_inward_yaw_for_slot(slot):
 
 
 def wall_yaw_for_slot(slot):
+    """Panels and frames take the same inward-facing angle as a dock on that side."""
     return dock_inward_yaw_for_slot(slot)
 
 
 def tiled_centers(total_size, tile_size):
+    """Centres of the whole tiles that fit inside total_size, laid out symmetrically about zero."""
     if tile_size <= 1e-9:
         raise ValueError(f"Invalid tile size: {tile_size}")
     n = max(1, int(math.floor(float(total_size) / float(tile_size))))
@@ -57,6 +63,7 @@ def tiled_centers(total_size, tile_size):
 
 
 def oriented_xy_size(loader, model_name, scale, yaw_deg):
+    """Axis-aligned footprint a scaled model covers once yawed by yaw_deg, memoised per loader."""
     if isinstance(scale, (tuple, list)):
         scale_key = (float(scale[0]), float(scale[1]), float(scale[2]))
     else:
@@ -79,6 +86,7 @@ def oriented_xy_size(loader, model_name, scale, yaw_deg):
 
 
 def model_bounds_xyz(loader, model_name, scale_xyz):
+    """Lowest and highest corner of a scaled mesh, taken from the loader or computed off its vertices, memoised."""
     sx, sy, sz = float(scale_xyz[0]), float(scale_xyz[1]), float(scale_xyz[2])
     scale_key = (sx, sy, sz)
     cache_key = (_loader_runtime_key(loader), str(model_name), scale_key)
@@ -101,6 +109,7 @@ def model_bounds_xyz(loader, model_name, scale_xyz):
 
 
 def _first_existing_model_name(loader, candidates):
+    """The first candidate that is actually on disk under the loader's obj directory, None when none is."""
     for model_name in candidates:
         if os.path.exists(os.path.join(loader.obj_dir, model_name)):
             return model_name
@@ -108,6 +117,7 @@ def _first_existing_model_name(loader, candidates):
 
 
 def _shell_mesh_scale_xy(shell_meshes):
+    """Factors that stretch the authored shell from the size baked into it to the configured floor size."""
     cfg = shell_meshes.get("config", {}) or {}
     base_x = float(cfg.get("warehouse_size_x", WAREHOUSE_BASE_SIZE_X))
     base_y = float(cfg.get("warehouse_size_y", WAREHOUSE_BASE_SIZE_Y))
@@ -117,6 +127,7 @@ def _shell_mesh_scale_xy(shell_meshes):
 
 
 def _floor_spawn_half_extents(loader, safety_margin_m=FLOOR_SPAWN_SAFETY_MARGIN_M):
+    """Half width and half depth of the region props may stand in, inside the tiled border and safety_margin_m."""
     tile_x, tile_y, _ = loader.model_size(CONVEYOR_ASSETS["floor"], UNIFORM_SCALE)
     margin_x = tile_x * FLOOR_INNER_MARGIN_TILES
     margin_y = tile_y * FLOOR_INNER_MARGIN_TILES
@@ -128,6 +139,7 @@ def _floor_spawn_half_extents(loader, safety_margin_m=FLOOR_SPAWN_SAFETY_MARGIN_
 
 
 def _truck_extra_gap_for_gate_state(gate_model_name):
+    """Metres to back a truck further off the dock when the gate mesh reads as closed or half open."""
     name = os.path.basename(str(gate_model_name)).lower()
     if "closed" in name:
         return LOADING_TRUCK_EXTRA_GAP_CLOSED
@@ -137,6 +149,7 @@ def _truck_extra_gap_for_gate_state(gate_model_name):
 
 
 def _estimate_loading_truck_along_extent_m(loading_slot):
+    """Metres the first truck OBJ spans parallel to the dock wall, read straight off its vertices; 0.0 when the file is absent."""
     cache_key = (str(loading_slot), tuple(float(v) for v in LOADING_TRUCK_SCALE_XYZ))
     if cache_key in _LOADING_TRUCK_ALONG_EXTENT_CACHE:
         return _LOADING_TRUCK_ALONG_EXTENT_CACHE[cache_key]
@@ -194,6 +207,7 @@ def _estimate_loading_truck_along_extent_m(loading_slot):
 # Area-layout geometry (shared by structure.py + layout.py)
 # ---------------------------------------------------------------------------
 def _loading_marker_xy_size(size_pair, loading_side):
+    """Turn a (depth, span) pair into world x and y sizes for the wall the dock sits on."""
     depth = float(size_pair[0])
     span = float(size_pair[1])
     if loading_side in ("north", "south"):
@@ -202,10 +216,12 @@ def _loading_marker_xy_size(size_pair, loading_side):
 
 
 def _rect_bounds(cx, cy, sx, sy):
+    """Minimum and maximum x and y of a box given by its centre and its size."""
     return (cx - sx * 0.5, cx + sx * 0.5, cy - sy * 0.5, cy + sy * 0.5)
 
 
 def _candidate_rect_bounds(candidate):
+    """Extents of a placement dict, worked out once and stashed back on the dict for later hits."""
     cached = candidate.get("_rect_bounds")
     if cached is None:
         cached = _rect_bounds(
@@ -216,6 +232,7 @@ def _candidate_rect_bounds(candidate):
 
 
 def _rects_overlap(a, b, gap):
+    """True when two placements come closer than gap on both axes, so neither can be kept."""
     a_bounds = a.get("_rect_bounds")
     if a_bounds is None:
         a_bounds = _candidate_rect_bounds(a)
@@ -233,12 +250,14 @@ def _rects_overlap(a, b, gap):
 
 
 def _size_fits_half_span(sx, sy, half_x, half_y, margin):
+    """True when an sx by sy box still sits between the given half extents after margin is taken off both edges."""
     max_sx = 2.0 * (half_x - margin)
     max_sy = 2.0 * (half_y - margin)
     return float(sx) <= max_sx + 1e-6 and float(sy) <= max_sy + 1e-6
 
 
 def _sample_random_center(rng, sx, sy, floor_half_x, floor_half_y, margin):
+    """Uniform centre that keeps an sx by sy box on the floor, falling back to the origin when it cannot fit."""
     min_x = -floor_half_x + margin + (sx * 0.5)
     max_x = floor_half_x - margin - (sx * 0.5)
     min_y = -floor_half_y + margin + (sy * 0.5)
@@ -249,6 +268,7 @@ def _sample_random_center(rng, sx, sy, floor_half_x, floor_half_y, margin):
 
 
 def _wall_along_limits(wall, sx, sy, half_x, half_y, margin):
+    """Lowest and highest centre coordinate an sx by sy box can slide to without leaving that wall."""
     if wall in ("north", "south"):
         return (
             -half_x + margin + (sx * 0.5),
@@ -261,6 +281,7 @@ def _wall_along_limits(wall, sx, sy, half_x, half_y, margin):
 
 
 def _wall_attached_center(wall, along, sx, sy, half_x, half_y, margin):
+    """Centre of a box pushed flush to the named wall, margin clear of it, at the given along position."""
     if wall == "north":
         return along, half_y - margin - (sy * 0.5)
     if wall == "south":
@@ -273,12 +294,14 @@ def _wall_attached_center(wall, along, sx, sy, half_x, half_y, margin):
 
 
 def _orient_dims_long_side_on_wall(wall, sx, sy):
+    """Swap sx and sy so the bigger of the two runs parallel to that wall."""
     if wall in ("north", "south"):
         return (max(sx, sy), min(sx, sy))
     return (min(sx, sy), max(sx, sy))
 
 
 def _attached_wall_from_area_bounds(area_sx, area_sy, area_cx, area_cy):
+    """Which of the four walls an already placed area sits against, ties broken toward the side its long axis runs down."""
     half_x = WAREHOUSE_SIZE_X * 0.5
     half_y = WAREHOUSE_SIZE_Y * 0.5
     dist_to_wall = {
@@ -306,6 +329,7 @@ def _attached_wall_from_area_bounds(area_sx, area_sy, area_cx, area_cy):
 # Window utilities (used by structure.py wall building)
 # ---------------------------------------------------------------------------
 def mirrored_window_indices(segment_count):
+    """Segment slots that get a single-pane opening, placed symmetrically; nothing at all below six segments."""
     if segment_count <= 5:
         return set()
     if segment_count >= 12:
@@ -318,6 +342,7 @@ def mirrored_window_indices(segment_count):
 
 
 def mirrored_wide_window_starts(segment_count, span_steps, seed_key):
+    """Opening segments for the span_steps-long panes, jittered off seed_key and kept symmetric about the middle."""
     if span_steps <= 1 or segment_count < (span_steps + 6):
         return []
     rng = random.Random(seed_key + segment_count * 97 + span_steps * 13)
@@ -351,6 +376,7 @@ def mirrored_wide_window_starts(segment_count, span_steps, seed_key):
 
 
 def _indices_blocked_by_doors(along_values, door_centers, door_span):
+    """Segment indices whose own span overlaps a door opening, so nothing may be built across them."""
     blocked = set()
     if not along_values or not door_centers:
         return blocked
@@ -373,6 +399,7 @@ def _indices_blocked_by_doors(along_values, door_centers, door_span):
 
 
 def _merge_spans_1d(spans, eps=1e-6):
+    """Sorted union of the intervals with touching ones joined and zero-length ones dropped."""
     if not spans:
         return []
     ordered = sorted(
@@ -390,6 +417,7 @@ def _merge_spans_1d(spans, eps=1e-6):
 
 
 def _subtract_spans_1d(base_spans, cut_spans, eps=1e-6):
+    """What is left of base_spans once every cut interval is carved out, merged and ordered."""
     if not base_spans:
         return []
     base_merged = _merge_spans_1d(base_spans, eps=eps)
@@ -419,6 +447,7 @@ def _subtract_spans_1d(base_spans, cut_spans, eps=1e-6):
 
 
 def _filter_mirrored_single_windows(candidate_indices, blocked_indices, segment_count):
+    """Keep an index only when its mirror across the middle is free too, dropping the whole pair otherwise."""
     out = set()
     for i in sorted(candidate_indices):
         j = segment_count - 1 - i
@@ -435,6 +464,7 @@ def _filter_mirrored_single_windows(candidate_indices, blocked_indices, segment_
 
 
 def _span_is_clear(start_idx, span_steps, blocked_indices):
+    """True when none of the span_steps segments from start_idx onward is taken by a door."""
     for k in range(span_steps):
         if (start_idx + k) in blocked_indices:
             return False
@@ -444,6 +474,7 @@ def _span_is_clear(start_idx, span_steps, blocked_indices):
 def _filter_mirrored_wide_windows(
     candidate_starts, span_steps, blocked_indices, segment_count
 ):
+    """Keep a start only when it and its mirror both have every segment of the pane free."""
     if span_steps <= 1:
         return sorted(candidate_starts)
     min_start = 1
@@ -471,6 +502,7 @@ def _filter_mirrored_wide_windows(
 # Cache clearing for build reset
 # ---------------------------------------------------------------------------
 def clear_build_caches():
+    """Drop the memoised PyBullet shape ids, resolved mesh paths and textures before a scene is rebuilt."""
     _MESH_VISUAL_SHAPE_CACHE.clear()
     _MESH_COLLISION_SHAPE_CACHE.clear()
     _RESOLVED_MESH_PATH_CACHE.clear()

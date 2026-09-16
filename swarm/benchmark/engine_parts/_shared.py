@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Imports, run options and worker message types re-exported to the engine parts."""
 from __future__ import annotations
 
 import argparse
@@ -58,6 +59,8 @@ BENCH_GROUP_TO_TYPE = dict(BENCHMARK_GROUP_TO_CHALLENGE_TYPE)
 
 @dataclass
 class _RunOptions:
+    """Knobs for one benchmark run: heartbeats, RPC tracing and the timeout policy."""
+
     heartbeat_sec: float = 30.0
     rpc_trace: bool = False
     rpc_trace_every: int = 250
@@ -74,6 +77,8 @@ class _RunOptions:
 
 @dataclass
 class _BatchStat:
+    """Timing for one finished batch: elapsed, seed processing and container startup."""
+
     worker_id: int
     batch_index: int
     seed_count: int
@@ -85,6 +90,8 @@ class _BatchStat:
 
 @dataclass
 class _ProcessBatchRequest:
+    """One batch of seeds handed to a worker process, with what it needs to fly them."""
+
     batch_index: int
     batch_indices: List[int]
     tasks: List[Any]
@@ -94,10 +101,14 @@ class _ProcessBatchRequest:
     runtime_profile: Optional[Dict[str, Any]] = None
     host_speed_factor: Optional[float] = None
     model_image: Optional[str] = None
+    # More seeds follow for this worker: start the next container during this flight.
+    prewarm_next: bool = False
 
 
 @dataclass
 class _ProcessBatchResult:
+    """What a worker sends back for a batch: per-seed rows, elapsed time and any error."""
+
     worker_id: int
     batch_index: int
     batch_indices: List[int]
@@ -109,6 +120,8 @@ class _ProcessBatchResult:
 
 @dataclass
 class _ProcessSeedEvent:
+    """Progress message a worker emits as a seed finishes, with that seed's metadata."""
+
     worker_id: int
     batch_index: int
     seed_meta: Optional[Dict[str, Any]] = None
@@ -116,6 +129,8 @@ class _ProcessSeedEvent:
 
 @dataclass
 class _ProcessWorkerHeartbeat:
+    """Liveness ping from a worker: the batch it is on, the kind of tick and when."""
+
     worker_id: int
     batch_index: int
     event_type: str

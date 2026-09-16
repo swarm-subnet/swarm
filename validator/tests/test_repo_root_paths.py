@@ -46,6 +46,7 @@ _ALIAS_ROOT = re.compile(r"^_REPO_ROOT\s*=\s*_SCRIPT_DIR((?:\.parents\[\d\]|\.pa
 # "SIBLING" is the swarm-backend checkout beside the repository, not inside it.
 EXPECTED: dict[str, list[str]] = {
     "scripts/bench_full_eval.py": ["REPO_ROOT"],
+    "scripts/compare_render_masks.py": ["REPO_ROOT"],
     "scripts/dump_depth_frame.py": ["REPO_ROOT"],
     "scripts/gen_family_io_tables.py": ["REPO_ROOT"],
     "scripts/generate_video.py": ["REPO_ROOT", "validator/scripts"],
@@ -62,9 +63,11 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_challenge_family_boundaries.py": ["REPO_ROOT"],
     "tests/test_cli.py": ["REPO_ROOT"],
     "tests/test_docker_evaluator.py": ["REPO_ROOT", "REPO_ROOT"],
+    "tests/test_docstring_linter.py": ["REPO_ROOT"],
     "tests/test_domain_model_naming.py": ["REPO_ROOT"],
     "tests/test_github.py": ["REPO_ROOT"] * 3,
     "tests/test_scripts_shell.py": ["REPO_ROOT"],
+    "tests/test_simulation_doc.py": ["REPO_ROOT"],
     "tests/test_submission_manifest.py": ["REPO_ROOT", "SIBLING"],
     "tests/test_swarm_autopilot_regression.py": ["validator/tests"],
     "tests/test_uv_dependency_install.py": ["REPO_ROOT"],
@@ -81,6 +84,7 @@ def _steps(expr: str) -> int:
 
 
 def _label(path: Path) -> str:
+    """The short name for a resolved directory: REPO_ROOT, SIBLING, or its path inside the repository."""
     if path == REPO_ROOT:
         return "REPO_ROOT"
     if path == REPO_ROOT.parent:
@@ -115,6 +119,7 @@ def _targets(source: Path) -> list[str]:
 
 @pytest.mark.parametrize("relative", sorted(EXPECTED), ids=lambda p: p)
 def test_every_resolver_lands_where_it_should(relative):
+    """A listed file's walks up still land on exactly the directories EXPECTED pins."""
     source = VALIDATOR / relative
     assert source.is_file(), f"{relative} is listed here but not in the tree"
     assert _targets(source) == sorted(EXPECTED[relative]), (

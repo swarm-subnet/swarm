@@ -37,6 +37,7 @@ DEFAULT_THRESHOLD = 0.30
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Count TIMEOUT episodes of the scripted baseline on the mountain scenario; exit 0 while the rate stays under the threshold."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-seeds", type=int, default=DEFAULT_N_SEEDS)
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)

@@ -51,6 +51,7 @@ from .manifest import (
 
 
 def _session_options() -> ort.SessionOptions:
+    """Return ORT options pinned to sequential, deterministic CPU execution."""
     options = ort.SessionOptions()
     options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
@@ -62,6 +63,7 @@ def _session_options() -> ort.SessionOptions:
 
 
 def _concrete_shape(shape: tuple[int, ...], num_drones: int | None) -> tuple[int, ...]:
+    """Substitute num_drones for the swarm axis placeholder in a declared shape."""
     return tuple(num_drones if d == SWARM_AXIS_DIM else d for d in shape)
 
 
@@ -69,6 +71,7 @@ class GraphRunner:
     """Runs one admitted artifact for one episode at a time."""
 
     def __init__(self, manifest: GraphManifest, models: dict[str, bytes]) -> None:
+        """Open one ORT session per unique model hash and reset the episode state."""
         self.manifest = manifest
         self._sessions_by_sha: dict[str, ort.InferenceSession] = {}
         self._sessions: dict[str, ort.InferenceSession] = {}
@@ -98,6 +101,7 @@ class GraphRunner:
 
     @classmethod
     def from_artifact(cls, zip_path: Path) -> "GraphRunner":
+        """Admit the artifact zip, then build a runner from its manifest and models."""
         from .admission import admit_artifact
 
         result = admit_artifact(Path(zip_path))
@@ -108,6 +112,7 @@ class GraphRunner:
 
     @property
     def tick(self) -> int:
+        """Number of completed ticks since the last reset."""
         return self._tick
 
     def reset(self, num_drones: int | None = None) -> None:
@@ -124,6 +129,11 @@ class GraphRunner:
         }
 
     def _resolve(self, binding: Binding, tick_outputs: dict[tuple[str, str], np.ndarray]) -> np.ndarray:
+        """Return the array a binding names: an observation, a memory slot or a node output.
+
+        A node output comes from this tick when the node ran, otherwise from the
+        cache of the last tick that produced it.
+        """
         if isinstance(binding, ObsBinding):
             return self._observation[binding.key]
         if isinstance(binding, MemoryBinding):
@@ -144,6 +154,11 @@ class GraphRunner:
     def _validate_observation(
         self, observation: dict[str, np.ndarray], num_drones: int | None
     ) -> tuple[dict[str, np.ndarray], int | None]:
+        """Return the observation as contiguous arrays plus the resolved swarm size.
+
+        Keys, dtypes, shapes or a swarm width outside 2..8 that miss the family
+        contract raise instead.
+        """
         contract = FAMILY_GRAPH_CONTRACTS[self.manifest.family_id]
         if not isinstance(observation, dict) or set(observation) != set(contract["observations"]):
             got = sorted(observation) if isinstance(observation, dict) else type(observation).__name__

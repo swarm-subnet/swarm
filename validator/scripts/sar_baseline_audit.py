@@ -57,6 +57,7 @@ DEFAULT_N_SEEDS = 1000
 
 
 def _scripted_step(env, target_xy):
+    """Unit vector from the drone toward the victim hover point, padded and reshaped to the action space."""
     pos, _ = env._sar_drone_state()
     dx = float(target_xy[0]) - float(pos[0])
     dy = float(target_xy[1]) - float(pos[1])
@@ -74,6 +75,7 @@ def _scripted_step(env, target_xy):
 
 
 def run_one_episode(map_seed: int, challenge_type: int) -> dict:
+    """Fly the scripted policy on a single seed and return its failure reason, sim time alive and success flag."""
     from swarm.core.moving_drone import MovingDroneAviary
 
     task = MapTask(
@@ -110,6 +112,7 @@ def run_one_episode(map_seed: int, challenge_type: int) -> dict:
 
 
 def audit_one_map(name: str, ctype: int, n_seeds: int) -> dict:
+    """Fly seeds 0..n_seeds on one challenge type and return the success rate, mean confirm time and reason tally."""
     started = time.time()
     successes = 0
     reasons = Counter()
@@ -132,6 +135,7 @@ def audit_one_map(name: str, ctype: int, n_seeds: int) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Audit each selected environment and print one line per map; 2 when an unknown map is asked for, else 0."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-seeds", type=int, default=DEFAULT_N_SEEDS)
     ap.add_argument("--maps", default=",".join(CHALLENGE_TYPES.keys()))

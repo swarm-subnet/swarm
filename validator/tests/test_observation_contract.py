@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The v1 observation contract: the published artifact, the smoke observation and the live environment all agree."""
 from __future__ import annotations
 
 import contextlib
@@ -39,6 +40,7 @@ from swarm.protocol import MapTask
 
 
 def _task(family_id: str):
+    """A challenge_type 2 MapTask on map seed 99 for the named family, version 5.0.0."""
     return MapTask(
         map_seed=99,
         start=(0.0, 0.0, 1.5),
@@ -52,6 +54,7 @@ def _task(family_id: str):
 
 
 def _build_env(family_id: str, sar_mode: bool):
+    """A reset MovingDroneAviary for the family at 30 Hz, with the simulator's startup chatter swallowed."""
     from gym_pybullet_drones.utils.enums import ActionType
 
     from swarm.core.moving_drone import MovingDroneAviary
@@ -65,6 +68,7 @@ def _build_env(family_id: str, sar_mode: bool):
 
 
 def _expected_v1_state(env, family_id):
+    """The v1 state vector assembled by hand: position, orientation, velocities, action history, altitude, then the search clue offset."""
     sv = env._getDroneStateVector(0)
     parts = [sv[0:3], sv[7:10], sv[10:13], sv[13:16]]
     for i in range(env.ACTION_BUFFER_SIZE):
@@ -78,6 +82,7 @@ def _expected_v1_state(env, family_id):
 
 
 def test_artifact_contract_shape_for_v1():
+    """The published v1 contract pins the miner entry point, the leading state channels and the per-family depth shape, and its minimum_length fits the smoke state."""
     expected_depth = {"cf_autopilot": [128, 128, 1], "cf_search_and_rescue": [256, 256, 1]}
     for family_id in ("cf_autopilot", "cf_search_and_rescue"):
         art = build_artifact_policy_contract(family_id, "submission_zip.v1")
@@ -98,6 +103,7 @@ def test_artifact_contract_shape_for_v1():
 
 
 def test_smoke_observation_lengths_match_production_runtime():
+    """A miner offline sees the shapes production hands over: 128 depth for autopilot, 256 depth plus RGB for SAR, state widths 141 and 165."""
     autopilot = build_smoke_test_observation("cf_autopilot", "submission_zip.v1")
     sar = build_smoke_test_observation("cf_search_and_rescue", "submission_zip.v1")
     assert autopilot["depth"].shape == (128, 128, 1)
@@ -113,6 +119,7 @@ def test_smoke_observation_lengths_match_production_runtime():
     "family_id,sar_mode", [("cf_autopilot", False), ("cf_search_and_rescue", True)]
 )
 def test_v1_observation_matches_documented_layout(family_id, sar_mode):
+    """A live environment's observation equals the hand-built v1 layout for both families, and smoke_observation reports the same state width."""
     env = _build_env(family_id, sar_mode)
     try:
         obs = env._computeObs()
@@ -139,6 +146,7 @@ def test_v1_observation_matches_documented_layout(family_id, sar_mode):
 
 @pytest.mark.timeout(180)
 def test_real_env_runs_gpsless_layout():
+    """Swapping a live environment to the GPS-less channel set yields orientation, rates, altitude and action history only, matching the rebuilt space."""
     env = _build_env("cf_autopilot", sar_mode=False)
     try:
         gpsless = {
@@ -169,7 +177,9 @@ def test_real_env_runs_gpsless_layout():
 
 
 class _FakeEnv:
+    """A minimal stand-in exposing an action buffer, a 5-wide action space, 128x128 image resolution and a constant altitude ray."""
     def __init__(self):
+        """Set the action buffer, action space and image resolution the assemble path reads."""
         self.ACTION_BUFFER_SIZE = 2
         self.action_buffer = [
             np.array([[0.1, 0.2, 0.3, 0.4, 0.5]], dtype=np.float32),
@@ -179,10 +189,12 @@ class _FakeEnv:
         self.IMG_RES = np.array([128, 128])
 
     def _get_altitude_distance(self, nth_drone=0):
+        """A constant 5.0 m ray reading, so the normalised altitude channel is predictable."""
         return 5.0
 
 
 def test_gpsless_layout_drops_global_position():
+    """The GPS-less layout assembles a 17-wide state with no position, goal or clue channel, and space, dim and smoke all agree on 17."""
     layout = {
         "depth": ["depth_camera"],
         "state": ["orientation", "angular_velocity", "altitude_norm", "action_history"],

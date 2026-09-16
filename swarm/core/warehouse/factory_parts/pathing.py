@@ -15,16 +15,23 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Seeded conveyor route for the embedded factory, and the lookups that choose which kit meshes dress it."""
+
 from ._shared import *
 
 
 def resolve_swarm_drone_urdf():
+    """First readable path among SWARM_DRONE_URDF_CANDIDATES, or None when that asset is not installed."""
     return first_existing_path(SWARM_DRONE_URDF_CANDIDATES)
 
 
 def _spawn_swarm_drone_urdf(
     urdf_path, x, y, z, yaw_deg, global_scale, cli, target_bottom_z=None
 ):
+    """Load the URDF fixed-base at that position and yaw, then give the base and every link the uniform specular colour.
+
+    With target_bottom_z given, the body is nudged so its AABB floor lands there, and the offset is cached per URDF
+    and scale so later spawns skip the measurement."""
     urdf_abs = os.path.abspath(urdf_path)
     urdf_dir = os.path.dirname(urdf_abs)
     cache_key = (cli, urdf_dir)
@@ -80,6 +87,7 @@ def _spawn_swarm_drone_urdf(
 
 
 def _dir_to_yaw(direction):
+    """Degrees for a unit grid step, 0 along +X and rising counter-clockwise; 0.0 for a step that is neither."""
     if direction == (1, 0):
         return 0.0
     if direction == (0, 1):
@@ -92,11 +100,13 @@ def _dir_to_yaw(direction):
 
 
 def _inside_grid(cell, cols, rows):
+    """True when the cell clears the one-deep border ring reserved around a cols by rows layout."""
     cx, cy = cell
     return 1 <= cx <= (cols - 2) and 1 <= cy <= (rows - 2)
 
 
 def _expand_waypoints_to_cells(waypoints, cols, rows):
+    """Walk axis-aligned corners into every cell between them, raising ValueError on a diagonal leg, a cell outside the border or a revisit."""
     path = []
     visited = set()
     for i in range(len(waypoints) - 1):
@@ -128,11 +138,16 @@ def _expand_waypoints_to_cells(waypoints, cols, rows):
 # Two-phase seeded path generator
 # ---------------------------------------------------------------------------
 def _generate_step1_path_seeded(cols, rows, seed):
+    """Best of PATH_BUILD_ATTEMPTS seeded snake routes, stopping early on one that fills every occupancy bin.
+
+    Candidates are ranked on cell count, turns, spread, shortest straight run and how evenly the cells divide across the
+    floor. Returns the cell list with the corner nearest each end and the final cell."""
     base_seed = int(seed) + 1187
     corners = [(1, 1), (cols - 2, 1), (cols - 2, rows - 2), (1, rows - 2)]
     start_idx = int(seed) % 4
 
     def _fallback_path():
+        """The plain L from one corner to the inset opposite corner, used on a tiny grid or when nothing better survives."""
         start_corner = corners[start_idx]
         end_corner = corners[(start_idx + 2) % 4]
         end_goal = (
@@ -176,11 +191,16 @@ def _generate_step1_path_seeded(cols, rows, seed):
         return path, start_corner, end_corner, end_goal
 
     def _build_candidate(rng):
+        """One route from this rng: a split ratio drawn per mode, then the snake, transposed on a coin weighted by the grid aspect."""
         def _lane_step():
+            """Cells from one lane to the next, an empty gap out of LANE_EMPTY_GAP_CHOICES plus the lane itself."""
             gap = rng.choice(LANE_EMPTY_GAP_CHOICES)
             return gap + 1
 
         def _build_two_phase(gen_cols, gen_rows, local_start_on_left, split_ratio):
+            """Snake the band above the split line in horizontal lanes, then the band below it in vertical ones.
+
+            The route therefore sweeps the floor in both directions instead of combing it one way."""
             gx_left = 1
             gx_right = gen_cols - 2
             gy_bottom = 1
@@ -207,6 +227,7 @@ def _generate_step1_path_seeded(cols, rows, seed):
             out_path = [(current_x, current_y)]
 
             def _append_line_to(tx, ty):
+                """Extend the route one cell at a time to (tx, ty), all of the X run first and then all of the Y run."""
                 nonlocal current_x, current_y, out_path
                 sx = 0 if tx == current_x else (1 if tx > current_x else -1)
                 sy = 0 if ty == current_y else (1 if ty > current_y else -1)
@@ -300,6 +321,10 @@ def _generate_step1_path_seeded(cols, rows, seed):
         return [(y, x) for (x, y) in path_swapped]
 
     def _path_metrics(path):
+        """Shape figures for one candidate: length, turns, spread on each axis and shortest straight run.
+
+        Halves, quadrants and occupancy bins say how evenly the floor is covered, and 'ok' is True only when every
+        tuning floor is met."""
         if not path:
             return {
                 "ok": False,
@@ -320,6 +345,7 @@ def _generate_step1_path_seeded(cols, rows, seed):
             }
 
         def _min_segment_len_edges():
+            """Edge count of the shortest straight run in the candidate, 0 when it holds fewer than two cells."""
             if len(path) < 2:
                 return 0
             seg_lens = []
@@ -477,6 +503,7 @@ def _generate_step1_path_seeded(cols, rows, seed):
     end_goal = path[-1]
 
     def _dist(a, b):
+        """Manhattan separation of two grid cells, used to match each end of the route to its nearest corner."""
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     start_corner = min(corners, key=lambda c: _dist(c, start_cell))
@@ -491,6 +518,7 @@ def _generate_step1_path_seeded(cols, rows, seed):
 # Model selection helpers
 # ---------------------------------------------------------------------------
 def pick_support_model(loader):
+    """First of SUPPORT_MODEL_CANDIDATES present in the loader's obj_dir, or None when the kit ships none of them."""
     for model_name in SUPPORT_MODEL_CANDIDATES:
         if os.path.exists(os.path.join(loader.obj_dir, model_name)):
             return model_name
@@ -498,6 +526,7 @@ def pick_support_model(loader):
 
 
 def pick_end_cap_model(loader):
+    """First of END_CAP_MODEL_CANDIDATES present in the loader's obj_dir, or None when the kit ships none of them."""
     for model_name in END_CAP_MODEL_CANDIDATES:
         if os.path.exists(os.path.join(loader.obj_dir, model_name)):
             return model_name
@@ -505,6 +534,7 @@ def pick_end_cap_model(loader):
 
 
 def pick_first_existing_model(loader, candidates):
+    """Earliest name in candidates that sits in the loader's obj_dir, or None when the whole list is absent."""
     for model_name in candidates:
         if os.path.exists(os.path.join(loader.obj_dir, model_name)):
             return model_name
@@ -512,6 +542,7 @@ def pick_first_existing_model(loader, candidates):
 
 
 def list_existing_models(loader, candidates):
+    """Every candidate name found in the loader's obj_dir, kept in the order it was offered."""
     out = []
     for model_name in candidates:
         if os.path.exists(os.path.join(loader.obj_dir, model_name)):
@@ -520,6 +551,10 @@ def list_existing_models(loader, candidates):
 
 
 def pick_section_belt_models(loader, rng):
+    """Choose the conveyor mesh for the assembly run and the one for packout, matched to a reference belt's footprint.
+
+    Only belts whose length and width stay inside the compat ratios are eligible. Returns that reference and its size,
+    the eligible list and the two picks, and raises FileNotFoundError when no conveyor is installed at all."""
     available = list_existing_models(loader, NETWORK_BELT_MODEL_CANDIDATES)
     if not available:
         raise FileNotFoundError(
@@ -553,6 +588,7 @@ def pick_section_belt_models(loader, rng):
 
 
 def support_scale_for_top_alignment(loader, support_model):
+    """Uniform scale that brings the leg's head up to CONVEYOR_ELEVATION_M, or None when the mesh has no measurable height."""
     _, _, raw_h = loader.model_size(support_model, 1.0)
     if raw_h <= 1e-6:
         return None
@@ -560,6 +596,9 @@ def support_scale_for_top_alignment(loader, support_model):
 
 
 def select_support_for_target_height(loader, target_top_z):
+    """The (mesh, scale) pair that reaches target_top_z with the least stretch, or None when none is installed.
+
+    Scales squashed below 0.45 or pulled past 1.45 are penalised, so a leg close to its authored size wins."""
     candidates = (
         "structure-medium.obj",
         "structure-high.obj",

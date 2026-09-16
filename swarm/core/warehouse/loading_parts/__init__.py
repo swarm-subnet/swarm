@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Loading zone builders re-exported flat for loading.py: dock trucks, overhead gantry cranes and staged cargo, plus the per-material OBJ spawner and truss rib positions from visuals."""
+
 from .cranes import *
 from .staging import *
 from .trucks import *

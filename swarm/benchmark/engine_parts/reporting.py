@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Prints the benchmark run tables and returns the same numbers as a JSON record."""
 from __future__ import annotations
 
 from ._shared import (
@@ -38,10 +39,12 @@ from .dispatch import (
 
 
 def _mean(values: List[float]) -> float:
+    """Arithmetic mean of values, 0.0 for an empty list."""
     return (sum(values) / len(values)) if values else 0.0
 
 
 def _pctl(values: List[float], fraction: float) -> float:
+    """Nearest-rank percentile of values at fraction, 0.0 when there is nothing."""
     if not values:
         return 0.0
     sorted_values = sorted(float(value) for value in values)
@@ -50,6 +53,7 @@ def _pctl(values: List[float], fraction: float) -> float:
 
 
 def _rows_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Counts, success rates and wall, sim and score aggregates over one group's seeds."""
     wall_times = [float(row["wall_time"]) for row in rows if float(row["wall_time"]) > 0.0]
     processing_walls = [
         float(row["processing_wall_time"])
@@ -103,6 +107,11 @@ def _print_results(
     num_workers: int,
     host_parallelism: str = "process",
 ) -> Dict[str, Any]:
+    """Print the benchmark tables and return the record that is written as JSON.
+
+    One line per seed, the run summary, the scheduler RAM model, the per-group
+    observations, the slowest seeds and an extrapolation to 1,000 seeds.
+    """
     group_order = BENCH_GROUP_ORDER
     seed_wall_queues: Dict[Tuple[int, int], deque[float]] = {
         key: deque(values) for key, values in seed_wall_by_key.items()
@@ -302,6 +311,7 @@ def _print_results(
     from swarm.domain_model import CHALLENGE_TYPE_TO_BENCHMARK_GROUP
 
     def _allocate(total: int, weights: Dict[Any, float], keys: List[Any]) -> Dict[Any, int]:
+        """Split total across keys by weight, giving the remainder to the largest fractions."""
         raw = {k: max(0.0, float(weights.get(k, 0.0))) * total for k in keys}
         base = {k: int(floor(v)) for k, v in raw.items()}
         rem = max(0, total - sum(base.values()))

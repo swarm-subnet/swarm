@@ -323,6 +323,7 @@ def office_airframe_profile(map_seed: int) -> dict:
     rng = np.random.default_rng((int(map_seed) ^ OFFICE_ACTUATOR_SEED_OFFSET) & 0xFFFFFFFF)
     j = OFFICE_ACTUATOR_JITTER
     def scale() -> float:
+        """Draw one multiplier from the jitter band around 1.0."""
         return float(rng.uniform(1.0 - j, 1.0 + j))
 
     return {
@@ -371,6 +372,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     # runtime profile
     # ------------------------------------------------------------------ #
     def runtime_profile(self, task) -> ChallengeFamilyRuntimeProfile:
+        """Container settings for the office family: the navigation class on the base image, with the wider budgets RGB rendering costs."""
         return ChallengeFamilyRuntimeProfile(
             family_id=self.family_id,
             profile_name="office_interceptor",
@@ -393,12 +395,14 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         )
 
     def env_kwargs_for_task(self, task) -> dict:
+        """Constructor arguments the office environment needs: search-and-rescue mode is always off."""
         return {"sar_mode": False}
 
     # ------------------------------------------------------------------ #
     # env lifecycle
     # ------------------------------------------------------------------ #
     def initialise_env_state(self, env, *, requested_mode: bool = False) -> None:
+        """Attach the family's own attributes to a fresh env: no target yet, the indoor tilt limit, and a neutral brightness."""
         env.sar_mode = False
         env.MAX_TILT_RAD = math.radians(OFFICE_MAX_TILT_DEG)
         env._office_target_uid = None
@@ -408,6 +412,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_rgb_bright = 1.0
 
     def reset_env_state(self, env) -> None:
+        """Redraw every per-episode stream from the map seed.
+
+        The target's personality and silhouette, the airframe, the telemetry and
+        detector state and the VPS drift direction are all dealt here, each off its
+        own salt so one stream cannot shift another.
+        """
         n = env.NUM_DRONES
         seed = int(getattr(env.task, "map_seed", 0))
         env._office_target_rng = random.Random((seed ^ OFFICE_TARGET_SEED_OFFSET) & 0xFFFFFFFF)
@@ -472,6 +482,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         ]
 
     def _rays_clear(self, env, froms: list, tos: list, extra_ignore: tuple = ()) -> bool:
+        """True when every ray in the batch reaches its end, the target and any extra_ignore body counting as empty air."""
         ignore = {int(env._office_target_uid), -1, *extra_ignore}
         return all(int(h[0]) in ignore
                    for h in p.rayTestBatch(froms, tos, physicsClientId=env.CLIENT))
@@ -540,6 +551,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         parent = list(range(len(cells)))
 
         def find(a):
+            """Root of a's set in the union-find, halving the path on the way up."""
             while parent[a] != a:
                 parent[a] = parent[parent[a]]
                 a = parent[a]
@@ -601,6 +613,11 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             "office placement found no clear reachable point inside the separation band")
 
     def spawn_task_world(self, env) -> None:
+        """Build this seed's office and set both drones down inside it.
+
+        The target loads fully transparent, the chaser is placed on clear floor at a
+        random heading, and the target is placed inside the separation band from it.
+        """
         cli = env.getPyBulletClient()
         env.task.start = env._original_start
         env.task.goal = env._original_goal
@@ -681,10 +698,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         env._office_rgb_bright = rng.uniform(OFFICE_RGB_BRIGHT_LOW, OFFICE_RGB_BRIGHT_HIGH)
 
     def protected_body_uids(self, env) -> set:
+        """The target's uid, so ramming it reads as the catch and never as a fatal collision."""
         uid = getattr(env, "_office_target_uid", None)
         return {int(uid)} if uid is not None else set()
 
     def compute_terminated(self, env) -> bool:
+        """True once the target has crashed itself; a chaser collision only stamps the failure reason the shared check acts on."""
         # A self-crashed target ends the seed as infeasible, like the outdoor family.
         if getattr(env, "_office_target_crashed", False) and not env._success:
             return True
@@ -694,6 +713,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def compute_truncated(self, env, *, terminal_already: bool, roll: float, pitch: float) -> bool:
+        """Cut the flight at the tilt limit or the episode horizon, recording which of the two fired."""
         if abs(float(roll)) > float(env.MAX_TILT_RAD) or abs(float(pitch)) > float(env.MAX_TILT_RAD):
             if not terminal_already:
                 env._failure_reason = FailureReason.TILT.value
@@ -705,6 +725,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         return False
 
     def build_info(self, env) -> dict:
+        """Per-step fields the family logs: the protocol schema version and the task's own version string."""
         return {
             "schema_version": SCHEMA_VERSION,
             "task_version": str(getattr(env.task, "version", "")),
@@ -787,6 +808,11 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         return tpos.copy(), False  # boxed in this step: hover and retry next step
 
     def advance_world(self, env) -> None:
+        """Fly the target one control step and cache its rotor thrust for the substep hook.
+
+        The waypoint legs, the corner speed ramp, the braking guards and the seeded
+        spook response all resolve here, then the PID tracks the chosen anchor.
+        """
         uid = getattr(env, "_office_target_uid", None)
         if uid is None or getattr(env, "_office_target_ctrl", None) is None:
             return
@@ -881,6 +907,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             np.exp(-env.PYB_TIMESTEP / prof["motor_tau"]))
 
     def _update_target(self, env) -> None:
+        """Refresh the target's pose and settle the catch.
+
+        Contact with the chaser, or a level-and-close hold sustained for
+        OFFICE_CATCH_HOLD_STEPS, ends the episode as a success; a hard hit on
+        anything else marks the target self-crashed and the seed infeasible.
+        """
         uid = getattr(env, "_office_target_uid", None)
         if uid is None:
             return
@@ -952,6 +984,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         return {"px": px, "py": py, "w": w_px, "h": h_px, "dist": depth, "vis": vis}
 
     def _detector_deliver(self, env, rng, dt: float) -> None:
+        """Fill the detection block the policy reads this period.
+
+        Recall thins with visibility, distance and frame edge, misses persist in
+        streaks, a surviving box carries centre and size jitter, and a ghost box
+        joins at the rig's false-positive rate; slots fill in confidence order.
+        """
         det = env._office_detection
         det[2:] = 0.0
         truth = env._office_det_pending
@@ -1005,6 +1043,11 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
             det[1] = OFFICE_DET_DELAY_STEPS * dt
 
     def post_step_update(self, env) -> None:
+        """Post-physics bookkeeping for one control step.
+
+        A drone that tunnelled out of the room is caught by the shell test, the catch
+        check runs, and the telemetry and detector clocks age, snapshot and deliver.
+        """
         # A full-speed drone can tunnel through the thin ceiling sheet between
         # substeps; leaving the room is hitting the shell, whatever physics missed.
         pos = env.pos[0]
@@ -1070,6 +1113,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         return min(MAX_RAY_DISTANCE, float(pos[2]) - float(hit_pos[2]))
 
     def _snapshot(self, env, d: int, dt: float) -> np.ndarray:
+        """The clean state a packet will carry once delivered: attitude with yaw relative to takeoff, body-frame velocity and specific force, ToF, height and baro."""
         # Lazy import: moving_drone imports this package, so the top level would cycle.
         from swarm.core.moving_drone import world_to_body
 
@@ -1089,6 +1133,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
                          af + bias[0], ar + bias[1], -au + bias[2], tof, height, baro])
 
     def _deliver_packet(self, env, d: int, rng, dt: float) -> None:
+        """Write one delayed SDK packet into the telemetry row: sensor noise, the walking biases, ToF outliers and SDK quantisation, or nothing when the link drops it."""
         env._office_baro_walk[d] += rng.normal(0.0, OFFICE_TELEM_BARO_WALK_M)
         env._office_vel_bias[d] += rng.normal(0.0, OFFICE_TELEM_VELOCITY_WALK, 2)
         if rng.random() < OFFICE_TELEM_DROP_PROB:
@@ -1109,6 +1154,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         telem[d, 13] = OFFICE_TELEM_DELAY_STEPS * dt
 
     def apply_world_physics(self, env) -> None:
+        """Apply the family's own forces before each PyBullet substep.
+
+        Every drone takes the seeded VPS drift push, quadratic body drag and the
+        ground cushion near the floor; the target takes the rotor thrust and yaw
+        torque its controller cached this step.
+        """
         cli = env.CLIENT
         force = getattr(env, "_office_vps_force", None)
         if force is not None:
@@ -1148,6 +1199,7 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     # ------------------------------------------------------------------ #
     def build_rollout_metrics(self, *, task, success, t, horizon,
                               min_clearance, collision, failure_reason) -> dict:
+        """Raw record of one office flight before any weighting: the elapsed and par times, the horizon, the collision flag and the failure reason."""
         challenge_type = int(getattr(task, "challenge_type", OFFICE_CHALLENGE_TYPE))
         return {
             "challenge_type": challenge_type,
@@ -1164,6 +1216,12 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
         }
 
     def normalize_rollout_metrics(self, *, task, metrics) -> dict:
+        """Turn that record into the weighted terms and the score they sum to.
+
+        Only a clean catch scores: an eval error pays nothing, a failure pays the
+        participation crumb when its reason qualifies, a catch bought with a collision
+        pays it once any time elapsed, and a win adds the time term against par.
+        """
         horizon = float(metrics["horizon_sec"])
         if horizon <= 0.0:
             raise ValueError("'horizon' must be positive")
@@ -1194,11 +1252,14 @@ class OfficeInterceptorChallengeFamily(ChallengeFamilyRuntime):
     # task generation
     # ------------------------------------------------------------------ #
     def build_random_task(self, *, sim_dt: float, seed: int):
+        """One freely sampled office task for the seed, drawn by the validator's generator."""
         from swarm.validator import task_gen
         return task_gen.random_task(sim_dt, seed, family_id=self.family_id)
 
     def screening_template(self) -> tuple:
+        """Eight identical slots, each the office challenge over the standard start-distance band."""
         return (_TEMPLATE_SLOT,) * 8
 
     def benchmark_template(self) -> tuple:
+        """The same office slot a hundred times over, one per benchmark seed."""
         return (_TEMPLATE_SLOT,) * 100

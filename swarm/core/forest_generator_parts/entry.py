@@ -25,6 +25,7 @@ from .spawning import _spawn_forest_assets
 
 
 def get_forest_subtype(seed: int) -> Tuple[int, int]:
+    """Draw the mode and difficulty ids for a seed from the weighted forest distributions, each on its own stream."""
     from swarm.constants import (
         FOREST_DIFFICULTY_DISTRIBUTION,
         FOREST_MODE_DISTRIBUTION,

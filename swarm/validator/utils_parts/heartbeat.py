@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Progress reporting to the backend while a validator works through its seeds."""
+
 from ._shared import *
 
 
 def _format_stop_reason(conflicts: list) -> str:
+    """Join the backend's conflict codes and messages into one readable line."""
     parts: List[str] = []
     for conflict in conflicts:
         if not isinstance(conflict, dict):
@@ -36,6 +39,10 @@ def _format_stop_reason(conflicts: list) -> str:
 
 _TIMER_INTERVAL_SECONDS = 15
 
+# Named so a test that leaves one of these running can be identified by name alone, without the
+# test suite having to import this module before its bittensor stubs are in place.
+TIMER_THREAD_NAME = "swarm-heartbeat-timer"
+
 
 class HeartbeatManager:
     """Thread-safe heartbeat progress manager for evaluation tracking.
@@ -46,6 +53,7 @@ class HeartbeatManager:
     """
 
     def __init__(self, backend_api: BackendApiClient, main_loop: asyncio.AbstractEventLoop):
+        """Bind the backend client and the event loop that posts are dispatched onto."""
         self.backend_api = backend_api
         self.main_loop = main_loop
         self._progress = 0
@@ -67,6 +75,7 @@ class HeartbeatManager:
         self._timer_thread: Optional[threading.Thread] = None
 
     def set_queue(self, queue: list) -> None:
+        """Replace the pending-task list sent alongside the next post."""
         with self._lock:
             self._queue = queue
 
@@ -85,6 +94,7 @@ class HeartbeatManager:
         backend_decision_version: Optional[int] = None,
         progress_offset: int = 0,
     ) -> None:
+        """Open a reporting session for one UID and launch the lease-renewal timer."""
         with self._lock:
             self._session_id += 1
             self._status = status
@@ -121,7 +131,7 @@ class HeartbeatManager:
         self._stop_timer()
         self._timer_stop = threading.Event()
         self._timer_thread = threading.Thread(
-            target=self._timer_loop, args=(self._session_id,), daemon=True
+            target=self._timer_loop, args=(self._session_id,), daemon=True, name=TIMER_THREAD_NAME
         )
         self._timer_thread.start()
 
@@ -133,13 +143,18 @@ class HeartbeatManager:
                 if session_id != self._session_id or not self._active:
                     return
                 progress = self._progress
-            self.main_loop.call_soon_threadsafe(
-                lambda p=progress, s=session_id: asyncio.create_task(
-                    self._safe_heartbeat(p, s)
+            try:
+                self.main_loop.call_soon_threadsafe(
+                    lambda p=progress, s=session_id: asyncio.create_task(
+                        self._safe_heartbeat(p, s)
+                    )
                 )
-            )
+            except RuntimeError:
+                # the loop closed under the timer; there is no lease left to renew
+                return
 
     def _stop_timer(self) -> None:
+        """Signal the renewal thread to end and wait up to a second for it."""
         self._timer_stop.set()
         thread = self._timer_thread
         if thread is not None and thread.is_alive():
@@ -158,16 +173,22 @@ class HeartbeatManager:
                 return
             self._last_sent = progress
 
-        self.main_loop.call_soon_threadsafe(
-            lambda p=progress, s=session_id: asyncio.create_task(self._safe_heartbeat(p, s))
-        )
+        try:
+            self.main_loop.call_soon_threadsafe(
+                lambda p=progress, s=session_id: asyncio.create_task(self._safe_heartbeat(p, s))
+            )
+        except RuntimeError:
+            # the loop closed under the worker; there is no lease left to renew
+            return
 
     def remove_uid_from_queue(self, uid: int) -> None:
+        """Drop that miner's entry from the pending list reported to the backend."""
         with self._lock:
             if self._queue is not None:
                 self._queue[:] = [q for q in self._queue if q.get("uid") != uid]
 
     def finish(self) -> None:
+        """Close the session: stop the timer, flush the final progress, then go idle."""
         self._stop_timer()
         with self._lock:
             final_progress = self._progress
@@ -181,6 +202,7 @@ class HeartbeatManager:
         )
 
     async def _finish_async(self, final_progress: int, session_id: int, uid: Optional[int]) -> None:
+        """Send the closing progress post, drop the UID from the queue, and report idle."""
         if final_progress > 0:
             await self._safe_heartbeat(final_progress, session_id, allow_inactive=True)
         if uid is not None:
@@ -190,6 +212,7 @@ class HeartbeatManager:
     async def _safe_heartbeat(
         self, progress: int, session_id: int, allow_inactive: bool = False
     ) -> None:
+        """Post one progress update under a 10s timeout, dropping stale sessions and any error."""
         with self._lock:
             if session_id != self._session_id:
                 return
@@ -223,6 +246,7 @@ class HeartbeatManager:
         self._handle_response(response, session_id)
 
     def _handle_response(self, response: Any, session_id: int) -> None:
+        """Record a backend stop request and log the conflict once."""
         if not isinstance(response, dict) or not response.get("stop_required"):
             return
         conflicts = response.get("conflicts") or []
@@ -239,10 +263,12 @@ class HeartbeatManager:
             )
 
     def should_stop(self) -> Optional[str]:
+        """The reason the backend asked this evaluation to halt, None while it may continue."""
         with self._lock:
             return self._stop_reason if self._stop_required else None
 
     async def _send_idle(self) -> None:
+        """Tell the backend this validator is between jobs and pass the pending queue."""
         with self._lock:
             queue = list(self._queue) if self._queue is not None else []
             decision_version = self._backend_decision_version

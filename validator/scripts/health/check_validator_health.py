@@ -16,6 +16,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Whether a validator actually set weights in an epoch, as importable checks and as a CLI hourly table."""
 from __future__ import annotations
 
 import argparse
@@ -43,6 +44,7 @@ DEFAULT_BLOCK_TIME_SECONDS = 12
 
 @dataclass
 class HealthCheckResult:
+    """One verdict, with the epoch window and the block it was judged against."""
     ok: bool
     status: str
     message: str
@@ -57,6 +59,7 @@ class HealthCheckResult:
 
 @dataclass
 class HourlyHealthCheckResult:
+    """One row of the table: the sampled block, its wall-clock time and the verdict there."""
     hours_ago: int
     target_time_utc: datetime
     checked_at_block: int
@@ -76,6 +79,7 @@ def is_validator_healthy(
     block: int | None = None,
     current_epoch: bool = False,
 ) -> bool:
+    """True when weights were set inside the epoch being examined."""
     result = check_validator_health(
         netuid=netuid,
         hotkey=hotkey,
@@ -94,6 +98,7 @@ def were_last_epochs_healthy(
     network: str = DEFAULT_NETWORK,
     chain_endpoint: str = "",
 ) -> bool:
+    """True when the hotkey was registered and set weights in every one of the last N completed epochs."""
     if epochs < 1:
         raise ValueError("epochs must be at least 1")
 
@@ -127,6 +132,7 @@ def check_validator_health(
     block: int | None = None,
     current_epoch: bool = False,
 ) -> HealthCheckResult:
+    """Open a chain connection, judge one epoch, and close it again whatever happens."""
     target = chain_endpoint or network
     subtensor = build_subtensor(target)
 
@@ -152,6 +158,7 @@ def _check_validator_health_with_subtensor(
     checked_at_block: int,
     current_epoch: bool,
 ) -> HealthCheckResult:
+    """Compare the hotkey's LastUpdate block with the epoch window, over a connection the caller owns."""
     tempo, blocks_since = get_subnet_epoch_state(
         subtensor, netuid=netuid, block=checked_at_block
     )
@@ -251,6 +258,7 @@ def _check_validator_health_with_subtensor(
 
 
 def get_block_time_utc(subtensor, block: int) -> datetime:
+    """The chain's own timestamp for a block, as an aware UTC datetime."""
     block_hash = subtensor.substrate.get_block_hash(block)
     result = subtensor.substrate.query(
         module="Timestamp",
@@ -266,6 +274,7 @@ def find_block_for_target_time(
     target_time_utc: datetime,
     current_block: int,
 ) -> int:
+    """Block closest to a wall-clock instant, estimated from the 12 second rate and refined by sampling."""
     current_time_utc = get_block_time_utc(subtensor, current_block)
     delta_seconds = (current_time_utc - target_time_utc).total_seconds()
     block = current_block - int(round(delta_seconds / DEFAULT_BLOCK_TIME_SECONDS))
@@ -292,11 +301,13 @@ def collect_recent_hourly_health_checks(
     hours: int = DEFAULT_REPORT_HOURS,
     now_utc: datetime | None = None,
 ) -> list[HourlyHealthCheckResult]:
+    """One verdict per hour across the requested window, oldest first."""
     target = chain_endpoint or network
     subtensor = build_subtensor(target)
     block_time_cache: dict[int, datetime] = {}
 
     def cached_block_time(block: int | None) -> datetime | None:
+        """Timestamp for a block, queried once and remembered for the run; None passes through."""
         if block is None:
             return None
         if block not in block_time_cache:
@@ -353,12 +364,14 @@ def collect_recent_hourly_health_checks(
 
 
 def _format_utc(value: datetime | None) -> str:
+    """An ISO-style timestamp for the table, or a dash when there is nothing."""
     if value is None:
         return "-"
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def render_hourly_health_table(rows: list[HourlyHealthCheckResult]) -> str:
+    """The rows as fixed-width columns under a header line."""
     headers = (
         "hrs_ago",
         "target_time_utc",
@@ -396,6 +409,7 @@ def render_hourly_health_table(rows: list[HourlyHealthCheckResult]) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Command-line options for the netuid, hotkey, endpoint and which report to print."""
     parser = argparse.ArgumentParser(
         description="Check health for validator 5FF6... on subnet 124."
     )
@@ -452,6 +466,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def format_health_check_error(exc: Exception) -> str:
+    """Point at an archive endpoint when the node has pruned the state, otherwise the raw text."""
     message = str(exc)
     if "UnknownBlock" in message or "State already discarded" in message:
         return (
@@ -462,6 +477,7 @@ def format_health_check_error(exc: Exception) -> str:
 
 
 def main() -> int:
+    """Run the requested report and return the process exit code: 0 healthy, 1 not, 2 failed."""
     args = parse_args()
     try:
         if args.last_epochs is not None:

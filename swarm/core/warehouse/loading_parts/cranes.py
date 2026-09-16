@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Overhead gantry cranes hung from the truss ribs above the zones that ask for them."""
+
 from ._shared import *
 from .visuals import _spawn_obj_with_mtl_parts, _truss_rib_x_positions
 
@@ -29,6 +31,7 @@ def build_overhead_cranes(
     cli,
     seed=0,
 ):
+    """Hang the crane meshes under the roof at truss rib positions inside the target zones."""
     _ = seed
     if not ENABLE_OVERHEAD_CRANES:
         return {"overhead_cranes_enabled": False}
@@ -66,6 +69,7 @@ def build_overhead_cranes(
     edge_margin = max(0.0, float(OVERHEAD_CRANE_ZONE_EDGE_MARGIN_M))
 
     def _zone_span_candidates(area, count):
+        """Preferred (x, y, yaw) slots spread along the area's long axis, alternating a small sideways offset."""
         sx = float(area["sx"])
         sy = float(area["sy"])
         cx = float(area["cx"])
@@ -99,6 +103,7 @@ def build_overhead_cranes(
         return out
 
     def _far_enough(x, y):
+        """True when (x, y) keeps the minimum spacing from every crane placed so far."""
         for prev in cranes:
             if math.hypot(float(x) - float(prev["x"]), float(y) - float(prev["y"])) < (
                 min_spacing - 1e-6

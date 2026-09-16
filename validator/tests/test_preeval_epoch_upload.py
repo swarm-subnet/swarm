@@ -30,6 +30,7 @@ from swarm.validator.utils_parts import evaluation
 
 
 def test_the_upload_epoch_comes_from_the_task_not_the_clock():
+    """Scores go up under the epoch that leased the seeds, so the lease can close."""
     src = inspect.getsource(evaluation._run_full_benchmark)
     assert "epoch_number if epoch_number is not None" in src, (
         "_run_full_benchmark must honour the assigned task epoch"

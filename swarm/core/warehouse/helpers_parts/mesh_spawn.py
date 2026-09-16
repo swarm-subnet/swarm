@@ -15,10 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Turn warehouse meshes into PyBullet shapes and place them as static bodies, reusing shape ids."""
+
 from ._shared import *
 
 
 def _loader_runtime_key(loader):
+    """Return a stable cache key for the loader: its absolute asset directory, or its object id."""
     cached = getattr(loader, "_swarm_runtime_key", None)
     if cached:
         return cached
@@ -36,6 +39,7 @@ def _loader_runtime_key(loader):
 
 
 def _clear_loader_spawn_caches(loader):
+    """Drop the cached visual and collision shape ids held on the loader, plus its texture handle."""
     if loader is None:
         return
     if hasattr(loader, "visual_shape_cache"):
@@ -47,6 +51,7 @@ def _clear_loader_spawn_caches(loader):
 
 
 def _resolve_mesh_path(loader, model_name):
+    """Return the absolute file for a model name, honouring it directly when it already carries a separator."""
     model_key = str(model_name)
     cache_key = (_loader_runtime_key(loader), model_key)
     cached = _RESOLVED_MESH_PATH_CACHE.get(cache_key)
@@ -68,6 +73,7 @@ def _resolve_mesh_path(loader, model_name):
 # Texture cache (keyed by cli + path)
 # ---------------------------------------------------------------------------
 def _load_texture_cached(texture_path, cli):
+    """Upload the image once per physics client and hand back the same id on every later call."""
     key = (cli, texture_path.replace("\\", "/"))
     if key in _TEXTURE_CACHE:
         return _TEXTURE_CACHE[key]
@@ -90,6 +96,7 @@ def _spawn_generated_mesh(
     base_position=(0.0, 0.0, 0.0),
     mesh_scale_xyz=(1.0, 1.0, 1.0),
 ):
+    """Place a zero-mass body at base_position from one OBJ file, optionally textured and drawn on both sides."""
     mesh_key = mesh_path.replace("\\", "/")
     msx, msy, msz = (
         float(mesh_scale_xyz[0]),
@@ -165,6 +172,7 @@ def _spawn_mesh_with_anchor(
     double_sided=False,
     frame_quat_override=None,
 ):
+    """Place a yawed static body so its local anchor point lands on the world coordinate, reusing cached shapes."""
     mesh_path = _resolve_mesh_path(loader, model_name)
     sx, sy, sz = mesh_scale_xyz
     ax, ay, az = local_anchor_xyz
@@ -274,6 +282,7 @@ def _spawn_native_mtl_visual_with_anchor(
     with_collision=True,
     double_sided=False,
 ):
+    """Place an anchored body that keeps the colours of its own material file, with an optional lighter hull."""
     if model_path_override and os.path.exists(model_path_override):
         mesh_path = os.path.abspath(model_path_override).replace("\\", "/")
     else:
@@ -348,6 +357,7 @@ def _spawn_collision_only_with_anchor(
     model_path_override="",
     frame_quat_override=None,
 ):
+    """Place an anchored body that blocks the drone but draws nothing: its visual is fully transparent."""
     if model_path_override and os.path.exists(model_path_override):
         mesh_path = os.path.abspath(model_path_override).replace("\\", "/")
     else:
@@ -400,6 +410,7 @@ def _spawn_collision_only_with_anchor(
 
 
 def _spawn_box_primitive(center_xyz, size_xyz, rgba, cli, with_collision=True):
+    """Place an untextured static cuboid of the given full extents, centred on center_xyz."""
     hx = float(size_xyz[0]) * 0.5
     hy = float(size_xyz[1]) * 0.5
     hz = float(size_xyz[2]) * 0.5

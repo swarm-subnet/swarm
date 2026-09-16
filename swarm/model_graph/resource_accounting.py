@@ -37,6 +37,7 @@ from .onnx_profile import ModelInspection
 
 @dataclass(frozen=True)
 class ResourceTotals:
+    """Aggregate storage, node, memory and FLOP counts an archive is measured against."""
     onnx_bytes: int
     initializer_bytes: int
     onnx_nodes: int

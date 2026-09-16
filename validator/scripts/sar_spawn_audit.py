@@ -53,6 +53,11 @@ DEFAULT_N_SEEDS = 5000
 
 
 def audit_one_map(cli: int, name: str, ctype: int, n_seeds: int) -> tuple[int, int, float]:
+    """Rebuild one environment type over a seed range and count the spawn searches that raise ``SARSpawnError``.
+
+    Returns the failure count, the number of seeds tried and the wall seconds
+    the sweep took.
+    """
     fails = 0
     started = time.time()
     for seed in range(n_seeds):
@@ -75,6 +80,11 @@ def audit_one_map(cli: int, name: str, ctype: int, n_seeds: int) -> tuple[int, i
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Sweep every selected environment type and print its spawn failure rate as one table row.
+
+    Exit code 0 when all of them sit at or under the threshold, 1 when any
+    misses it, 2 when an unknown map name was asked for.
+    """
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n-seeds", type=int, default=DEFAULT_N_SEEDS)
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)

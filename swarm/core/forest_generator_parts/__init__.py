@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Forest map generator re-exported flat for forest_generator.py: asset resolution, OBJ geometry, ground and hills, placement and PyBullet spawning, behind the entrypoints in entry."""
+
 from ._shared import *
 from .assets import *
 from .entry import *

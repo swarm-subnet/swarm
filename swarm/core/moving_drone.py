@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 # swarm/envs/moving_drone.py
+"""The PyBullet aviary a Swarm task is flown in: camera, control contract, physics extras and scoring all come from the task's family."""
 from __future__ import annotations
 
 import functools
@@ -98,7 +99,10 @@ from swarm.constants import (
     SOLVER_ITERATIONS,
     SOLVER_MIN_ISLAND_SIZE,
 )
+from swarm.core.daylight import apply_seeded_sun, daylight_render_kwargs, sky_render_kwargs, sun_render_kwargs
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
+from swarm.core.sky_pack import load_sky_pack, pick_sky
+from swarm.core.wind import SeededWind
 
 # Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
 _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
@@ -131,6 +135,7 @@ def world_to_body(w, yaw):
 
 @functools.lru_cache(maxsize=4096)
 def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
+    """Number of 'f ' lines in an OBJ, keyed on path, mtime and size; 0 when it cannot be read."""
     try:
         with open(path, "rb") as f:
             data = f.read()
@@ -140,6 +145,7 @@ def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
 
 
 def _inside_safety_patch(contact_point, safety_patch) -> bool:
+    """True when a contact falls inside the disc and the height band a family has excused from clearance scoring."""
     cx, cy = safety_patch.xy
     dx = float(contact_point[0]) - float(cx)
     dy = float(contact_point[1]) - float(cy)
@@ -170,7 +176,7 @@ class MovingDroneAviary(BaseRLAviary):
         self,
         task,
         drone_model : DroneModel   = DroneModel.CF2X,
-        physics     : Physics      = Physics.PYB,
+        physics     : Physics | None = None,
         pyb_freq    : int          = 240,
         ctrl_freq   : int          = 30,
         gui         : bool         = False,
@@ -188,6 +194,8 @@ class MovingDroneAviary(BaseRLAviary):
         sar_mode : bool
             Backward-compatible family runtime hint. The active challenge
             family may normalize or ignore it.
+        physics : Physics | None
+            Drone physics mode; None takes the family's ``physics_mode``.
         """
         self.task       = task
         n_drones = max(1, int(getattr(task, "num_drones", 0) or num_drones))
@@ -207,6 +215,7 @@ class MovingDroneAviary(BaseRLAviary):
             self.GOAL_POS   = np.asarray(task.goal, dtype=float)
         self.EP_LEN_SEC = float(task.horizon)
         self.family_runtime = runtime_family_for_task(task)
+        self._sky_colors = self.family_runtime.sky_colors(task)
         self.sar_mode = bool(sar_mode)
 
         self._time_alive = 0.0
@@ -243,6 +252,13 @@ class MovingDroneAviary(BaseRLAviary):
         self._movement_pattern = self._get_movement_pattern_from_seed(seed)
         self._platform_offsets = []
         self._init_platform_randomization(seed)
+        wind_max = float(getattr(task, 'wind_max_mps', 0.0) or 0.0)
+        self._wind = None if wind_max <= 0.0 else SeededWind(
+            seed, max_mps=wind_max,
+            turbulence=float(getattr(task, 'wind_turbulence', 0.0) or 0.0),
+            gusts=int(getattr(task, 'wind_gusts', 0) or 0),
+            dt=float(task.sim_dt), horizon=float(task.horizon),
+        )
         self._end_platform_uids = []
         self._start_platform_uids = []
         self._platform_hit = False
@@ -272,6 +288,13 @@ class MovingDroneAviary(BaseRLAviary):
             self._light_direction = [0, 0, 1]
         # Neutral light tint; the office family overwrites it per episode.
         self._light_color = [1.0, 1.0, 1.0]
+        self._sun = None
+        if getattr(self.family_runtime, "seeded_sun", False):
+            apply_seeded_sun(self, seed, getattr(self.family_runtime, "night_share", 0.0))
+        self._apply_sun_sky(seed)
+
+        if physics is None:
+            physics = Physics(self.family_runtime.physics_mode)
 
         # Let BaseRLAviary set up the PyBullet world
         super().__init__(
@@ -324,6 +347,15 @@ class MovingDroneAviary(BaseRLAviary):
             os.environ.get("SWARM_BATCH_DEPTH", "1") != "0"
             and hasattr(p, "getDepthImagesBatch")
         )
+        backend = os.environ.get("SWARM_RENDER_BACKEND") or self.family_runtime.render_backend
+        # The office family observes colour, which only TinyRenderer shades, so it stays there.
+        self._raycast_enabled = backend == "raycast" and not self._office_rc_enabled
+        self._render_flags = 0
+        if self._raycast_enabled:
+            if not hasattr(p, "ER_SWARM_RAYCAST"):
+                raise RuntimeError("render_backend 'raycast' needs a swarm-bullet3 wheel with ER_SWARM_RAYCAST")
+            self._render_flags = p.ER_SWARM_RAYCAST
+        self._apply_daylight(seed)
 
         # on-demand RGB state (SAR only): per-drone request budget + the frame served this step
         if self._sar_rgb_enabled:
@@ -388,6 +420,7 @@ class MovingDroneAviary(BaseRLAviary):
         fam = getattr(getattr(self, "family_runtime", None), "family_id", "")
 
         def _reseed_buffer(width):
+            """Refill the action history with zero rows of this many columns."""
             # _reset_action_buffer reads action_space, which is not assigned yet
             self.action_buffer.clear()
             for _ in range(self.ACTION_BUFFER_SIZE):
@@ -784,6 +817,7 @@ class MovingDroneAviary(BaseRLAviary):
         return True
 
     def _drone_camera_view(self, nth_drone):
+        """View matrix along the body's forward axis, from an eye offset ahead of and above the hull."""
         cli = getattr(self, "CLIENT", 0)
         drone_pos = self.pos[nth_drone, :]
         rot_mat = np.array(p.getMatrixFromQuaternion(self.quat[nth_drone, :])).reshape(3, 3)
@@ -806,6 +840,7 @@ class MovingDroneAviary(BaseRLAviary):
         )
 
     def _drone_proj_matrix(self):
+        """Projection matrix at the episode's field of view and far plane, built once and kept."""
         cli = getattr(self, "CLIENT", 0)
         if self._cached_proj_matrix is None:
             aspect = self.IMG_RES[0] / self.IMG_RES[1]
@@ -842,21 +877,88 @@ class MovingDroneAviary(BaseRLAviary):
             depth_only_flag = getattr(p, "ER_DEPTH_ONLY", None)
             if depth_only_flag is not None:
                 seg_flag |= depth_only_flag
+        if self._sun is not None:
+            extra_kwargs.update(sun_render_kwargs(self._sun))
+        extra_kwargs.update(self._sky_kwargs())
+        daylight_flags = 0 if office else self._daylight_flags
+        if daylight_flags:
+            extra_kwargs.update(self._daylight_kwargs(cli))
         [w, h, rgb, dep, _seg] = p.getCameraImage(
             width=self.IMG_RES[0],
             height=self.IMG_RES[1],
-            shadow=0,
+            shadow=1 if daylight_flags else 0,
             renderer=p.ER_TINY_RENDERER,
             viewMatrix=DRONE_CAM_VIEW,
             projectionMatrix=DRONE_CAM_PRO,
             lightDirection=self._light_direction,
-            flags=seg_flag,
+            flags=seg_flag | self._render_flags | self._sky_flags | daylight_flags,
             physicsClientId=cli,
             **extra_kwargs
         )
 
         dep = np.reshape(dep, (h, w))
         return (np.reshape(rgb, (h, w, 4)) if office else None), dep, None
+
+    def _apply_sun_sky(self, seed: int) -> None:
+        """Ask the renderer for the sky of this seed's sun, and its clouds, when the family opted
+        in and the seed is a daytime sun; a night seed and every other family keep their sky."""
+        self._sky_flags = 0
+        self._sky_cloud_seed = None
+        runtime = self.family_runtime
+        if self._sun is None or not getattr(runtime, "sky_from_sun", False) or getattr(self._sun, "night", False):
+            return
+        if not hasattr(p, "ER_SWARM_SKY_SUN"):
+            raise RuntimeError("sky_from_sun needs a swarm-bullet3 wheel with ER_SWARM_SKY_SUN")
+        self._sky_flags = p.ER_SWARM_SKY_SUN
+        if getattr(runtime, "sky_clouds", False):
+            self._sky_cloud_seed = int(seed)
+
+    def _apply_daylight(self, seed: int) -> None:
+        """Decide the daylight model for this episode: on when the family asks for it under a daytime
+        seeded sun on the ray caster with the sun sky, off otherwise; picks the seed's sky photo."""
+        self._daylight_flags = 0
+        self._daylight_sky = None
+        self._daylight_texture = None
+        runtime = self.family_runtime
+        if not getattr(runtime, "daylight", False):
+            return
+        if not self._raycast_enabled or not getattr(runtime, "sky_from_sun", False):
+            raise RuntimeError("daylight needs render_backend 'raycast', seeded_sun and sky_from_sun on the family")
+        if self._sun is None or getattr(self._sun, "night", False):
+            return
+        needed = ("ER_SWARM_DAYLIGHT", "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS",
+                  "ER_ALPHA_CUTOUT", "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")
+        missing = [name for name in needed if not hasattr(p, name)]
+        if missing:
+            raise RuntimeError("daylight needs a swarm-bullet3 wheel with " + ", ".join(missing))
+        self._daylight_flags = functools.reduce(lambda a, b: a | b, (getattr(p, name) for name in needed))
+        self._daylight_sky = pick_sky(seed, self._sun, load_sky_pack())
+
+    def _daylight_kwargs(self, cli: int) -> dict:
+        """getCameraImage arguments of a colour frame under the daylight model: the sun's strength and
+        the film settings, plus the seed's sky photo, loaded into the engine once per world."""
+        if not self._daylight_flags:
+            return {}
+        kwargs = daylight_render_kwargs(self._sun)
+        if self._daylight_sky is not None:
+            photo, yaw = self._daylight_sky
+            if self._daylight_texture is None:
+                self._daylight_texture = p.loadTexture(photo.path, physicsClientId=cli)
+            kwargs.update(skyTextureId=self._daylight_texture, skyYaw=yaw)
+        return kwargs
+
+    def _sky_kwargs(self) -> dict:
+        """getCameraImage sky arguments: the family's own sky colours, or the dark sky a seeded
+        moon carries when the family sets none, plus the cloud seed once clouds are on. Empty
+        under a day sun with no family sky, which is the white background every family has today."""
+        if self._sky_colors is not None:
+            horizon, zenith = self._sky_colors
+            kwargs = {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
+        else:
+            kwargs = sky_render_kwargs(getattr(self, "_sun", None)) or {}
+        if getattr(self, "_sky_cloud_seed", None) is not None:
+            kwargs["skyCloudSeed"] = self._sky_cloud_seed
+        return kwargs
 
     def _get_altitude_distance(self, nth_drone: int = 0) -> float:
         """Cast single ray downward for ground/altitude detection."""
@@ -975,6 +1077,7 @@ class MovingDroneAviary(BaseRLAviary):
 
     @staticmethod
     def _count_mesh_faces(path: str) -> int:
+        """Face total for an OBJ on disk, served from the process cache; 0 when it is gone."""
         try:
             st = os.stat(path)
         except OSError:
@@ -1019,7 +1122,13 @@ class MovingDroneAviary(BaseRLAviary):
             cx = (mn[0] + mx[0]) * 0.5
             cy = (mn[1] + mx[1]) * 0.5
             rgba_orig = list(vdata[0][7])
-            targets.append((uid, cx, cy, span / 2.0, rgba_orig))
+            # Remember the collision filter because culling temporarily replaces it.
+            restore_filter = (
+                (2, 1)
+                if p.getDynamicsInfo(uid, -1, physicsClientId=cli)[0] == 0
+                else (1, 0xFF)
+            )
+            targets.append((uid, cx, cy, span / 2.0, rgba_orig, restore_filter))
             total_faces += faces
 
         self._cull_targets = targets
@@ -1049,12 +1158,14 @@ class MovingDroneAviary(BaseRLAviary):
         dx, dy = dp[0], dp[1]
         vis_hidden = self._cull_vis_hidden
         phys_disabled = self._cull_phys_disabled
+        # The ray caster's frame cost does not grow with the bodies in view, so it keeps far bodies.
+        hide_visuals = not getattr(self, "_raycast_enabled", False)
 
-        for uid, cx, cy, hs, rgba in self._cull_targets:
+        for uid, cx, cy, hs, rgba, restore_filter in self._cull_targets:
             dist = math.sqrt((cx - dx) ** 2 + (cy - dy) ** 2)
             surface_dist = dist - hs
 
-            if surface_dist > CULL_VISUAL_RADIUS:
+            if hide_visuals and surface_dist > CULL_VISUAL_RADIUS:
                 if uid not in vis_hidden:
                     p.changeVisualShape(uid, -1, rgbaColor=[0, 0, 0, 0], physicsClientId=cli)
                     vis_hidden.add(uid)
@@ -1067,17 +1178,21 @@ class MovingDroneAviary(BaseRLAviary):
                     p.setCollisionFilterGroupMask(uid, -1, 0, 0, physicsClientId=cli)
                     phys_disabled.add(uid)
             elif uid in phys_disabled:
-                p.setCollisionFilterGroupMask(uid, -1, 1, 0xFF, physicsClientId=cli)
+                p.setCollisionFilterGroupMask(
+                    uid, -1, *restore_filter, physicsClientId=cli
+                )
                 phys_disabled.discard(uid)
 
     def _restore_culled_bodies(self) -> None:
         """Restore all culled bodies to their original state."""
         cli = getattr(self, "CLIENT", 0)
-        for uid, _, _, _, rgba in self._cull_targets:
+        for uid, _, _, _, rgba, restore_filter in self._cull_targets:
             if uid in self._cull_vis_hidden:
                 p.changeVisualShape(uid, -1, rgbaColor=rgba, physicsClientId=cli)
             if uid in self._cull_phys_disabled:
-                p.setCollisionFilterGroupMask(uid, -1, 1, 0xFF, physicsClientId=cli)
+                p.setCollisionFilterGroupMask(
+                    uid, -1, *restore_filter, physicsClientId=cli
+                )
         self._cull_vis_hidden.clear()
         self._cull_phys_disabled.clear()
 
@@ -1180,6 +1295,7 @@ class MovingDroneAviary(BaseRLAviary):
         self._frozen[nth_drone] = True
 
     def _update_landing_state_multi(self, platform_contact: bool, nth_drone: int) -> None:
+        """One drone's landing latch in a swarm: level and slow on the pad for LANDING_STABLE_SEC, then claim it."""
         from swarm.protocol import FailureReason
 
         if self._d_success[nth_drone] or self._d_collision[nth_drone]:
@@ -1265,6 +1381,7 @@ class MovingDroneAviary(BaseRLAviary):
                 self._d_min_clearance[i] = min_dist
 
     def _process_step_updates_multi(self) -> None:
+        """Advance every drone still flying through contacts, tilt and landing, then park the ones that finished."""
         from swarm.protocol import FailureReason
 
         froze_any = False
@@ -1304,6 +1421,7 @@ class MovingDroneAviary(BaseRLAviary):
             seed = getattr(self.task, 'map_seed', None)
 
         p.resetSimulation(physicsClientId=self.CLIENT)
+        self._daylight_texture = None
         self._housekeeping()
         self._updateAndStoreKinematicInformation()
         self._startVideoRecording()
@@ -1332,6 +1450,9 @@ class MovingDroneAviary(BaseRLAviary):
         from swarm.protocol import FailureReason
         self._failure_reason = FailureReason.NONE.value
         self._d_failure_reason = [FailureReason.NONE.value] * n
+        wind_model = getattr(self, "_wind", None)
+        if wind_model is not None:
+            wind_model.reset()
         self.family_runtime.reset_env_state(self)
 
         if getattr(self, "_sar_rgb_enabled", False):
@@ -1412,8 +1533,11 @@ class MovingDroneAviary(BaseRLAviary):
                 viewMatrix=self.CAM_VIEW,
                 projectionMatrix=self.CAM_PRO,
                 renderer=p.ER_TINY_RENDERER,
-                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX | self._sky_flags | self._daylight_flags,
+                lightDirection=self._light_direction,
                 physicsClientId=self.CLIENT,
+                **self._sky_kwargs(),
+                **self._daylight_kwargs(self.CLIENT),
             )
             (Image.fromarray(np.reshape(rgb, (h, w, 4)), 'RGBA')).save(
                 os.path.join(self.IMG_PATH, "frame_" + str(self.FRAME_NUM) + ".png")
@@ -1464,6 +1588,8 @@ class MovingDroneAviary(BaseRLAviary):
             )
         self._update_moving_platform()
         self.family_runtime.advance_world(self)
+        wind_model = getattr(self, "_wind", None)
+        wind = None if wind_model is None else wind_model.velocity(self._time_alive)
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if (
                 self.PYB_STEPS_PER_CTRL > 1
@@ -1498,15 +1624,20 @@ class MovingDroneAviary(BaseRLAviary):
                     self._groundEffect(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.PYB_DRAG:
                     self._physics(clipped_action[i, :], i)
-                    self._drag(self.last_clipped_action[i, :], i)
+                    # Wind already applies the same rotor drag on the relative air.
+                    if wind is None:
+                        self._drag(self.last_clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.PYB_DW:
                     self._physics(clipped_action[i, :], i)
                     self._downwash(i)
                 elif self.PHYSICS == Physics.PYB_GND_DRAG_DW:
                     self._physics(clipped_action[i, :], i)
                     self._groundEffect(clipped_action[i, :], i)
-                    self._drag(self.last_clipped_action[i, :], i)
+                    if wind is None:
+                        self._drag(self.last_clipped_action[i, :], i)
                     self._downwash(i)
+                if wind is not None and self.PHYSICS != Physics.DYN:
+                    self._apply_wind(clipped_action[i, :], i, wind)
             self.family_runtime.apply_world_physics(self)
             if self.PHYSICS != Physics.DYN:
                 p.stepSimulation(physicsClientId=self.CLIENT)
@@ -1521,6 +1652,40 @@ class MovingDroneAviary(BaseRLAviary):
         info = self._computeInfo()
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return obs, reward, terminated, truncated, info
+
+    def _groundEffect(self, rpm, nth_drone: int) -> None:
+        """Ground effect of the drone's URDF model with the height read from the downward
+        ray, so terrain, roofs and pads above or below z = 0 cushion the drone like the
+        world plane does. Scalar math so every CPU produces the same bytes."""
+        roll, pitch = float(self.rpy[nth_drone, 0]), float(self.rpy[nth_drone, 1])
+        if abs(roll) >= math.pi / 2 or abs(pitch) >= math.pi / 2:
+            return
+        height = max(float(self._get_altitude_distance(nth_drone)), float(self.GND_EFF_H_CLIP))
+        gain = float(self.KF) * float(self.GND_EFF_COEFF) * (float(self.PROP_RADIUS) / (4.0 * height)) ** 2
+        uid = int(self.DRONE_IDS[nth_drone])
+        for i in range(4):
+            p.applyExternalForce(
+                uid, i, [0.0, 0.0, gain * float(rpm[i]) ** 2], [0.0, 0.0, 0.0],
+                p.LINK_FRAME, physicsClientId=self.CLIENT,
+            )
+
+    def _apply_wind(self, rpm, nth_drone: int, wind) -> None:
+        """Rotor drag on the air moving relative to the drone, the drone's own URDF
+        coefficient times total rotor speed, so wind pushes a hovering drone and brakes a
+        flying one. Written as scalar math so every CPU produces the same bytes."""
+        vx, vy, vz = (float(c) for c in self.vel[nth_drone])
+        rx, ry, rz = vx - float(wind[0]), vy - float(wind[1]), vz - float(wind[2])
+        m = p.getMatrixFromQuaternion(self.quat[nth_drone])
+        # rows of m^T: relative airspeed in the body frame, where the URDF coefficients live
+        bx = m[0] * rx + m[3] * ry + m[6] * rz
+        by = m[1] * rx + m[4] * ry + m[7] * rz
+        bz = m[2] * rx + m[5] * ry + m[8] * rz
+        omega = (float(rpm[0]) + float(rpm[1]) + float(rpm[2]) + float(rpm[3])) * (2.0 * math.pi / 60.0)
+        kxy, kz = -float(self.DRAG_COEFF[0]) * omega, -float(self.DRAG_COEFF[2]) * omega
+        p.applyExternalForce(
+            int(self.DRONE_IDS[nth_drone]), -1, [kxy * bx, kxy * by, kz * bz], [0.0, 0.0, 0.0],
+            p.LINK_FRAME, physicsClientId=self.CLIENT,
+        )
 
     def _process_step_updates(self):
         """Handle post-physics episode bookkeeping exactly once per control step."""
@@ -1538,18 +1703,23 @@ class MovingDroneAviary(BaseRLAviary):
         self._apply_distance_cull()
 
     def _family_post_step_update(self) -> None:
+        """Hand the finished step to the active family's own bookkeeping."""
         self.family_runtime.post_step_update(self)
 
     def _legacy_sar_runtime(self):
+        """The active family runtime, reached under the name older callers use."""
         return self.family_runtime
 
     def _sar_drone_state(self):
+        """The drone's position and velocity, read through the family runtime."""
         return self._legacy_sar_runtime().legacy_sar_drone_state(self)
 
     def _sar_check_predicate(self) -> bool:
+        """Whether the drone is holding the confirm hover this step, decided by the family runtime."""
         return self._legacy_sar_runtime().legacy_sar_check_predicate(self)
 
     def _sar_step_update(self) -> None:
+        """Advance the dwell bookkeeping through the family runtime."""
         self._legacy_sar_runtime().legacy_sar_step_update(self)
 
     def _reset_action_buffer(self) -> None:
@@ -1629,6 +1799,7 @@ class MovingDroneAviary(BaseRLAviary):
 
     # -------- extra logging --------------------------------------------- #
     def _computeInfo(self):
+        """The per-step dict the scorer reads: success, collision, clearance, timing and the family's extras."""
         if self.NUM_DRONES > 1:
             info = {
                 "num_drones": int(self.NUM_DRONES),
@@ -1674,6 +1845,7 @@ class MovingDroneAviary(BaseRLAviary):
                 viewMatrices=views,
                 projectionMatrix=self._drone_proj_matrix(),
                 lightDirection=self._light_direction,
+                flags=self._render_flags,
                 physicsClientId=getattr(self, "CLIENT", 0),
             )
         depth_stack = np.empty(
@@ -1772,10 +1944,13 @@ class MovingDroneAviary(BaseRLAviary):
             fov=self._fov, aspect=1.0, nearVal=0.05,
             farVal=getattr(self, "_depth_far_m", DEPTH_FAR), physicsClientId=cli,
         )
+        sun_kwargs = sun_render_kwargs(self._sun) if self._sun is not None else {}
+        sun_kwargs.update(self._daylight_kwargs(cli))
         _w, _h, rgb, _dep, _seg = p.getCameraImage(
-            width=res, height=res, shadow=0, renderer=p.ER_TINY_RENDERER,
+            width=res, height=res, shadow=1 if self._daylight_flags else 0, renderer=p.ER_TINY_RENDERER,
             viewMatrix=view, projectionMatrix=proj, lightDirection=self._light_direction,
-            flags=p.ER_NO_SEGMENTATION_MASK, physicsClientId=cli,
+            flags=p.ER_NO_SEGMENTATION_MASK | self._sky_flags | self._daylight_flags, physicsClientId=cli, **sun_kwargs,
+            **self._sky_kwargs(),
         )
         return np.reshape(rgb, (res, res, 4))[:, :, :3].astype(np.float32) / 255.0
 

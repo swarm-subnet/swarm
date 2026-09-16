@@ -29,6 +29,7 @@ from swarm.core.env_builder.surface_resolver import resolve_surface
 
 
 def _flat_ground(cli, tagger, *, z=0.0):
+    """Spawn a level 80m square slab tagged SUPPORT_TERRAIN at height z."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[40.0, 40.0, 0.1], physicsClientId=cli,
     )
@@ -41,6 +42,7 @@ def _flat_ground(cli, tagger, *, z=0.0):
 
 
 def _building(cli, tagger, *, position, half_extents=(2.0, 2.0, 5.0)):
+    """Spawn a static box tagged SUPPORT_ROOFTOP, centred where position puts it."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=list(half_extents), physicsClientId=cli,
     )
@@ -53,6 +55,7 @@ def _building(cli, tagger, *, position, half_extents=(2.0, 2.0, 5.0)):
 
 
 def _slope(cli, tagger, *, position, tilt_deg, category=BodyCategory.SUPPORT_SLOPE):
+    """Spawn a thin slab pitched tilt_deg about Y and tagged with the given category."""
     col = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[3.0, 3.0, 0.1], physicsClientId=cli,
     )
@@ -67,6 +70,7 @@ def _slope(cli, tagger, *, position, tilt_deg, category=BodyCategory.SUPPORT_SLO
 
 
 def test_rejects_wall_side_hit(sar_pybullet):
+    """The rooftop is returned at its centre, while a probe half a metre past its edge comes back as the ground instead."""
     cli = sar_pybullet
     tagger = BodyTagger(cli)
     _flat_ground(cli, tagger, z=-0.1)
@@ -81,6 +85,7 @@ def test_rejects_wall_side_hit(sar_pybullet):
 
 
 def test_slope_accept_35deg(sar_pybullet):
+    """A 35 degree face is shallow enough to hold a victim and comes back flagged as one."""
     cli = sar_pybullet
     tagger = BodyTagger(cli)
     _slope(cli, tagger, position=[0.0, 0.0, 1.5], tilt_deg=35.0)
@@ -91,6 +96,7 @@ def test_slope_accept_35deg(sar_pybullet):
 
 
 def test_slope_reject_55deg(sar_pybullet):
+    """A 55 degree face has a normal under the 0.70 cutoff and is never offered as support."""
     cli = sar_pybullet
     tagger = BodyTagger(cli)
     _slope(cli, tagger, position=[0.0, 0.0, 1.5], tilt_deg=55.0)

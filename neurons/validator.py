@@ -17,7 +17,10 @@
 # DEALINGS IN THE SOFTWARE.
 
 
+"""Validator process entrypoint: builds the neuron, watches its worker thread and hands leased seeds back on exit."""
+import asyncio
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -39,6 +42,7 @@ from loguru import logger
 
 import swarm
 from swarm.base.validator import BaseValidatorNeuron
+from swarm.constants import STAND_DOWN_TIMEOUT_SEC
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.forward import forward
 from swarm.validator.utils_parts.model_fetch import ensure_model_dir
@@ -179,6 +183,7 @@ class Validator(BaseValidatorNeuron):
     """
 
     def __init__(self, config=None):
+        """Load saved state, start W&B logging, kill leftover eval containers and bring the Docker evaluator up."""
         super(Validator, self).__init__(config=config)
 
         # Log validator version info
@@ -255,6 +260,19 @@ class Validator(BaseValidatorNeuron):
         """
         return await forward(self)
 
+    def stand_down(self) -> None:
+        """Hand every leased seed back before the process dies, so a restart costs the pool nothing."""
+        api = getattr(self, "backend_api", None)
+        if api is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(api.stand_down(), self.loop).result(
+                timeout=STAND_DOWN_TIMEOUT_SEC
+            )
+            bt.logging.info("Handed leased seeds back to the backend before exit")
+        except Exception as exc:
+            bt.logging.warning(f"Stand-down heartbeat did not land: {exc}")
+
     def __del__(self):
         """Cleanup wandb helper and docker evaluator when validator is destroyed."""
         if hasattr(self, "docker_evaluator"):
@@ -273,9 +291,19 @@ if __name__ == "__main__":
     logger.add("logfile.log", level="INFO")
     logger.add(lambda msg: print(msg, end=""), level="WARNING")
 
+    def _terminate(signum, frame):
+        """Turn a signal into the KeyboardInterrupt the shutdown path already handles."""
+        raise KeyboardInterrupt
+
+    # pm2 stops with SIGINT by default; SIGTERM covers systemd and a custom kill signal.
+    signal.signal(signal.SIGTERM, _terminate)
+
     with Validator() as validator:
-        while True:
-            if hasattr(validator, 'thread') and not validator.thread.is_alive():
-                bt.logging.error("Validator worker thread died! Exiting.")
-                break
-            time.sleep(5)
+        try:
+            while True:
+                if hasattr(validator, 'thread') and not validator.thread.is_alive():
+                    bt.logging.error("Validator worker thread died! Exiting.")
+                    break
+                time.sleep(5)
+        except KeyboardInterrupt:
+            validator.stand_down()

@@ -104,24 +104,29 @@ def office_pieces() -> dict:
 
 @dataclass
 class Box:
+    """An axis-aligned floor footprint, held as its two opposite corners."""
     x0: float
     y0: float
     x1: float
     y1: float
 
     def grow(self, m):
+        """The same box expanded by m on every side, for clearance tests."""
         return Box(self.x0 - m, self.y0 - m, self.x1 + m, self.y1 + m)
 
     def hits(self, o):
+        """True when the two rectangles overlap; a shared edge does not count."""
         return self.x0 < o.x1 and o.x0 < self.x1 and self.y0 < o.y1 and o.y0 < self.y1
 
     def inside(self, z, tol=0.005):
+        """True when the rectangle sits within zone (x0, x1, y0, y1), tol slack allowed."""
         return (z[0] - tol <= self.x0 and self.x1 <= z[1] + tol
                 and z[2] - tol <= self.y0 and self.y1 <= z[3] + tol)
 
 
 @dataclass
 class Placed:
+    """A piece pinned down: its id, pose and the floor rectangle it occupies."""
     piece: str
     x: float
     y: float
@@ -131,11 +136,13 @@ class Placed:
 
 
 def footprint(size, x, y, yaw):
+    """Floor rectangle a piece of this size covers at (x, y), width and depth swapping on a quarter turn."""
     w, d = (size[0], size[1]) if yaw % 180 == 0 else (size[1], size[0])
     return Box(x - w / 2, y - d / 2, x + w / 2, y + d / 2)
 
 
 def rot(dx, dy, yaw):
+    """Turn the offset (dx, dy) by yaw, snapped to the nearest right angle."""
     c, s = round(math.cos(math.radians(yaw))), round(math.sin(math.radians(yaw)))
     return dx * c - dy * s, dx * s + dy * c
 
@@ -146,7 +153,9 @@ def yaw_for_wall(back_side, axis, normal):
 
 
 class _Layout:
+    """One placement attempt: a scaled room, a seeded rng, and what has gone down so far."""
     def __init__(self, seed, scale):
+        """Scale the room, its wall runs, doors and keep-out boxes to this room size."""
         self.pieces = {p["id"]: p for p in office_pieces()["pieces"]}
         self.rng = random.Random(seed)
         self.placed: dict = {}
@@ -166,9 +175,11 @@ class _Layout:
 
     # ---- geometry --------------------------------------------------------
     def wall(self, name):
+        """The scaled run with this name: axis, coordinate, span and inward normal."""
         return next(w for w in self.walls if w[0] == name)
 
     def free(self, box, zone=None, clear=CLEAR):
+        """True when the rectangle fits the zone and room, clears what is already down, and touches no door apron or the entrance disc."""
         if zone and not box.inside(self.zones[zone]):
             return False
         if not box.inside(self.room):
@@ -185,17 +196,20 @@ class _Layout:
         return True
 
     def put(self, pid, x, y, yaw, z=None):
+        """Record a piece at (x, y, yaw), taking its height from the manifest unless z is given."""
         p = self.pieces[pid]
         z = p["base_z"] if z is None else z
         self.placed[pid] = Placed(pid, x, y, z, yaw, footprint(p["size"], x, y, yaw))
 
     def authored_offsets(self, ids, anchor):
+        """Distance from the anchor to each id in the real office, scaled to this room."""
         a = self.pieces[anchor]["authored"]
         return {i: ((self.pieces[i]["authored"]["x"] - a["x"]) * self.sx,
                     (self.pieces[i]["authored"]["y"] - a["y"]) * self.sy) for i in ids}
 
     # ---- rules -------------------------------------------------------------
     def wall_unit(self, pid, zone, walls):
+        """Slide the piece along a shuffled run until its back sits flat on clear wall."""
         p = self.pieces[pid]
         size, back = p["size"], p["back_side"] or "-y"
         gap = max(0.0, min(p["wall_gap"], 0.1))
@@ -256,6 +270,7 @@ class _Layout:
         members = {d: [i for i, p in self.pieces.items() if p.get("desk") == d] for pr in DESK_PAIRS for d in pr}
 
         def extent(pair):
+            """Depth in metres of one back-to-back pair with its chairs and drawers."""
             ids = list(pair) + members[pair[0]] + members[pair[1]]
             boxes = [footprint(self.pieces[i]["size"], self.pieces[i]["authored"]["x"] * self.sx,
                                self.pieces[i]["authored"]["y"] * self.sy, 0) for i in ids]
@@ -300,6 +315,7 @@ class _Layout:
         return False
 
     def free_item(self, pid, zone):
+        """Drop a loose piece by a wall, beside a desk, or anywhere in the zone."""
         p = self.pieces[pid]
         z = self.zones[zone]
         for _ in range(TRIES):
@@ -365,6 +381,7 @@ class _Layout:
 
     # ---- the whole office ----------------------------------------------------
     def generate(self):
+        """Place the whole office for this seed and return the piece ids and set names no rule could place."""
         pz = self.pieces
         fallback = []
         for pid in sorted(ZONE_A_WALL_UNITS, key=lambda i: -pz[i]["size"][2]):

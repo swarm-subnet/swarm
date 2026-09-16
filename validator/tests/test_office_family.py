@@ -65,6 +65,7 @@ def _blind(env):
 
 @pytest.fixture(scope="module")
 def office_world():
+    """Module-scoped office interceptor env from a screening task, closed when the module ends."""
     task = task_gen.screening_task(
         1 / 50, 3, challenge_type=OFFICE_CHALLENGE_TYPE,
         distance_range=(OFFICE_MIN_START_DISTANCE_M, OFFICE_MAX_START_DISTANCE_M),
@@ -83,6 +84,7 @@ def office_env(office_world, monkeypatch):
 
 
 def test_office_contract_action_space():
+    """The published contract hands the policy four RC sticks, each bounded to [-1, 1]."""
     contract = get_policy_interface_contract("cf_interceptor_office", "submission_zip.v1")
     action = contract["action_space"]
     assert action["shape"] == [4]
@@ -92,6 +94,7 @@ def test_office_contract_action_space():
 
 
 def test_rc_body_to_world_math():
+    """Sticks are read in the drone's own frame: forward follows the yaw, the climb axis ignores it."""
     # Facing +X: forward stick moves +X, right stick moves -Y.
     v = rc_sticks_to_world_velocity([0.0, 1.0, 0.0], 0.0, 3.0)
     assert np.allclose(v, [3.0, 0.0, 0.0], atol=1e-9)
@@ -108,6 +111,7 @@ def test_rc_body_to_world_math():
 
 
 def test_office_env_action_space_and_state(office_world):
+    """The live env matches the published contract: stick bounds, observation widths, unit-range RGB."""
     env = office_world
     assert env.action_space.shape == (1, 4)
     assert np.all(env.action_space.low == -1.0)
@@ -122,6 +126,7 @@ def test_office_env_action_space_and_state(office_world):
 
 
 def test_office_zero_action_hovers(office_env):
+    """Neutral sticks hold station: fifty steps of drift stay under 15 cm."""
     env = office_env
     env.reset(seed=env.task.map_seed)
     start = env.pos[0].copy()
@@ -187,6 +192,7 @@ def test_office_substep_refresh_scoped_to_office(office_env):
     orig = env._updateAndStoreKinematicInformation
 
     def counting():
+        """Tally one kinematics refresh on the office env and delegate to the real method."""
         calls["n"] += 1
         return orig()
 
@@ -214,6 +220,7 @@ def test_office_substep_refresh_scoped_to_office(office_env):
     orig2 = env2._updateAndStoreKinematicInformation
 
     def counting2():
+        """Tally one kinematics refresh on the plain env and delegate to the real method."""
         calls2["n"] += 1
         return orig2()
 
@@ -237,6 +244,7 @@ def test_office_aero_forces_hit_chaser_only(office_env):
     orig = p.applyExternalForce
 
     def spy(uid, link, force, pos, flags, physicsClientId=0):
+        """Record the body, link and force vector of one external-force call, then pass it through."""
         calls.append((int(uid), int(link), tuple(float(f) for f in force)))
         return orig(uid, link, force, pos, flags, physicsClientId=physicsClientId)
 
@@ -292,6 +300,7 @@ def test_office_malformed_actions_canonicalize_to_hover(office_env):
 
 
 def test_office_forward_matches_heading(office_env):
+    """The forward stick drives the drone along its own seeded spawn yaw, inside 20 degrees."""
     env = office_env
     env.reset(seed=env.task.map_seed)
     # Climb clear of ground effect, gently enough to stay under the 3 m ceiling.
@@ -356,6 +365,7 @@ def test_office_spawn_heading_random_and_yaw_relative(office_env):
 
 
 def test_office_contract_matches_the_rig():
+    """Nothing offered to the policy exists only in simulation: no ground-truth pose, no depth camera."""
     contract = get_policy_interface_contract("cf_interceptor_office", "submission_zip.v1")
     assert contract["observation_assembly"]["state"] == [
         "tello_attitude", "tello_velocity", "tello_acceleration",
@@ -375,6 +385,7 @@ def test_office_contract_matches_the_rig():
 
 
 def test_office_telemetry_cadence_and_age(office_env):
+    """Packets land on the period boundary carrying the link delay, and hold between arrivals while only the age advances."""
     env = office_env
     obs, _ = env.reset(seed=env.task.map_seed)
     telem = obs["state"][:15]
@@ -397,6 +408,7 @@ def test_office_telemetry_cadence_and_age(office_env):
 
 
 def test_office_telemetry_tracks_flight(office_env):
+    """Reported motion follows the real flight in the SDK's z-down frame, so a climb reads negative and a forward run positive."""
     env = office_env
     env.reset(seed=env.task.map_seed)
     # Gentle climb: a full-stick climb would reach the 3 m ceiling and tumble.
@@ -440,6 +452,7 @@ def test_office_telemetry_matches_calibration(office_env):
 
 
 def test_office_telemetry_deterministic():
+    """One seed replays the same packet stream, drops and noise included, so validators agree."""
     task = task_gen.random_task(1 / 50, 42, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
@@ -513,6 +526,7 @@ def test_office_tof_has_outliers(office_env, monkeypatch):
 
 
 def test_office_target_spawns_in_band(office_env):
+    """The target is its own body, starts inside the altitude and room limits, and is exempt from the chaser's collisions."""
     env = office_env
     env.reset(seed=env.task.map_seed)
     uid = env._office_target_uid
@@ -526,6 +540,7 @@ def test_office_target_spawns_in_band(office_env):
 
 
 def test_office_target_flight_deterministic_and_clear():
+    """One seed replays the same path, and that path really flies its legs well above the floor."""
     task = task_gen.random_task(1 / 50, 55, family_id="cf_interceptor_office")
     trajs = []
     for _ in range(2):
@@ -546,6 +561,7 @@ def test_office_target_flight_deterministic_and_clear():
 
 
 def test_office_target_profile_deterministic_and_varied():
+    """A seed always deals the same behaviour, and across seeds the cruise speed, nerve and pausing spread over their bands."""
     from swarm.challenge_families.office_interceptor import office_target_profile
     from swarm.constants import OFFICE_TARGET_FLEE_MAX, OFFICE_TARGET_FLEE_MIN
 
@@ -562,6 +578,7 @@ def test_office_target_profile_deterministic_and_varied():
 
 
 def test_office_target_flees_when_approached(office_env):
+    """A target with nerve picks its next waypoint away from a chaser that came inside the spook range."""
     from swarm.constants import OFFICE_TARGET_DODGE_REPLAN_STEPS
 
     env = office_env
@@ -589,6 +606,7 @@ def test_office_target_flees_when_approached(office_env):
 
 
 def test_office_target_oblivious_ignores_chaser(office_env):
+    """A zero reaction range fires no dodge at all, even with the pursuer parked alongside."""
     env = office_env
     env.reset(seed=env.task.map_seed)
     env._office_target_profile = dict(env._office_target_profile, react_range=0.0)
@@ -606,6 +624,7 @@ def test_office_target_oblivious_ignores_chaser(office_env):
 
 
 def test_office_target_pause_prob_respected(office_env):
+    """Probability 0 never idles at a waypoint and probability 1 always does, so the draw is real."""
     env = office_env
     env.reset(seed=env.task.map_seed)
     env._office_target_profile = dict(env._office_target_profile,
@@ -831,6 +850,7 @@ def _place_with_clear_view(env, dist=2.5):
 
 
 def test_office_detector_sees_target(office_env):
+    """With a clear line of sight arranged, the emulator fires regularly and its boxes sit inside the frame."""
     env = office_env
     obs, _ = env.reset(seed=env.task.map_seed)
     assert _place_with_clear_view(env), "no clear line of sight to arrange"
@@ -901,6 +921,7 @@ def test_office_detector_occluded_means_silent(office_env):
 
 
 def test_office_detector_deterministic():
+    """One seed replays the same detection rows, misses and ghosts included."""
     task = task_gen.random_task(1 / 50, 88, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
@@ -935,6 +956,7 @@ def test_office_rgb_deterministic_and_isolated():
 
 
 def test_office_rgb_appearance_varies_by_seed():
+    """Two seeds paint measurably different rooms, so one memorised look is worth nothing."""
     frames = []
     for seed in (91, 92):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
@@ -963,6 +985,7 @@ def test_office_rgb_stream_cadence_and_noise(office_world):
 
 
 def test_office_world_is_randomized(office_env):
+    """The gym ground plane is hidden and the map bodies carry per-episode tints."""
 
     env = office_env
     env.reset(seed=env.task.map_seed)
@@ -982,6 +1005,7 @@ def test_office_world_is_randomized(office_env):
 
 
 def test_office_crash_pays_participation(office_env):
+    """Plowing into the furniture is reported as an obstacle collision and still scores the 0.01 floor."""
     from swarm.challenge_families import evaluate_rollout
     from swarm.protocol import FailureReason
 
@@ -1001,6 +1025,7 @@ def test_office_crash_pays_participation(office_env):
 
 
 def test_office_task_generation_deterministic():
+    """One seed builds an identical task twice, with the start inside the room and the target below the ceiling."""
     a = task_gen.random_task(1 / 50, 77, family_id="cf_interceptor_office")
     b = task_gen.random_task(1 / 50, 77, family_id="cf_interceptor_office")
     assert a == b

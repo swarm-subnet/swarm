@@ -15,6 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Turn a backend KotH sync payload into the validator's own weight map and score vector.
+
+The backend's own weight numbers are advisory only: the validator recomputes them
+from the per-family kings so live chain identity decides who is paid, and every
+unassigned slice lands on the burn UID.
+"""
+
 from swarm.constants import UID_ZERO
 from swarm.validator import koth as _koth
 
@@ -26,6 +33,7 @@ _ADVISORY_WARN_INTERVAL_SEC: float = 60.0
 
 
 def _parse_king_entries(rows: Any) -> list:
+    """KingEntry objects from raw sync rows; a malformed row is logged and dropped, never fatal."""
     entries = []
     for raw in rows or []:
         if not isinstance(raw, dict):
@@ -51,6 +59,7 @@ def _make_uid_validator(metagraph: Any):
     n = len(hotkeys)
 
     def _valid(entry: "_koth.KingEntry") -> bool:
+        """True when the uid is in range, is not the burn UID, and still holds the entry's hotkey."""
         uid = int(entry.uid)
         if uid == UID_ZERO or uid < 0 or uid >= n:
             return False

@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The flight reward: its clamp, the target time formula, the safety ramp and the weighted score."""
 from __future__ import annotations
 
 import math
@@ -41,6 +42,7 @@ from swarm.validator.reward import (
 
 
 def _sample_task():
+    """A type 1 MapTask whose start and goal sit exactly 5 m apart."""
     return MapTask(
         map_seed=1,
         start=(0.0, 0.0, 0.0),
@@ -52,12 +54,14 @@ def _sample_task():
 
 
 def test_clamp_bounds():
+    """Values outside [0, 1] are pinned to the nearer end while anything inside passes through."""
     assert _clamp(-1.0) == 0.0
     assert _clamp(2.0) == 1.0
     assert _clamp(0.3) == 0.3
 
 
 def test_calculate_target_time_matches_formula():
+    """Par time is the buffered sum of travel with hover, the GPS disk sweep and the landing allowance."""
     task = _sample_task()
     r = task.search_radius
     sweep = SEARCH_SWEEP_ALPHA * math.pi * r * r / (SEARCH_DETECT_WIDTH * SPEED_LIMIT)
@@ -67,6 +71,7 @@ def test_calculate_target_time_matches_formula():
 
 
 def test_calculate_safety_term_thresholds_and_interpolation():
+    """Clearance above the safe distance scores 1, a collision scores 0, and the band between the two ramps linearly."""
     assert _calculate_safety_term(min_clearance=2.0, collision=False) == 1.0
     assert _calculate_safety_term(min_clearance=0.0, collision=False) == 0.0
     assert _calculate_safety_term(min_clearance=0.5, collision=True) == 0.0
@@ -76,23 +81,28 @@ def test_calculate_safety_term_thresholds_and_interpolation():
 
 
 def test_flight_reward_requires_positive_horizon():
+    """A horizon of zero raises ValueError instead of dividing through it."""
     with pytest.raises(ValueError):
         flight_reward(success=True, t=1.0, horizon=0.0)
 
 
 def test_flight_reward_collision_penalty():
+    """Hitting something drops even a successful run to the 0.01 participation floor."""
     assert flight_reward(success=True, t=1.0, horizon=10.0, collision=True) == 0.01
 
 
 def test_flight_reward_collision_zero_at_zero_time():
+    """A crash before any time elapsed pays nothing at all, not even the participation floor."""
     assert flight_reward(success=True, t=0.0, horizon=10.0, collision=True) == 0.0
 
 
 def test_flight_reward_failed_mission_returns_base_score():
+    """A run that spent time in the air but missed the goal still earns the 0.01 floor."""
     assert flight_reward(success=False, t=1.0, horizon=10.0) == 0.01
 
 
 def test_flight_reward_success_with_fast_time_and_safe_clearance_is_one():
+    """Reaching the goal well inside par with clearance beyond the safe distance scores a full 1.0."""
     task = _sample_task()
     score = flight_reward(
         success=True,
@@ -105,6 +115,7 @@ def test_flight_reward_success_with_fast_time_and_safe_clearance_is_one():
 
 
 def test_flight_reward_success_without_task_uses_linear_time_term():
+    """With no task there is no par time, so the time term simply decays across the horizon."""
     score = flight_reward(
         success=True,
         t=5.0,
@@ -117,6 +128,7 @@ def test_flight_reward_success_without_task_uses_linear_time_term():
 
 
 def test_flight_reward_with_task_and_horizon_below_target_forces_zero_time_term():
+    """A horizon tighter than par kills the time term, leaving only success and safety at 0.55."""
     task = _sample_task()
     target = _calculate_target_time(task)
     score = flight_reward(
@@ -131,6 +143,7 @@ def test_flight_reward_with_task_and_horizon_below_target_forces_zero_time_term(
 
 
 def test_flight_reward_uses_safety_interpolation():
+    """Clearance halfway down the ramp costs half the 0.10 safety weight and nothing else."""
     task = _sample_task()
     mid = (SAFETY_DISTANCE_SAFE + SAFETY_DISTANCE_DANGER) / 2.0
     score = flight_reward(

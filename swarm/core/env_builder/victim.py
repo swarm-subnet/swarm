@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Placement of the search-and-rescue victim: character choice, slope-aware seating and spawning."""
+
 from __future__ import annotations
 
 import json
@@ -66,6 +68,7 @@ _manifest_characters: list | None = None
 
 
 def _load_characters() -> list:
+    """The manifest's character entries, parsed once and cached; empty when it cannot be read."""
     global _manifest_characters
     if _manifest_characters is None:
         try:
@@ -77,6 +80,7 @@ def _load_characters() -> list:
 
 
 def select_victim_split_dir(seed: int, challenge_type: int, slope_deg: float = 0.0) -> Path | None:
+    """Seeded pick among the characters allowed on this map and slope, as a prebaked parts directory."""
     map_name = _CHALLENGE_TYPE_TO_MAP.get(int(challenge_type))
     if map_name is None:
         return None
@@ -102,6 +106,7 @@ def victim_scale_for(challenge_type: int) -> float:
 
 
 def accepted_categories_for(challenge_type: int) -> Set[BodyCategory]:
+    """Body kinds the victim may rest on: warehouse floors indoors, bare ground in city and village."""
     if challenge_type == 5:
         return {BodyCategory.SUPPORT_FLOOR}
     if challenge_type in (1, 4):
@@ -114,12 +119,14 @@ def accepted_categories_for(challenge_type: int) -> Set[BodyCategory]:
 
 
 def _compose_orientation(yaw_rad: float):
+    """Quaternion for a heading, with the Y-up mesh turned Z-up first."""
     yaw_quat = p.getQuaternionFromEuler([0.0, 0.0, yaw_rad])
     rot_quat = p.getQuaternionFromEuler(list(_Y_UP_TO_Z_UP))
     return _quat_mul(yaw_quat, rot_quat)
 
 
 def _quat_mul(a, b):
+    """Hamilton product of two xyzw quaternions, a applied after b."""
     ax, ay, az, aw = a
     bx, by, bz, bw = b
     return (
@@ -135,6 +142,7 @@ def _rotated_bounds(
     quat,
     base_position,
 ):
+    """Axis-aligned box around the eight corners once rotated by `quat` and shifted to the base."""
     (mn_x, mn_y, mn_z), (mx_x, mx_y, mx_z) = raw_bounds
     corners = [
         (x, y, z)
@@ -162,6 +170,7 @@ def _rotated_bounds(
 
 
 def _sample_terrain_slope(cli, cx, cy, surface_z, radius):
+    """Raycast a nine-point grid of radius `r` and fit a ground normal, with the heights it hit."""
     r = max(float(radius), 0.15)
     offsets = (
         (0.0, 0.0),
@@ -186,6 +195,7 @@ def _sample_terrain_slope(cli, cx, cy, surface_z, radius):
 
 
 def _solve3x3(matrix, rhs):
+    """Cramer's rule on a 3x3 system; None when the determinant is degenerate."""
     (a, b, c), (d, e, f), (g, h, i) = matrix
     det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     if abs(det) < 1e-12:
@@ -198,6 +208,7 @@ def _solve3x3(matrix, rhs):
 
 
 def _fit_plane_normal(points):
+    """Unit up-normal of the least-squares plane through the samples, straight up on failure."""
     sx = sy = sz = sxx = sxy = syy = sxz = syz = 0.0
     for x, y, z in points:
         sx += x
@@ -223,6 +234,7 @@ def _fit_plane_normal(points):
 
 
 def _percentile(values, q):
+    """The value `q` of the way through the sorted list, 0.0 when there are none."""
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -230,12 +242,14 @@ def _percentile(values, q):
 
 
 def _quat_axis_angle(axis, angle):
+    """Quaternion for turning `angle` radians about a unit axis."""
     half = angle * 0.5
     s = math.sin(half)
     return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(half))
 
 
 def _tilt_to_slope(base_quat, normal, lying):
+    """Lean a pose toward the ground normal, held to a tighter limit while the body stands."""
     nz = max(-1.0, min(1.0, normal[2]))
     full_angle = math.acos(nz)
     if full_angle < 1e-4:
@@ -252,17 +266,20 @@ def _tilt_to_slope(base_quat, normal, lying):
 
 
 def terrain_slope_deg(cli, x, y, surface_z, radius=0.4):
+    """Tilt of the fitted ground plane at (x, y), in degrees away from horizontal."""
     normal, _ = _sample_terrain_slope(cli, float(x), float(y), float(surface_z), radius)
     return math.degrees(math.acos(max(-1.0, min(1.0, normal[2]))))
 
 
 def _fall_line_yaw(raw_bounds, normal):
+    """Heading that lays the body down the slope, offset by whichever way its long axis runs."""
     up0 = _rotated_bounds(raw_bounds, _compose_orientation(0.0), (0.0, 0.0, 0.0))
     axis0 = 0.0 if (up0[1][0] - up0[0][0]) >= (up0[1][1] - up0[0][1]) else math.pi / 2.0
     return math.atan2(-normal[1], -normal[0]) - axis0
 
 
 def _footprint_seat_z(cli, cx, cy, fx, fy, surface_z, q, normal):
+    """Height to rest the body at, from 25 rays under its footprint, bounded so it neither sinks far nor floats."""
     fx = max(fx, 0.15)
     fy = max(fy, 0.15)
     z_hi = surface_z + 20.0
@@ -302,6 +319,7 @@ def spawn_victim(
     double_sided: bool = True,
     scale: float = 1.0,
 ) -> VictimAttrs:
+    """Spawn the mannequin seated on the ground and turned to the slope; its uids, world AABB and centre."""
     split_path = Path(split_dir) if split_dir else _DEFAULT_SPLIT_DIR
 
     if not iter_prebaked_parts(split_path):

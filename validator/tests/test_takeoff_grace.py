@@ -46,6 +46,7 @@ _CLEAR_LIFT = SAFETY_DISTANCE_SAFE + 0.5
 
 
 def _gate_probe(origin, position, num_drones=1, challenge_type=1):
+    """A bare MovingDroneAviary carrying only the fields the takeoff-grace gate reads."""
     env = MovingDroneAviary.__new__(MovingDroneAviary)
     env.task = SimpleNamespace(challenge_type=challenge_type)
     env.NUM_DRONES = num_drones
@@ -56,6 +57,7 @@ def _gate_probe(origin, position, num_drones=1, challenge_type=1):
 
 
 def test_grace_holds_until_the_drone_has_flown_clear():
+    """The gate stays open below the map's safe distance over the spawn and shuts once it is passed."""
     env = _gate_probe([[0.0, 0.0, 0.0]], [[0.0, 0.0, 0.0]])
     assert env._in_takeoff_grace(0)
 
@@ -67,6 +69,7 @@ def test_grace_holds_until_the_drone_has_flown_clear():
 
 
 def test_the_latch_never_closes_again():
+    """Once a drone has climbed away, dropping back to the pad buys it no second grace period."""
     env = _gate_probe([[0.0, 0.0, 0.0]], [[0.0, 0.0, 5.0]])
     assert not env._in_takeoff_grace(0)
 
@@ -76,6 +79,7 @@ def test_the_latch_never_closes_again():
 
 
 def test_each_drone_clears_on_its_own():
+    """The latch is held per drone: one flying high does not end the grace of one still down."""
     env = _gate_probe(
         [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
         [[0.0, 0.0, 5.0], [10.0, 0.0, 0.0]],
@@ -86,6 +90,7 @@ def test_each_drone_clears_on_its_own():
 
 
 def test_a_collision_still_zeroes_clearance_during_grace(monkeypatch):
+    """A contact drops the episode minimum to zero and returns before any geometry is scanned."""
     env = MovingDroneAviary.__new__(MovingDroneAviary)
     env.NUM_DRONES = 1
     env._collision = True
@@ -96,6 +101,7 @@ def test_a_collision_still_zeroes_clearance_during_grace(monkeypatch):
     env.pos = np.zeros((1, 3))
 
     def _boom(*a, **k):  # the scan must never be reached
+        """Fail loudly if the clearance scan is reached after a collision."""
         raise AssertionError("collision path should return before scanning")
 
     monkeypatch.setattr(moving_drone_mod.p, "getAABB", _boom)
@@ -105,6 +111,7 @@ def test_a_collision_still_zeroes_clearance_during_grace(monkeypatch):
 
 
 def _tasks_for(ctype: int, count: int, family: str):
+    """Walk seeds until `count` tasks of one challenge type and family have been collected."""
     found = []
     for seed in range(1, 4000):
         if len(found) >= count:
@@ -151,6 +158,7 @@ def test_warehouse_spawn_is_not_scored(family, sar):
 @pytest.mark.full
 @pytest.mark.parametrize("ctype", sorted(_MAPS))
 def test_no_map_is_scored_before_the_drone_flies_clear(ctype):
+    """On every challenge type and both families, spawn clearance reads full and climbing keeps it safe."""
     for family, sar in (("cf_search_and_rescue", True), ("cf_autopilot", False)):
         for task in _tasks_for(ctype, 2, family):
             at_spawn, after_climb = _spawn_then_climb(task, sar=sar)

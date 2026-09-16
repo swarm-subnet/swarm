@@ -58,6 +58,7 @@ FULL = 3000  # steps per seed
 
 
 def benchmark_scene(label, seed):
+    """Time one scene's env.step against isolated render, physics and clearance calls, and return the means."""
     task = random_task(sim_dt=SIM_DT, seed=seed)
     env = make_env(task, gui=False)
     env.reset()
@@ -168,12 +169,14 @@ def benchmark_scene(label, seed):
 
 
 def print_results(results):
+    """Print the per-scene component breakdown, the full-run extrapolation and the summary table."""
     SEP = "─" * 65
 
     for r in results:
         other = r["step"] - r["render"] - r["physics"] - r["clearance"]
 
         def pct(ms):
+            """Return ms as a percentage of the scene's total step time."""
             return ms / r["step"] * 100
 
         print(f"\n  {r['label']}")

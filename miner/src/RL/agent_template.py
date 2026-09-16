@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Baseline agent packaged into submission.zip as drone_agent.py, wrapping the ppo_policy.zip trained beside it."""
+
 from pathlib import Path
 
 import numpy as np

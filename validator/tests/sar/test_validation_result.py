@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""ValidationResult keeps failure_reason keyword-only, so a four-field worker packet still unpacks."""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -25,6 +26,7 @@ from swarm.protocol import ValidationResult
 
 
 def test_keyword_only_failure_reason():
+    """Left out, the reason is NONE; passed as a fifth positional argument it raises TypeError."""
     vr = ValidationResult(1, True, 5.0, 0.9)
     assert vr.failure_reason == "NONE"
     with pytest.raises(TypeError):
@@ -32,6 +34,7 @@ def test_keyword_only_failure_reason():
 
 
 def test_round_trip_with_reason():
+    """A result carrying a reason comes back equal through asdict and the constructor."""
     vr = ValidationResult(
         uid=7, success=False, time_sec=12.3, score=0.01, failure_reason="TIMEOUT"
     )
@@ -42,6 +45,7 @@ def test_round_trip_with_reason():
 
 
 def test_parallel_py_unpack():
+    """A four-field packet still builds a whole result, with the reason defaulting to NONE."""
     packed = (5, True, 9.0, 1.0)
     vr = ValidationResult(*packed)
     assert vr.uid == 5 and vr.success is True
@@ -49,6 +53,7 @@ def test_parallel_py_unpack():
 
 
 def test_workers_py_unpack():
+    """A batch of four-field packets keeps its order and its scores, every reason left at NONE."""
     packets = [(1, False, 0.0, 0.0), (2, True, 4.5, 0.8)]
     results = [ValidationResult(*packed) for packed in packets]
     assert len(results) == 2

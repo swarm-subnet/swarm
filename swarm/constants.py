@@ -22,6 +22,7 @@
 # configuration values, limits, and parameters used throughout the system.
 # =============================================================================
 
+"""Tuned values the whole subnet shares: physics, scoring weights, evaluation budgets and per-family map parameters."""
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,9 @@ EPOCH_FREEZE_SECONDS = 5400                # 1.5 hours before epoch end — no n
 # =============================================================================
 
 FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes (seconds)
+DUPLICATE_SESSION_RETRY_SEC = 15.0      # Wait between startup heartbeats while the previous session is still fresh
+DUPLICATE_SESSION_WAIT_SEC = 240.0      # Startup gives up on a duplicate-session rejection after this long
+STAND_DOWN_TIMEOUT_SEC = 1.2            # Time allowed for the hand-back heartbeat before the process exits
 BACKEND_GRACE_PERIOD_SEC = 3600         # Use cached weights for 1h after last successful sync
 WANDB_IDLE_RESTART_SEC = 5 * 3600      # Restart W&B run every 5h when idle
 
@@ -82,6 +86,30 @@ SEARCH_TIME_BUFFER = 1.06               # Slack multiplier on the search-aware t
 SEARCH_FEASIBILITY_MARGIN_SEC = 1.0     # Keep target time this far under the horizon when clamping radius
 # Light randomization parameters
 LIGHT_RANDOMIZATION_ENABLED = True      # Enable random light direction (time of day)
+# Seeded sun for families that opt in (ChallengeFamilyRuntime.seeded_sun): a real
+# sun arc at a mid latitude, sampled between sunrise and sunset.
+SUN_SEED_OFFSET = 0x5A11                # decorrelates the sun rng from the other streams
+SUN_LATITUDE_DEG = 40.0                 # site latitude of the arc
+SUN_DECLINATION_DEG = 10.0              # sun declination: noon peak of 60 deg, 12.6 h of daylight
+SUN_MIN_ELEVATION_DEG = 3.0             # lowest sun a seed may pick (degrees above the horizon)
+SUN_DIFFUSE_MAX = 0.35                  # renderer diffuse coefficient with the sun overhead
+SUN_EXTINCTION = 0.06                   # per-air-mass loss of sun strength toward the horizon
+SUN_AMBIENT_RANGE = (0.28, 0.60)        # renderer ambient coefficient across the whole arc
+# Night for families that set ChallengeFamilyRuntime.night_share: a moon lights the map instead.
+MOON_ELEVATION_RANGE_DEG = (10.0, 60.0) # where the moon may sit, degrees above the horizon
+MOON_COLOR = (0.62, 0.70, 0.90)         # renderer light colour of the moon: cool blue-grey
+MOON_DIFFUSE_RANGE = (0.03, 0.10)       # renderer diffuse coefficient from a crescent to a full moon
+MOON_AMBIENT_RANGE = (0.10, 0.24)       # renderer ambient coefficient from a crescent to a full moon
+# Daylight model (ChallengeFamilyRuntime.daylight): ER_SWARM_DAYLIGHT shading under a photographed sky turned to the seed's sun.
+DAYLIGHT_SUN_DIFFUSE_MAX = 5.0          # renderer diffuse coefficient with the sun overhead; the sky's own light is 1
+DAYLIGHT_AMBIENT = 0.5                  # share of the sky's light a surface receives; under 1 stands for the sky the map itself hides
+DAYLIGHT_EXPOSURE = 0.45                # scale on the linear light before the film curve, under the noon sun
+DAYLIGHT_EXPOSURE_GAIN_MAX = 3.0        # how far the exposure opens for a low sun, as a camera would
+DAYLIGHT_SKY_DUSK_SHARE = 0.2           # the renderer's sky brightness at the horizon relative to a high sun
+DAYLIGHT_HAZE_M = 4000.0                # metres at which a surface is 63 % haze
+DAYLIGHT_SHADOW_CORE_M = 200.0          # half side, metres, of the fine shadow grid about the world origin
+DAYLIGHT_SKY_SEED_OFFSET = 0x5C1E       # decorrelates the sky photo choice from the other streams
+DAYLIGHT_SKY_ELEVATION_TOLERANCE_DEG = 12.0  # a photo is a candidate when its sun stands within this of the seed's sun
 # Propulsion efficiency
 
 # =============================================================================
@@ -100,6 +128,7 @@ DOCKER_WORKER_CPUS = "2"                # CPU limit per Docker worker container
 
 
 def available_vcpu_count() -> int:
+    """Usable CPU count from the process affinity mask, falling back to os.cpu_count and finally to 1."""
     try:
         if hasattr(os, "sched_getaffinity"):
             count = len(os.sched_getaffinity(0))
@@ -175,6 +204,7 @@ RPC_RESET_TIMEOUT_SEC = 5.0             # Max wall-clock for agent.reset() betwe
 RPC_PING_TIMEOUT_SEC = 2.0              # Max wall-clock for agent.ping() health check (seconds)
 RPC_CONNECT_MAX_WAIT_SEC = 60.0         # Total budget to reach a serving RPC agent
 AGENT_STARTUP_WALL_SEC = 30.0           # Budget for the agent to serve after the start gate opens
+WARM_CONTAINER_GRACE_SEC = 15.0         # Extra wait for a pre-warmed container once the flight before it ends
 RPC_MAX_STRIKES_PER_SEED = 15           # Soft timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 600.0            # Base overhead for global worker timeout (seconds); one-seed validator batches get ~600s wall-clock
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
@@ -336,6 +366,7 @@ SAR_TIME_TERM_BUFFER = 1.03          # multiplier on the Candidate-C target time
 
 
 def _build_sar_screening_template() -> list[dict]:
+    """Interleave the six map pools into the 50 screening slots so consecutive seeds land on different maps."""
     slots: list[dict] = []
     city_slot      = dict(challenge_type=1, distance_range=(15, 25))
     open_slot      = dict(challenge_type=2, distance_range=(14, 20))
@@ -473,6 +504,24 @@ MOVING_PLATFORM_PROB = {
     6: 0.00,
 }
 MOVING_PLATFORM_SEED_OFFSET = 555555
+
+# =============================================================================
+# WIND (per map, off unless a map opts in)
+# =============================================================================
+
+# (family_id, challenge_type) -> {"max_mps", "turbulence", "gusts"}. max_mps caps the
+# total wind (0 = none), turbulence scales the Dryden low-altitude intensity (1 = the
+# standard, 0 = steady wind only), gusts is the number of gust bumps per flight.
+# Maps not listed get no wind, so every existing family flies in still air.
+WIND_BY_MAP = {}
+WIND_SEED_OFFSET = 0xB10B5                  # own stream: wind must not ride the other seed draws
+WIND_MEAN_FRACTION = (0.4, 0.67)            # episode mean as a fraction of max_mps; 0.67 x 1.5 gust peak stays under the cap
+WIND_TURB_SIGMA_XY = 0.2                    # horizontal turbulence std / mean wind (Dryden, ~3 m altitude)
+WIND_TURB_SIGMA_Z = 0.1                     # vertical turbulence std / mean wind (Dryden: 0.1 x W20)
+WIND_TURB_TAU_XY_SEC = 4.0                  # horizontal correlation time (~20 m length scale at a few m/s)
+WIND_TURB_TAU_Z_SEC = 1.0                   # vertical correlation time (length scale = altitude)
+WIND_GUST_PEAK = 1.5                        # gust peak / mean wind, the common near-ground gust factor
+WIND_GUST_DURATION_SEC = (3.0, 8.0)         # gust bump length
 
 # Swarm autopilot (cf_swarm_autopilot): N drones flown by one centralized policy.
 SWARM_NUM_DRONES = 5                      # reference / smoke default

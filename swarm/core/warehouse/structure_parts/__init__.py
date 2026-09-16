@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Warehouse shell build stages re-exported flat: build_floor, build_personnel_floor_lane, build_walls, build_columns, build_curved_roof and build_roof_truss_system."""
 from .floor import *
 from .roof import *
 from .walls import *

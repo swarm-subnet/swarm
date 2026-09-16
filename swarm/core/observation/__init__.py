@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Sensor observations for the challenge families: re-exports the channel table and SensorChannel from channels, and assemble, the gym space and the vector dim helpers from assembly."""
+
 from .assembly import (
     ObservationLayout,
     UnknownSensorChannelError,

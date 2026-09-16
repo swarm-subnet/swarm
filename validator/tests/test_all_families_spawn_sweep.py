@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Every challenge family, swept over the kind of seeds the validator hands out."""
 from __future__ import annotations
 
 import os
@@ -37,6 +38,7 @@ _SAR_FAMILIES = {"cf_search_and_rescue", "cf_swarm_sar"}
 
 
 def _seeds(family_id: str) -> list[int]:
+    """A fixed sample of 32-bit seeds for one family, the same list on every run."""
     rng = random.Random(f"spawn-sweep:{family_id}")
     return [rng.randrange(1, 2**32) for _ in range(_N_SEEDS)]
 

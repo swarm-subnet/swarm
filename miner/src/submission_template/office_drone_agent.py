@@ -78,10 +78,12 @@ class DroneFlightController:
     """Contract smoke-test baseline: climbs off the floor, then yaws without intercepting."""
 
     def __init__(self):
+        """Construction hook for your policy; the baseline loads nothing."""
         # Load your trained model here (any framework).
         pass
 
     def act(self, observation):
+        """Climb until fused height reaches 1.2 m, then spin in place; returns the four RC sticks."""
         state = observation["state"]
         fused_height = float(state[11])
         action = np.zeros(4, dtype=np.float32)
@@ -92,5 +94,6 @@ class DroneFlightController:
         return action
 
     def reset(self):
+        """Mission-start hook for your policy; the baseline holds no state to clear."""
         # Called before each new mission; clear any internal state here.
         pass

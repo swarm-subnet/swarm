@@ -119,6 +119,7 @@ HOUSE_SPECS = [
 
 
 def _terrain_mesh_cache_dir() -> Path:
+    """Return the terrain mesh cache directory, SWARM_TERRAIN_CACHE_DIR or a per-uid folder under state, created if absent."""
     override = os.getenv("SWARM_TERRAIN_CACHE_DIR")
     if override:
         cache_dir = Path(override).expanduser()

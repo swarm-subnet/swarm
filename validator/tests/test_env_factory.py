@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Env construction: GUI overlays, the observation from the first reset, and per-family kwargs."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -26,6 +28,7 @@ from swarm.utils import env_factory
 
 
 class _DummyPyBullet:
+    """PyBullet stub that logs every visualizer call and answers the rest with nothing."""
     COV_ENABLE_RENDERING = 7
     COV_ENABLE_SHADOWS = 2
     COV_ENABLE_GUI = 1
@@ -35,24 +38,31 @@ class _DummyPyBullet:
     COV_ENABLE_WIREFRAME = 6
 
     def __init__(self) -> None:
+        """Start with an empty log of visualizer calls."""
         self.calls: list[tuple[int, int, int]] = []
 
     def setAdditionalSearchPath(self, _path: str) -> None:
+        """Accept the pybullet_data directory and do nothing with it."""
         return None
 
     def configureDebugVisualizer(self, flag: int, value: int, physicsClientId: int) -> None:
+        """Append the flag, the value and the client id to the call log."""
         self.calls.append((flag, value, physicsClientId))
 
     def setPhysicsEngineParameter(self, **_kwargs) -> None:
+        """Swallow the solver settings the factory applies after the reset."""
         return None
 
     def getNumBodies(self, physicsClientId: int) -> int:
+        """Report an empty world: zero bodies loaded."""
         _ = physicsClientId
         return 0
 
 
 class _DummyEnv:
+    """Aviary stub exposing the kwargs it was built with and a tiny depth-plus-state space."""
     def __init__(self, task, **_kwargs) -> None:
+        """Keep the task and every runtime kwarg, and declare the 4x4 depth and 4-vector state."""
         self.task = task
         self.kwargs = dict(_kwargs)
         self._state_dim = 4
@@ -63,9 +73,11 @@ class _DummyEnv:
         }
 
     def getPyBulletClient(self) -> int:
+        """Return 99 as the physics client id the visualizer calls must carry."""
         return 99
 
     def reset(self, seed: int):
+        """Hand back zeroed depth and state arrays with an empty info dict."""
         _ = seed
         return {
             "depth": np.zeros((4, 4, 1), dtype=np.float32),
@@ -74,6 +86,7 @@ class _DummyEnv:
 
 
 def test_make_env_hides_gui_rendering_during_reset(monkeypatch) -> None:
+    """A viewer world is built with overlays off and redraw suspended, then redraw comes back."""
     dummy_p = _DummyPyBullet()
     monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
     monkeypatch.setattr(env_factory, "p", dummy_p)
@@ -101,6 +114,7 @@ def test_make_env_hides_gui_rendering_during_reset(monkeypatch) -> None:
 
 
 def test_make_env_with_initial_obs_returns_first_observation(monkeypatch) -> None:
+    """The env comes back paired with the depth and state produced by its own reset."""
     dummy_p = _DummyPyBullet()
     monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
     monkeypatch.setattr(env_factory, "p", dummy_p)
@@ -120,6 +134,7 @@ def test_make_env_with_initial_obs_returns_first_observation(monkeypatch) -> Non
 
 
 def test_make_env_with_initial_obs_uses_family_runtime_kwargs(monkeypatch) -> None:
+    """A search-and-rescue task reaches the aviary with sar_mode switched on."""
     dummy_p = _DummyPyBullet()
     monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
     monkeypatch.setattr(env_factory, "p", dummy_p)
@@ -137,6 +152,7 @@ def test_make_env_with_initial_obs_uses_family_runtime_kwargs(monkeypatch) -> No
 
 
 def test_make_env_with_initial_obs_uses_autopilot_runtime_kwargs(monkeypatch) -> None:
+    """An autopilot task reaches the aviary with sar_mode switched off."""
     dummy_p = _DummyPyBullet()
     monkeypatch.setattr(env_factory, "MovingDroneAviary", _DummyEnv)
     monkeypatch.setattr(env_factory, "p", dummy_p)

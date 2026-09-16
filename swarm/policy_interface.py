@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Write, read and enforce the contract a submitted policy zip ships, then smoke test the controller inside it."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -51,6 +53,7 @@ def resolve_policy_interface_version(
     family_id: str,
     requested_version: str | None = None,
 ) -> str:
+    """Return the asked-for interface version, or the family's first when none is asked for; an unsupported one raises."""
     if family_id not in CHALLENGE_FAMILY_IDS:
         raise PolicyInterfaceError(f"unknown_challenge_family:{family_id}")
     supported = get_supported_interface_versions(family_id)
@@ -67,6 +70,7 @@ def build_artifact_policy_contract(
     family_id: str,
     interface_version: str,
 ) -> dict[str, Any]:
+    """Return the six fields a shipped contract carries: the family id, the two versions, the entry point and both spaces."""
     canonical = get_policy_interface_contract(family_id, interface_version)
     return {
         "contract_version": canonical["contract_version"],
@@ -82,11 +86,13 @@ def render_artifact_policy_contract(
     family_id: str,
     interface_version: str,
 ) -> str:
+    """Return the contract as indented JSON text with a trailing newline, ready to drop into a zip."""
     payload = build_artifact_policy_contract(family_id, interface_version)
     return json.dumps(payload, indent=2) + "\n"
 
 
 def read_policy_contract_from_zip(zip_path: Path) -> dict[str, Any]:
+    """Return the parsed contract object out of the archive, raising PolicyInterfaceError when it is absent or malformed."""
     try:
         with zipfile.ZipFile(zip_path) as zf:
             try:
@@ -109,6 +115,7 @@ def read_policy_contract_from_zip(zip_path: Path) -> dict[str, Any]:
 
 
 def validate_policy_contract_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the canonical contract once the submitted one matches it key for key and value for value."""
     family_id = payload.get("family_id")
     if not isinstance(family_id, str) or not family_id:
         raise PolicyInterfaceError("invalid_policy_contract:family_id")
@@ -162,6 +169,7 @@ def validate_policy_contract_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def verify_policy_package_contract(
     zip_path: Path,
 ) -> tuple[bool, str, dict[str, Any] | None]:
+    """Check the archive layout and its contract, returning a flag, a reason string and the canonical contract."""
     ok, reason = validate_submission_zip(zip_path)
     if not ok:
         return False, reason, None
@@ -179,6 +187,7 @@ def build_smoke_test_observation(
     interface_version: str,
     num_drones: int | None = None,
 ) -> dict[str, np.ndarray]:
+    """Assemble one dummy observation from the contract, stacked across drones when a count is given."""
     contract = get_policy_interface_contract(family_id, interface_version)
     action_dim = int(contract["action_space"]["shape"][-1])
     ctrl_freq = int(round(1.0 / SIM_DT))
@@ -202,6 +211,7 @@ def validate_action_output(
     action_space: dict[str, Any],
     num_drones: int | None = None,
 ) -> np.ndarray:
+    """Return the move as a float32 array once its shape, finiteness and bounds agree with the declared space."""
     action_array = np.asarray(action, dtype=np.float32)
     expected_shape = tuple(action_space["shape"])
     if num_drones is not None:
@@ -231,6 +241,7 @@ def validate_action_output(
 def smoke_test_policy_package(
     zip_path: Path,
 ) -> tuple[bool, str]:
+    """Import the archived controller into a temporary directory and drive one step, at both ends of the drone-count range when the family declares one."""
     ok, reason, contract = verify_policy_package_contract(zip_path)
     if not ok or contract is None:
         return False, reason

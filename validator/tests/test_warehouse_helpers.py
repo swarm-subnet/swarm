@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""The geometry the warehouse map is laid out with: wall slots, tiling, footprints, spans and window openings."""
 from __future__ import annotations
 
 import math
@@ -27,19 +28,24 @@ from swarm.core.warehouse import helpers as wh
 
 
 class _DummyLoader:
+    """A mesh loader stand-in with fixed answers, so no helper under test ever opens an OBJ."""
     def __init__(self, obj_dir: str = ""):
+        """Remember the folder the OBJ files are said to sit in."""
         self.obj_dir = obj_dir
 
     def model_size(self, model_name, scale):
+        """Report every model as a 2 by 4 by 1 metre box, whatever the scale."""
         _ = model_name, scale
         return (2.0, 4.0, 1.0)
 
     def _parse_vertices(self, model_name):
+        """Report two opposite corners of a box centred on the origin."""
         _ = model_name
         return [(-1.0, -2.0, -3.0), (1.0, 2.0, 3.0)]
 
 
 def test_slot_point_and_dock_yaw_for_all_slots():
+    """Each wall name places a point inward from its own edge and faces the interior; an unknown name raises."""
     assert wh.slot_point("north", along=1.0, inward=2.0) == (1.0, wh.HALF_Y - 2.0)
     assert wh.slot_point("south", along=1.0, inward=2.0) == (1.0, -wh.HALF_Y + 2.0)
     assert wh.slot_point("east", along=1.0, inward=2.0) == (wh.HALF_X - 2.0, 1.0)
@@ -52,6 +58,7 @@ def test_slot_point_and_dock_yaw_for_all_slots():
 
 
 def test_tiled_centers_validates_tile_size_and_positions():
+    """Whole tiles land symmetrically about zero at one spacing apart, and a zero-width tile raises."""
     centers = wh.tiled_centers(total_size=10.0, tile_size=2.0)
     assert centers == [-4.0, -2.0, 0.0, 2.0, 4.0]
 
@@ -60,6 +67,7 @@ def test_tiled_centers_validates_tile_size_and_positions():
 
 
 def test_oriented_xy_size_rotates_dimensions_and_uses_cache():
+    """A quarter turn swaps width and depth, and asking twice gives the memoised answer back unchanged."""
     loader = _DummyLoader()
     xy_90 = wh.oriented_xy_size(loader, "model.obj", scale=1.0, yaw_deg=90.0)
     xy_90_again = wh.oriented_xy_size(loader, "model.obj", scale=1.0, yaw_deg=90.0)
@@ -68,6 +76,7 @@ def test_oriented_xy_size_rotates_dimensions_and_uses_cache():
 
 
 def test_model_bounds_xyz_from_vertices():
+    """Scale applies to each axis on its own, so the corners come back stretched per axis, not uniformly."""
     loader = _DummyLoader()
     min_v, max_v = wh.model_bounds_xyz(loader, "x.obj", (1.0, 2.0, 3.0))
     assert min_v == [-1.0, -4.0, -9.0]
@@ -75,6 +84,7 @@ def test_model_bounds_xyz_from_vertices():
 
 
 def test_resolve_optional_model_case_insensitive(tmp_path):
+    """A name asked for in lower case still finds Truck.OBJ, and comes back with the folder holding it."""
     root = tmp_path / "assets"
     root.mkdir()
     (root / "Truck.OBJ").write_text("v 0 0 0\n")
@@ -84,24 +94,28 @@ def test_resolve_optional_model_case_insensitive(tmp_path):
 
 
 def test_first_existing_model_name(tmp_path):
+    """Candidates are tried in order and the one actually on disk wins, not simply the one listed first."""
     loader = _DummyLoader(obj_dir=str(tmp_path))
     (tmp_path / "b.obj").write_text("v 0 0 0\n")
     assert wh._first_existing_model_name(loader, ["a.obj", "b.obj"]) == "b.obj"
 
 
 def test_shell_mesh_scale_xy_uses_config_override():
+    """The size declared alongside a shell mesh is what it is stretched from, not the built-in base size."""
     sx, sy = wh._shell_mesh_scale_xy({"config": {"warehouse_size_x": 52.0, "warehouse_size_y": 36.0}})
     assert math.isclose(sx, wh.WAREHOUSE_SIZE_X / 52.0, rel_tol=1e-9)
     assert math.isclose(sy, wh.WAREHOUSE_SIZE_Y / 36.0, rel_tol=1e-9)
 
 
 def test_truck_extra_gap_by_gate_name():
+    """A shut or half-shut dock gate pushes the truck its own distance clear; a fully open one adds nothing."""
     assert wh._truck_extra_gap_for_gate_state("dock-door-closed.obj") == wh.LOADING_TRUCK_EXTRA_GAP_CLOSED
     assert wh._truck_extra_gap_for_gate_state("dock-door-half.obj") == wh.LOADING_TRUCK_EXTRA_GAP_HALF
     assert wh._truck_extra_gap_for_gate_state("dock-door-open.obj") == 0.0
 
 
 def test_rect_helpers_and_overlap():
+    """Bounds come from a centre and a size, and two placements clash only when they meet on both axes."""
     a = {"cx": 0.0, "cy": 0.0, "sx": 2.0, "sy": 2.0}
     b = {"cx": 1.0, "cy": 0.0, "sx": 2.0, "sy": 2.0}
     c = {"cx": 10.0, "cy": 10.0, "sx": 1.0, "sy": 1.0}
@@ -111,6 +125,7 @@ def test_rect_helpers_and_overlap():
 
 
 def test_wall_and_span_geometry_helpers():
+    """A box too big for the floor is refused, a flush centre lands on its own side, and the long edge runs along the wall."""
     assert wh._size_fits_half_span(2.0, 3.0, half_x=5.0, half_y=5.0, margin=0.5) is True
     assert wh._size_fits_half_span(20.0, 3.0, half_x=5.0, half_y=5.0, margin=0.5) is False
 
@@ -124,12 +139,14 @@ def test_wall_and_span_geometry_helpers():
 
 
 def test_attached_wall_from_area_bounds_prefers_nearest_wall():
+    """An area flush against the north edge is read as attached to that wall, the nearest of the four."""
     half_y = wh.WAREHOUSE_SIZE_Y * 0.5
     wall = wh._attached_wall_from_area_bounds(area_sx=5.0, area_sy=10.0, area_cx=0.0, area_cy=half_y - 5.0)
     assert wall == "north"
 
 
 def test_window_index_helpers():
+    """A wall of five segments gets no openings at all, and the wide-pane starts come back sorted."""
     assert wh.mirrored_window_indices(5) == set()
     assert wh.mirrored_window_indices(12) == {2, 6, 9}
 
@@ -139,6 +156,7 @@ def test_window_index_helpers():
 
 
 def test_door_blocking_and_span_math():
+    """Segments sitting over a door are marked out, touching intervals merge, and cutting one leaves the rest."""
     blocked = wh._indices_blocked_by_doors(along_values=[-2, -1, 0, 1, 2], door_centers=[0], door_span=1.0)
     assert blocked == {2}
 
@@ -150,6 +168,7 @@ def test_door_blocking_and_span_math():
 
 
 def test_mirrored_window_filters():
+    """An opening survives only when its reflection is clear too, so a blocked twin drops the whole pair."""
     singles = wh._filter_mirrored_single_windows({2, 3, 9}, blocked_indices={9}, segment_count=12)
     assert singles == {3, 8}
 
@@ -161,6 +180,7 @@ def test_mirrored_window_filters():
 
 
 def test_sample_random_center_within_safe_bounds():
+    """A drawn centre always leaves the whole box on the floor, half its size and the margin clear of the edge."""
     rng = random.Random(3)
     x, y = wh._sample_random_center(rng, sx=2.0, sy=2.0, floor_half_x=10.0, floor_half_y=8.0, margin=1.0)
     assert -8.0 <= x <= 8.0

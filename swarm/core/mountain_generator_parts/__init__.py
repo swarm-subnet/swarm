@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Mountain map generator re-exported flat for mountain_generator.py: shared constants, seeded terrain, the mountains-only scatter and the ski village, behind build_mountains in entry."""
+
 from ._shared import STATE_DIR, _terrain_mesh_cache_dir
 from .entry import *
 from .mountains_only import *

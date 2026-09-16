@@ -30,6 +30,7 @@ VERSION = "cal-1"
 
 @pytest.fixture
 def cache_path(monkeypatch, tmp_path):
+    """Point the calibration cache at a fresh temporary file and clear the in-process copy."""
     path = tmp_path / "host_speed_factor.json"
     monkeypatch.setattr(batch, "_CALIBRATION_CACHE_PATH", path)
     monkeypatch.setattr(batch, "_HOST_SPEED_CALIBRATION", None)
@@ -37,6 +38,7 @@ def cache_path(monkeypatch, tmp_path):
 
 
 def _calibration(*, local_p90_ms: float = 200.0, workers: int = 6, age_sec: float = 0.0):
+    """Build a HostSpeedCalibration for the given p90 act time, worker count and age in seconds."""
     speed = normalize_speed_factor(local_p90_ms)
     return batch.HostSpeedCalibration(
         speed=speed,
@@ -48,12 +50,14 @@ def _calibration(*, local_p90_ms: float = 200.0, workers: int = 6, age_sec: floa
 
 
 def _read(*, workers: int = 6, version: str = VERSION):
+    """Load the cache back under a given worker count and calibration version."""
     return batch._read_calibration_cache(
         worker_count=workers, calibration_version=version,
     )
 
 
 def test_a_measurement_survives_a_restart(cache_path):
+    """The factor written to disk comes back with its worker count intact."""
     batch._write_calibration_cache(_calibration())
 
     loaded = _read()
@@ -64,6 +68,7 @@ def test_a_measurement_survives_a_restart(cache_path):
 
 
 def test_a_measurement_older_than_the_window_is_ignored(cache_path):
+    """Past the age limit the cached factor is refused and the host has to measure again."""
     batch._write_calibration_cache(
         _calibration(age_sec=batch._CALIBRATION_MAX_AGE_SEC + 60)
     )
@@ -79,12 +84,14 @@ def test_a_measurement_under_fewer_workers_is_ignored(cache_path):
 
 
 def test_a_measurement_from_another_baseline_is_ignored(cache_path):
+    """A different calibration version makes the cached entry unusable."""
     batch._write_calibration_cache(_calibration())
 
     assert _read(version="cal-2") is None
 
 
 def test_a_measurement_from_another_host_is_ignored(cache_path, monkeypatch):
+    """The fingerprint must match, so a state file copied between boxes is never trusted."""
     batch._write_calibration_cache(_calibration())
     monkeypatch.setattr(batch, "_calibration_host_fingerprint", lambda: "other-host")
 
@@ -102,12 +109,14 @@ def test_an_ineligible_host_is_never_cached(cache_path):
 
 
 def test_a_corrupt_cache_is_ignored(cache_path):
+    """Unparsable JSON on disk reads as no measurement, not as an error."""
     cache_path.write_text("{not json")
 
     assert _read() is None
 
 
 def test_a_cached_measurement_means_no_stand_down(cache_path, monkeypatch):
+    """A fresh entry on disk answers the readiness check and repopulates the process global."""
     monkeypatch.setattr(
         batch, "load_baseline_manifest", lambda: {"calibration_version": VERSION},
     )
@@ -118,6 +127,7 @@ def test_a_cached_measurement_means_no_stand_down(cache_path, monkeypatch):
 
 
 def test_an_empty_cache_means_the_host_must_measure(cache_path, monkeypatch):
+    """With nothing cached the readiness check is False and scoring waits for a fresh reading."""
     monkeypatch.setattr(
         batch, "load_baseline_manifest", lambda: {"calibration_version": VERSION},
     )
