@@ -25,7 +25,6 @@ import pytest
 from swarm.constants import BENCHMARK_TOTAL_SEED_COUNT
 from swarm.validator.seed_scheme import derive_seeds, key_fingerprint
 
-
 KEY = "11" * 32
 OTHER_KEY = "22" * 32
 EPOCH = 22
@@ -193,3 +192,37 @@ def test_the_seed_set_identity_only_exists_under_the_shared_scheme(manager):
     assert manager.seed_set_id_for(EPOCH, FAMILY) != manager.seed_set_id_for(
         EPOCH, "cf_search_and_rescue"
     )
+
+
+def test_a_keyless_manager_holds_no_seeds_at_all(manager, seed_manager_module):
+    """Proves "no key means no seeds" holds in memory too, not only on the next build.
+
+    An old random file on disk must not be loaded into a derived manager that has just said
+    it cannot build this epoch, or the invariant is true in the logs and false in the object.
+    """
+    module = seed_manager_module
+    path = _stored_file(module)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "epoch_number": EPOCH,
+        "family_id": FAMILY,
+        "seeds": list(range(BENCHMARK_TOTAL_SEED_COUNT)),
+        "published": False,
+    }))
+
+    manager.apply_backend_scheme(LIVE_FROM, {})
+
+    assert not manager.seeds_ready()
+    with pytest.raises(seed_manager_module.SeedsNotReady):
+        manager.get_all_seeds(FAMILY)
+
+
+def test_changing_the_scheme_drops_what_the_other_one_cached(manager):
+    """Proves a list built under one scheme is never served once the other becomes live."""
+    random_seeds = manager.get_all_seeds(FAMILY)
+    assert not manager.uses_derived_seeds()
+
+    _go_live(manager)
+
+    assert manager.uses_derived_seeds()
+    assert manager.get_all_seeds(FAMILY) != random_seeds

@@ -122,8 +122,13 @@ class BenchmarkSeedManager:
         A key arriving for an epoch whose cached list was built without it drops that cache,
         because checking the file alone would leave a stale list live in memory.
         """
+        was_derived = self.uses_derived_seeds()
         if min_version:
             self._scheme_min_version = str(min_version)
+        if self.uses_derived_seeds() != was_derived:
+            # The scheme itself moved, so anything cached was built under the other one.
+            self._family_seeds = {}
+            self.seeds = []
         for raw_epoch, entry in (epoch_keys or {}).items():
             try:
                 epoch = int(raw_epoch)
@@ -249,6 +254,10 @@ class BenchmarkSeedManager:
         before the switch, and nothing would say so.
         """
         if not path.exists():
+            return None
+        if not self.seeds_ready(epoch):
+            # Without the key there is no list this file could legitimately be, and loading it
+            # would put seeds in memory for an epoch the manager has just said it cannot build.
             return None
         try:
             data = self._load_epoch_payload(path)

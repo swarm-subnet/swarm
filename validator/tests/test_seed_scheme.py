@@ -27,7 +27,6 @@ from swarm.validator.seed_scheme import (
     uses_derived_seeds,
 )
 
-
 KEY = "11" * 32
 EPOCH = 22
 FAMILY = "cf_autopilot"
