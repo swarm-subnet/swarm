@@ -33,20 +33,24 @@ _LOCK_ENTRY = re.compile(r"git\+https://github\.com/swarm-subnet/swarm-worlds\.g
 
 
 def _pinned_tag() -> str:
+    """The swarm-worlds release tag requirements.txt pins, or a failure when it pins none."""
     match = _REQUIREMENT.search((_REPO_ROOT / "requirements.txt").read_text(encoding="utf-8"))
     assert match, "requirements.txt must pin swarm-worlds to a release tag"
     return match.group(1)
 
 
 def test_requirements_pin_is_a_release_tag():
+    """Proves the dependency points at a release tag rather than a branch or a bare commit."""
     assert _pinned_tag().startswith("v")
 
 
 def test_pixi_lock_records_the_same_tag():
+    """Proves the lock was refreshed after the tag moved, so both name one commit."""
     lock = (_REPO_ROOT / "pixi.lock").read_text(encoding="utf-8")
     tags = set(_LOCK_ENTRY.findall(lock))
     assert tags == {_pinned_tag()}, "run `pixi lock` after changing the swarm-worlds tag"
 
 
 def test_installed_package_matches_the_pin():
+    """Proves the environment actually holds the pinned release, not a stale install."""
     assert f"v{swarm_worlds.__version__}" == _pinned_tag()
