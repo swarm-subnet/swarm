@@ -397,6 +397,8 @@ Non-success failures (collision, timeout, etc.) score **0.01** participation for
 
 Your **model score** is the mean of the eligible recorded seed scores across the 1,100-seed range, stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
+Every validator flies the same 1,100 seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
+
 ### CONFIRMED Requirements (Search and Rescue)
 
 All four conditions must hold continuously for 2.0 seconds:

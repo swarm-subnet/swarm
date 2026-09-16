@@ -343,11 +343,13 @@ pm2 save
 6. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is not re-evaluated within the same epoch unless a re-eval is explicitly queued (for example, a benchmark version bump).
 
-### Per-Validator Seeds
+### Shared Epoch Seeds
 
-Each validator independently generates its own 1,100 random seeds per family per epoch using `random.SystemRandom()`. With 1,100 seeds per validator and per-seed results stitched across validators, statistical variance across validators is negligible.
+Every validator flies the same 1,100 seeds per family per epoch. The backend holds one secret key per epoch and serves it to trusted validators over `/validators/sync`; each seed is `HMAC-SHA256(key, "v1|<family>|<epoch>|<index>")` truncated to 32 bits, so the whole network derives an identical list without any of it being predictable in advance. Seed index N is therefore the same mission everywhere, and two models in one epoch are compared on the same maps rather than on two different draws.
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for transparency.
+The key is never needed by hand: it arrives with the regular sync, and a task assigned for a future epoch carries that epoch's key with it. A validator holding no key for an epoch takes no work for it rather than falling back to its own seeds.
+
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). The key's fingerprint is published as soon as the key exists, and the key itself once the epoch closes, so anyone can rebuild that epoch's seeds and confirm they were fixed before they were flown. Both appear on the epoch endpoints and on [swarm124.com](https://swarm124.com).
 
 ## 🔧 Troubleshooting
 

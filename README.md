@@ -120,7 +120,7 @@ The drone sees the world through a single depth camera and knows its own positio
 <!-- ENVIRONMENTS -->
 ## The Worlds
 
-None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives **1,100 fresh seeds** across its supported map types, so nothing can be memorized. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
+None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives **1,100 fresh seeds** across its supported map types, the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
 
 <table>
 <tr>
@@ -204,7 +204,7 @@ swarm visualize --type 1                       # fly a map yourself to see it
 swarm report                                   # see how it did
 ```
 
-The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use independently generated epoch seeds, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
+The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use the epoch's own seeds, which stay secret until the epoch closes, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

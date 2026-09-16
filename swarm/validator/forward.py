@@ -97,6 +97,14 @@ async def _forward_iteration(self) -> None:
             error=str(sync_data.get("error", "")),
         )
 
+        # Before aligning: a rollover has to find the new epoch's key already in hand.
+        apply_scheme = getattr(self.seed_manager, "apply_backend_scheme", None)
+        if apply_scheme is not None:
+            apply_scheme(
+                sync_data.get("seed_scheme_min_version"),
+                sync_data.get("epoch_keys"),
+            )
+
         backend_epoch = int(
             sync_data.get("benchmark_epoch")
             or sync_data.get("current_epoch")
@@ -124,6 +132,14 @@ async def _forward_iteration(self) -> None:
         await _publish_pending_epoch_seeds(self)
 
         if not await _host_may_score(self):
+            await _idle_until_wake(self, FORWARD_SLEEP_SEC)
+            tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
+            return
+
+        seeds_ready = getattr(self.seed_manager, "seeds_ready", None)
+        if seeds_ready is not None and not seeds_ready():
+            # Taking a task without the seeds to fly it wastes a lease and reports nothing.
+            bt.logging.info("No seeds for this epoch yet; not taking work this cycle")
             await _idle_until_wake(self, FORWARD_SLEEP_SEC)
             tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
             return

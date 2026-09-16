@@ -120,6 +120,17 @@ fi
 # 4. Update repository
 ###############################################################################
 banner "Pulling latest code from origin/main"
+PREVIOUS_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+
+# A failure after the reset would leave the checkout reporting the new version while the
+# process still runs the old code, so the watcher sees nothing left to do and never retries.
+# Rolling the checkout back makes the next cycle try again instead of stranding the host.
+restore_checkout() {
+  echo "[ERR] update failed; restoring the checkout to $PREVIOUS_COMMIT" >&2
+  git -C "$REPO_ROOT" reset --hard "$PREVIOUS_COMMIT" >/dev/null 2>&1 || true
+}
+trap restore_checkout ERR
+
 git -C "$REPO_ROOT" fetch --quiet origin main
 git -C "$REPO_ROOT" reset --hard origin/main
 
@@ -142,6 +153,9 @@ if ! pm2 restart "$PROCESS_NAME" &>/dev/null; then
           --wallet.name "$WALLET_NAME" \
           --wallet.hotkey "$WALLET_HOTKEY"
 fi
+
+# The process is up on the new code, so the checkout is where it should be.
+trap - ERR
 
 banner "Update & redeploy completed – validator running"
 exit 0
