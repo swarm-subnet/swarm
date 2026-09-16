@@ -27,7 +27,24 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ###############################################################################
-# 0. Helper – tiny progress banner
+# 0. Run from a copy, because step 4 overwrites this file
+#
+# bash reads a script as it goes. `git reset --hard` rewrites this very file
+# mid-run, and bash then continues from a byte offset that now points at
+# different content: it stops partway through and still exits 0, so the caller
+# sees a successful update that never installed anything or restarted anything.
+# Re-executing from a copy means the running bytes can no longer move.
+###############################################################################
+if [[ "${SWARM_UPDATE_FROM_COPY:-}" != "1" ]]; then
+  _copy="$(mktemp -t swarm_update_deploy.XXXXXX)"
+  cp "${BASH_SOURCE[0]}" "$_copy"
+  trap 'rm -f "$_copy"' EXIT
+  SWARM_UPDATE_FROM_COPY=1 bash "$_copy" "$@"
+  exit $?
+fi
+
+###############################################################################
+# 0b. Helper – tiny progress banner
 ###############################################################################
 STEP=0
 banner() {
