@@ -9,11 +9,22 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 import pytest
+import swarm_worlds
 
 from swarm.core import moving_drone as moving_drone_mod
 
 _needs_wheel = pytest.mark.skipif(
     not hasattr(p, "ER_SWARM_RAYCAST"), reason="swarm-bullet3 wheel without the ray-cast backend"
+)
+
+# A mesh with enough faces to clear the cull's minimum, so the body becomes a cull target.
+_DOORWAY_MESH = (
+    Path(swarm_worlds.maps_dir())
+    / "kenney"
+    / "kenney_conveyor-kit"
+    / "Models"
+    / "OBJ format"
+    / "structure-doorway-wide.obj"
 )
 
 
@@ -26,11 +37,8 @@ def test_cull_reenable_keeps_static_bodies_isolated(monkeypatch) -> None:
         collision = p.createCollisionShape(
             p.GEOM_BOX, halfExtents=[4, 4, 1], physicsClientId=cli
         )
-        mesh_path = Path(
-            "swarm/assets/maps/kenney/kenney_conveyor-kit/Models/OBJ format/structure-doorway-wide.obj"
-        ).resolve()
         visual = p.createVisualShape(
-            p.GEOM_MESH, fileName=str(mesh_path), physicsClientId=cli
+            p.GEOM_MESH, fileName=str(_DOORWAY_MESH), physicsClientId=cli
         )
         box_id = p.createMultiBody(
             baseMass=0,
@@ -102,11 +110,8 @@ def _cull_world(cli, monkeypatch, raycast_enabled):
     collision = p.createCollisionShape(
         p.GEOM_BOX, halfExtents=[4, 4, 4], physicsClientId=cli
     )
-    mesh_path = Path(
-        "swarm/assets/maps/kenney/kenney_conveyor-kit/Models/OBJ format/structure-doorway-wide.obj"
-    ).resolve()
     visual = p.createVisualShape(
-        p.GEOM_MESH, fileName=str(mesh_path), meshScale=[8, 8, 8], physicsClientId=cli
+        p.GEOM_MESH, fileName=str(_DOORWAY_MESH), meshScale=[8, 8, 8], physicsClientId=cli
     )
     box_id = p.createMultiBody(
         baseMass=0,
