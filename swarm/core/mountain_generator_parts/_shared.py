@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pybullet as p
+import swarm_worlds
 
 from swarm.constants import (
     MOUNTAIN_SUBTYPE_DISTRIBUTION,
@@ -43,15 +44,7 @@ from swarm.constants import (
 # ---------------------------------------------------------------------------
 # SECTION 1: Constants & asset paths
 # ---------------------------------------------------------------------------
-ASSETS_DIR = os.path.normpath(
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        os.pardir,
-        os.pardir,
-        "assets",
-        "maps",
-    )
-)
+ASSETS_DIR = swarm_worlds.maps_dir()
 CUSTOM_DIR = os.path.join(ASSETS_DIR, "custom")
 MOUNTAIN_DIR = os.path.join(CUSTOM_DIR, "mountains")
 BUILDING_DIR = os.path.join(CUSTOM_DIR, "buildings")

@@ -46,5 +46,9 @@ COPY requirements.txt /tmp/requirements.txt
 # setuptools 82 drops pkg_resources.fixup_namespace_packages, which pytest's monkeypatch imports.
 RUN uv pip install --system --no-cache -r /tmp/requirements.txt "setuptools<82"
 
+# The simulator writes mesh caches next to the map assets, and CI runs the tests
+# as the host uid, so the worlds package has to be writable for that user.
+RUN chmod -R a+w "$(python -c 'import os, swarm_worlds; print(os.path.dirname(swarm_worlds.__file__))')"
+
 WORKDIR /app
 CMD ["pytest"]

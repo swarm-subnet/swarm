@@ -36,11 +36,11 @@ from __future__ import annotations
 import math
 import os
 import random
-from importlib.resources import files as _pkg_files
 from typing import Any
 
 import numpy as np
 import pybullet as p
+import swarm_worlds
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
@@ -264,8 +264,8 @@ _SNAP_QUANT = np.array([_ATT_Q] * 3 + [_VEL_Q] * 3 + [_ACC_Q] * 3 + [_ALT_Q] * 3
 
 
 def tello_urdf_path() -> str:
-    """Absolute path to the Tello URDF in the swarm package assets."""
-    return str(_pkg_files("swarm").joinpath("assets", TELLO_URDF))
+    """Absolute path to the Tello URDF in the swarm-worlds package."""
+    return os.path.join(swarm_worlds.robots_dir(), TELLO_URDF)
 
 
 def ensure_tello_assets_staged() -> str:
@@ -278,7 +278,7 @@ def ensure_tello_assets_staged() -> str:
     if _tello_assets_ready:
         return TELLO_URDF
     dst_dir = gym_assets.stage_dir()
-    src_mesh_dir = str(_pkg_files("swarm").joinpath("assets", TELLO_MESH_DIR))
+    src_mesh_dir = os.path.join(swarm_worlds.robots_dir(), TELLO_MESH_DIR)
     dst_mesh_dir = os.path.join(dst_dir, TELLO_MESH_DIR)
     os.makedirs(dst_mesh_dir, exist_ok=True)
     for name in sorted(os.listdir(src_mesh_dir)):

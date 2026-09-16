@@ -23,12 +23,12 @@ All tuning parameters, feature flags, model names, and asset paths.
 import math
 import os
 
+import swarm_worlds
+
 # ---------------------------------------------------------------------------
-# Asset paths (relative to this file → swarm/assets/maps/)
+# Asset paths (the swarm-worlds package)
 # ---------------------------------------------------------------------------
-ASSETS_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "assets", "maps")
-)
+ASSETS_DIR = swarm_worlds.maps_dir()
 KENNEY_DIR = os.path.join(ASSETS_DIR, "kenney")
 CUSTOM_DIR = os.path.join(ASSETS_DIR, "custom")
 OTHER_SOURCES_DIR = os.path.join(ASSETS_DIR, "other_sources")

@@ -28,10 +28,6 @@ repos:
         exclude: *skip
       - id: check-toml
         exclude: *skip
-      # The three .urdf files live under swarm/assets and are therefore outside the
-      # shared exclusion; name them here so the drone descriptions are still parsed.
-      - id: check-xml
-        files: \.urdf$
       - id: check-case-conflict
       - id: check-added-large-files
         args: [--maxkb=2048]

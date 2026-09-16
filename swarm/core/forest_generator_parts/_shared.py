@@ -24,19 +24,12 @@ import random
 from typing import Dict, List, Optional, Tuple
 
 import pybullet as p
+import swarm_worlds
 
 # ---------------------------------------------------------------------------
 # SECTION 1: Constants & asset paths
 # ---------------------------------------------------------------------------
-ASSETS_DIR = os.path.normpath(
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        os.pardir,
-        os.pardir,
-        "assets",
-        "maps",
-    )
-)
+ASSETS_DIR = swarm_worlds.maps_dir()
 STATE_DIR = os.path.normpath(
     os.path.join(
         os.path.dirname(os.path.abspath(__file__)),

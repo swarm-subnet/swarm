@@ -36,6 +36,7 @@ import random
 from typing import Dict, List, Tuple
 
 import pybullet as p
+import swarm_worlds
 
 from swarm.constants import (
     OFFICE_SCALE_JITTER_MAX,
@@ -44,10 +45,7 @@ from swarm.constants import (
 )
 from swarm.core.maps.office.layout import office_layout, office_pieces
 
-_PACKAGE_DIR = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
-_OFFICE_ASSET_DIR = os.path.join(_PACKAGE_DIR, "assets", "maps", "custom", "office")
+_OFFICE_ASSET_DIR = os.path.join(swarm_worlds.maps_dir(), "custom", "office")
 
 OFFICE_X_RANGE: Tuple[float, float] = (0.0, 18.0)
 OFFICE_Y_RANGE: Tuple[float, float] = (0.0, 7.6)

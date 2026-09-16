@@ -38,11 +38,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 from dataclasses import dataclass
-from importlib.resources import files as _pkg_files
 
 import numpy as np
+import swarm_worlds
 
 from swarm.constants import OFFICE_LAYOUT_RETRIES, OFFICE_LAYOUT_SEED_OFFSET
 
@@ -95,8 +96,9 @@ def office_pieces() -> dict:
     """The shipped pieces manifest, read once per process."""
     global _MANIFEST
     if _MANIFEST is None:
-        path = _pkg_files("swarm").joinpath("assets", "maps", "custom", "office", "pieces.json")
-        _MANIFEST = json.loads(path.read_text())
+        path = os.path.join(swarm_worlds.maps_dir(), "custom", "office", "pieces.json")
+        with open(path, encoding="utf-8") as f:
+            _MANIFEST = json.load(f)
     return _MANIFEST
 
 
