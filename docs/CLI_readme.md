@@ -62,7 +62,7 @@ Verifies: Python version (3.11+), Docker (binary + daemon), sandbox lockdown bin
 
 ### `swarm benchmark`
 
-Runs a local benchmark for the selected family (`cf_autopilot` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,100 seeds per family per epoch.
+Runs a local benchmark for the selected family (`cf_autopilot` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,000 seeds per family per epoch.
 
 ```bash
 # Default-family benchmark (3 seeds per environment group)

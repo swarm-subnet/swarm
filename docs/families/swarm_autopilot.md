@@ -102,7 +102,7 @@ Kinematic channels are unbounded (`Box(-inf, inf)`).
 
 Five environment types: **city, open, mountain, village, forest**. Warehouse is excluded from this family. Moving platforms never occur here, even though the underlying template slots carry the flag: it is forced off for every family except single-drone Autopilot.
 
-The full benchmark is 1,100 seeds. Seeds are generated from two templates cycled over the seed range: the first 300 seed indices use the 41-slot screening template, the remaining 800 use the 84-slot benchmark template (the Autopilot templates minus their warehouse slots). Drone count cycles `2 + (slot % 7)` across slots, so every count from 2 to 8 appears; seeds generated outside a template draw the count uniformly from 2–8.
+The full benchmark is 1,000 seeds. Seeds are generated from two templates cycled over the seed range: the first 300 seed indices use the 41-slot screening template, the remaining 700 use the 84-slot benchmark template (the Autopilot templates minus their warehouse slots). Drone count cycles `2 + (slot % 7)` across slots, so every count from 2 to 8 appears; seeds generated outside a template draw the count uniformly from 2–8.
 
 Start → goal distance and goal-height bands per type (in the benchmark template each type's range is split into 3 distance bands; screening slots use the full range):
 
@@ -206,7 +206,7 @@ safety_factor = 1.0    if min_clearance ≥ 1.0 m   (0.6 m on forest maps)
 
 The seed's `ValidationResult` carries `score` (the mean), `success` (true only if **all** drones landed), the first non-`NONE` per-drone failure reason when the seed is not fully successful, and per-drone metrics (`per_drone_final_score`, `per_drone_success`, `per_drone_failure_reason`).
 
-Submissions run the full 1,100-seed benchmark. A screening admission phase exists behind a backend constant (`SCREENING_ENABLED`, off by default); if it is ever switched on, this family's policy applies a 0.01 bootstrap threshold, a 0.015 minimum improvement over the champion (floor 0.005 as scores approach 1.0), and early-fail checkpoints at seeds 50/100/150 with thresholds 0.5/0.7/0.85. The 0.015 → 0.005 improvement floor also gates benchmark crowning.
+Submissions run the full 1,000-seed benchmark. A screening admission phase exists behind a backend constant (`SCREENING_ENABLED`, off by default); if it is ever switched on, this family's policy applies a 0.01 bootstrap threshold, a 0.015 minimum improvement over the champion (floor 0.005 as scores approach 1.0), and early-fail checkpoints at seeds 50/100/150 with thresholds 0.5/0.7/0.85. The 0.015 → 0.005 improvement floor also gates benchmark crowning.
 
 <p align="right">(<a href="#swarm-autopilot-top">back to top</a>)</p>
 

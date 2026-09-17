@@ -2,7 +2,7 @@
 
 # Swarm Miner Guide
 
-Train an autonomous drone pilot, benchmark it against 1,100 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
+Train an autonomous drone pilot, benchmark it against 1,000 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
 
 ---
 
@@ -265,7 +265,7 @@ swarm benchmark --model Submission/submission.zip --workers 4
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 ```
 
-The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,100 seeds total.
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds total.
 
 ### View Results
 
@@ -395,9 +395,9 @@ The Interceptor and Office Interceptor families override the weights to 0.5 succ
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
-Your **model score** is the mean of the eligible recorded seed scores across the 1,100-seed range, stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
+Your **model score** is the mean of the eligible recorded seed scores across the 1,000-seed range, stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
-Every validator flies the same 1,100 seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
+Every validator flies the same 1,000 seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
 
 ### CONFIRMED Requirements (Search and Rescue)
 
@@ -449,16 +449,16 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 1. **Miner** runs `swarm model submit`: the digest goes on-chain, the archive goes to the backend, then the miner goes offline
 2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. Once the uploaded bytes match the committed digest and pass the intake checks, it creates one **Pending Benchmark** row
 3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
-4. **Validators** lease the model's seeds individually from a shared pool, fetch the archive from the backend, verify its hash, and run the agent in a sandboxed Docker container: the full **1,100 seeds** per family, spread over the family's environment types
-5. When the whole seed range [0, 1100) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+4. **Validators** lease the model's seeds individually from a shared pool, fetch the archive from the backend, verify its hash, and run the agent in a sandboxed Docker container: the full **1,000 seeds** per family, spread over the family's environment types
+5. When the whole seed range [0, 1000) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
 
-Every submission runs the full 1,100-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
+Every submission runs the full 1,000-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
 
 A transient timeout or RPC-transport failure is retried once for that seed, subject to run-wide retry budgets. Deterministic environment failures and validator-infrastructure failures are excluded from the score; failures caused by the submitted agent still count. Smoke-test with `swarm model verify` before submitting.
 
 ### Epoch Rotation
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Each validator independently generates its own 1,100 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Each validator independently generates its own 1,000 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
 
 At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` refuses to commit in that window and tells you when it reopens.
 
@@ -466,7 +466,7 @@ At rollover, pending models keep their queue position, discard partial results, 
 
 | Parameter | Value |
 |-----------|-------|
-| Seeds per family per epoch | 1,100 |
+| Seeds per family per epoch | 1,000 |
 | Seed claim size | Dynamic: up to the validator's free worker slots (API cap 64) |
 | Chain scanner interval | 3 minutes |
 | Upload window after a commit | 6 hours (a late upload of the same digest is still accepted afterwards) |

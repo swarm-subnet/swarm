@@ -42,7 +42,7 @@ def test_derivation_matches_the_known_answer_vector():
 
 
 def test_two_validators_with_one_key_build_the_same_list():
-    """Proves the whole point: the same key gives the same 1,100 maps everywhere."""
+    """Proves the whole point: the same key gives the same maps everywhere."""
     assert derive_seeds(KEY, EPOCH, FAMILY, 128) == derive_seeds(KEY, EPOCH, FAMILY, 128)
 
 

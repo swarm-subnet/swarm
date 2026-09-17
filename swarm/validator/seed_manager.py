@@ -301,8 +301,13 @@ class BenchmarkSeedManager:
             )
         self._save_epoch_file(epoch, family_id, seeds, published=False)
         source = "derived" if self.uses_derived_seeds() else "random"
+        # The identity is logged so the fleet can be checked without switching anything on:
+        # read this line off every validator and the strings either all match or they do not.
+        # It is a hash of the commitment, so it names the list without revealing a single map.
+        identity = self.seed_set_id_for(epoch, family_id)
         bt.logging.info(
             f"Built {len(seeds)} {source} seeds for epoch {epoch} family {family_id}"
+            + (f" seed_set={identity}" if identity else "")
         )
         return seeds
 

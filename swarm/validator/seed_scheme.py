@@ -18,7 +18,7 @@
 """Deriving an epoch's seed list from the key the backend serves.
 
 Every validator on the shared scheme runs this exact arithmetic, so the whole network flies
-the same 1100 maps. The encoding is pinned: a change to it is a new SEED_SCHEME_VERSION, never
+the same maps. The encoding is pinned: a change to it is a new SEED_SCHEME_VERSION, never
 a quiet edit, because the seeds it produces are the benchmark itself. The known-answer vectors
 in the tests exist to make an accidental change fail loudly instead of silently moving the maps.
 """

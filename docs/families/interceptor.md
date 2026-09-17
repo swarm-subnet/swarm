@@ -134,7 +134,7 @@ The benchmark template is 100 slots, all open, cycling three start-distance band
 | 2 | 73.3 – 86.7 m |
 | 3 | 86.7 – 100.0 m |
 
-The template repeats across the seed run (the backend's benchmark defaults to 1,100 seeds per run, env-overridable). Every submission goes straight to the full benchmark: screening is disabled (`SCREENING_ENABLED = False`); a dormant 8-slot screening template and its thresholds exist behind that constant, but they do not run today.
+The template repeats across the seed run (the backend's benchmark defaults to 1,000 seeds per run, env-overridable). Every submission goes straight to the full benchmark: screening is disabled (`SCREENING_ENABLED = False`); a dormant 8-slot screening template and its thresholds exist behind that constant, but they do not run today.
 
 ### Spawn geometry (per seed)
 
