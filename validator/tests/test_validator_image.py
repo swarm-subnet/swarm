@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,23 @@ def test_the_runner_image_inputs_are_untouched() -> None:
     assert (DOCKER_DIR / "validator.Dockerfile.dockerignore").is_file()
     root_ignore = (REPO_ROOT / ".dockerignore").read_text()
     assert "validator" in root_ignore.split(), "root ignore should still exclude validator/"
+
+
+def test_the_cross_machine_check_pins_the_published_image() -> None:
+    """Proves the check flies inside the shared image unless a host is opted out.
+
+    Defaulting to whatever a host already built would make the check compare the
+    per-host builds it exists to rule out, and it would still print a verdict.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "validator" / "scripts"))
+    try:
+        import cross_machine_check as check
+    finally:
+        sys.path.pop(0)
+
+    parser = check._build_parser()
+    assert parser.parse_args(["run"]).image == check.SHARED_IMAGE
+    assert parser.parse_args(["run", "--host-image"]).image is None
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker is not installed")
