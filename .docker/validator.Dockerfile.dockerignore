@@ -1,0 +1,21 @@
+# Build context for the validator image only.
+#
+# BuildKit reads "<dockerfile>.dockerignore" in preference to the root .dockerignore, which
+# is why this file exists: the root one excludes validator/ and scripts/, which this image
+# needs, and the runner image's cache key hashes that root file. Editing it there would
+# rebuild every validator's runner image for no reason.
+.git
+.github
+.venv
+venv
+validator_env
+miner_env
+**/__pycache__
+**/*.pyc
+**/*.pyo
+Submission
+artifacts
+state
+swarm/state
+wandb
+*.log

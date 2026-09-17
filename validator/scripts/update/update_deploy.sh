@@ -17,131 +17,100 @@
 # DEALINGS IN THE SOFTWARE.
 
 # ---------------------------------------------------------------
-# update_deploy.sh – Pull latest code, reinstall, restart PM2.
+# update_deploy.sh – pull the published validator image and run it.
 #
-# Called directly or by auto_update_deploy.sh.
-# If everything is already up‑to‑date it still rebuilds / restarts,
-# so that environment changes (e.g. new requirements) are picked up.
+# Nothing is compiled or installed on the host any more. The version this script
+# replaced reset the checkout and reinstalled the package, which left every
+# operator's machine deciding for itself what the validator ran on.
+#
+# It is deliberately still callable by the watcher that operators already have
+# running. That watcher checks a version on main and runs this file from disk, so
+# it carries a host onto containers without anyone restarting anything. The git
+# sync below is what keeps its check working.
+#
+#   bash validator/scripts/update/update_deploy.sh
 # ---------------------------------------------------------------
 set -euo pipefail
 IFS=$'\n\t'
 
-###############################################################################
-# 0. Helper – tiny progress banner
-###############################################################################
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+COMPOSE_FILE="$REPO_ROOT/.docker/docker-compose.yml"
+SERVICE="validator"
+LEGACY_PM2_PROCESS="${PROCESS_NAME_OVERRIDE:-swarm_validator}"
+
 STEP=0
 banner() {
   STEP=$((STEP+1))
   echo -e "\n[STEP ${STEP}] $*\n"
 }
 
-###############################################################################
-# 1. Configuration (env‑vars → CLI‑args → defaults)
-###############################################################################
-banner "Loading configuration"
-
-# ► Defaults – match the public instructions exactly
-PROCESS_NAME="swarm_validator"          # pm2 process name
-WALLET_NAME=""                          # coldkey  (empty ⇒ prompt if interactive)
-WALLET_HOTKEY=""                        # hotkey   (empty ⇒ prompt if interactive)
-SUBTENSOR_PARAM="--subtensor.network finney"
-
-# ◄ Allow overrides from environment
-PROCESS_NAME="${PROCESS_NAME_OVERRIDE:-$PROCESS_NAME}"
-WALLET_NAME="${WALLET_NAME_OVERRIDE:-$WALLET_NAME}"
-WALLET_HOTKEY="${WALLET_HOTKEY_OVERRIDE:-$WALLET_HOTKEY}"
-SUBTENSOR_PARAM="${SUBTENSOR_PARAM_OVERRIDE:-$SUBTENSOR_PARAM}"
-
-# ◄ Allow overrides from positional CLI args
-[[ $# -ge 1 ]] && PROCESS_NAME="$1"
-[[ $# -ge 2 ]] && WALLET_NAME="$2"
-[[ $# -ge 3 ]] && WALLET_HOTKEY="$3"
-[[ $# -ge 4 ]] && SUBTENSOR_PARAM="$4"
-
-# ◄ Interactive prompts (only if running on TTY and still empty)
-if [[ -t 0 ]]; then
-  [[ -z "$WALLET_NAME"     ]] && read -rp "Coldkey name            : " WALLET_NAME
-  [[ -z "$WALLET_HOTKEY"   ]] && read -rp "Hotkey                  : " WALLET_HOTKEY
-fi
-
-[[ -z "$WALLET_NAME"   || -z "$WALLET_HOTKEY" ]] && {
-  echo "[ERR] WALLET_NAME or WALLET_HOTKEY not set." >&2
+banner "Checking docker compose"
+docker compose version >/dev/null 2>&1 || {
+  echo "[ERR] 'docker compose' is required. Install the Docker Compose plugin." >&2
   exit 1
 }
 
-###############################################################################
-# 2. Ensure uv is available
-#
-# Runs before the repo is touched: a machine that predates the uv migration has
-# no uv, and an unattended update that failed after `git reset` would leave the
-# local version matching the remote, so the watcher would never retry.
-###############################################################################
-banner "Checking uv"
-
-UV_VERSION="0.12.8"
-export PATH="$HOME/.local/bin:$PATH"
-
-if ! uv --version >/dev/null 2>&1; then
-  echo "[INFO] uv not found – installing $UV_VERSION"
-  curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" \
-    | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
-fi
-
-uv --version >/dev/null 2>&1 || {
-  echo "[ERR] uv bootstrap failed – aborting before the repository is modified." >&2
-  exit 1
+# Keeps the compose file and this script current, and keeps the legacy watcher's
+# version check meaningful: it compares the checkout against main, so a checkout
+# that never moved would make it fire on every cycle forever.
+banner "Syncing the checkout"
+PREVIOUS_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+restore_checkout() {
+  echo "[ERR] update failed; restoring the checkout to $PREVIOUS_COMMIT" >&2
+  git -C "$REPO_ROOT" reset --hard "$PREVIOUS_COMMIT" >/dev/null 2>&1 || true
 }
-
-###############################################################################
-# 3. Locate repo root and virtualenv
-###############################################################################
-banner "Locating repository root & virtualenv"
-
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-echo "Repository root : $REPO_ROOT"
-
-VENV_DIR="$REPO_ROOT/validator_env"
-PYTHON_BIN="$VENV_DIR/bin/python"
-
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  echo "[INFO] Virtualenv not found – running setup script first."
-  bash "$REPO_ROOT/validator/scripts/main/setup.sh"
-fi
-
-# setup.sh creates the venv relative to its own working directory, so confirm it
-# landed where this script expects rather than failing later at activation.
-[[ -x "$PYTHON_BIN" ]] || {
-  echo "[ERR] Virtualenv still missing at $PYTHON_BIN after setup." >&2
-  exit 1
-}
-
-###############################################################################
-# 4. Update repository
-###############################################################################
-banner "Pulling latest code from origin/main"
+trap restore_checkout ERR
 git -C "$REPO_ROOT" fetch --quiet origin main
 git -C "$REPO_ROOT" reset --hard origin/main
 
-###############################################################################
-# 5. Re‑install package inside venv & restart validator
-###############################################################################
-banner "Installing updated Python package"
-source "$VENV_DIR/bin/activate"
-uv pip install --quiet -e "$REPO_ROOT"
+[[ -f "$COMPOSE_FILE" ]] || { echo "[ERR] missing $COMPOSE_FILE" >&2; exit 1; }
 
-banner "Restarting PM2 process: $PROCESS_NAME"
-if ! pm2 restart "$PROCESS_NAME" &>/dev/null; then
-  echo "[WARN] PM2 process not found – starting a fresh one."
-  interp="$(command -v python)"        # fallback if venv not on PATH for pm2
-  pm2 start "$REPO_ROOT/neurons/validator.py" \
-        --name "$PROCESS_NAME" \
-        --interpreter "$interp" \
-        -- \
-          --netuid 124 $SUBTENSOR_PARAM \
-          --wallet.name "$WALLET_NAME" \
-          --wallet.hotkey "$WALLET_HOTKEY"
+# The container runs as the invoking user rather than root, and needs the host's
+# docker group to reach the socket. Resolved here so .env stays about the wallet.
+banner "Resolving the user and the docker socket group"
+export SWARM_UID="${SWARM_UID:-$(id -u)}"
+export SWARM_GID="${SWARM_GID:-$(id -g)}"
+if [[ -z "${DOCKER_GID:-}" ]]; then
+  DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)"
+fi
+export DOCKER_GID
+export SWARM_STATE_DIR="${SWARM_STATE_DIR:-/opt/swarm-validator-state}"
+export BT_WALLET_HOME="${BT_WALLET_HOME:-$HOME/.bittensor}"
+echo "[INFO] uid=$SWARM_UID gid=$SWARM_GID docker_gid=$DOCKER_GID"
+echo "[INFO] state=$SWARM_STATE_DIR wallets=$BT_WALLET_HOME"
+
+# The same absolute path is mounted on both sides, so it has to exist on the host
+# and be writable by the uid the container runs as.
+banner "Preparing the state directory"
+mkdir -p "$SWARM_STATE_DIR"
+chown -R "$SWARM_UID:$SWARM_GID" "$SWARM_STATE_DIR" 2>/dev/null || true
+
+banner "Pulling the published image"
+docker compose -f "$COMPOSE_FILE" --profile "$SERVICE" pull "$SERVICE"
+
+# One hotkey, one validator. A host process left running beside the container is a
+# second session on the same hotkey, and the backend fences one of them off.
+# Stopped only once the image is in hand, so a failed pull leaves the host running.
+banner "Stopping the host validator, if one is still running"
+if command -v pm2 >/dev/null 2>&1 && pm2 describe "$LEGACY_PM2_PROCESS" >/dev/null 2>&1; then
+  echo "[INFO] stopping pm2 process '$LEGACY_PM2_PROCESS'"
+  pm2 stop "$LEGACY_PM2_PROCESS" >/dev/null 2>&1 || true
+  pm2 save >/dev/null 2>&1 || true
+else
+  echo "[INFO] no pm2 host validator found"
 fi
 
-banner "Update & redeploy completed – validator running"
+# up -d recreates the container only when the image or its configuration changed,
+# so an unchanged pull leaves the running validator alone.
+banner "Starting the validator container"
+docker compose -f "$COMPOSE_FILE" --profile "$SERVICE" up -d "$SERVICE"
+
+banner "Running image"
+docker compose -f "$COMPOSE_FILE" --profile "$SERVICE" images "$SERVICE" || true
+
+# The deploy stands; a later failure must not roll the checkout back under it.
+trap - ERR
+
+echo -e "\n[INFO] Update complete. Logs: docker compose -f $COMPOSE_FILE logs -f $SERVICE"
 exit 0

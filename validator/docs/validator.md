@@ -91,45 +91,52 @@ sudo systemctl status docker
 
 ## 📦 Installation
 
-### 1. Clone Repository
+The validator ships as a container image. Nothing is compiled on your machine and no
+Python environment is created, so a validator behaves the same on every host.
+
+### 1. Clone the repository
+
+The checkout provides the compose file and the update scripts. The validator itself
+comes from the image.
 
 ```bash
 git clone https://github.com/swarm-subnet/swarm
 cd swarm
 ```
 
-### 2. Install System Dependencies
+### 2. Configure
 
 ```bash
-chmod +x validator/scripts/main/install_dependencies.sh
-./validator/scripts/main/install_dependencies.sh
-
-sudo apt update && sudo apt install -y build-essential git pkg-config libgl1-mesa-glx mesa-utils
+cp .env.example .env
+nano .env
 ```
 
-### 3. Setup Python Environment
+Fill in at least these:
+
+| Variable | What it is |
+|---|---|
+| `SWARM_BACKEND_API_URL` | Backend endpoint, from the team |
+| `WANDB_API_KEY` | Logging key, from the team |
+| `SWARM_WALLET_NAME` | Your coldkey name |
+| `SWARM_WALLET_HOTKEY` | Your validator hotkey |
+
+`SWARM_STATE_DIR` defaults to `/opt/swarm-validator-state` and is mounted at the same
+path inside the container. Leave it absolute: the validator hands that path to the host's
+Docker daemon when it starts evaluation containers, so it has to mean the same thing on
+both sides.
+
+Contact the team on [Discord](https://discord.gg/8dPqPDw7GC) for the backend URL and the
+WandB key.
+
+### 3. Start it
 
 ```bash
-chmod +x validator/scripts/main/setup.sh
-./validator/scripts/main/setup.sh
-
-source validator_env/bin/activate
+bash validator/scripts/update/update_deploy.sh
 ```
 
-### 4. Configure Environment Variables
-
-Create `.env` file in repository root:
-
-```bash
-# REQUIRED: Backend API endpoint
-SWARM_BACKEND_API_URL=<contact the team>
-
-# REQUIRED: WandB logging
-WANDB_API_KEY=<contact the team>
-VALIDATOR_NAME=my_validator_name
-```
-
-Contact the team on [Discord](https://discord.gg/8dPqPDw7GC) to obtain `SWARM_BACKEND_API_URL` and `WANDB_API_KEY`.
+That pulls the published image, prepares the state directory, stops any old host-process
+validator, and starts the container. Run the same command any time you want to force an
+update by hand.
 
 ## 🔑 Wallet & Registration
 
@@ -150,30 +157,26 @@ btcli wallet overview --wallet.name my_cold --subtensor.network finney
 
 ## ⚙️ Run the Validator
 
-### PM2 Launch
+### Start, stop, restart
 
 ```bash
-source validator_env/bin/activate
-
-pm2 start neurons/validator.py --name swarm_validator -- \
-  --netuid 124 \
-  --subtensor.network finney \
-  --wallet.name my_cold \
-  --wallet.hotkey my_validator \
-  --logging.debug
+cd swarm
+docker compose -f .docker/docker-compose.yml --profile validator up -d validator
+docker compose -f .docker/docker-compose.yml --profile validator stop validator
+docker compose -f .docker/docker-compose.yml --profile validator restart validator
 ```
 
 ### Logs
 
 ```bash
-pm2 logs swarm_validator
+docker compose -f .docker/docker-compose.yml logs -f validator
 ```
 
-### Stop / Restart
+### Which version is running
 
 ```bash
-pm2 restart swarm_validator
-pm2 stop    swarm_validator
+docker inspect --format '{{index .Config.Labels "swarm.__version__"}}' \
+  "$(docker compose -f .docker/docker-compose.yml --profile validator ps -q validator)"
 ```
 
 ## 📡 Telemetry and Monitor
@@ -296,32 +299,68 @@ If the monitor looks unhealthy:
 
 ## 🔄 Auto-Update
 
-**`validator/scripts/update/auto_update_deploy.sh`** checks `origin/main` for version bumps every *n* minutes. When a new version is found, it pulls, resets, and restarts the PM2 process.
+**`validator/scripts/update/auto_update_deploy.sh`** watches the registry. Every *n*
+minutes it pulls `:latest`, compares that image's `swarm.__version__` label against the
+one the running container was started from, and redeploys when the published version is
+newer. No git pull, no reinstall, nothing built on your machine.
+
+### If you already run the updater
+
+**Nothing to do.** The watcher you have running checks a version and runs
+`update_deploy.sh` from disk. That script now deploys the container, so your host moves
+onto the container flow on its next update without you restarting anything.
+
+### Fresh install, under systemd
 
 ```bash
-chmod +x ./validator/scripts/update/auto_update_deploy.sh
-chmod +x ./validator/scripts/update/update_deploy.sh
-
-# Edit variables at the top of auto_update_deploy.sh
-nano ./validator/scripts/update/auto_update_deploy.sh
-
-# Run under PM2
-pm2 start --name auto_update_validator \
-          --interpreter /bin/bash \
-          validator/scripts/update/auto_update_deploy.sh
+sudo cp validator/scripts/update/swarm-validator-updater.service /etc/systemd/system/
+# adjust WorkingDirectory and User if your checkout is not /root/swarm
+sudo systemctl daemon-reload
+sudo systemctl enable --now swarm-validator-updater
+journalctl -u swarm-validator-updater -f
 ```
 
-If you registered the updater before these scripts moved, it keeps working:
-`scripts/validator/update/auto_update_deploy.sh` still exists and forwards to the path
-above. Re-register when convenient, so the forwarder can eventually be dropped:
+### Fresh install, under PM2
 
 ```bash
-pm2 delete auto_update_validator
 pm2 start --name auto_update_validator \
           --interpreter /bin/bash \
           validator/scripts/update/auto_update_deploy.sh
 pm2 save
 ```
+
+The legacy path `scripts/validator/update/auto_update_deploy.sh` still forwards to the
+one above, so an updater registered before the scripts moved keeps working.
+
+### Pinning a version, and rolling back
+
+`:latest` is what the updater follows. To hold a specific version, set the tag in `.env`
+and the updater stops moving you:
+
+```bash
+SWARM_VALIDATOR_TAG=5.1.5.6
+```
+
+```bash
+bash validator/scripts/update/update_deploy.sh
+```
+
+Every published version keeps its own tag, so rolling back is setting the tag to the
+previous version and running that command. Set the tag back to `latest` to resume
+automatic updates.
+
+### Coming from a host install
+
+The first update does it for you: it stops the PM2 host process and starts the container
+in its place. If you would rather do it by hand:
+
+```bash
+pm2 stop swarm_validator
+bash validator/scripts/update/update_deploy.sh
+```
+
+Your wallet and `.env` are unchanged. State moves to `SWARM_STATE_DIR`; the validator
+rebuilds anything it finds missing there on its next cycle.
 
 ## 🧩 What the Validator Does
 

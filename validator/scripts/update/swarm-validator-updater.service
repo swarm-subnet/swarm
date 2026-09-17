@@ -1,0 +1,31 @@
+# Watches the registry and redeploys the validator when a newer image is published.
+#
+# The PM2 one-liner in validator/docs/validator.md still works and needs no change;
+# this is for operators who would rather the host supervise it.
+#
+#   sudo cp validator/scripts/update/swarm-validator-updater.service \
+#           /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now swarm-validator-updater
+#
+# Edit WorkingDirectory and User below if the checkout does not live in /root/swarm.
+
+[Unit]
+Description=Swarm validator image updater
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/swarm
+ExecStart=/bin/bash /root/swarm/validator/scripts/update/auto_update_deploy.sh
+# The watcher loops forever; a crash means the host stops updating, so bring it back.
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

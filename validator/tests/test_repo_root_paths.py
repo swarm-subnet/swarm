@@ -47,6 +47,7 @@ _ALIAS_ROOT = re.compile(r"^_REPO_ROOT\s*=\s*_SCRIPT_DIR((?:\.parents\[\d\]|\.pa
 EXPECTED: dict[str, list[str]] = {
     "scripts/bench_full_eval.py": ["REPO_ROOT"],
     "scripts/compare_render_masks.py": ["REPO_ROOT"],
+    "scripts/cross_machine_check.py": ["REPO_ROOT"],
     "scripts/dump_depth_frame.py": ["REPO_ROOT"],
     "scripts/gen_family_io_tables.py": ["REPO_ROOT"],
     "scripts/generate_video.py": ["REPO_ROOT", "validator/scripts"],
@@ -69,6 +70,7 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_scripts_shell.py": ["REPO_ROOT"],
     "tests/test_simulation_doc.py": ["REPO_ROOT"],
     "tests/test_submission_manifest.py": ["REPO_ROOT", "SIBLING"],
+    "tests/test_validator_image.py": ["REPO_ROOT"],
     "tests/test_swarm_autopilot_regression.py": ["validator/tests"],
     "tests/test_uv_dependency_install.py": ["REPO_ROOT"],
     "tests/test_worlds_pin.py": ["REPO_ROOT"],
