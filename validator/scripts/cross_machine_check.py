@@ -97,16 +97,64 @@ def _package_version(name: str) -> str:
     return str(getattr(module, "__version__", "unknown"))
 
 
+RUNNER_IMAGE = "swarm_evaluator_base:latest"
+
+
+def _docker(*args: str, timeout: int = 900) -> subprocess.CompletedProcess:
+    """Run a docker command and hand back the finished process."""
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, timeout=timeout,
+    )
+
+
 def _runner_image_id() -> str:
-    """The runner image's local id, so two reports can say whether they used the same one."""
+    """The runner image's full content id.
+
+    Untruncated on purpose: this is the evidence that two machines ran the same image,
+    which is the entire question. A short id is not proof.
+    """
     try:
-        result = subprocess.run(
-            ["docker", "images", "-q", "swarm_evaluator_base:latest"],
-            capture_output=True, text=True, timeout=30,
-        )
+        result = _docker("images", "--no-trunc", "-q", RUNNER_IMAGE, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return "docker unavailable"
     return result.stdout.strip() or "not built"
+
+
+def _prepare_image(image_ref: Optional[str], image_tar: Optional[str]) -> None:
+    """Put one agreed image on this machine, so every host flies inside the same one.
+
+    Without this each machine builds its own image from the same Dockerfile, and that
+    Dockerfile is not reproducible: the base tag moves, apt is unpinned, and numpy is a
+    range. Comparing those builds answers a different question from the one being asked.
+
+    The validator skips its rebuild when the image's swarm.code_hash label matches the
+    hash of the checkout, and that hash is the same on every machine, so a correctly
+    labelled image is simply adopted.
+    """
+    if image_tar:
+        print(f"Loading the agreed image from {image_tar}")
+        loaded = _docker("load", "-i", image_tar)
+        if loaded.returncode != 0:
+            raise RuntimeError(f"docker load failed: {loaded.stderr.strip()}")
+        ref = image_ref
+        if not ref:
+            match = [w for w in loaded.stdout.split() if ":" in w and "/" in w or ":" in w]
+            ref = match[-1] if match else None
+        if not ref:
+            raise RuntimeError("could not tell which image the tarball loaded")
+    elif image_ref:
+        print(f"Pulling the agreed image {image_ref}")
+        pulled = _docker("pull", image_ref)
+        if pulled.returncode != 0:
+            raise RuntimeError(f"docker pull failed: {pulled.stderr.strip()}")
+        ref = image_ref
+    else:
+        return
+
+    tagged = _docker("tag", ref, RUNNER_IMAGE, timeout=60)
+    if tagged.returncode != 0:
+        raise RuntimeError(f"docker tag failed: {tagged.stderr.strip()}")
+    print(f"Runner image pinned to {ref} ({_runner_image_id()[:24]}...)")
 
 
 def _environment() -> Dict[str, Any]:
@@ -245,6 +293,12 @@ def _command_run(args: argparse.Namespace) -> int:
         print(f"missing seed file: {seed_file}", file=sys.stderr)
         return 2
 
+    try:
+        _prepare_image(args.image, args.image_tar)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        print(f"could not pin the runner image: {exc}", file=sys.stderr)
+        return 2
+
     print(f"Flying {args.limit or 'all'} {args.family_id} seeds on {platform.node()} ({_cpu_model()})")
     summary = _run_benchmark(model, seed_file, args.workers, args.limit, args.family_id)
     rows = _seed_rows(summary)
@@ -288,9 +342,27 @@ def _command_compare(args: argparse.Namespace) -> int:
         print(f"    mean         {report['mean_score']:.6f}   successes {report['success_count']}")
         print(f"    digest       {report['digest_exact']} exact / {report['digest_3dp']} 3dp\n")
 
+    images = {r["environment"].get("runner_image_id", "?") for r in reports}
+    same_image = len(images) == 1 and "not built" not in images
+
+    if not same_image:
+        print("THESE MACHINES DID NOT RUN THE SAME IMAGE\n")
+        for report in reports:
+            print(f"  {report['label']:<16} {report['environment'].get('runner_image_id', '?')[:32]}")
+        print()
+        print("So this run cannot answer the question that was asked. It compares the images")
+        print("each machine happened to build, which is what already happens in production.")
+        print("Rerun every machine with the same --image or --image-tar, then compare again.")
+        print("Whatever the scores below say, they do not separate the image from the CPU.\n")
+    else:
+        print(f"ALL MACHINES RAN THE SAME IMAGE: {images.pop()[:32]}...\n")
+
     if len({r["digest_exact"] for r in reports}) == 1:
         print("VERDICT: every machine produced byte-identical scores.")
-        print("The simulation reproduces across these hosts.")
+        if same_image:
+            print("One image gives one score on every host. Shipping a central image fixes this.")
+        else:
+            print("The simulation reproduces across these hosts even before pinning the image.")
         return 0
 
     base, *others = reports
@@ -330,10 +402,16 @@ def _command_compare(args: argparse.Namespace) -> int:
     if worst_overall < MEANINGFUL_DIFFERENCE:
         print("the scores differ, but only as floating-point noise.")
         print("Nothing here is large enough to move a crown.")
+    elif same_image:
+        print("one image, different scores. The image is not the cause.")
+        print("Every machine ran identical libraries inside an identical image and still")
+        print("disagreed, so what is left is the processor. Shipping a central image will")
+        print("not fix this on its own; the fix has to tolerate the difference instead, by")
+        print("comparing a challenger against the champion on the seeds they actually shared.")
     else:
-        print("the scores genuinely depend on the machine.")
-        print("A shared image pins the libraries, not the processor. Compare the cpu and")
-        print("numpy lines above: if the libraries already match, the image will not fix this.")
+        print("the scores differ, but the machines ran different images.")
+        print("Pin the image with --image or --image-tar and rerun before concluding")
+        print("anything: this result cannot tell the image apart from the processor.")
     return 0
 
 
@@ -350,6 +428,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     run.add_argument(
         "--family-id", default="cf_search_and_rescue",
         help="challenge family to fly (default: cf_search_and_rescue)",
+    )
+    run.add_argument(
+        "--image", default=None,
+        help="pull this image and run inside it, so every machine uses the same one",
+    )
+    run.add_argument(
+        "--image-tar", default=None,
+        help="load the agreed image from a docker save tarball instead of pulling it",
     )
     run.add_argument(
         "--model", default=str(DEFAULT_MODEL),
