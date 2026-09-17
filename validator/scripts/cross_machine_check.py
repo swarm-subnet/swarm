@@ -50,6 +50,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -171,9 +172,12 @@ def _as_model_archive(model: Path) -> Path:
         raise FileNotFoundError(model)
     archive = Path(tempfile.mkdtemp()) / "submission.zip"
     root = model / "model" if (model / "model").is_dir() else model
-    subprocess.run(
-        ["zip", "-qr", str(archive), "."], cwd=root, check=True,
-    )
+    # zipfile rather than the zip command: the machines running this are validator hosts
+    # and laptops, and a missing zip binary should not be what stops the check.
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                bundle.write(path, path.relative_to(root).as_posix())
     return archive
 
 
