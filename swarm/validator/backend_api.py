@@ -419,6 +419,8 @@ class BackendApiClient:
                     "validator_compatibility": data.get("validator_compatibility", {}),
                     "benchmark_epoch": benchmark_epoch,
                     "current_epoch": benchmark_epoch,
+                    "seed_scheme_min_version": data.get("seed_scheme_min_version"),
+                    "epoch_keys": data.get("epoch_keys", {}),
                     "latest_reported_epoch": data.get("latest_reported_epoch"),
                     "kings": data.get("kings", []),
                     "kings_by_family": data.get("kings_by_family", {}),
@@ -535,6 +537,7 @@ class BackendApiClient:
         task_id: Optional[int] = None,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
         provenance: Optional[Dict[str, Any]] = None,
+        seed_set_id: Optional[str] = None,
         retries: int = 3,
     ) -> Dict[str, Any]:
         """Upload one batch of per-seed results, retried up to ``retries`` times for the backend's confirmation."""
@@ -566,6 +569,10 @@ class BackendApiClient:
                     payload[key] = provenance[key]
         if task_id is not None:
             payload["task_id"] = task_id
+        if seed_set_id is not None:
+            # Names the list these seeds were flown on, so the backend can refuse a batch
+            # that belongs to a different set rather than stitch it into this one.
+            payload["seed_set_id"] = seed_set_id
         for attempt in range(retries):
             result = await self._post_signed("/validators/seed-scores", payload)
             if result.get("recorded"):

@@ -49,6 +49,39 @@ def _pool_drained(granted: list, pending: int) -> bool:
     return not granted and pending == 0
 
 
+def _adopt_task_seed_key(seed_manager, task: Dict[str, Any], epoch: int) -> None:
+    """Take the key the task carries for its own epoch.
+
+    A task assigned across a rollover names the epoch it was queued for, so its key is the
+    one it must fly; the prefetched pair from the last sync need not cover it.
+    """
+    key = task.get("seed_key")
+    apply_scheme = getattr(seed_manager, "apply_backend_scheme", None)
+    if not key or apply_scheme is None:
+        return
+    apply_scheme(
+        None,
+        {str(epoch): {
+            "key": str(key),
+            "commitment": task.get("seed_key_commitment"),
+        }},
+    )
+
+
+def _seeds_ready(seed_manager, epoch: int) -> bool:
+    """Whether this epoch's seeds can be built; a manager outside the shared scheme always can."""
+    check = getattr(seed_manager, "seeds_ready", None)
+    return True if check is None else bool(check(epoch))
+
+
+def _task_epoch(seed_manager, task: Dict[str, Any]) -> int:
+    """The epoch a task belongs to: the one it names, else the manager's current epoch."""
+    named = task.get("epoch_number")
+    if named:
+        return int(named)
+    return int(getattr(seed_manager, "epoch_number", 0) or 0)
+
+
 async def run_task(
     self,
     task: Dict[str, Any],
@@ -67,6 +100,15 @@ async def run_task(
 
     if uid < 0 or not phase or task_id is None:
         bt.logging.warning(f"run_task: malformed task payload {task}")
+        return
+
+    seed_manager = getattr(self, "seed_manager", None)
+    epoch = _task_epoch(seed_manager, task)
+    _adopt_task_seed_key(seed_manager, task, epoch)
+    if not _seeds_ready(seed_manager, epoch):
+        bt.logging.warning(
+            f"run_task: no seeds for epoch {epoch}; leaving UID {uid} to a validator that has them"
+        )
         return
 
     # The cleanup covers the fetch too: cancelling mid-download must not leave
@@ -170,6 +212,7 @@ async def _run_phase(
             cancel_flag=cancel_flag,
             batch_id=batch_id,
             seed_feeder=seed_feeder,
+            epoch_number=epoch,
         )
         avg, all_scores, per_type_raw, cancel_reason, early_failed = result
         per_type_avgs = _per_type_means(per_type_raw)

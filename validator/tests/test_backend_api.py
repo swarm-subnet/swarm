@@ -197,7 +197,7 @@ def test_post_heartbeat_forwards_queue_and_active_task(monkeypatch, tmp_path):
                 status="evaluating_benchmark",
                 current_uid=114,
                 progress=10,
-                total_seeds=800,
+                total_seeds=700,
                 queue=[{"uid": 114, "phase": "benchmark", "status": "benchmark", "enqueue_time": "2026-04-15T17:00:00Z"}],
                 active_task={"uid": 114, "phase": "BENCHMARK", "assignment_id": 9, "family_id": "cf_autopilot"},
                 backend_decision_version=12,

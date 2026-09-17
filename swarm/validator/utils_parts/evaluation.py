@@ -118,6 +118,15 @@ def _seed_manager_call(seed_manager, method_name: str, family_id: str, epoch: Op
         return method()
 
 
+def _seed_set_id(self, family_id: str, epoch_number: Optional[int]) -> Optional[str]:
+    """Identity of the seed list these scores were flown on; None under the random scheme."""
+    seed_manager = getattr(self, "seed_manager", None)
+    resolver = getattr(seed_manager, "seed_set_id_for", None)
+    if resolver is None:
+        return None
+    return resolver(epoch=epoch_number, family_id=family_id)
+
+
 async def _evaluate_seeds(
     self,
     uid: int,
@@ -375,6 +384,7 @@ async def _run_streaming_phase(
                     task_id=task_id,
                     family_id=family_id,
                     provenance=provenance,
+                    seed_set_id=_seed_set_id(self, family_id, epoch_number),
                 )
             except Exception as exc:
                 bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
@@ -586,6 +596,7 @@ async def _run_streaming_phase(
                         task_id=task_id,
                         family_id=family_id,
                         provenance=provenance,
+                        seed_set_id=_seed_set_id(self, family_id, epoch_number),
                     )
                 except Exception as exc:
                     bt.logging.warning(
@@ -615,6 +626,7 @@ async def _run_screening(
     cancel_flag: Optional[asyncio.Event] = None,
     batch_id: Optional[int] = None,
     seed_feeder: Optional[Callable[[int], Any]] = None,
+    epoch_number: Optional[int] = None,
 ) -> Tuple[float, List[float], Dict[str, List[float]], Optional[str], bool]:
     """Run screening seeds and stream per-seed scores.
 
@@ -626,9 +638,16 @@ async def _run_screening(
     screening seed list — used for resuming an interrupted task. ``cancel_flag``
     is set by the SSE listener; when set the streaming phase stops dispatching
     at the next seed.
+
+    ``epoch_number`` is the epoch the task names, not today's: a long poll that
+    crosses a rollover hands back a task for the epoch it was queued in, and its
+    seeds must come from that epoch's list.
     """
+    epoch = int(
+        epoch_number if epoch_number is not None else self.seed_manager.epoch_number
+    )
     full_seeds = _seed_manager_call(
-        self.seed_manager, "get_screening_seeds", family_id
+        self.seed_manager, "get_screening_seeds", family_id, epoch
     )
     upper = seeds_to if seeds_to is not None else len(full_seeds)
     upper = max(seeds_from, min(upper, len(full_seeds)))
@@ -640,7 +659,6 @@ async def _run_screening(
     # 0/(remaining-slice) on resume.
     heartbeat_total = upper
     progress_offset = seeds_from
-    epoch = self.seed_manager.epoch_number
 
     screening_tasks: List = []
     try:

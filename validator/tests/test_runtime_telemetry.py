@@ -84,8 +84,8 @@ def test_runtime_tracker_summarizes_queue_stage_and_progress(tmp_path: Path) -> 
         item=queue["items"]["1:hash1"],
         stage="benchmark",
         progress_done=150,
-        progress_total=800,
-        note="chunk 150/800",
+        progress_total=700,
+        note="chunk 150/700",
     )
     tracker.flush()
 
@@ -95,8 +95,8 @@ def test_runtime_tracker_summarizes_queue_stage_and_progress(tmp_path: Path) -> 
     assert snapshot["queue"]["processable_count"] == 1
     assert item["stage"] == "benchmark"
     assert item["progress_done"] == 150
-    assert item["progress_total"] == 800
-    assert item["note"] == "chunk 150/800"
+    assert item["progress_total"] == 700
+    assert item["note"] == "chunk 150/700"
 
 
 def test_compute_alerts_flags_fallback_freeze_and_stalls(tmp_path: Path) -> None:

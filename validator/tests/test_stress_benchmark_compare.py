@@ -25,12 +25,12 @@ from types import SimpleNamespace
 
 
 def test_screening_count_matches_validator_ratio(reload_module):
-    """The screening slice keeps the validator's 3-in-11 share of the seeds at any size."""
+    """The screening slice keeps the validator's 3-in-10 share of the seeds at any size."""
     mod = reload_module("validator.scripts.stress_benchmark_compare")
 
-    assert mod._screening_count_for_total(1100) == 300
-    assert mod._screening_count_for_total(1000) == 273
-    assert mod._screening_count_for_total(100) == 27
+    assert mod._screening_count_for_total(1000) == 300
+    assert mod._screening_count_for_total(1100) == 330
+    assert mod._screening_count_for_total(100) == 30
     assert mod._screening_count_for_total(6) == 2
 
 

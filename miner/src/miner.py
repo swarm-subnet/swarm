@@ -250,7 +250,7 @@ def _requirements_from_zip(zip_path: Path) -> str | None:
 
 
 def _check_requirements(requirements: str) -> str | None:
-    """Mirror the validator's whitelist rules so a bad line fails here, not on 1,100 seeds."""
+    """Mirror the validator's whitelist rules so a bad line fails here, not on the full benchmark."""
     rejected = []
     for raw_line in requirements.splitlines():
         line = raw_line.strip()

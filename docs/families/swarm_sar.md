@@ -121,7 +121,7 @@ The family runs on five procedurally generated environment types (**warehouse is
 | 4 | Village | 17 | 25–50 m |
 | 6 | Forest | 16 | 15–31 m |
 
-The benchmark template has 84 slots (the SAR 100-slot template minus warehouse), each type's band split into 3 distance sub-bands, no moving obstacles. The template repeats cyclically to fill the 800 full-benchmark seed positions. Each slot carries a fixed, deterministic drone count:
+The benchmark template has 84 slots (the SAR 100-slot template minus warehouse), each type's band split into 3 distance sub-bands, no moving obstacles. The template repeats cyclically to fill the 700 full-benchmark seed positions. Each slot carries a fixed, deterministic drone count:
 
 ```text
 n_drones = 2 + (slot_index % 7)        # cycles 2..8

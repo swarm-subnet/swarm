@@ -15,7 +15,7 @@ A victim is down somewhere in the world. Your drone lifts off from a start pad w
 | Control / physics rate | 50 Hz (`sim_dt` = 1/50 s) |
 | Episode horizon | 60 s (3,000 control steps) |
 | Emission allocation | 0.15 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
-| Benchmark | 1,100 seeds per 14-day epoch, all 6 environment types |
+| Benchmark | 1,000 seeds per 14-day epoch, all 6 environment types |
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
 
@@ -114,7 +114,7 @@ Benchmark seeds are built from two templates. Each table's distance column is th
 | Warehouse | 16 | 10–25 m |
 | Forest | 16 | 15–31 m |
 
-**Screening template**: 50 interleaved slots, used for seed indices 0–299 of the 1,100 even though screening itself is disabled:
+**Screening template**: 50 interleaved slots, used for seed indices 0–299 of the 1,000 even though screening itself is disabled:
 
 | Type | Slots | Distance band |
 |---|---|---|
@@ -125,7 +125,7 @@ Benchmark seeds are built from two templates. Each table's distance column is th
 | Warehouse | 9 | 10–22 m |
 | Forest | 8 | 15–28 m |
 
-Every epoch runs 1,100 seeds: indices below 300 use the screening template, the remaining 800 use the benchmark template. Epochs run for 14 days from epoch 19 onward, anchored Monday 16:00 UTC.
+Every epoch runs 1,000 seeds: indices below 300 use the screening template, the remaining 700 use the benchmark template. Epochs run for 14 days from epoch 19 onward, anchored Monday 16:00 UTC.
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
 
@@ -216,7 +216,7 @@ Models run inside a sandboxed Docker container (6 GB RAM, 2 CPUs) as a Cap'n Pro
 
 Compute is hardware-fair: a calibration pass converts your wall-clock into baseline-equivalent seconds, so a fast validator host does not buy you a bigger model.
 
-New submissions go straight to the full 1,100-seed benchmark. A champion-gated 300-seed screening stage exists in the backend behind the `SCREENING_ENABLED` constant, but it is off. Its policy thresholds only matter if operators enable it.
+New submissions go straight to the full 1,000-seed benchmark. A champion-gated 300-seed screening stage exists in the backend behind the `SCREENING_ENABLED` constant, but it is off. Its policy thresholds only matter if operators enable it.
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>
 
@@ -235,6 +235,6 @@ swarm benchmark \
   --seeds-per-group 3 --workers 4
 ```
 
-`--seeds-per-group` controls seeds per environment group; validators run the full 1,100.
+`--seeds-per-group` controls seeds per environment group; validators run the full 1,000.
 
 <p align="right">(<a href="#sar-top">back to top</a>)</p>

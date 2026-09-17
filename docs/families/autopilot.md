@@ -107,7 +107,7 @@ So the pad can be anywhere within R metres along each axis of where the offset p
 
 ## Maps
 
-Autopilot runs on **all six environment types** with no exclusions. Each 14-day epoch (anchored Monday 16:00 UTC; 14 days from epoch 19 onward) draws **1,100 seeds**: indices 0–299 are templated by a second, 50-slot template (tiled to 300), indices 300–1099 by the 100-slot benchmark template below. Every submission runs all 1,100.
+Autopilot runs on **all six environment types** with no exclusions. Each 14-day epoch (anchored Monday 16:00 UTC; 14 days from epoch 19 onward) draws **1,000 seeds**: indices 0–299 are templated by a second, 50-slot template (tiled to 300), indices 300–999 by the 100-slot benchmark template below. Every submission runs all 1,000.
 
 The benchmark template (the bulk of your score) is 100 interleaved slots:
 
@@ -120,7 +120,7 @@ The benchmark template (the bulk of your score) is 100 interleaved slots:
 | 5 | Warehouse | 16 | 18–35 m | 0% | 0.2–10 m |
 | 6 | Forest | 16 | 22–45 m | 0% | 0.2–3 m |
 
-Each type's distance band is split into three equal sub-bands cycled across its slots, so you see the near, middle, and far end of every band. The moving-pad count is `round(slots × probability)`. The template tiles over the 800 benchmark seeds.
+Each type's distance band is split into three equal sub-bands cycled across its slots, so you see the near, middle, and far end of every band. The moving-pad count is `round(slots × probability)`. The template tiles over the 700 benchmark seeds.
 
 ### Spawn and goal placement
 
@@ -219,7 +219,7 @@ Your zip runs inside a Docker container as a Cap'n Proto RPC server; the validat
 
 `requirements.txt` packages must be on the Docker whitelist: torch, onnxruntime, stable-baselines3, gymnasium, numpy, opencv and friends; the full list lives in `swarm/constants.py`.
 
-Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,100-seed benchmark directly. A separate champion-gated screening phase (300 seeds with early-fail checkpoints) exists behind a code constant but is switched off.
+Submissions enter the queue as `PENDING_BENCHMARK` and run the full 1,000-seed benchmark directly. A separate champion-gated screening phase (300 seeds with early-fail checkpoints) exists behind a code constant but is switched off.
 
 <p align="right">(<a href="#autopilot-top">back to top</a>)</p>
 

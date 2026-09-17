@@ -133,7 +133,7 @@ Rank weighting is separate from the crowning floor below: the floor decides who 
 
 ## Taking the throne: the dynamic floor
 
-Every submission runs the full 1100-seed benchmark. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
+Every submission runs the full 1000-seed benchmark. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
 
 ```text
 s ≤ 0.5      floor = floor_max                                (flat, anti-noise while scores are low)

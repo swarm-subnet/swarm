@@ -320,9 +320,9 @@ SAFETY_DISTANCE_DANGER = 0.2            # Zero safety score at this clearance (m
 from swarm import version_split as _vs  # noqa: E402
 
 BENCHMARK_VERSION = ".".join(_vs[:3])
-BENCHMARK_TOTAL_SEED_COUNT = 1100       # Total seeds per epoch
+BENCHMARK_TOTAL_SEED_COUNT = 1000       # Total seeds per epoch
 BENCHMARK_SCREENING_SEED_COUNT = 300    # Seeds used for screening phase
-BENCHMARK_FULL_SEED_COUNT = 800         # Seeds used for full benchmark phase
+BENCHMARK_FULL_SEED_COUNT = 700         # Seeds used for full benchmark phase
 SCREENING_BOOTSTRAP_THRESHOLD = 0.01    # Minimum score threshold during bootstrap
 
 # Epoch system — seeds rotate every 7 days (Monday 16:00 UTC)

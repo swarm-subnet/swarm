@@ -1987,19 +1987,19 @@ def test_run_full_benchmark_reeval_heartbeat_includes_assignment_id(monkeypatch)
 
 def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     """When resuming benchmark with seeds_from > 300, the heartbeat must
-    report the FULL benchmark range (800) as total and the offset
+    report the FULL benchmark range (700) as total and the offset
     (seeds_from - 300) as already-done. Otherwise the dashboard shows
     a misleading 0/(remaining) right after a validator restart."""
     heartbeat_calls: list[dict] = []
     validator = _make_validator(heartbeat_calls=heartbeat_calls)
     validator.seed_manager = SimpleNamespace(
         epoch_number=12,
-        get_benchmark_seeds=lambda: list(range(800)),
+        get_benchmark_seeds=lambda: list(range(700)),
     )
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
 
     async def _run():
-        """Benchmark UID 42 resuming from seed 400 of 800."""
+        """Benchmark UID 42 resuming from seed 400 of 700."""
         return await validator_evaluation._run_full_benchmark(
             validator, uid=42, model_path=_FAKE_MODEL_ZIP,
             task_id=8888, seeds_from=400,
@@ -2010,7 +2010,7 @@ def test_run_full_benchmark_resume_reports_cumulative_progress(monkeypatch):
     sent = [c for c in heartbeat_calls if c.get("active_task")]
     assert sent
     initial = sent[0]
-    assert initial["total_seeds"] == 800
+    assert initial["total_seeds"] == 700
     assert initial["progress"] == 100  # 400 - 300 already done
 
 
@@ -2082,7 +2082,7 @@ def test_run_full_benchmark_resume_uses_family_specific_seed_slice(monkeypatch):
     validator.seed_manager = SimpleNamespace(
         epoch_number=12,
         get_benchmark_seeds=lambda family_id="cf_search_and_rescue": (
-            list(range(1000, 1010)) if family_id == "cf_autopilot" else list(range(800))
+            list(range(1000, 1010)) if family_id == "cf_autopilot" else list(range(700))
         ),
     )
     monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())

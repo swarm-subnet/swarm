@@ -92,12 +92,17 @@ while true; do
 
   if is_remote_newer "$LVER" "$RVER"; then
     echo "[INFO] Newer version detected → running update_deploy.sh"
-    bash "$UPDATE_SCRIPT" \
+    # Unguarded, set -e would kill this watcher on a failed update and the host would
+    # never upgrade again. A failure has to cost one cycle, not the updater itself.
+    if bash "$UPDATE_SCRIPT" \
          "$PROCESS_NAME" \
          "$WALLET_NAME" \
          "$WALLET_HOTKEY" \
-         "$SUBTENSOR_PARAM"
-    echo "[INFO] Update finished – next check in $SLEEP_INTERVAL s."
+         "$SUBTENSOR_PARAM"; then
+      echo "[INFO] Update finished – next check in $SLEEP_INTERVAL s."
+    else
+      echo "[ERR] Update failed – retrying in $SLEEP_INTERVAL s." >&2
+    fi
   else
     echo "[INFO] Already up‑to‑date – next check in $SLEEP_INTERVAL s."
   fi

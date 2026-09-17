@@ -26,7 +26,7 @@ with the real Cap'n Proto observation serialization from the docker evaluator.
 Per config it reports:
   task build / env build (world gen) / per-step render / physics / clearance /
   other (obs assembly etc.) / observation serialize+parse / payload size,
-then extrapolates to a full seed (horizon steps) and a full 1,100-seed eval.
+then extrapolates to a full seed (horizon steps) and a full epoch's eval.
 
 Usage:
     python3 validator/scripts/profile_walltime.py                 # full sweep
@@ -394,7 +394,7 @@ def print_family_totals(results):
     for r in results:
         per_family[r["family"]].append(r["per_seed_s"])
     print("\nValidator-side cost only: excludes the RPC round trip and miner compute.")
-    print(f"\n{'family':<22} {'avg seed_s':>10} {'x1100 core-h':>13} {'@6 workers':>11}")
+    print(f"\n{'family':<22} {'avg seed_s':>10} {f'x{BENCHMARK_TOTAL_SEED_COUNT} core-h':>13} {'@6 workers':>11}")
     print("-" * 60)
     for family, seeds_s in per_family.items():
         avg = float(np.mean(seeds_s))

@@ -129,11 +129,11 @@ When the official version changes, the version-transition job (checked every 5 m
 
 With screening off (the current and default behavior):
 
-- Fresh submissions enter as `PENDING_BENCHMARK` and the benchmark phase covers seed indices [0, 1100) in one pass (`BENCHMARK_SEEDS_PER_RUN`, env default 1100).
+- Fresh submissions enter as `PENDING_BENCHMARK` and the benchmark phase covers seed indices [0, 1000) in one pass (`BENCHMARK_SEEDS_PER_RUN`, env default 1000).
 - Screening-phase authorization always returns `(False, 'screening disabled')`.
 - A stray `PENDING_SCREENING` head is healed in place to `PENDING_BENCHMARK` (audit event `screening_disabled_promotion`), so the queue head can never be pinned by a phase that doesn't run.
 
-Flipping it to `True` gates new models on a screening pass first: seeds [0, 300) (`SCREENING_SEEDS_PER_RUN`, env default 300), pass bar = champion score + screening improvement floor, then the benchmark phase continues over [300, 1100).
+Flipping it to `True` gates new models on a screening pass first: seeds [0, 300) (`SCREENING_SEEDS_PER_RUN`, env default 300), pass bar = champion score + screening improvement floor, then the benchmark phase continues over [300, 1000).
 
 **The flip is self-healing.** `apply_screening_mode_fixups` runs at every backend startup (lifespan, under `LOCK_BENCHMARK_SCORES`):
 
@@ -151,7 +151,7 @@ Both directions cancel stale-phase tasks/batches, keep already-recorded seed sco
 - Epoch anchor: **2026-03-30 16:00:00 UTC** (a Monday). Epochs 1–18 lasted 7 days; epoch 19 began **2026-08-03 16:00 UTC**, and epochs last 14 days from that point onward. Backend and validator use the same piecewise anchor, switch epoch, and duration constants.
 - `EPOCH_FREEZE_SECONDS = 5400` (1.5 h, hardcoded): `is_in_freeze_window()` is true in the last 5400 s of an epoch. Its only production caller is the **chain scanner**, which skips scanning new chain commitments during the freeze. Commitments made in the window are picked up after rollover. The same constant exists in `swarm/constants.py` but nothing in the validator consumes it.
 - The epoch-transition job runs every 5 minutes; on rollover it carries all `PENDING_SCREENING`/`PENDING_BENCHMARK` models submitted before the new epoch into it (partial results are discarded and evaluation restarts on the fresh seed set, queue position kept) and queues every current champion for re-evaluation on the fresh seeds.
-- Seeds: each validator generates its own 1100 seeds per epoch per family from OS entropy (`random.SystemRandom`), stored under `state/epoch_seeds/`, and publishes them to the backend only **after** the epoch ends (`POST /validators/epoch/publish`, trusted-validator gated).
+- Seeds: each validator generates its own 1000 seeds per epoch per family from OS entropy (`random.SystemRandom`), stored under `state/epoch_seeds/`, and publishes them to the backend only **after** the epoch ends (`POST /validators/epoch/publish`, trusted-validator gated).
 
 ---
 
@@ -196,7 +196,7 @@ The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../
 | `METAGRAPH_NETUID` | 124 | `REAPER_INTERVAL_SECONDS` | 30 |
 | `DB_STAKE_FRESHNESS_SECONDS` | 1800 | `MAX_BATCH_ATTEMPTS` | 3 |
 | `SCREENING_SEEDS_PER_RUN` | 300 | `MODEL_STUCK_SCREENING_SECONDS` | 3600 |
-| `BENCHMARK_SEEDS_PER_RUN` | 1100 | `MODEL_STUCK_BENCHMARK_SECONDS` | 7200 |
+| `BENCHMARK_SEEDS_PER_RUN` | 1000 | `MODEL_STUCK_BENCHMARK_SECONDS` | 7200 |
 | `PENDING_UPLOAD_TIMEOUT_SECONDS` | 21600 | | |
 | `SCANNER_MIN_REGISTRATION_BLOCK` | 0 (off) | `HEARTBEAT_STALL_SECONDS` | 1800 |
 | `PRIVATE_MODEL_FILES_PATH` | `/app/data/private_models` | `ACTIVE_HEARTBEAT_SECONDS` | 120 |

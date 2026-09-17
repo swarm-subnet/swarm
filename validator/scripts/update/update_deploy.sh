@@ -27,7 +27,24 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ###############################################################################
-# 0. Helper – tiny progress banner
+# 0. Run from a copy, because step 4 overwrites this file
+#
+# bash reads a script as it goes. `git reset --hard` rewrites this very file
+# mid-run, and bash then continues from a byte offset that now points at
+# different content: it stops partway through and still exits 0, so the caller
+# sees a successful update that never installed anything or restarted anything.
+# Re-executing from a copy means the running bytes can no longer move.
+###############################################################################
+if [[ "${SWARM_UPDATE_FROM_COPY:-}" != "1" ]]; then
+  _copy="$(mktemp -t swarm_update_deploy.XXXXXX)"
+  cp "${BASH_SOURCE[0]}" "$_copy"
+  trap 'rm -f "$_copy"' EXIT
+  SWARM_UPDATE_FROM_COPY=1 bash "$_copy" "$@"
+  exit $?
+fi
+
+###############################################################################
+# 0b. Helper – tiny progress banner
 ###############################################################################
 STEP=0
 banner() {
@@ -120,6 +137,17 @@ fi
 # 4. Update repository
 ###############################################################################
 banner "Pulling latest code from origin/main"
+PREVIOUS_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+
+# A failure after the reset would leave the checkout reporting the new version while the
+# process still runs the old code, so the watcher sees nothing left to do and never retries.
+# Rolling the checkout back makes the next cycle try again instead of stranding the host.
+restore_checkout() {
+  echo "[ERR] update failed; restoring the checkout to $PREVIOUS_COMMIT" >&2
+  git -C "$REPO_ROOT" reset --hard "$PREVIOUS_COMMIT" >/dev/null 2>&1 || true
+}
+trap restore_checkout ERR
+
 git -C "$REPO_ROOT" fetch --quiet origin main
 git -C "$REPO_ROOT" reset --hard origin/main
 
@@ -142,6 +170,9 @@ if ! pm2 restart "$PROCESS_NAME" &>/dev/null; then
           --wallet.name "$WALLET_NAME" \
           --wallet.hotkey "$WALLET_HOTKEY"
 fi
+
+# The process is up on the new code, so the checkout is where it should be.
+trap - ERR
 
 banner "Update & redeploy completed – validator running"
 exit 0

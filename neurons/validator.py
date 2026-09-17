@@ -44,6 +44,7 @@ import swarm
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.constants import STAND_DOWN_TIMEOUT_SEC
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
+from swarm.validator.env_check import ensure_environment
 from swarm.validator.forward import forward
 from swarm.validator.utils_parts.model_fetch import ensure_model_dir
 
@@ -290,6 +291,10 @@ if __name__ == "__main__":
     logger.remove()
     logger.add("logfile.log", level="INFO")
     logger.add(lambda msg: print(msg, end=""), level="WARNING")
+
+    # Before anything is scored: a validator running packages other than the ones it
+    # pins produces different numbers for the same flight, and says nothing about it.
+    ensure_environment()
 
     def _terminate(signum, frame):
         """Turn a signal into the KeyboardInterrupt the shutdown path already handles."""

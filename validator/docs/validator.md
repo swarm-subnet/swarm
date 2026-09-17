@@ -331,8 +331,8 @@ pm2 save
 2. **Fetch the model**
    Fetch the archive from the backend vault (every family is on the private track) and verify its SHA-256 against the backend record. The bytes are written owner-only, never kept for forensics, and deleted once the task is done. A public-track family, if one is ever reopened, is downloaded from the miner's GitHub repo instead.
 
-3. **Full benchmark (1,100 seeds)**
-   Every new model runs its family's full 1,100-seed benchmark in parallel Docker containers. As workers free up, the validator claims up to that many pending seeds from the backend's shared pool, so validators of different speeds share one model without long idle tails. The task metadata carries the family and phase, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
+3. **Full benchmark (1,000 seeds)**
+   Every new model runs its family's full 1,000-seed benchmark in parallel Docker containers. As workers free up, the validator claims up to that many pending seeds from the backend's shared pool, so validators of different speeds share one model without long idle tails. The task metadata carries the family and phase, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
 
 4. **Report scores**
    Per-seed and aggregate scores are submitted to the backend as they are computed.
@@ -343,11 +343,13 @@ pm2 save
 6. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is not re-evaluated within the same epoch unless a re-eval is explicitly queued (for example, a benchmark version bump).
 
-### Per-Validator Seeds
+### Shared Epoch Seeds
 
-Each validator independently generates its own 1,100 random seeds per family per epoch using `random.SystemRandom()`. With 1,100 seeds per validator and per-seed results stitched across validators, statistical variance across validators is negligible.
+Every validator flies the same 1,000 seeds per family per epoch. The backend holds one secret key per epoch and serves it to trusted validators over `/validators/sync`; each seed is `HMAC-SHA256(key, "v1|<family>|<epoch>|<index>")` truncated to 32 bits, so the whole network derives an identical list without any of it being predictable in advance. Seed index N is therefore the same mission everywhere, and two models in one epoch are compared on the same maps rather than on two different draws.
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). At the end of each epoch, per-validator seeds are published on [swarm124.com](https://swarm124.com) for transparency.
+The key is never needed by hand: it arrives with the regular sync, and a task assigned for a future epoch carries that epoch's key with it. A validator holding no key for an epoch takes no work for it rather than falling back to its own seeds.
+
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). The key's fingerprint is published as soon as the key exists, and the key itself once the epoch closes, so anyone can rebuild that epoch's seeds and confirm they were fixed before they were flown. Both appear on the epoch endpoints and on [swarm124.com](https://swarm124.com).
 
 ## 🔧 Troubleshooting
 

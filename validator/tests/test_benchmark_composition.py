@@ -21,13 +21,13 @@ from swarm.challenge_families import build_benchmark_tasks
 
 
 def _composition(family_id: str, seeds: list[int]) -> list[tuple[int, int]]:
-    """The (challenge_type, num_drones) pairs a family lays out for these seeds at offset 40 of 800."""
+    """The (challenge_type, num_drones) pairs a family lays out for these seeds at offset 40 of 700."""
     tasks = build_benchmark_tasks(
         sim_dt=0.02,
         seeds=seeds,
         family_id=family_id,
         offset=40,
-        total_seed_count=800,
+        total_seed_count=700,
     )
     return [(task.challenge_type, task.num_drones) for task in tasks]
 
