@@ -24,11 +24,14 @@ seed sharing fixes that. This answers the question with numbers instead of opini
 
 Run it on every machine, then compare the reports:
 
+    echo "$GHCR_TOKEN" | docker login ghcr.io -u <user> --password-stdin
     python validator/scripts/cross_machine_check.py run --out mybox.json
     python validator/scripts/cross_machine_check.py compare mybox.json ownervali.json ...
 
 It reruns the tracked default model over a frozen seed list, so every machine flies
-exactly the same missions. Nothing is downloaded, no wallet or backend is needed.
+exactly the same missions, inside the runner image CI publishes rather than the one each
+host builds for itself. No wallet and no backend are needed, but the login is, because
+that published image is what makes the machines comparable.
 
 Read the comparison this way:
 
@@ -53,6 +56,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from swarm.benchmark.engine import main as benchmark_main
+from swarm.validator.docker.docker_evaluator_parts.lifecycle import _calculate_docker_hash
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = REPO_ROOT / "validator" / "tests" / "default_model" / "default_model.zip"
@@ -98,6 +104,10 @@ def _package_version(name: str) -> str:
 
 
 RUNNER_IMAGE = "swarm_evaluator_base:latest"
+# CI builds this from .docker/Dockerfile, the same file every validator builds its own
+# runner from, and pushes it once. It is therefore the only copy of that image that can be
+# shared, so it is what the check pins unless another one is named.
+SHARED_IMAGE = "ghcr.io/swarm-subnet/swarm:base"
 
 
 def _docker(*args: str, timeout: int = 900) -> subprocess.CompletedProcess:
@@ -120,26 +130,58 @@ def _runner_image_id() -> str:
     return result.stdout.strip() or "not built"
 
 
-def _prepare_image(image_ref: Optional[str], image_tar: Optional[str]) -> None:
+def _pinned_identity(ref: str) -> str:
+    """What every machine has to match: the registry digest, or the image id for a tarball.
+
+    The local id cannot serve, because stamping the label below rebuilds the image
+    config on each host and gives it a different one for the same content.
+    """
+    digests = _docker("inspect", "--format", "{{range .RepoDigests}}{{.}} {{end}}", ref, timeout=60)
+    for word in digests.stdout.split():
+        if "@sha256:" in word:
+            return word
+    identity = _docker("inspect", "--format", "{{.Id}}", ref, timeout=60)
+    return identity.stdout.strip() or "unknown"
+
+
+def _stamp_code_hash(ref: str) -> None:
+    """Give the pinned image the label the validator checks before deciding to rebuild.
+
+    The evaluator compares a swarm.code_hash label against a hash of this checkout and
+    rebuilds when they differ, and it writes that label during its own build, so a pulled
+    image carries none. Without this the pin is quietly replaced by a local build and the
+    check measures exactly what it exists to rule out.
+    """
+    code_hash = _calculate_docker_hash(None)
+    stamped = subprocess.run(
+        ["docker", "build", "--label", f"swarm.code_hash={code_hash}",
+         "-t", RUNNER_IMAGE, "-"],
+        input=f"FROM {ref}\n", capture_output=True, text=True, timeout=300,
+    )
+    if stamped.returncode != 0:
+        raise RuntimeError(f"could not label the pinned image: {stamped.stderr.strip()}")
+    print(f"Stamped swarm.code_hash={code_hash}, so the validator adopts it instead of rebuilding")
+
+
+def _prepare_image(image_ref: Optional[str], image_tar: Optional[str]) -> str:
     """Put one agreed image on this machine, so every host flies inside the same one.
 
     Without this each machine builds its own image from the same Dockerfile, and that
     Dockerfile is not reproducible: the base tag moves, apt is unpinned, and numpy is a
     range. Comparing those builds answers a different question from the one being asked.
 
-    The validator skips its rebuild when the image's swarm.code_hash label matches the
-    hash of the checkout, and that hash is the same on every machine, so a correctly
-    labelled image is simply adopted.
+    Returns the identity every machine must agree on, or an empty string when the host
+    was deliberately left on its own build.
     """
     if image_tar:
         print(f"Loading the agreed image from {image_tar}")
         loaded = _docker("load", "-i", image_tar)
         if loaded.returncode != 0:
             raise RuntimeError(f"docker load failed: {loaded.stderr.strip()}")
-        ref = image_ref
-        if not ref:
-            match = [w for w in loaded.stdout.split() if ":" in w and "/" in w or ":" in w]
-            ref = match[-1] if match else None
+        # What the tarball actually holds wins over the default ref, which would otherwise
+        # name an image this host never loaded.
+        match = [w for w in loaded.stdout.split() if ":" in w]
+        ref = match[-1] if match else image_ref
         if not ref:
             raise RuntimeError("could not tell which image the tarball loaded")
     elif image_ref:
@@ -149,17 +191,18 @@ def _prepare_image(image_ref: Optional[str], image_tar: Optional[str]) -> None:
             raise RuntimeError(f"docker pull failed: {pulled.stderr.strip()}")
         ref = image_ref
     else:
-        return
+        return ""
 
-    tagged = _docker("tag", ref, RUNNER_IMAGE, timeout=60)
-    if tagged.returncode != 0:
-        raise RuntimeError(f"docker tag failed: {tagged.stderr.strip()}")
-    print(f"Runner image pinned to {ref} ({_runner_image_id()[:24]}...)")
+    identity = _pinned_identity(ref)
+    _stamp_code_hash(ref)
+    print(f"Runner image pinned to {identity}")
+    return identity
 
 
-def _environment() -> Dict[str, Any]:
+def _environment(pinned: str) -> Dict[str, Any]:
     """Everything about this host that could plausibly move a score."""
     return {
+        "pinned_image": pinned or "none, this host used its own build",
         "hostname": platform.node(),
         "cpu": _cpu_model(),
         "cpu_flags": _cpu_flags(),
@@ -233,8 +276,6 @@ def _run_benchmark(
     model: Path, seed_file: Path, workers: int, limit: Optional[int], family_id: str,
 ) -> Dict[str, Any]:
     """Fly the model over the seed file for one family and return the benchmark's summary."""
-    from swarm.benchmark.engine import main as benchmark_main
-
     model = _as_model_archive(model)
     if limit is not None:
         seed_file = _trimmed_seed_file(seed_file, limit)
@@ -266,14 +307,16 @@ def _trimmed_seed_file(seed_file: Path, limit: int) -> Path:
     return out
 
 
-def _report(rows: List[Dict[str, Any]], label: str, family_id: str, model: str) -> Dict[str, Any]:
+def _report(
+    rows: List[Dict[str, Any]], label: str, family_id: str, model: str, pinned: str,
+) -> Dict[str, Any]:
     """The full record for one machine: what it flew, what it scored, and on what."""
     scores = [row["score"] for row in rows]
     return {
         "label": label,
         "family_id": family_id,
         "model": model,
-        "environment": _environment(),
+        "environment": _environment(pinned),
         "seed_count": len(rows),
         "mean_score": sum(scores) / len(scores) if scores else 0.0,
         "success_count": sum(1 for row in rows if row["success"]),
@@ -294,9 +337,10 @@ def _command_run(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        _prepare_image(args.image, args.image_tar)
+        pinned = _prepare_image(args.image, args.image_tar)
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         print(f"could not pin the runner image: {exc}", file=sys.stderr)
+        print("a private package needs a login first: docker login ghcr.io", file=sys.stderr)
         return 2
 
     print(f"Flying {args.limit or 'all'} {args.family_id} seeds on {platform.node()} ({_cpu_model()})")
@@ -306,7 +350,9 @@ def _command_run(args: argparse.Namespace) -> int:
         print("the benchmark returned no seeds", file=sys.stderr)
         return 2
 
-    report = _report(rows, args.label or platform.node(), args.family_id, Path(args.model).name)
+    report = _report(
+        rows, args.label or platform.node(), args.family_id, Path(args.model).name, pinned,
+    )
     Path(args.out).write_text(json.dumps(report, indent=2))
 
     print(f"\nseeds        {report['seed_count']}")
@@ -337,25 +383,25 @@ def _command_compare(args: argparse.Namespace) -> int:
         print(f"    cpu          {env['cpu']}")
         print(f"    flags        {','.join(env['cpu_flags']) or 'unknown'}")
         print(f"    numpy        {env['numpy']}   pybullet {env['pybullet']}")
-        print(f"    runner image {env['runner_image_id']}")
+        print(f"    pinned image {env.get('pinned_image', 'unrecorded')}")
         print(f"    family       {report.get('family_id', '?')}   model {report.get('model', '?')}")
         print(f"    mean         {report['mean_score']:.6f}   successes {report['success_count']}")
         print(f"    digest       {report['digest_exact']} exact / {report['digest_3dp']} 3dp\n")
 
-    images = {r["environment"].get("runner_image_id", "?") for r in reports}
-    same_image = len(images) == 1 and "not built" not in images
+    images = {r["environment"].get("pinned_image", "?") for r in reports}
+    same_image = len(images) == 1 and not any("none" in i or i == "?" for i in images)
 
     if not same_image:
         print("THESE MACHINES DID NOT RUN THE SAME IMAGE\n")
         for report in reports:
-            print(f"  {report['label']:<16} {report['environment'].get('runner_image_id', '?')[:32]}")
+            print(f"  {report['label']:<16} {report['environment'].get('pinned_image', '?')}")
         print()
         print("So this run cannot answer the question that was asked. It compares the images")
         print("each machine happened to build, which is what already happens in production.")
         print("Rerun every machine with the same --image or --image-tar, then compare again.")
         print("Whatever the scores below say, they do not separate the image from the CPU.\n")
     else:
-        print(f"ALL MACHINES RAN THE SAME IMAGE: {images.pop()[:32]}...\n")
+        print(f"ALL MACHINES RAN THE SAME IMAGE: {images.pop()}\n")
 
     if len({r["digest_exact"] for r in reports}) == 1:
         print("VERDICT: every machine produced byte-identical scores.")
@@ -415,8 +461,8 @@ def _command_compare(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    """Parse the command line and dispatch to run or compare."""
+def _build_parser() -> argparse.ArgumentParser:
+    """The command line for run and compare."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -430,8 +476,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="challenge family to fly (default: cf_search_and_rescue)",
     )
     run.add_argument(
-        "--image", default=None,
-        help="pull this image and run inside it, so every machine uses the same one",
+        "--image", default=SHARED_IMAGE,
+        help=f"pull this image and run inside it (default: {SHARED_IMAGE})",
+    )
+    run.add_argument(
+        "--host-image", dest="image", action="store_const", const=None,
+        help="use this host's own build instead, which answers a different question",
     )
     run.add_argument(
         "--image-tar", default=None,
@@ -447,8 +497,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     compare = sub.add_parser("compare", help="compare two or more machines' reports")
     compare.add_argument("reports", nargs="+", help="report files written by run")
     compare.set_defaults(func=_command_compare)
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Parse the command line and dispatch to run or compare."""
+    args = _build_parser().parse_args(argv)
     if getattr(args, "limit", None) == 0:
         args.limit = None
     return int(args.func(args))
