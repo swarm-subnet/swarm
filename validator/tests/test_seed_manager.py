@@ -36,6 +36,10 @@ def _patch_paths(monkeypatch, module, tmp_path):
     seeds_dir = state_dir / "epoch_seeds"
     monkeypatch.setattr(module, "STATE_DIR", state_dir)
     monkeypatch.setattr(module, "EPOCH_SEEDS_DIR", seeds_dir)
+    # These tests describe a validator rolling its own seeds. Pinned here rather than
+    # inherited from swarm.__version__, so a release that activates the shared scheme
+    # does not quietly turn them into tests of something else.
+    monkeypatch.setattr(module, "DEFAULT_SEED_SCHEME_MIN_VERSION", "99.0.0")
     return seeds_dir
 
 

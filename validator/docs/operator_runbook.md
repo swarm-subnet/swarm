@@ -117,7 +117,7 @@ Validators send their full `swarm.__version__`. The backend dependency `require_
 
 ### Benchmark version: `X-Benchmark-Version`
 
-Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `5.1.5`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
+Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `5.1.6`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
 
 When the official version changes, the version-transition job (checked every 5 minutes) expires all pending models to `VERSION_EXPIRED` and queues every champion for re-evaluation. This means **merging a version bump to `main` (or whatever `SWARM_VERSION_REF` points at) is the cutover trigger**: the backend picks it up in up to about 20 minutes (the 15-minute cache TTL plus the next 5-minute transition-job tick), without a deploy.
 
