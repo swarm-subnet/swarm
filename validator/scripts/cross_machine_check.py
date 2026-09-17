@@ -29,27 +29,32 @@ Run it on every machine, then compare the reports:
     python validator/scripts/cross_machine_check.py compare mybox.json ownervali.json ...
 
 It reruns the tracked default model over a frozen seed list, so every machine flies
-exactly the same missions, inside the runner image CI publishes rather than the one each
-host builds for itself. No wallet and no backend are needed, but the login is, because
-that published image is what makes the machines comparable.
+exactly the same missions. No wallet and no backend are needed, but the login is, because
+the published image is what makes the machines comparable.
+
+The check runs *inside* that image rather than merely handing it to the model. The world
+is built and the physics is stepped in this process, not in the model's container, so a
+run on the host would score on whatever numpy and pybullet that host installed. Inside,
+every machine steps the same build of the simulator and only the processor is left over.
 
 Read the comparison this way:
 
-* identical everywhere: the simulation is reproducible across hosts, and a shared image
-  would lock it in.
+* identical everywhere: one image gives one score, and shipping the validator as an image
+  removes the variance entirely.
 * tiny differences, far below 0.001: floating point noise, harmless against the margin.
-* differences at the second decimal, or success flipping to failure: the score depends on
-  the host. A shared Docker image pins the libraries but not the CPU, so it would only
-  fix this if the divergence comes from the libraries rather than the processor. The
-  environment block in each report is what tells the two apart.
+* differences at the second decimal, or success flipping to failure: the libraries were
+  identical and the scores still moved, so what is left is the processor and the timing.
+  An image cannot fix that, and the fix has to tolerate it instead.
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,10 +62,22 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from swarm.benchmark.engine import main as benchmark_main
-from swarm.validator.docker.docker_evaluator_parts.lifecycle import _calculate_docker_hash
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# Imported after the repo root joins sys.path, so every machine runs this checkout's
+# simulator instead of whichever one it happens to have installed. Without it the hash
+# that decides whether the runner image is rebuilt is taken from a different tree.
+from swarm.benchmark.engine import main as benchmark_main  # noqa: E402
+from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator  # noqa: E402
+from swarm.validator.docker.docker_evaluator_parts.batch import (  # noqa: E402
+    _ensure_host_speed_factor,
+)
+from swarm.validator.docker.docker_evaluator_parts.lifecycle import (  # noqa: E402
+    _calculate_docker_hash,
+)
+
 DEFAULT_MODEL = REPO_ROOT / "validator" / "tests" / "default_model" / "default_model.zip"
 DEFAULT_SEED_FILE = (
     REPO_ROOT / "validator" / "tests" / "fixtures"
@@ -104,10 +121,19 @@ def _package_version(name: str) -> str:
 
 
 RUNNER_IMAGE = "swarm_evaluator_base:latest"
-# CI builds this from .docker/Dockerfile, the same file every validator builds its own
-# runner from, and pushes it once. It is therefore the only copy of that image that can be
-# shared, so it is what the check pins unless another one is named.
+# CI builds this from .docker/Dockerfile and pushes it once, so it is the only copy of the
+# environment that every machine can share. It carries the whole of requirements.txt,
+# swarm_worlds and pybullet included, which is what makes it usable for the simulation and
+# not only for the model.
 SHARED_IMAGE = "ghcr.io/swarm-subnet/swarm:base"
+# The thin layer built locally on top of the pinned base: the docker client, iptables and
+# nsenter, which the evaluator needs to start and cut off a model's container. None of it
+# touches the simulator, so building it per host does not reintroduce the drift.
+VALIDATOR_IMAGE = "swarm-validator:cross-machine"
+# Set inside the container, so the re-exec happens once rather than forever.
+INSIDE_MARKER = "SWARM_CROSS_MACHINE_INSIDE"
+# Carries the pinned identity inwards, since the pull and the stamp happen on the host.
+PINNED_ENV = "SWARM_CROSS_MACHINE_PINNED"
 
 
 def _docker(*args: str, timeout: int = 900) -> subprocess.CompletedProcess:
@@ -128,6 +154,74 @@ def _runner_image_id() -> str:
     except (OSError, subprocess.SubprocessError):
         return "docker unavailable"
     return result.stdout.strip() or "not built"
+
+
+def _reexec_inside(image_ref: str, args: argparse.Namespace, pinned: str) -> int:
+    """Re-run this check inside the shared image and return its exit code.
+
+    The simulation steps in this process, not in the model's container: the world is built
+    here, pybullet is stepped here, the score is computed here. Pinning only the image the
+    model answers from would therefore leave the part that makes the score running on
+    whatever each host happens to have installed, which is the difference being measured.
+
+    The container reaches the host's docker daemon through the mounted socket, so the model
+    containers are still started exactly as a validator starts them.
+    """
+    docker_cli = shutil.which("docker")
+    if docker_cli is None:
+        raise RuntimeError("docker is not installed on this host")
+
+    print(f"Building {VALIDATOR_IMAGE} on {image_ref}")
+    built = _docker(
+        "build", "-f", str(REPO_ROOT / ".docker" / "validator.Dockerfile"),
+        "--build-arg", f"BASE_IMAGE={image_ref}",
+        "-t", VALIDATOR_IMAGE, str(REPO_ROOT), timeout=3600,
+    )
+    if built.returncode != 0:
+        raise RuntimeError(f"could not build the validator layer: {built.stderr.strip()[-400:]}")
+
+    out = Path(args.out).resolve()
+    model = Path(args.model).resolve()
+    seed_file = Path(args.seed_file).resolve()
+
+    command = [
+        "docker", "run", "--rm", "--network", "host", "--pid", "host",
+        # What the evaluator needs to put a model's container on its own network and then
+        # cut it off mid-flight, the same pair the validator service is given.
+        "--cap-add", "SYS_ADMIN", "--cap-add", "NET_ADMIN",
+        "--entrypoint", "python",
+        "-e", f"{INSIDE_MARKER}=1",
+        "-e", f"{PINNED_ENV}={pinned}",
+        "-e", f"PYTHONPATH={REPO_ROOT}",
+        "-v", "/var/run/docker.sock:/var/run/docker.sock",
+        # The model containers are started by the host's daemon, which resolves every path
+        # it is given against the host. A path that meant something different in here would
+        # point at nothing out there.
+        "-v", "/tmp:/tmp",
+        "-v", "/dev/shm:/dev/shm",
+        "-v", f"{REPO_ROOT}:{REPO_ROOT}",
+    ]
+    for path in {out.parent, model, seed_file.parent}:
+        if REPO_ROOT not in path.parents and path != REPO_ROOT:
+            command += ["-v", f"{path}:{path}"]
+
+    # Rebuilt rather than forwarded, because a relative path on the host would resolve
+    # against a different working directory in here.
+    command += [
+        "-w", str(REPO_ROOT), VALIDATOR_IMAGE,
+        str(Path(__file__).resolve()), "run",
+        "--out", str(out),
+        "--label", args.label or platform.node(),
+        "--limit", str(args.limit or 0),
+        "--workers", str(args.workers),
+        "--family-id", args.family_id,
+        "--model", str(model),
+        "--seed-file", str(seed_file),
+        "--host-image",
+    ]
+
+    print(f"Running the check inside {VALIDATOR_IMAGE}, so the simulation is pinned too")
+    return subprocess.run(command).returncode
 
 
 def _pinned_identity(ref: str) -> str:
@@ -272,6 +366,22 @@ def _as_model_archive(model: Path) -> Path:
     return archive
 
 
+def _calibrate_host(workers: int) -> Optional[float]:
+    """Measure this host's speed factor before the workers start, and return it.
+
+    The benchmark asks for it lazily from inside a worker, and those are daemonic, so a
+    machine with no cached calibration dies on "daemonic processes are not allowed to have
+    children" before it flies anything. Measuring here, in the main process, also keeps
+    each machine's own factor rather than borrowing one, and that factor scales the
+    model's compute budget, so it belongs in the comparison.
+    """
+    speed = asyncio.run(_ensure_host_speed_factor(DockerSecureEvaluator(), workers))
+    if speed is None:
+        return None
+    print(f"host speed factor {speed.factor:.2f}x")
+    return float(speed.factor)
+
+
 def _run_benchmark(
     model: Path, seed_file: Path, workers: int, limit: Optional[int], family_id: str,
 ) -> Dict[str, Any]:
@@ -336,14 +446,20 @@ def _command_run(args: argparse.Namespace) -> int:
         print(f"missing seed file: {seed_file}", file=sys.stderr)
         return 2
 
-    try:
-        pinned = _prepare_image(args.image, args.image_tar)
-    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
-        print(f"could not pin the runner image: {exc}", file=sys.stderr)
-        print("a private package needs a login first: docker login ghcr.io", file=sys.stderr)
-        return 2
+    if os.environ.get(INSIDE_MARKER) == "1":
+        pinned = os.environ.get(PINNED_ENV, "")
+    else:
+        try:
+            pinned = _prepare_image(args.image, args.image_tar)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            print(f"could not pin the image: {exc}", file=sys.stderr)
+            print("a private package needs a login first: docker login ghcr.io", file=sys.stderr)
+            return 2
+        if pinned:
+            return _reexec_inside(args.image or RUNNER_IMAGE, args, pinned)
 
     print(f"Flying {args.limit or 'all'} {args.family_id} seeds on {platform.node()} ({_cpu_model()})")
+    speed_factor = _calibrate_host(args.workers)
     summary = _run_benchmark(model, seed_file, args.workers, args.limit, args.family_id)
     rows = _seed_rows(summary)
     if not rows:
@@ -353,6 +469,7 @@ def _command_run(args: argparse.Namespace) -> int:
     report = _report(
         rows, args.label or platform.node(), args.family_id, Path(args.model).name, pinned,
     )
+    report["speed_factor"] = speed_factor
     Path(args.out).write_text(json.dumps(report, indent=2))
 
     print(f"\nseeds        {report['seed_count']}")
@@ -383,6 +500,7 @@ def _command_compare(args: argparse.Namespace) -> int:
         print(f"    cpu          {env['cpu']}")
         print(f"    flags        {','.join(env['cpu_flags']) or 'unknown'}")
         print(f"    numpy        {env['numpy']}   pybullet {env['pybullet']}")
+        print(f"    speed factor {report.get('speed_factor') or 'unmeasured'}")
         print(f"    pinned image {env.get('pinned_image', 'unrecorded')}")
         print(f"    family       {report.get('family_id', '?')}   model {report.get('model', '?')}")
         print(f"    mean         {report['mean_score']:.6f}   successes {report['success_count']}")
