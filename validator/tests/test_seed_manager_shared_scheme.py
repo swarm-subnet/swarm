@@ -47,6 +47,10 @@ def manager(seed_manager_module, monkeypatch, tmp_path):
     monkeypatch.setattr(module, "STATE_DIR", state_dir)
     monkeypatch.setattr(module, "EPOCH_SEEDS_DIR", state_dir / "epoch_seeds")
     monkeypatch.setattr(module, "PREEVAL_SEEDS_DIR", state_dir / "preeval_seeds")
+    # Starts where a validator starts, on its own seeds, until the backend moves it.
+    # Pinned rather than inherited from swarm.__version__ so these tests keep describing
+    # the transition itself once the release has activated the shared scheme.
+    monkeypatch.setattr(module, "DEFAULT_SEED_SCHEME_MIN_VERSION", "99.0.0")
     built = module.BenchmarkSeedManager()
     built.epoch_number = EPOCH
     return built

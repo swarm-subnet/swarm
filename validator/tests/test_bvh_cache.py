@@ -107,6 +107,8 @@ def test_seed_manager_owns_the_epoch_cache_folder(reload_module, monkeypatch, tm
     seeds_dir = state_dir / "epoch_seeds"
     monkeypatch.setattr(module, "STATE_DIR", state_dir)
     monkeypatch.setattr(module, "EPOCH_SEEDS_DIR", seeds_dir)
+    # The stored file below is an unstamped one, which only the random scheme reads.
+    monkeypatch.setattr(module, "DEFAULT_SEED_SCHEME_MIN_VERSION", "99.0.0")
     monkeypatch.delenv(module.BVH_CACHE_ENV, raising=False)
     seeds_dir.mkdir(parents=True)
     (seeds_dir / "epoch_7.json").write_text(json.dumps({
