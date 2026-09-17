@@ -33,6 +33,48 @@ services:
       SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
     command: pytest -v miner/tests -n 0 -p no:cacheprovider
 
+  # The validator itself, as a container. Behind the "validator" profile so a dev box
+  # running `docker compose up` still only gets the test services above.
+  #
+  #   docker compose --profile validator up -d validator
+  #
+  # It pulls a published image and never builds: an operator's machine contributes
+  # nothing to what runs, which is the whole point of shipping an image.
+  validator:
+    image: ${SWARM_VALIDATOR_IMAGE:-ghcr.io/swarm-subnet/swarm-validator}:${SWARM_VALIDATOR_TAG:-latest}
+    pull_policy: always
+    container_name: swarm_validator_node
+    profiles: ["validator"]
+    restart: unless-stopped
+    # Not root. The two capabilities are what the evaluator needs to cut a flight's
+    # network off and to enter its namespace; everything else is dropped with the uid.
+    user: "${SWARM_UID:-1000}:${SWARM_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:-999}"
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    # The evaluator talks to the host daemon and to containers it starts on host ports.
+    network_mode: host
+    pid: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Identical paths on both sides. The validator hands these to the host's Docker
+      # daemon as bind sources, and the daemon resolves them on the host, so a path that
+      # differs inside the container would point at nothing.
+      - /tmp:/tmp
+      - /dev/shm:/dev/shm
+      - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}:${SWARM_STATE_DIR:-/opt/swarm-validator-state}
+      - ${BT_WALLET_HOME:-${HOME}/.bittensor}:${BT_WALLET_HOME:-${HOME}/.bittensor}:ro
+    environment:
+      SWARM_STATE_DIR: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
+      BT_WALLET_PATH: ${BT_WALLET_HOME:-${HOME}/.bittensor}/wallets
+    env_file:
+      # Optional so `docker compose config` works in a checkout without one; the
+      # entrypoint refuses to start when the wallet variables are actually missing.
+      - path: ../.env
+        required: false
+
   # The validator side on its own, the same set the validator job runs in CI.
   swarm_validator:
     <<: *swarm-base
