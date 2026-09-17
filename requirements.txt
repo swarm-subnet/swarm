@@ -4,7 +4,7 @@
 pydantic==2.12.5
 rich==14.3.3
 # Keep NumPy aligned with bittensor's supported range.
-numpy>=2.0.1,<3.0.0
+numpy==2.4.6
 loguru==0.7.3
 xmldiff==2.7.0
 filelock==3.25.2
