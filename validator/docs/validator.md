@@ -161,13 +161,19 @@ btcli wallet overview --wallet.name my_cold --subtensor.network finney
 
 ```bash
 cd swarm
-docker compose -f .docker/docker-compose.yml --profile validator up -d validator
+bash validator/scripts/update/update_deploy.sh
 docker compose -f .docker/docker-compose.yml --profile validator stop validator
 docker compose -f .docker/docker-compose.yml --profile validator restart validator
 ```
 
-`up` pulls `ghcr.io/swarm-subnet/swarm-validator` from GitHub Packages every time, so
-there is no separate pull step and nothing to build.
+The script is the start command: it reads `.env`, works out the uid and the docker group,
+prepares the state directory, pulls `ghcr.io/swarm-subnet/swarm-validator` from GitHub
+Packages and runs `up`. To run `up` yourself, hand it the same file, because compose
+otherwise looks for `.env` next to the compose file rather than at the repository root:
+
+```bash
+docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d validator
+```
 
 ### Build the image yourself
 
@@ -178,7 +184,14 @@ published one as soon as you can.
 ```bash
 cd swarm
 docker compose -f .docker/docker-compose.yml --profile validator build validator
-docker compose -f .docker/docker-compose.yml --profile validator up -d --pull never validator
+docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d --pull never validator
+```
+
+The image also runs without any of this. A command after the image name replaces the
+validator, needs no wallet and no backend, and is how a test job uses it:
+
+```bash
+docker run --rm ghcr.io/swarm-subnet/swarm-validator:latest pytest validator/tests -n4
 ```
 
 ### Logs

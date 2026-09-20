@@ -73,9 +73,20 @@ def mismatches(requirements: Path = REQUIREMENTS) -> List[Tuple[str, str, str]]:
         except PackageNotFoundError:
             found.append((name, wanted, "missing"))
             continue
-        if have != wanted:
+        if not _satisfies(have, wanted):
             found.append((name, wanted, have))
     return found
+
+
+def _satisfies(have: str, wanted: str) -> bool:
+    """Whether an installed version is the pinned one, allowing a build label the pin does not name.
+
+    ``torch==2.10.0`` is met by ``2.10.0+cpu``: the local segment says which wheel was
+    chosen, and the CPU wheel is the same release as the default one.
+    """
+    if "+" in wanted:
+        return have == wanted
+    return have.split("+", 1)[0] == wanted
 
 
 def _install(pins: List[Tuple[str, str, str]]) -> bool:

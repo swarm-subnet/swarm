@@ -18,9 +18,28 @@
 
 # Turn the container's environment into the validator's command line.
 #
-# An operator sets wallet and netuid in .env and never types a flag. Anything passed to
-# `docker run` after the image name is appended, so an unusual option is still reachable.
+# An operator sets wallet and netuid in .env and never types a flag. Extra flags passed
+# to `docker run` after the image name are appended, so an unusual option is still
+# reachable. A command instead of flags runs as it is, with no wallet and no backend:
+#
+#   docker run --rm swarm-validator pytest validator/tests
+#   docker run --rm swarm-validator python validator/scripts/cross_machine_check.py run
+#
+# which is what a test job or a nightly build wants from this image.
 set -euo pipefail
+
+# A bare uid has no passwd entry, so Docker sets HOME=/ and bittensor, which creates
+# ~/.bittensor on import, dies before reading any config. Compose points HOME at the
+# state directory; a plain `docker run` gets a scratch home instead.
+if [[ ! -w "${HOME:-/}" ]]; then
+  HOME="/tmp/swarm-validator-home-$(id -u)"
+  export HOME
+  mkdir -p "$HOME"
+fi
+
+if (( $# )) && [[ "$1" != -* ]]; then
+  exec "$@"
+fi
 
 NETUID="${SWARM_NETUID:-124}"
 WALLET_NAME="${SWARM_WALLET_NAME:-}"
@@ -48,10 +67,22 @@ if [[ ! -d "$WALLET_ROOT/$WALLET_NAME" ]]; then
   exit 2
 fi
 
+# Everything the validator writes goes under the state directory, so a directory the
+# uid cannot write fails here with the fix, not later inside a library.
+STATE_DIR="${SWARM_STATE_DIR:-$HOME}"
+for dir in "$STATE_DIR" /opt/swarm-validator/state /opt/swarm-validator/swarm/state; do
+  if [[ ! -w "$dir" ]]; then
+    echo "[ERR] $dir is not writable by uid $(id -u)" >&2
+    echo "      on the host: sudo chown -R $(id -u):$(id -g) $STATE_DIR" >&2
+    exit 2
+  fi
+done
+
 args=(
   --netuid "$NETUID"
   --wallet.name "$WALLET_NAME"
   --wallet.hotkey "$WALLET_HOTKEY"
+  --wallet.path "$WALLET_ROOT"
   --subtensor.network "$SUBTENSOR_NETWORK"
 )
 [[ -n "$SUBTENSOR_ENDPOINT" ]] && args+=(--subtensor.chain_endpoint "$SUBTENSOR_ENDPOINT")

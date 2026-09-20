@@ -75,10 +75,24 @@ services:
       - /tmp:/tmp
       - /dev/shm:/dev/shm
       - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}:${SWARM_STATE_DIR:-/opt/swarm-validator-state}
-      - ${BT_WALLET_HOME:-${HOME}/.bittensor}:${BT_WALLET_HOME:-${HOME}/.bittensor}:ro
+      # The code keeps its caches, queues and the model store next to itself. Those
+      # never reach the daemon, so they live in the state directory under other names
+      # and survive an image update.
+      - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}/state:/opt/swarm-validator/state
+      - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}/swarm-state:/opt/swarm-validator/swarm/state
+      # The wallet is only read by this process, never handed to the daemon, so it
+      # gets a fixed path: its host path may sit under a directory the uid cannot enter.
+      - ${BT_WALLET_HOME:-${HOME}/.bittensor}/wallets:/wallets:ro
+    # The log file is written to the working directory.
+    working_dir: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
     environment:
       SWARM_STATE_DIR: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
-      BT_WALLET_PATH: ${BT_WALLET_HOME:-${HOME}/.bittensor}/wallets
+      # A bare uid has no passwd entry, so Docker would set HOME=/ and bittensor,
+      # which creates ~/.bittensor on import, would die before reading any config.
+      # Home is the state directory: scores, events and caches all land there, and
+      # the wallet stays on its own read-only mount below.
+      HOME: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
+      BT_WALLET_PATH: /wallets
     env_file:
       # Optional so `docker compose config` works in a checkout without one; the
       # entrypoint refuses to start when the wallet variables are actually missing.

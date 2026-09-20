@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -34,6 +35,7 @@ UPDATE_SCRIPT = UPDATE_DIR / "update_deploy.sh"
 AUTO_UPDATE_SCRIPT = UPDATE_DIR / "auto_update_deploy.sh"
 VALIDATOR_DOCKERFILE = DOCKER_DIR / "validator.Dockerfile"
 COMPOSE_FILE = DOCKER_DIR / "docker-compose.yml"
+ENTRYPOINT = DOCKER_DIR / "validator-entrypoint.sh"
 VALIDATOR_REQUIREMENTS = REPO_ROOT / "validator" / "requirements.txt"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validator-image.yml"
 
@@ -44,6 +46,27 @@ def test_the_deploy_scripts_are_valid_bash(script: Path) -> None:
     assert script.is_file(), f"missing {script}"
     result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_the_entrypoint_runs_a_plain_command_without_a_wallet(tmp_path: Path) -> None:
+    """Proves a test job can use the image with no validator environment at all.
+
+    A command replaces the validator; a flag is still appended to it, and then the
+    wallet variables are required as before.
+    """
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    ran = subprocess.run(
+        ["bash", str(ENTRYPOINT), "echo", "ran as", "given"],
+        capture_output=True, text=True, env=env,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.strip() == "ran as given"
+
+    flagged = subprocess.run(
+        ["bash", str(ENTRYPOINT), "--logging.debug"], capture_output=True, text=True, env=env,
+    )
+    assert flagged.returncode == 2
+    assert "SWARM_WALLET_NAME" in flagged.stderr
 
 
 def test_the_version_compare_orders_releases_properly() -> None:
@@ -175,6 +198,33 @@ def test_the_validator_service_can_be_built_locally() -> None:
     assert service["build"]["dockerfile"] == ".docker/validator.Dockerfile"
     assert Path(service["build"]["context"]).resolve() == REPO_ROOT
     assert service["pull_policy"] == "always", "`up` must keep pulling the published image"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker is not installed")
+def test_everything_the_validator_writes_lands_in_the_state_directory() -> None:
+    """Proves the code's own state folders, the log and the home all map to the state dir.
+
+    Inside the image those folders belong to root and vanish on the next image, so a
+    validator without these mounts loses its model cache, its queues and its scores.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "validator",
+         "config", "--format", "json"],
+        capture_output=True, text=True, cwd=str(DOCKER_DIR),
+        env={**os.environ, "SWARM_STATE_DIR": "/srv/state"},
+    )
+    if result.returncode != 0:
+        pytest.skip(f"docker compose could not run here: {result.stderr.strip()[:200]}")
+
+    service = json.loads(result.stdout)["services"]["validator"]
+    mounts = {v["target"]: v["source"] for v in service["volumes"]}
+    assert mounts["/opt/swarm-validator/state"] == "/srv/state/state"
+    assert mounts["/opt/swarm-validator/swarm/state"] == "/srv/state/swarm-state"
+    assert mounts["/srv/state"] == "/srv/state", "the path the daemon is handed must match"
+    assert service["working_dir"] == "/srv/state", "logfile.log is written to the cwd"
+    assert service["environment"]["HOME"] == "/srv/state"
+    assert mounts["/wallets"].endswith("/.bittensor/wallets")
+    assert service["environment"]["BT_WALLET_PATH"] == "/wallets"
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker is not installed")

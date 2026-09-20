@@ -103,7 +103,7 @@ echo "[INFO] state=$SWARM_STATE_DIR wallets=$BT_WALLET_HOME"
 # The same absolute path is mounted on both sides, so it has to exist on the host
 # and be writable by the uid the container runs as.
 banner "Preparing the state directory"
-mkdir -p "$SWARM_STATE_DIR"
+mkdir -p "$SWARM_STATE_DIR/state" "$SWARM_STATE_DIR/swarm-state"
 chown -R "$SWARM_UID:$SWARM_GID" "$SWARM_STATE_DIR" 2>/dev/null || true
 
 banner "Pulling the published image"
