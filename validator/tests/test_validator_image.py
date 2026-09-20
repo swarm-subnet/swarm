@@ -18,6 +18,8 @@
 """The validator container: its image, its compose service and the scripts that deploy it."""
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +34,8 @@ UPDATE_SCRIPT = UPDATE_DIR / "update_deploy.sh"
 AUTO_UPDATE_SCRIPT = UPDATE_DIR / "auto_update_deploy.sh"
 VALIDATOR_DOCKERFILE = DOCKER_DIR / "validator.Dockerfile"
 COMPOSE_FILE = DOCKER_DIR / "docker-compose.yml"
+VALIDATOR_REQUIREMENTS = REPO_ROOT / "validator" / "requirements.txt"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validator-image.yml"
 
 
 @pytest.mark.parametrize("script", [UPDATE_SCRIPT, AUTO_UPDATE_SCRIPT], ids=lambda p: p.name)
@@ -98,6 +102,79 @@ def test_the_cross_machine_check_pins_the_published_image() -> None:
     parser = check._build_parser()
     assert parser.parse_args(["run"]).image == check.SHARED_IMAGE
     assert parser.parse_args(["run", "--host-image"]).image is None
+
+
+def _pins(path: Path) -> dict[str, str]:
+    """Map each requirement name in a file to its full line, comments and blanks dropped."""
+    lines = [line.strip() for line in path.read_text().splitlines()]
+    return {
+        re.split(r"[=@ ]", line, maxsplit=1)[0]: line
+        for line in lines if line and not line.startswith("#")
+    }
+
+
+def test_the_validator_pins_match_the_root_pins() -> None:
+    """Proves the validator's own list can narrow the root one but never disagree with it.
+
+    A version chosen here would put the validator on different physics from the
+    flights it scores, which is the drift the shared base image exists to rule out.
+    """
+    root = _pins(REPO_ROOT / "requirements.txt")
+    for name, line in _pins(VALIDATOR_REQUIREMENTS).items():
+        assert root.get(name) == line, f"{name} differs from the root requirements.txt"
+
+
+def test_the_image_installs_the_validator_requirements() -> None:
+    """Proves the image is built from the validator's list rather than the root one."""
+    assert "validator/requirements.txt" in VALIDATOR_DOCKERFILE.read_text()
+
+
+def test_the_update_script_finds_the_checkout_from_its_copy(tmp_path: Path) -> None:
+    """Proves the script still resolves the repository once it re-runs itself from a copy.
+
+    The copy lives in the temp directory, so a path derived from the running file
+    points outside the checkout and the update dies before it has done anything.
+    """
+    checkout = tmp_path / "checkout"
+    script_dir = checkout / "validator" / "scripts" / "update"
+    script_dir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    head = UPDATE_SCRIPT.read_text().split("\nSTEP=0\n", 1)[0]
+    probe = script_dir / "update_deploy.sh"
+    probe.write_text(head + '\necho "$REPO_ROOT"\n')
+
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()).resolve() == checkout.resolve()
+
+
+def test_the_publish_workflow_watches_files_that_exist() -> None:
+    """Proves a renamed image input cannot leave the rebuild check watching nothing."""
+    text = WORKFLOW.read_text()
+    watched = re.findall(r"^\s+(\.docker/\S+|validator/\S+?);?\s*(?:\\|then)?$", text, re.M)
+    assert "validator/requirements.txt" in watched
+    assert ".docker/validator.Dockerfile" in watched
+    for path in watched:
+        assert (REPO_ROOT / path).is_file(), f"the workflow watches a missing file: {path}"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker is not installed")
+def test_the_validator_service_can_be_built_locally() -> None:
+    """Proves compose can build the image from the validator Dockerfile while still naming the published one."""
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "validator",
+         "config", "--format", "json"],
+        capture_output=True, text=True, cwd=str(DOCKER_DIR),
+    )
+    if result.returncode != 0:
+        pytest.skip(f"docker compose could not run here: {result.stderr.strip()[:200]}")
+
+    service = json.loads(result.stdout)["services"]["validator"]
+    assert service["build"]["dockerfile"] == ".docker/validator.Dockerfile"
+    assert Path(service["build"]["context"]).resolve() == REPO_ROOT
+    assert service["pull_policy"] == "always", "`up` must keep pulling the published image"
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker is not installed")

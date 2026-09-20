@@ -4,7 +4,8 @@ name: Validator image
 #
 # Tagged with swarm.__version__ and with :latest. A version that is already
 # published is never overwritten: the tag is what operators pin to roll back, so
-# it has to keep meaning one exact image.
+# it has to keep meaning one exact image. A change to the image's own inputs
+# without a version bump therefore moves :latest only.
 
 on:
   workflow_run:
@@ -29,6 +30,27 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # the commit and its parent, which is all the input check below compares
+          fetch-depth: 2
+
+      - name: Check whether the image inputs changed
+        id: inputs
+        run: |
+          # A manual run and an unknown parent both rebuild: rebuilding when unsure
+          # costs minutes, skipping when unsure costs a stale image.
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] \
+             && git rev-parse --verify --quiet HEAD^1 >/dev/null \
+             && git diff --quiet HEAD^1 HEAD -- \
+                  .docker/validator.Dockerfile \
+                  .docker/validator.Dockerfile.dockerignore \
+                  .docker/validator-entrypoint.sh \
+                  validator/requirements.txt; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Image inputs unchanged"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Image inputs changed"
+          fi
 
       - name: Read the version
         id: version
@@ -46,22 +68,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Skip when this version is already published
-        id: exists
+      - name: Decide what to publish
+        id: plan
         run: |
-          if docker manifest inspect "$IMAGE:${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "$IMAGE:${{ steps.version.outputs.version }} exists; nothing to publish"
+          version="${{ steps.version.outputs.version }}"
+          if ! docker manifest inspect "$IMAGE:$version" >/dev/null 2>&1; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            printf 'tags=%s\n' "$IMAGE:$version,$IMAGE:latest" >> "$GITHUB_OUTPUT"
+            echo "New version: publishing $version and latest"
+          elif [ "${{ steps.inputs.outputs.changed }}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            printf 'tags=%s\n' "$IMAGE:latest" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE:$version exists and stays as it is; publishing latest only"
           else
-            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE:$version exists and the image inputs are unchanged; nothing to publish"
           fi
 
       - name: Set up buildx
-        if: steps.exists.outputs.already == 'false'
+        if: steps.plan.outputs.publish == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
-        if: steps.exists.outputs.already == 'false'
+        if: steps.plan.outputs.publish == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -69,8 +98,6 @@ jobs:
           push: true
           build-args: |
             SWARM_VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE }}:latest
+          tags: ${{ steps.plan.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

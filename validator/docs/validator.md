@@ -166,6 +166,21 @@ docker compose -f .docker/docker-compose.yml --profile validator stop validator
 docker compose -f .docker/docker-compose.yml --profile validator restart validator
 ```
 
+`up` pulls `ghcr.io/swarm-subnet/swarm-validator` from GitHub Packages every time, so
+there is no separate pull step and nothing to build.
+
+### Build the image yourself
+
+Only when you are working on the image, or the registry cannot be reached. A validator
+built on its own host is no longer the image everyone else runs, so go back to the
+published one as soon as you can.
+
+```bash
+cd swarm
+docker compose -f .docker/docker-compose.yml --profile validator build validator
+docker compose -f .docker/docker-compose.yml --profile validator up -d --pull never validator
+```
+
 ### Logs
 
 ```bash

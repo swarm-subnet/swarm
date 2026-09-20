@@ -51,7 +51,10 @@ RUN setcap cap_sys_admin+ep /usr/bin/nsenter \
 WORKDIR /opt/swarm-validator
 COPY . /opt/swarm-validator
 
-RUN uv pip install --system --no-cache -e /opt/swarm-validator
+# The validator's own list decides what it runs on; the package itself is then
+# installed without resolving the root requirements a second time.
+RUN uv pip install --system --no-cache -r /opt/swarm-validator/validator/requirements.txt \
+    && uv pip install --system --no-cache --no-deps -e /opt/swarm-validator
 
 COPY .docker/validator-entrypoint.sh /usr/local/bin/validator-entrypoint
 RUN chmod +x /usr/local/bin/validator-entrypoint

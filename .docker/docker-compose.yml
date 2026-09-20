@@ -38,10 +38,17 @@ services:
   #
   #   docker compose --profile validator up -d validator
   #
-  # It pulls a published image and never builds: an operator's machine contributes
-  # nothing to what runs, which is the whole point of shipping an image.
+  # `up` pulls the published image and does not build: an operator's machine
+  # contributes nothing to what runs, which is the whole point of shipping an image.
+  # The build block is for working on the image itself:
+  #
+  #   docker compose --profile validator build validator
+  #   docker compose --profile validator up -d --pull never validator
   validator:
     image: ${SWARM_VALIDATOR_IMAGE:-ghcr.io/swarm-subnet/swarm-validator}:${SWARM_VALIDATOR_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: .docker/validator.Dockerfile
     pull_policy: always
     container_name: swarm_validator_node
     profiles: ["validator"]
