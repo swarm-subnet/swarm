@@ -30,6 +30,7 @@ SSE listener runs as a supervised background task and uses two
 from __future__ import annotations
 
 import asyncio
+import time
 import traceback
 
 import bittensor as bt
@@ -113,7 +114,7 @@ async def _forward_iteration(self) -> None:
         if backend_epoch > 0 and backend_epoch != self.seed_manager.epoch_number:
             old_epoch = self.seed_manager.align_to_epoch(backend_epoch)
             if old_epoch is not None:
-                self.docker_evaluator.cleanup()
+                await _cleanup_off_loop(self, reason="epoch_change", prune=True)
                 bt.logging.info(
                     f"Aligned validator seed epoch: {old_epoch} -> "
                     f"{self.seed_manager.epoch_number}"
@@ -174,7 +175,7 @@ async def _forward_iteration(self) -> None:
             cancel_flag=self._cancel_flag, wake_flag=self._wake_flag,
         )
 
-        self.docker_evaluator.cleanup()
+        await _cleanup_off_loop(self, reason="task_end")
         tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
 
     except BackendProtocolMismatchError:
@@ -184,6 +185,20 @@ async def _forward_iteration(self) -> None:
         bt.logging.error(f"Validator forward error: {exc}")
         bt.logging.error(traceback.format_exc())
         await asyncio.sleep(FORWARD_SLEEP_SEC)
+
+
+async def _cleanup_off_loop(self, *, reason: str, prune: bool = False) -> None:
+    """Run the Docker cleanup in a worker thread and record how long it took.
+
+    The event loop keeps serving heartbeats, SSE events and uploads while Docker works;
+    the caller still waits, so a cleanup never overlaps the next task's containers.
+    """
+    started = time.monotonic()
+    await asyncio.to_thread(self.docker_evaluator.cleanup, prune=prune)
+    tracker_call(
+        self, "mark_docker_cleanup",
+        duration_sec=time.monotonic() - started, reason=reason,
+    )
 
 
 async def _ensure_components(self) -> None:

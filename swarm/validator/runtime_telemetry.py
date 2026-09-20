@@ -804,6 +804,15 @@ class ValidatorRuntimeTracker:
                 worker_slot=int(worker_slot),
             )
 
+    def mark_docker_cleanup(self, *, duration_sec: float, reason: str) -> None:
+        """Count one Docker cleanup pass and keep how long it took and what triggered it."""
+        with self._lock:
+            docker = self.snapshot["docker"]
+            docker["cleanup_count"] = int(docker.get("cleanup_count", 0)) + 1
+            docker["last_cleanup_duration_sec"] = round(float(duration_sec), 3)
+            docker["last_cleanup_reason"] = str(reason)
+            self._persist_snapshot_locked(force=False)
+
     def snapshot_copy(self) -> dict[str, Any]:
         """A deep copy taken under the lock, so a reader never sees a half-written update."""
         with self._lock:

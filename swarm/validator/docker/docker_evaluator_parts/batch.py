@@ -56,6 +56,7 @@ from swarm.protocol import (
     is_supported_schema,
     normalize_version,
 )
+from swarm.utils.docker_instance import INSTANCE_LABEL_KEY, instance_id, instance_label
 from swarm.utils.hash import sha256sum
 from swarm.validator.calibration import (
     SpeedFactor,
@@ -241,6 +242,10 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
 
 _PIP_INSTALL_TIMEOUT_SEC = 120
 _BUILD_CACHE_PRUNE_FREE_GB = 25.0
+# Far above what a healthy daemon needs: only a wedged one ever reaches these.
+_DOCKER_LIST_TIMEOUT_SEC = 30.0
+_DOCKER_PRUNE_TIMEOUT_SEC = 120.0
+_OWNED_CONTAINER_PREFIXES = ("swarm_eval_", "swarm_verify_", "swarm_pip_")
 
 
 def model_image_tag(model_hash: str) -> str:
@@ -335,6 +340,7 @@ def prepare_model_image(
         cmd = [
             "docker", "run", "--rm", "-d",
             "--name", container_name,
+            "--label", instance_label(),
             "--user", f"{current_uid}:{current_gid}",
             f"--memory={worker_limits['memory']}",
             f"--cpus={worker_limits['cpus'] or DOCKER_WORKER_CPUS}",
@@ -1498,6 +1504,7 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
     obs_shm_path = _create_obs_shm(ctx.host_port)
     cmd = [
         "docker", "run", "--rm", "-d", "--name", ctx.container_name,
+        "--label", instance_label(),
         "--user", f"{ctx.current_uid}:{ctx.current_gid}",
         f"--memory={ctx.worker_limits['memory']}",
         "--pids-limit=50", "--ulimit", "nofile=256:256",
@@ -1859,101 +1866,93 @@ async def evaluate_seeds_batch(
     ]
 
 
-def cleanup(self):
-    """Clean up any orphaned containers and prune unused images/cache"""
+def _owned_containers(prefix: str, adopt_unlabelled: bool) -> list[str]:
+    """Names of this instance's containers under a name prefix.
+
+    adopt_unlabelled also takes containers that carry no owner, the ones a release
+    from before the label existed left behind.
+    """
+    result = subprocess.run(
+        [
+            "docker", "ps", "-a", "--filter", f"name={prefix}",
+            "--format", f'{{{{.Names}}}}\t{{{{.Label "{INSTANCE_LABEL_KEY}"}}}}',
+        ],
+        capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
+    )
+    if result.returncode != 0:
+        return []
+    owner_id = instance_id()
+    owned = []
+    for line in result.stdout.splitlines():
+        name, _, owner = line.partition("\t")
+        if name and (owner == owner_id or (adopt_unlabelled and not owner)):
+            owned.append(name)
+    return owned
+
+
+def _reap_model_images() -> None:
+    """Remove this instance's per-model images whose model zip is no longer on disk."""
+    result = subprocess.run(
+        [
+            "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
+            "--filter", "reference=swarm_eval_model_*",
+            "--filter", f"label={instance_label()}",
+        ],
+        capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return
+    live_tags = set()
+    for zip_fp in MODEL_DIR.glob("*.zip"):
+        try:
+            live_tags.add(model_image_tag(sha256sum(zip_fp)))
+        except Exception:
+            continue
+    for img in result.stdout.strip().split("\n"):
+        if img and img not in live_tags:
+            remove_model_image(img)
+
+
+def prune_swarm_images() -> None:
+    """Drop dangling images built on the Swarm base, leaving every other image on the host alone."""
+    subprocess.run(
+        ["docker", "image", "prune", "-f", "--filter", "label=swarm.code_hash"],
+        capture_output=True, timeout=_DOCKER_PRUNE_TIMEOUT_SEC,
+    )
+
+
+def remove_owned_containers(adopt_unlabelled: bool = False) -> None:
+    """Force-remove every evaluation, verification and install container this instance owns."""
+    for prefix in _OWNED_CONTAINER_PREFIXES:
+        for container in _owned_containers(prefix, adopt_unlabelled):
+            subprocess.run(
+                ["docker", "rm", "-f", container], capture_output=True, timeout=30
+            )
+            bt.logging.debug(f"Cleaned up orphaned container: {container}")
+
+
+def cleanup(self, prune: bool = False, adopt_unlabelled: bool = False):
+    """Remove this instance's leftover containers and model images.
+
+    prune adds the slower maintenance: dangling Swarm images and a build cache on a
+    tight disk. Every Docker call is bounded and the first timeout ends the pass, so a
+    wedged daemon costs one wait and one warning instead of a frozen validator.
+    """
     for stale in Path("/dev/shm").glob("swarm_obs_*.bin"):
         try:
             stale.unlink()
         except OSError:
             pass
     try:
-        # List all swarm evaluation containers
-        result = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "-a",
-                "--filter",
-                "name=swarm_eval_",
-                "--format",
-                "{{.Names}}",
-            ],
-            capture_output=True,
-            text=True,
+        remove_owned_containers(adopt_unlabelled)
+        _reap_model_images()
+        if prune:
+            prune_swarm_images()
+            prune_build_cache_if_disk_low()
+    except subprocess.TimeoutExpired as e:
+        cmd = " ".join(map(str, e.cmd)) if isinstance(e.cmd, (list, tuple)) else e.cmd
+        bt.logging.warning(
+            f"Docker cleanup abandoned: no answer within {e.timeout:.0f}s from `{cmd}`"
         )
-
-        if result.returncode == 0 and result.stdout:
-            containers = result.stdout.strip().split("\n")
-            for container in containers:
-                if container:
-                    subprocess.run(
-                        ["docker", "rm", "-f", container],
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    bt.logging.debug(f"Cleaned up orphaned container: {container}")
-
-        # Also clean up verification containers
-        result_verify = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "-a",
-                "--filter",
-                "name=swarm_verify_",
-                "--format",
-                "{{.Names}}",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result_verify.returncode == 0 and result_verify.stdout:
-            containers_v = result_verify.stdout.strip().split("\n")
-            for container in containers_v:
-                if container:
-                    subprocess.run(
-                        ["docker", "rm", "-f", container],
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    bt.logging.debug(
-                        f"Cleaned up orphaned verify container: {container}"
-                    )
-
-        result_pip = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=swarm_pip_", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-        )
-        if result_pip.returncode == 0 and result_pip.stdout:
-            for container in result_pip.stdout.strip().split("\n"):
-                if container:
-                    subprocess.run(
-                        ["docker", "rm", "-f", container], capture_output=True, timeout=30
-                    )
-
-        result_images = subprocess.run(
-            [
-                "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
-                "--filter", "reference=swarm_eval_model_*",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result_images.returncode == 0 and result_images.stdout:
-            live_tags = set()
-            for zip_fp in MODEL_DIR.glob("*.zip"):
-                try:
-                    live_tags.add(model_image_tag(sha256sum(zip_fp)))
-                except Exception:
-                    continue
-            for img in result_images.stdout.strip().split("\n"):
-                if img and img not in live_tags:
-                    remove_model_image(img)
-
-        subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-        subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-        prune_build_cache_if_disk_low()
-
     except Exception as e:
         bt.logging.warning(f"Container cleanup failed: {e}")
