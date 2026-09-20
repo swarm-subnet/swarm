@@ -140,7 +140,7 @@ async def _evaluate_seeds(
     seeds: List[int],
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     description: str = "benchmark",
-    on_seed_complete: Optional[Callable[[], None]] = None,
+    on_seed_complete: Optional[Callable[..., None]] = None,
     on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
     should_stop: Optional[Callable[[], Optional[str]]] = None,
     prior_seeds_done: int = 0,

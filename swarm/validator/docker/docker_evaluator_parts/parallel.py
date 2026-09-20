@@ -48,7 +48,11 @@ from swarm.benchmark.engine_parts.workers import _unpack_validation_result
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.faults import ReasonCode
 from swarm.protocol import FailureReason, ValidationResult
-from swarm.validator.runtime_telemetry import tracker_call
+from swarm.validator.runtime_telemetry import (
+    format_seed_timing_line,
+    summarize_seed_timing,
+    tracker_call,
+)
 
 from ._shared import _docker_evaluator_facade, _runtime_profile_from_payload
 
@@ -286,6 +290,10 @@ async def _run_process_parallel(
         pending_batch_ids = list(range(len(batch_plan)))
     last_held_report: tuple[int, ...] = ()
     batch_seed_meta: dict[int, Dict[str, Any]] = {}
+    batch_attempts: dict[int, int] = {}
+    batch_dispatched_at: dict[int, float] = {}
+    batch_started_ts: dict[int, float] = {}
+    run_timing: list[Dict[str, Any]] = []
     batch_retry_counts: dict[int, int] = {}
     rpc_transport_retry_counts: dict[int, int] = {}
     if retry_budget is None:
@@ -514,6 +522,9 @@ async def _run_process_parallel(
             )
             worker_active_requests[worker_slot] = request
             now = time.time()
+            batch_attempts[batch_index] = batch_attempts.get(batch_index, 0) + 1
+            batch_dispatched_at[batch_index] = now
+            batch_started_ts.pop(batch_index, None)
             worker_started_at[worker_slot] = now
             worker_last_heartbeat[worker_slot] = now
             worker_seeds_dispatched[worker_slot] = (
@@ -536,6 +547,29 @@ async def _run_process_parallel(
         if isinstance(seed_meta, dict):
             batch_seed_meta[int(batch_index)] = dict(seed_meta)
 
+    def _record_seed_timing(
+        batch_index: int,
+        seed_meta: Optional[Dict[str, Any]],
+        *,
+        retried: bool = False,
+    ) -> None:
+        """Stamp one attempt's record with its queue wait, total and attempt number, then log it."""
+        if not isinstance(seed_meta, dict):
+            return
+        now = time.time()
+        dispatched_at = batch_dispatched_at.get(int(batch_index), now)
+        started_ts = batch_started_ts.get(int(batch_index), dispatched_at)
+        record = {
+            **seed_meta,
+            "eval_phase": phase_label,
+            "attempt": batch_attempts.get(int(batch_index), 1),
+            "retried": bool(retried),
+            "queue_wait_sec": max(0.0, started_ts - dispatched_at),
+            "total_sec": max(0.0, now - dispatched_at),
+        }
+        run_timing.append(record)
+        tracker_call(runtime_tracker, "record_seed_timing", record)
+
     def _drain_progress_events() -> None:
         """Empty the progress queue, refreshing heartbeats and keeping the seed records it carries."""
         while True:
@@ -548,6 +582,7 @@ async def _run_process_parallel(
                 worker_last_heartbeat[worker_slot] = float(event.ts)
                 if event.event_type == "batch_started":
                     worker_started_at[worker_slot] = float(event.ts)
+                    batch_started_ts[int(event.batch_index)] = float(event.ts)
                 continue
             _remember_seed_meta(
                 int(getattr(event, "batch_index", -1)),
@@ -602,6 +637,7 @@ async def _run_process_parallel(
                 )
             meta = task_meta[int(idx)] if 0 <= int(idx) < len(task_meta) else None
             _emit_seed_complete(on_seed_complete, seed_meta)
+            _record_seed_timing(int(request.batch_index), seed_meta)
 
         for idx in request.batch_indices:
             vr = ValidationResult(
@@ -958,6 +994,7 @@ async def _run_process_parallel(
                     retry_budget["timeout"] += 1
                     batch_retry_counts[int(request.batch_index)] = prior_retries + 1
                     _record_timeout_retry(meta)
+                    _record_seed_timing(int(request.batch_index), final_seed_meta, retried=True)
                     bt.logging.warning(
                         f"[Validator eval] retrying timed-out seed {_seed_label(meta)} "
                         f"for UID {uid} (retry {prior_retries + 1}/1, "
@@ -984,6 +1021,7 @@ async def _run_process_parallel(
                         prior_transport_retries + 1
                     )
                     _record_rpc_transport_retry(meta)
+                    _record_seed_timing(int(request.batch_index), final_seed_meta, retried=True)
                     bt.logging.warning(
                         f"[Validator eval] retrying RPC-transport seed {_seed_label(meta)} "
                         f"for UID {uid} (retry {prior_transport_retries + 1}/1, "
@@ -1032,6 +1070,7 @@ async def _run_process_parallel(
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(vr, meta, status=seed_status)
                 _emit_seed_result(idx, vr, seed_status)
+                _record_seed_timing(int(request.batch_index), final_seed_meta)
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
@@ -1047,6 +1086,11 @@ async def _run_process_parallel(
 
         _drain_progress_events()
         _log_summary()
+        if run_timing:
+            bt.logging.info(
+                f"[{phase_label}] UID {uid} "
+                f"{format_seed_timing_line(summarize_seed_timing(run_timing))}"
+            )
         if stop_reason is not None or feeder_active:
             # Feeder mode: None entries are seeds this validator never claimed.
             return results

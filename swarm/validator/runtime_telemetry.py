@@ -25,12 +25,34 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 STATE_DIR = Path(__file__).resolve().parent.parent / "state"
 RUNTIME_SNAPSHOT_FILE = STATE_DIR / "validator_runtime.json"
 RUNTIME_EVENTS_FILE = STATE_DIR / "validator_events.jsonl"
+SEED_TIMING_FILE = STATE_DIR / "validator_seed_timing.jsonl"
 _TRACKER_SCHEMA_VERSION = 1
+
+# One line per seed attempt adds up, so the log rolls over to a single .1 file at this size.
+_SEED_TIMING_MAX_BYTES = 20 * 1024 * 1024
+_SEED_TIMING_WINDOW = 2000
+
+# Every duration a seed record can carry, in the order a seed lives through them.
+SEED_TIMING_PHASES = (
+    "total_sec",
+    "queue_wait_sec",
+    "container_start_sec",
+    "connect_sec",
+    "seed_wall_sec",
+    "env_build_sec",
+    "reset_sec",
+    "calibration_sec",
+    "fly_sec",
+    "act_sec",
+    "act_max_sec",
+    "sim_sec",
+    "cleanup_sec",
+)
 
 
 def tracker_call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -76,6 +98,66 @@ def _new_stage_state() -> dict[str, Any]:
     }
 
 
+def _spread(values: list[float]) -> dict[str, float]:
+    """The sample count, median, 90th percentile and maximum of a list of durations."""
+    ordered = sorted(values)
+    last = len(ordered) - 1
+    return {
+        "n": len(ordered),
+        "median": round(ordered[last // 2], 4),
+        "p90": round(ordered[min(last, int(0.9 * len(ordered)))], 4),
+        "max": round(ordered[last], 4),
+    }
+
+
+def summarize_seed_timing(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate seed timing records: a tally per status, each phase's spread, and the total per status.
+
+    A phase a seed never reached carries no positive value and is left out of that phase's samples.
+    """
+    by_status: dict[str, int] = {}
+    phase_samples: dict[str, list[float]] = {}
+    total_samples: dict[str, list[float]] = {}
+    seeds = 0
+    for record in records:
+        seeds += 1
+        status = str(record.get("status", "") or "unknown")
+        by_status[status] = by_status.get(status, 0) + 1
+        for phase in SEED_TIMING_PHASES:
+            value = record.get(phase)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                phase_samples.setdefault(phase, []).append(float(value))
+                if phase == "total_sec":
+                    total_samples.setdefault(status, []).append(float(value))
+    return {
+        "seeds": seeds,
+        "by_status": by_status,
+        "phases": {
+            phase: _spread(phase_samples[phase])
+            for phase in SEED_TIMING_PHASES
+            if phase in phase_samples
+        },
+        "total_by_status": {
+            status: _spread(values) for status, values in sorted(total_samples.items())
+        },
+    }
+
+
+def format_seed_timing_line(summary: dict[str, Any]) -> str:
+    """One log line for a timing summary, each phase written as median/p90/max in seconds."""
+    statuses = ", ".join(
+        f"{status} {count}" for status, count in sorted(summary.get("by_status", {}).items())
+    )
+    phases = " | ".join(
+        f"{phase[:-4]} {spread['median']:.2f}/{spread['p90']:.2f}/{spread['max']:.2f}"
+        for phase, spread in summary.get("phases", {}).items()
+    )
+    return (
+        f"seed timing n={int(summary.get('seeds', 0))} ({statuses or '-'}) "
+        f"median/p90/max sec | {phases or 'no phase measured'}"
+    )
+
+
 class ValidatorRuntimeTracker:
     """Collects what the validator is doing into one JSON snapshot on disk plus an append-only event log."""
 
@@ -85,6 +167,7 @@ class ValidatorRuntimeTracker:
         state_dir: Path | None = None,
         snapshot_file: Path | None = None,
         events_file: Path | None = None,
+        seed_timing_file: Path | None = None,
         process_label: str = "validator",
     ) -> None:
         """Lay out the empty snapshot, resolve the state file paths, and log the tracker_started event."""
@@ -95,6 +178,12 @@ class ValidatorRuntimeTracker:
         self.events_file = (
             Path(events_file) if events_file is not None else self.state_dir / RUNTIME_EVENTS_FILE.name
         )
+        self.seed_timing_file = (
+            Path(seed_timing_file)
+            if seed_timing_file is not None
+            else self.state_dir / SEED_TIMING_FILE.name
+        )
+        self._seed_timing_window: deque[dict[str, Any]] = deque(maxlen=_SEED_TIMING_WINDOW)
         self._lock = threading.Lock()
         self._queue_item_stages: dict[str, str] = {}
         self._queue_item_progress: dict[str, dict[str, Any]] = {}
@@ -219,6 +308,7 @@ class ValidatorRuntimeTracker:
                 "reeval_started_total": 0,
                 "reeval_completed_total": 0,
             },
+            "seed_timing": summarize_seed_timing([]),
             "alerts": [],
         }
         self.record_event("tracker_started", force_snapshot=True, process_label=process_label)
@@ -811,6 +901,20 @@ class ValidatorRuntimeTracker:
             docker["cleanup_count"] = int(docker.get("cleanup_count", 0)) + 1
             docker["last_cleanup_duration_sec"] = round(float(duration_sec), 3)
             docker["last_cleanup_reason"] = str(reason)
+
+    def record_seed_timing(self, record: dict[str, Any]) -> None:
+        """Log one seed attempt's timing record and fold it into the rolling aggregate in the snapshot."""
+        if not isinstance(record, dict):
+            return
+        entry = {"ts": time.time(), **record}
+        entry = {
+            key: round(value, 4) if isinstance(value, float) else value
+            for key, value in entry.items()
+        }
+        with self._lock:
+            self._seed_timing_window.append(entry)
+            self.snapshot["seed_timing"] = summarize_seed_timing(self._seed_timing_window)
+            self._append_seed_timing_jsonl(entry)
             self._persist_snapshot_locked(force=False)
 
     def snapshot_copy(self) -> dict[str, Any]:
@@ -823,6 +927,15 @@ class ValidatorRuntimeTracker:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with self.events_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+    def _append_seed_timing_jsonl(self, entry: dict[str, Any]) -> None:
+        """Add one record as a JSON line to the seed timing log, rolling the file over once it is full."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        target = self.seed_timing_file
+        if target.exists() and target.stat().st_size >= _SEED_TIMING_MAX_BYTES:
+            target.replace(target.with_name(target.name + ".1"))
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, sort_keys=True, default=str) + "\n")
 
     def _persist_snapshot_locked(self, *, force: bool) -> None:
         """Write the snapshot atomically through a .tmp file, at most once every 0.25s unless force is set."""
