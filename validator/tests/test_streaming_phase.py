@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from swarm.validator import utils as validator_utils
+from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 from swarm.validator.utils_parts.heartbeat import HeartbeatManager
 
@@ -2260,3 +2261,107 @@ def test_a_seed_stopped_in_flight_uploads_nothing_and_hands_its_lease_back(monke
     assert uploaded == [0]
     assert cancel_reason == "backend stop_required: task cancelled"
     assert reported[-1] == []
+
+    assert reported[1] == [0], "seed dropped from the report while its score was unsent"
+    assert reported[-1] == []
+
+
+def _stream_ten_seeds(validator):
+    """Stream ten seeds as one upload batch and return the phase result."""
+    async def _run():
+        """Run the phase under a heartbeat that is closed afterwards."""
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=_FAKE_MODEL_ZIP,
+                seeds=list(range(10)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    return asyncio.run(_run())
+
+
+def _skip_backoff(monkeypatch) -> list:
+    """Replace the evaluator's sleeps with a bare yield and return the list the requested waits land in."""
+    waits: list = []
+    real_sleep = asyncio.sleep
+
+    async def _yield_only(seconds):
+        """Log the requested wait and give the loop one turn instead of sleeping."""
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(validator_evaluation.asyncio, "sleep", _yield_only)
+    return waits
+
+
+def test_streaming_phase_does_not_resend_a_refused_batch(monkeypatch):
+    """A batch the backend refuses is sent once and dropped; the phase still returns its scores."""
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    _skip_backoff(monkeypatch)
+    calls: list = []
+
+    async def _refuse(**kwargs):
+        """Refuse every upload the way the backend refuses a provenance mismatch."""
+        calls.append(len(kwargs["scores"]))
+        raise BackendRejectedError("/validators/seed-scores", 409, {"detail": "Submission provenance mismatch"})
+
+    validator.backend_api.post_seed_scores_batch = _refuse
+    scores, _per_type, _details, cancel = _stream_ten_seeds(validator)
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert calls == [10]
+
+
+def test_streaming_phase_waits_out_an_outage_after_the_last_seed(monkeypatch):
+    """A batch parked by an outage keeps being retried with growing waits until the backend is back."""
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    waits = _skip_backoff(monkeypatch)
+    calls: list = []
+
+    async def _down_then_up(**kwargs):
+        """Fail the first five uploads as an outage, then record."""
+        calls.append(len(kwargs["scores"]))
+        if len(calls) <= 5:
+            raise BackendTransportError("backend 503")
+        return {"recorded": 10}
+
+    validator.backend_api.post_seed_scores_batch = _down_then_up
+    scores, _per_type, _details, cancel = _stream_ten_seeds(validator)
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert calls == [10] * 6
+    assert [w for w in waits if w >= 5.0] == [5.0, 10.0]
+
+
+def test_streaming_phase_stops_waiting_when_the_grace_window_ends(monkeypatch):
+    """An outage that outlasts the grace window ends the phase without raising and without an endless loop."""
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(validator_evaluation, "SCORE_UPLOAD_GRACE_SEC", 0.0)
+    _skip_backoff(monkeypatch)
+    calls: list = []
+
+    async def _always_down(**kwargs):
+        """Fail every upload as an outage."""
+        calls.append(len(kwargs["scores"]))
+        raise BackendTransportError("backend 503")
+
+    validator.backend_api.post_seed_scores_batch = _always_down
+    scores, _per_type, _details, cancel = _stream_ten_seeds(validator)
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert calls == [10] * 4

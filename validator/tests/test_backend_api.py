@@ -313,29 +313,6 @@ def test_stand_down_hands_back_and_silences_later_progress(monkeypatch, tmp_path
     assert late == {"error": "standing_down"}
 
 
-def test_post_signed_http_error_returns_json_body(monkeypatch, tmp_path):
-    """A 400 comes back as its decoded body plus an error tag and the status code."""
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    response = httpx.Response(
-        status_code=400,
-        json={"detail": "bad"},
-        request=httpx.Request("POST", "http://backend.local/x"),
-    )
-    fake_http.post_error = httpx.HTTPStatusError(
-        "boom", request=response.request, response=response
-    )
-    client.client = fake_http
-
-    try:
-        data = _run(client._post_signed("/x", {"a": 1}))
-        assert data["detail"] == "bad"
-        assert data["error"] == "HTTP 400"
-        assert data["status_code"] == 400
-    finally:
-        _run(client.close())
-
-
 def test_sync_success_updates_runtime_state(monkeypatch, tmp_path):
     """A good sync maps current_champion onto current_top and passes the rest of the payload through."""
     client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
@@ -483,97 +460,6 @@ def test_publish_epoch_seeds_posts_expected_payload(monkeypatch, tmp_path):
             )
         )
         assert result == {"accepted": True}
-    finally:
-        _run(client.close())
-
-
-def test_post_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
-    """A 502 is marked transport_failure so the caller knows it may retry."""
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    response = httpx.Response(
-        status_code=502,
-        json={"detail": "Bad Gateway"},
-        request=httpx.Request("POST", "http://backend.local/x"),
-    )
-    fake_http.post_error = httpx.HTTPStatusError(
-        "boom", request=response.request, response=response
-    )
-    client.client = fake_http
-    try:
-        data = _run(client._post_signed("/x", {"a": 1}))
-        assert data.get("transport_failure") is True
-        assert data.get("status_code") == 502
-    finally:
-        _run(client.close())
-
-
-def test_post_signed_4xx_does_not_tag_transport_failure(monkeypatch, tmp_path):
-    """A 409 is a real rejection: no retry marker, and the body reaches the caller intact."""
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    response = httpx.Response(
-        status_code=409,
-        json={"detail": "already submitted"},
-        request=httpx.Request("POST", "http://backend.local/x"),
-    )
-    fake_http.post_error = httpx.HTTPStatusError(
-        "conflict", request=response.request, response=response
-    )
-    client.client = fake_http
-    try:
-        data = _run(client._post_signed("/x", {"a": 1}))
-        assert "transport_failure" not in data
-        assert data["detail"] == "already submitted"
-        assert data["status_code"] == 409
-    finally:
-        _run(client.close())
-
-
-def test_post_signed_connection_error_tags_transport_failure(monkeypatch, tmp_path):
-    """A refused socket comes back as a marked error dict rather than an exception."""
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    fake_http.post_error = httpx.ConnectError("cannot connect")
-    client.client = fake_http
-    try:
-        data = _run(client._post_signed("/x", {"a": 1}))
-        assert data.get("transport_failure") is True
-        assert "error" in data
-    finally:
-        _run(client.close())
-
-
-def test_post_signed_timeout_tags_transport_failure(monkeypatch, tmp_path):
-    """A read timeout counts as retryable, exactly like a 5xx."""
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    fake_http.post_error = httpx.ReadTimeout("read timed out")
-    client.client = fake_http
-    try:
-        data = _run(client._post_signed("/x", {"a": 1}))
-        assert data.get("transport_failure") is True
-    finally:
-        _run(client.close())
-
-
-def test_get_signed_5xx_tags_transport_failure(monkeypatch, tmp_path):
-    """The GET path marks a 503 retryable and keeps its status code in the body."""
-    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
-    fake_http = _FakeAsyncClient()
-    response = httpx.Response(
-        status_code=503,
-        json={"detail": "Service Unavailable"},
-        request=httpx.Request("GET", "http://backend.local/x"),
-    )
-    fake_http.get_error = httpx.HTTPStatusError(
-        "boom", request=response.request, response=response
-    )
-    client.client = fake_http
-    try:
-        data = _run(client._get_signed("/x"))
-        assert data.get("transport_failure") is True
-        assert data.get("status_code") == 503
     finally:
         _run(client.close())
 
