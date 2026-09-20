@@ -2359,3 +2359,80 @@ def test_every_name_read_through_the_evaluator_facade_exists():
     assert names, "no facade reads found; the pattern is stale"
     missing = sorted(n for n in names if not hasattr(de, n))
     assert not missing, f"read through the facade but not on the module: {missing}"
+
+
+def test_legal_thinking_sec_holds_the_per_step_budget_for_every_step():
+    """The clock allowance is steps x the per-step budget, scaled by the host factor and never below 1.0x."""
+    from swarm.constants import MINER_COMPUTE_BUDGET_SEC
+    from swarm.validator.docker.docker_evaluator_parts.batch import _legal_thinking_sec
+
+    seed = SimpleNamespace(horizon=60.0, sim_dt=1.0 / 50.0)
+    per_seed = 3000 * MINER_COMPUTE_BUDGET_SEC
+
+    assert _legal_thinking_sec([seed], 1.0) == pytest.approx(per_seed)
+    assert _legal_thinking_sec([seed], 1.3) == pytest.approx(per_seed * 1.3)
+    assert _legal_thinking_sec([seed], 0.7) == pytest.approx(per_seed), "a fast host keeps the full budget"
+    assert _legal_thinking_sec([seed], None) == pytest.approx(per_seed)
+    assert _legal_thinking_sec([seed, seed], 1.0) == pytest.approx(2 * per_seed)
+    assert _legal_thinking_sec([], 1.0) == 0.0
+
+
+def test_process_parallel_attaches_the_timing_record_to_the_result(monkeypatch, tmp_path):
+    """The result handed to the caller carries the seed's timing record, so the upload can report it."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(challenge_type=2, map_seed=77, horizon=60.0)
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 9,
+                            "map_seed": 77,
+                            "challenge_type": 2,
+                            "status": "seed_done",
+                            "success": True,
+                            "sim_time_sec": 60.0,
+                            "seed_wall_sec": 61.0,
+                            "step_idx": 3000,
+                            "error": "",
+                            "act_sec": 12.5,
+                            "sim_sec": 40.0,
+                            "env_build_sec": 3.0,
+                            "calibration_cpu_factor": 1.3,
+                        }
+                    ],
+                    "results": [(9, True, 60.0, 0.9)],
+                    "elapsed_sec": 61.0,
+                },
+            ]
+        },
+    )
+    seen = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[{"group": "type2_open", "seed": 77, "index": 0, "challenge_type": 2, "horizon": 60.0}],
+            batch_plan=[[0]],
+            uid=9,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_result=lambda idx, result, status: seen.append((idx, result, status)),
+            phase_label="eval",
+        )
+    )
+
+    assert results[0].score == pytest.approx(0.9)
+    (idx, result, status), = seen
+    assert (idx, status) == (0, "seed_done")
+    timing = result.metrics["timing"]
+    assert timing["act_sec"] == pytest.approx(12.5)
+    assert timing["sim_sec"] == pytest.approx(40.0)
+    assert timing["calibration_cpu_factor"] == pytest.approx(1.3)
+    assert timing["attempt"] == 1

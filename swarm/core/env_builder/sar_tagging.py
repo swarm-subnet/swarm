@@ -20,8 +20,8 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import os
-import sys
 from typing import Iterable, Optional, Set
 
 import pybullet as p
@@ -29,29 +29,37 @@ import pybullet as p
 from .body_tagger import BodyTagger
 from .sar_types import BodyCategory
 
+_STDOUT_FD = 1
+_STDERR_FD = 2
+
 
 @contextlib.contextmanager
-def _muted_stderr():
-    """Drop the C++ warning pybullet prints for shape queries that legitimately miss."""
+def _muted_engine_output():
+    """Drop the C++ warning pybullet prints for shape queries that legitimately miss.
+
+    The engine writes it through C stdio on stdout, block-buffered under pm2, so both
+    descriptors are pointed at /dev/null and the C buffers are flushed before they return."""
     try:
-        fd = sys.stderr.fileno()
-    except (AttributeError, OSError, ValueError):
+        saved = {fd: os.dup(fd) for fd in (_STDOUT_FD, _STDERR_FD)}
+    except OSError:
         yield
         return
-    saved = os.dup(fd)
     devnull = os.open(os.devnull, os.O_WRONLY)
     try:
-        os.dup2(devnull, fd)
+        for fd in saved:
+            os.dup2(devnull, fd)
         yield
     finally:
-        os.dup2(saved, fd)
+        ctypes.CDLL(None).fflush(None)
+        for fd, copy in saved.items():
+            os.dup2(copy, fd)
+            os.close(copy)
         os.close(devnull)
-        os.close(saved)
 
 
 def classify_body(cli: int, uid: int, *, challenge_type: int) -> str:
     """Read a body's collision shape and AABB to decide if it is terrain, a floor, a rooftop or an obstacle."""
-    with _muted_stderr():
+    with _muted_engine_output():
         try:
             shape_data = p.getCollisionShapeData(uid, -1, physicsClientId=cli)
         except p.error:

@@ -2365,3 +2365,69 @@ def test_streaming_phase_stops_waiting_when_the_grace_window_ends(monkeypatch):
     assert cancel is None
     assert len(scores) == 10
     assert calls == [10] * 4
+
+
+def test_run_full_benchmark_uploads_the_seed_timing_as_runtime_details(tmp_path):
+    """Every uploaded score row carries the host speed factor and the phase timings of its flight."""
+    from swarm.protocol import ValidationResult
+
+    model_path = tmp_path / "UID_44.zip"
+    model_path.write_bytes(b"fake-model")
+    uploads: list[list[dict]] = []
+
+    async def _evaluate_seeds_parallel(tasks, uid, model_path, **kwargs):
+        """Return one result per task with the timing record a real worker attaches."""
+        on_seed_result = kwargs.get("on_seed_result")
+        results = []
+        for i, _task in enumerate(tasks):
+            result = ValidationResult(int(uid), True, 60.0, 0.5)
+            result.metrics["timing"] = {
+                "calibration_cpu_factor": 1.3, "act_sec": 12.5, "act_max_sec": 0.2, "sim_sec": 40.0,
+                "env_build_sec": 3.0, "seed_wall_sec": 61.0, "total_sec": 63.0, "attempt": 1,
+                "status": "seed_done",
+            }
+            results.append(result)
+            if on_seed_result is not None:
+                on_seed_result(i, result, "seed_done")
+        return results
+
+    async def _capture_upload(**kwargs):
+        """Keep each posted batch of score rows and acknowledge it."""
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    async def _post_heartbeat(**kwargs):
+        """Acknowledge the heartbeat without asking for a stop."""
+        return {"ok": True}
+
+    validator = SimpleNamespace(
+        docker_evaluator=SimpleNamespace(
+            evaluate_seeds_parallel=_evaluate_seeds_parallel,
+            _get_image_hash_label=lambda: "test-image-hash",
+            _calculate_docker_hash=lambda: "test-image-hash",
+        ),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_capture_upload,
+        ),
+        seed_manager=SimpleNamespace(
+            epoch_number=7,
+            get_benchmark_seeds=lambda: [900001 + i for i in range(3)],
+        ),
+    )
+
+    async def _run():
+        """Benchmark UID 44 through the real streaming path."""
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=44, model_path=model_path,
+        )
+
+    asyncio.run(_run())
+
+    rows = [row for batch in uploads for row in batch]
+    assert len(rows) == 3
+    for row in rows:
+        assert row["runtime_details"] == {
+            "speed_factor": 1.3, "act_sec": 12.5, "act_max_sec": 0.2, "sim_sec": 40.0,
+            "env_build_sec": 3.0, "seed_wall_sec": 61.0, "total_sec": 63.0, "attempt": 1,
+        }

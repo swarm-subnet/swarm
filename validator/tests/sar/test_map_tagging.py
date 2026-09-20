@@ -109,3 +109,38 @@ def test_forest_trees_never_classified_as_support(sar_pybullet, seed):
         )
 
     assert world.support_category.startswith("SUPPORT_")
+
+
+def test_tagging_the_warehouse_prints_nothing_from_the_engine(sar_pybullet, tmp_path):
+    """Classifying every warehouse body leaves the process's stdout and stderr empty.
+
+    Thousands of its shelf pieces have no collision shape, and the engine prints a warning
+    for each one on C stdio, which the mute has to catch on the descriptor, not on the Python
+    stream."""
+    import ctypes
+    import os
+
+    from swarm.core.env_builder.sar_tagging import tag_world_after_build
+
+    tagger = build_and_tag_map(
+        sar_pybullet, seed=1005, challenge_type=5,
+        start=(0.0, 0.0, 1.5), goal=(10.0, 10.0, 1.5),
+    )
+    bodies = enumerate_bodies(sar_pybullet)
+    tagger.body_tags.clear()
+    capture = tmp_path / "engine_output.txt"
+    saved = {fd: os.dup(fd) for fd in (1, 2)}
+    sink = os.open(capture, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    try:
+        for fd in saved:
+            os.dup2(sink, fd)
+        tag_world_after_build(sar_pybullet, tagger, challenge_type=5, body_range=bodies)
+        ctypes.CDLL(None).fflush(None)
+    finally:
+        for fd, copy in saved.items():
+            os.dup2(copy, fd)
+            os.close(copy)
+        os.close(sink)
+
+    assert len(tagger.body_tags) == len(bodies)
+    assert capture.read_bytes() == b""
