@@ -218,6 +218,49 @@ async def test_run_task_aborts_when_cancel_flag_signal(
 
 
 @pytest.mark.asyncio
+async def test_run_task_cancelled_during_the_download_never_starts_the_phase(
+    monkeypatch, fake_model_path,
+):
+    """A cancel that lands while the model downloads ends the task there: no phase runs and nothing is filed."""
+    target_hash = ("abc" * 22)[:64]
+    backend = _RecordingBackend()
+    cancel = asyncio.Event()
+    phases_run = []
+    _patch_helpers(monkeypatch)
+
+    async def _fetch_then_cancel(_self, _models):
+        """Hand back the model, with the cancel arriving while it was on its way."""
+        cancel.set()
+        return {42: (fake_model_path, "https://github.com/x/y")}
+
+    async def _record_phase(*_args, **_kwargs):
+        """Note that a phase started, which a cancelled task must never reach."""
+        phases_run.append(True)
+
+    monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", _fetch_then_cancel)
+    monkeypatch.setattr(run_task_module, "_run_phase", _record_phase)
+
+    await run_task_module.run_task(
+        _validator(backend_api=backend),
+        {
+            "task_id": 103,
+            "uid": 42,
+            "phase": "BENCHMARK",
+            "seeds_from": 200,
+            "seeds_to": 1200,
+            "model_hash": target_hash,
+            "github_url": "https://github.com/x/y",
+            "epoch_number": 5,
+        },
+        cancel_flag=cancel,
+        wake_flag=asyncio.Event(),
+    )
+
+    assert phases_run == []
+    assert backend.submissions == []
+
+
+@pytest.mark.asyncio
 async def test_run_task_benchmark_happy_path(monkeypatch, fake_model_path):
     """A benchmark reports the window offset plus the seeds it flew, so seeds 200 to 1000 submit as 1000."""
     target_hash = ("abc" * 22)[:64]

@@ -254,8 +254,11 @@ def _benchmark_worker_main(
     task_queue: Any,
     result_queue: Any,
     progress_queue: Any,
+    cancel_event: Any = None,
 ) -> None:
-    """Worker process body: fly each batch from the queue in its own container."""
+    """Worker process body: fly each batch from the queue in its own container.
+
+    ``cancel_event`` is the parent's stop signal; once set, the seed in flight is abandoned."""
     _die_with_parent()
     _apply_host_worker_limits(process_slot)
     loop = asyncio.new_event_loop()
@@ -287,7 +290,8 @@ def _benchmark_worker_main(
 
             def _prewarm_next() -> None:
                 """Start the next seed's container now that this one is serving."""
-                if getattr(request, "prewarm_next", False) and _prewarm_enabled():
+                cancelled = cancel_event is not None and cancel_event.is_set()
+                if getattr(request, "prewarm_next", False) and _prewarm_enabled() and not cancelled:
                     next_start["start"] = WarmContainerStart(evaluator, key)
 
             batch_start = time.time()
@@ -350,6 +354,7 @@ def _benchmark_worker_main(
                         model_image=getattr(request, "model_image", None),
                         warm_container=warm,
                         on_container_ready=_prewarm_next,
+                        cancel_event=cancel_event,
                     )
                 )
                 result_queue.put(

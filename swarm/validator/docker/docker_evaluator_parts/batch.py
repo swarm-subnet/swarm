@@ -489,6 +489,7 @@ class _BatchContext:
     task_total: Optional[int] = None
     runtime_profile_payload: Optional[dict[str, Any]] = None
     speed_factor: Optional[float] = None
+    cancel_event: Optional[Any] = None
 
     # Trace + sync primitives (built in _init_batch_state)
     trace_rpc: bool = False
@@ -542,6 +543,9 @@ _CONTAINER_FIELDS = (
 _WARM_CPU_SHARES = 2
 _WARM_CPU_LIMIT = "0.5"
 _ACTIVE_CPU_SHARES = 1024
+
+# How long a stopped batch waits for its flight loop to leave the step it is in.
+_CANCEL_GRACE_SEC = 5.0
 
 
 def _init_batch_state(ctx: _BatchContext) -> None:
@@ -893,12 +897,16 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
         rpc_thread.start()
 
         timed_out = False
+        cancelled = False
         eval_start = time.time()
         timeout_deadline = eval_start + batch_timeout
         extension_count = 0
         last_extended_sim_t = -1.0
         last_extended_step_idx = -1
         while not rpc_done.is_set():
+            if _cancel_requested(ctx):
+                cancelled = True
+                break
             now = time.time()
             if now >= timeout_deadline:
                 if extend_on_progress:
@@ -956,6 +964,17 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                 timed_out = True
                 break
             await asyncio.sleep(0.2)
+
+        if cancelled:
+            stop_event.set()
+            _phase("stop requested by the dispatcher; abandoning the seeds in flight")
+            grace_deadline = time.monotonic() + _CANCEL_GRACE_SEC
+            while not rpc_done.is_set() and time.monotonic() < grace_deadline:
+                await asyncio.sleep(0.1)
+            partial_results = rpc_payload.get("results")
+            if isinstance(partial_results, list) and len(partial_results) == len(tasks):
+                return partial_results
+            return _cancelled_batch(ctx, "seed_cancelled")
 
         if timed_out:
             stop_event.set()
@@ -1544,7 +1563,7 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
     gate_opened_at = time.monotonic()
     ctx.lockdown_sec = gate_opened_at - t_lockdown
     deadline = gate_opened_at + AGENT_STARTUP_WALL_SEC
-    while time.monotonic() < deadline:
+    while time.monotonic() < deadline and not _cancel_requested(ctx):
         if ctx.self._check_rpc_ready(ctx.host_port):
             ctx.connected = True
             ctx.serve_sec = time.monotonic() - gate_opened_at
@@ -1560,6 +1579,20 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
     gone = _container_is_gone(ctx.container_name)
     ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
     return ReasonCode.LOAD_FAILED if gone else ReasonCode.INFRA_DOCKER
+
+
+def _cancel_requested(ctx: _BatchContext) -> bool:
+    """True once the dispatcher has asked this batch to stop."""
+    return ctx.cancel_event is not None and ctx.cancel_event.is_set()
+
+
+def _cancelled_batch(ctx: _BatchContext, status: str) -> list:
+    """Report every unfinished seed under a stop status; none of them carries a score."""
+    ctx.helpers.notify_all_failed(status=status)
+    return [
+        ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value)
+        for _ in ctx.tasks
+    ]
 
 
 def _fail_batch(ctx: _BatchContext, reason: ReasonCode) -> list:
@@ -1725,6 +1758,7 @@ async def evaluate_seeds_batch(
     model_image: Optional[str] = None,
     warm_container: Optional[WarmContainer] = None,
     on_container_ready: Optional[Callable[[], None]] = None,
+    cancel_event: Optional[Any] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1736,6 +1770,7 @@ async def evaluate_seeds_batch(
         model_image: Pre-built image carrying the miner's declared dependencies
         warm_container: A spare started ahead of time; adopted instead of a fresh start
         on_container_ready: Called once the container serves, before the first seed flies
+        cancel_event: Set by the dispatcher to abandon the batch; unfinished seeds report a stop status
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -1755,9 +1790,14 @@ async def evaluate_seeds_batch(
         task_total=task_total,
         runtime_profile_payload=runtime_profile_payload,
         model_image=model_image,
+        cancel_event=cancel_event,
     )
 
     _init_batch_state(ctx)
+
+    if _cancel_requested(ctx):
+        discard_warm_container(warm_container)
+        return _cancelled_batch(ctx, "stopped_before_seed")
 
     early = _validate_inputs(ctx)
     if early is not None:
@@ -1810,6 +1850,8 @@ async def evaluate_seeds_batch(
         t0 = time.monotonic()
         if not adopted:
             failure = await _prepare_container(ctx)
+            if failure is not None and _cancel_requested(ctx):
+                return _cancelled_batch(ctx, "stopped_before_seed")
             if failure is not None:
                 return _fail_batch(ctx, failure)
 
