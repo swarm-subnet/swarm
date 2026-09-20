@@ -214,6 +214,7 @@ RPC_MAX_STRIKES_PER_SEED = 15           # Soft timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 600.0            # Base overhead for global worker timeout (seconds); one-seed validator batches get ~600s wall-clock
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
 GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker timeout (seconds)
+SEED_STALL_TIMEOUT_SEC = 222.0          # Cut a seed once no phase or step has reported progress for this long
 
 # Hardware-fair calibrated timing
 MINER_COMPUTE_BUDGET_SEC = 0.600        # Guaranteed pure-compute budget per step (seconds)
