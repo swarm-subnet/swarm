@@ -27,6 +27,10 @@
 ARG BASE_IMAGE=ghcr.io/swarm-subnet/swarm:base
 FROM ${BASE_IMAGE}
 
+# Brought in here as well as in the base: a host holding a base image from before
+# uv arrived would otherwise fail this build with "uv: not found".
+COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/
+
 # The validator drives the host's Docker daemon through the mounted socket, so it needs
 # the client and buildx to build and run the evaluation containers. iptables and nsenter
 # are what the runner uses to cut a container's network off mid-flight.

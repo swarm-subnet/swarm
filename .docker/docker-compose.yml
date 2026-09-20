@@ -49,6 +49,9 @@ services:
     build:
       context: ..
       dockerfile: .docker/validator.Dockerfile
+      # A local build starts from the published base as it is today, not from
+      # whatever copy of it the host pulled months ago.
+      pull: true
     pull_policy: always
     container_name: swarm_validator_node
     profiles: ["validator"]
