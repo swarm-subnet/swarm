@@ -880,7 +880,9 @@ async def _run_process_parallel(
                 prior_retries = int(batch_retry_counts.get(int(request.batch_index), 0))
                 if (
                     (
-                        bench_engine._is_timeout_retry_status(final_status)
+                        # In seed flow the pool is the retry: a timed-out seed goes back at
+                        # once instead of holding this worker for a second full timeout.
+                        (bench_engine._is_timeout_retry_status(final_status) and not feeder_active)
                         # transient (e.g. host port briefly taken) -> retry, don't score 0
                         or final_status in ("container_start_failed", "INFRA_DOCKER")
                     )

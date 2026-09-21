@@ -39,6 +39,7 @@ import numpy as np
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.utils.hash import sha256sum
+from swarm.validator.runtime_telemetry import tracker_call
 
 from .evaluation import _run_full_benchmark, _run_screening
 from .model_fetch import _ensure_models_from_backend, _set_private_marker, stored_model_path
@@ -47,6 +48,15 @@ from .model_fetch import _ensure_models_from_backend, _set_private_marker, store
 def _pool_drained(granted: list, pending: int) -> bool:
     """An empty pool ends the run even while other validators fly trailing seeds."""
     return not granted and pending == 0
+
+
+def _repeat_handouts(resp: Dict[str, Any]) -> Dict[int, int]:
+    """Granted seeds that have been handed out before, mapped to the hand-out they are now on."""
+    return {
+        int(index): int(number)
+        for index, number in (resp.get("handouts") or {}).items()
+        if int(number) > 1
+    }
 
 
 def _adopt_task_seed_key(seed_manager, task: Dict[str, Any], epoch: int) -> None:
@@ -191,6 +201,16 @@ async def _run_phase(
                 bt.logging.info(
                     f"[seed-flow] claimed {len(granted)} seed(s) [{shown}] · pool {pending} open"
                 )
+                ceiling = int(resp.get("max_handouts") or 0)
+                for index, number in sorted(_repeat_handouts(resp).items()):
+                    bt.logging.warning(
+                        f"[seed-flow] seed {index} is on hand-out {number} of {ceiling} "
+                        f"· {max(0, ceiling - number)} left before it closes unscorable"
+                    )
+                    tracker_call(
+                        self, "record_event", "seed_rehanded", severity="warning",
+                        uid=uid, seed_index=index, handout=number, max_handouts=ceiling,
+                    )
             elif drained and others:
                 bt.logging.info(
                     f"[seed-flow] pool drained ({others} seed(s) finishing on other validators) · moving on"

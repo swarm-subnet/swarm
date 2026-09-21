@@ -34,7 +34,7 @@ import pytest
 
 from swarm.benchmark import engine as bench_full_eval
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
-from swarm.protocol import ValidationResult
+from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.calibration import SpeedFactor
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import lifecycle
@@ -1176,6 +1176,72 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
     assert [payload["status"] for payload in callback_payloads] == ["seed_done"]
     assert any("retrying timed-out seed village:#0" in line for line in log_lines)
     assert any("1 retried_timeout" in line for line in log_lines)
+
+
+@pytest.mark.full
+def test_run_process_parallel_hands_a_timed_out_seed_back_in_seed_flow(monkeypatch, tmp_path):
+    """Under the seed feeder a wall-clock timeout is final here: the pool retries it, not this host."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=4,
+        map_seed=3101,
+        horizon=60.0,
+    )
+    timed_out = {
+        "seed_events": [
+            {
+                "uid": 41,
+                "map_seed": 3101,
+                "challenge_type": 4,
+                "status": "seed_cancelled",
+                "success": False,
+                "sim_time_sec": 12.0,
+                "seed_wall_sec": 840.0,
+                "step_idx": 123,
+                "error": "",
+            }
+        ],
+        "results": [(41, False, 12.0, 0.0)],
+        "elapsed_sec": 840.0,
+    }
+    scripted_context = _ScriptedContext(bench_full_eval, {0: [timed_out, timed_out]})
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    async def _drained_feeder(_free_slots):
+        """Offer nothing more and report the pool drained."""
+        return [], True
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type4_village",
+                    "seed": 3101,
+                    "index": 0,
+                    "challenge_type": 4,
+                    "horizon": 60.0,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=41,
+            model_path=model_path,
+            effective_workers=1,
+            phase_label="eval",
+            seed_feeder=_drained_feeder,
+            initial_pending=[0],
+        )
+    )
+
+    assert scripted_context.attempts == {0: 1}, "the seed must not be flown twice on this host"
+    assert results[0].failure_reason == FailureReason.INFRA.value
+    assert not any("retrying timed-out seed" in line for line in log_lines)
 
 
 @pytest.mark.full

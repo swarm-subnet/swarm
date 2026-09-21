@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from swarm.validator.utils_parts.evaluation import _evaluate_seeds
+from swarm.validator.utils_parts.run_task import _repeat_handouts
 
 
 class _StubEvaluator:
@@ -103,3 +104,15 @@ def test_pool_drained_ignores_seeds_flying_elsewhere():
     assert _pool_drained([], 0) is True
     assert _pool_drained([], 5) is False
     assert _pool_drained([7], 0) is False
+
+
+def test_only_seeds_handed_out_before_are_reported():
+    """A first hand-out is ordinary work; only a repeat is named, with JSON's string keys read back as indexes."""
+    reply = {"granted": [3, 40], "handouts": {"3": 1, "40": 4}, "max_handouts": 6}
+
+    assert _repeat_handouts(reply) == {40: 4}
+
+
+def test_a_backend_that_sends_no_hand_out_numbers_reports_nothing():
+    """An older backend omits the field, and the claim loop must carry on unchanged."""
+    assert _repeat_handouts({"granted": [3]}) == {}
