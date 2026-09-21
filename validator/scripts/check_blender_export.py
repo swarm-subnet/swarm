@@ -61,6 +61,7 @@ BASE_TOLERANCE = 0.05
 AXIS_ALIGNED = 0.9
 JPEG_BASELINE = (0xC0, 0xC1)
 JPEG_PROGRESSIVE = 0xC2
+FLAT_SHELL = 1e-6
 RECALCULATE = "in Blender select all, Mesh > Normals > Recalculate Outside"
 
 Vec3 = Tuple[float, float, float]
@@ -328,6 +329,7 @@ def check_orientation(obj: ObjFile) -> List[Finding]:
                                 "recalculate normals outside and export normals again", first_against))
 
     volume: Dict[int, float] = defaultdict(float)
+    swept: Dict[int, float] = defaultdict(float)
     faces_of: Counter = Counter()
     first_line: Dict[int, int] = {}
     for line_no, tri in triangles:
@@ -335,10 +337,13 @@ def check_orientation(obj: ObjFile) -> List[Finding]:
         if component in broken:
             continue
         a, b, c = (positions[i] for i in tri)
-        volume[component] += _dot(a, _cross(b, c))
+        signed = _dot(a, _cross(b, c))
+        volume[component] += signed
+        swept[component] += abs(signed)
         faces_of[component] += 1
         first_line.setdefault(component, line_no)
-    inside_out = [c for c, v in volume.items() if v < 0]
+    # A flat double-sided card encloses nothing, so its signed volume is rounding noise against what its faces sweep.
+    inside_out = [c for c, v in volume.items() if v < -FLAT_SHELL * swept[c]]
     if inside_out:
         findings.append(Finding(obj.path, "error", f"{len(inside_out)} closed shells are inside out ({sum(faces_of[c] for c in inside_out)} faces), the engine shows them only from inside",
                                 RECALCULATE, min(first_line[c] for c in inside_out)))

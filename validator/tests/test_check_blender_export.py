@@ -208,6 +208,14 @@ def test_inside_out_shell(tmp_path):
     assert "opposite directions" not in messages(found)
 
 
+def test_double_sided_card_is_not_inside_out(tmp_path):
+    """Two triangles on the same corners wound both ways enclose nothing and raise no inside-out error."""
+    # These corners make the two signed volumes cancel to -9e-16 rather than to zero exactly.
+    card = [(1.675, 1.113, 1.285), (0.372, 1.985, 1.72), (0.242, 0.665, 1.443)]
+    write_piece(tmp_path, vertices=card, faces=[((1, 2, 3), 1), ((2, 1, 3), 1)], normals=[(0, 0, 1)])
+    assert "inside out" not in messages(run(tmp_path))
+
+
 def test_normals_against_winding_is_a_warning(tmp_path):
     """vn vectors that oppose the winding are a warning, not an error."""
     write_piece(tmp_path, flip_normals=True)
