@@ -102,13 +102,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The validator tests run inside the image itself, as a plain uid with no wallet,
-      # so what gets published is what passed and not merely what built.
+      # The validator tests run inside the image itself, as a plain uid with no wallet, so
+      # what gets published is what passed and not merely what built. The checkout is
+      # mounted the way the Tests workflow mounts it: the image ships neither .github nor a
+      # writable state directory, and the suite reads one and writes the other.
       - name: Run the validator tests inside the image
         if: steps.plan.outputs.publish == 'true'
         run: |
           docker run --rm --cpus=4 \
+            -v "$PWD":/app \
+            -w /app \
             -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/app \
+            -e HOME=/tmp \
             --user "$(id -u):$(id -g)" \
             swarm-validator:candidate \
             pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider
