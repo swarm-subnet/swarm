@@ -328,7 +328,7 @@ def _setup_base_container(self):
 
         try:
             remove_owned_containers(adopt_unlabelled=True)
-            remove_all_model_images()
+            remove_all_model_images(adopt_unlabelled=True)
             prune_swarm_images()
         except Exception:
             pass

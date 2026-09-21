@@ -40,3 +40,13 @@ def instance_id() -> str:
 def instance_label() -> str:
     """The key=value Docker label carrying the owner name."""
     return f"{INSTANCE_LABEL_KEY}={instance_id()}"
+
+
+def is_unowned(owner: str) -> bool:
+    """Whether a label value names nobody: absent, or the default a process carries before it is named."""
+    return owner in ("", _DEFAULT_INSTANCE_ID)
+
+
+def obs_shm_path(host_port: int) -> str:
+    """The /dev/shm observation buffer for the container on this port, named after its owner."""
+    return f"/dev/shm/swarm_obs_{instance_id()}_{host_port}.bin"

@@ -23,6 +23,7 @@ import math
 import multiprocessing as mp
 import os
 import queue
+import re
 import shutil
 import subprocess
 import tempfile
@@ -56,7 +57,13 @@ from swarm.protocol import (
     is_supported_schema,
     normalize_version,
 )
-from swarm.utils.docker_instance import INSTANCE_LABEL_KEY, instance_id, instance_label
+from swarm.utils.docker_instance import (
+    INSTANCE_LABEL_KEY,
+    instance_id,
+    instance_label,
+    is_unowned,
+    obs_shm_path,
+)
 from swarm.utils.hash import sha256sum
 from swarm.validator.calibration import (
     SpeedFactor,
@@ -438,29 +445,23 @@ def prune_build_cache_if_disk_low() -> None:
 
 
 def remove_model_image(image_tag: str) -> None:
-    """Remove a per-model image once its evaluation is finished."""
+    """Remove a per-model image once its evaluation is finished.
+
+    A daemon that does not answer is the caller's to handle: swallowing the timeout
+    here would let a sweep wait it out once per image instead of once.
+    """
     try:
         subprocess.run(["docker", "rmi", image_tag], capture_output=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise
     except Exception:
         pass
 
 
-def remove_all_model_images() -> None:
-    """Drop every cached per-model image; stale bases must not survive a base rebuild."""
-    try:
-        result = subprocess.run(
-            [
-                "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
-                "--filter", "reference=swarm_eval_model_*",
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0 and result.stdout:
-            for img in result.stdout.strip().split("\n"):
-                if img:
-                    remove_model_image(img)
-    except Exception:
-        pass
+def remove_all_model_images(adopt_unlabelled: bool = False) -> None:
+    """Drop this instance's cached per-model images; stale bases must not survive a base rebuild."""
+    for img in _owned_model_images(adopt_unlabelled):
+        remove_model_image(img)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -778,7 +779,7 @@ OBS_SHM_BYTES = 32 * 1024 * 1024
 
 def _obs_shm_host_path(host_port: int) -> str:
     """The /dev/shm file that carries observations to the container published on this port."""
-    return f"/dev/shm/swarm_obs_{host_port}.bin"
+    return obs_shm_path(host_port)
 
 
 def _create_obs_shm(host_port: int) -> Optional[str]:
@@ -1885,22 +1886,40 @@ def _owned_containers(prefix: str, adopt_unlabelled: bool) -> list[str]:
     owned = []
     for line in result.stdout.splitlines():
         name, _, owner = line.partition("\t")
-        if name and (owner == owner_id or (adopt_unlabelled and not owner)):
+        if name and (owner == owner_id or (adopt_unlabelled and is_unowned(owner))):
             owned.append(name)
     return owned
 
 
-def _reap_model_images() -> None:
-    """Remove this instance's per-model images whose model zip is no longer on disk."""
+def _owned_model_images(adopt_unlabelled: bool) -> list[str]:
+    """Tags of this instance's per-model images, plus the unowned ones when asked.
+
+    The owner is read from the label column rather than passed as a filter, because
+    a filter cannot say "mine or nobody's", and the images a release before the label
+    left behind are nobody's.
+    """
     result = subprocess.run(
         [
-            "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
-            "--filter", "reference=swarm_eval_model_*",
-            "--filter", f"label={instance_label()}",
+            "docker", "images", "--filter", "reference=swarm_eval_model_*",
+            "--format", f'{{{{.Repository}}}}:{{{{.Tag}}}}\t{{{{.Label "{INSTANCE_LABEL_KEY}"}}}}',
         ],
         capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
     )
-    if result.returncode != 0 or not result.stdout:
+    if result.returncode != 0:
+        return []
+    owner_id = instance_id()
+    owned = []
+    for line in result.stdout.splitlines():
+        tag, _, owner = line.partition("\t")
+        if tag and (owner == owner_id or (adopt_unlabelled and is_unowned(owner))):
+            owned.append(tag)
+    return owned
+
+
+def _reap_model_images(adopt_unlabelled: bool = False) -> None:
+    """Remove this instance's per-model images whose model zip is no longer on disk."""
+    images = _owned_model_images(adopt_unlabelled)
+    if not images:
         return
     live_tags = set()
     for zip_fp in MODEL_DIR.glob("*.zip"):
@@ -1908,8 +1927,8 @@ def _reap_model_images() -> None:
             live_tags.add(model_image_tag(sha256sum(zip_fp)))
         except Exception:
             continue
-    for img in result.stdout.strip().split("\n"):
-        if img and img not in live_tags:
+    for img in images:
+        if img not in live_tags:
             remove_model_image(img)
 
 
@@ -1931,6 +1950,21 @@ def remove_owned_containers(adopt_unlabelled: bool = False) -> None:
             bt.logging.debug(f"Cleaned up orphaned container: {container}")
 
 
+def _owned_obs_buffers(adopt_unlabelled: bool) -> list[Path]:
+    """This instance's observation buffers in /dev/shm, plus the ownerless ones when asked.
+
+    A buffer from before the owner was in the name is just a port number; another
+    validator's carries its own name and is never touched.
+    """
+    owned = list(Path("/dev/shm").glob(f"swarm_obs_{instance_id()}_*.bin"))
+    if adopt_unlabelled:
+        owned += [
+            p for p in Path("/dev/shm").glob("swarm_obs_*.bin")
+            if re.fullmatch(r"swarm_obs_\d+\.bin", p.name)
+        ]
+    return owned
+
+
 def cleanup(self, prune: bool = False, adopt_unlabelled: bool = False):
     """Remove this instance's leftover containers and model images.
 
@@ -1938,14 +1972,14 @@ def cleanup(self, prune: bool = False, adopt_unlabelled: bool = False):
     tight disk. Every Docker call is bounded and the first timeout ends the pass, so a
     wedged daemon costs one wait and one warning instead of a frozen validator.
     """
-    for stale in Path("/dev/shm").glob("swarm_obs_*.bin"):
+    for stale in _owned_obs_buffers(adopt_unlabelled):
         try:
             stale.unlink()
         except OSError:
             pass
     try:
         remove_owned_containers(adopt_unlabelled)
-        _reap_model_images()
+        _reap_model_images(adopt_unlabelled)
         if prune:
             prune_swarm_images()
             prune_build_cache_if_disk_low()
