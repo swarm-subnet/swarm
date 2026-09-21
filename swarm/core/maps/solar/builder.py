@@ -42,13 +42,14 @@ CONFIG: Dict[str, Any] = {
     "seed_offset": 0x501A2,                      # own stream: the map must not ride the other seed draws
     "density": {"near": (0.6, 1.0),              # share of the trees by the fence and the road a seed keeps
                 "mid": (0.5, 1.0),               # share of the trees on the slopes a seed keeps
-                "far": (1.0, 1.0)},              # the forest mass on the far hills always stands
+                "far": (1.0, 1.0),               # the forest mass on the far hills always stands
+                "grass": (0.5, 1.0)},            # share of the grass tufts a seed keeps, a dry year against a green one
     "cylinder_radius_m": 0.13,                   # trunk and post stand-in for the drone to hit
     "cylinder_height_share": 0.6,                # of the piece's height, so a crown is flown through, not into
 }
 
-_FLAG_BITS = {"double_sided": "VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY", "glass": "VISUAL_SHAPE_GLASS",
-              "tree_cache": "VISUAL_SHAPE_RENDER_TREE_CACHE"}
+# tree_cache is left out on purpose: measured, a cached piece leaves the one static tree and every warm frame pays for it.
+_FLAG_BITS = {"double_sided": "VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY", "glass": "VISUAL_SHAPE_GLASS"}
 
 
 @lru_cache(maxsize=2)
@@ -68,9 +69,15 @@ def solar_densities(seed: int) -> Dict[str, float]:
 
 
 def _stands(place: Dict[str, Any], densities: Dict[str, float]) -> bool:
-    """Whether a placement is part of this seed's world: fixed pieces always, vegetation by its rank."""
+    """Whether a placement is part of this seed's world: fixed pieces always, vegetation by its rank.
+
+    A merged piece carries the lowest rank of the vegetation inside it as band_low, so a whole band stands or
+    falls together; a single plant carries its own rank.
+    """
     tier = place.get("tier")
-    return tier is None or place.get("rank", 0.0) < densities.get(tier, 1.0)
+    if tier is None:
+        return True
+    return place.get("band_low", place.get("rank", 0.0)) < densities.get(tier, 1.0)
 
 
 class _Shapes:
