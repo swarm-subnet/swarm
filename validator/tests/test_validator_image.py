@@ -225,7 +225,7 @@ def test_the_validator_service_can_be_built_locally() -> None:
     if result.returncode != 0:
         pytest.skip(f"docker compose could not run here: {result.stderr.strip()[:200]}")
 
-    service = json.loads(result.stdout)["services"]["validator"]
+    service = json.loads(result.stdout)["services"]["swarm_validator"]
     assert service["build"]["dockerfile"] == ".docker/validator.Dockerfile"
     assert Path(service["build"]["context"]).resolve() == REPO_ROOT
     assert service["pull_policy"] == "always", "`up` must keep pulling the published image"
@@ -247,7 +247,7 @@ def test_everything_the_validator_writes_lands_in_the_state_directory() -> None:
     if result.returncode != 0:
         pytest.skip(f"docker compose could not run here: {result.stderr.strip()[:200]}")
 
-    service = json.loads(result.stdout)["services"]["validator"]
+    service = json.loads(result.stdout)["services"]["swarm_validator"]
     mounts = {v["target"]: v["source"] for v in service["volumes"]}
     assert mounts["/opt/swarm-validator/state"] == "/srv/state/state"
     assert mounts["/opt/swarm-validator/swarm/state"] == "/srv/state/swarm-state"
@@ -284,4 +284,4 @@ def test_the_default_profile_does_not_start_the_validator() -> None:
     )
     if result.returncode != 0:
         pytest.skip(f"docker compose could not run here: {result.stderr.strip()[:200]}")
-    assert "validator" not in result.stdout.split()
+    assert "swarm_validator" not in result.stdout.split()

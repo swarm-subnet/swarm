@@ -36,15 +36,15 @@ services:
   # The validator itself, as a container. Behind the "validator" profile so a dev box
   # running `docker compose up` still only gets the test services above.
   #
-  #   docker compose --profile validator up -d validator
+  #   docker compose --profile validator up -d swarm_validator
   #
   # `up` pulls the published image and does not build: an operator's machine
   # contributes nothing to what runs, which is the whole point of shipping an image.
   # The build block is for working on the image itself:
   #
-  #   docker compose --profile validator build validator
-  #   docker compose --profile validator up -d --pull never validator
-  validator:
+  #   docker compose --profile validator build swarm_validator
+  #   docker compose --profile validator up -d --pull never swarm_validator
+  swarm_validator:
     image: ${SWARM_VALIDATOR_IMAGE:-ghcr.io/swarm-subnet/swarm-validator}:${SWARM_VALIDATOR_TAG:-latest}
     build:
       context: ..
@@ -104,16 +104,3 @@ services:
         required: false
       - path: .env
         required: false
-
-  # The validator side on its own, the same set the validator job runs in CI.
-  swarm_validator:
-    <<: *swarm-base
-    container_name: swarm_validator
-    # the anchor restarts unless-stopped, which would relaunch pytest forever
-    restart: "no"
-    working_dir: /app
-    volumes:
-      - ..:/app
-    environment:
-      SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
-    command: pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider

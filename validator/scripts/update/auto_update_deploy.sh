@@ -58,7 +58,7 @@ running_version() {
   # What the validator is actually running, read from the container's own image
   # rather than from a tag, so a retagged :latest cannot be mistaken for a redeploy.
   local image_id
-  image_id="$(docker compose -f "$COMPOSE_FILE" --profile validator ps -q validator 2>/dev/null \
+  image_id="$(docker compose -f "$COMPOSE_FILE" --profile validator ps -q swarm_validator 2>/dev/null \
               | head -n1 | xargs -r docker inspect --format '{{.Image}}' 2>/dev/null || true)"
   [[ -n "$image_id" ]] && image_version "$image_id"
 }

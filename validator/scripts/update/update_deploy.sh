@@ -56,7 +56,8 @@ fi
 SCRIPT_DIR="${SWARM_UPDATE_SCRIPT_DIR:-$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )}"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 COMPOSE_FILE="$REPO_ROOT/.docker/docker-compose.yml"
-SERVICE="validator"
+SERVICE="swarm_validator"
+PROFILE="validator"
 LEGACY_PM2_PROCESS="${PROCESS_NAME_OVERRIDE:-swarm_validator}"
 
 STEP=0
@@ -107,7 +108,7 @@ mkdir -p "$SWARM_STATE_DIR/state" "$SWARM_STATE_DIR/swarm-state"
 chown -R "$SWARM_UID:$SWARM_GID" "$SWARM_STATE_DIR" 2>/dev/null || true
 
 banner "Pulling the published image"
-docker compose -f "$COMPOSE_FILE" --profile "$SERVICE" pull "$SERVICE"
+docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" pull "$SERVICE"
 
 # One hotkey, one validator. A host process left running beside the container is a
 # second session on the same hotkey, and the backend fences one of them off.
@@ -124,10 +125,10 @@ fi
 # up -d recreates the container only when the image or its configuration changed,
 # so an unchanged pull leaves the running validator alone.
 banner "Starting the validator container"
-docker compose -f "$COMPOSE_FILE" --profile "$SERVICE" up -d "$SERVICE"
+docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" up -d "$SERVICE"
 
 banner "Running image"
-docker compose -f "$COMPOSE_FILE" --profile "$SERVICE" images "$SERVICE" || true
+docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" images "$SERVICE" || true
 
 # The deploy stands; a later failure must not roll the checkout back under it.
 trap - ERR

@@ -162,8 +162,8 @@ btcli wallet overview --wallet.name my_cold --subtensor.network finney
 ```bash
 cd swarm
 bash validator/scripts/update/update_deploy.sh
-docker compose -f .docker/docker-compose.yml --profile validator stop validator
-docker compose -f .docker/docker-compose.yml --profile validator restart validator
+docker compose -f .docker/docker-compose.yml --profile validator stop swarm_validator
+docker compose -f .docker/docker-compose.yml --profile validator restart swarm_validator
 ```
 
 The script is the start command: it reads `.env`, works out the uid and the docker group,
@@ -173,7 +173,7 @@ the same file, because compose otherwise looks for `.env` next to the compose fi
 than at the repository root (a copy kept at `.docker/.env` works too):
 
 ```bash
-docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d validator
+docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d swarm_validator
 ```
 
 ### Build the image yourself
@@ -184,8 +184,8 @@ published one as soon as you can.
 
 ```bash
 cd swarm
-docker compose -f .docker/docker-compose.yml --profile validator build validator
-docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d --pull never validator
+docker compose -f .docker/docker-compose.yml --profile validator build swarm_validator
+docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d --pull never swarm_validator
 ```
 
 The image also runs without any of this. A command after the image name replaces the
@@ -198,14 +198,14 @@ docker run --rm ghcr.io/swarm-subnet/swarm-validator:latest pytest validator/tes
 ### Logs
 
 ```bash
-docker compose -f .docker/docker-compose.yml logs -f validator
+docker compose -f .docker/docker-compose.yml logs -f swarm_validator
 ```
 
 ### Which version is running
 
 ```bash
 docker inspect --format '{{index .Config.Labels "swarm.__version__"}}' \
-  "$(docker compose -f .docker/docker-compose.yml --profile validator ps -q validator)"
+  "$(docker compose -f .docker/docker-compose.yml --profile validator ps -q swarm_validator)"
 ```
 
 ## 📡 Telemetry and Monitor
