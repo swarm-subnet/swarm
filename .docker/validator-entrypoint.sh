@@ -43,6 +43,7 @@ if [[ "$(id -u)" == "0" && -n "${SWARM_UID:-}" && "$SWARM_UID" != "0" ]]; then
   [[ -n "${DOCKER_GID:-}" ]] && groups="$gid,$DOCKER_GID"
   # A container started without the two capabilities, a test run for instance, has
   # nothing to carry across and must not fail on the attempt.
+  # shellcheck disable=SC2054  # setpriv takes the capabilities as one comma-separated list
   caps=(--inh-caps +sys_admin,+net_admin --ambient-caps +sys_admin,+net_admin)
   setpriv "${caps[@]}" --reuid "$SWARM_UID" --regid "$gid" --groups "$groups" true 2>/dev/null \
     || caps=()
