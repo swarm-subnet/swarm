@@ -33,15 +33,74 @@ services:
       SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
     command: pytest -v miner/tests -n 0 -p no:cacheprovider
 
-  # The validator side on its own, the same set the validator job runs in CI.
+  # The validator itself, as a container. Behind the "validator" profile so a dev box
+  # running `docker compose up` still only gets the test services above.
+  #
+  #   docker compose --profile validator up -d swarm_validator
+  #
+  # `up` pulls the published image and does not build: an operator's machine
+  # contributes nothing to what runs, which is the whole point of shipping an image.
+  # The build block is for working on the image itself:
+  #
+  #   docker compose --profile validator build swarm_validator
+  #   docker compose --profile validator up -d --pull never swarm_validator
   swarm_validator:
-    <<: *swarm-base
-    container_name: swarm_validator
-    # the anchor restarts unless-stopped, which would relaunch pytest forever
-    restart: "no"
-    working_dir: /app
+    image: ${SWARM_VALIDATOR_IMAGE:-ghcr.io/swarm-subnet/swarm-validator}:${SWARM_VALIDATOR_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: .docker/validator.Dockerfile
+      # A local build starts from the published base as it is today, not from
+      # whatever copy of it the host pulled months ago.
+      pull: true
+    pull_policy: always
+    container_name: swarm_validator_node
+    profiles: ["validator"]
+    restart: unless-stopped
+    # Not root. The entrypoint starts as root only to create and own the state
+    # directories, then becomes SWARM_UID. The two capabilities are what the evaluator
+    # needs to cut a flight's network off and to enter its namespace; everything else
+    # is dropped with the uid.
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    # The evaluator talks to the host daemon and to containers it starts on host ports.
+    network_mode: host
+    pid: host
     volumes:
-      - ..:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Identical paths on both sides. The validator hands these to the host's Docker
+      # daemon as bind sources, and the daemon resolves them on the host, so a path that
+      # differs inside the container would point at nothing.
+      - /tmp:/tmp
+      - /dev/shm:/dev/shm
+      - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}:${SWARM_STATE_DIR:-/opt/swarm-validator-state}
+      # The code keeps its caches, queues and the model store next to itself. Those
+      # never reach the daemon, so they live in the state directory under other names
+      # and survive an image update.
+      - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}/state:/opt/swarm-validator/state
+      - ${SWARM_STATE_DIR:-/opt/swarm-validator-state}/swarm-state:/opt/swarm-validator/swarm/state
+      # The wallet is only read by this process, never handed to the daemon, so it
+      # gets a fixed path: its host path may sit under a directory the uid cannot enter.
+      - ${BT_WALLET_HOME:-${HOME}/.bittensor}/wallets:/wallets:ro
+    # The log file is written to the working directory.
+    working_dir: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
     environment:
-      SWARM_TERRAIN_CACHE_DIR: /tmp/swarm_terrain_cache
-    command: pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider
+      SWARM_UID: ${SWARM_UID:-1000}
+      SWARM_GID: ${SWARM_GID:-1000}
+      DOCKER_GID: ${DOCKER_GID:-999}
+      SWARM_STATE_DIR: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
+      # A bare uid has no passwd entry, so Docker would set HOME=/ and bittensor,
+      # which creates ~/.bittensor on import, would die before reading any config.
+      # Home is the state directory: scores, events and caches all land there, and
+      # the wallet stays on its own read-only mount below.
+      HOME: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
+      BT_WALLET_PATH: /wallets
+    env_file:
+      # Optional so `docker compose config` works in a checkout without one; the
+      # entrypoint refuses to start when the wallet variables are actually missing.
+      # Compose itself reads .env next to this file for the paths above, so a copy
+      # kept there is read for the container as well.
+      - path: ../.env
+        required: false
+      - path: .env
+        required: false

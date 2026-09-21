@@ -55,6 +55,24 @@ def test_a_missing_package_counts_as_a_mismatch(tmp_path: Path) -> None:
     ]
 
 
+def test_a_cpu_wheel_meets_the_plain_pin(tmp_path: Path, monkeypatch) -> None:
+    """Proves torch 2.10.0+cpu, the wheel the image ships, is not reported as drift.
+
+    A pin that names the label itself is still exact, so a host on the default
+    wheel cannot pass as the CPU one.
+    """
+    monkeypatch.setattr(env_check, "version", lambda name: "2.10.0+cpu")
+    assert env_check.mismatches(_requirements(tmp_path, "torch==2.10.0\n")) == []
+    assert env_check.mismatches(_requirements(tmp_path, "torch==2.10.0+cpu\n")) == []
+    assert env_check.mismatches(_requirements(tmp_path, "torch==2.10.1\n")) == [
+        ("torch", "2.10.1", "2.10.0+cpu")
+    ]
+    monkeypatch.setattr(env_check, "version", lambda name: "2.10.0")
+    assert env_check.mismatches(_requirements(tmp_path, "torch==2.10.0+cpu\n")) == [
+        ("torch", "2.10.0+cpu", "2.10.0")
+    ]
+
+
 def test_a_matching_environment_reports_nothing(tmp_path: Path) -> None:
     """Proves the normal case is silent, so the log only speaks when something is wrong."""
     installed = env_check.version("pytest")
