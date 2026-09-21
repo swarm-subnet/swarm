@@ -141,6 +141,31 @@ def _run_multi_seed_rpc_sync(
         else RPC_STEP_TIMEOUT_SEC
     )
 
+    # Phase clocks of the seed in flight, and its record while the env is still open.
+    seed_clock: dict = {"phases": {}, "env_open": False, "held": None}
+
+    def _send_seed_complete(payload: Optional[dict]) -> None:
+        """Hand one record to the caller's callback, swallowing its errors."""
+        try:
+            on_seed_complete(payload)
+        except TypeError:
+            try:
+                on_seed_complete()
+            except Exception:
+                pass
+        except Exception:
+            pass
+        seed_clock["phases"] = {}
+
+    def _release_held_seed(cleanup_sec: float) -> None:
+        """Send the record held back during teardown, now that the cleanup time is known."""
+        seed_clock["env_open"] = False
+        seed_clock["phases"]["cleanup_sec"] = max(0.0, float(cleanup_sec))
+        held, seed_clock["held"] = seed_clock["held"], None
+        if held is not None:
+            held["cleanup_sec"] = seed_clock["phases"]["cleanup_sec"]
+            _send_seed_complete(held)
+
     def _emit_seed_complete(
         task_obj=None,
         *,
@@ -154,7 +179,7 @@ def _run_multi_seed_rpc_sync(
         calibration_cpu_factor: Optional[float] = None,
         calibrated_timeout_sec: Optional[float] = None,
     ) -> None:
-        """Hand the per-seed progress payload to the caller's callback, swallowing its errors."""
+        """Build the per-seed record with its phase clocks and send it, or hold it while the env is open."""
         if on_seed_complete is None:
             return
 
@@ -186,16 +211,12 @@ def _run_multi_seed_rpc_sync(
                     if calibrated_timeout_sec is None
                     else float(calibrated_timeout_sec)
                 ),
+                **seed_clock["phases"],
             }
-        try:
-            on_seed_complete(payload)
-        except TypeError:
-            try:
-                on_seed_complete()
-            except Exception:
-                pass
-        except Exception:
-            pass
+        if payload is not None and seed_clock["env_open"]:
+            seed_clock["held"] = payload
+            return
+        _send_seed_complete(payload)
 
     def _trace(msg: str) -> None:
         """Print and log one timestamped RPC trace line when tracing is enabled."""
@@ -440,6 +461,16 @@ def _run_multi_seed_rpc_sync(
                     f"type={_task_type_label(task)}"
                 )
                 seed_wall_start = time.time()
+                phases = seed_clock["phases"] = {
+                    "env_build_sec": 0.0,
+                    "reset_sec": 0.0,
+                    "calibration_sec": 0.0,
+                    "fly_sec": 0.0,
+                    "act_sec": 0.0,
+                    "act_max_sec": 0.0,
+                    "sim_sec": 0.0,
+                    "cleanup_sec": 0.0,
+                }
                 try:
                     _set_phase("seed_start", task=task_label, step=0, sim_t=0.0)
                     _trace(
@@ -449,9 +480,11 @@ def _run_multi_seed_rpc_sync(
                     _set_phase("env_build", task=task_label, step=0, sim_t=0.0)
                     _trace(f"{task_label} building env")
                     env, obs = make_env_with_initial_obs(task, gui=False)
+                    phases["env_build_sec"] = time.time() - t_env_start
                     _trace(
-                        f"{task_label} env built in {(time.time() - t_env_start):.2f}s"
+                        f"{task_label} env built in {phases['env_build_sec']:.2f}s"
                     )
+                    seed_clock["env_open"] = True
 
                     try:
                         t_reset_start = time.time()
@@ -463,11 +496,13 @@ def _run_multi_seed_rpc_sync(
                                 agent.reset(), timeout=reset_timeout_sec
                             )
                         except Exception as e:
+                            phases["reset_sec"] = time.time() - t_reset_start
                             _trace(
                                 f"{task_label} reset failed: {type(e).__name__}: {e}"
                             )
                             raise
                         reset_ms = (time.time() - t_reset_start) * 1000.0
+                        phases["reset_sec"] = reset_ms / 1000.0
                         _trace(f"{task_label} reset ok in {reset_ms:.1f}ms")
 
                         should_calibrate = not calibrated or (
@@ -476,6 +511,7 @@ def _run_multi_seed_rpc_sync(
                             and task_idx % CALIBRATION_RECAL_INTERVAL == 0
                         )
                         if should_calibrate:
+                            t_calibration_start = time.perf_counter()
                             phase_label = "rpc_recalibration" if calibrated else "rpc_calibration"
                             _set_phase(
                                 phase_label,
@@ -501,6 +537,7 @@ def _run_multi_seed_rpc_sync(
                                 + CALIBRATION_MARGIN_SEC
                             )
                             calibrated = True
+                            phases["calibration_sec"] = time.perf_counter() - t_calibration_start
                             if use_ref:
                                 act_hard_cap, first_hard_cap = _ref_hard_caps(rpc_overhead_sec)
                                 cpu_factor = speed_factor
@@ -545,6 +582,7 @@ def _run_multi_seed_rpc_sync(
                                 env.action_space.high.flatten(),
                             )
 
+                        t_fly_start = time.perf_counter()
                         while t_sim < task.horizon and not (
                             stop_event is not None and stop_event.is_set()
                         ):
@@ -578,6 +616,8 @@ def _run_multi_seed_rpc_sync(
                                         agent.act(observation), timeout=step_timeout
                                     )
                                     act_ms = (time.perf_counter() - t_act_start) * 1000.0
+                                    phases["act_sec"] += act_ms / 1000.0
+                                    phases["act_max_sec"] = max(phases["act_max_sec"], act_ms / 1000.0)
                                     candidate = np.frombuffer(
                                         action_response.action.data,
                                         dtype=np.dtype(action_response.action.dtype),
@@ -623,6 +663,8 @@ def _run_multi_seed_rpc_sync(
                                     break
                                 except asyncio.TimeoutError:
                                     act_ms = (time.perf_counter() - t_act_start) * 1000
+                                    phases["act_sec"] += act_ms / 1000.0
+                                    phases["act_max_sec"] = max(phases["act_max_sec"], act_ms / 1000.0)
                                     if not step_striked:
                                         step_striked = True
                                         strikes += 1
@@ -701,9 +743,11 @@ def _run_multi_seed_rpc_sync(
                             _set_phase(
                                 "env_step", task=task_label, step=step_idx, sim_t=t_sim
                             )
+                            t_step_start = time.perf_counter()
                             obs, _r, terminated, truncated, info = env.step(
                                 act if n_drones > 1 else act[None, :]
                             )
+                            phases["sim_sec"] += time.perf_counter() - t_step_start
 
                             t_sim += SIM_DT
                             if rollout_observer is not None:
@@ -729,6 +773,7 @@ def _run_multi_seed_rpc_sync(
                                 )
                                 break
 
+                        phases["fly_sec"] = time.perf_counter() - t_fly_start
                         seed_cancelled = (
                             stop_event is not None and stop_event.is_set()
                         )
@@ -887,7 +932,9 @@ def _run_multi_seed_rpc_sync(
                             )
 
                     finally:
+                        t_cleanup_start = time.perf_counter()
                         _cleanup_env_quietly(env)
+                        _release_held_seed(time.perf_counter() - t_cleanup_start)
 
                 except Exception as e:
                     try:

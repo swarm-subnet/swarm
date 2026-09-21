@@ -555,6 +555,25 @@ _ACTIVE_CPU_SHARES = 1024
 _CANCEL_GRACE_SEC = 5.0
 
 
+def _container_timing(ctx: _BatchContext) -> dict[str, Any]:
+    """The container-level durations every seed record of this batch carries."""
+    state = ctx.progress_state or {}
+    rpc_started_ts = state.get("rpc_started_ts")
+    connect_sec = 0.0
+    if rpc_started_ts is not None:
+        connect_sec = max(0.0, state.get("ping_ok_ts", rpc_started_ts) - rpc_started_ts)
+    return {
+        "container_start_sec": ctx.setup_sec + ctx.launch_sec + ctx.lockdown_sec + ctx.serve_sec,
+        "setup_sec": ctx.setup_sec,
+        "launch_sec": ctx.launch_sec,
+        "lockdown_sec": ctx.lockdown_sec,
+        "serve_sec": ctx.serve_sec,
+        "connect_sec": connect_sec,
+        "prewarmed": bool(ctx.prewarmed),
+        "last_phase": str(state.get("phase", "")),
+    }
+
+
 def _init_batch_state(ctx: _BatchContext) -> None:
     """Fill the context's trace flag, stop event, progress dict and the closures every phase shares."""
     uid = ctx.uid
@@ -597,6 +616,8 @@ def _init_batch_state(ctx: _BatchContext) -> None:
             if completed_count >= len(tasks):
                 return
             completed_count += 1
+        if isinstance(seed_meta, dict):
+            seed_meta = {**seed_meta, **_container_timing(ctx)}
         try:
             on_seed_complete(seed_meta)
         except TypeError:
@@ -1584,6 +1605,7 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
                 )
             return None
         await asyncio.sleep(0.1)
+    ctx.serve_sec = time.monotonic() - gate_opened_at
     gone = _container_is_gone(ctx.container_name)
     ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
     return ReasonCode.LOAD_FAILED if gone else ReasonCode.INFRA_DOCKER
@@ -1865,6 +1887,7 @@ async def evaluate_seeds_batch(
 
         t1 = time.monotonic()
         rpc_started_at = time.time()
+        ctx.progress_state["rpc_started_ts"] = rpc_started_at
         if on_container_ready is not None:
             on_container_ready()
         results = await _run_rpc_phase(ctx)
