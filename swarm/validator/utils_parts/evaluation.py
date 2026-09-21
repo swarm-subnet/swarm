@@ -18,6 +18,7 @@
 """Screening and benchmark phases: seed evaluation, streamed score uploads and heartbeats."""
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -36,6 +37,7 @@ from swarm.constants import (
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
     RE_AUTH_INTERVAL_SEC,
+    SCORE_UPLOAD_GRACE_SEC,
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
@@ -48,7 +50,11 @@ from swarm.core.submission_policy import (
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
 from swarm.protocol import FailureReason
 from swarm.utils.hash import sha256sum
-from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
+from swarm.validator.backend_api import (
+    BackendRejectedError,
+    BackendTransportError,
+    authorize_with_retry,
+)
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
@@ -373,8 +379,15 @@ async def _run_streaming_phase(
     )
     provenance = _seed_upload_provenance(self, model_path)
 
+    def _drop_refused(batch: List[dict], exc: BackendRejectedError) -> None:
+        """Let go of a batch the backend refused: resending cannot change the answer, and its seeds are no longer ours to hold."""
+        unacked.difference_update(int(row["seed_index"]) for row in batch)
+        bt.logging.warning(
+            f"Backend refused {len(batch)} seed scores for UID {uid}, not resending: {exc}"
+        )
+
     async def _safe_upload(batch: List[dict]) -> None:
-        """Post one score batch, three attempts with backoff; a batch never recorded is parked."""
+        """Post one score batch, three attempts with backoff; a refused batch is dropped, one never recorded is parked."""
         for delay in (0.0, 2.0, 4.0):
             if delay:
                 await asyncio.sleep(delay)
@@ -386,6 +399,9 @@ async def _run_streaming_phase(
                     provenance=provenance,
                     seed_set_id=_seed_set_id(self, family_id, epoch_number),
                 )
+            except BackendRejectedError as exc:
+                _drop_refused(batch, exc)
+                return
             except Exception as exc:
                 bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
                 continue
@@ -586,9 +602,12 @@ async def _run_streaming_phase(
                     asyncio.create_task(_safe_upload(rows[start:start + chunk_size]))
                 )
         await _drain_inflight()
-        if failed_batches:
-            retry_queue = list(failed_batches)
-            failed_batches.clear()
+        retry_queue = list(failed_batches)
+        failed_batches.clear()
+        grace_ends = time.monotonic() + SCORE_UPLOAD_GRACE_SEC
+        retry_delay = 5.0
+        while retry_queue:
+            unreachable: List[List[dict]] = []
             for batch in retry_queue:
                 try:
                     result = await self.backend_api.post_seed_scores_batch(
@@ -598,15 +617,30 @@ async def _run_streaming_phase(
                         provenance=provenance,
                         seed_set_id=_seed_set_id(self, family_id, epoch_number),
                     )
+                except BackendRejectedError as exc:
+                    _drop_refused(batch, exc)
+                    continue
                 except Exception as exc:
                     bt.logging.warning(
                         f"Final retry of {len(batch)} seed scores failed for UID {uid}: {exc}"
                     )
+                    unreachable.append(batch)
                     continue
                 if not result or not result.get("recorded"):
                     bt.logging.warning(
                         f"Final retry of {len(batch)} seed scores not recorded for UID {uid}"
                     )
+            # Only an outage earns another round: a batch the backend answered is settled either way.
+            retry_queue = unreachable
+            if not retry_queue or time.monotonic() + retry_delay > grace_ends:
+                break
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60.0)
+        if retry_queue:
+            lost = sum(len(batch) for batch in retry_queue)
+            bt.logging.error(
+                f"{lost} seed scores for UID {uid} never reached the backend; their seeds go back to the pool"
+            )
         if seed_feeder is not None:
             # Every score is uploaded by now, so anything still leased was dropped.
             hb.set_in_flight([])

@@ -30,6 +30,7 @@ recomputes per-type means by aggregating across the relevant tasks.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -37,8 +38,10 @@ import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.constants import CLAIM_GIVE_UP_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.utils.hash import sha256sum
+from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .evaluation import _run_full_benchmark, _run_screening
@@ -187,16 +190,34 @@ async def _run_phase(
     seed_feeder = None
     if flow == "seed":
         bt.logging.info(f"[seed-flow] UID {uid}: joined the {phase.lower()} pool")
+        unreachable_since: list = []
 
         async def seed_feeder(free_slots: int):
-            """Claim up to free_slots seed indexes from the shared pool; returns the granted list and whether the pool is empty."""
-            resp = await self.backend_api.claim_seeds(
-                int(task_id), count=max(1, int(free_slots)),
-            )
-            if not resp:
+            """Claim up to free_slots seed indexes from the shared pool; returns the granted list and whether to stop asking."""
+            try:
+                resp = await self.backend_api.claim_seeds(
+                    int(task_id), count=max(1, int(free_slots)),
+                )
+            except BackendRejectedError as exc:
+                bt.logging.warning(f"[seed-flow] UID {uid}: backend closed the task ({exc}) · wrapping up")
+                return [], True
+            except BackendTransportError as exc:
+                # An outage says nothing about the pool: keep the task and ask again.
+                if not unreachable_since:
+                    unreachable_since.append(time.monotonic())
+                gave_up = time.monotonic() - unreachable_since[0] >= CLAIM_GIVE_UP_SEC
+                bt.logging.warning(
+                    f"[seed-flow] UID {uid}: claim failed ({exc}) · "
+                    + ("backend unreachable too long, wrapping up" if gave_up else "will ask again")
+                )
+                return [], gave_up
+            unreachable_since.clear()
+            if "granted" not in resp or "pending" not in resp:
+                # Only a reply that states the pool's size may declare it empty.
+                bt.logging.warning(f"[seed-flow] UID {uid}: claim reply missing its counts · will ask again")
                 return [], False
-            granted = [int(i) for i in resp.get("granted", [])]
-            pending = int(resp.get("pending", 0))
+            granted = [int(i) for i in resp["granted"]]
+            pending = int(resp["pending"])
             others = int(resp.get("leased_other", 0))
             drained = _pool_drained(granted, pending)
             if granted:
@@ -295,20 +316,31 @@ async def _run_phase(
             "letting backend decide via late-submission gate"
         )
 
-    submission = await self.backend_api.submit_task_result(
-        task_id=int(task_id),
-        score=sanity_score,
-        per_type_scores=per_type_avgs,
-        seeds_evaluated=int(seeds_evaluated),
-        early_failed=bool(early_failed),
-        epoch_number=int(epoch),
-    )
+    try:
+        submission = await self.backend_api.submit_task_result(
+            task_id=int(task_id),
+            score=sanity_score,
+            per_type_scores=per_type_avgs,
+            seeds_evaluated=int(seeds_evaluated),
+            early_failed=bool(early_failed),
+            epoch_number=int(epoch),
+        )
+    except BackendRejectedError as exc:
+        bt.logging.warning(f"run_task: backend refused the result for UID {uid}: {exc}")
+        return
+    except BackendTransportError as exc:
+        bt.logging.error(f"run_task: result for UID {uid} never reached the backend: {exc}")
+        return
     reason = submission.get("reason") or ""
     if reason.startswith("seed_gap_at_index_"):
         # Backend says we're missing a seed; next /next-task will hand
         # back a task with the correct seeds_from. Nothing to do here.
         bt.logging.warning(
             f"run_task: backend reports seed gap for UID {uid}: {reason}"
+        )
+    elif not submission.get("recorded"):
+        bt.logging.warning(
+            f"run_task: backend did not record the result for UID {uid}: {reason or 'no reason given'}"
         )
 
 

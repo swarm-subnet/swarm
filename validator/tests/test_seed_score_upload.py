@@ -23,7 +23,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from swarm.validator.backend_api import BackendApiClient
+from swarm.validator.backend_api import (
+    BackendApiClient,
+    BackendRejectedError,
+    BackendTransportError,
+)
 
 
 class FakeWallet:
@@ -51,15 +55,15 @@ def client():
 
 @patch("asyncio.sleep", return_value=None)
 def test_retry_succeeds_on_second_attempt(mock_sleep, client):
-    """A batch the backend does not confirm is posted again, and the second reply is what the caller gets."""
+    """A batch that meets an outage is posted again, and the second reply is what the caller gets."""
     call_count = 0
 
     async def mock_post(endpoint, data):
-        """Fail the first post with an error payload, then confirm five recorded scores."""
+        """Fail the first post as an outage, then confirm five recorded scores."""
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return {"error": "timeout"}
+            raise BackendTransportError("timeout")
         return {"recorded": 5, "message": "ok"}
 
     client._post_signed = mock_post
@@ -76,49 +80,51 @@ def test_retry_succeeds_on_second_attempt(mock_sleep, client):
 
 
 @patch("asyncio.sleep", return_value=None)
-def test_retry_exhausted_returns_error(mock_sleep, client):
-    """Once the attempt budget is spent the caller receives the backend's last rejection, not a success."""
-    async def mock_post(endpoint, data):
-        """Refuse every post with a connection failure so no attempt ever records."""
-        return {"error": "connection refused"}
-
-    client._post_signed = mock_post
-
-    result = asyncio.run(
-        client.post_seed_scores_batch(
-            model_uid=1,
-            epoch_number=1,
-            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
-            retries=2,
-        )
-    )
-    assert "error" in result
-
-
-@patch("asyncio.sleep", return_value=None)
-def test_retry_on_detail_key(mock_sleep, client):
-    """A rejection carried under `detail` rather than `error` is still treated as unrecorded and resent."""
+def test_retry_exhausted_raises_transport_error(mock_sleep, client):
+    """Once the attempt budget is spent the outage is raised, never handed back as a reply."""
     call_count = 0
 
     async def mock_post(endpoint, data):
-        """Reject the first post with a `detail` message, then confirm one recorded score."""
+        """Fail every post as an outage so no attempt ever records."""
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            return {"detail": "Invalid map_type: unknown"}
-        return {"recorded": 1, "message": "ok"}
+        raise BackendTransportError("connection refused")
 
     client._post_signed = mock_post
 
-    result = asyncio.run(
-        client.post_seed_scores_batch(
-            model_uid=1,
-            epoch_number=1,
-            scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+    with pytest.raises(BackendTransportError):
+        asyncio.run(
+            client.post_seed_scores_batch(
+                model_uid=1,
+                epoch_number=1,
+                scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+                retries=2,
+            )
         )
-    )
-    assert result.get("recorded") == 1
     assert call_count == 2
+
+
+def test_refusal_is_not_resent(client):
+    """A batch the backend refuses is posted once: the same rows would only be refused again."""
+    call_count = 0
+
+    async def mock_post(endpoint, data):
+        """Refuse every post the way the backend refuses an unknown map type."""
+        nonlocal call_count
+        call_count += 1
+        raise BackendRejectedError(endpoint, 400, {"detail": "Invalid map_type: unknown"})
+
+    client._post_signed = mock_post
+
+    with pytest.raises(BackendRejectedError):
+        asyncio.run(
+            client.post_seed_scores_batch(
+                model_uid=1,
+                epoch_number=1,
+                scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
+            )
+        )
+    assert call_count == 1
 
 
 def test_task_id_included_in_payload(client):

@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.utils_parts import run_task as run_task_module
 
 
@@ -441,3 +442,135 @@ async def test_run_task_logs_seed_gap_response_without_raising(
     )
 
     assert len(backend.submissions) == 1
+
+
+class _ClaimBackend(_RecordingBackend):
+    """A backend whose seed claims play a script of replies and exceptions."""
+    def __init__(self, claims):
+        """Queue the claim outcomes to play, in order."""
+        super().__init__()
+        self._claims = list(claims)
+
+    async def claim_seeds(self, task_id, count=1):
+        """Play the next scripted claim: raise it if it is an exception, else return it."""
+        step = self._claims.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+async def _feeder_outcomes(monkeypatch, fake_model_path, backend, calls: int) -> list:
+    """Run a seed-flow benchmark whose evaluator only calls the feeder, and return what the feeder answered."""
+    outcomes: list = []
+
+    async def _fake_benchmark(_self, _uid, _path, *, seed_feeder, **_kw):
+        """Ask the feeder the given number of times, then report one flown seed so a result is submitted."""
+        for _ in range(calls):
+            outcomes.append(await seed_feeder(2))
+        return 0.5, {"city": 0.5}, [0.5], {"city": [0.5]}, None
+
+    _patch_helpers(monkeypatch, fetch_paths={42: (fake_model_path, "https://github.com/x/y")})
+    monkeypatch.setattr(run_task_module, "_run_full_benchmark", _fake_benchmark)
+    await run_task_module.run_task(
+        _validator(backend_api=backend),
+        {
+            "task_id": 9, "uid": 42, "phase": "BENCHMARK", "flow": "seed",
+            "model_hash": ("abc" * 22)[:64],
+            "github_url": "https://github.com/x/y", "epoch_number": 5,
+        },
+        cancel_flag=asyncio.Event(),
+        wake_flag=asyncio.Event(),
+    )
+    return outcomes
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_outage_is_not_a_drained_pool(monkeypatch, fake_model_path):
+    """A claim that fails keeps the task alive, and the grant after it is still flown."""
+    backend = _ClaimBackend([
+        BackendTransportError("backend 500"),
+        {"granted": [3, 8], "pending": 5, "leased_other": 0, "done": 0},
+    ])
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=2)
+    assert outcomes == [([], False), ([3, 8], False)]
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_stops_when_the_backend_closed_the_task(monkeypatch, fake_model_path):
+    """A refused claim ends the feeding at once instead of being asked again."""
+    backend = _ClaimBackend([BackendRejectedError("/claim", 409, {"detail": "task_not_running"})])
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=1)
+    assert outcomes == [([], True)]
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_gives_up_after_a_long_outage(monkeypatch, fake_model_path):
+    """Once the backend has been unreachable past the give-up window, the feeder stops asking."""
+    monkeypatch.setattr(run_task_module, "CLAIM_GIVE_UP_SEC", 100.0)
+    clock = iter([0.0, 50.0, 50.0, 120.0, 120.0])
+    monkeypatch.setattr(run_task_module, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    backend = _ClaimBackend([BackendTransportError("down")] * 3)
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=3)
+    assert outcomes == [([], False), ([], False), ([], True)]
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_outage_clock_restarts_after_a_good_claim(monkeypatch, fake_model_path):
+    """Two short outages with a real reply between them never add up to a give-up."""
+    monkeypatch.setattr(run_task_module, "CLAIM_GIVE_UP_SEC", 100.0)
+    clock = iter([0.0, 0.0, 500.0, 500.0])
+    monkeypatch.setattr(run_task_module, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    backend = _ClaimBackend([
+        BackendTransportError("down"),
+        {"granted": [], "pending": 4, "leased_other": 2, "done": 0},
+        BackendTransportError("down"),
+    ])
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=3)
+    assert outcomes == [([], False), ([], False), ([], False)]
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_reply_without_counts_is_not_a_drained_pool(monkeypatch, fake_model_path):
+    """A reply that does not state the pool's size cannot declare the pool empty."""
+    backend = _ClaimBackend([{"message": "ok"}])
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=1)
+    assert outcomes == [([], False)]
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_real_empty_pool_still_drains(monkeypatch, fake_model_path):
+    """A real reply of nothing granted and nothing pending still ends the run."""
+    backend = _ClaimBackend([{"granted": [], "pending": 0, "leased_other": 0, "done": 1000}])
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=1)
+    assert outcomes == [([], True)]
+
+
+@pytest.mark.parametrize("failure", [
+    BackendTransportError("backend 503"),
+    BackendRejectedError("/result", 410, {"reason": "task_finalized"}),
+])
+@pytest.mark.asyncio
+async def test_run_task_survives_a_result_that_never_lands(monkeypatch, fake_model_path, failure):
+    """A result the backend cannot take, or refuses, ends the task cleanly instead of crashing the forward loop."""
+    class _FailingBackend:
+        """A backend whose result endpoint always fails the same way."""
+        async def submit_task_result(self, **_kwargs):
+            """Raise the configured failure."""
+            raise failure
+
+    _patch_helpers(
+        monkeypatch,
+        fetch_paths={42: (fake_model_path, "https://github.com/x/y")},
+        screening_result=(0.4, [0.4] * 200, {"city": [0.4] * 200}, None, False),
+    )
+    await run_task_module.run_task(
+        _validator(backend_api=_FailingBackend()),
+        {
+            "task_id": 5, "uid": 42, "phase": "SCREENING",
+            "seeds_from": 0, "seeds_to": 200,
+            "model_hash": ("abc" * 22)[:64],
+            "github_url": "https://github.com/x/y", "epoch_number": 5,
+        },
+        cancel_flag=asyncio.Event(),
+        wake_flag=asyncio.Event(),
+    )
