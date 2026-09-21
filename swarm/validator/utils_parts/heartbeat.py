@@ -161,8 +161,11 @@ class HeartbeatManager:
             thread.join(timeout=1.0)
         self._timer_thread = None
 
-    def on_seed_complete(self) -> None:
-        """Called from worker thread after each seed completes (throttled)."""
+    def on_seed_complete(self, seed_meta: Optional[dict] = None) -> None:
+        """Called from worker thread after each seed completes (throttled).
+
+        Progress only counts seeds; the record is accepted so the emitter never
+        has to fall back to a bare call."""
         with self._lock:
             if not self._active:
                 return

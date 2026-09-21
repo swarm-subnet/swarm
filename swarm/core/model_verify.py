@@ -47,6 +47,7 @@ from swarm.core.submission_policy import (
     check_safety,
     check_structure,
 )
+from swarm.utils.docker_instance import instance_label
 
 # ──────────────────────────────────────────────────────────────────────────
 # Blacklist Management
@@ -304,6 +305,8 @@ async def verify_new_model_with_docker(
                 "--rm",
                 "--name",
                 container_name,
+                "--label",
+                instance_label(),
                 "--user",
                 f"{current_uid}:{current_gid}",
                 "--memory=4g",

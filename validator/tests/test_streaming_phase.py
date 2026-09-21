@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from swarm.validator import utils as validator_utils
+from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.utils_parts import evaluation as validator_evaluation
 from swarm.validator.utils_parts.heartbeat import HeartbeatManager
 
@@ -2195,3 +2196,238 @@ def test_a_scored_seed_stays_in_flight_until_the_backend_acks_it(monkeypatch):
     assert reported[0] == [0]
     assert reported[1] == [0], "seed dropped from the report while its score was unsent"
     assert reported[-1] == []
+
+
+def test_a_seed_stopped_in_flight_uploads_nothing_and_hands_its_lease_back(monkeypatch):
+    """After a stop the finished seed still uploads, the stopped one leaves no score row,
+    and the last in-flight report is empty so the pool can lease it again."""
+    validator = _make_validator()
+    reported: list = []
+    uploaded: list = []
+    stop = {"reason": None}
+    monkeypatch.setattr(
+        HeartbeatManager,
+        "set_in_flight",
+        lambda _self, indexes: reported.append(list(indexes)),
+    )
+
+    async def _record_upload(**kwargs):
+        """Keep the seed indexes of every score batch and acknowledge it."""
+        uploaded.extend(int(row["seed_index"]) for row in kwargs["scores"])
+        return {"recorded": True}
+
+    async def _parallel(tasks, uid, model_path, **kwargs):
+        """Finish seed 0, then see the stop while seed 1 flies and leave it without a result."""
+        _ = tasks, model_path
+        kwargs["on_held_seeds"]([0, 1])
+        kwargs["on_seed_result"](0, SimpleNamespace(uid=uid, score=0.9, failure_reason="NONE"), "seed_done")
+        stop["reason"] = "task cancelled"
+        assert kwargs["should_stop"]()
+        kwargs["on_held_seeds"]([])
+        return [SimpleNamespace(uid=uid, score=0.9, failure_reason="NONE", metrics={}), None]
+
+    validator.backend_api.post_seed_scores_batch = _record_upload
+    validator.docker_evaluator.evaluate_seeds_parallel = _parallel
+
+    async def _feeder(_free_slots):
+        """Offer no further seeds and report the source exhausted."""
+        return [], True
+
+    async def _run():
+        """Stream two leased seeds and stop while the second one is flying."""
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=_FAKE_MODEL_ZIP,
+                seeds=[0, 1],
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=2,
+                pre_built_tasks=[SimpleNamespace(challenge_type=1), SimpleNamespace(challenge_type=1)],
+                should_stop=lambda: stop["reason"],
+                seed_feeder=_feeder,
+                initial_pending=[0, 1],
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel_reason = asyncio.run(_run())
+
+    assert scores == [0.9]
+    assert uploaded == [0]
+    assert cancel_reason == "backend stop_required: task cancelled"
+    assert reported[-1] == []
+
+    assert reported[1] == [0], "seed dropped from the report while its score was unsent"
+    assert reported[-1] == []
+
+
+def _stream_ten_seeds(validator):
+    """Stream ten seeds as one upload batch and return the phase result."""
+    async def _run():
+        """Run the phase under a heartbeat that is closed afterwards."""
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=_FAKE_MODEL_ZIP,
+                seeds=list(range(10)),
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=10,
+            )
+        finally:
+            hb.finish()
+
+    return asyncio.run(_run())
+
+
+def _skip_backoff(monkeypatch) -> list:
+    """Replace the evaluator's sleeps with a bare yield and return the list the requested waits land in."""
+    waits: list = []
+    real_sleep = asyncio.sleep
+
+    async def _yield_only(seconds):
+        """Log the requested wait and give the loop one turn instead of sleeping."""
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(validator_evaluation.asyncio, "sleep", _yield_only)
+    return waits
+
+
+def test_streaming_phase_does_not_resend_a_refused_batch(monkeypatch):
+    """A batch the backend refuses is sent once and dropped; the phase still returns its scores."""
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    _skip_backoff(monkeypatch)
+    calls: list = []
+
+    async def _refuse(**kwargs):
+        """Refuse every upload the way the backend refuses a provenance mismatch."""
+        calls.append(len(kwargs["scores"]))
+        raise BackendRejectedError("/validators/seed-scores", 409, {"detail": "Submission provenance mismatch"})
+
+    validator.backend_api.post_seed_scores_batch = _refuse
+    scores, _per_type, _details, cancel = _stream_ten_seeds(validator)
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert calls == [10]
+
+
+def test_streaming_phase_waits_out_an_outage_after_the_last_seed(monkeypatch):
+    """A batch parked by an outage keeps being retried with growing waits until the backend is back."""
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    waits = _skip_backoff(monkeypatch)
+    calls: list = []
+
+    async def _down_then_up(**kwargs):
+        """Fail the first five uploads as an outage, then record."""
+        calls.append(len(kwargs["scores"]))
+        if len(calls) <= 5:
+            raise BackendTransportError("backend 503")
+        return {"recorded": 10}
+
+    validator.backend_api.post_seed_scores_batch = _down_then_up
+    scores, _per_type, _details, cancel = _stream_ten_seeds(validator)
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert calls == [10] * 6
+    assert [w for w in waits if w >= 5.0] == [5.0, 10.0]
+
+
+def test_streaming_phase_stops_waiting_when_the_grace_window_ends(monkeypatch):
+    """An outage that outlasts the grace window ends the phase without raising and without an endless loop."""
+    validator = _make_validator()
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _make_evaluate_stub())
+    monkeypatch.setattr(validator_evaluation, "SCORE_UPLOAD_GRACE_SEC", 0.0)
+    _skip_backoff(monkeypatch)
+    calls: list = []
+
+    async def _always_down(**kwargs):
+        """Fail every upload as an outage."""
+        calls.append(len(kwargs["scores"]))
+        raise BackendTransportError("backend 503")
+
+    validator.backend_api.post_seed_scores_batch = _always_down
+    scores, _per_type, _details, cancel = _stream_ten_seeds(validator)
+
+    assert cancel is None
+    assert len(scores) == 10
+    assert calls == [10] * 4
+
+
+def test_run_full_benchmark_uploads_the_seed_timing_as_runtime_details(tmp_path):
+    """Every uploaded score row carries the host speed factor and the phase timings of its flight."""
+    from swarm.protocol import ValidationResult
+
+    model_path = tmp_path / "UID_44.zip"
+    model_path.write_bytes(b"fake-model")
+    uploads: list[list[dict]] = []
+
+    async def _evaluate_seeds_parallel(tasks, uid, model_path, **kwargs):
+        """Return one result per task with the timing record a real worker attaches."""
+        on_seed_result = kwargs.get("on_seed_result")
+        results = []
+        for i, _task in enumerate(tasks):
+            result = ValidationResult(int(uid), True, 60.0, 0.5)
+            result.metrics["timing"] = {
+                "calibration_cpu_factor": 1.3, "act_sec": 12.5, "act_max_sec": 0.2, "sim_sec": 40.0,
+                "env_build_sec": 3.0, "seed_wall_sec": 61.0, "total_sec": 63.0, "attempt": 1,
+                "status": "seed_done",
+            }
+            results.append(result)
+            if on_seed_result is not None:
+                on_seed_result(i, result, "seed_done")
+        return results
+
+    async def _capture_upload(**kwargs):
+        """Keep each posted batch of score rows and acknowledge it."""
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    async def _post_heartbeat(**kwargs):
+        """Acknowledge the heartbeat without asking for a stop."""
+        return {"ok": True}
+
+    validator = SimpleNamespace(
+        docker_evaluator=SimpleNamespace(
+            evaluate_seeds_parallel=_evaluate_seeds_parallel,
+            _get_image_hash_label=lambda: "test-image-hash",
+            _calculate_docker_hash=lambda: "test-image-hash",
+        ),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_capture_upload,
+        ),
+        seed_manager=SimpleNamespace(
+            epoch_number=7,
+            get_benchmark_seeds=lambda: [900001 + i for i in range(3)],
+        ),
+    )
+
+    async def _run():
+        """Benchmark UID 44 through the real streaming path."""
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=44, model_path=model_path,
+        )
+
+    asyncio.run(_run())
+
+    rows = [row for batch in uploads for row in batch]
+    assert len(rows) == 3
+    for row in rows:
+        assert row["runtime_details"] == {
+            "speed_factor": 1.3, "act_sec": 12.5, "act_max_sec": 0.2, "sim_sec": 40.0,
+            "env_build_sec": 3.0, "seed_wall_sec": 61.0, "total_sec": 63.0, "attempt": 1,
+        }

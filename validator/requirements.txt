@@ -1,0 +1,32 @@
+# What the validator runs on, and nothing else: no test runner, no packaging tools,
+# none of the backend stack the contract tests import.
+#
+# Every pin here must equal the pin in the root requirements.txt. The validator and
+# the flights it scores have to carry one package set, so the versions are never
+# chosen here; validator/tests/test_validator_image.py fails when the two disagree.
+
+pydantic==2.12.5
+rich==14.3.3
+numpy==2.4.6
+loguru==0.7.3
+xmldiff==2.7.0
+filelock==3.25.2
+swarm-bullet3==2.0.0.3
+bittensor==10.5.0
+async-substrate-interface==2.2.1
+msgpack==1.1.2
+importlib-metadata==9.0.0
+onnx==1.22.0
+onnxruntime==1.23.2
+stable-baselines3==2.7.1
+wandb==0.25.1
+python-dotenv==1.2.2
+typing-extensions==4.15.0
+tqdm==4.67.3
+torch==2.10.0
+gymnasium==0.29.1
+requests==2.34.2
+httpx==0.28.1
+pycapnp==2.2.2
+swarm-drone-gym==2.0.0.3
+swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.0.0

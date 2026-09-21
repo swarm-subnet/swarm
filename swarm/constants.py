@@ -41,6 +41,11 @@ FORWARD_SLEEP_SEC = 2.0                 # Pause between validator forward passes
 DUPLICATE_SESSION_RETRY_SEC = 15.0      # Wait between startup heartbeats while the previous session is still fresh
 DUPLICATE_SESSION_WAIT_SEC = 240.0      # Startup gives up on a duplicate-session rejection after this long
 STAND_DOWN_TIMEOUT_SEC = 1.2            # Time allowed for the hand-back heartbeat before the process exits
+CLAIM_GIVE_UP_SEC = 600.0               # A task stops asking for seeds after the backend stays unreachable this long
+RESULT_SUBMIT_ATTEMPTS = 8              # Tries for a task result before it is given up as undelivered
+RESULT_SUBMIT_BASE_DELAY_SEC = 2.0      # First wait between result tries; doubles each time
+RESULT_SUBMIT_MAX_DELAY_SEC = 60.0      # Longest wait between result tries
+SCORE_UPLOAD_GRACE_SEC = 180.0          # After the last seed lands, how long parked score batches wait out an outage
 BACKEND_GRACE_PERIOD_SEC = 3600         # Use cached weights for 1h after last successful sync
 WANDB_IDLE_RESTART_SEC = 5 * 3600      # Restart W&B run every 5h when idle
 
@@ -209,6 +214,7 @@ RPC_MAX_STRIKES_PER_SEED = 15           # Soft timeouts before failing a seed
 GLOBAL_EVAL_BASE_SEC = 600.0            # Base overhead for global worker timeout (seconds); one-seed validator batches get ~600s wall-clock
 GLOBAL_EVAL_PER_SEED_SEC = 15.0         # Per-seed budget in global worker timeout (seconds)
 GLOBAL_EVAL_CAP_SEC = 600.0             # Hard upper bound for global worker timeout (seconds)
+SEED_STALL_TIMEOUT_SEC = 222.0          # Cut a seed once no phase or step has reported progress for this long
 
 # Hardware-fair calibrated timing
 MINER_COMPUTE_BUDGET_SEC = 0.600        # Guaranteed pure-compute budget per step (seconds)

@@ -26,6 +26,7 @@ from typing import Any, Iterable
 from .runtime_telemetry import (
     RUNTIME_EVENTS_FILE,
     RUNTIME_SNAPSHOT_FILE,
+    SEED_TIMING_PHASES,
     load_recent_events,
     load_runtime_snapshot,
 )
@@ -265,6 +266,28 @@ def render_runtime_dashboard(
                 ("weight nonzero uids", str(weights.get("last_nonzero_uids", 0))),
                 ("weight error", str(weights.get("last_error", "") or "-")),
             ],
+        )
+    )
+
+    seed_timing = snapshot.get("seed_timing") or {}
+    timed_phases = seed_timing.get("phases") or {}
+    output.append("")
+    output.extend(
+        _render_section(
+            f"Seed Timing (last {int(seed_timing.get('seeds', 0))} seeds, median / p90 / max)",
+            [
+                (
+                    phase[:-4].replace("_", " "),
+                    (
+                        f"{_fmt_duration(timed_phases[phase].get('median'))} / "
+                        f"{_fmt_duration(timed_phases[phase].get('p90'))} / "
+                        f"{_fmt_duration(timed_phases[phase].get('max'))}"
+                    ),
+                )
+                for phase in SEED_TIMING_PHASES
+                if phase in timed_phases
+            ]
+            or [("-", "no seed timed yet")],
         )
     )
 

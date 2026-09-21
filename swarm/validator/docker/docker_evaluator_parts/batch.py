@@ -23,6 +23,7 @@ import math
 import multiprocessing as mp
 import os
 import queue
+import re
 import shutil
 import subprocess
 import tempfile
@@ -42,9 +43,12 @@ from swarm.constants import (
     GLOBAL_EVAL_BASE_SEC,
     GLOBAL_EVAL_CAP_SEC,
     GLOBAL_EVAL_PER_SEED_SEC,
+    MINER_COMPUTE_BUDGET_SEC,
     MODEL_DIR,
+    SEED_STALL_TIMEOUT_SEC,
     SIM_DT,
     SPEED_FACTOR_MAX_ELIGIBLE,
+    SPEED_FACTOR_MIN,
 )
 from swarm.core.faults import ReasonCode
 from swarm.core.submission_lane import is_model_graph_artifact
@@ -55,6 +59,13 @@ from swarm.protocol import (
     ValidationResult,
     is_supported_schema,
     normalize_version,
+)
+from swarm.utils.docker_instance import (
+    INSTANCE_LABEL_KEY,
+    instance_id,
+    instance_label,
+    is_unowned,
+    obs_shm_path,
 )
 from swarm.utils.hash import sha256sum
 from swarm.validator.calibration import (
@@ -241,6 +252,10 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
 
 _PIP_INSTALL_TIMEOUT_SEC = 120
 _BUILD_CACHE_PRUNE_FREE_GB = 25.0
+# Far above what a healthy daemon needs: only a wedged one ever reaches these.
+_DOCKER_LIST_TIMEOUT_SEC = 30.0
+_DOCKER_PRUNE_TIMEOUT_SEC = 120.0
+_OWNED_CONTAINER_PREFIXES = ("swarm_eval_", "swarm_verify_", "swarm_pip_")
 
 
 def model_image_tag(model_hash: str) -> str:
@@ -335,6 +350,7 @@ def prepare_model_image(
         cmd = [
             "docker", "run", "--rm", "-d",
             "--name", container_name,
+            "--label", instance_label(),
             "--user", f"{current_uid}:{current_gid}",
             f"--memory={worker_limits['memory']}",
             f"--cpus={worker_limits['cpus'] or DOCKER_WORKER_CPUS}",
@@ -432,29 +448,23 @@ def prune_build_cache_if_disk_low() -> None:
 
 
 def remove_model_image(image_tag: str) -> None:
-    """Remove a per-model image once its evaluation is finished."""
+    """Remove a per-model image once its evaluation is finished.
+
+    A daemon that does not answer is the caller's to handle: swallowing the timeout
+    here would let a sweep wait it out once per image instead of once.
+    """
     try:
         subprocess.run(["docker", "rmi", image_tag], capture_output=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise
     except Exception:
         pass
 
 
-def remove_all_model_images() -> None:
-    """Drop every cached per-model image; stale bases must not survive a base rebuild."""
-    try:
-        result = subprocess.run(
-            [
-                "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
-                "--filter", "reference=swarm_eval_model_*",
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0 and result.stdout:
-            for img in result.stdout.strip().split("\n"):
-                if img:
-                    remove_model_image(img)
-    except Exception:
-        pass
+def remove_all_model_images(adopt_unlabelled: bool = False) -> None:
+    """Drop this instance's cached per-model images; stale bases must not survive a base rebuild."""
+    for img in _owned_model_images(adopt_unlabelled):
+        remove_model_image(img)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -489,6 +499,7 @@ class _BatchContext:
     task_total: Optional[int] = None
     runtime_profile_payload: Optional[dict[str, Any]] = None
     speed_factor: Optional[float] = None
+    cancel_event: Optional[Any] = None
 
     # Trace + sync primitives (built in _init_batch_state)
     trace_rpc: bool = False
@@ -543,6 +554,28 @@ _WARM_CPU_SHARES = 2
 _WARM_CPU_LIMIT = "0.5"
 _ACTIVE_CPU_SHARES = 1024
 
+# How long a stopped batch waits for its flight loop to leave the step it is in.
+_CANCEL_GRACE_SEC = 5.0
+
+
+def _container_timing(ctx: _BatchContext) -> dict[str, Any]:
+    """The container-level durations every seed record of this batch carries."""
+    state = ctx.progress_state or {}
+    rpc_started_ts = state.get("rpc_started_ts")
+    connect_sec = 0.0
+    if rpc_started_ts is not None:
+        connect_sec = max(0.0, state.get("ping_ok_ts", rpc_started_ts) - rpc_started_ts)
+    return {
+        "container_start_sec": ctx.setup_sec + ctx.launch_sec + ctx.lockdown_sec + ctx.serve_sec,
+        "setup_sec": ctx.setup_sec,
+        "launch_sec": ctx.launch_sec,
+        "lockdown_sec": ctx.lockdown_sec,
+        "serve_sec": ctx.serve_sec,
+        "connect_sec": connect_sec,
+        "prewarmed": bool(ctx.prewarmed),
+        "last_phase": str(state.get("phase", "")),
+    }
+
 
 def _init_batch_state(ctx: _BatchContext) -> None:
     """Fill the context's trace flag, stop event, progress dict and the closures every phase shares."""
@@ -586,6 +619,8 @@ def _init_batch_state(ctx: _BatchContext) -> None:
             if completed_count >= len(tasks):
                 return
             completed_count += 1
+        if isinstance(seed_meta, dict):
+            seed_meta = {**seed_meta, **_container_timing(ctx)}
         try:
             on_seed_complete(seed_meta)
         except TypeError:
@@ -770,9 +805,23 @@ def _setup_pretry_state(ctx: _BatchContext) -> None:
 OBS_SHM_BYTES = 32 * 1024 * 1024
 
 
+def _legal_thinking_sec(tasks: list, speed_factor: Optional[float]) -> float:
+    """Wall time the miner may spend in act() across these seeds without breaking the per-step budget.
+
+    Every step grants MINER_COMPUTE_BUDGET_SEC scaled by the host speed factor, so the batch
+    clock has to hold that on top of the family's simulation allowance; otherwise a slow but
+    legal model runs out of clock and is booked as an infrastructure fault."""
+    steps = 0
+    for task in tasks:
+        sim_dt = float(getattr(task, "sim_dt", 0.0) or SIM_DT)
+        steps += math.ceil(float(getattr(task, "horizon", 0.0)) / sim_dt)
+    factor = max(float(speed_factor or SPEED_FACTOR_MIN), SPEED_FACTOR_MIN)
+    return steps * MINER_COMPUTE_BUDGET_SEC * factor
+
+
 def _obs_shm_host_path(host_port: int) -> str:
     """The /dev/shm file that carries observations to the container published on this port."""
-    return f"/dev/shm/swarm_obs_{host_port}.bin"
+    return obs_shm_path(host_port)
 
 
 def _create_obs_shm(host_port: int) -> Optional[str]:
@@ -833,7 +882,10 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             else 1.0
         )
         timeout_multiplier = timeout_settings.multiplier * profile_timeout_multiplier
-        batch_timeout = base_batch_timeout * timeout_multiplier
+        thinking_allowance = _legal_thinking_sec(tasks, ctx.speed_factor)
+        batch_timeout = base_batch_timeout * timeout_multiplier + thinking_allowance
+        if profile_cap_sec > 0:
+            batch_timeout = min(batch_timeout, profile_cap_sec)
         hard_cap_timeout = timeout_settings.hard_cap_sec
         if hard_cap_timeout > 0:
             batch_timeout = min(batch_timeout, hard_cap_timeout)
@@ -847,12 +899,13 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             _phase(
                 f"starting rpc batch with timeout={batch_timeout:.1f}s "
                 f"(base={base_batch_timeout:.1f}s x {timeout_multiplier:.2f} "
-                f"hard_cap={hard_cap_timeout:.1f}s)"
+                f"+ thinking={thinking_allowance:.1f}s hard_cap={hard_cap_timeout:.1f}s)"
             )
         else:
             _phase(
                 f"starting rpc batch with timeout={batch_timeout:.1f}s "
-                f"(base={base_batch_timeout:.1f}s x {timeout_multiplier:.2f})"
+                f"(base={base_batch_timeout:.1f}s x {timeout_multiplier:.2f} "
+                f"+ thinking={thinking_allowance:.1f}s)"
             )
         if extend_on_progress:
             _phase(
@@ -893,20 +946,30 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
         rpc_thread.start()
 
         timed_out = False
+        cancelled = False
+        stalled = False
         eval_start = time.time()
         timeout_deadline = eval_start + batch_timeout
+        stall_timeout_sec = float(SEED_STALL_TIMEOUT_SEC)
         extension_count = 0
         last_extended_sim_t = -1.0
         last_extended_step_idx = -1
         while not rpc_done.is_set():
+            if _cancel_requested(ctx):
+                cancelled = True
+                break
             now = time.time()
+            try:
+                last_ts = max(eval_start, float(progress_state.get("ts", eval_start)))
+            except Exception:
+                last_ts = eval_start
+            stale_for = max(0.0, now - last_ts)
+            if stall_timeout_sec > 0 and stale_for >= stall_timeout_sec:
+                stalled = True
+                timed_out = True
+                break
             if now >= timeout_deadline:
                 if extend_on_progress:
-                    try:
-                        last_ts = float(progress_state.get("ts", eval_start))
-                    except Exception:
-                        last_ts = eval_start
-                    stale_for = max(0.0, now - last_ts)
                     try:
                         current_sim_t = float(progress_state.get("sim_t", -1.0))
                     except Exception:
@@ -957,20 +1020,39 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                 break
             await asyncio.sleep(0.2)
 
+        if cancelled:
+            stop_event.set()
+            _phase("stop requested by the dispatcher; abandoning the seeds in flight")
+            grace_deadline = time.monotonic() + _CANCEL_GRACE_SEC
+            while not rpc_done.is_set() and time.monotonic() < grace_deadline:
+                await asyncio.sleep(0.1)
+            partial_results = rpc_payload.get("results")
+            if isinstance(partial_results, list) and len(partial_results) == len(tasks):
+                return partial_results
+            return _cancelled_batch(ctx, "seed_cancelled")
+
         if timed_out:
             stop_event.set()
             elapsed = time.time() - eval_start
             timeout_limit_elapsed = timeout_deadline - eval_start
-            bt.logging.warning(
-                f"[Worker {worker_id}] Batch timeout for UID {uid} after {elapsed:.1f}s "
-                f"(limit={timeout_limit_elapsed:.1f}s, base_limit={batch_timeout:.1f}s, "
-                f"extensions={extension_count})"
-            )
             try:
-                last_ts = float(progress_state.get("ts", eval_start))
+                last_ts = max(eval_start, float(progress_state.get("ts", eval_start)))
             except Exception:
                 last_ts = eval_start
             stale_sec = max(0.0, time.time() - last_ts)
+            if stalled:
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Seed stalled for UID {uid}: no progress for {stale_sec:.1f}s "
+                    f"(stall_limit={stall_timeout_sec:.1f}s, elapsed={elapsed:.1f}s, "
+                    f"phase={progress_state.get('phase', 'unknown')}, "
+                    f"step={progress_state.get('step_idx', 'n/a')})"
+                )
+            else:
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Batch timeout for UID {uid} after {elapsed:.1f}s "
+                    f"(limit={timeout_limit_elapsed:.1f}s, base_limit={batch_timeout:.1f}s, "
+                    f"extensions={extension_count})"
+                )
             _phase(
                 f"batch timeout after {timeout_limit_elapsed:.1f}s; last progress "
                 f"phase={progress_state.get('phase', 'unknown')} "
@@ -1498,6 +1580,7 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
     obs_shm_path = _create_obs_shm(ctx.host_port)
     cmd = [
         "docker", "run", "--rm", "-d", "--name", ctx.container_name,
+        "--label", instance_label(),
         "--user", f"{ctx.current_uid}:{ctx.current_gid}",
         f"--memory={ctx.worker_limits['memory']}",
         "--pids-limit=50", "--ulimit", "nofile=256:256",
@@ -1544,7 +1627,7 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
     gate_opened_at = time.monotonic()
     ctx.lockdown_sec = gate_opened_at - t_lockdown
     deadline = gate_opened_at + AGENT_STARTUP_WALL_SEC
-    while time.monotonic() < deadline:
+    while time.monotonic() < deadline and not _cancel_requested(ctx):
         if ctx.self._check_rpc_ready(ctx.host_port):
             ctx.connected = True
             ctx.serve_sec = time.monotonic() - gate_opened_at
@@ -1557,9 +1640,24 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
                 )
             return None
         await asyncio.sleep(0.1)
+    ctx.serve_sec = time.monotonic() - gate_opened_at
     gone = _container_is_gone(ctx.container_name)
     ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
     return ReasonCode.LOAD_FAILED if gone else ReasonCode.INFRA_DOCKER
+
+
+def _cancel_requested(ctx: _BatchContext) -> bool:
+    """True once the dispatcher has asked this batch to stop."""
+    return ctx.cancel_event is not None and ctx.cancel_event.is_set()
+
+
+def _cancelled_batch(ctx: _BatchContext, status: str) -> list:
+    """Report every unfinished seed under a stop status; none of them carries a score."""
+    ctx.helpers.notify_all_failed(status=status)
+    return [
+        ValidationResult(ctx.uid, False, 0.0, 0.0, failure_reason=FailureReason.INFRA.value)
+        for _ in ctx.tasks
+    ]
 
 
 def _fail_batch(ctx: _BatchContext, reason: ReasonCode) -> list:
@@ -1725,6 +1823,7 @@ async def evaluate_seeds_batch(
     model_image: Optional[str] = None,
     warm_container: Optional[WarmContainer] = None,
     on_container_ready: Optional[Callable[[], None]] = None,
+    cancel_event: Optional[Any] = None,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1736,6 +1835,7 @@ async def evaluate_seeds_batch(
         model_image: Pre-built image carrying the miner's declared dependencies
         warm_container: A spare started ahead of time; adopted instead of a fresh start
         on_container_ready: Called once the container serves, before the first seed flies
+        cancel_event: Set by the dispatcher to abandon the batch; unfinished seeds report a stop status
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -1755,9 +1855,14 @@ async def evaluate_seeds_batch(
         task_total=task_total,
         runtime_profile_payload=runtime_profile_payload,
         model_image=model_image,
+        cancel_event=cancel_event,
     )
 
     _init_batch_state(ctx)
+
+    if _cancel_requested(ctx):
+        discard_warm_container(warm_container)
+        return _cancelled_batch(ctx, "stopped_before_seed")
 
     early = _validate_inputs(ctx)
     if early is not None:
@@ -1810,11 +1915,14 @@ async def evaluate_seeds_batch(
         t0 = time.monotonic()
         if not adopted:
             failure = await _prepare_container(ctx)
+            if failure is not None and _cancel_requested(ctx):
+                return _cancelled_batch(ctx, "stopped_before_seed")
             if failure is not None:
                 return _fail_batch(ctx, failure)
 
         t1 = time.monotonic()
         rpc_started_at = time.time()
+        ctx.progress_state["rpc_started_ts"] = rpc_started_at
         if on_container_ready is not None:
             on_container_ready()
         results = await _run_rpc_phase(ctx)
@@ -1859,101 +1967,138 @@ async def evaluate_seeds_batch(
     ]
 
 
-def cleanup(self):
-    """Clean up any orphaned containers and prune unused images/cache"""
-    for stale in Path("/dev/shm").glob("swarm_obs_*.bin"):
+def _owned_containers(prefix: str, adopt_unlabelled: bool) -> list[str]:
+    """Names of this instance's containers under a name prefix.
+
+    adopt_unlabelled also takes containers that carry no owner, the ones a release
+    from before the label existed left behind.
+    """
+    result = subprocess.run(
+        [
+            "docker", "ps", "-a", "--filter", f"name={prefix}",
+            "--format", f'{{{{.Names}}}}\t{{{{.Label "{INSTANCE_LABEL_KEY}"}}}}',
+        ],
+        capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
+    )
+    if result.returncode != 0:
+        return []
+    owner_id = instance_id()
+    owned = []
+    for line in result.stdout.splitlines():
+        name, _, owner = line.partition("\t")
+        if name and (owner == owner_id or (adopt_unlabelled and is_unowned(owner))):
+            owned.append(name)
+    return owned
+
+
+def _owned_model_images(adopt_unlabelled: bool) -> list[str]:
+    """Tags of this instance's per-model images, plus the unowned ones when asked.
+
+    The owner is read off each image rather than passed as a filter, because a filter
+    cannot say "mine or nobody's", and the images a release before the label left
+    behind are nobody's. The images listing has no label column, so the tags are
+    listed first and inspected in one call.
+    """
+    listed = subprocess.run(
+        [
+            "docker", "images", "--filter", "reference=swarm_eval_model_*",
+            "--format", "{{.Repository}}:{{.Tag}}",
+        ],
+        capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
+    )
+    if listed.returncode != 0:
+        return []
+    tags = [tag for tag in listed.stdout.split() if tag and not tag.endswith(":<none>")]
+    if not tags:
+        return []
+    inspected = subprocess.run(
+        [
+            "docker", "image", "inspect",
+            "--format", f'{{{{index .Config.Labels "{INSTANCE_LABEL_KEY}"}}}}', *tags,
+        ],
+        capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
+    )
+    if inspected.returncode != 0:
+        return []
+    owner_id = instance_id()
+    owned = []
+    for tag, owner in zip(tags, inspected.stdout.splitlines()):
+        if owner == owner_id or (adopt_unlabelled and is_unowned(owner)):
+            owned.append(tag)
+    return owned
+
+
+def _reap_model_images(adopt_unlabelled: bool = False) -> None:
+    """Remove this instance's per-model images whose model zip is no longer on disk."""
+    images = _owned_model_images(adopt_unlabelled)
+    if not images:
+        return
+    live_tags = set()
+    for zip_fp in MODEL_DIR.glob("*.zip"):
+        try:
+            live_tags.add(model_image_tag(sha256sum(zip_fp)))
+        except Exception:
+            continue
+    for img in images:
+        if img not in live_tags:
+            remove_model_image(img)
+
+
+def prune_swarm_images() -> None:
+    """Drop dangling images built on the Swarm base, leaving every other image on the host alone."""
+    subprocess.run(
+        ["docker", "image", "prune", "-f", "--filter", "label=swarm.code_hash"],
+        capture_output=True, timeout=_DOCKER_PRUNE_TIMEOUT_SEC,
+    )
+
+
+def remove_owned_containers(adopt_unlabelled: bool = False) -> None:
+    """Force-remove every evaluation, verification and install container this instance owns."""
+    for prefix in _OWNED_CONTAINER_PREFIXES:
+        for container in _owned_containers(prefix, adopt_unlabelled):
+            subprocess.run(
+                ["docker", "rm", "-f", container], capture_output=True, timeout=30
+            )
+            bt.logging.debug(f"Cleaned up orphaned container: {container}")
+
+
+def _owned_obs_buffers(adopt_unlabelled: bool) -> list[Path]:
+    """This instance's observation buffers in /dev/shm, plus the ownerless ones when asked.
+
+    A buffer from before the owner was in the name is just a port number; another
+    validator's carries its own name and is never touched.
+    """
+    owned = list(Path("/dev/shm").glob(f"swarm_obs_{instance_id()}_*.bin"))
+    if adopt_unlabelled:
+        owned += [
+            p for p in Path("/dev/shm").glob("swarm_obs_*.bin")
+            if re.fullmatch(r"swarm_obs_\d+\.bin", p.name)
+        ]
+    return owned
+
+
+def cleanup(self, prune: bool = False, adopt_unlabelled: bool = False):
+    """Remove this instance's leftover containers and model images.
+
+    prune adds the slower maintenance: dangling Swarm images and a build cache on a
+    tight disk. Every Docker call is bounded and the first timeout ends the pass, so a
+    wedged daemon costs one wait and one warning instead of a frozen validator.
+    """
+    for stale in _owned_obs_buffers(adopt_unlabelled):
         try:
             stale.unlink()
         except OSError:
             pass
     try:
-        # List all swarm evaluation containers
-        result = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "-a",
-                "--filter",
-                "name=swarm_eval_",
-                "--format",
-                "{{.Names}}",
-            ],
-            capture_output=True,
-            text=True,
+        remove_owned_containers(adopt_unlabelled)
+        _reap_model_images(adopt_unlabelled)
+        if prune:
+            prune_swarm_images()
+            prune_build_cache_if_disk_low()
+    except subprocess.TimeoutExpired as e:
+        cmd = " ".join(map(str, e.cmd)) if isinstance(e.cmd, (list, tuple)) else e.cmd
+        bt.logging.warning(
+            f"Docker cleanup abandoned: no answer within {e.timeout:.0f}s from `{cmd}`"
         )
-
-        if result.returncode == 0 and result.stdout:
-            containers = result.stdout.strip().split("\n")
-            for container in containers:
-                if container:
-                    subprocess.run(
-                        ["docker", "rm", "-f", container],
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    bt.logging.debug(f"Cleaned up orphaned container: {container}")
-
-        # Also clean up verification containers
-        result_verify = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "-a",
-                "--filter",
-                "name=swarm_verify_",
-                "--format",
-                "{{.Names}}",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result_verify.returncode == 0 and result_verify.stdout:
-            containers_v = result_verify.stdout.strip().split("\n")
-            for container in containers_v:
-                if container:
-                    subprocess.run(
-                        ["docker", "rm", "-f", container],
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    bt.logging.debug(
-                        f"Cleaned up orphaned verify container: {container}"
-                    )
-
-        result_pip = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=swarm_pip_", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-        )
-        if result_pip.returncode == 0 and result_pip.stdout:
-            for container in result_pip.stdout.strip().split("\n"):
-                if container:
-                    subprocess.run(
-                        ["docker", "rm", "-f", container], capture_output=True, timeout=30
-                    )
-
-        result_images = subprocess.run(
-            [
-                "docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
-                "--filter", "reference=swarm_eval_model_*",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result_images.returncode == 0 and result_images.stdout:
-            live_tags = set()
-            for zip_fp in MODEL_DIR.glob("*.zip"):
-                try:
-                    live_tags.add(model_image_tag(sha256sum(zip_fp)))
-                except Exception:
-                    continue
-            for img in result_images.stdout.strip().split("\n"):
-                if img and img not in live_tags:
-                    remove_model_image(img)
-
-        subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-        subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
-        prune_build_cache_if_disk_low()
-
     except Exception as e:
         bt.logging.warning(f"Container cleanup failed: {e}")

@@ -34,7 +34,7 @@ import pytest
 
 from swarm.benchmark import engine as bench_full_eval
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
-from swarm.protocol import ValidationResult
+from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.calibration import SpeedFactor
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import lifecycle
@@ -118,7 +118,7 @@ class _ScriptedProcess:
     def start(self):
         """Mark the worker alive and wire the task queue so every request is answered inline."""
         self._alive = True
-        worker_slot, task_queue, result_queue, progress_queue = self._args
+        worker_slot, task_queue, result_queue, progress_queue = self._args[:4]
         task_queue.set_handler(
             lambda request: self._ctx.handle_request(
                 worker_slot,
@@ -152,6 +152,13 @@ class _ScriptedContext:
         self._attempts = {}
         self._queues = []
         self.requests = []
+        self.processes = []
+        self.cancel_event = None
+
+    def Event(self):
+        """Return the stop signal the dispatcher shares with its workers, kept for inspection."""
+        self.cancel_event = threading.Event()
+        return self.cancel_event
 
     def Queue(self):
         """Return a fresh scripted queue and keep a reference to it."""
@@ -162,7 +169,9 @@ class _ScriptedContext:
     def Process(self, target, args, name, daemon):
         """Return a scripted process bound to this context; target, name and daemon are ignored."""
         _ = target, name, daemon
-        return _ScriptedProcess(self, args)
+        process = _ScriptedProcess(self, args)
+        self.processes.append(process)
+        return process
 
     def handle_request(self, worker_slot, request, result_queue, progress_queue):
         """Replay the plan for this batch attempt: push its seed events, then its batch result."""
@@ -173,6 +182,8 @@ class _ScriptedContext:
         attempt = self._attempts.get(batch_index, 0)
         self._attempts[batch_index] = attempt + 1
         plan = self._scripted_attempts[batch_index][attempt]
+        if plan.get("silent"):
+            return
         for seed_meta in plan.get("seed_events", []):
             progress_queue.put(
                 self._bench_engine._ProcessSeedEvent(
@@ -1179,6 +1190,72 @@ def test_run_process_parallel_retries_wall_timeout_once(monkeypatch, tmp_path):
 
 
 @pytest.mark.full
+def test_run_process_parallel_hands_a_timed_out_seed_back_in_seed_flow(monkeypatch, tmp_path):
+    """Under the seed feeder a wall-clock timeout is final here: the pool retries it, not this host."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(
+        challenge_type=4,
+        map_seed=3101,
+        horizon=60.0,
+    )
+    timed_out = {
+        "seed_events": [
+            {
+                "uid": 41,
+                "map_seed": 3101,
+                "challenge_type": 4,
+                "status": "seed_cancelled",
+                "success": False,
+                "sim_time_sec": 12.0,
+                "seed_wall_sec": 840.0,
+                "step_idx": 123,
+                "error": "",
+            }
+        ],
+        "results": [(41, False, 12.0, 0.0)],
+        "elapsed_sec": 840.0,
+    }
+    scripted_context = _ScriptedContext(bench_full_eval, {0: [timed_out, timed_out]})
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    async def _drained_feeder(_free_slots):
+        """Offer nothing more and report the pool drained."""
+        return [], True
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[
+                {
+                    "group": "type4_village",
+                    "seed": 3101,
+                    "index": 0,
+                    "challenge_type": 4,
+                    "horizon": 60.0,
+                }
+            ],
+            batch_plan=[[0]],
+            uid=41,
+            model_path=model_path,
+            effective_workers=1,
+            phase_label="eval",
+            seed_feeder=_drained_feeder,
+            initial_pending=[0],
+        )
+    )
+
+    assert scripted_context.attempts == {0: 1}, "the seed must not be flown twice on this host"
+    assert results[0].failure_reason == FailureReason.INFRA.value
+    assert not any("retrying timed-out seed" in line for line in log_lines)
+
+
+@pytest.mark.full
 def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, tmp_path):
     """A seed killed for slow inference is never re-run; the failure stands and counts as slow_act."""
     model_path = tmp_path / "model.zip"
@@ -1715,6 +1792,136 @@ def test_run_process_parallel_refreshes_resources_while_waiting(monkeypatch, tmp
     assert len(refresh_calls) >= 2
 
 
+def _stopped_scripted_run(monkeypatch, tmp_path, *, first_attempt, log_lines):
+    """Run two one-seed batches on one worker and ask for a stop while the first is in flight.
+
+    Returns the results, the scripted context, and what the callbacks, retry budget and sweep saw."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [
+        SimpleNamespace(challenge_type=4, map_seed=3101 + i, horizon=60.0) for i in range(2)
+    ]
+    scripted_context = _ScriptedContext(bench_full_eval, {0: [first_attempt]})
+    seen = {"seed_results": [], "completions": [], "swept": [], "retry_budget": {"timeout": 0, "rpc_transport": 0}}
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel, "_remove_uid_containers", lambda uid: seen["swept"].append(uid))
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=tasks,
+            task_meta=[
+                {"group": "type4_village", "seed": int(t.map_seed), "index": i, "challenge_type": 4, "horizon": 60.0}
+                for i, t in enumerate(tasks)
+            ],
+            batch_plan=[[0], [1]],
+            uid=41,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_complete=lambda payload=None: seen["completions"].append(payload),
+            on_seed_result=lambda idx, result, status: seen["seed_results"].append((idx, status)),
+            should_stop=lambda: "task cancelled",
+            retry_budget=seen["retry_budget"],
+            phase_label="eval",
+        )
+    )
+    return results, scripted_context, seen
+
+
+def _seed_event(status: str, *, success: bool = False) -> dict:
+    """One worker progress record for seed 3101 under the given status."""
+    return {
+        "uid": 41, "map_seed": 3101, "challenge_type": 4, "status": status,
+        "success": success, "sim_time_sec": 12.0, "seed_wall_sec": 20.0, "step_idx": 123, "error": "",
+    }
+
+
+def test_stop_signals_the_workers_and_leaves_the_flying_seed_unscored(monkeypatch, tmp_path):
+    """A stop raises the shared signal; the seed it interrupts is not retried, scored or reported, and its containers are swept."""
+    log_lines = []
+    results, scripted_context, seen = _stopped_scripted_run(
+        monkeypatch, tmp_path, log_lines=log_lines,
+        first_attempt={"seed_events": [_seed_event("seed_cancelled")], "results": [(41, False, 12.0, 0.0)]},
+    )
+
+    assert scripted_context.cancel_event.is_set()
+    assert results == [None, None]
+    assert scripted_context.attempts == {0: 1}
+    assert seen["seed_results"] == []
+    assert seen["completions"] == []
+    assert seen["retry_budget"] == {"timeout": 0, "rpc_transport": 0}
+    assert seen["swept"] == [41]
+    assert any("dropping 1 pending seeds, stopping 1 in-flight" in line for line in log_lines)
+
+
+def test_stop_keeps_the_score_of_a_seed_that_finished_anyway(monkeypatch, tmp_path):
+    """A seed that lands its real result after the stop still counts; only the pending one is dropped."""
+    results, _context, seen = _stopped_scripted_run(
+        monkeypatch, tmp_path, log_lines=[],
+        first_attempt={"seed_events": [_seed_event("seed_done", success=True)], "results": [(41, True, 18.0, 0.8)]},
+    )
+
+    assert results[0].score == pytest.approx(0.8)
+    assert results[1] is None
+    assert seen["seed_results"] == [(0, "seed_done")]
+
+
+def test_stop_kills_a_worker_that_never_answers(monkeypatch, tmp_path):
+    """Past the grace period a silent worker is killed and its seed stays unscored, so the run still ends."""
+    log_lines = []
+    monkeypatch.setattr(de.parallel, "_STOP_GRACE_SEC", 0.0)
+    results, scripted_context, seen = _stopped_scripted_run(
+        monkeypatch, tmp_path, log_lines=log_lines, first_attempt={"silent": True},
+    )
+
+    assert results == [None, None]
+    assert scripted_context.processes[0].exitcode == -15
+    assert seen["seed_results"] == []
+    assert seen["swept"] == [41]
+    assert any("did not stop within" in line for line in log_lines)
+
+
+@pytest.mark.parametrize("stop_during", ["image_build", "calibration"])
+def test_evaluate_seeds_parallel_honours_a_stop_raised_before_the_pool_starts(monkeypatch, tmp_path, stop_during):
+    """A stop that arrives during the image build or the calibration skips every seed and never starts the pool."""
+    ev = _new_evaluator()
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    tasks = [SimpleNamespace(challenge_type=1, map_seed=2001 + i, family_id="cf_autopilot") for i in range(3)]
+    state = {"stop": None, "pool_started": False}
+
+    def _fake_image(*_args, **_kwargs):
+        """Stand in for the image build, raising the stop when this case asks for it."""
+        if stop_during == "image_build":
+            state["stop"] = "task cancelled"
+        return None
+
+    async def _fake_speed(_self, _worker_count):
+        """Stand in for the calibration, raising the stop when this case asks for it."""
+        if stop_during == "calibration":
+            state["stop"] = "task cancelled"
+        return _eligible_speed(1.1)
+
+    async def _fake_run_process_parallel(**_kwargs):
+        """Record that the pool was started, which a stopped run must never do."""
+        state["pool_started"] = True
+        return []
+
+    monkeypatch.setattr(de.batch, "prepare_model_image", _fake_image)
+    monkeypatch.setattr(de.batch, "_ensure_host_speed_factor", _fake_speed)
+    monkeypatch.setattr(de.parallel, "_run_process_parallel", _fake_run_process_parallel)
+
+    results = asyncio.run(
+        ev.evaluate_seeds_parallel(tasks, uid=17, model_path=model_path, should_stop=lambda: state["stop"])
+    )
+
+    assert results == [None, None, None]
+    assert state["pool_started"] is False
+
+
 def test_evaluate_seeds_parallel_falls_back_to_batch_when_docker_not_ready(monkeypatch, tmp_path):
     """With no base image built, every seed runs through one sequential call on slot 0, still carrying the family profile and speed factor."""
     ev = _new_evaluator()
@@ -2152,3 +2359,80 @@ def test_every_name_read_through_the_evaluator_facade_exists():
     assert names, "no facade reads found; the pattern is stale"
     missing = sorted(n for n in names if not hasattr(de, n))
     assert not missing, f"read through the facade but not on the module: {missing}"
+
+
+def test_legal_thinking_sec_holds_the_per_step_budget_for_every_step():
+    """The clock allowance is steps x the per-step budget, scaled by the host factor and never below 1.0x."""
+    from swarm.constants import MINER_COMPUTE_BUDGET_SEC
+    from swarm.validator.docker.docker_evaluator_parts.batch import _legal_thinking_sec
+
+    seed = SimpleNamespace(horizon=60.0, sim_dt=1.0 / 50.0)
+    per_seed = 3000 * MINER_COMPUTE_BUDGET_SEC
+
+    assert _legal_thinking_sec([seed], 1.0) == pytest.approx(per_seed)
+    assert _legal_thinking_sec([seed], 1.3) == pytest.approx(per_seed * 1.3)
+    assert _legal_thinking_sec([seed], 0.7) == pytest.approx(per_seed), "a fast host keeps the full budget"
+    assert _legal_thinking_sec([seed], None) == pytest.approx(per_seed)
+    assert _legal_thinking_sec([seed, seed], 1.0) == pytest.approx(2 * per_seed)
+    assert _legal_thinking_sec([], 1.0) == 0.0
+
+
+def test_process_parallel_attaches_the_timing_record_to_the_result(monkeypatch, tmp_path):
+    """The result handed to the caller carries the seed's timing record, so the upload can report it."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(challenge_type=2, map_seed=77, horizon=60.0)
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 9,
+                            "map_seed": 77,
+                            "challenge_type": 2,
+                            "status": "seed_done",
+                            "success": True,
+                            "sim_time_sec": 60.0,
+                            "seed_wall_sec": 61.0,
+                            "step_idx": 3000,
+                            "error": "",
+                            "act_sec": 12.5,
+                            "sim_sec": 40.0,
+                            "env_build_sec": 3.0,
+                            "calibration_cpu_factor": 1.3,
+                        }
+                    ],
+                    "results": [(9, True, 60.0, 0.9)],
+                    "elapsed_sec": 61.0,
+                },
+            ]
+        },
+    )
+    seen = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[{"group": "type2_open", "seed": 77, "index": 0, "challenge_type": 2, "horizon": 60.0}],
+            batch_plan=[[0]],
+            uid=9,
+            model_path=model_path,
+            effective_workers=1,
+            on_seed_result=lambda idx, result, status: seen.append((idx, result, status)),
+            phase_label="eval",
+        )
+    )
+
+    assert results[0].score == pytest.approx(0.9)
+    (idx, result, status), = seen
+    assert (idx, status) == (0, "seed_done")
+    timing = result.metrics["timing"]
+    assert timing["act_sec"] == pytest.approx(12.5)
+    assert timing["sim_sec"] == pytest.approx(40.0)
+    assert timing["calibration_cpu_factor"] == pytest.approx(1.3)
+    assert timing["attempt"] == 1

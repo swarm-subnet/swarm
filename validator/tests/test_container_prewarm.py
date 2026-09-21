@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import queue
 import socket
+import threading
 import time
 import zipfile
 from types import SimpleNamespace
@@ -247,6 +248,120 @@ def test_failed_weight_restore_falls_back_to_a_fresh_start(fake_docker):
     assert fake_docker.first("kill", spare) < fake_docker.first("run", fresh)
     assert "--cpu-shares=2" not in fake_docker.runs[2]
     assert [r.results[0][3] for r in results] == [0.5, 0.5]
+
+
+def _run_cancellable_worker(request, cancel_event, cancel_after=None):
+    """Drive one worker through ``request`` with the dispatcher's stop signal raised after ``cancel_after`` seconds.
+
+    Returns the batch result, the seed statuses it reported, and how long the worker took."""
+    task_queue: queue.Queue = queue.Queue()
+    result_queue: queue.Queue = queue.Queue()
+    progress_queue: queue.Queue = queue.Queue()
+    task_queue.put(request)
+    task_queue.put(None)
+    timer = None
+    if cancel_after is not None:
+        timer = threading.Timer(cancel_after, cancel_event.set)
+        timer.start()
+    started = time.monotonic()
+    workers._benchmark_worker_main(0, task_queue, result_queue, progress_queue, cancel_event)
+    elapsed = time.monotonic() - started
+    if timer is not None:
+        timer.cancel()
+    statuses = []
+    while not progress_queue.empty():
+        event = progress_queue.get_nowait()
+        if isinstance(event, bench_full_eval._ProcessSeedEvent):
+            statuses.append(event.seed_meta["status"])
+    return result_queue.get_nowait(), statuses, elapsed
+
+
+def _fly_until_stopped(docker, release):
+    """A flight that lasts until its stop event is set, then reports the seed as cancelled, like the real step loop."""
+    def _fly(_evaluator, tasks, uid, rpc_port, on_seed_complete, _observer, stop_event, *args, **kwargs):
+        """Fly until stopped or released, reporting a cancelled seed only when stopped."""
+        _ = args, kwargs
+        docker._note("fly_start", docker.owner[int(rpc_port)])
+        while not stop_event.is_set() and not release.is_set():
+            time.sleep(0.02)
+        if not stop_event.is_set():
+            return [ValidationResult(uid, True, 1.0, 0.5) for _ in tasks]
+        for task in tasks:
+            on_seed_complete({"map_seed": task.map_seed, "status": "seed_cancelled"})
+        return [ValidationResult(uid, False, 1.0, 0.0, failure_reason="INFRA") for _ in tasks]
+    return _fly
+
+
+def test_cancel_stops_the_seed_in_flight(fake_docker, monkeypatch):
+    """The stop signal ends a flight that would otherwise run on: the seed reports cancelled, carries no score, and its container is killed."""
+    release = threading.Event()
+    monkeypatch.setattr(de.DockerSecureEvaluator, "_run_multi_seed_rpc_sync", _fly_until_stopped(fake_docker, release))
+    try:
+        result, statuses, elapsed = _run_cancellable_worker(
+            _request(0, 7, fake_docker.model_path, prewarm_next=False), threading.Event(), cancel_after=_LOAD_SEC + 0.5,
+        )
+    finally:
+        release.set()
+
+    (name,) = fake_docker.names()
+    assert statuses == ["seed_cancelled"]
+    assert result.error is None and result.results[0][3] == 0.0
+    assert elapsed < _LOAD_SEC + 0.5 + 2.0
+    assert fake_docker.first("kill", name) > fake_docker.first("fly_start", name)
+
+
+def test_cancel_gives_up_on_a_flight_that_ignores_the_signal(fake_docker, monkeypatch):
+    """A flight stuck inside a step cannot hold the stop: after the grace the batch reports cancelled and kills the container."""
+    release = threading.Event()
+
+    def _stuck_fly(_evaluator, tasks, uid, rpc_port, *args, **kwargs):
+        """Block until the test ends, whatever the stop event says."""
+        _ = tasks, uid, args, kwargs
+        fake_docker._note("fly_start", fake_docker.owner[int(rpc_port)])
+        release.wait(30.0)
+        return []
+
+    monkeypatch.setattr(de.DockerSecureEvaluator, "_run_multi_seed_rpc_sync", _stuck_fly)
+    monkeypatch.setattr(batch, "_CANCEL_GRACE_SEC", 0.3)
+    try:
+        result, statuses, elapsed = _run_cancellable_worker(
+            _request(0, 7, fake_docker.model_path, prewarm_next=False), threading.Event(), cancel_after=_LOAD_SEC + 0.5,
+        )
+    finally:
+        release.set()
+
+    (name,) = fake_docker.names()
+    assert statuses == ["seed_cancelled"]
+    assert result.results[0][3] == 0.0
+    assert elapsed < _LOAD_SEC + 0.5 + 2.0
+    assert any(kind == "kill" and subject == name for _, kind, subject in fake_docker.events)
+
+
+def test_cancel_during_the_container_start_never_flies(fake_docker):
+    """A stop that lands while the agent is still loading ends the wait at once: the container is removed and no flight starts."""
+    result, statuses, elapsed = _run_cancellable_worker(
+        _request(0, 7, fake_docker.model_path, prewarm_next=True), threading.Event(), cancel_after=0.3,
+    )
+
+    (name,) = fake_docker.names()
+    assert statuses == ["stopped_before_seed"]
+    assert result.results[0][3] == 0.0
+    assert elapsed < _LOAD_SEC
+    assert not any(kind == "fly_start" for _, kind, _subject in fake_docker.events)
+    assert any(kind == "rm" and subject == name for _, kind, subject in fake_docker.events)
+
+
+def test_a_worker_told_to_stop_launches_nothing(fake_docker):
+    """A request picked up after the stop starts no container, neither for its seed nor as a spare."""
+    cancel_event = threading.Event()
+    cancel_event.set()
+    result, statuses, _elapsed = _run_cancellable_worker(
+        _request(0, 7, fake_docker.model_path, prewarm_next=True), cancel_event,
+    )
+
+    assert statuses == ["stopped_before_seed"]
+    assert result.results[0][3] == 0.0
+    assert fake_docker.runs == []
 
 
 def test_validator_dispatcher_asks_for_a_spare_until_the_last_seed(monkeypatch, tmp_path):

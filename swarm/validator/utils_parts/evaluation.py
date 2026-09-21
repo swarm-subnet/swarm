@@ -18,6 +18,7 @@
 """Screening and benchmark phases: seed evaluation, streamed score uploads and heartbeats."""
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -36,6 +37,7 @@ from swarm.constants import (
     BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
     RE_AUTH_INTERVAL_SEC,
+    SCORE_UPLOAD_GRACE_SEC,
     SIM_DT,
     UNIFIED_CHUNK_SIZE,
 )
@@ -48,7 +50,11 @@ from swarm.core.submission_policy import (
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
 from swarm.protocol import FailureReason
 from swarm.utils.hash import sha256sum
-from swarm.validator.backend_api import BackendTransportError, authorize_with_retry
+from swarm.validator.backend_api import (
+    BackendRejectedError,
+    BackendTransportError,
+    authorize_with_retry,
+)
 from swarm.validator.runtime_telemetry import tracker_call
 
 from .heartbeat import HeartbeatManager
@@ -63,6 +69,37 @@ _INFRA_FAILURE_REASONS = frozenset(
 def _is_infra_failure(reason) -> bool:
     """Infrastructure faults are the validator's problem and are never uploaded as miner scores."""
     return reason in _INFRA_FAILURE_REASONS
+
+
+_RUNTIME_DETAIL_FIELDS = {
+    "speed_factor": "calibration_cpu_factor",
+    "act_sec": "act_sec",
+    "act_max_sec": "act_max_sec",
+    "sim_sec": "sim_sec",
+    "env_build_sec": "env_build_sec",
+    "seed_wall_sec": "seed_wall_sec",
+    "total_sec": "total_sec",
+    "attempt": "attempt",
+}
+
+
+def _runtime_details(metrics: Any) -> Dict[str, Any]:
+    """The host speed factor and phase timings of the flight behind a result's metrics, for the backend's attempt record."""
+    timing = metrics.get("timing") if isinstance(metrics, dict) else None
+    if not isinstance(timing, dict):
+        return {}
+    details: Dict[str, Any] = {}
+    for key, source in _RUNTIME_DETAIL_FIELDS.items():
+        value = timing.get(source)
+        if isinstance(value, (int, float)):
+            details[key] = round(float(value), 3)
+    return details
+
+
+def _runtime_details_field(metrics: Any) -> Dict[str, Any]:
+    """The upload row's runtime_details entry, or nothing when the flight left no timing."""
+    details = _runtime_details(metrics)
+    return {"runtime_details": details} if details else {}
 
 
 def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
@@ -134,7 +171,7 @@ async def _evaluate_seeds(
     seeds: List[int],
     family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
     description: str = "benchmark",
-    on_seed_complete: Optional[Callable[[], None]] = None,
+    on_seed_complete: Optional[Callable[..., None]] = None,
     on_seed_result: Optional[Callable[[int, Any, str], None]] = None,
     should_stop: Optional[Callable[[], Optional[str]]] = None,
     prior_seeds_done: int = 0,
@@ -152,8 +189,8 @@ async def _evaluate_seeds(
     position in ``seeds`` and its detail dict (score, map_type, metric_key,
     failure_reason, moving_platform). ``should_stop`` is polled by the
     dispatcher; a non-None reason stops new dispatches, in-flight seeds
-    finish, and undispatched seeds are skipped (returned lists then cover
-    only the evaluated seeds)."""
+    are stopped, and both those and the undispatched seeds are skipped
+    (returned lists then cover only the evaluated seeds)."""
     all_scores = []
     per_type_scores = _empty_per_type()
 
@@ -209,6 +246,7 @@ async def _evaluate_seeds(
                     getattr(result, "failure_reason", "NONE") or "NONE"
                 ),
                 "moving_platform": bool(getattr(task, "moving_platform", False)),
+                "runtime_details": _runtime_details(getattr(result, "metrics", None)),
             },
         )
 
@@ -357,8 +395,8 @@ async def _run_streaming_phase(
     arrive (fire-and-forget, capped at ``max_inflight``). ``re_authorize``
     (when given) re-checks the task every ``re_auth_interval_sec`` alongside
     evaluation; a denial — like a backend stop via ``should_stop`` — halts new
-    seed dispatches, lets in-flight seeds finish, and returns the accumulated
-    partials with the cancel reason.
+    seed dispatches, stops the seeds in flight unscored, and returns the
+    accumulated partials with the cancel reason.
     """
     all_scores: List[float] = []
     all_per_type: Dict[str, List[float]] = _empty_per_type()
@@ -373,8 +411,15 @@ async def _run_streaming_phase(
     )
     provenance = _seed_upload_provenance(self, model_path)
 
+    def _drop_refused(batch: List[dict], exc: BackendRejectedError) -> None:
+        """Let go of a batch the backend refused: resending cannot change the answer, and its seeds are no longer ours to hold."""
+        unacked.difference_update(int(row["seed_index"]) for row in batch)
+        bt.logging.warning(
+            f"Backend refused {len(batch)} seed scores for UID {uid}, not resending: {exc}"
+        )
+
     async def _safe_upload(batch: List[dict]) -> None:
-        """Post one score batch, three attempts with backoff; a batch never recorded is parked."""
+        """Post one score batch, three attempts with backoff; a refused batch is dropped, one never recorded is parked."""
         for delay in (0.0, 2.0, 4.0):
             if delay:
                 await asyncio.sleep(delay)
@@ -386,6 +431,9 @@ async def _run_streaming_phase(
                     provenance=provenance,
                     seed_set_id=_seed_set_id(self, family_id, epoch_number),
                 )
+            except BackendRejectedError as exc:
+                _drop_refused(batch, exc)
+                return
             except Exception as exc:
                 bt.logging.warning(f"Seed score upload failed for UID {uid}: {exc}")
                 continue
@@ -483,15 +531,16 @@ async def _run_streaming_phase(
         )
         if type_name != "unknown" and not _is_infra_failure(reason):
             unacked.add(seed_offset + idx)
-            upload_queue.put_nowait(
-                {
-                    "seed_index": seed_offset + idx,
-                    "score": score,
-                    "metric_key": type_name,
-                    "map_type": type_name,
-                    "failure_reason": reason,
-                }
-            )
+            row = {
+                "seed_index": seed_offset + idx,
+                "score": score,
+                "metric_key": type_name,
+                "map_type": type_name,
+                "failure_reason": reason,
+            }
+            if detail.get("runtime_details"):
+                row["runtime_details"] = dict(detail["runtime_details"])
+            upload_queue.put_nowait(row)
         if len(completed_scores) % chunk_size == 0:
             _fire_chunk_complete()
 
@@ -575,6 +624,7 @@ async def _run_streaming_phase(
                     "metric_key": detail.get("metric_key") or detail["map_type"],
                     "map_type": detail["map_type"],
                     "failure_reason": detail.get("failure_reason", "NONE"),
+                    **_runtime_details_field(detail.get("metrics")),
                 }
                 for j, detail in enumerate(all_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"
@@ -586,9 +636,12 @@ async def _run_streaming_phase(
                     asyncio.create_task(_safe_upload(rows[start:start + chunk_size]))
                 )
         await _drain_inflight()
-        if failed_batches:
-            retry_queue = list(failed_batches)
-            failed_batches.clear()
+        retry_queue = list(failed_batches)
+        failed_batches.clear()
+        grace_ends = time.monotonic() + SCORE_UPLOAD_GRACE_SEC
+        retry_delay = 5.0
+        while retry_queue:
+            unreachable: List[List[dict]] = []
             for batch in retry_queue:
                 try:
                     result = await self.backend_api.post_seed_scores_batch(
@@ -598,15 +651,30 @@ async def _run_streaming_phase(
                         provenance=provenance,
                         seed_set_id=_seed_set_id(self, family_id, epoch_number),
                     )
+                except BackendRejectedError as exc:
+                    _drop_refused(batch, exc)
+                    continue
                 except Exception as exc:
                     bt.logging.warning(
                         f"Final retry of {len(batch)} seed scores failed for UID {uid}: {exc}"
                     )
+                    unreachable.append(batch)
                     continue
                 if not result or not result.get("recorded"):
                     bt.logging.warning(
                         f"Final retry of {len(batch)} seed scores not recorded for UID {uid}"
                     )
+            # Only an outage earns another round: a batch the backend answered is settled either way.
+            retry_queue = unreachable
+            if not retry_queue or time.monotonic() + retry_delay > grace_ends:
+                break
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60.0)
+        if retry_queue:
+            lost = sum(len(batch) for batch in retry_queue)
+            bt.logging.error(
+                f"{lost} seed scores for UID {uid} never reached the backend; their seeds go back to the pool"
+            )
         if seed_feeder is not None:
             # Every score is uploaded by now, so anything still leased was dropped.
             hb.set_in_flight([])

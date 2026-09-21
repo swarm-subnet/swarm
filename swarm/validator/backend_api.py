@@ -62,6 +62,9 @@ from swarm.constants import (
     DUPLICATE_SESSION_RETRY_SEC,
     DUPLICATE_SESSION_WAIT_SEC,
     MAX_MODEL_BYTES,
+    RESULT_SUBMIT_ATTEMPTS,
+    RESULT_SUBMIT_BASE_DELAY_SEC,
+    RESULT_SUBMIT_MAX_DELAY_SEC,
 )
 from swarm.core.submission_policy import VALIDATOR_CONTRACT
 
@@ -79,11 +82,22 @@ VALIDATOR_CONTRACT_VERSION = VALIDATOR_CONTRACT
 
 
 class BackendTransportError(RuntimeError):
-    """Raised when the backend cannot be reached after retries."""
+    """Raised when the backend could not answer: a dropped connection, a timeout, a 5xx or a rate limit."""
 
 
 class BackendProtocolMismatchError(RuntimeError):
     """Raised on 404/405 from /next-task or /events: backend is too old."""
+
+
+class BackendRejectedError(RuntimeError):
+    """Raised when the backend answered and refused; sending the same request again will not change it."""
+
+    def __init__(self, endpoint: str, status_code: int, payload: Dict[str, Any]):
+        """Keep the status code, the backend's own reason and the decoded body of the refusal."""
+        self.status_code = status_code
+        self.payload = payload
+        self.detail = _scrub_url(str(payload.get("detail") or payload.get("reason") or ""))
+        super().__init__(f"backend refused {endpoint}: {status_code} {self.detail}".rstrip())
 
 
 async def authorize_with_retry(
@@ -266,8 +280,29 @@ class BackendApiClient:
             self._duplicate_instance_logged = True
         raise SystemExit(1)
 
+    def _read_reply(self, endpoint: str, resp: httpx.Response) -> Dict[str, Any]:
+        """Return the JSON object of a 2xx reply and raise for everything else, so a failure never reads as an answer."""
+        status = resp.status_code
+        try:
+            payload = resp.json()
+        except (ValueError, RuntimeError):
+            payload = None
+        if status >= 500 or status == 429:
+            bt.logging.warning(f"Backend unavailable on {endpoint}: {status}")
+            raise BackendTransportError(f"backend {status} on {endpoint}")
+        if status >= 400:
+            bt.logging.warning(f"Backend rejected {endpoint}: {status}")
+            raise BackendRejectedError(
+                endpoint, status, payload if isinstance(payload, dict) else {},
+            )
+        if not isinstance(payload, dict):
+            # A proxy page or a truncated body under a 200 is an outage, not an empty answer.
+            bt.logging.warning(f"Backend sent an unreadable reply on {endpoint}")
+            raise BackendTransportError(f"unreadable reply on {endpoint}")
+        return payload
+
     async def _post_signed(self, endpoint: str, data: dict) -> Dict[str, Any]:
-        """Make a signed POST request to the backend."""
+        """Make a signed POST request; raises BackendTransportError on an outage, BackendRejectedError on a refusal."""
         body = json.dumps(data).encode()
         headers = self._sign_request("POST", endpoint, body)
         headers["Content-Type"] = "application/json"
@@ -276,35 +311,18 @@ class BackendApiClient:
             resp = await self.client.post(
                 f"{self.base_url}{endpoint}", content=body, headers=headers
             )
-            await self._fence_duplicate_instance(resp)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            bt.logging.warning(f"Backend rejected {endpoint}: {status}")
-            try:
-                payload: Dict[str, Any] = e.response.json()
-                if not isinstance(payload, dict):
-                    payload = {"error": _scrub_url(str(payload)), "status_code": status}
-            except Exception:
-                payload = {"error": _scrub_url(str(e)), "status_code": status}
-            # Non-2xx is a failure: guarantee an "error" key so sync never reads a rejection as success.
-            payload.setdefault("error", f"HTTP {status}")
-            payload.setdefault("status_code", status)
-            if status >= 500:
-                payload.setdefault("transport_failure", True)
-            return payload
         except _TRANSPORT_EXCEPTIONS as e:
             bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
-            return {"error": _scrub_url(str(e)), "transport_failure": True}
-        except Exception as e:
-            bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
-            return {"error": _scrub_url(str(e))}
+            raise BackendTransportError(
+                f"transport failure on {endpoint}: {_scrub_url(e)}"
+            ) from e
+        await self._fence_duplicate_instance(resp)
+        return self._read_reply(endpoint, resp)
 
     async def _get_signed(
         self, endpoint: str, extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Make a signed GET request to the backend."""
+        """Make a signed GET request; raises BackendTransportError on an outage, BackendRejectedError on a refusal."""
         body = b""
         headers = self._sign_request("GET", endpoint, body)
         if extra_headers:
@@ -312,30 +330,13 @@ class BackendApiClient:
 
         try:
             resp = await self.client.get(f"{self.base_url}{endpoint}", headers=headers)
-            await self._fence_duplicate_instance(resp)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            bt.logging.warning(f"Backend rejected {endpoint}: {status}")
-            try:
-                payload: Dict[str, Any] = e.response.json()
-                if not isinstance(payload, dict):
-                    payload = {"error": _scrub_url(str(payload)), "status_code": status}
-            except Exception:
-                payload = {"error": _scrub_url(str(e)), "status_code": status}
-            # Non-2xx is a failure: guarantee an "error" key so sync never reads a rejection as success.
-            payload.setdefault("error", f"HTTP {status}")
-            payload.setdefault("status_code", status)
-            if status >= 500:
-                payload.setdefault("transport_failure", True)
-            return payload
         except _TRANSPORT_EXCEPTIONS as e:
             bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
-            return {"error": _scrub_url(str(e)), "transport_failure": True}
-        except Exception as e:
-            bt.logging.warning(f"Backend API error ({endpoint}): {_scrub_url(e)}")
-            return {"error": _scrub_url(str(e))}
+            raise BackendTransportError(
+                f"transport failure on {endpoint}: {_scrub_url(e)}"
+            ) from e
+        await self._fence_duplicate_instance(resp)
+        return self._read_reply(endpoint, resp)
 
     # ──────────────────────────────────────────────────────────────────────
     # GET /validators/sync
@@ -467,22 +468,33 @@ class BackendApiClient:
         The backend refuses a new session while the previous one still looks
         alive. A validator that just restarted is that previous session, so
         instead of exiting it keeps knocking until the takeover window passes;
-        only a rejection that outlives the window means a real duplicate."""
+        only a rejection that outlives the window means a real duplicate. A backend
+        that cannot answer has settled nothing, so that is retried for the same
+        window; past it startup carries on and the fence on later calls still holds."""
         deadline = time.monotonic() + DUPLICATE_SESSION_WAIT_SEC
         self._announcing = True
         try:
             while True:
-                response = await self.post_heartbeat(status="idle", in_flight_seeds=[])
-                if response.get("detail") != "DUPLICATE_VALIDATOR_INSTANCE":
+                try:
+                    await self.post_heartbeat(status="idle", in_flight_seeds=[])
                     return
-                if time.monotonic() >= deadline:
-                    bt.logging.error(
-                        "Duplicate validator instance detected: another process holds this hotkey; exiting"
+                except BackendTransportError:
+                    if time.monotonic() >= deadline:
+                        bt.logging.warning("Backend unreachable at startup; continuing unannounced")
+                        return
+                    bt.logging.info("Backend unreachable at startup; retrying startup heartbeat")
+                except BackendRejectedError as exc:
+                    if exc.detail != "DUPLICATE_VALIDATOR_INSTANCE":
+                        bt.logging.warning(f"Startup heartbeat refused: {exc}")
+                        return
+                    if time.monotonic() >= deadline:
+                        bt.logging.error(
+                            "Duplicate validator instance detected: another process holds this hotkey; exiting"
+                        )
+                        raise SystemExit(1)
+                    bt.logging.info(
+                        "Previous validator session still fresh on the backend; retrying startup heartbeat"
                     )
-                    raise SystemExit(1)
-                bt.logging.info(
-                    "Previous validator session still fresh on the backend; retrying startup heartbeat"
-                )
                 await asyncio.sleep(DUPLICATE_SESSION_RETRY_SEC)
         finally:
             self._announcing = False
@@ -540,10 +552,12 @@ class BackendApiClient:
         seed_set_id: Optional[str] = None,
         retries: int = 3,
     ) -> Dict[str, Any]:
-        """Upload one batch of per-seed results, retried up to ``retries`` times for the backend's confirmation."""
+        """Upload one batch of per-seed results and return the backend's reply.
+
+        Only an outage is retried, up to ``retries`` times, and it raises
+        BackendTransportError once they are spent. A refusal raises
+        BackendRejectedError at once: asking again cannot change it."""
         retries = max(retries, 1)
-        last_reason = ""
-        result: Dict[str, Any] = {}
         payload: Dict[str, Any] = {
             "model_uid": model_uid,
             "epoch_number": epoch_number,
@@ -574,19 +588,16 @@ class BackendApiClient:
             # that belongs to a different set rather than stitch it into this one.
             payload["seed_set_id"] = seed_set_id
         for attempt in range(retries):
-            result = await self._post_signed("/validators/seed-scores", payload)
-            if result.get("recorded"):
-                return result
-            last_reason = str(
-                result.get("error") or result.get("detail") or "not recorded"
-            )
-            if attempt < retries - 1:
+            try:
+                return await self._post_signed("/validators/seed-scores", payload)
+            except BackendTransportError as exc:
+                if attempt == retries - 1:
+                    bt.logging.warning(
+                        f"Seed score upload failed for UID {model_uid} "
+                        f"after {retries} attempts: {exc}"
+                    )
+                    raise
                 await asyncio.sleep(1)
-        bt.logging.warning(
-            f"Seed score upload failed for UID {model_uid} "
-            f"after {retries} attempts: {last_reason}"
-        )
-        return result
 
     # ──────────────────────────────────────────────────────────────────────
     # POST /validators/epoch/publish
@@ -616,16 +627,15 @@ class BackendApiClient:
     # Task lease and seed upload endpoints
     # ──────────────────────────────────────────────────────────────────────
 
-    async def claim_seeds(self, task_id: int, count: int = 1) -> Optional[Dict[str, Any]]:
-        """Lease up to ``count`` seeds for the task; None on transport failure."""
-        try:
-            return await self._post_signed(
-                f"/validators/tasks/{int(task_id)}/claim-seeds",
-                {"count": int(count)},
-            )
-        except Exception as exc:
-            bt.logging.warning(f"claim_seeds failed for task {task_id}: {exc}")
-            return None
+    async def claim_seeds(self, task_id: int, count: int = 1) -> Dict[str, Any]:
+        """Lease up to ``count`` seeds for the task.
+
+        Raises BackendTransportError on an outage and BackendRejectedError once the
+        backend has closed the task, so neither can be read as an empty pool."""
+        return await self._post_signed(
+            f"/validators/tasks/{int(task_id)}/claim-seeds",
+            {"count": int(count)},
+        )
 
     async def next_task(self) -> Optional[Dict[str, Any]]:
         """Long-poll for the next task; None if the window times out."""
@@ -730,7 +740,11 @@ class BackendApiClient:
         early_failed: bool,
         epoch_number: int,
     ) -> Dict[str, Any]:
-        """Submit a task result. Backend recomputes the authoritative score."""
+        """Submit a task result. Backend recomputes the authoritative score.
+
+        An outage is retried with capped backoff for RESULT_SUBMIT_ATTEMPTS and then
+        raises BackendTransportError. The backend answers a repeat of a result it
+        already holds with the same reply, so sending twice is safe."""
         endpoint = f"/validators/tasks/{task_id}/result"
         data: Dict[str, Any] = {
             "score": score,
@@ -741,7 +755,19 @@ class BackendApiClient:
             "benchmark_version": BENCHMARK_VERSION,
             "epoch_number": epoch_number,
         }
-        return await self._post_signed(endpoint, data)
+        delay = RESULT_SUBMIT_BASE_DELAY_SEC
+        for attempt in range(RESULT_SUBMIT_ATTEMPTS):
+            try:
+                return await self._post_signed(endpoint, data)
+            except BackendTransportError:
+                if attempt == RESULT_SUBMIT_ATTEMPTS - 1:
+                    raise
+                bt.logging.warning(
+                    f"Task {task_id} result not delivered "
+                    f"(attempt {attempt + 1}/{RESULT_SUBMIT_ATTEMPTS}); retrying in {delay:.0f}s"
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RESULT_SUBMIT_MAX_DELAY_SEC)
 
     async def events(
         self, last_event_id: Optional[int] = None,

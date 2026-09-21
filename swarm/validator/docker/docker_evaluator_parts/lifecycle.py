@@ -32,7 +32,7 @@ from swarm.config import DockerRuntimeSettings, env_bool
 from swarm.constants import DOCKER_WORKER_CPUS, DOCKER_WORKER_MEMORY
 
 from ._shared import _THREAD_CAP_ENV_VARS
-from .batch import remove_all_model_images
+from .batch import prune_swarm_images, remove_all_model_images, remove_owned_containers
 
 
 def __new__(cls):
@@ -327,22 +327,9 @@ def _setup_base_container(self):
             pass
 
         try:
-            subprocess.run(
-                ["docker", "container", "prune", "-f"], capture_output=True
-            )
-            subprocess.run(
-                "docker rm -f $(docker ps -aq --filter=name=swarm_eval_)",
-                shell=True,
-                capture_output=True,
-            )
-            subprocess.run(
-                "docker rm -f $(docker ps -aq --filter=name=swarm_verify_)",
-                shell=True,
-                capture_output=True,
-            )
-            remove_all_model_images()
-            subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
-            subprocess.run(["docker", "volume", "prune", "-f"], capture_output=True)
+            remove_owned_containers(adopt_unlabelled=True)
+            remove_all_model_images(adopt_unlabelled=True)
+            prune_swarm_images()
         except Exception:
             pass
 
