@@ -143,6 +143,9 @@ async def run_task(
         if not model_path.exists() or sha256sum(model_path) != model_hash:
             bt.logging.warning(f"run_task: model hash mismatch for UID {uid}")
             return
+        if cancel_flag.is_set():
+            bt.logging.info(f"run_task: cancelled before evaluation for UID {uid}")
+            return
         await _run_phase(
             self, task, uid=uid, phase=phase, task_id=task_id, family_id=family_id,
             model_path=model_path, cancel_flag=cancel_flag,

@@ -2195,3 +2195,68 @@ def test_a_scored_seed_stays_in_flight_until_the_backend_acks_it(monkeypatch):
     assert reported[0] == [0]
     assert reported[1] == [0], "seed dropped from the report while its score was unsent"
     assert reported[-1] == []
+
+
+def test_a_seed_stopped_in_flight_uploads_nothing_and_hands_its_lease_back(monkeypatch):
+    """After a stop the finished seed still uploads, the stopped one leaves no score row,
+    and the last in-flight report is empty so the pool can lease it again."""
+    validator = _make_validator()
+    reported: list = []
+    uploaded: list = []
+    stop = {"reason": None}
+    monkeypatch.setattr(
+        HeartbeatManager,
+        "set_in_flight",
+        lambda _self, indexes: reported.append(list(indexes)),
+    )
+
+    async def _record_upload(**kwargs):
+        """Keep the seed indexes of every score batch and acknowledge it."""
+        uploaded.extend(int(row["seed_index"]) for row in kwargs["scores"])
+        return {"recorded": True}
+
+    async def _parallel(tasks, uid, model_path, **kwargs):
+        """Finish seed 0, then see the stop while seed 1 flies and leave it without a result."""
+        _ = tasks, model_path
+        kwargs["on_held_seeds"]([0, 1])
+        kwargs["on_seed_result"](0, SimpleNamespace(uid=uid, score=0.9, failure_reason="NONE"), "seed_done")
+        stop["reason"] = "task cancelled"
+        assert kwargs["should_stop"]()
+        kwargs["on_held_seeds"]([])
+        return [SimpleNamespace(uid=uid, score=0.9, failure_reason="NONE", metrics={}), None]
+
+    validator.backend_api.post_seed_scores_batch = _record_upload
+    validator.docker_evaluator.evaluate_seeds_parallel = _parallel
+
+    async def _feeder(_free_slots):
+        """Offer no further seeds and report the source exhausted."""
+        return [], True
+
+    async def _run():
+        """Stream two leased seeds and stop while the second one is flying."""
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator,
+                uid=7,
+                model_path=_FAKE_MODEL_ZIP,
+                seeds=[0, 1],
+                phase_description="benchmark",
+                seed_offset=0,
+                epoch_number=1,
+                hb=hb,
+                chunk_size=2,
+                pre_built_tasks=[SimpleNamespace(challenge_type=1), SimpleNamespace(challenge_type=1)],
+                should_stop=lambda: stop["reason"],
+                seed_feeder=_feeder,
+                initial_pending=[0, 1],
+            )
+        finally:
+            hb.finish()
+
+    scores, _per_type, _details, cancel_reason = asyncio.run(_run())
+
+    assert scores == [0.9]
+    assert uploaded == [0]
+    assert cancel_reason == "backend stop_required: task cancelled"
+    assert reported[-1] == []

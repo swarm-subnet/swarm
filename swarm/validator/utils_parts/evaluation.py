@@ -152,8 +152,8 @@ async def _evaluate_seeds(
     position in ``seeds`` and its detail dict (score, map_type, metric_key,
     failure_reason, moving_platform). ``should_stop`` is polled by the
     dispatcher; a non-None reason stops new dispatches, in-flight seeds
-    finish, and undispatched seeds are skipped (returned lists then cover
-    only the evaluated seeds)."""
+    are stopped, and both those and the undispatched seeds are skipped
+    (returned lists then cover only the evaluated seeds)."""
     all_scores = []
     per_type_scores = _empty_per_type()
 
@@ -357,8 +357,8 @@ async def _run_streaming_phase(
     arrive (fire-and-forget, capped at ``max_inflight``). ``re_authorize``
     (when given) re-checks the task every ``re_auth_interval_sec`` alongside
     evaluation; a denial — like a backend stop via ``should_stop`` — halts new
-    seed dispatches, lets in-flight seeds finish, and returns the accumulated
-    partials with the cancel reason.
+    seed dispatches, stops the seeds in flight unscored, and returns the
+    accumulated partials with the cancel reason.
     """
     all_scores: List[float] = []
     all_per_type: Dict[str, List[float]] = _empty_per_type()

@@ -32,6 +32,7 @@ import asyncio
 import os
 import queue as queue_mod
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -59,6 +60,29 @@ _MAX_RPC_TRANSPORT_RETRIES = 15
 _WORKER_RECYCLE_RSS_MB = float(os.getenv("SWARM_WORKER_RECYCLE_RSS_MB", "2500"))
 _WORKER_RECYCLE_SEED_BUDGET = int(os.getenv("SWARM_WORKER_RECYCLE_SEEDS", "25"))
 _WORKER_RECYCLE_MIN_SEEDS = 3
+
+# A stopped seed leaves its flight loop within a step; past this the worker is killed.
+_STOP_GRACE_SEC = 30.0
+
+
+def _remove_uid_containers(uid: int) -> None:
+    """Force-remove the evaluation containers a stopped run may have left behind for this UID."""
+    prefix = f"swarm_eval_{int(uid)}_w"
+    try:
+        listed = subprocess.run(
+            ["docker", "ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        for name in listed.stdout.split():
+            if name.startswith(prefix):
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+    except Exception as exc:
+        bt.logging.warning(f"[Validator eval] container sweep for UID {uid} failed: {exc}")
+
+
+def _stop_requested(should_stop: Optional[Callable[[], Optional[str]]]) -> bool:
+    """True once the caller's stop check names a reason to halt."""
+    return should_stop is not None and bool(should_stop())
 
 
 def _benchmark_engine():
@@ -276,6 +300,9 @@ async def _run_process_parallel(
     )
     last_resource_poll_at = 0.0
     stop_reason: Optional[str] = None
+    stop_requested_at = 0.0
+    # Shared with every worker: set once, it ends the seeds already in flight.
+    cancel_event = ctx.Event()
 
     def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
         """Fire the per-seed result callback, ignoring anything it raises."""
@@ -326,7 +353,7 @@ async def _run_process_parallel(
         task_queue = ctx.Queue()
         worker = ctx.Process(
             target=bench_engine._benchmark_worker_main,
-            args=(worker_slot, task_queue, result_queue, progress_queue),
+            args=(worker_slot, task_queue, result_queue, progress_queue, cancel_event),
             name=f"validator_host_worker_{worker_slot}",
             daemon=True,
         )
@@ -527,6 +554,13 @@ async def _run_process_parallel(
                 getattr(event, "seed_meta", None),
             )
 
+    def _release_unscored(worker_slot: int, request: Any) -> None:
+        """Free a worker slot whose seeds were stopped; they keep no result and no score."""
+        batch_seed_meta.pop(int(request.batch_index), None)
+        worker_active_requests.pop(worker_slot, None)
+        worker_last_heartbeat.pop(worker_slot, None)
+        worker_started_at.pop(worker_slot, None)
+
     def _complete_failed_request(
         worker_slot: int,
         *,
@@ -536,6 +570,9 @@ async def _run_process_parallel(
         elapsed_sec: float,
     ) -> None:
         """Score every seed of a dead batch as an INFRA failure and free the worker slot."""
+        if stop_reason is not None:
+            _release_unscored(worker_slot, request)
+            return
         bt.logging.warning(
             f"[Validator eval] worker {worker_slot} failed batch {request.batch_index + 1}/{len(batch_plan)} "
             f"with status={status}: {error}"
@@ -607,6 +644,22 @@ async def _run_process_parallel(
             _restart_worker(worker_slot)
             _dispatch_available_batches()
         return completed_now
+
+    def _abandon_unresponsive_workers() -> None:
+        """Kill the workers that ignored the stop signal; their seeds stay unscored."""
+        for worker_slot, request in list(worker_active_requests.items()):
+            bt.logging.warning(
+                f"[Validator eval] worker {worker_slot} did not stop within "
+                f"{_STOP_GRACE_SEC:.0f}s; killing it"
+            )
+            worker = workers.get(worker_slot)
+            try:
+                if worker is not None and worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=2.0)
+            except Exception:
+                pass
+            _release_unscored(worker_slot, request)
 
     _TYPE_PREFIX = re.compile(r"^type\d+_")
     seed_stats: dict[str, Any] = {
@@ -748,15 +801,27 @@ async def _run_process_parallel(
                 reason = should_stop()
                 if reason:
                     stop_reason = str(reason)
+                    stop_requested_at = time.monotonic()
+                    cancel_event.set()
                     dropped = len(pending_batch_ids)
                     pending_batch_ids.clear()
                     feeder_done = True
                     bt.logging.warning(
                         f"[Validator eval] stop requested for UID {uid} ({stop_reason}); "
-                        f"dropping {dropped} pending seeds, finishing "
+                        f"dropping {dropped} pending seeds, stopping "
                         f"{len(worker_active_requests)} in-flight"
                     )
+            if (
+                stop_reason is not None
+                and worker_active_requests
+                and time.monotonic() - stop_requested_at >= _STOP_GRACE_SEC
+            ):
+                _abandon_unresponsive_workers()
             if stop_reason is not None and not worker_active_requests:
+                bt.logging.info(
+                    f"[Validator eval] UID {uid} stopped "
+                    f"{time.monotonic() - stop_requested_at:.1f}s after the request"
+                )
                 break
             _drain_progress_events()
             _maybe_poll_scheduler()
@@ -879,7 +944,8 @@ async def _run_process_parallel(
                 final_status = _seed_status(final_seed_meta)
                 prior_retries = int(batch_retry_counts.get(int(request.batch_index), 0))
                 if (
-                    (
+                    stop_reason is None
+                    and (
                         # In seed flow the pool is the retry: a timed-out seed goes back at
                         # once instead of holding this worker for a second full timeout.
                         (bench_engine._is_timeout_retry_status(final_status) and not feeder_active)
@@ -908,7 +974,8 @@ async def _run_process_parallel(
                     rpc_transport_retry_counts.get(int(request.batch_index), 0)
                 )
                 if (
-                    bench_engine._is_rpc_transport_status(final_status)
+                    stop_reason is None
+                    and bench_engine._is_rpc_transport_status(final_status)
                     and prior_transport_retries < 1
                     and retry_budget["rpc_transport"] < _MAX_RPC_TRANSPORT_RETRIES
                 ):
@@ -933,7 +1000,6 @@ async def _run_process_parallel(
 
             for idx, packed in zip(request.batch_indices, payload.results):
                 vr = _unpack_validation_result(packed)
-                results[idx] = vr
                 meta = task_meta[idx] if idx < len(task_meta) else None
                 final_seed_meta = prebuilt_seed_meta.pop(int(idx), None)
                 if final_seed_meta is None:
@@ -945,7 +1011,7 @@ async def _run_process_parallel(
                         result_obj=vr,
                     )
                 seed_status = _seed_status(final_seed_meta)
-                if vr is not None and (
+                infra_failed = vr is not None and (
                     bench_engine._is_timeout_retry_status(seed_status)
                     or bench_engine._is_rpc_transport_status(seed_status)
                     or bench_engine._is_infra_failure_status(seed_status)
@@ -954,7 +1020,12 @@ async def _run_process_parallel(
                         "stopped_during_connect",
                         "stopped_before_seed",
                     )
-                ):
+                )
+                if infra_failed and stop_reason is not None:
+                    # Stopped mid-flight: left unscored, like a seed that never started.
+                    continue
+                results[idx] = vr
+                if infra_failed:
                     # Infra failure, not a real 0 — flag it so the upload skips it
                     # and the seed is re-dispatched on resume instead of scored 0.
                     vr.failure_reason = FailureReason.INFRA.value
@@ -1003,6 +1074,8 @@ async def _run_process_parallel(
             _close_queue(queue_obj)
         for queue_obj in (result_queue, progress_queue):
             _close_queue(queue_obj)
+        if stop_reason is not None:
+            await asyncio.to_thread(_remove_uid_containers, uid)
 
 
 async def evaluate_seeds_parallel(
@@ -1108,6 +1181,8 @@ async def evaluate_seeds_parallel(
         )
         return schema_reject
 
+    if _stop_requested(should_stop):
+        return [None] * len(tasks)
     model_image = await asyncio.to_thread(
         prepare_model_image,
         self,
@@ -1115,6 +1190,8 @@ async def evaluate_seeds_parallel(
         model_path,
         runtime_profile_payload=runtime_profile.as_dict(),
     )
+    if _stop_requested(should_stop):
+        return [None] * len(tasks)
 
     task_meta = [
         {
@@ -1130,6 +1207,8 @@ async def evaluate_seeds_parallel(
     from .batch import _ensure_host_speed_factor
 
     speed = await _ensure_host_speed_factor(self, effective_workers)
+    if _stop_requested(should_stop):
+        return [None] * len(tasks)
     if speed is None or not speed.eligible:
         detail = (
             "reference calibration is unavailable"
