@@ -59,6 +59,49 @@ COMPOSE_FILE="$REPO_ROOT/.docker/docker-compose.yml"
 SERVICE="swarm_validator"
 PROFILE="validator"
 LEGACY_PM2_PROCESS="${PROCESS_NAME_OVERRIDE:-swarm_validator}"
+ENV_FILE="$REPO_ROOT/.env"
+
+# Compose reads .env next to the compose file, not at the repository root where the
+# operator keeps it, so the file is handed over on every call.
+compose() {
+  if [[ -f "$ENV_FILE" ]]; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  else
+    docker compose -f "$COMPOSE_FILE" "$@"
+  fi
+}
+
+env_has() {
+  # True when the variable is set in the shell or named in .env.
+  [[ -n "${!1:-}" ]] || { [[ -f "$ENV_FILE" ]] && grep -q "^$1=" "$ENV_FILE"; }
+}
+
+carry_into_env() {
+  # The watcher a host ran before the image passes its settings as arguments; they
+  # are written into .env once so the container reads them from then on.
+  env_has "$1" && return 0
+  printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
+  echo "[INFO] carried $1 into $ENV_FILE"
+}
+
+[[ $# -ge 1 && -n "$1" ]] && LEGACY_PM2_PROCESS="$1"
+[[ $# -ge 2 && -n "$2" ]] && carry_into_env SWARM_WALLET_NAME "$2"
+[[ $# -ge 3 && -n "$3" ]] && carry_into_env SWARM_WALLET_HOTKEY "$3"
+if [[ $# -ge 4 && -n "$4" ]]; then
+  case "$4" in
+    --subtensor.network\ *)        carry_into_env SWARM_SUBTENSOR_NETWORK "${4#--subtensor.network }" ;;
+    --subtensor.chain_endpoint\ *) carry_into_env SWARM_SUBTENSOR_CHAIN_ENDPOINT "${4#--subtensor.chain_endpoint }" ;;
+  esac
+fi
+
+# Refused here, before the checkout moves or the host validator stops: a container
+# without a wallet exits at once, and the pm2 process it replaced would be gone.
+for var in SWARM_WALLET_NAME SWARM_WALLET_HOTKEY SWARM_BACKEND_API_URL; do
+  if ! env_has "$var"; then
+    echo "[ERR] $var is not set in the environment or in $ENV_FILE; the container cannot start without it" >&2
+    exit 1
+  fi
+done
 
 STEP=0
 banner() {
@@ -108,7 +151,7 @@ mkdir -p "$SWARM_STATE_DIR/state" "$SWARM_STATE_DIR/swarm-state"
 chown -R "$SWARM_UID:$SWARM_GID" "$SWARM_STATE_DIR" 2>/dev/null || true
 
 banner "Pulling the published image"
-docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" pull "$SERVICE"
+compose --profile "$PROFILE" pull "$SERVICE"
 
 # One hotkey, one validator. A host process left running beside the container is a
 # second session on the same hotkey, and the backend fences one of them off.
@@ -125,10 +168,10 @@ fi
 # up -d recreates the container only when the image or its configuration changed,
 # so an unchanged pull leaves the running validator alone.
 banner "Starting the validator container"
-docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" up -d "$SERVICE"
+compose --profile "$PROFILE" up -d "$SERVICE"
 
 banner "Running image"
-docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" images "$SERVICE" || true
+compose --profile "$PROFILE" images "$SERVICE" || true
 
 # The deploy stands; a later failure must not roll the checkout back under it.
 trap - ERR

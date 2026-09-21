@@ -34,15 +34,33 @@ IFS=$'\n\t'
 # 1. User-tunable settings – **edit these** ──────────────────────
 ###############################################################################
 SLEEP_INTERVAL=600                      # seconds between version checks
-IMAGE="${SWARM_VALIDATOR_IMAGE:-ghcr.io/swarm-subnet/swarm-validator}"
-TAG="${SWARM_VALIDATOR_TAG:-latest}"
 ###############################################################################
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 UPDATE_SCRIPT="$SCRIPT_DIR/update_deploy.sh"
 COMPOSE_FILE="$REPO_ROOT/.docker/docker-compose.yml"
+ENV_FILE="$REPO_ROOT/.env"
 VERSION_LABEL="swarm.__version__"
+
+env_value() {
+  # A variable from the shell, else from .env, else empty.
+  if [[ -n "${!1:-}" ]]; then printf '%s' "${!1}"; return; fi
+  [[ -f "$ENV_FILE" ]] && { grep "^$1=" "$ENV_FILE" || true; } | tail -n1 | cut -d= -f2-
+}
+
+# The image and the tag the operator pinned in .env, so a pin holds here as well as
+# in the deploy, and a rollback by tag is not undone on the next cycle.
+IMAGE="$(env_value SWARM_VALIDATOR_IMAGE)"; IMAGE="${IMAGE:-ghcr.io/swarm-subnet/swarm-validator}"
+TAG="$(env_value SWARM_VALIDATOR_TAG)"; TAG="${TAG:-latest}"
+
+compose() {
+  if [[ -f "$ENV_FILE" ]]; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  else
+    docker compose -f "$COMPOSE_FILE" "$@"
+  fi
+}
 
 [[ -f "$UPDATE_SCRIPT" ]] || { echo "[ERR] missing $UPDATE_SCRIPT" >&2; exit 1; }
 
@@ -58,7 +76,7 @@ running_version() {
   # What the validator is actually running, read from the container's own image
   # rather than from a tag, so a retagged :latest cannot be mistaken for a redeploy.
   local image_id
-  image_id="$(docker compose -f "$COMPOSE_FILE" --profile validator ps -q swarm_validator 2>/dev/null \
+  image_id="$(compose --profile validator ps -q swarm_validator 2>/dev/null \
               | head -n1 | xargs -r docker inspect --format '{{.Image}}' 2>/dev/null || true)"
   [[ -n "$image_id" ]] && image_version "$image_id"
 }

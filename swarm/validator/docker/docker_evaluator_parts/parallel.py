@@ -48,6 +48,7 @@ from swarm.benchmark.engine_parts.workers import _unpack_validation_result
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.faults import ReasonCode
 from swarm.protocol import FailureReason, ValidationResult
+from swarm.validator.docker.docker_evaluator_parts.batch import _owned_containers
 from swarm.validator.runtime_telemetry import (
     format_seed_timing_line,
     summarize_seed_timing,
@@ -70,16 +71,10 @@ _STOP_GRACE_SEC = 30.0
 
 
 def _remove_uid_containers(uid: int) -> None:
-    """Force-remove the evaluation containers a stopped run may have left behind for this UID."""
-    prefix = f"swarm_eval_{int(uid)}_w"
+    """Force-remove this instance's evaluation containers a stopped run may have left behind for this UID."""
     try:
-        listed = subprocess.run(
-            ["docker", "ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=30,
-        )
-        for name in listed.stdout.split():
-            if name.startswith(prefix):
-                subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+        for name in _owned_containers(f"swarm_eval_{int(uid)}_w", adopt_unlabelled=False):
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
     except Exception as exc:
         bt.logging.warning(f"[Validator eval] container sweep for UID {uid} failed: {exc}")
 

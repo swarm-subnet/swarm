@@ -1994,24 +1994,36 @@ def _owned_containers(prefix: str, adopt_unlabelled: bool) -> list[str]:
 def _owned_model_images(adopt_unlabelled: bool) -> list[str]:
     """Tags of this instance's per-model images, plus the unowned ones when asked.
 
-    The owner is read from the label column rather than passed as a filter, because
-    a filter cannot say "mine or nobody's", and the images a release before the label
-    left behind are nobody's.
+    The owner is read off each image rather than passed as a filter, because a filter
+    cannot say "mine or nobody's", and the images a release before the label left
+    behind are nobody's. The images listing has no label column, so the tags are
+    listed first and inspected in one call.
     """
-    result = subprocess.run(
+    listed = subprocess.run(
         [
             "docker", "images", "--filter", "reference=swarm_eval_model_*",
-            "--format", f'{{{{.Repository}}}}:{{{{.Tag}}}}\t{{{{.Label "{INSTANCE_LABEL_KEY}"}}}}',
+            "--format", "{{.Repository}}:{{.Tag}}",
         ],
         capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
     )
-    if result.returncode != 0:
+    if listed.returncode != 0:
+        return []
+    tags = [tag for tag in listed.stdout.split() if tag and not tag.endswith(":<none>")]
+    if not tags:
+        return []
+    inspected = subprocess.run(
+        [
+            "docker", "image", "inspect",
+            "--format", f'{{{{index .Config.Labels "{INSTANCE_LABEL_KEY}"}}}}', *tags,
+        ],
+        capture_output=True, text=True, timeout=_DOCKER_LIST_TIMEOUT_SEC,
+    )
+    if inspected.returncode != 0:
         return []
     owner_id = instance_id()
     owned = []
-    for line in result.stdout.splitlines():
-        tag, _, owner = line.partition("\t")
-        if tag and (owner == owner_id or (adopt_unlabelled and is_unowned(owner))):
+    for tag, owner in zip(tags, inspected.stdout.splitlines()):
+        if owner == owner_id or (adopt_unlabelled and is_unowned(owner)):
             owned.append(tag)
     return owned
 

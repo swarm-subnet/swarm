@@ -52,8 +52,20 @@ class _FakeDocker:
         if cmd[:2] == ["docker", "ps"] and "name=swarm_eval_" in cmd:
             stdout = self.containers
         elif cmd[:2] == ["docker", "images"]:
-            stdout = self.images
+            stdout = "\n".join(self._image_owners()) + "\n" if self.images else ""
+        elif cmd[:3] == ["docker", "image", "inspect"]:
+            owners = self._image_owners()
+            stdout = "\n".join(owners[tag] for tag in cmd[5:]) + "\n"
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    def _image_owners(self) -> dict:
+        """The canned image listing as tag to owner, in listing order."""
+        owners = {}
+        for line in self.images.splitlines():
+            tag, _, owner = line.partition("\t")
+            if tag:
+                owners[tag] = owner
+        return owners
 
     def removed(self) -> list[str]:
         """Names of the containers a cleanup force-removed."""
@@ -194,8 +206,7 @@ def test_a_wedged_daemon_costs_one_wait_even_while_reaping_images(monkeypatch, e
         calls.append(cmd)
         if cmd[:2] == ["docker", "rmi"]:
             raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
-        stdout = _IMAGES if cmd[:2] == ["docker", "images"] else ""
-        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+        return _FakeDocker(images=_IMAGES).run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", _list_then_hang)
     evaluator.cleanup(adopt_unlabelled=True)

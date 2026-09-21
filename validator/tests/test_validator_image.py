@@ -193,6 +193,9 @@ def test_the_update_script_finds_the_checkout_from_its_copy(tmp_path: Path) -> N
     script_dir = checkout / "validator" / "scripts" / "update"
     script_dir.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    (checkout / ".env").write_text(
+        "SWARM_WALLET_NAME=w\nSWARM_WALLET_HOTKEY=h\nSWARM_BACKEND_API_URL=http://backend\n"
+    )
     head = UPDATE_SCRIPT.read_text().split("\nSTEP=0\n", 1)[0]
     probe = script_dir / "update_deploy.sh"
     probe.write_text(head + '\necho "$REPO_ROOT"\n')
@@ -285,3 +288,70 @@ def test_the_default_profile_does_not_start_the_validator() -> None:
     if result.returncode != 0:
         pytest.skip(f"docker compose could not run here: {result.stderr.strip()[:200]}")
     assert "swarm_validator" not in result.stdout.split()
+
+
+def _update_script_head_in_a_checkout(tmp_path: Path) -> tuple[Path, Path]:
+    """Copy the update script's preamble into a scratch git checkout and return the script and its .env."""
+    checkout = tmp_path / "checkout"
+    script_dir = checkout / "validator" / "scripts" / "update"
+    script_dir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    head = UPDATE_SCRIPT.read_text().split("\nSTEP=0\n", 1)[0]
+    probe = script_dir / "update_deploy.sh"
+    probe.write_text(head + '\necho "pm2=$LEGACY_PM2_PROCESS"\n')
+    return probe, checkout / ".env"
+
+
+def test_the_update_script_carries_the_old_watchers_arguments_into_env(tmp_path: Path) -> None:
+    """Proves a host still running the pre-image watcher keeps its wallet across the switch.
+
+    That watcher passes the pm2 name, the wallet and the chain as positional
+    arguments; the container reads .env, so they are written there once.
+    """
+    probe, env_file = _update_script_head_in_a_checkout(tmp_path)
+    env_file.write_text("SWARM_BACKEND_API_URL=http://backend\n")
+    result = subprocess.run(
+        ["bash", str(probe), "my_pm2", "my_cold", "my_hot", "--subtensor.network finney"],
+        capture_output=True, text=True, cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "pm2=my_pm2" in result.stdout
+    assert env_file.read_text().splitlines()[1:] == [
+        "SWARM_WALLET_NAME=my_cold",
+        "SWARM_WALLET_HOTKEY=my_hot",
+        "SWARM_SUBTENSOR_NETWORK=finney",
+    ]
+    again = subprocess.run(
+        ["bash", str(probe), "my_pm2", "other_cold", "other_hot"],
+        capture_output=True, text=True, cwd=str(tmp_path),
+    )
+    assert again.returncode == 0, again.stderr
+    assert "other_cold" not in env_file.read_text(), "a value already in .env is never overwritten"
+
+
+def test_the_update_script_refuses_to_run_without_a_wallet(tmp_path: Path) -> None:
+    """Proves the deploy stops before touching anything when the container could not start.
+
+    Stopping the host validator first would leave the operator with neither.
+    """
+    probe, env_file = _update_script_head_in_a_checkout(tmp_path)
+    env_file.write_text("SWARM_BACKEND_API_URL=http://backend\n")
+    result = subprocess.run(["bash", str(probe)], capture_output=True, text=True, cwd=str(tmp_path))
+    assert result.returncode == 1
+    assert "SWARM_WALLET_NAME" in result.stderr
+    assert "pm2=" not in result.stdout
+
+
+def test_the_watcher_reads_the_pinned_tag_from_env(tmp_path: Path) -> None:
+    """Proves a tag pinned in the repo-root .env holds for the watcher, so a rollback by pin is not undone."""
+    checkout = tmp_path / "checkout"
+    script_dir = checkout / "validator" / "scripts" / "update"
+    script_dir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    (checkout / ".env").write_text("SWARM_VALIDATOR_TAG=5.1.5.9\n")
+    head = AUTO_UPDATE_SCRIPT.read_text().split("\n[[ -f \"$UPDATE_SCRIPT\" ]]", 1)[0]
+    probe = script_dir / "auto_update_deploy.sh"
+    probe.write_text(head + '\necho "$IMAGE:$TAG"\n')
+    result = subprocess.run(["bash", str(probe)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ghcr.io/swarm-subnet/swarm-validator:5.1.5.9"
