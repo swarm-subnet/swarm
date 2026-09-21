@@ -41,8 +41,12 @@ if [[ "$(id -u)" == "0" && -n "${SWARM_UID:-}" && "$SWARM_UID" != "0" ]]; then
   done
   groups="$gid"
   [[ -n "${DOCKER_GID:-}" ]] && groups="$gid,$DOCKER_GID"
-  exec setpriv --reuid "$SWARM_UID" --regid "$gid" --groups "$groups" \
-      --inh-caps +sys_admin,+net_admin --ambient-caps +sys_admin,+net_admin \
+  # A container started without the two capabilities, a test run for instance, has
+  # nothing to carry across and must not fail on the attempt.
+  caps=(--inh-caps +sys_admin,+net_admin --ambient-caps +sys_admin,+net_admin)
+  setpriv "${caps[@]}" --reuid "$SWARM_UID" --regid "$gid" --groups "$groups" true 2>/dev/null \
+    || caps=()
+  exec setpriv --reuid "$SWARM_UID" --regid "$gid" --groups "$groups" "${caps[@]}" \
       bash "$0" "$@"
 fi
 
