@@ -43,9 +43,11 @@ from swarm.constants import (
     GLOBAL_EVAL_BASE_SEC,
     GLOBAL_EVAL_CAP_SEC,
     GLOBAL_EVAL_PER_SEED_SEC,
+    MINER_COMPUTE_BUDGET_SEC,
     MODEL_DIR,
     SIM_DT,
     SPEED_FACTOR_MAX_ELIGIBLE,
+    SPEED_FACTOR_MIN,
 )
 from swarm.core.faults import ReasonCode
 from swarm.core.submission_lane import is_model_graph_artifact
@@ -802,6 +804,20 @@ def _setup_pretry_state(ctx: _BatchContext) -> None:
 OBS_SHM_BYTES = 32 * 1024 * 1024
 
 
+def _legal_thinking_sec(tasks: list, speed_factor: Optional[float]) -> float:
+    """Wall time the miner may spend in act() across these seeds without breaking the per-step budget.
+
+    Every step grants MINER_COMPUTE_BUDGET_SEC scaled by the host speed factor, so the batch
+    clock has to hold that on top of the family's simulation allowance; otherwise a slow but
+    legal model runs out of clock and is booked as an infrastructure fault."""
+    steps = 0
+    for task in tasks:
+        sim_dt = float(getattr(task, "sim_dt", 0.0) or SIM_DT)
+        steps += math.ceil(float(getattr(task, "horizon", 0.0)) / sim_dt)
+    factor = max(float(speed_factor or SPEED_FACTOR_MIN), SPEED_FACTOR_MIN)
+    return steps * MINER_COMPUTE_BUDGET_SEC * factor
+
+
 def _obs_shm_host_path(host_port: int) -> str:
     """The /dev/shm file that carries observations to the container published on this port."""
     return obs_shm_path(host_port)
@@ -865,7 +881,10 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             else 1.0
         )
         timeout_multiplier = timeout_settings.multiplier * profile_timeout_multiplier
-        batch_timeout = base_batch_timeout * timeout_multiplier
+        thinking_allowance = _legal_thinking_sec(tasks, ctx.speed_factor)
+        batch_timeout = base_batch_timeout * timeout_multiplier + thinking_allowance
+        if profile_cap_sec > 0:
+            batch_timeout = min(batch_timeout, profile_cap_sec)
         hard_cap_timeout = timeout_settings.hard_cap_sec
         if hard_cap_timeout > 0:
             batch_timeout = min(batch_timeout, hard_cap_timeout)
@@ -879,12 +898,13 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             _phase(
                 f"starting rpc batch with timeout={batch_timeout:.1f}s "
                 f"(base={base_batch_timeout:.1f}s x {timeout_multiplier:.2f} "
-                f"hard_cap={hard_cap_timeout:.1f}s)"
+                f"+ thinking={thinking_allowance:.1f}s hard_cap={hard_cap_timeout:.1f}s)"
             )
         else:
             _phase(
                 f"starting rpc batch with timeout={batch_timeout:.1f}s "
-                f"(base={base_batch_timeout:.1f}s x {timeout_multiplier:.2f})"
+                f"(base={base_batch_timeout:.1f}s x {timeout_multiplier:.2f} "
+                f"+ thinking={thinking_allowance:.1f}s)"
             )
         if extend_on_progress:
             _phase(

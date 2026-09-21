@@ -552,10 +552,10 @@ async def _run_process_parallel(
         seed_meta: Optional[Dict[str, Any]],
         *,
         retried: bool = False,
-    ) -> None:
-        """Stamp one attempt's record with its queue wait, total and attempt number, then log it."""
+    ) -> Optional[Dict[str, Any]]:
+        """Stamp one attempt's record with its queue wait, total and attempt number, log it and return it."""
         if not isinstance(seed_meta, dict):
-            return
+            return None
         now = time.time()
         dispatched_at = batch_dispatched_at.get(int(batch_index), now)
         started_ts = batch_started_ts.get(int(batch_index), dispatched_at)
@@ -569,6 +569,7 @@ async def _run_process_parallel(
         }
         run_timing.append(record)
         tracker_call(runtime_tracker, "record_seed_timing", record)
+        return record
 
     def _drain_progress_events() -> None:
         """Empty the progress queue, refreshing heartbeats and keeping the seed records it carries."""
@@ -1069,8 +1070,10 @@ async def _run_process_parallel(
                     vr.failure_reason = FailureReason.INFRA.value
                 _emit_seed_complete(on_seed_complete, final_seed_meta)
                 _record_seed_result(vr, meta, status=seed_status)
+                timing = _record_seed_timing(int(request.batch_index), final_seed_meta)
+                if vr is not None and timing is not None:
+                    vr.metrics["timing"] = timing
                 _emit_seed_result(idx, vr, seed_status)
-                _record_seed_timing(int(request.batch_index), final_seed_meta)
 
             worker_active_requests.pop(worker_slot, None)
             worker_last_heartbeat.pop(worker_slot, None)
