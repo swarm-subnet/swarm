@@ -28,8 +28,6 @@ from typing import Optional
 
 os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
 
-import subprocess
-
 import bittensor as bt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -43,6 +41,7 @@ from loguru import logger
 import swarm
 from swarm.base.validator import BaseValidatorNeuron
 from swarm.constants import STAND_DOWN_TIMEOUT_SEC
+from swarm.utils.docker_instance import set_instance_id
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.env_check import ensure_environment
 from swarm.validator.forward import forward
@@ -215,30 +214,7 @@ class Validator(BaseValidatorNeuron):
 
         # Initialize Docker evaluator at startup
         bt.logging.info("Initializing Docker secure evaluator...")
-        try:
-            docker_ok = (
-                subprocess.run(["docker", "--version"], capture_output=True).returncode
-                == 0
-            )
-            if docker_ok:
-                subprocess.run(
-                    "docker kill $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true",
-                    shell=True,
-                )
-                subprocess.run(
-                    "docker kill $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true",
-                    shell=True,
-                )
-                subprocess.run(
-                    "docker rm -f $(docker ps -aq --filter name=swarm_eval_) 2>/dev/null || true",
-                    shell=True,
-                )
-                subprocess.run(
-                    "docker rm -f $(docker ps -aq --filter name=swarm_verify_) 2>/dev/null || true",
-                    shell=True,
-                )
-        except Exception:
-            pass
+        set_instance_id(self.wallet.hotkey.ss58_address)
         ensure_model_dir()
         self.docker_evaluator = DockerSecureEvaluator()
         if DockerSecureEvaluator._base_ready:
@@ -246,7 +222,7 @@ class Validator(BaseValidatorNeuron):
         else:
             bt.logging.warning("⚠️  Docker evaluator initialization failed")
         try:
-            self.docker_evaluator.cleanup()
+            self.docker_evaluator.cleanup(prune=True, adopt_unlabelled=True)
         except Exception as exc:
             bt.logging.warning(f"Startup evaluation cleanup failed: {exc}")
 

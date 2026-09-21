@@ -50,6 +50,7 @@ from swarm.constants import (
 )
 from swarm.core.action import canonicalize_action
 from swarm.protocol import FailureReason, ValidationResult
+from swarm.utils.docker_instance import obs_shm_path
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.calibration import act_hard_cap_sec, judge_act
 
@@ -98,7 +99,7 @@ def _run_multi_seed_rpc_sync(
 
     shm_file = None
     shm_buf = None
-    shm_path = f"/dev/shm/swarm_obs_{rpc_port}.bin"
+    shm_path = obs_shm_path(rpc_port)
     if os.path.exists(shm_path):
         try:
             shm_file = open(shm_path, "r+b")
