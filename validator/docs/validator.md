@@ -167,9 +167,10 @@ docker compose -f .docker/docker-compose.yml --profile validator restart validat
 ```
 
 The script is the start command: it reads `.env`, works out the uid and the docker group,
-prepares the state directory, pulls `ghcr.io/swarm-subnet/swarm-validator` from GitHub
-Packages and runs `up`. To run `up` yourself, hand it the same file, because compose
-otherwise looks for `.env` next to the compose file rather than at the repository root:
+pulls `ghcr.io/swarm-subnet/swarm-validator` from GitHub Packages and runs `up`. The
+container creates the state directory itself on first start. To run `up` by hand, hand it
+the same file, because compose otherwise looks for `.env` next to the compose file rather
+than at the repository root (a copy kept at `.docker/.env` works too):
 
 ```bash
 docker compose --env-file .env -f .docker/docker-compose.yml --profile validator up -d validator

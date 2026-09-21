@@ -89,7 +89,31 @@ jobs:
         if: steps.plan.outputs.publish == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build for the test run
+        if: steps.plan.outputs.publish == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .docker/validator.Dockerfile
+          load: true
+          build-args: |
+            SWARM_VERSION=${{ steps.version.outputs.version }}
+          tags: swarm-validator:candidate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The validator tests run inside the image itself, as a plain uid with no wallet,
+      # so what gets published is what passed and not merely what built.
+      - name: Run the validator tests inside the image
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          docker run --rm --cpus=4 \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            --user "$(id -u):$(id -g)" \
+            swarm-validator:candidate \
+            pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider
+
+      - name: Push
         if: steps.plan.outputs.publish == 'true'
         uses: docker/build-push-action@v6
         with:

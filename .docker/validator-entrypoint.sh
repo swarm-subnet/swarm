@@ -28,6 +28,24 @@
 # which is what a test job or a nightly build wants from this image.
 set -euo pipefail
 
+# Compose starts the container as root so this can create the state directories and
+# hand them to the uid: Docker creates a missing bind source as root, and nothing else
+# in the container could fix that. Then it becomes that uid for good. The two
+# capabilities are carried across the switch, since dropping uid would drop them.
+if [[ "$(id -u)" == "0" && -n "${SWARM_UID:-}" && "$SWARM_UID" != "0" ]]; then
+  gid="${SWARM_GID:-$SWARM_UID}"
+  for dir in "${SWARM_STATE_DIR:-}" /opt/swarm-validator/state /opt/swarm-validator/swarm/state; do
+    [[ -n "$dir" ]] || continue
+    mkdir -p "$dir"
+    chown "$SWARM_UID:$gid" "$dir"
+  done
+  groups="$gid"
+  [[ -n "${DOCKER_GID:-}" ]] && groups="$gid,$DOCKER_GID"
+  exec setpriv --reuid "$SWARM_UID" --regid "$gid" --groups "$groups" \
+      --inh-caps +sys_admin,+net_admin --ambient-caps +sys_admin,+net_admin \
+      bash "$0" "$@"
+fi
+
 # A bare uid has no passwd entry, so Docker sets HOME=/ and bittensor, which creates
 # ~/.bittensor on import, dies before reading any config. Compose points HOME at the
 # state directory; a plain `docker run` gets a scratch home instead.

@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,36 @@ def test_the_entrypoint_runs_a_plain_command_without_a_wallet(tmp_path: Path) ->
     )
     assert flagged.returncode == 2
     assert "SWARM_WALLET_NAME" in flagged.stderr
+
+
+@pytest.mark.skipif(os.geteuid() != 0 or shutil.which("setpriv") is None,
+                    reason="needs root and setpriv to switch uid")
+def test_the_entrypoint_owns_the_state_directory_then_drops_root() -> None:
+    """Proves a root start hands the state directory to the uid and runs as that uid.
+
+    Docker creates a missing bind source as root; without this step a plain `up`
+    fails on the first write and the operator is told to chown by hand.
+    """
+    # The re-exec runs as the uid, which cannot enter pytest's private temp tree or
+    # a checkout under /root, so the script is copied somewhere world-readable.
+    work = Path(tempfile.mkdtemp(prefix="swarm-entrypoint-", dir="/tmp"))
+    work.chmod(0o755)
+    script = work / "entrypoint.sh"
+    script.write_text(ENTRYPOINT.read_text())
+    script.chmod(0o644)
+    state = work / "state"
+    env = {
+        "PATH": "/usr/bin:/bin", "HOME": "/", "SWARM_UID": "1000", "SWARM_GID": "1000",
+        "SWARM_STATE_DIR": str(state),
+    }
+    ran = subprocess.run(
+        ["bash", str(script), "sh", "-c", "id -u; test -w \"$SWARM_STATE_DIR\" && echo writable"],
+        capture_output=True, text=True, env=env,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.split() == ["1000", "writable"]
+    assert state.stat().st_uid == 1000
+    shutil.rmtree(work)
 
 
 def test_the_version_compare_orders_releases_properly() -> None:

@@ -56,11 +56,10 @@ services:
     container_name: swarm_validator_node
     profiles: ["validator"]
     restart: unless-stopped
-    # Not root. The two capabilities are what the evaluator needs to cut a flight's
-    # network off and to enter its namespace; everything else is dropped with the uid.
-    user: "${SWARM_UID:-1000}:${SWARM_GID:-1000}"
-    group_add:
-      - "${DOCKER_GID:-999}"
+    # Not root. The entrypoint starts as root only to create and own the state
+    # directories, then becomes SWARM_UID. The two capabilities are what the evaluator
+    # needs to cut a flight's network off and to enter its namespace; everything else
+    # is dropped with the uid.
     cap_add:
       - SYS_ADMIN
       - NET_ADMIN
@@ -86,6 +85,9 @@ services:
     # The log file is written to the working directory.
     working_dir: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
     environment:
+      SWARM_UID: ${SWARM_UID:-1000}
+      SWARM_GID: ${SWARM_GID:-1000}
+      DOCKER_GID: ${DOCKER_GID:-999}
       SWARM_STATE_DIR: ${SWARM_STATE_DIR:-/opt/swarm-validator-state}
       # A bare uid has no passwd entry, so Docker would set HOME=/ and bittensor,
       # which creates ~/.bittensor on import, would die before reading any config.
@@ -96,7 +98,11 @@ services:
     env_file:
       # Optional so `docker compose config` works in a checkout without one; the
       # entrypoint refuses to start when the wallet variables are actually missing.
+      # Compose itself reads .env next to this file for the paths above, so a copy
+      # kept there is read for the container as well.
       - path: ../.env
+        required: false
+      - path: .env
         required: false
 
   # The validator side on its own, the same set the validator job runs in CI.
