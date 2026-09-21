@@ -45,6 +45,7 @@ from swarm.constants import (
     GLOBAL_EVAL_PER_SEED_SEC,
     MINER_COMPUTE_BUDGET_SEC,
     MODEL_DIR,
+    SEED_STALL_TIMEOUT_SEC,
     SIM_DT,
     SPEED_FACTOR_MAX_ELIGIBLE,
     SPEED_FACTOR_MIN,
@@ -946,8 +947,10 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
 
         timed_out = False
         cancelled = False
+        stalled = False
         eval_start = time.time()
         timeout_deadline = eval_start + batch_timeout
+        stall_timeout_sec = float(SEED_STALL_TIMEOUT_SEC)
         extension_count = 0
         last_extended_sim_t = -1.0
         last_extended_step_idx = -1
@@ -956,13 +959,17 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
                 cancelled = True
                 break
             now = time.time()
+            try:
+                last_ts = max(eval_start, float(progress_state.get("ts", eval_start)))
+            except Exception:
+                last_ts = eval_start
+            stale_for = max(0.0, now - last_ts)
+            if stall_timeout_sec > 0 and stale_for >= stall_timeout_sec:
+                stalled = True
+                timed_out = True
+                break
             if now >= timeout_deadline:
                 if extend_on_progress:
-                    try:
-                        last_ts = float(progress_state.get("ts", eval_start))
-                    except Exception:
-                        last_ts = eval_start
-                    stale_for = max(0.0, now - last_ts)
                     try:
                         current_sim_t = float(progress_state.get("sim_t", -1.0))
                     except Exception:
@@ -1028,16 +1035,24 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             stop_event.set()
             elapsed = time.time() - eval_start
             timeout_limit_elapsed = timeout_deadline - eval_start
-            bt.logging.warning(
-                f"[Worker {worker_id}] Batch timeout for UID {uid} after {elapsed:.1f}s "
-                f"(limit={timeout_limit_elapsed:.1f}s, base_limit={batch_timeout:.1f}s, "
-                f"extensions={extension_count})"
-            )
             try:
-                last_ts = float(progress_state.get("ts", eval_start))
+                last_ts = max(eval_start, float(progress_state.get("ts", eval_start)))
             except Exception:
                 last_ts = eval_start
             stale_sec = max(0.0, time.time() - last_ts)
+            if stalled:
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Seed stalled for UID {uid}: no progress for {stale_sec:.1f}s "
+                    f"(stall_limit={stall_timeout_sec:.1f}s, elapsed={elapsed:.1f}s, "
+                    f"phase={progress_state.get('phase', 'unknown')}, "
+                    f"step={progress_state.get('step_idx', 'n/a')})"
+                )
+            else:
+                bt.logging.warning(
+                    f"[Worker {worker_id}] Batch timeout for UID {uid} after {elapsed:.1f}s "
+                    f"(limit={timeout_limit_elapsed:.1f}s, base_limit={batch_timeout:.1f}s, "
+                    f"extensions={extension_count})"
+                )
             _phase(
                 f"batch timeout after {timeout_limit_elapsed:.1f}s; last progress "
                 f"phase={progress_state.get('phase', 'unknown')} "
