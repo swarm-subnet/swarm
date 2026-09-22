@@ -211,6 +211,18 @@ def test_the_goats_keep_their_feet_on_the_terrain(world, walking_assets):
     assert worst < 0.05
 
 
+def test_the_goats_face_the_way_they_walk(world):
+    """Each goat's nose, its own -y turned by its pose, points along the ground it covers in its next steps."""
+    cli, built, movers = world
+    for body in _by_item(built, "goat"):
+        movers.advance(0)
+        start, pose = p.getBasePositionAndOrientation(body, physicsClientId=cli)
+        movers.advance(10)
+        travel = np.array(p.getBasePositionAndOrientation(body, physicsClientId=cli)[0][:2]) - np.array(start[:2])
+        nose = np.array(p.getMatrixFromQuaternion(pose)).reshape(3, 3) @ np.array([0.0, -1.0, 0.0])
+        assert float(nose[:2] @ travel) / np.linalg.norm(travel) > 0.98
+
+
 def test_the_goats_stand_still_without_a_stride(walking_assets, tmp_path):
     """A herd table with no pose file leaves the animals where the manifest put them."""
     target = str(tmp_path / "still")

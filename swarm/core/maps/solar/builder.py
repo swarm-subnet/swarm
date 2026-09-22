@@ -348,8 +348,9 @@ class SolarMovers:
             y = goat["start"][1] - gone * math.cos(goat["heading_rad"] + half)
             if step % CONFIG["goat_ray_steps"] == 0:
                 goat["ground"] = self._ground(x, y, goat["ground"])
+            # The goat is modelled facing its own -y, which a yaw of heading turns onto the track's direction.
             p.resetBasePositionAndOrientation(goat["body"], [x, y, goat["ground"] - goat["foot"]],
-                                              [0.0, 0.0, math.sin(-heading / 2.0), math.cos(-heading / 2.0)],
+                                              [0.0, 0.0, math.sin(heading / 2.0), math.cos(heading / 2.0)],
                                               physicsClientId=self.cli)
             if self.goat_mesh and step % CONFIG["goat_mesh_steps"] == 0:
                 pose = _stride_pose(self._goat_poses, seconds * goat["pose_fps"] + goat["phase"])
