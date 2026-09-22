@@ -51,7 +51,9 @@ CONFIG: Dict[str, Any] = {
     "cylinder_radius_m": 0.13,                   # trunk and post stand-in for the drone to hit
     "cylinder_height_share": 0.6,                # of the piece's height, so a crown is flown through, not into
     "forest_trunk_min_m": 2.0,                   # a near tree at least this tall gets a trunk for the drone to hit
-    "forest_trunk_step_m": 0.25,                 # trunk heights snap to this, so the trunks share a few shapes
+    "forest_trunk_step_m": 0.25,                 # trunk heights snap to this, so few distinct cylinders are made
+    "forest_trunks_per_body": 16,                # trunks one body holds, the engine's compound limit
+    "forest_trunk_cell_m": 10.0,                 # trunks are grouped by this grid, so a body's trunks are neighbours
     "mover_seed_offset": 0x4D0FE,                # movers draw from their own stream, so a new density tier cannot move the truck
     "step_hz": 50,                               # the rate every mover table is written at, one row per simulator step
     "pickup_delay_s": (0.0, 40.0),               # window the truck's start is drawn from, so it passes at a different moment
@@ -374,7 +376,7 @@ def _forest_table(path: str) -> Dict[str, np.ndarray]:
 
 
 def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
-    """Stand this seed's share of the forest as one body, with a collision-only trunk for every near tree a drone meets.
+    """Stand this seed's share of the forest as one body, with a collision trunk for every near tree a drone meets.
 
     A tree stands when its rank is below the seed's density for its zone, the rule a single placement follows. The
     trees that stand become a forest file the renderer draws as one instanced batch per mesh. Returns the bodies and
@@ -404,16 +406,23 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     near = forest["tiers"].index("near")
     reach = (table["tier"][keep] == near) & (scale[:, 2] >= CONFIG["forest_trunk_min_m"])
     step = CONFIG["forest_trunk_step_m"]
-    trunks: Dict[float, int] = {}
-    for (x, y, z), height in zip(position[reach], scale[reach, 2]):
-        tall = max(step, round(float(height) * CONFIG["cylinder_height_share"] / step) * step)
-        if tall not in trunks:
-            trunks[tall] = p.createCollisionShape(p.GEOM_CYLINDER, radius=CONFIG["cylinder_radius_m"], height=tall,
-                                                  physicsClientId=cli)
-        body = p.createMultiBody(0, trunks[tall], -1, [float(x), float(y), float(z) + tall / 2.0], physicsClientId=cli)
-        # A body without a visual is drawn from its collision shape; clear, the renderer skips it and the tree shows.
-        p.changeVisualShape(body, -1, rgbaColor=[1, 1, 1, 0], physicsClientId=cli)
-        bodies.append(body)
+    tall = np.maximum(step, np.round(scale[reach, 2] * CONFIG["cylinder_height_share"] / step) * step)
+    # A body without a visual is drawn from its collision shape, which the renderer would still have to trace past;
+    # a trunk's visual is one clear sliver under the ground instead, so the cylinder exists for collision alone.
+    sliver = p.createVisualShape(p.GEOM_MESH, vertices=[[0, 0, -1.0], [0.001, 0, -1.0], [0, 0.001, -1.0]], indices=[0, 1, 2],
+                                 rgbaColor=[1, 1, 1, 0], physicsClientId=cli)
+    # The renderer pays for every body each frame, so neighbouring trunks share a body, as many as a compound holds.
+    centres = position[reach] + np.column_stack([np.zeros((len(tall), 2)), tall / 2.0])
+    cells = np.floor(centres[:, :2] / CONFIG["forest_trunk_cell_m"]).astype(np.int64)
+    order = np.lexsort((cells[:, 1], cells[:, 0]))
+    per = CONFIG["forest_trunks_per_body"]
+    for start in range(0, len(order), per):
+        group = order[start:start + per]
+        base = centres[group].mean(0)
+        shape = p.createCollisionShapeArray([p.GEOM_CYLINDER] * len(group), radii=[CONFIG["cylinder_radius_m"]] * len(group),
+                                            lengths=tall[group].tolist(), collisionFramePositions=(centres[group] - base).tolist(),
+                                            physicsClientId=cli)
+        bodies.append(p.createMultiBody(0, shape, sliver, base.tolist(), physicsClientId=cli))
     return bodies, int(keep.sum())
 
 

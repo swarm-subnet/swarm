@@ -69,21 +69,28 @@ def test_a_seed_stands_the_trees_its_densities_keep(client):
 
 
 def test_near_tall_trees_get_a_collision_only_trunk(client):
-    """One visual body carries the forest; every other plants body is a clear cylinder no camera sees, one per near tall tree."""
+    """One visual body carries the forest; the other plants bodies hold a cylinder no camera sees for every near tall tree."""
     world = build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
     forest, *trunks = world["bodies"]["plants"]
     _, trunk = _expected(0)
-    assert len(trunks) == int(trunk.sum())
+    shapes = [p.getCollisionShapeData(body, -1, physicsClientId=client) for body in trunks]
+    assert sum(len(parts) for parts in shapes) == int(trunk.sum())
+    assert all(len(parts) <= CONFIG["forest_trunks_per_body"] for parts in shapes)
+    assert all(part[2] == p.GEOM_CYLINDER for parts in shapes for part in parts)
     assert p.getVisualShapeData(forest, physicsClientId=client)
     for body in trunks[:50]:
-        assert p.getVisualShapeData(body, physicsClientId=client)[0][7][3] == 0.0
-        assert p.getCollisionShapeData(body, -1, physicsClientId=client)[0][2] == p.GEOM_CYLINDER
+        visual = p.getVisualShapeData(body, physicsClientId=client)[0]
+        assert visual[2] == p.GEOM_MESH and visual[7][3] == 0.0
     (x, y, z), _ = p.getBasePositionAndOrientation(trunks[0], physicsClientId=client)
     view = p.computeViewMatrix([x + 2.0, y, z], [x, y, z], [0, 0, 1])
     proj = p.computeProjectionMatrixFOV(20, 1, 0.05, 50)
     seg = np.asarray(p.getCameraImage(32, 32, view, proj, renderer=p.ER_TINY_RENDERER,
                                       flags=getattr(p, "ER_SWARM_RAYCAST", 0), physicsClientId=client)[4])
     assert trunks[0] not in set(seg.ravel().tolist())
+    base, _ = p.getBasePositionAndOrientation(trunks[0], physicsClientId=client)
+    centre = np.add(base, shapes[0][0][5])
+    hit = p.rayTest((centre + [1.0, 0.0, 0.0]).tolist(), (centre - [1.0, 0.0, 0.0]).tolist(), physicsClientId=client)[0]
+    assert hit[0] in trunks
 
 
 def test_two_seeds_stand_different_forests():
