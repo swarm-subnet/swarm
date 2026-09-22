@@ -32,6 +32,7 @@ import json
 import math
 import os
 import random
+import tempfile
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -49,6 +50,8 @@ CONFIG: Dict[str, Any] = {
                 "grass": (0.5, 1.0)},            # share of the grass tufts a seed keeps, a dry year against a green one
     "cylinder_radius_m": 0.13,                   # trunk and post stand-in for the drone to hit
     "cylinder_height_share": 0.6,                # of the piece's height, so a crown is flown through, not into
+    "forest_trunk_min_m": 2.0,                   # a near tree at least this tall gets a trunk for the drone to hit
+    "forest_trunk_step_m": 0.25,                 # trunk heights snap to this, so the trunks share a few shapes
     "mover_seed_offset": 0x4D0FE,                # movers draw from their own stream, so a new density tier cannot move the truck
     "step_hz": 50,                               # the rate every mover table is written at, one row per simulator step
     "pickup_delay_s": (0.0, 40.0),               # window the truck's start is drawn from, so it passes at a different moment
@@ -363,6 +366,57 @@ class SolarMovers:
         return float(hit[3][2]) if int(hit[0]) in self.terrain else last
 
 
+@lru_cache(maxsize=2)
+def _forest_table(path: str) -> Dict[str, np.ndarray]:
+    """Every tree of the forest: its mesh, position, yaw, scale, zone and rank, read once per process."""
+    with np.load(path) as table:
+        return {key: table[key] for key in table.files}
+
+
+def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
+    """Stand this seed's share of the forest as one body, with a collision-only trunk for every near tree a drone meets.
+
+    A tree stands when its rank is below the seed's density for its zone, the rule a single placement follows. The
+    trees that stand become a forest file the renderer draws as one instanced batch per mesh. Returns the bodies and
+    the number of trees standing.
+    """
+    instanced = getattr(p, "VISUAL_SHAPE_RENDER_INSTANCED", 0)
+    if not instanced:
+        raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with VISUAL_SHAPE_RENDER_INSTANCED")
+    folder = os.path.join(asset_dir, forest["folder"])
+    table = _forest_table(os.path.join(folder, forest["table"]))
+    limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
+    keep = table["rank"] < limits[table["tier"]]
+    position, yaw, scale = table["position"][keep], table["yaw"][keep], table["scale"][keep]
+    half = yaw * 0.5
+    rows = np.column_stack([table["mesh"][keep], position, np.zeros(len(yaw)), np.zeros(len(yaw)), np.sin(half),
+                            np.cos(half), scale])
+    handle, path = tempfile.mkstemp(suffix=".fst")
+    try:
+        with os.fdopen(handle, "w") as out:
+            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]))
+            np.savetxt(out, rows, fmt="%d " + " ".join(["%.4f"] * 10))
+        flags = instanced | p.VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY | p.VISUAL_SHAPE_MATERIALS_FROM_MTL
+        visual = p.createVisualShape(p.GEOM_MESH, fileName=path, flags=flags, specularColor=[0, 0, 0], physicsClientId=cli)
+        bodies = [p.createMultiBody(0, -1, visual, physicsClientId=cli)]
+    finally:
+        os.remove(path)
+    near = forest["tiers"].index("near")
+    reach = (table["tier"][keep] == near) & (scale[:, 2] >= CONFIG["forest_trunk_min_m"])
+    step = CONFIG["forest_trunk_step_m"]
+    trunks: Dict[float, int] = {}
+    for (x, y, z), height in zip(position[reach], scale[reach, 2]):
+        tall = max(step, round(float(height) * CONFIG["cylinder_height_share"] / step) * step)
+        if tall not in trunks:
+            trunks[tall] = p.createCollisionShape(p.GEOM_CYLINDER, radius=CONFIG["cylinder_radius_m"], height=tall,
+                                                  physicsClientId=cli)
+        body = p.createMultiBody(0, trunks[tall], -1, [float(x), float(y), float(z) + tall / 2.0], physicsClientId=cli)
+        # A body without a visual is drawn from its collision shape; clear, the renderer skips it and the tree shows.
+        p.changeVisualShape(body, -1, rgbaColor=[1, 1, 1, 0], physicsClientId=cli)
+        bodies.append(body)
+    return bodies, int(keep.sum())
+
+
 def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None,
                     groups: Optional[Tuple[str, ...]] = None) -> Dict[str, Any]:
     """Build the solar park inside an existing PyBullet world.
@@ -394,7 +448,12 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
         if "mover" in place:
             movers.append((place, body))
         triangles += item["triangles"]
-    return {"bodies": bodies, "movers": movers, "densities": densities, "triangles": triangles,
+    trees = 0
+    forest = manifest.get("forest")
+    if forest and (groups is None or "plants" in groups):
+        standing, trees = _stand_forest(cli, asset_dir, forest, densities)
+        bodies.setdefault("plants", []).extend(standing)
+    return {"bodies": bodies, "movers": movers, "densities": densities, "triangles": triangles, "trees": trees,
             "asset_dir": asset_dir, "body_count": sum(len(ids) for ids in bodies.values())}
 
 
