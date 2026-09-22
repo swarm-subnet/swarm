@@ -133,10 +133,13 @@ def test_non_triangle_face_is_reported_with_its_line(tmp_path):
     assert found[0].line == 19
 
 
-def test_second_material_in_one_file(tmp_path):
-    """Two usemtl lines in one OBJ are an error."""
+def test_second_material_is_a_warning_naming_the_flag(tmp_path):
+    """Two usemtl lines in one OBJ are a warning naming the load flag, not an error."""
     write_piece(tmp_path, materials=("mat", "second"))
-    assert "2 materials in one file" in messages(errors(run(tmp_path)))
+    found = run(tmp_path)
+    assert errors(found) == []
+    assert "2 materials in one file" in messages(found)
+    assert "VISUAL_SHAPE_MATERIALS_FROM_MTL" in messages(found)
 
 
 def test_material_missing_from_mtl(tmp_path):
@@ -151,17 +154,19 @@ def test_missing_texture(tmp_path):
     assert "texture missing.jpg not found" in messages(errors(run(tmp_path)))
 
 
-def test_texture_with_alpha(tmp_path):
-    """An RGBA PNG texture is an error."""
+def test_texture_with_alpha_passes_silently(tmp_path):
+    """An RGBA PNG texture is how cut-outs work and raises nothing at all."""
     write_png(tmp_path / "tex.png", colour_type=6)
     write_piece(tmp_path)
-    assert "alpha channel" in messages(errors(run(tmp_path)))
+    assert run(tmp_path) == []
 
 
 def test_sixteen_bit_png(tmp_path):
-    """A 16-bit PNG texture is an error."""
+    """A 16-bit PNG texture is an error, with or without an alpha channel."""
     write_png(tmp_path / "tex.png", depth=16)
     write_piece(tmp_path)
+    assert "16-bit PNG" in messages(errors(run(tmp_path)))
+    write_png(tmp_path / "tex.png", colour_type=6, depth=16)
     assert "16-bit PNG" in messages(errors(run(tmp_path)))
 
 
@@ -201,6 +206,14 @@ def test_inside_out_shell(tmp_path):
     found = errors(run(tmp_path))
     assert "inside out" in messages(found)
     assert "opposite directions" not in messages(found)
+
+
+def test_double_sided_card_is_not_inside_out(tmp_path):
+    """Two triangles on the same corners wound both ways enclose nothing and raise no inside-out error."""
+    # These corners make the two signed volumes cancel to -9e-16 rather than to zero exactly.
+    card = [(1.675, 1.113, 1.285), (0.372, 1.985, 1.72), (0.242, 0.665, 1.443)]
+    write_piece(tmp_path, vertices=card, faces=[((1, 2, 3), 1), ((2, 1, 3), 1)], normals=[(0, 0, 1)])
+    assert "inside out" not in messages(run(tmp_path))
 
 
 def test_normals_against_winding_is_a_warning(tmp_path):

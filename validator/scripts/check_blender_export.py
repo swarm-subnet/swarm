@@ -25,8 +25,9 @@ rule is printed with the file, the line and the fix. Errors set the exit code;
 warnings do not. The rules come from the swarm Bullet fork and are the reasons a
 map loads without complaint and still looks wrong:
 
-- one material per OBJ file: the importer keeps the first texture it finds and
-  paints every face with it (b3ImportMeshUtility.cpp, TinyRendererVisualShapeConverter.cpp)
+- one material per OBJ file, unless the map loads it with VISUAL_SHAPE_MATERIALS_FROM_MTL:
+  without that flag the importer keeps the first texture it finds and paints every
+  face with it (b3ImportMeshUtility.cpp, TinyRendererVisualShapeConverter.cpp)
 - triangles only: a face with more corners is fanned from its first corner with
   no concavity check (tiny_obj_loader.cpp, exportFaceGroupToShape)
 - no line over 1023 characters: the parser reads lines into a 1024 byte buffer and
@@ -34,9 +35,9 @@ map loads without complaint and still looks wrong:
 - Z-up, transforms applied: nothing is converted on import, the file is used as is
 - outward, closed faces: a triangle is hidden when the camera is behind its vertex
   order, and the double-sided flag is not honoured for map bodies (TinyRenderer.cpp)
-- baseline JPEG or 8-bit PNG, no alpha: the decoder rejects progressive JPEG and
-  16-bit PNG, and drops the alpha channel of anything it accepts (stb_image.cpp,
-  b3ImportMeshUtility.cpp)
+- baseline JPEG or 8-bit PNG: the decoder rejects progressive JPEG and 16-bit PNG;
+  an alpha channel is kept at decode and read by ER_ALPHA_CUTOUT, which is how leaf
+  and fence cut-outs work (stb_image.cpp, b3ImportMeshUtility.cpp)
 
 Pieces in one folder are either placed in the map frame together, or each
 exported on its own origin with its base on z = 0 for the builder to place. A
@@ -60,7 +61,7 @@ BASE_TOLERANCE = 0.05
 AXIS_ALIGNED = 0.9
 JPEG_BASELINE = (0xC0, 0xC1)
 JPEG_PROGRESSIVE = 0xC2
-PNG_ALPHA_COLOUR_TYPES = (4, 6)
+FLAT_SHELL = 1e-6
 RECALCULATE = "in Blender select all, Mesh > Normals > Recalculate Outside"
 
 Vec3 = Tuple[float, float, float]
@@ -173,11 +174,9 @@ def texture_problem(path: Path) -> Optional[str]:
     with open(path, "rb") as handle:
         data = handle.read()
     if data[:8] == b"\x89PNG\r\n\x1a\n":
-        depth, colour_type = struct.unpack(">BB", data[24:26])
+        depth = data[24]
         if depth != 8:
             return f"{depth}-bit PNG, the decoder only reads 8-bit PNG so the piece renders white"
-        if colour_type in PNG_ALPHA_COLOUR_TYPES or b"tRNS" in data[33:]:
-            return "PNG with an alpha channel, alpha is dropped at load so see-through parts turn solid"
         return None
     if data[:2] == b"\xff\xd8":
         pos = 2
@@ -247,8 +246,8 @@ def check_materials(obj: ObjFile) -> List[Finding]:
     materials, long_lines = parse_mtl(mtl_path)
     findings.extend(check_lines(mtl_path, long_lines))
     if len(obj.materials) > 1:
-        findings.append(Finding(obj.path, "error", f"{len(obj.materials)} materials in one file ({', '.join(obj.materials)}), the engine keeps one texture for every face",
-                                "split the object so each OBJ file carries one material", sorted(obj.materials.values())[1]))
+        findings.append(Finding(obj.path, "warning", f"{len(obj.materials)} materials in one file ({', '.join(obj.materials)}), only a load with VISUAL_SHAPE_MATERIALS_FROM_MTL keeps them apart",
+                                "load the piece with VISUAL_SHAPE_MATERIALS_FROM_MTL, or split the object so each OBJ file carries one material", sorted(obj.materials.values())[1]))
     for name, line_no in obj.materials.items():
         if name not in materials:
             findings.append(Finding(obj.path, "error", f"material {name} is not in {mtl_name}, the engine paints the piece white",
@@ -268,7 +267,7 @@ def check_materials(obj: ObjFile) -> List[Finding]:
             continue
         problem = texture_problem(texture_path)
         if problem:
-            findings.append(Finding(texture_path, "error", problem, "save the texture as baseline JPEG or 8-bit PNG without alpha"))
+            findings.append(Finding(texture_path, "error", problem, "save the texture as baseline JPEG or 8-bit PNG"))
         if not obj.has_texcoords:
             findings.append(Finding(obj.path, "error", "textured material but the faces carry no UVs, the engine samples one texel for the whole piece",
                                     "switch on Export UV Coordinates, or unwrap the object", line_no))
@@ -330,6 +329,7 @@ def check_orientation(obj: ObjFile) -> List[Finding]:
                                 "recalculate normals outside and export normals again", first_against))
 
     volume: Dict[int, float] = defaultdict(float)
+    swept: Dict[int, float] = defaultdict(float)
     faces_of: Counter = Counter()
     first_line: Dict[int, int] = {}
     for line_no, tri in triangles:
@@ -337,10 +337,13 @@ def check_orientation(obj: ObjFile) -> List[Finding]:
         if component in broken:
             continue
         a, b, c = (positions[i] for i in tri)
-        volume[component] += _dot(a, _cross(b, c))
+        signed = _dot(a, _cross(b, c))
+        volume[component] += signed
+        swept[component] += abs(signed)
         faces_of[component] += 1
         first_line.setdefault(component, line_no)
-    inside_out = [c for c, v in volume.items() if v < 0]
+    # A flat double-sided card encloses nothing, so its signed volume is rounding noise against what its faces sweep.
+    inside_out = [c for c, v in volume.items() if v < -FLAT_SHELL * swept[c]]
     if inside_out:
         findings.append(Finding(obj.path, "error", f"{len(inside_out)} closed shells are inside out ({sum(faces_of[c] for c in inside_out)} faces), the engine shows them only from inside",
                                 RECALCULATE, min(first_line[c] for c in inside_out)))
