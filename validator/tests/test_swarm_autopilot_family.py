@@ -19,12 +19,13 @@
 from __future__ import annotations
 
 import math
+import random
 
 import numpy as np
 import pytest
 
 from swarm.challenge_families import runtime_family_for_task
-from swarm.constants import SWARM_MAX_DRONES, SWARM_MIN_DRONES, SWARM_SEARCH_RADIUS
+from swarm.constants import SEARCH_RADIUS_MIN, SWARM_MAX_DRONES, SWARM_MIN_DRONES, SWARM_SEARCH_RADIUS
 from swarm.utils.env_factory import make_env
 from swarm.validator import task_gen
 
@@ -193,6 +194,24 @@ def test_swarm_uses_shared_search_clue_and_platform_pool():
         assert off <= SWARM_SEARCH_RADIUS * 1.5         # noisy clue, within the (bigger) radius
     finally:
         env.close()
+
+
+def test_swarm_camera_fov_does_not_reveal_the_clue_offset():
+    """The episode's camera FOV carries no information about where the shared clue was pushed off the goal centroid."""
+    for seed in (11, 22, 33, 44):
+        task = task_gen.task_for_seed_and_type(
+            sim_dt=1 / 30, seed=seed, challenge_type=2, family_id="cf_swarm_autopilot",
+        )
+        env = make_env(task, gui=False)
+        try:
+            env.reset(seed=task.map_seed)
+            radius = random.Random((seed + 888888) & 0xFFFFFFFF).uniform(SEARCH_RADIUS_MIN, SWARM_SEARCH_RADIUS)
+            centroid = np.asarray(env.GOAL_POSES, dtype=float).mean(axis=0)
+            clue_dy = float(env._search_area_center[1] - centroid[1])
+            from_fov = radius * (float(env._fov) - 90.0) / 2.0
+            assert abs(clue_dy - from_fov) > 1e-6, (seed, clue_dy, from_fov)
+        finally:
+            env.close()
 
 
 def test_swarm_rollout_is_deterministic():
