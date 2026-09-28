@@ -367,7 +367,7 @@ def _goal_distance_bounds(challenge_type: int) -> Optional[Tuple[float, float, s
     if challenge_type == 1:
         return (C.TYPE_1_R_MIN, C.TYPE_1_R_MAX, "xy")
     if challenge_type == 4:
-        return (C.TYPE_3_R_MIN, C.TYPE_3_R_MAX, "xy")
+        return (C.VILLAGE_R_MIN, C.VILLAGE_R_MAX, "xy")
     if challenge_type == 5:
         return (C.TYPE_4_R_MIN, C.TYPE_4_R_MAX, "xy")
     if challenge_type == 6:
