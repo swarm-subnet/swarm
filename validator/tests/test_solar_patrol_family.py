@@ -24,11 +24,13 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import zipfile
 
 import numpy as np
 import pybullet as p
 import pytest
+import swarm_worlds
 
 from swarm.challenge_families import (
     build_benchmark_tasks,
@@ -36,7 +38,7 @@ from swarm.challenge_families import (
     get_challenge_family,
     list_registered_challenge_families,
 )
-from swarm.challenge_families.solar_patrol import park
+from swarm.challenge_families.solar_patrol import airframe, park
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_FIELDS,
@@ -68,6 +70,8 @@ from swarm.policy_interface import (
 )
 from swarm.utils.env_factory import make_env_with_initial_obs
 
+# A patrol flies the M4TD, which ships in swarm-worlds; an installed release without it cannot fly one.
+_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
 
 
@@ -104,6 +108,8 @@ def _action(**values):
 
 def _patrol(seed, pilot, max_decisions=None):
     """Fly one patrol with a pilot that maps (decision index, observation) to an action; returns the log."""
+    if not _M4TD_SHIPPED:
+        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)

@@ -47,6 +47,8 @@ from swarm.constants import SIM_DT
 from swarm.utils.env_factory import make_env_with_initial_obs
 
 ROBOTS = swarm_worlds.robots_dir()
+pytestmark = pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
+                                reason=f"the installed swarm-worlds has no {airframe.URDF} yet")
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
 
 
