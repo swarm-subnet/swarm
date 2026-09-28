@@ -79,5 +79,6 @@ def fly(env: Any, ep: SolarEpisode, target: Setpoint) -> np.ndarray:
         target_pos=env.pos[0],
         target_rpy=np.array([0.0, 0.0, yaw]),
         target_vel=velocity,
+        target_rpy_rates=np.array([0.0, 0.0, target.yaw_rate_rad_s]),
     )
     return np.asarray(rpm, dtype=float).reshape(env.NUM_DRONES, 4)
