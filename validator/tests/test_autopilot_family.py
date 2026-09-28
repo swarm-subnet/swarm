@@ -23,7 +23,7 @@ import math
 import numpy as np
 import pybullet as p
 
-from swarm.constants import SEARCH_RADIUS_MAX, SEARCH_RADIUS_MIN, SIM_DT
+from swarm.constants import SEARCH_RADIUS_MAX, SEARCH_RADIUS_MIN, SIM_DT, VILLAGE_R_MAX, VILLAGE_R_MIN
 from swarm.protocol import MapTask
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import task_for_seed_and_type
@@ -78,6 +78,19 @@ def test_autopilot_camera_fov_does_not_reveal_the_clue_offset():
             clue_dy = float(env._search_area_center[1] - env.GOAL_POS[1])
             from_fov = float(task.search_radius) * (float(env._fov) - 90.0) / 2.0
             assert abs(clue_dy - from_fov) > 1e-6, (seed, clue_dy, from_fov)
+        finally:
+            env.close()
+
+
+def test_autopilot_village_pads_are_placed_within_the_village_distance_range():
+    """On the built village world the goal pad sits within the village start-to-goal range, not the mountain one."""
+    for seed in (5000, 5001, 5002, 5003):
+        task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=4, family_id="cf_autopilot")
+        env = make_env(task, gui=False)
+        try:
+            start, goal = env.task.start, env.task.goal
+            distance = math.hypot(goal[0] - start[0], goal[1] - start[1])
+            assert VILLAGE_R_MIN <= distance <= VILLAGE_R_MAX, (seed, distance)
         finally:
             env.close()
 
