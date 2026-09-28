@@ -23,7 +23,7 @@ import math
 import numpy as np
 import pybullet as p
 
-from swarm.constants import SEARCH_RADIUS_MAX, SIM_DT
+from swarm.constants import SEARCH_RADIUS_MAX, SEARCH_RADIUS_MIN, SIM_DT
 from swarm.protocol import MapTask
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import task_for_seed_and_type
@@ -68,8 +68,22 @@ def test_autopilot_search_clue_is_deterministic_and_within_radius():
     assert max(offsets) > 0.5, "autopilot clue is never noticeably offset from the goal"
 
 
+def test_autopilot_camera_fov_does_not_reveal_the_clue_offset():
+    """The episode's camera FOV carries no information about where the search clue was pushed off the goal."""
+    for seed in (11, 22, 33, 44):
+        task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=2, family_id="cf_autopilot")
+        env = make_env(task, gui=False)
+        try:
+            env.reset(seed=task.map_seed)
+            clue_dy = float(env._search_area_center[1] - env.GOAL_POS[1])
+            from_fov = float(task.search_radius) * (float(env._fov) - 90.0) / 2.0
+            assert abs(clue_dy - from_fov) > 1e-6, (seed, clue_dy, from_fov)
+        finally:
+            env.close()
+
+
 def _manual_open_world_task() -> MapTask:
-    """A hand-written autopilot task on map seed 31415: goal 8 m straight ahead, 20 s horizon."""
+    """A hand-written autopilot task on map seed 31415: goal 8 m straight ahead, 20 s horizon, tightest search clue."""
     return MapTask(
         map_seed=31415,
         start=(0.0, 0.0, 1.5),
@@ -79,6 +93,7 @@ def _manual_open_world_task() -> MapTask:
         challenge_type=2,
         family_id="cf_autopilot",
         version="4.9.0",
+        search_radius=SEARCH_RADIUS_MIN,
     )
 
 

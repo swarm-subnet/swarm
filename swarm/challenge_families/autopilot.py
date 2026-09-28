@@ -26,6 +26,7 @@ import numpy as np
 import pybullet as p
 
 from swarm.constants import (
+    AUTOPILOT_CLUE_SEED_OFFSET,
     SEARCH_AREA_NOISE_Z,
     START_PLATFORM_TAKEOFF_BUFFER,
 )
@@ -373,7 +374,7 @@ class AutopilotChallengeFamily(ChallengeFamilyRuntime):
 
         seed = int(env.task.map_seed)
         search_radius = float(getattr(env.task, "search_radius", 10.0))
-        noise_rng = np.random.RandomState(seed)
+        noise_rng = np.random.RandomState((seed ^ AUTOPILOT_CLUE_SEED_OFFSET) & 0xFFFFFFFF)
         noise_xy = noise_rng.uniform(-search_radius, search_radius, size=2)
         noise_z = noise_rng.uniform(-SEARCH_AREA_NOISE_Z, SEARCH_AREA_NOISE_Z)
         center = env.GOAL_POS.copy()
