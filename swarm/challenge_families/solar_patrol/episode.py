@@ -63,6 +63,7 @@ class SolarEpisode:
 
     park: Any = None
     dock: Any = None
+    airframe: Any = None
     flight_limit: Any = None
     wind: Any = None
     theft: Any = None

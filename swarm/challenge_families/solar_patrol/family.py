@@ -72,7 +72,7 @@ from .episode import SolarEpisode
 from .task import solar_patrol_task
 
 # Build order on reset: the world first, then what stands in it, then the sensors that look at it.
-_PARTS = (park, dock, flight_limit, wind, theft, decoys, coverage, camera, zoom, laser, ground_distance,
+_PARTS = (park, dock, airframe, flight_limit, wind, theft, decoys, coverage, camera, zoom, laser, ground_distance,
           drone_state, sensor_noise, reports, score, outputs)
 
 _FAILURE_BY_END = {
@@ -191,6 +191,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         ep = env._solar
         ep.step += 1
         dock.update(env, ep)
+        airframe.update(env, ep)
         flight_limit.update(env, ep)
         camera.update(env, ep)
         zoom.update(env, ep)
@@ -225,11 +226,15 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         return bool(ep.outcome.end_reason)
 
     def protected_body_uids(self, env: Any) -> set[int]:
-        """The dock and the park's movers, kept out of the clearance metric and the obstacle cull."""
+        """The dock (body, pad and base) and the park's movers, kept out of the clearance metric and the obstacle
+        cull; the pad's concave surface must also stay out of the clearance's closest-point query, which can crash
+        on concave meshes."""
         ep = env._solar
         if ep.park is None:
             return set()
-        return set(park.moving_bodies(ep)) | {int(ep.dock_uid)}
+        model = (ep.dock or {}).get("model")
+        dock_bodies = {int(ep.dock_uid)} | ({model.pad_uid, model.base_uid} if model is not None else set())
+        return set(park.moving_bodies(ep)) | dock_bodies
 
     def build_info(self, env: Any) -> dict[str, Any]:
         """Per-step fields the evaluator reads: the schema version and the patrol outcome so far."""
