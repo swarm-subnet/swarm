@@ -175,6 +175,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         a = np.asarray(action, dtype=np.float32).reshape(-1)
         if a.size != ACTION_DIM or not np.all(np.isfinite(a)):
             a = np.zeros(ACTION_DIM, dtype=np.float32)
+        a = outputs.clip(a)
         env.action_buffer.append(a.reshape(1, ACTION_DIM).copy())
         command = sensor_noise.delay(env, ep, decode_action(a, ep.previous_action))
         ep.previous_action = a
