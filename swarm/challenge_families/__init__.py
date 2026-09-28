@@ -32,6 +32,7 @@ from .base import (
 from .interceptor import InterceptorChallengeFamily
 from .office_interceptor import OfficeInterceptorChallengeFamily
 from .search_and_rescue import SearchAndRescueChallengeFamily
+from .solar_patrol import SolarPatrolChallengeFamily
 from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
 
@@ -45,6 +46,7 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_swarm_sar": SwarmSarChallengeFamily(),
     "cf_interceptor": InterceptorChallengeFamily(),
     "cf_interceptor_office": OfficeInterceptorChallengeFamily(),
+    "cf_solar_patrol": SolarPatrolChallengeFamily(),
 }
 
 
@@ -169,6 +171,7 @@ def evaluate_rollout(
     min_clearance: Optional[float],
     collision: bool,
     failure_reason: str,
+    info: Optional[dict[str, Any]] = None,
 ) -> ChallengeFamilyEvaluation:
     """Score one finished flight under the rules of the family that owns the task."""
     family = runtime_family_for_task(task)
@@ -180,6 +183,7 @@ def evaluate_rollout(
         min_clearance=min_clearance,
         collision=collision,
         failure_reason=failure_reason,
+        info=info,
     )
 
 
@@ -194,6 +198,7 @@ __all__ = [
     "InterceptorChallengeFamily",
     "OfficeInterceptorChallengeFamily",
     "SearchAndRescueChallengeFamily",
+    "SolarPatrolChallengeFamily",
     "SwarmAutopilotChallengeFamily",
     "SwarmSarChallengeFamily",
     "build_random_task",

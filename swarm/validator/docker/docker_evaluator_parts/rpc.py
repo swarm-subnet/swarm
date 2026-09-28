@@ -573,6 +573,8 @@ def _run_multi_seed_rpc_sync(
                         rpc_disconnected = False
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
+                        # One env.step is one decision, which holds for the family's control steps.
+                        step_sec = SIM_DT * int(runtime_family_for_task(task).decision_steps)
                         act_dim = int(env.action_space.shape[-1])
                         if n_drones > 1:
                             lo, hi = env.action_space.low, env.action_space.high
@@ -749,7 +751,7 @@ def _run_multi_seed_rpc_sync(
                             )
                             phases["sim_sec"] += time.perf_counter() - t_step_start
 
-                            t_sim += SIM_DT
+                            t_sim += step_sec
                             if rollout_observer is not None:
                                 _emit_rollout_event(
                                     "step",
@@ -887,6 +889,7 @@ def _run_multi_seed_rpc_sync(
                                     min_clearance=min_clearance,
                                     collision=collision,
                                     failure_reason=failure_reason,
+                                    info=info,
                                 )
                                 score = evaluation.score
                                 result_metrics = dict(evaluation.metrics)

@@ -63,6 +63,7 @@ _GROUP_RAM_ESTIMATES_MB = {
     "type3_mountain": 2300.0,
     "type6_forest": 2400.0,
     "type7_office": 1900.0,
+    "type8_solar": 2000.0,
 }
 _DEFAULT_RAM_ESTIMATE_MB = max(_GROUP_RAM_ESTIMATES_MB.values())
 _RESOURCE_POLL_INTERVAL_SEC = 2.0
