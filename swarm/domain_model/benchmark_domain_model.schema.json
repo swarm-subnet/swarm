@@ -9,6 +9,7 @@
         "cf_interceptor",
         "cf_interceptor_office",
         "cf_search_and_rescue",
+        "cf_solar_patrol",
         "cf_swarm_autopilot",
         "cf_swarm_sar"
       ]
@@ -66,7 +67,8 @@
       "village",
       "warehouse",
       "forest",
-      "office"
+      "office",
+      "solar"
     ]
   },
   "skills": {
@@ -188,6 +190,46 @@
         {
           "metric_id": "navigation_safety",
           "label": "Navigation Safety",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        }
+      ]
+    },
+    "ss_solar_patrol_v1": {
+      "score_schema_id": "ss_solar_patrol_v1",
+      "name": "Solar Patrol Score",
+      "description": "Normalized patrol score from threats reported against false alarms, the share of the park searched, and a safe flight back to the dock.",
+      "normalized_score_range": [
+        0,
+        1
+      ],
+      "primary_metric": "final_score",
+      "metrics": [
+        {
+          "metric_id": "final_score",
+          "label": "Patrol Score",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        },
+        {
+          "metric_id": "detection_term",
+          "label": "Detection",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        },
+        {
+          "metric_id": "coverage_term",
+          "label": "Coverage",
+          "kind": "normalized",
+          "objective": "maximize",
+          "unit": "score"
+        },
+        {
+          "metric_id": "flight_term",
+          "label": "Flight",
           "kind": "normalized",
           "objective": "maximize",
           "unit": "score"
@@ -473,6 +515,50 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.3
+    },
+    "cf_solar_patrol": {
+      "family_id": "cf_solar_patrol",
+      "name": "Solar Patrol",
+      "description": "Security patrol of a solar park out of a drone dock: take off, search the park by day and by night, report intruders, and land back in the dock before time runs out.",
+      "display": {
+        "label": "Solar Patrol",
+        "short_label": "Solar",
+        "slug": "solar-patrol"
+      },
+      "family_state": "incubating",
+      "emissions_state": "incubating",
+      "visibility": "private",
+      "skill_ids": [
+        "sk_autonomous_navigation",
+        "sk_search_and_rescue"
+      ],
+      "market_vertical_ids": [
+        "mv_public_safety"
+      ],
+      "environment_types": [
+        "solar"
+      ],
+      "score_schema_id": "ss_solar_patrol_v1",
+      "supported_interface_versions": [
+        "submission_zip.v1"
+      ],
+      "screening_policy": {
+        "bootstrap_threshold": 0.01,
+        "min_improvement": 0.015,
+        "early_fail_checkpoints": {
+          "50": 0.5,
+          "100": 0.7,
+          "150": 0.85
+        },
+        "min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "benchmark_admission_policy": {
+        "champion_min_improvement": 0.015,
+        "champion_min_improvement_floor": 0.005,
+        "improvement_plateau_end": 0.5
+      },
+      "emission_allocation": 0.0
     }
   },
   "policy_interfaces": {
@@ -1189,6 +1275,258 @@
           "fill": 0.0
         }
       }
+    },
+    "cf_solar_patrol:submission_zip.v1": {
+      "family_id": "cf_solar_patrol",
+      "interface_version": "submission_zip.v1",
+      "contract_version": "policy_contract.v1",
+      "contract_filename": "swarm_policy_contract.json",
+      "entry_point": {
+        "module": "drone_agent",
+        "class_name": "DroneFlightController",
+        "act_method": "act",
+        "reset_method": "reset"
+      },
+      "observation_space": {
+        "type": "dict",
+        "required_keys": [
+          "rgb",
+          "site_map",
+          "state",
+          "thermal",
+          "zoom"
+        ],
+        "fields": {
+          "rgb": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              480,
+              640,
+              3
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "thermal": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              512,
+              640,
+              1
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "zoom": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              480,
+              640,
+              3
+            ],
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "state": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              31
+            ],
+            "rank": 1,
+            "minimum_length": 31,
+            "semantic_channels": [
+              "position_m",
+              "heading_deg",
+              "velocity_mps",
+              "height_above_takeoff_m",
+              "gimbal_tilt_deg",
+              "time_left_s",
+              "battery_pct",
+              "wind_estimate_mps",
+              "wind_estimate_sector",
+              "dock_wind_mps",
+              "laser_range_m",
+              "laser_point_m",
+              "laser_status",
+              "ground_distance_m",
+              "downward_sensing_ok",
+              "flight_limit_distance_m",
+              "inside_flight_limit",
+              "flight_phase",
+              "camera_feed",
+              "frame_age_s",
+              "night_mode",
+              "night_vision",
+              "zoom_lens",
+              "zoom_age_s",
+              "zooms_left"
+            ]
+          },
+          "site_map": {
+            "type": "tensor",
+            "dtype": "float32",
+            "shape": [
+              660
+            ],
+            "rank": 1,
+            "minimum_length": 660,
+            "semantic_channels": [
+              "fence_count",
+              "fence_xy",
+              "limit_count",
+              "limit_xy",
+              "table_count",
+              "tables",
+              "building_count",
+              "buildings"
+            ]
+          }
+        }
+      },
+      "observation_assembly": {
+        "rgb": [
+          "solar_rgb"
+        ],
+        "thermal": [
+          "solar_thermal"
+        ],
+        "zoom": [
+          "solar_zoom"
+        ],
+        "state": [
+          "solar_state"
+        ],
+        "site_map": [
+          "solar_site_map"
+        ]
+      },
+      "action_space": {
+        "type": "tensor",
+        "dtype": "float32",
+        "shape": [
+          24
+        ],
+        "component_names": [
+          "move_forward",
+          "move_right",
+          "move_up",
+          "turn",
+          "gimbal_tilt",
+          "thermal",
+          "night_mode",
+          "night_vision",
+          "zoom",
+          "zoom_lens",
+          "zoom_cx",
+          "zoom_cy",
+          "zoom_w",
+          "zoom_h",
+          "report",
+          "report_class",
+          "report_image",
+          "report_cx",
+          "report_cy",
+          "report_w",
+          "report_h",
+          "take_off",
+          "return_home",
+          "cancel_return"
+        ],
+        "lower_bound": [
+          -1.0,
+          -1.0,
+          -1.0,
+          -1.0,
+          -1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "upper_bound": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "smoke_test_observation": {
+        "rgb": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "fill": 0.25
+        },
+        "thermal": {
+          "shape": [
+            512,
+            640,
+            1
+          ],
+          "fill": 0.0
+        },
+        "zoom": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "fill": 0.0
+        },
+        "state": {
+          "shape": [
+            31
+          ],
+          "fill": 0.0
+        },
+        "site_map": {
+          "shape": [
+            660
+          ],
+          "fill": 0.0
+        }
+      }
     }
   },
   "legacy_aliases": {
@@ -1199,7 +1537,8 @@
       "4": "village",
       "5": "warehouse",
       "6": "forest",
-      "7": "office"
+      "7": "office",
+      "8": "solar"
     },
     "benchmark_group_to_environment_type": {
       "type1_city": "city",
@@ -1208,7 +1547,8 @@
       "type4_village": "village",
       "type5_warehouse": "warehouse",
       "type6_forest": "forest",
-      "type7_office": "office"
+      "type7_office": "office",
+      "type8_solar": "solar"
     },
     "field_renames": {
       "challenge_type": "environment_type",

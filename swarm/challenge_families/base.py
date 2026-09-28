@@ -201,6 +201,8 @@ class ChallengeFamilyRuntime:
     # Drone physics mode, a gym_pybullet_drones Physics value: "pyb" is rotor thrust only,
     # "pyb_gnd_drag_dw" adds the URDF's air drag, ground effect and downwash.
     physics_mode: str = "pyb"
+    # Control steps one model decision holds for; each env.step runs this many.
+    decision_steps: int = 1
 
     def screening_policy(self) -> Dict[str, Any]:
         """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
@@ -254,6 +256,21 @@ class ChallengeFamilyRuntime:
         """How many trailing floats of the state vector carry the goal or search clue, three for a plain flight."""
         _ = task
         return 3
+
+    def drone_urdf(self, env: Any) -> Optional[str]:
+        """The staged URDF the family's drone flies with, or None for the environment's default body."""
+        _ = env
+        return None
+
+    def action_space(self, env: Any) -> Any | None:
+        """The family's own action space, or None where the environment's default applies."""
+        _ = env
+        return None
+
+    def preprocess_action(self, env: Any, action: Any) -> Any | None:
+        """Rotor speeds for one control step from the family's own action, or None where the default applies."""
+        _ = env, action
+        return None
 
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
         """Attach the family's own attributes to a freshly constructed env; a plain flight needs none."""
@@ -418,8 +435,11 @@ class ChallengeFamilyRuntime:
         min_clearance: Optional[float],
         collision: bool,
         failure_reason: str,
+        info: Optional[Dict[str, Any]] = None,
     ) -> ChallengeFamilyEvaluation:
         """Score a finished flight: collect the raw metrics, normalize them, and package final_score with both dicts."""
+        # info is the flight's last step info, for a family whose score needs more than its clock and flags.
+        _ = info
         metrics = self.build_rollout_metrics(
             task=task,
             success=success,

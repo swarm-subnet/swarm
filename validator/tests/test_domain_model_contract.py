@@ -51,6 +51,7 @@ def test_domain_model_schema_snapshot():
             "cf_interceptor",
             "cf_interceptor_office",
             "cf_search_and_rescue",
+            "cf_solar_patrol",
             "cf_swarm_autopilot",
             "cf_swarm_sar",
         ],
@@ -88,6 +89,7 @@ def test_domain_model_schema_snapshot():
             "warehouse",
             "forest",
             "office",
+            "solar",
         ],
         "challenge_type_to_environment_type": {
             1: "city",
@@ -97,6 +99,7 @@ def test_domain_model_schema_snapshot():
             5: "warehouse",
             6: "forest",
             7: "office",
+            8: "solar",
         },
         "challenge_type_to_benchmark_group": {
             1: "type1_city",
@@ -106,6 +109,7 @@ def test_domain_model_schema_snapshot():
             5: "type5_warehouse",
             6: "type6_forest",
             7: "type7_office",
+            8: "type8_solar",
         },
         "benchmark_group_order": [
             "type1_city",
@@ -115,6 +119,7 @@ def test_domain_model_schema_snapshot():
             "type5_warehouse",
             "type6_forest",
             "type7_office",
+            "type8_solar",
         ],
     }
 
@@ -176,6 +181,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
         "cf_interceptor": ("submission_zip.v1",),
         "cf_interceptor_office": ("submission_zip.v1",),
         "cf_search_and_rescue": ("submission_zip.v1",),
+        "cf_solar_patrol": ("submission_zip.v1",),
         "cf_swarm_autopilot": ("submission_zip.v1",),
         "cf_swarm_sar": ("submission_zip.v1",),
     }
