@@ -58,9 +58,9 @@ MOTOR_XY = ((0.17065, -0.1915), (-0.17065, -0.1715), (-0.17065, 0.1715), (0.1706
 # error), attitude loop in PWM units.
 VEL_GAIN = np.array([6.0, 6.0, 7.4])
 VEL_INTEGRAL = np.array([1.0, 1.0, 2.0])  # a small, fading integral for what the drag feed-forward misses (wind)
-INTEGRAL_BAND_MPS = 0.3                 # it only learns once the speed is this close to the target
-INTEGRAL_LIMIT = 1.0
-INTEGRAL_LEAK_S = 4.0
+INTEGRAL_BAND_MPS = 1.0                 # it only learns once the speed is this close to the target
+INTEGRAL_LIMIT = 4.0                    # room for the steady push of a 12 m/s wind on top of the rotor drag
+INTEGRAL_LEAK_S = 30.0
 ATT_P = np.array([45000.0, 45000.0, 20000.0])
 ATT_I = np.array([0.0, 0.0, 0.0])
 ATT_D = np.array([9000.0, 9000.0, 24000.0])

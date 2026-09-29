@@ -89,6 +89,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     family_id = FAMILY_ID
     runtime_supported = True
     decision_steps = DECISION_STEPS
+    physics_mode = "pyb_drag"            # rotor drag in still air too, the same law the seeded wind applies
     seeded_sun = park.SEEDED_SUN
     night_share = park.NIGHT_SHARE
     sky_from_sun = park.SKY_FROM_SUN
@@ -196,6 +197,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         dock.update(env, ep)
         airframe.update(env, ep)
         drone_state.update(env, ep)
+        wind.update(env, ep)
         flight_limit.update(env, ep)
         camera.update(env, ep)
         zoom.update(env, ep)

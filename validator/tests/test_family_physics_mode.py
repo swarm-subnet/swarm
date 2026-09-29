@@ -19,6 +19,7 @@ from swarm.utils.env_factory import make_env
 from swarm.validator import task_gen
 
 AERO = Physics.PYB_GND_DRAG_DW.value
+OPTED_IN = {"SolarPatrolChallengeFamily": Physics.PYB_DRAG.value}  # drag in still air too, like its wind
 
 
 def _every_family_class(cls=ChallengeFamilyRuntime):
@@ -48,7 +49,7 @@ def test_every_family_stays_on_plain_physics():
     """No family opts into the aerodynamic terms on its own; the switch is explicit per family."""
     assert ChallengeFamilyRuntime.physics_mode == Physics.PYB.value
     for family in _every_family_class():
-        assert family.physics_mode == Physics.PYB.value, family.__name__
+        assert family.physics_mode == OPTED_IN.get(family.__name__, Physics.PYB.value), family.__name__
 
 
 def test_env_takes_the_physics_mode_from_the_family(monkeypatch):
