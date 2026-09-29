@@ -147,7 +147,7 @@ def capture(env: Any, ep: SolarEpisode) -> None:
     height, width = (THERMAL_SHAPE if cam["thermal"] else RGB_SHAPE)[:2]
     diagonal = THERMAL_DIAGONAL_FOV_DEG if cam["thermal"] else WIDE_DIAGONAL_FOV_DEG
     eye, forward, up = airframe.camera_pose(env, cam["tilt_deg"])
-    dark = _night(env)
+    dark = night(env)
     night_scene = cam["night_mode"] == "on" or (cam["night_mode"] == "auto" and dark)
     shot = View(feed=feed, eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=int(width),
                 height=int(height), vertical_fov_deg=vertical_fov_deg(diagonal, width, height),
@@ -156,7 +156,7 @@ def capture(env: Any, ep: SolarEpisode) -> None:
         ep.frames.thermal = _thermal_frame(env, ep, shot)
         ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)
     else:
-        frame = _colour_frame(env, shot)
+        frame = colour_frame(env, shot)
         if dark and night_scene:
             frame = night_scene_stand_in(frame, ep.seed, cam["captures"])
         ep.frames.rgb = frame
@@ -171,7 +171,7 @@ def night_scene_stand_in(frame: np.ndarray, seed: int, capture_index: int) -> np
     return np.clip(frame * np.float32(NIGHT_SCENE_GAIN) + grain, 0.0, 1.0)
 
 
-def _night(env: Any) -> bool:
+def night(env: Any) -> bool:
     """True when the seed is lit by the moon."""
     sun = getattr(env, "_sun", None)
     return bool(sun is not None and sun.night)
@@ -182,7 +182,7 @@ def _floats(vector: np.ndarray) -> Tuple[float, float, float]:
     return tuple(float(v) for v in vector)
 
 
-def _colour_frame(env: Any, shot: View) -> np.ndarray:
+def colour_frame(env: Any, shot: View) -> np.ndarray:
     """A colour frame in the seed's light, the way the environment lights its own colour frames."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
@@ -207,7 +207,7 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> np.ndarray:
         return np.zeros(THERMAL_SHAPE, dtype=np.float32)
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
-    light = [0.0, 0.0, -1.0] if _night(env) else env._light_direction
+    light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
     flags = p.ER_NO_SEGMENTATION_MASK | p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT
     _w, _h, image, _depth, _seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
