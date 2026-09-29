@@ -179,19 +179,19 @@ def test_second_seed_does_not_wait_for_its_container(fake_docker, monkeypatch):
     """Serially the second flight starts a full model load after the first one ends;
     with the start hidden behind the first flight that gap shrinks below the load time."""
     def _gap_between_flights() -> float:
-        """Seconds from the end of the first flight to the start of the second."""
+        """Seconds from the end of the first flight until the second seed's container finished loading."""
         fake_docker.events.clear()
         _run_worker([
             _request(0, 7, fake_docker.model_path, prewarm_next=True),
             _request(1, 7, fake_docker.model_path, prewarm_next=False),
         ])
         first, second = fake_docker.names()[-2:]
-        return fake_docker.first("fly_start", second) - fake_docker.first("fly_end", first)
+        return fake_docker.ready_time(second) - fake_docker.first("fly_end", first)
 
     monkeypatch.setenv("SWARM_DOCKER_PREWARM", "0")
-    assert _gap_between_flights() > _LOAD_SEC
+    assert _gap_between_flights() >= _LOAD_SEC
     monkeypatch.setenv("SWARM_DOCKER_PREWARM", "1")
-    assert _gap_between_flights() < _LOAD_SEC
+    assert _gap_between_flights() <= 0.0
 
 
 def test_spare_for_the_last_seed_is_killed_at_shutdown(fake_docker):
@@ -337,16 +337,27 @@ def test_cancel_gives_up_on_a_flight_that_ignores_the_signal(fake_docker, monkey
     assert any(kind == "kill" and subject == name for _, kind, subject in fake_docker.events)
 
 
-def test_cancel_during_the_container_start_never_flies(fake_docker):
+def test_cancel_during_the_container_start_never_flies(fake_docker, monkeypatch):
     """A stop that lands while the agent is still loading ends the wait at once: the container is removed and no flight starts."""
-    result, statuses, elapsed = _run_cancellable_worker(
-        _request(0, 7, fake_docker.model_path, prewarm_next=True), threading.Event(), cancel_after=0.3,
+    cancel_event = threading.Event()
+    launch = fake_docker.run
+
+    def _run_then_stop(cmd, **kwargs):
+        """Launch as the daemon does, and raise the stop 0.3 s into the container's load."""
+        done = launch(cmd, **kwargs)
+        if cmd[1] == "run":
+            threading.Timer(0.3, cancel_event.set).start()
+        return done
+
+    monkeypatch.setattr(batch.subprocess, "run", _run_then_stop)
+    result, statuses, _elapsed = _run_cancellable_worker(
+        _request(0, 7, fake_docker.model_path, prewarm_next=True), cancel_event,
     )
 
     (name,) = fake_docker.names()
     assert statuses == ["stopped_before_seed"]
     assert result.results[0][3] == 0.0
-    assert elapsed < _LOAD_SEC
+    assert fake_docker.first("rm", name) < fake_docker.ready_time(name)
     assert not any(kind == "fly_start" for _, kind, _subject in fake_docker.events)
     assert any(kind == "rm" and subject == name for _, kind, subject in fake_docker.events)
 

@@ -17,9 +17,11 @@
 
 """Flight limit (task 15): the invisible line the drone must stay inside, and the stop line 5 m before it.
 
-Reaching the stop line ends the patrol: the drone flies home on its own and the landing earns nothing.
-
-Stand-in: the limit is the fence's bounding rectangle grown by 5 m on every side.
+Each seed draws every straight side of the fence its own distance, from the limit's own stream, for the stop line to
+stand outside it, so the whole park inside the fence can always be flown. The limit stands STOP_LINE_M further out,
+the pushed sides joined into one outline around the fence, the shape of a DJI custom flight area. The dock reports the
+distance to it and whether the drone is inside, as DJI's does. Reaching the stop line ends the patrol there, and the
+landing earns nothing.
 """
 
 from __future__ import annotations
@@ -27,13 +29,51 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from shapely.geometry import MultiPoint, Polygon
+from shapely.geometry.polygon import orient
+from shapely.ops import unary_union
 
 from .contract import MAX_LIMIT_POINTS, SITE_MAP_SLICES, STATE_SLICES, put
 from .episode import SolarEpisode
 
-STOP_LINE_M = 5.0
-MARGIN_M = 5.0
+STOP_LINE_M = 5.0                      # DJI ends the task this near a custom flight area's edge
+MAX_OUTSIDE_M = 5.0                    # the stop line stands 0 to 5 m outside each side of the fence
+LIMIT_SEED_STREAM = 0xF15              # the limit's own stream, so its draws never move another part's
 _AIRBORNE = ("taking_off", "flying", "returning", "landing")
+
+
+def _sides(fence: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each side's start and end, anticlockwise, and its unit normal pointing out of the fence."""
+    a = np.array(orient(Polygon(fence), 1.0).exterior.coords[:-1])
+    b = np.roll(a, -1, axis=0)
+    along = b - a
+    return a, b, np.column_stack([along[:, 1], -along[:, 0]]) / np.hypot(*along.T)[:, None]
+
+
+def pushes(seed: int, fence: np.ndarray) -> np.ndarray:
+    """How far each side of the limit stands out from its side of the fence this seed: STOP_LINE_M, plus 0 to
+    MAX_OUTSIDE_M drawn per side for the stop line."""
+    draw = np.random.default_rng([LIMIT_SEED_STREAM, int(seed)]).uniform(0.0, MAX_OUTSIDE_M, len(_sides(fence)[0]))
+    return STOP_LINE_M + draw
+
+
+def outline(fence: np.ndarray, push: np.ndarray) -> np.ndarray:
+    """The fence with every side pushed out by its distance, merged into one polygon, anticlockwise, in world metres.
+
+    A strip lies along each side and a wedge closes each corner. An outward corner's wedge reaches the point
+    STOP_LINE_M out along both sides, so no stretch of the fence comes nearer the limit than the stop line.
+    """
+    a, b, out = _sides(fence)
+    strips = [Polygon([a[i], b[i], b[i] + push[i] * out[i], a[i] + push[i] * out[i]]) for i in range(len(a))]
+    wedges = []
+    for i in range(len(a)):
+        before, after = a[i] + push[i - 1] * out[i - 1], a[i] + push[i] * out[i]
+        corner = [a[i], before, after]
+        if out[i - 1, 0] * out[i, 1] - out[i - 1, 1] * out[i, 0] > 0.0:
+            corner.append(a[i] + STOP_LINE_M * (out[i - 1] + out[i]) / (1.0 + out[i - 1] @ out[i]))
+        wedges.append(MultiPoint(corner).convex_hull)
+    merged = unary_union([Polygon(a)] + [piece for piece in strips + wedges if piece.area > 0.0]).simplify(0.0)
+    return np.array(orient(merged, 1.0).exterior.coords[:-1])
 
 
 def _inside(polygon: np.ndarray, point: np.ndarray) -> bool:
@@ -57,10 +97,8 @@ def _distance(polygon: np.ndarray, point: np.ndarray) -> float:
 
 def reset(env: Any, ep: SolarEpisode) -> None:
     """Draw this seed's limit around the fence."""
-    low = ep.fence.min(axis=0) - MARGIN_M
-    high = ep.fence.max(axis=0) + MARGIN_M
-    ep.flight_limit = {"polygon": np.array([[low[0], low[1]], [high[0], low[1]], [high[0], high[1]],
-                                            [low[0], high[1]]])}
+    push = pushes(ep.seed, ep.fence)
+    ep.flight_limit = {"pushes": push, "polygon": outline(ep.fence, push)}
 
 
 def update(env: Any, ep: SolarEpisode) -> None:
