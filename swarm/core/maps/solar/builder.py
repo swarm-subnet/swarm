@@ -426,13 +426,27 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     return bodies, int(keep.sum())
 
 
+def _outline(item: Dict[str, Any], place: Dict[str, Any]) -> Tuple[float, float, float]:
+    """The circle a placed piece covers seen from above: the centre of its bounds in the world and their larger half
+    width, which for a tree crown is its radius."""
+    low = np.array(item["bounds_min"][:2]) * place["scale"][:2]
+    high = np.array(item["bounds_max"][:2]) * place["scale"][:2]
+    x, y, z, w = place["quaternion"]
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    cx, cy = (low + high) / 2.0
+    c, s = math.cos(yaw), math.sin(yaw)
+    return (float(place["position"][0] + c * cx - s * cy), float(place["position"][1] + s * cx + c * cy),
+            float(np.max(high - low) / 2.0))
+
+
 def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None,
                     groups: Optional[Tuple[str, ...]] = None) -> Dict[str, Any]:
     """Build the solar park inside an existing PyBullet world.
 
-    Returns the body ids per group, the placement and body of every mover for the runtime to drive, the densities
-    the seed drew, and the counts of what was placed. Naming groups builds only those, which is how a check loads
-    the terrain on its own.
+    Returns the body ids per group, the placement and body of every mover for the runtime to drive, the outline of
+    every standing park piece the simulator lets a drone pass through (a tree's crown), the densities the seed drew,
+    and the counts of what was placed. Naming groups builds only those, which is how a check loads the terrain on
+    its own.
     """
     asset_dir = asset_dir or SOLAR_ASSET_DIR
     manifest = solar_manifest(asset_dir)
@@ -440,6 +454,7 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
     densities = solar_densities(seed)
     bodies: Dict[str, List[int]] = {}
     movers: List[Tuple[Dict[str, Any], int]] = []
+    passable: List[Tuple[float, float, float]] = []
     triangles = 0
     for place in manifest["placements"]:
         item = manifest["items"][place["item"]]
@@ -456,14 +471,16 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
         bodies.setdefault(item["group"], []).append(body)
         if "mover" in place:
             movers.append((place, body))
+        if item["group"] == "park" and item.get("collision", "none") == "none":
+            passable.append(_outline(item, place))
         triangles += item["triangles"]
     trees = 0
     forest = manifest.get("forest")
     if forest and (groups is None or "plants" in groups):
         standing, trees = _stand_forest(cli, asset_dir, forest, densities)
         bodies.setdefault("plants", []).extend(standing)
-    return {"bodies": bodies, "movers": movers, "densities": densities, "triangles": triangles, "trees": trees,
-            "asset_dir": asset_dir, "body_count": sum(len(ids) for ids in bodies.values())}
+    return {"bodies": bodies, "movers": movers, "passable": passable, "densities": densities, "triangles": triangles,
+            "trees": trees, "asset_dir": asset_dir, "body_count": sum(len(ids) for ids in bodies.values())}
 
 
 def build_solar_movers(world: Dict[str, Any], seed: int = 0, cli: int = 0) -> SolarMovers:

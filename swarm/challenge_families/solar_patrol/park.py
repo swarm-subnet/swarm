@@ -90,3 +90,9 @@ def advance(env: Any, ep: SolarEpisode) -> None:
 def moving_bodies(ep: SolarEpisode) -> frozenset:
     """Every body the park moves itself, kept out of the clearance metric."""
     return ep.park["movers"].body_uids
+
+
+def passable_outlines(ep: SolarEpisode) -> np.ndarray:
+    """East, north and radius, world metres, of each standing piece the simulator lets a drone pass through but a
+    real one would hit: a tree's crown."""
+    return np.asarray(ep.park["world"].get("passable", ()), dtype=float).reshape(-1, 3)
