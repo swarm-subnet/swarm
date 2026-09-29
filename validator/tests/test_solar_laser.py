@@ -31,7 +31,7 @@ import pytest
 import swarm_worlds
 
 from swarm.challenge_families import build_benchmark_tasks
-from swarm.challenge_families.solar_patrol import airframe, laser, park
+from swarm.challenge_families.solar_patrol import airframe, drone_state, laser, park
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_INDEX,
@@ -293,6 +293,7 @@ def flat_ground(monkeypatch):
     monkeypatch.setattr(park, "build_solar_movers", lambda world, seed=0, cli=0: Still())
     monkeypatch.setattr(park, "fence_line", lambda asset_dir: np.array([[0.0, 40.0], [120.0, 40.0],
                                                                         [120.0, 160.0], [0.0, 160.0]]))
+    monkeypatch.setattr(drone_state, "survey", lambda asset_dir: (np.zeros((0, 5)), np.zeros((0, 5))))
 
 
 @needs_m4td

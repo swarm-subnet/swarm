@@ -92,6 +92,11 @@ def moving_bodies(ep: SolarEpisode) -> frozenset:
     return ep.park["movers"].body_uids
 
 
+def asset_dir(ep: SolarEpisode) -> str:
+    """The folder this patrol's park was built from, whose manifest is the site's survey."""
+    return ep.park["world"]["asset_dir"]
+
+
 def passable_outlines(ep: SolarEpisode) -> np.ndarray:
     """East, north and radius, world metres, of each standing piece the simulator lets a drone pass through but a
     real one would hit: a tree's crown."""

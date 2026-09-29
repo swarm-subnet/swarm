@@ -31,7 +31,7 @@ import pytest
 import swarm_worlds
 
 from swarm.challenge_families import build_benchmark_tasks
-from swarm.challenge_families.solar_patrol import airframe, dock3, park
+from swarm.challenge_families.solar_patrol import airframe, dock3, drone_state, park
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_INDEX,
@@ -73,6 +73,7 @@ def flat_park(monkeypatch):
     monkeypatch.setattr(park, "build_solar_map", build)
     monkeypatch.setattr(park, "build_solar_movers", lambda world, seed=0, cli=0: _StillMovers())
     monkeypatch.setattr(park, "fence_line", lambda asset_dir: _FENCE)
+    monkeypatch.setattr(drone_state, "survey", lambda asset_dir: (np.zeros((0, 5)), np.zeros((0, 5))))
 
 
 @pytest.fixture
