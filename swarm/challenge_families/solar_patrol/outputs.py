@@ -17,32 +17,63 @@
 
 """Model outputs (task 8): every value the model sends, checked and applied to the drone and its camera.
 
-Stand-in: the move and turn sticks are flown through the drone's velocity controller in its body frame, the velocity
-asked for eased in at a fixed acceleration, and the camera, zoom and report values are handed on unchecked to the
-parts that own them.
+Every value is held to its contract bounds before it is read. The move and turn sticks are flown through the drone's
+velocity controller in its body frame, the speed across the ground capped as a whole and the velocity asked for eased
+in at a fixed acceleration. The gimbal moves towards the tilt asked for at its top rate, night vision works only
+through the 7x lens, and the camera, zoom and report values are then handed to the parts that own them.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
 
 from . import camera, reports, zoom
-from .contract import MAX_CLIMB_MPS, MAX_DESCENT_MPS, MAX_HORIZONTAL_MPS, MAX_YAW_RATE_DEG_S, Command
+from .contract import (
+    ACTION_HIGH,
+    ACTION_LOW,
+    GIMBAL_TILT_RANGE_DEG,
+    MAX_CLIMB_MPS,
+    MAX_DESCENT_MPS,
+    MAX_GIMBAL_RATE_DEG_S,
+    MAX_HORIZONTAL_MPS,
+    MAX_YAW_RATE_DEG_S,
+    MAX_ZOOMS,
+    Command,
+)
 from .episode import Setpoint, SolarEpisode
 
 MAX_ACCEL_MPS2 = 2.0                   # a step change of velocity would tip the body past the tilt limit
+NIGHT_VISION_LENS = 7                  # DJI: night vision with the infrared light only at 7x zoom or above
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
-    """The velocity the controller holds starts at rest."""
-    ep.outputs = {"velocity": np.zeros(3)}
+    """The velocity the controller holds starts at rest, the gimbal level, and no zoom lens in use."""
+    ep.outputs = {"velocity": np.zeros(3), "tilt_deg": 0.0, "lens": 0}
+
+
+def clip(action: np.ndarray) -> np.ndarray:
+    """The action with every value held inside its contract bounds."""
+    return np.clip(action, ACTION_LOW, ACTION_HIGH).astype(np.float32)
 
 
 def apply(env: Any, ep: SolarEpisode, command: Command) -> None:
-    """Hand the camera, zoom and report values to their parts."""
+    """Hand the camera, zoom and report values to their parts, with the gimbal and night vision in their limits."""
+    low, high = GIMBAL_TILT_RANGE_DEG
+    target = low + (command.gimbal_tilt + 1.0) / 2.0 * (high - low)
+    reach = MAX_GIMBAL_RATE_DEG_S * env.CTRL_TIMESTEP
+    ep.outputs["tilt_deg"] += float(np.clip(target - ep.outputs["tilt_deg"], -reach, reach))
+    # The zoom part refuses a press once the patrol's zooms are spent, and the lens in use stays the last one taken.
+    if command.zoom is not None and ep.outcome.zooms_used < MAX_ZOOMS:
+        ep.outputs["lens"] = command.zoom.lens
+    command = replace(
+        command,
+        gimbal_tilt=(ep.outputs["tilt_deg"] - low) / (high - low) * 2.0 - 1.0,
+        night_vision=command.night_vision and ep.outputs["lens"] == NIGHT_VISION_LENS,
+    )
     camera.request(env, ep, command)
     zoom.request(env, ep, command)
     if command.report is not None:
@@ -52,8 +83,10 @@ def apply(env: Any, ep: SolarEpisode, command: Command) -> None:
 def setpoint(env: Any, ep: SolarEpisode, command: Command) -> Setpoint:
     """The model's sticks as a world velocity and a turn rate, with forward along the drone's heading."""
     yaw = float(env.rpy[0, 2])
-    forward = command.move_forward * MAX_HORIZONTAL_MPS
-    right = command.move_right * MAX_HORIZONTAL_MPS
+    # The cap is on the speed across the ground, so a diagonal stick flies no faster than a straight one.
+    share = max(1.0, math.hypot(command.move_forward, command.move_right))
+    forward = command.move_forward / share * MAX_HORIZONTAL_MPS
+    right = command.move_right / share * MAX_HORIZONTAL_MPS
     up = command.move_up * (MAX_CLIMB_MPS if command.move_up >= 0.0 else MAX_DESCENT_MPS)
     c, s = math.cos(yaw), math.sin(yaw)
     velocity = (forward * c + right * s, forward * s - right * c, up)
