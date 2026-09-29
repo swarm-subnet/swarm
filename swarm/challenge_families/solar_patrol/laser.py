@@ -19,8 +19,8 @@
 
 The beam is read from the renderer, not the physics: intruders and tree crowns are drawn but have no collision, and
 the laser must find what the camera shows. A coarse read finds the first surface on the beam; a tight read around it
-gives the distance and the surface's slope, which sets DJI's shorter range for a slanted hit. The readings are clean;
-the sensor noise part adds the rangefinder's error.
+gives the distance and the surface's slope, which sets DJI's shorter range for a slanted hit. Each normal reading
+then carries DJI's range error, drawn from the seed so every validator sees the same one.
 """
 
 from __future__ import annotations
@@ -47,6 +47,8 @@ SEARCH_M = 2000.0                       # past the range, so a surface too far i
 COARSE_SIZE, COARSE_TAN, COARSE_NEAR_M = 2, 1e-4, 0.005
 FINE_SIZE, FINE_SPACING_M = 4, 0.1      # neighbour pixels this far apart on the surface, for its slope
 FLAGS = getattr(p, "ER_SWARM_RAYCAST", 0) | getattr(p, "ER_ALPHA_CUTOUT", 0)
+ERROR_M, ERROR_SHARE = 0.2, 0.0015      # DJI: range accuracy +-(0.2 m + 0.15 % of the distance)
+NOISE_SEED_STREAM = 0x1A5E              # the laser's own stream, so its error never moves another part's draws
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
@@ -59,8 +61,20 @@ def update(env: Any, ep: SolarEpisode) -> None:
     """Take a reading on the first control step, then once a second."""
     taken = ep.laser["taken_step"]
     if taken is None or ep.step - taken >= READING_STEPS:
-        ep.laser = read(env, float(ep.camera.get("tilt_deg", 0.0)))
+        ep.laser = with_error(read(env, float(ep.camera.get("tilt_deg", 0.0))), ep.seed, ep.step)
         ep.laser["taken_step"] = ep.step
+
+
+def with_error(reading: dict, seed: int, step: int) -> dict:
+    """A normal reading moved along its beam by DJI's range error, drawn from the seed and the step: normal, with the
+    stated accuracy as two standard deviations and never past it."""
+    if reading["status"] != "normal":
+        return reading
+    bound = ERROR_M + ERROR_SHARE * reading["range_m"]
+    rng = np.random.default_rng([NOISE_SEED_STREAM, int(seed), int(step)])
+    error = float(np.clip(rng.normal(0.0, bound / 2.0), -bound, bound))
+    distance = reading["range_m"] + error
+    return dict(reading, range_m=distance, point=reading["origin"] + reading["direction"] * distance, error_m=error)
 
 
 def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:

@@ -113,7 +113,8 @@ def test_distance_and_ground_point_are_right_at_any_tilt(world, yaw_deg, pitch_d
 
 
 def test_the_model_gets_the_point_from_the_dock(world):
-    """The state carries the distance, the hit point in metres east, north and up from the dock, and status normal."""
+    """The state carries the distance, the hit point in metres east, north and up from the dock, and status normal,
+    within DJI's range error."""
     _ground(world)
     env = _Stub(world)
     ep = SolarEpisode(seed=0)
@@ -125,8 +126,9 @@ def test_the_model_gets_the_point_from_the_dock(world):
     state = new_state()
     laser.observe(env, ep, state)
     distance, point = _ground_hit(env, -60.0)
-    assert state[STATE_SLICES["laser_range_m"]][0] == pytest.approx(distance, abs=0.01)
-    assert state[STATE_SLICES["laser_point_m"]] == pytest.approx(point - ep.dock_position, abs=0.01)
+    bound = laser.ERROR_M + laser.ERROR_SHARE * distance + 0.01
+    assert state[STATE_SLICES["laser_range_m"]][0] == pytest.approx(distance, abs=bound)
+    assert state[STATE_SLICES["laser_point_m"]] == pytest.approx(point - ep.dock_position, abs=bound)
     assert LASER_STATUSES[int(state[STATE_SLICES["laser_status"]][0])] == "normal"
 
 
@@ -231,6 +233,24 @@ def test_a_reading_is_taken_once_a_second(world, monkeypatch):
     assert laser.READING_STEPS * SIM_DT == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("distance", [5.0, 40.0, 500.0, 1500.0])
+def test_the_range_error_is_djis(distance):
+    """Over 4,000 readings the error stays inside DJI's +-(0.2 m + 0.15 %), is centred on zero with that bound as
+    two standard deviations, moves the point along the beam with it, and is the same for the same seed and step."""
+    origin, direction = np.array([1.0, 2.0, 20.0]), np.array([0.6, 0.0, -0.8])
+    clean = {"status": "normal", "range_m": distance, "origin": origin, "direction": direction,
+             "point": origin + direction * distance, "body": 7}
+    readings = [laser.with_error(clean, seed, 50 * k + 1) for seed in range(40) for k in range(100)]
+    errors = np.array([r["range_m"] - distance for r in readings])
+    bound = laser.ERROR_M + laser.ERROR_SHARE * distance
+    assert np.abs(errors).max() <= bound + 1e-9
+    assert abs(errors.mean()) < 0.05 * bound
+    assert errors.std() == pytest.approx(bound / 2.0, rel=0.1)
+    assert all(r["point"] == pytest.approx(origin + direction * r["range_m"]) for r in readings[:50])
+    assert laser.with_error(clean, 3, 51)["range_m"] == readings[3 * 100 + 1]["range_m"]
+    assert laser.with_error(dict(clean, status="too_far"), 3, 51)["range_m"] == distance
+
+
 @needs_m4td
 @pytest.mark.parametrize("tilt", [60.0, 70.0, 80.0, 90.0])
 def test_the_beam_clears_the_aircraft_when_tilted_up(world, tilt):
@@ -280,7 +300,8 @@ def flat_ground(monkeypatch):
 @pytest.mark.parametrize("night_share", [0.0, 1.0])
 def test_a_patrol_reads_the_ground_by_day_and_by_night(flat_ground, monkeypatch, night_share):
     """In a real patrol, day or night, hovering at 20 m clear of the dock with the camera straight down, the model is
-    handed the ground's distance and the point under the drone from the dock, refreshed once a second."""
+    handed the ground's distance and the point under the drone from the dock, with DJI's range error along the beam,
+    refreshed once a second."""
     monkeypatch.setattr(SolarPatrolChallengeFamily, "seeded_sun", True)
     monkeypatch.setattr(SolarPatrolChallengeFamily, "night_share", night_share)
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
@@ -308,9 +329,12 @@ def test_a_patrol_reads_the_ground_by_day_and_by_night(flat_ground, monkeypatch,
         origin, direction = np.asarray(ep.laser["origin"]), np.asarray(ep.laser["direction"])
         distance = -origin[2] / direction[2]
         ground = origin + direction * distance
+        error = ep.laser["error_m"]
         assert LASER_STATUSES[int(state[STATE_SLICES["laser_status"]][0])] == "normal"
-        assert state[STATE_SLICES["laser_range_m"]][0] == pytest.approx(distance, abs=0.02)
+        assert abs(error) <= laser.ERROR_M + laser.ERROR_SHARE * distance
+        assert state[STATE_SLICES["laser_range_m"]][0] == pytest.approx(distance + error, abs=0.02)
         assert distance == pytest.approx(ep.dock_position[2] + 20.0, abs=1.0)
-        assert state[STATE_SLICES["laser_point_m"]] == pytest.approx(ground - ep.dock_position, abs=0.02)
+        assert state[STATE_SLICES["laser_point_m"]] == pytest.approx(ground + direction * error - ep.dock_position,
+                                                                     abs=0.02)
     finally:
         env.close()
