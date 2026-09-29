@@ -40,7 +40,7 @@ from typing import Any, Optional
 import numpy as np
 import pybullet as p
 
-from . import airframe, camera
+from . import airframe, camera, sensor_noise
 from .contract import DECISION_STEPS, MAX_ZOOMS, STATE_SLICES, ZOOM_SHAPE, Box, Command, ZoomRequest, put
 from .episode import SolarEpisode
 
@@ -67,7 +67,9 @@ def request(env: Any, ep: SolarEpisode, command: Command) -> None:
     if command.zoom is None or ep.outcome.zooms_used >= MAX_ZOOMS:
         return
     ep.outcome.zooms_used += 1
-    ep.zoom.update(pending=command.zoom, pending_step=ep.step, seen=camera.view(ep))
+    # The box was drawn on the frame the model was shown, which the link delivers late.
+    seen = sensor_noise.shown_view(ep, "feed") or camera.view(ep)
+    ep.zoom.update(pending=command.zoom, pending_step=ep.step, seen=seen)
 
 
 def update(env: Any, ep: SolarEpisode) -> None:

@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 
 from swarm.challenge_families import get_challenge_family
-from swarm.challenge_families.solar_patrol import camera, outputs, reports, zoom
+from swarm.challenge_families.solar_patrol import camera, outputs, reports, sensor_noise, zoom
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_HIGH,
@@ -57,7 +57,7 @@ def _patrol():
     """An aircraft resting in its dock, with the parts the outputs hand values to."""
     env = SimpleNamespace(NUM_DRONES=1, CTRL_TIMESTEP=SIM_DT, rpy=np.zeros((1, 3)), action_buffer=[])
     env._solar = SolarEpisode(seed=0)
-    for part in (camera, zoom, reports, outputs):
+    for part in (camera, zoom, reports, outputs, sensor_noise):
         part.reset(env, env._solar)
     return env, env._solar
 
@@ -96,7 +96,9 @@ def test_values_outside_the_contract_are_held_to_its_bounds():
     """A raw action far outside the bounds is applied as its nearest in-bounds value, and never crashes the step."""
     env, ep = _patrol()
     raw = np.where(np.arange(ACTION_DIM) % 2 == 0, 40.0, -40.0).astype(np.float32)
-    get_challenge_family(FAMILY_ID).preprocess_action(env, raw)
+    # The aircraft acts on a command one control step after it is sent.
+    for _ in range(2):
+        get_challenge_family(FAMILY_ID).preprocess_action(env, raw)
     held = env.action_buffer[-1].reshape(-1)
     assert np.all(held >= np.asarray(ACTION_LOW)) and np.all(held <= np.asarray(ACTION_HIGH))
     for name in ("move_forward", "move_right", "move_up", "turn", "gimbal_tilt"):

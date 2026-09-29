@@ -328,6 +328,7 @@ def test_a_patrol_sees_through_the_camera(flat_park):  # noqa: F811
             assert np.any(obs["rgb"]) and not np.any(obs["thermal"])
         else:
             assert not np.any(obs["rgb"])
-        fresh += int(state[STATE_SLICES["frame_age_s"]][0] < 1e-6)
+        # A new frame reaches the model within the decision it was taken in, the link's delay after it.
+        fresh += int(state[STATE_SLICES["frame_age_s"]][0] < DECISION_STEPS * SIM_DT - 1e-6)
     assert fresh == 1 + 200 // 5
     assert log["observations"][-1]["state"][STATE_SLICES["camera_feed"]][0] == 1.0

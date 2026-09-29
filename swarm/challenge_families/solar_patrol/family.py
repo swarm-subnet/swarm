@@ -204,6 +204,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         score.update(env, ep)
         if env._collision:
             ep.end("collision")
+        if sensor_noise.snapshot_due(ep):
+            sensor_noise.hold(ep, self._clean_view(env, ep))
 
     def compute_terminated(self, env: Any) -> bool:
         """True once the patrol has ended on landing, a collision or the flight limit's stop line."""
@@ -258,7 +260,16 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         return ep.view[key]
 
     def _build_view(self, env: Any, ep: SolarEpisode) -> dict[str, np.ndarray]:
-        """Every part writes its own fields; the sensor errors go on last, over the clean values."""
+        """The snapshot the link delivered, or this step's when none is on its way, with the sensor errors on top."""
+        view = sensor_noise.observe(env, ep, sensor_noise.delivered(ep) or self._clean_view(env, ep))
+        site_map = new_site_map()
+        if ep.step == 0:
+            drone_state.site_map(env, ep, site_map)
+            flight_limit.site_map(env, ep, site_map)
+        return dict(view, site_map=site_map)
+
+    def _clean_view(self, env: Any, ep: SolarEpisode) -> dict[str, Any]:
+        """Every part writes its own fields; the images come with the views they were taken from."""
         state = new_state()
         drone_state.observe(env, ep, state)
         wind.observe(env, ep, state)
@@ -268,13 +279,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         dock.observe(env, ep, state)
         camera.observe(env, ep, state)
         zoom.observe(env, ep, state)
-        sensor_noise.observe(env, ep, state)
-        site_map = new_site_map()
-        if ep.step == 0:
-            drone_state.site_map(env, ep, site_map)
-            flight_limit.site_map(env, ep, site_map)
-        return {"rgb": ep.frames.rgb, "thermal": ep.frames.thermal, "zoom": ep.frames.zoom,
-                "state": state, "site_map": site_map}
+        return {"step": ep.step, "state": state, "rgb": ep.frames.rgb, "thermal": ep.frames.thermal,
+                "zoom": ep.frames.zoom, "feed_view": camera.view(ep), "zoom_view": zoom.view(ep)}
 
     # ------------------------------------------------------------------ #
     # scoring

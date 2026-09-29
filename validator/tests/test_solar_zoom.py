@@ -105,11 +105,13 @@ class _Flight:
             self.step(_action(gimbal_tilt=_TILT, **flying))
 
     def zoom_on_marker(self, lens, **flying):
-        """Box the marker where the wide frame shows it, press zoom with a lens, and return the observation after."""
+        """Box the marker where the wide frame shows it, press zoom with a lens, and return the observation that
+        brings the close-up: the second after the press, once the request and the frame have crossed the link."""
         found = _red(self.obs["rgb"])
         assert found is not None, "the marker is not in the wide frame"
-        return self.step(_action(gimbal_tilt=_TILT, zoom=1.0, zoom_lens=float(lens == 7), zoom_cx=found[0] / 640.0,
-                                 zoom_cy=found[1] / 480.0, zoom_w=0.05, zoom_h=0.05, **flying))
+        self.step(_action(gimbal_tilt=_TILT, zoom=1.0, zoom_lens=float(lens == 7), zoom_cx=found[0] / 640.0,
+                          zoom_cy=found[1] / 480.0, zoom_w=0.05, zoom_h=0.05, **flying))
+        return self.step(_action(gimbal_tilt=_TILT, **flying))
 
     def close(self):
         """Close the environment."""
@@ -175,8 +177,8 @@ def test_night_vision_is_black_and_white_and_lit_only_inside_its_beam():
 
 @pytest.mark.timeout(300)
 @pytest.mark.usefixtures("_flat_park")
-def test_a_zoom_centres_what_was_boxed_at_the_next_decision():
-    """Nothing shows before the press; the observation right after it holds the close-up, with the boxed marker in
+def test_a_zoom_centres_what_was_boxed_two_decisions_later():
+    """Nothing shows before the press; the second observation after it holds the close-up, with the boxed marker in
     its middle on both lenses and 7x showing it (7/3)^2 larger in area than 3x, as the lenses' angles give."""
     flight = _Flight(seed=21)
     try:
@@ -188,8 +190,9 @@ def test_a_zoom_centres_what_was_boxed_at_the_next_decision():
             pressed_step = flight.env._solar.step
             obs = flight.zoom_on_marker(lens)
             assert obs["state"][STATE_SLICES["zoom_lens"]][0] == lens
-            assert obs["state"][STATE_SLICES["zoom_age_s"]][0] == pytest.approx(0.0)
-            assert zoom.view(flight.env._solar).step == pressed_step + 5
+            # The request reaches the aircraft a control step after the press; the frame is drawn a decision later.
+            assert obs["state"][STATE_SLICES["zoom_age_s"]][0] <= SIM_DT + 1e-6
+            assert zoom.view(flight.env._solar).step == pressed_step + 6
             found = _red(obs["zoom"])
             assert found is not None
             assert math.hypot(found[0] - _CENTRE[0], found[1] - _CENTRE[1]) < _CENTRED_PX
