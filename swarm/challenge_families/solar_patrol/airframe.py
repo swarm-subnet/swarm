@@ -42,6 +42,7 @@ from scipy.spatial.transform import Rotation
 
 from swarm.utils import gym_assets
 
+from . import park
 from .episode import SolarEpisode
 
 URDF = "m4td.urdf"
@@ -75,7 +76,6 @@ DOCKED_FOLD_RAD = math.radians(45.0)                 # blades set 90 degrees apa
 # between 10 and 35 C and it warms through a flight; the gimbal's electronics run a few kelvin over the air.
 HEAT = {"motor": (25.0, 60.0, 240.0, 0.85), "battery": (10.0, 400.0, 900.0, 0.92), "gimbal": (8.0, 120.0, 300.0, 0.92)}
 BATTERY_BASE_C = 25.0                  # the dock conditions the battery before take-off
-AIR_C = 20.0                           # until the park sets the air temperature for the seed
 THERMAL = hasattr(p, "ER_SWARM_THERMAL")
 
 
@@ -247,7 +247,7 @@ def _warm(env: Any, ep: SolarEpisode, spinning: bool, dt: float) -> None:
         tau = heat_s if spinning else cool_s
         target = 1.0 if spinning else 0.0
         state["warm"][name] += (target - state["warm"][name]) * (1.0 - math.exp(-dt / tau))
-        base = BATTERY_BASE_C if name == "battery" else AIR_C
+        base = BATTERY_BASE_C if name == "battery" else park.air_c(ep)
         celsius = round(base + rise * state["warm"][name], 1)
         state["celsius"][name] = celsius
         if not THERMAL or state["shown"].get(name) == celsius:

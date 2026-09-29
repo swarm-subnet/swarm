@@ -328,7 +328,7 @@ def test_the_aircraft_flies_inside_the_m4td_limits(flat_park):
     assert settled("forward", lambda r: math.hypot(*r["vel"][:2])) == pytest.approx(MAX_HORIZONTAL_MPS, rel=0.05)
     assert settled("turn", lambda r: abs(math.degrees(r["yaw_rate"]))) == pytest.approx(MAX_YAW_RATE_DEG_S, rel=0.05)
     assert episode.outcome.end_reason == "landed" and episode.outcome.landed_in_dock
-    assert log[-1]["celsius"]["motor"] > airframe.AIR_C + 15.0
+    assert log[-1]["celsius"]["motor"] > park.air_c(episode) + 15.0
     assert log[-1]["celsius"]["battery"] > airframe.BATTERY_BASE_C
 
 

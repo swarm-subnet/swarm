@@ -47,7 +47,7 @@ from swarm.challenge_families.solar_patrol.contract import (
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.constants import SIM_DT
-from swarm.core.maps.solar.builder import SOLAR_ASSET_DIR, build_solar_map
+from swarm.core.maps.solar.builder import SOLAR_ASSET_DIR, build_solar_map, solar_manifest, solar_shifts
 from swarm.utils.env_factory import make_env_with_initial_obs
 
 _M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
@@ -269,12 +269,15 @@ def test_a_park_with_no_room_says_so(world):
 @pytest.mark.skipif(not os.path.exists(os.path.join(_SOLAR_ASSETS, "manifest.json")),
                     reason=f"solar map not built at {_SOLAR_ASSETS}")
 def test_the_map_lists_the_olive_crown_as_passable(world):
-    """The park's only piece without a collision shape, the olive's crown, is listed with its 3.3 m radius."""
+    """The park's only piece without a collision shape, the olive's crown, is listed where this seed stands the olive,
+    with its 3.3 m radius at this seed's size."""
     built = build_solar_map(seed=0, cli=world, asset_dir=_SOLAR_ASSETS, groups=("park",))
+    olive = next(shift for index, shift in solar_shifts(0, _SOLAR_ASSETS).items()
+                 if solar_manifest(_SOLAR_ASSETS)["placements"][index]["item"] == "olive_leaves_0")
     crowns = np.array(built["passable"])
     assert len(crowns) == 2
-    assert np.allclose(crowns[:, :2], [65.3, 100.2], atol=0.3)
-    assert np.allclose(crowns[:, 2], 3.3, atol=0.1)
+    assert np.allclose(crowns[:, :2], olive["position"][:2], atol=0.3)
+    assert np.allclose(crowns[:, 2], 3.3 * olive["scale"][0], atol=0.1)
 
 
 # ---------------------------------------------------------------- the dock's buttons

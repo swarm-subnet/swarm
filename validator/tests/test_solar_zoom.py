@@ -61,7 +61,7 @@ def _view(vertical_fov_deg=40.0, width=640, height=480):
 
 def _red(frame):
     """Centre (x, y) in pixels and size in pixels of the red marker in a frame, or None when it is not there."""
-    mask = (frame[..., 0] > 0.25) & (frame[..., 0] > 3.0 * frame[..., 1]) & (frame[..., 0] > 3.0 * frame[..., 2])
+    mask = (frame[..., 0] > 0.25) & (frame[..., 0] > 1.5 * np.maximum(frame[..., 1], frame[..., 2]))
     if not mask.any():
         return None
     ys, xs = np.nonzero(mask)

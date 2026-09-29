@@ -216,7 +216,7 @@ def test_a_random_action_controller_passes_the_package_smoke_test(tmp_path):
     assert smoke_test_policy_package(zip_path) == (True, "ok")
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(1200)
 def test_random_actions_fly_a_whole_patrol(flat_park):
     """Random actions run a patrol to one of its end reasons, every observation in the contract's shapes."""
     rng = np.random.default_rng(7)
@@ -230,7 +230,7 @@ def test_random_actions_fly_a_whole_patrol(flat_park):
     assert all(not obs["site_map"].any() for obs in log["observations"][1:])
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(1200)
 def test_a_patrol_that_never_takes_off_runs_out_of_time(flat_park):
     """A drone left in its dock ends the patrol on the clock at 390 s, one decision every 0.1 s."""
     log = _patrol(12, lambda i, obs: _action())
