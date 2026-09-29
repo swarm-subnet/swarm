@@ -38,7 +38,7 @@ from swarm.challenge_families import (
     get_challenge_family,
     list_registered_challenge_families,
 )
-from swarm.challenge_families.solar_patrol import airframe, park
+from swarm.challenge_families.solar_patrol import airframe, drone_state, park
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_FIELDS,
@@ -73,6 +73,8 @@ from swarm.utils.env_factory import make_env_with_initial_obs
 # A patrol flies the M4TD, which ships in swarm-worlds; an installed release without it cannot fly one.
 _M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
+_TABLES = np.array([[60.0, 120.0, 20.0, 4.0, 89.0], [40.0, 70.0, 10.0, 4.0, 88.0]])
+_BUILDINGS = np.array([[20.0, 50.0, 3.8, 3.7, 0.0]])
 
 
 class _StillMovers:
@@ -96,6 +98,7 @@ def flat_park(monkeypatch):
     monkeypatch.setattr(park, "build_solar_map", build)
     monkeypatch.setattr(park, "build_solar_movers", lambda world, seed=0, cli=0: _StillMovers())
     monkeypatch.setattr(park, "fence_line", lambda asset_dir: _FENCE)
+    monkeypatch.setattr(drone_state, "survey", lambda asset_dir: (_TABLES, _BUILDINGS))
 
 
 def _action(**values):
@@ -265,6 +268,38 @@ def test_take_off_fly_return_and_land(flat_park):
     assert outcome.max_height_m == pytest.approx(20.0, abs=1.5)
     assert log["info"]["success"] is True
     assert log["time_s"] < HORIZON_S
+
+
+@pytest.mark.timeout(300)
+def test_the_state_counts_from_the_dock_through_a_whole_patrol(flat_park):
+    """In the dock the drone reads 0, 0, 0 with 390 s and 95 % left; flying forward from its east-facing dock it
+    heads 90 and moves east at the speed it reports, 20 m above take-off; the clock loses 0.1 s a decision up to
+    the landing, the battery only ever drains, and the site map places the survey from the dock."""
+    log = _patrol(16, _home_and_back(outbound_decisions=40))
+    ep = log["episode"]
+    states = np.array([obs["state"] for obs in log["observations"]])
+    position = states[:, STATE_SLICES["position_m"]]
+    velocity = states[:, STATE_SLICES["velocity_mps"]]
+    battery = states[:, STATE_SLICES["battery_pct"]][:, 0]
+    assert position[0] == pytest.approx([0.0, 0.0, 0.0], abs=0.05)
+    assert states[0, STATE_SLICES["heading_deg"]][0] == pytest.approx(90.0, abs=0.5)
+    time_left = states[:, STATE_SLICES["time_left_s"]][:, 0]
+    assert time_left[:-1] == pytest.approx(HORIZON_S - 0.1 * np.arange(len(states) - 1), abs=1e-3)
+    # The landing closes the patrol on the control step it happens, part way through the last decision.
+    assert time_left[-2] - 0.1 - 1e-3 <= time_left[-1] < time_left[-2]
+    assert states[:, STATE_SLICES["height_above_takeoff_m"]][:, 0] == pytest.approx(position[:, 2])
+    assert position[:, 2].max() == pytest.approx(20.0, abs=1.5)
+    assert position[:, 0].max() > 5.0 and np.abs(position[:, 1]).max() < 1.0
+    assert velocity[:, 0].max() == pytest.approx(3.0, abs=0.5)
+    assert np.median(np.abs(np.diff(position, axis=0) / 0.1 - velocity[1:])) < 0.2
+    assert battery[0] == 95.0 and battery[-1] < 95.0 and np.all(np.diff(battery) <= 0.0)
+    assert 95.0 - ep.drone_state["battery_pct"] <= 100.0 * log["time_s"] / (47 * 60)
+    site = log["observations"][0]["site_map"]
+    shift = np.array([ep.dock_position[0], ep.dock_position[1], 0.0, 0.0, 0.0])
+    assert site[SITE_MAP_SLICES["table_count"]][0] == len(_TABLES)
+    assert site[SITE_MAP_SLICES["tables"]].reshape(-1, 5)[:len(_TABLES)] == pytest.approx(_TABLES - shift, abs=1e-4)
+    assert site[SITE_MAP_SLICES["building_count"]][0] == len(_BUILDINGS)
+    assert site[SITE_MAP_SLICES["buildings"]].reshape(-1, 5)[:1] == pytest.approx(_BUILDINGS - shift, abs=1e-4)
 
 
 @pytest.mark.timeout(300)

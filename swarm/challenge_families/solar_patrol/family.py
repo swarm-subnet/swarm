@@ -193,6 +193,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         ep.step += 1
         dock.update(env, ep)
         airframe.update(env, ep)
+        drone_state.update(env, ep)
         flight_limit.update(env, ep)
         camera.update(env, ep)
         zoom.update(env, ep)
