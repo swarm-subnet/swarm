@@ -24,7 +24,7 @@ Stand-in: no seed has thieves.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from .episode import SolarEpisode
 
@@ -37,3 +37,9 @@ def reset(env: Any, ep: SolarEpisode) -> None:
 
 def advance(env: Any, ep: SolarEpisode) -> None:
     """Move the thieves and their vehicles to the step physics is about to run."""
+
+
+def people(ep: SolarEpisode, step: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Every thief in the scene at a step up to the current one: his body ids, where he stands, what he is doing, and
+    whether he is a threat, which is a man inside the fence."""
+    return []
