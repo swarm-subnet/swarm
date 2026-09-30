@@ -102,6 +102,19 @@ def _runtime_details_field(metrics: Any) -> Dict[str, Any]:
     return {"runtime_details": details} if details else {}
 
 
+_SEED_MISTAKE_FIELDS = ("missed_threats", "false_alarms")
+
+
+def _seed_mistakes(metrics: Any) -> Dict[str, int]:
+    """The seed's missed threats and false alarms for the backend's cross-seed penalty, or nothing when its family counts none."""
+    if not isinstance(metrics, dict):
+        return {}
+    counts = [metrics.get(key) for key in _SEED_MISTAKE_FIELDS]
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in counts):
+        return {}
+    return {key: max(0, int(value)) for key, value in zip(_SEED_MISTAKE_FIELDS, counts)}
+
+
 def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
     """Provenance fields the backend seed-score schema requires on every upload.
 
@@ -247,6 +260,7 @@ async def _evaluate_seeds(
                 ),
                 "moving_platform": bool(getattr(task, "moving_platform", False)),
                 "runtime_details": _runtime_details(getattr(result, "metrics", None)),
+                **_seed_mistakes(getattr(result, "metrics", None)),
             },
         )
 
@@ -540,6 +554,7 @@ async def _run_streaming_phase(
             }
             if detail.get("runtime_details"):
                 row["runtime_details"] = dict(detail["runtime_details"])
+            row.update(_seed_mistakes(detail))
             upload_queue.put_nowait(row)
         if len(completed_scores) % chunk_size == 0:
             _fire_chunk_complete()
@@ -625,6 +640,7 @@ async def _run_streaming_phase(
                     "map_type": detail["map_type"],
                     "failure_reason": detail.get("failure_reason", "NONE"),
                     **_runtime_details_field(detail.get("metrics")),
+                    **_seed_mistakes(detail.get("metrics")),
                 }
                 for j, detail in enumerate(all_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"

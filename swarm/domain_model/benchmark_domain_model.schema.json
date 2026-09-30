@@ -558,6 +558,7 @@
         "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
+      "seeds_zeroed_per_mistake": 10,
       "emission_allocation": 0.0
     }
   },

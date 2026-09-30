@@ -206,6 +206,11 @@ class ChallengeFamilyRuntime:
     # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
     prepares_seeds: bool = False
 
+    def stalled_rollout_metrics(self, task: Any, info: Dict[str, Any]) -> Dict[str, Any]:
+        """Metrics a seed keeps when the model stalls out of it on slow-act strikes; none by default."""
+        _ = task, info
+        return {}
+
     def screening_policy(self) -> Dict[str, Any]:
         """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
         return get_family_screening_policy(self.family_id)
