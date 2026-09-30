@@ -28,7 +28,7 @@ import pybullet as p
 import pytest
 import swarm_worlds
 
-from swarm.challenge_families.solar_patrol import airframe, camera
+from swarm.challenge_families.solar_patrol import airframe, camera, park
 from swarm.challenge_families.solar_patrol.contract import (
     DECISION_STEPS,
     RGB_SHAPE,
@@ -87,6 +87,7 @@ def scene():
                               [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
     env = _Env(cli, drone)
     ep = SolarEpisode(seed=11)
+    ep.park = park.heat(env._sun, ep.seed, 0)
     camera.reset(env, ep)
     yield env, ep
     p.disconnect(cli)
@@ -290,6 +291,7 @@ def test_the_aircraft_blocks_the_view_above_seventy_degrees():
                   for j in range(p.getNumJoints(moving, physicsClientId=cli))}
         env = _Env(cli, drone)
         ep = SolarEpisode(seed=11)
+        ep.park = park.heat(env._sun, ep.seed, 0)
         camera.reset(env, ep)
         shares = {}
         for tilt in (-90.0, 0.0, 60.0, 70.0, 90.0):

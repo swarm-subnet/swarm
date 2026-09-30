@@ -91,6 +91,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     decision_steps = DECISION_STEPS
     seeded_sun = park.SEEDED_SUN
     night_share = park.NIGHT_SHARE
+    sky_from_sun = park.SKY_FROM_SUN
+    daylight = park.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
 
     # ------------------------------------------------------------------ #

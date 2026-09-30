@@ -45,7 +45,7 @@ import pybullet as p
 from swarm.constants import SIM_DT
 from swarm.core.daylight import sun_render_kwargs
 
-from . import airframe
+from . import airframe, park
 from .contract import GIMBAL_TILT_RANGE_DEG, NIGHT_MODES, RGB_SHAPE, STATE_SLICES, THERMAL_SHAPE, Command, put
 from .episode import SolarEpisode
 
@@ -67,10 +67,6 @@ WIDE_DIAGONAL_FOV_DEG = 82.0            # DJI: M4TD wide camera
 THERMAL_DIAGONAL_FOV_DEG = 45.0         # DJI: M4TD thermal camera
 NEAR_M = 0.004                          # under the airframe's 5 mm, so the aircraft is drawn when it is in view
 FAR_M = 2000.0
-
-# Until the park sets them for the seed (task 17): the air, and the clear sky straight up, the engine's own default.
-AIR_C = airframe.AIR_C
-SKY_C = -20.0
 
 NIGHT_SCENE_GAIN = 3.0
 NIGHT_SCENE_GRAIN = 0.035               # standard deviation of the grain, in the image's 0 to 1 units
@@ -211,7 +207,7 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> np.ndarray:
     flags = p.ER_NO_SEGMENTATION_MASK | p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT
     _w, _h, image, _depth, _seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
-        flags=flags, airTemperature=AIR_C, skyTemperature=SKY_C,
+        flags=flags, airTemperature=park.air_c(ep), skyTemperature=park.sky_c(ep),
         thermalSeed=(int(ep.seed) * 1000003 + ep.camera["captures"]) & 0x7FFFFFFF, physicsClientId=env.CLIENT,
     )
     white_hot = np.reshape(np.asarray(image, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :1]

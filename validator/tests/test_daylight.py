@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import pytest
 
 from swarm.challenge_families.base import ChallengeFamilyRuntime
+from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.constants import (
     MOON_AMBIENT_RANGE,
     MOON_COLOR,
@@ -125,10 +126,13 @@ def test_apply_seeded_sun_lights_the_env():
 
 
 def test_families_are_off_by_default():
-    """No family opts in unless it says so, so today's families keep today's light and no night."""
+    """No family opts in unless it says so, so today's families keep today's light and no night; Solar Patrol flies
+    its seeds by day and by night."""
     assert ChallengeFamilyRuntime.seeded_sun is False
     assert ChallengeFamilyRuntime.night_share == 0.0
     for cls in ChallengeFamilyRuntime.__subclasses__():
+        if cls is SolarPatrolChallengeFamily:
+            continue
         assert cls.seeded_sun is False, cls.__name__
         assert cls.night_share == 0.0, cls.__name__
 
