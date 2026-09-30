@@ -38,7 +38,7 @@ from swarm.challenge_families import (
     get_challenge_family,
     list_registered_challenge_families,
 )
-from swarm.challenge_families.solar_patrol import airframe, drone_state, park
+from swarm.challenge_families.solar_patrol import airframe, drone_state, park, sensor_noise
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_FIELDS,
@@ -281,17 +281,21 @@ def test_the_state_counts_from_the_dock_through_a_whole_patrol(flat_park):
     position = states[:, STATE_SLICES["position_m"]]
     velocity = states[:, STATE_SLICES["velocity_mps"]]
     battery = states[:, STATE_SLICES["battery_pct"]][:, 0]
-    assert position[0] == pytest.approx([0.0, 0.0, 0.0], abs=0.05)
+    assert position[0] == pytest.approx([0.0, 0.0, 0.0], abs=0.05 + sensor_noise.RTK_HORIZONTAL_M)
     assert states[0, STATE_SLICES["heading_deg"]][0] == pytest.approx(90.0, abs=0.5)
+    # Each decision is shown the snapshot the link delivered, 60 or 80 ms before it.
+    seen_s = np.array([0.0] + [(k * DECISION_STEPS - sensor_noise.data_delay_steps(ep, k * DECISION_STEPS)) * SIM_DT
+                               for k in range(1, len(states) - 1)])
     time_left = states[:, STATE_SLICES["time_left_s"]][:, 0]
-    assert time_left[:-1] == pytest.approx(HORIZON_S - 0.1 * np.arange(len(states) - 1), abs=1e-3)
+    assert time_left[:-1] == pytest.approx(HORIZON_S - seen_s, abs=1e-3)
     # The landing closes the patrol on the control step it happens, part way through the last decision.
-    assert time_left[-2] - 0.1 - 1e-3 <= time_left[-1] < time_left[-2]
+    assert HORIZON_S - log["time_s"] - 1e-3 <= time_left[-1] < time_left[-2]
     assert states[:, STATE_SLICES["height_above_takeoff_m"]][:, 0] == pytest.approx(position[:, 2])
     assert position[:, 2].max() == pytest.approx(20.0, abs=1.5)
     assert position[:, 0].max() > 5.0 and np.abs(position[:, 1]).max() < 1.0
     assert velocity[:, 0].max() == pytest.approx(3.0, abs=0.5)
-    assert np.median(np.abs(np.diff(position, axis=0) / 0.1 - velocity[1:])) < 0.2
+    moved = np.diff(position[:-1], axis=0) / np.diff(seen_s)[:, None]
+    assert np.median(np.abs(moved - velocity[1:-1])) < 0.2
     assert battery[0] == 95.0 and battery[-1] < 95.0 and np.all(np.diff(battery) <= 0.0)
     assert 95.0 - ep.drone_state["battery_pct"] <= 100.0 * log["time_s"] / (47 * 60)
     site = log["observations"][0]["site_map"]

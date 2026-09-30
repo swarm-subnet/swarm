@@ -15,14 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Zoom lenses (task 11): a box and a lens asked for, and the close view that arrives one decision later.
+"""Zoom lenses (task 11): a box and a lens asked for, and the close view the link brings back.
 
 The M4TD carries two tele cameras beside the wide one: 3x (35 degree diagonal) and 7x (15 degree). A zoom is a
 request, not a free look: the model draws a box on the frame it is looking at and picks a lens, as the dock's
 zoom-on-a-box command takes them. The box centre becomes a ray from that frame's view, and the first thing the ray
-meets past the aircraft is the point zoomed on. One decision later the lens is pointed at that point and one 640 x 480
-frame is drawn, so what was boxed sits in the middle even if the aircraft moved or turned meanwhile. The box's size
-picks nothing: there is no digital zoom, the lens alone sets the view.
+meets past the aircraft is the point zoomed on. When the request reaches the aircraft the lens is pointed at that point
+and one 640 x 480 frame is drawn, so what was boxed sits in the middle even if the aircraft moved or turned meanwhile;
+the link's delays (task 16) set when the model sees it. The box's size picks nothing: there is no digital zoom, the
+lens alone sets the view.
 
 At night the zoom frame takes night mode by the wide camera's rule. Through the 7x lens the model can switch on night
 vision (the outputs part holds it to that lens): a black and white picture lit by the aircraft's infrared light, a
@@ -40,8 +41,8 @@ from typing import Any, Optional
 import numpy as np
 import pybullet as p
 
-from . import airframe, camera
-from .contract import DECISION_STEPS, MAX_ZOOMS, STATE_SLICES, ZOOM_SHAPE, Box, Command, ZoomRequest, put
+from . import airframe, camera, sensor_noise
+from .contract import MAX_ZOOMS, STATE_SLICES, ZOOM_SHAPE, Box, Command, ZoomRequest, put
 from .episode import SolarEpisode
 
 LENS_DIAGONAL_FOV_DEG = {3: 35.0, 7: 15.0}  # DJI: M4TD medium tele and tele cameras
@@ -67,13 +68,15 @@ def request(env: Any, ep: SolarEpisode, command: Command) -> None:
     if command.zoom is None or ep.outcome.zooms_used >= MAX_ZOOMS:
         return
     ep.outcome.zooms_used += 1
-    ep.zoom.update(pending=command.zoom, pending_step=ep.step, seen=camera.view(ep))
+    # The box was drawn on the frame the model was shown, which the link delivers late.
+    seen = sensor_noise.shown_view(ep, "feed") or camera.view(ep)
+    ep.zoom.update(pending=command.zoom, pending_step=ep.step, seen=seen)
 
 
 def update(env: Any, ep: SolarEpisode) -> None:
-    """Draw a queued zoom once a full decision has passed since it was asked for."""
+    """Draw a queued zoom on the control step its request reached the aircraft."""
     asked = ep.zoom["pending"]
-    if asked is None or ep.step - ep.zoom["pending_step"] < DECISION_STEPS:
+    if asked is None:
         return
     shot, reach_m = aim(env, ep, asked)
     ep.frames.zoom = _draw(env, ep, shot, reach_m)
