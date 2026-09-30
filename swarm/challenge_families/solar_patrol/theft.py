@@ -37,3 +37,13 @@ def reset(env: Any, ep: SolarEpisode) -> None:
 
 def advance(env: Any, ep: SolarEpisode) -> None:
     """Move the thieves and their vehicles to the step physics is about to run."""
+
+
+def bodies(ep: SolarEpisode) -> dict[int, int]:
+    """Every drawn visual body of every thief, mapped to that thief's index."""
+    return {}
+
+
+def inside(ep: SolarEpisode, thief: int, step: int) -> bool:
+    """True when that thief stood inside the fence at that control step."""
+    return False

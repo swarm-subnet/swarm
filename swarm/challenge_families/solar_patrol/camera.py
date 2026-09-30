@@ -29,6 +29,7 @@ gives: dark with night mode off, brighter and grainy with it on, and auto turns 
 engine draws the Night Scene look (task 27): the brightening and the seeded grain are applied to the rendered frame.
 
 Each frame keeps the view it was taken from, so the zoom, report and coverage parts work from the image the model saw.
+The view also carries the frame's object map from the same draw: which body each pixel shows, never shown to the model.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from __future__ import annotations
 import functools
 import math
 import operator
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -86,6 +87,8 @@ class View:
     vertical_fov_deg: float
     sees: bool                          # False for a colour frame in the dark with night mode off
     step: int
+    # Per pixel, the body id plus (link index + 1) << 24, or -1 where nothing was hit; set once the frame is drawn.
+    objects: Optional[np.ndarray] = field(default=None, compare=False, repr=False)
 
     def matrices(self) -> Tuple[tuple, tuple]:
         """The renderer's view and projection matrices of this frame."""
@@ -164,15 +167,15 @@ def capture(env: Any, ep: SolarEpisode) -> None:
     cam = ep.camera
     shot = aim(env, ep)
     if cam["thermal"]:
-        ep.frames.thermal = _thermal_frame(env, ep, shot)
+        ep.frames.thermal, objects = _thermal_frame(env, ep, shot)
         ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)
     else:
-        frame = colour_frame(env, shot)
+        frame, objects = colour_frame(env, shot)
         if night(env) and _night_scene(cam, env):
             frame = night_scene_stand_in(frame, ep.seed, cam["captures"])
         ep.frames.rgb = frame
         ep.frames.thermal = np.zeros(THERMAL_SHAPE, dtype=np.float32)
-    cam.update(view=shot, captured_s=ep.time_s, captures=cam["captures"] + 1)
+    cam.update(view=replace(shot, objects=objects), captured_s=ep.time_s, captures=cam["captures"] + 1)
 
 
 def night_scene_stand_in(frame: np.ndarray, seed: int, capture_index: int) -> np.ndarray:
@@ -193,8 +196,13 @@ def _floats(vector: np.ndarray) -> Tuple[float, float, float]:
     return tuple(float(v) for v in vector)
 
 
-def colour_frame(env: Any, shot: View) -> np.ndarray:
-    """A colour frame in the seed's light, the way the environment lights its own colour frames."""
+def _object_map(seg: Any, shot: View) -> np.ndarray:
+    """The engine's segmentation buffer as one int32 body code per pixel, laid out like the frame."""
+    return np.reshape(np.asarray(seg, dtype=np.int32), (shot.height, shot.width))
+
+
+def colour_frame(env: Any, shot: View) -> Tuple[np.ndarray, np.ndarray]:
+    """A colour frame in the seed's light, the way the environment lights its own colour frames, and its object map."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -203,27 +211,28 @@ def colour_frame(env: Any, shot: View) -> np.ndarray:
         kwargs["shadowLightCoeff"] = 0.0
         kwargs.update(env._daylight_kwargs(cli))
         kwargs.update(env._sky_kwargs())
-    flags = p.ER_NO_SEGMENTATION_MASK | env._render_flags | env._sky_flags | env._daylight_flags | PICTURE_FLAGS
-    _w, _h, rgb, _depth, _seg = p.getCameraImage(
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | PICTURE_FLAGS
+    _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
         physicsClientId=cli, **kwargs,
     )
-    return np.reshape(np.asarray(rgb, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :3].astype(np.float32) / 255.0
+    frame = np.reshape(np.asarray(rgb, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :3].astype(np.float32) / 255.0
+    return frame, _object_map(seg, shot)
 
 
-def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> np.ndarray:
-    """A White Hot frame from the engine's thermal mode, blank on an engine without it."""
+def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """A White Hot frame from the engine's thermal mode and its object map; blank and no map on an engine without it."""
     if not THERMAL:
-        return np.zeros(THERMAL_SHAPE, dtype=np.float32)
+        return np.zeros(THERMAL_SHAPE, dtype=np.float32), None
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
-    flags = p.ER_NO_SEGMENTATION_MASK | p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT
-    _w, _h, image, _depth, _seg = p.getCameraImage(
+    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT
+    _w, _h, image, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
         flags=flags, airTemperature=park.air_c(ep), skyTemperature=park.sky_c(ep),
         thermalSeed=(int(ep.seed) * 1000003 + ep.camera["captures"]) & 0x7FFFFFFF, physicsClientId=env.CLIENT,
     )
     white_hot = np.reshape(np.asarray(image, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :1]
-    return white_hot.astype(np.float32) / 255.0
+    return white_hot.astype(np.float32) / 255.0, _object_map(seg, shot)
