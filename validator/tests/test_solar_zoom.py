@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Solar Patrol zoom lenses: the 3x and 7x close-up answers the box the model drew, one decision later.
+"""Solar Patrol zoom lenses: the 3x and 7x close-up answers the box the model drew, once the link brings it back.
 
 The patrols here fly the M4TD over the flat stand-in park and put a red marker on the ground in view of the wide
 camera; the model's box is drawn on the marker as it shows in the wide frame, and the zoom frame must centre it.
@@ -34,6 +34,7 @@ import pytest
 from swarm.challenge_families import build_benchmark_tasks
 from swarm.challenge_families.solar_patrol import camera, zoom
 from swarm.challenge_families.solar_patrol.contract import (
+    DECISION_STEPS,
     FAMILY_ID,
     MAX_ZOOMS,
     STATE_SLICES,
@@ -106,12 +107,14 @@ class _Flight:
 
     def zoom_on_marker(self, lens, **flying):
         """Box the marker where the wide frame shows it, press zoom with a lens, and return the observation that
-        brings the close-up: the second after the press, once the request and the frame have crossed the link."""
+        brings the close-up: the next one when the link's delay lets it through, else the one after."""
         found = _red(self.obs["rgb"])
         assert found is not None, "the marker is not in the wide frame"
-        self.step(_action(gimbal_tilt=_TILT, zoom=1.0, zoom_lens=float(lens == 7), zoom_cx=found[0] / 640.0,
-                          zoom_cy=found[1] / 480.0, zoom_w=0.05, zoom_h=0.05, **flying))
-        return self.step(_action(gimbal_tilt=_TILT, **flying))
+        obs = self.step(_action(gimbal_tilt=_TILT, zoom=1.0, zoom_lens=float(lens == 7), zoom_cx=found[0] / 640.0,
+                                zoom_cy=found[1] / 480.0, zoom_w=0.05, zoom_h=0.05, **flying))
+        if obs["state"][STATE_SLICES["zoom_lens"]][0] != lens:
+            obs = self.step(_action(gimbal_tilt=_TILT, **flying))
+        return obs
 
     def close(self):
         """Close the environment."""
@@ -177,9 +180,9 @@ def test_night_vision_is_black_and_white_and_lit_only_inside_its_beam():
 
 @pytest.mark.timeout(300)
 @pytest.mark.usefixtures("_flat_park")
-def test_a_zoom_centres_what_was_boxed_two_decisions_later():
-    """Nothing shows before the press; the second observation after it holds the close-up, with the boxed marker in
-    its middle on both lenses and 7x showing it (7/3)^2 larger in area than 3x, as the lenses' angles give."""
+def test_a_zoom_centres_what_was_boxed_once_the_link_brings_it_back():
+    """Nothing shows before the press; within two observations the close-up arrives, with the boxed marker in its
+    middle on both lenses and 7x showing it (7/3)^2 larger in area than 3x, as the lenses' angles give."""
     flight = _Flight(seed=21)
     try:
         flight.place_marker(ahead_m=20.0, left_m=5.0)
@@ -190,9 +193,9 @@ def test_a_zoom_centres_what_was_boxed_two_decisions_later():
             pressed_step = flight.env._solar.step
             obs = flight.zoom_on_marker(lens)
             assert obs["state"][STATE_SLICES["zoom_lens"]][0] == lens
-            # The request reaches the aircraft a control step after the press; the frame is drawn a decision later.
-            assert obs["state"][STATE_SLICES["zoom_age_s"]][0] <= SIM_DT + 1e-6
-            assert zoom.view(flight.env._solar).step == pressed_step + 6
+            # The request reaches the aircraft a control step after the press and the frame is drawn on arrival.
+            assert obs["state"][STATE_SLICES["zoom_age_s"]][0] <= DECISION_STEPS * SIM_DT + 1e-6
+            assert zoom.view(flight.env._solar).step == pressed_step + 2
             found = _red(obs["zoom"])
             assert found is not None
             assert math.hypot(found[0] - _CENTRE[0], found[1] - _CENTRE[1]) < _CENTRED_PX
