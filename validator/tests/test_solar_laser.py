@@ -31,7 +31,7 @@ import pytest
 import swarm_worlds
 
 from swarm.challenge_families import build_benchmark_tasks
-from swarm.challenge_families.solar_patrol import airframe, drone_state, laser, park
+from swarm.challenge_families.solar_patrol import airframe, drone_state, laser, park, wind
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_INDEX,
@@ -305,6 +305,7 @@ def test_a_patrol_reads_the_ground_by_day_and_by_night(flat_ground, monkeypatch,
     refreshed once a second."""
     monkeypatch.setattr(SolarPatrolChallengeFamily, "seeded_sun", True)
     monkeypatch.setattr(SolarPatrolChallengeFamily, "night_share", night_share)
+    monkeypatch.setattr(wind, "for_seed", lambda seed: dict(wind.STILL_AIR))  # a hover this still needs calm air
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)
