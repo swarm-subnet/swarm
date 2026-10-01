@@ -139,16 +139,16 @@ class M4TDControl(DSLPIDControl):
         cap = t2 * math.tan(MAX_TILT_RAD)
         if side > cap:
             t0, t1 = t0 * (cap / side), t1 * (cap / side)
-        # The three dot products stay numpy's (BLAS) calls: their rounding is the machine's, as it always was.
-        target_thrust = np.array([t0, t1, t2])
-        scalar_thrust = max(0.0, float(np.dot(target_thrust, cur_rotation[:, 2])))
+        # Dot products summed in a fixed order, not by BLAS, whose rounding changes with the CPU's kernel.
+        up = cur_rotation[:, 2].tolist()
+        scalar_thrust = max(0.0, t0 * up[0] + t1 * up[1] + t2 * up[2])
         thrust = (math.sqrt(scalar_thrust / (4 * self.KF)) - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE
-        norm = math.sqrt(target_thrust.dot(target_thrust))
+        norm = math.sqrt(t0 * t0 + t1 * t1 + t2 * t2)
         z = (t0 / norm, t1 / norm, t2 / norm)
         c, s = math.cos(target_rpy[2]), math.sin(target_rpy[2])
-        zx = np.array([z[1] * 0.0 - z[2] * s, z[2] * c - z[0] * 0.0, z[0] * s - z[1] * c])
-        norm = math.sqrt(zx.dot(zx))
-        y = (float(zx[0]) / norm, float(zx[1]) / norm, float(zx[2]) / norm)
+        zx = (z[1] * 0.0 - z[2] * s, z[2] * c - z[0] * 0.0, z[0] * s - z[1] * c)
+        norm = math.sqrt(zx[0] * zx[0] + zx[1] * zx[1] + zx[2] * zx[2])
+        y = (zx[0] / norm, zx[1] / norm, zx[2] / norm)
         x = (y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0])
         euler = _euler_xyz(x, y, z)
         if euler is None:
@@ -157,13 +157,13 @@ class M4TDControl(DSLPIDControl):
 
     def _dslPIDAttitudeControl(self, control_timestep, thrust, cur_quat, target_euler, target_rpy_rates,
                                cur_rotation):
-        """DSL's attitude loop as the gym runs it, with its scipy rotation steps in plain float operations."""
+        """DSL's attitude loop as the gym runs it, in plain float operations."""
         dt = control_timestep
         cur_rpy = p.getEulerFromQuaternion(cur_quat)
-        target_rotation = np.array(_matrix_xyz(*np.asarray(target_euler, dtype=float).tolist()))
-        rot_matrix_e = (np.dot(target_rotation.transpose(), cur_rotation)
-                        - np.dot(cur_rotation.transpose(), target_rotation)).tolist()
-        rot_e = (rot_matrix_e[2][1], rot_matrix_e[0][2], rot_matrix_e[1][0])
+        t, r = _matrix_xyz(*np.asarray(target_euler, dtype=float).tolist()), cur_rotation.tolist()
+        # The three entries of target^T cur - cur^T target the loop reads, summed in a fixed order rather than by BLAS.
+        rot_e = tuple(t[0][a] * r[0][b] + t[1][a] * r[1][b] + t[2][a] * r[2][b]
+                      - (r[0][a] * t[0][b] + r[1][a] * t[1][b] + r[2][a] * t[2][b]) for a, b in ((2, 1), (0, 2), (1, 0)))
         terms = zip(rot_e, cur_rpy, self.last_rpy.tolist(), np.asarray(target_rpy_rates, dtype=float).tolist(),
                     self.integral_rpy_e.tolist(), self.P_COEFF_TOR.tolist(), self.D_COEFF_TOR.tolist(),
                     self.I_COEFF_TOR.tolist(), (1.0, 1.0, 1500.0))
@@ -174,8 +174,9 @@ class M4TDControl(DSLPIDControl):
             torques.append(min(max(-(kp * re) + kd * (rate - (rpy - last) / dt) + ki * ir, -3200.0), 3200.0))
         self.last_rpy = np.array(cur_rpy)
         self.integral_rpy_e = np.array(integral)
-        pwm = np.clip(thrust + np.dot(self.MIXER_MATRIX, np.array(torques)), self.MIN_PWM, self.MAX_PWM)
-        return self.PWM2RPM_SCALE * pwm + self.PWM2RPM_CONST
+        pwm = [min(max(thrust + (m[0] * torques[0] + m[1] * torques[1] + m[2] * torques[2]), self.MIN_PWM), self.MAX_PWM)
+               for m in self.MIXER_MATRIX.tolist()]
+        return self.PWM2RPM_SCALE * np.array(pwm) + self.PWM2RPM_CONST
 
 
 def _euler_xyz(x: tuple, y: tuple, z: tuple) -> Optional[list]:

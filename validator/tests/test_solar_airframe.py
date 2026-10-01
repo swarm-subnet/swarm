@@ -20,9 +20,12 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import math
 import os
+import subprocess
+import sys
 import types
 import xml.etree.ElementTree as ET
 
@@ -53,6 +56,8 @@ pytestmark = [pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airfram
                                  reason=f"the installed swarm-worlds has no {airframe.URDF} yet"),
               pytest.mark.usefixtures("blank_camera")]
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
+_CONTROL_ENV = types.SimpleNamespace(G=9.8, GRAVITY=18.13, KF=3.0833e-07, KM=4.9333e-09, HOVER_RPM=3834.08,
+                                     DRAG_COEFF=np.array([0.00015, 0.00015, 0.00035]))
 
 
 class _StillMovers:
@@ -405,29 +410,51 @@ class _NumpyControl(airframe.M4TDControl):
         return thrust, target_euler, pos_e
 
 
-def test_the_controller_keeps_every_bit_of_the_numpy_and_scipy_loops():
-    """Step after step over random flights, the plain-float controller gives the same float64 rotor speeds, errors
-    and loop memory as the numpy and scipy loops it replaced."""
-    env = types.SimpleNamespace(G=9.8, GRAVITY=18.13, KF=3.0833e-07, KM=4.9333e-09, HOVER_RPM=3834.08,
-                                DRAG_COEFF=np.array([0.00015, 0.00015, 0.00035]))
-    fast, reference = airframe.M4TDControl(env), _NumpyControl(env)
+def _random_flight(steps: int):
+    """Controller inputs of a fixed random flight, well past the patrol's tilts, speeds and turns."""
     rng = np.random.default_rng(11)
-    for _ in range(3000):
+    for _ in range(steps):
         quat = rng.normal(size=4) * [0.3, 0.3, 1.0, 1.0]
         pos = rng.normal(0.0, 50.0, 3)
         vel = rng.normal(0.0, 6.0, 3)
         target_vel = rng.normal(0.0, 8.0, 3) if rng.random() < 0.8 else np.zeros(3)
         if rng.random() < 0.2:
             vel = target_vel + rng.normal(0.0, 0.3, 3)
-        args = dict(control_timestep=SIM_DT, cur_pos=pos, cur_quat=quat / np.linalg.norm(quat), cur_vel=vel,
-                    cur_ang_vel=rng.normal(size=3), target_pos=pos + rng.normal(size=3) * (rng.random() < 0.3),
-                    target_rpy=np.array([0.0, 0.0, rng.uniform(-4.0, 4.0)]), target_vel=target_vel,
-                    target_rpy_rates=np.array([0.0, 0.0, rng.normal()]))
-        got, want = fast.computeControl(**args), reference.computeControl(**args)
-        for a, b in zip(got, want):
-            assert np.asarray(a, dtype=np.float64).tobytes() == np.asarray(b, dtype=np.float64).tobytes()
+        yield dict(control_timestep=SIM_DT, cur_pos=pos, cur_quat=quat / np.sqrt((quat * quat).sum()), cur_vel=vel,
+                   cur_ang_vel=rng.normal(size=3), target_pos=pos + rng.normal(size=3) * (rng.random() < 0.3),
+                   target_rpy=np.array([0.0, 0.0, rng.uniform(-4.0, 4.0)]), target_vel=target_vel,
+                   target_rpy_rates=np.array([0.0, 0.0, rng.normal()]))
+
+
+def _flight_sha() -> str:
+    """Hash of the controller's rotor speeds and yaw errors over the fixed random flight."""
+    ctrl, digest = airframe.M4TDControl(_CONTROL_ENV), hashlib.sha256()
+    for args in _random_flight(500):
+        rpm, _, yaw_e = ctrl.computeControl(**args)
+        digest.update(np.asarray(rpm, dtype=np.float64).tobytes() + np.float64(yaw_e).tobytes())
+    return digest.hexdigest()
+
+
+def test_the_controller_matches_the_numpy_and_scipy_loops():
+    """Step after step over random flights, the plain-float controller gives the rotor speeds, errors and loop memory
+    of the numpy and scipy loops it replaced, apart from the last bits their BLAS sums round differently."""
+    fast, reference = airframe.M4TDControl(_CONTROL_ENV), _NumpyControl(_CONTROL_ENV)
+    for args in _random_flight(3000):
+        for got, want in zip(fast.computeControl(**args), reference.computeControl(**args)):
+            np.testing.assert_allclose(got, want, rtol=1e-9, atol=1e-9)
         for name in ("integral_pos_e", "integral_vel_e", "last_rpy", "integral_rpy_e"):
-            assert getattr(fast, name).tobytes() == getattr(reference, name).tobytes()
+            np.testing.assert_allclose(getattr(fast, name), getattr(reference, name), rtol=1e-9, atol=1e-9)
+
+
+def test_the_controller_gives_the_same_bits_on_every_blas_kernel():
+    """The fixed random flight hashes the same under the oldest and a fused multiply-add BLAS kernel, so validators on
+    different CPU families fly the same path; the numpy loops it replaced did not."""
+    script = "from validator.tests.test_solar_airframe import _flight_sha; print(_flight_sha())"
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    hashes = {subprocess.run([sys.executable, "-c", script], cwd=root, env=dict(os.environ, OPENBLAS_CORETYPE=core),
+                             capture_output=True, text=True, check=True).stdout.split()[-1]
+              for core in ("Prescott", "Haswell")}
+    assert hashes == {_flight_sha()}
 
 
 def test_the_rotation_steps_match_scipy_bit_for_bit():
