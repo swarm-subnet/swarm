@@ -20,6 +20,7 @@ every tilt with the aircraft's own body above +70 degrees, and night mode."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 
@@ -38,7 +39,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     new_state,
 )
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
-from swarm.constants import SIM_DT
+from swarm.constants import MOON_AMBIENT_RANGE, MOON_DIFFUSE_RANGE, SIM_DT
 from swarm.core.daylight import seeded_sun, sky_render_kwargs
 from validator.tests.test_solar_patrol_family import _action, _patrol, flat_park  # noqa: F401
 
@@ -224,8 +225,18 @@ def _moonlit(env, seed=11):
     assert env._sun.night
 
 
+def _moon(env, phase, elevation_deg=45.0):
+    """Light the scene by a moon of the given phase, 0 a crescent and 1 full, at the given height."""
+    low, high = MOON_DIFFUSE_RANGE
+    ambient_low, ambient_high = MOON_AMBIENT_RANGE
+    up = math.radians(elevation_deg)
+    env._sun = dataclasses.replace(seeded_sun(11, 1.0), diffuse=low + (high - low) * phase,
+                                   ambient=ambient_low + (ambient_high - ambient_low) * phase,
+                                   direction=(0.0, math.cos(up), math.sin(up)))
+
+
 def test_at_night_night_mode_off_is_dark_and_sees_nothing(scene):
-    """With night mode off the frame is the dark render as it is, and the view counts as seeing nothing."""
+    """With night mode off the frame stays dark and the view counts as seeing nothing; night mode brightens it."""
     env, ep = scene
     _moonlit(env)
     _ask(env, ep, tilt=-90.0, night_mode="off")
@@ -235,12 +246,14 @@ def test_at_night_night_mode_off_is_dark_and_sees_nothing(scene):
     _ask(env, ep, tilt=-90.0, night_mode="on")
     camera.capture(env, ep)
     assert camera.view(ep).sees
-    assert np.array_equal(ep.frames.rgb, camera.night_scene_stand_in(dark, ep.seed, 1))
-    assert float(ep.frames.rgb.mean()) > 2.0 * float(dark.mean())
+    if camera.LOW_LIGHT:
+        assert float(ep.frames.rgb.mean()) > 2.0 * float(dark.mean())
+    else:
+        assert np.array_equal(ep.frames.rgb, dark)
 
 
 def test_auto_night_mode_turns_on_in_the_dark_only(scene):
-    """Auto is on under the moon and changes nothing by day."""
+    """Auto is on under the moon, drawing the frame night mode draws, and changes nothing by day."""
     env, ep = scene
     _ask(env, ep, tilt=-90.0, night_mode="off")
     camera.capture(env, ep)
@@ -250,13 +263,14 @@ def test_auto_night_mode_turns_on_in_the_dark_only(scene):
         camera.capture(env, ep)
         assert np.array_equal(ep.frames.rgb, day) and camera.view(ep).sees
     _moonlit(env)
-    _ask(env, ep, tilt=-90.0, night_mode="off")
-    camera.capture(env, ep)
-    dark = ep.frames.rgb.copy()
-    _ask(env, ep, tilt=-90.0, night_mode="auto")
-    camera.capture(env, ep)
-    assert camera.view(ep).sees
-    assert np.array_equal(ep.frames.rgb, camera.night_scene_stand_in(dark, ep.seed, ep.camera["captures"] - 1))
+    frames = []
+    for mode in ("on", "auto"):
+        ep.camera["captures"] = 7
+        _ask(env, ep, tilt=-90.0, night_mode=mode)
+        camera.capture(env, ep)
+        assert camera.view(ep).sees
+        frames.append(ep.frames.rgb.copy())
+    assert np.array_equal(frames[0], frames[1])
 
 
 def test_the_thermal_feed_sees_at_night(scene):
@@ -268,15 +282,58 @@ def test_the_thermal_feed_sees_at_night(scene):
     assert camera.view(ep).sees
 
 
-def test_night_grain_is_seeded():
-    """The same seed and frame draw the same grain on every run; the next frame draws new grain."""
-    frame = np.full(RGB_SHAPE, 0.05, dtype=np.float32)
-    first = camera.night_scene_stand_in(frame, 11, 3)
-    assert np.array_equal(first, camera.night_scene_stand_in(frame, 11, 3))
-    assert not np.array_equal(first, camera.night_scene_stand_in(frame, 11, 4))
-    assert not np.array_equal(first, camera.night_scene_stand_in(frame, 12, 3))
-    assert float(first.mean()) == pytest.approx(0.05 * camera.NIGHT_SCENE_GAIN, abs=0.01)
-    assert float(np.std(first - 0.05 * camera.NIGHT_SCENE_GAIN)) == pytest.approx(camera.NIGHT_SCENE_GRAIN, rel=0.1)
+def test_moonlight_follows_the_phase_and_the_height():
+    """A full moon at the zenith gives 0.25 lux plus the sky's glow; a crescent and a low moon give far less."""
+    env = _Env(0, 0)
+    _moon(env, 1.0, 90.0)
+    assert camera.moon_lux(env._sun) == pytest.approx(camera.FULL_MOON_ZENITH_LUX + camera.SKY_GLOW_LUX)
+    full_high = camera.moon_lux(env._sun)
+    _moon(env, 1.0, 30.0)
+    assert camera.moon_lux(env._sun) == pytest.approx(0.5 * camera.FULL_MOON_ZENITH_LUX + camera.SKY_GLOW_LUX)
+    _moon(env, 0.0, 90.0)
+    assert camera.moon_lux(env._sun) < 0.1 * full_high
+
+
+@pytest.mark.skipif(not camera.LOW_LIGHT, reason="engine without the low-light camera")
+def test_the_night_camera_follows_the_lens_the_mode_and_the_moon():
+    """The 7x lens collects a quarter of the wide lens's light, Night Scene doubles the exposure and lifts the ISO cap
+    16 times, a full moon gives far more light than a crescent, and every frame draws its own grain."""
+    env = _Env(0, 0)
+    _moon(env, 1.0)
+    shot = camera.View(feed="colour", eye=(0.0, 0.0, 20.0), forward=(0.0, 0.0, -1.0), up=(0.0, 1.0, 0.0), width=640,
+                       height=480, vertical_fov_deg=55.1, sees=True, step=0)
+    flags, off = camera.night_camera(env, 1, shot, False, 11, 0)
+    assert flags == p.ER_SWARM_LOW_LIGHT
+    _flags, wide = camera.night_camera(env, 1, shot, True, 11, 0)
+    _flags, tele = camera.night_camera(env, 7, shot, True, 11, 0)
+    assert wide["sensorPhotons"] == pytest.approx(2.0 * off["sensorPhotons"], rel=1e-5)
+    assert wide["sensorGainCap"] == pytest.approx(32.0 * off["sensorGainCap"], rel=1e-5)
+    assert tele["sensorPhotons"] / wide["sensorPhotons"] == pytest.approx((1.7 / 2.8) ** 2 * 48.8 / 70.3, rel=1e-4)
+    assert camera.night_camera(env, 1, shot, True, 11, 1)[1]["sensorSeed"] != wide["sensorSeed"]
+    _moon(env, 0.0)
+    assert camera.night_camera(env, 1, shot, True, 11, 0)[1]["sensorPhotons"] < 0.1 * wide["sensorPhotons"]
+    env._sun = None
+    assert camera.night_camera(env, 1, shot, True, 11, 0) == (0, {})
+
+
+@pytest.mark.skipif(not camera.LOW_LIGHT, reason="engine without the low-light camera")
+def test_night_mode_frames_carry_grain_that_moves(scene):
+    """Two night mode frames of the same view share their brightness but not their grain, and a crescent's frame is
+    darker and grainier than a full moon's."""
+    env, ep = scene
+    _moon(env, 1.0)
+    _ask(env, ep, tilt=-90.0, night_mode="on")
+    camera.capture(env, ep)
+    first = ep.frames.rgb.copy()
+    camera.capture(env, ep)
+    assert not np.array_equal(first, ep.frames.rgb)
+    assert float(first.mean()) == pytest.approx(float(ep.frames.rgb.mean()), abs=0.01)
+    ground = (slice(0, 60), slice(0, 60))
+    _moon(env, 0.0, 15.0)
+    camera.capture(env, ep)
+    crescent = ep.frames.rgb
+    assert float(crescent.mean()) < float(first.mean())
+    assert float(crescent[ground].std() / crescent[ground].mean()) > 2.0 * float(first[ground].std() / first[ground].mean())
 
 
 @pytest.mark.skipif(not _M4TD_SHIPPED, reason=f"the installed swarm-worlds has no {airframe.URDF} yet")

@@ -25,10 +25,10 @@ and one 640 x 480 frame is drawn, so what was boxed sits in the middle even if t
 the link's delays (task 16) set when the model sees it. The box's size picks nothing: there is no digital zoom, the
 lens alone sets the view.
 
-At night the zoom frame takes night mode by the wide camera's rule. Through the 7x lens the model can switch on night
-vision (the outputs part holds it to that lens): a black and white picture lit by the aircraft's infrared light, a
-5.7 degree beam reaching 100 m. Stand-in until the engine draws both looks (task 27): night mode is the wide camera's
-own stand-in, and night vision is the frame's brightness, lit inside the beam when the point zoomed on is in reach.
+At night the zoom frame takes night mode by the wide camera's rule, through its own lens, which gathers less light than
+the wide one and so shows more grain. Through the 7x lens the model can switch on night vision (the outputs part holds
+it to that lens): a black and white picture lit by the aircraft's infrared light, a 5.7 degree beam reaching 100 m,
+drawn by the engine (task 27) along the zoom's view.
 
 Each zoom frame keeps the view it was drawn from, so a report boxed on it is read against the same view.
 """
@@ -49,8 +49,8 @@ from .episode import SolarEpisode
 LENS_DIAGONAL_FOV_DEG = {3: 35.0, 7: 15.0}  # DJI: M4TD medium tele and tele cameras
 NIGHT_VISION_BEAM_DEG = 5.7                 # DJI: M4TD infrared auxiliary light
 NIGHT_VISION_RANGE_M = 100.0
-NIGHT_VISION_GAIN = 4.0                     # stand-in: brightness inside the beam at night
-NIGHT_VISION_OUTSIDE = 0.1                  # stand-in: share of the brightness left outside it
+# DJI publishes no power for the light, so a target at the end of its reach is lit as a full moon lights the ground.
+NIGHT_VISION_INTENSITY_LUX_M2 = camera.FULL_MOON_ZENITH_LUX * NIGHT_VISION_RANGE_M ** 2
 LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 # Zoom frames draw their night grain from their own indices, clear of the wide camera's captures.
 GRAIN_OFFSET = 1 << 20
@@ -79,8 +79,8 @@ def update(env: Any, ep: SolarEpisode) -> None:
     asked = ep.zoom["pending"]
     if asked is None:
         return
-    shot, reach_m = aim(env, ep, asked)
-    ep.frames.zoom, objects = _draw(env, ep, shot, reach_m)
+    shot, _reach_m = aim(env, ep, asked)
+    ep.frames.zoom, objects = _draw(env, ep, shot, asked.lens)
     ep.zoom.update(lens=asked.lens, arrived_s=ep.time_s, pending=None, seen=None, view=replace(shot, objects=objects))
 
 
@@ -167,30 +167,19 @@ def _night_scene(ep: SolarEpisode, dark: bool) -> bool:
     return ep.zoom["night_mode"] == "on" or (ep.zoom["night_mode"] == "auto" and dark)
 
 
-def _draw(env: Any, ep: SolarEpisode, shot: camera.View, reach_m: float) -> tuple[np.ndarray, np.ndarray]:
-    """One zoom frame through the camera's own draw, with night mode or night vision on top, and its object map."""
+def _draw(env: Any, ep: SolarEpisode, shot: camera.View, lens: int) -> tuple[np.ndarray, np.ndarray]:
+    """One zoom frame through the camera's own draw and the lens's own camera at night, or in night vision, and its
+    object map."""
     theft.show(env, ep, shot)
-    frame, objects = camera.colour_frame(env, shot)
     dark = camera.night(env)
-    if ep.zoom["night_vision"]:
-        return _night_vision(frame, shot, reach_m, dark), objects
-    if dark and _night_scene(ep, dark):
-        return camera.night_scene_stand_in(frame, ep.seed, GRAIN_OFFSET + ep.outcome.zooms_used), objects
+    beam = (NIGHT_VISION_BEAM_DEG, NIGHT_VISION_RANGE_M, NIGHT_VISION_INTENSITY_LUX_M2) if ep.zoom["night_vision"] else None
+    at_night = camera.night_camera(env, lens, shot, _night_scene(ep, dark), ep.seed, GRAIN_OFFSET + ep.outcome.zooms_used,
+                                   beam=beam)
+    frame, objects = camera.colour_frame(env, shot, at_night)
+    # An engine without the near infrared still gives night vision in black and white.
+    if beam and not camera.LOW_LIGHT:
+        frame = np.repeat((frame @ LUMA)[..., None], 3, axis=2).astype(np.float32)
     return frame, objects
-
-
-def _night_vision(frame: np.ndarray, shot: camera.View, reach_m: float, dark: bool) -> np.ndarray:
-    """Black and white; in the dark, bright inside the infrared beam while the point zoomed on is in its reach."""
-    grey = frame @ LUMA
-    if dark:
-        half_v = math.tan(math.radians(shot.vertical_fov_deg) / 2.0)
-        half_h = half_v * shot.width / shot.height
-        ys = ((np.arange(shot.height, dtype=np.float32) + 0.5) / shot.height * 2.0 - 1.0) * half_v
-        xs = ((np.arange(shot.width, dtype=np.float32) + 0.5) / shot.width * 2.0 - 1.0) * half_h
-        in_beam = np.hypot(xs[None, :], ys[:, None]) <= math.tan(math.radians(NIGHT_VISION_BEAM_DEG / 2.0))
-        lit = in_beam & (reach_m <= NIGHT_VISION_RANGE_M)
-        grey = np.clip(grey * np.where(lit, NIGHT_VISION_GAIN, NIGHT_VISION_OUTSIDE).astype(np.float32), 0.0, 1.0)
-    return np.repeat(grey[..., None], 3, axis=2).astype(np.float32)
 
 
 def _floats(vector: np.ndarray) -> tuple[float, float, float]:

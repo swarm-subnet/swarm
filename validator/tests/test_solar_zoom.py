@@ -45,6 +45,7 @@ from swarm.challenge_families.solar_patrol.contract import (
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
 from swarm.constants import SIM_DT
 from swarm.utils.env_factory import make_env_with_initial_obs
+from validator.tests.test_solar_camera import _box, _Env, _moon
 from validator.tests.test_solar_patrol_family import _M4TD_SHIPPED, _action
 from validator.tests.test_solar_patrol_family import flat_park as _flat_park  # noqa: F401
 
@@ -161,21 +162,41 @@ def test_the_patrol_has_80_zooms_and_each_keeps_the_frame_it_was_boxed_on():
     assert ep.outcome.zooms_used == MAX_ZOOMS and ep.zoom["pending_step"] == MAX_ZOOMS - 1
 
 
+@pytest.mark.skipif(not camera.LOW_LIGHT, reason="engine without the low-light camera")
 def test_night_vision_is_black_and_white_and_lit_only_inside_its_beam():
-    """In the dark the 5.7 degree beam lights the middle of the 7x frame within 100 m and leaves the rest dim; by day
-    the picture is only turned black and white."""
-    shot = _view(vertical_fov_deg=camera.vertical_fov_deg(15.0, 640, 480))
-    frame = np.full((480, 640, 3), [0.1, 0.05, 0.02], dtype=np.float32)
-    grey = float(np.dot([0.1, 0.05, 0.02], zoom.LUMA))
-    near = zoom._night_vision(frame, shot, 40.0, dark=True)
-    assert np.array_equal(near[..., 0], near[..., 1]) and np.array_equal(near[..., 1], near[..., 2])
-    assert near[240, 320, 0] == pytest.approx(grey * zoom.NIGHT_VISION_GAIN)
-    assert near[0, 0, 0] == pytest.approx(grey * zoom.NIGHT_VISION_OUTSIDE)
-    beam_px = math.tan(math.radians(zoom.NIGHT_VISION_BEAM_DEG / 2)) / math.tan(math.radians(shot.vertical_fov_deg / 2)) * 240
-    lit_rows = np.nonzero(near[:, 320, 0] > grey)[0]
-    assert (lit_rows[-1] - lit_rows[0] + 1) / 2 == pytest.approx(beam_px, abs=1.0)
-    assert np.allclose(zoom._night_vision(frame, shot, 140.0, dark=True), grey * zoom.NIGHT_VISION_OUTSIDE)
-    assert np.allclose(zoom._night_vision(frame, shot, 40.0, dark=False), grey)
+    """Under a crescent the 5.7 degree beam lights the middle of a 7x frame looking down from 40 m, about as wide as
+    the beam, and from 140 m, past its reach, the middle is no brighter than the rest; by day the frame is only grey."""
+    cli = p.connect(p.DIRECT)
+    try:
+        _box(cli, [300.0, 300.0, 0.1], [0.0, 0.0, -0.1], [0.5, 0.5, 0.5, 1.0])
+        env = _Env(cli, 0)
+        _moon(env, 0.0, 30.0)
+        ep = SolarEpisode(seed=11)
+        zoom.reset(env, ep)
+        ep.zoom["night_vision"] = True
+        vertical = camera.vertical_fov_deg(zoom.LENS_DIAGONAL_FOV_DEG[7], 640, 480)
+
+        def frame(height_m):
+            """A 7x night vision frame looking straight down from this height."""
+            shot = camera.View(feed="colour", eye=(0.0, 0.0, height_m), forward=(0.0, 0.0, -1.0), up=(0.0, 1.0, 0.0),
+                               width=640, height=480, vertical_fov_deg=vertical, sees=True, step=0)
+            return zoom._draw(env, ep, shot, 7)[0]
+
+        near = frame(40.0)
+        assert np.array_equal(near[..., 0], near[..., 1]) and np.array_equal(near[..., 1], near[..., 2])
+        grey = near[..., 0]
+        assert float(grey[230:250, 310:330].mean()) > 3.0 * float(grey[:40, :40].mean())
+        beam_px = math.tan(math.radians(zoom.NIGHT_VISION_BEAM_DEG / 2)) / math.tan(math.radians(vertical / 2)) * 240
+        row = ((grey[240].astype(float) + 0.055) / 1.055) ** 2.4
+        lit = np.nonzero(row > 0.5 * float(row[300:340].mean()))[0]
+        assert (lit[-1] - lit[0] + 1) / 2 == pytest.approx(beam_px, rel=0.25)
+        far = frame(140.0)[..., 0]
+        assert float(far[230:250, 310:330].mean()) < 1.5 * float(far[:40, :40].mean()) + 0.02
+        env._sun = None
+        day = frame(40.0)
+        assert np.array_equal(day[..., 0], day[..., 1]) and np.array_equal(day[..., 1], day[..., 2])
+    finally:
+        p.disconnect(cli)
 
 
 @pytest.mark.timeout(300)
@@ -183,7 +204,7 @@ def test_night_vision_is_black_and_white_and_lit_only_inside_its_beam():
 def test_a_zoom_centres_what_was_boxed_once_the_link_brings_it_back():
     """Nothing shows before the press; within two observations the close-up arrives, with the boxed marker in its
     middle on both lenses and 7x showing it (7/3)^2 larger in area than 3x, as the lenses' angles give."""
-    flight = _Flight(seed=21)
+    flight = _Flight(seed=31)  # a day seed: with night mode off a night frame is too dark to find the marker in
     try:
         flight.place_marker(ahead_m=20.0, left_m=5.0)
         assert not flight.obs["zoom"].any()
