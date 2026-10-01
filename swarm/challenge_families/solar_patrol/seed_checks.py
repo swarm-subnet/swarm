@@ -50,8 +50,6 @@ CACHE_DEFAULT = Path.home() / ".cache" / "swarm" / "seed_checks"
 WORKERS_ENV = "SWARM_SEED_CHECK_WORKERS"
 CPU_SHARE = 4                          # by default the flights take a quarter of the machine's cores
 PILOT_MODULE = "swarm.challenge_families.solar_patrol.reference_pilot"
-# One BLAS and OpenMP thread in every reference flight, as in the validator image, whatever the host sets.
-THREAD_CAPS = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
 
 @dataclass
@@ -150,7 +148,7 @@ def fly(seeds: List[int], workers: int) -> None:
     """Fly the reference pilot over the seeds, split across parallel processes, each keeping its verdicts."""
     shares = [seeds[i::max(1, int(workers))] for i in range(max(1, int(workers)))]
     runs = [subprocess.Popen([sys.executable, "-m", PILOT_MODULE, *map(str, share)], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.PIPE, env={**os.environ, **THREAD_CAPS}) for share in shares if share]
+                             stderr=subprocess.PIPE) for share in shares if share]
     failures = []
     for run in runs:
         _out, err = run.communicate()
