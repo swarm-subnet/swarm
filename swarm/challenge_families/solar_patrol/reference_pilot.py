@@ -29,7 +29,8 @@ The seed passes when every thief who stepped inside the fence showed at least PI
 side, from the patrol height or lower above the dock and at least MIN_DISTANCE_M away (check 1), and the pilot landed
 back in the dock before the patrol's time ran out (check 2).
 
-Run as a module it judges the seeds given on the command line and keeps their verdicts.
+Run as a module it judges the seeds given on the command line, or else those read from its standard input, and keeps
+their verdicts.
 """
 
 from __future__ import annotations
@@ -105,6 +106,8 @@ def check(seed: int) -> Verdict:
     started = time.process_time()
     with contextlib.redirect_stdout(io.StringIO()):
         env, _obs = make_env_with_initial_obs(solar_patrol_task(seed=int(seed), sim_dt=SIM_DT), wrap_runtime=_Unseen)
+    # The verdict reads no clearance metric, observation, reward or info, and none of them steers the flight.
+    env._update_min_clearance = env._computeObs = env._computeReward = env._computeInfo = _unread
     try:
         ep = env._solar
         night = camera.night(env)
@@ -135,6 +138,10 @@ def check(seed: int) -> Verdict:
     result.passed = not result.reason
     result.cpu_s = round(time.process_time() - started, 1)
     return result
+
+
+def _unread() -> None:
+    """Stands in for the parts of an environment step a reference flight never reads."""
 
 
 class _Unseen:
@@ -523,8 +530,9 @@ def judge(seed: int) -> Verdict:
 
 
 def main(argv: List[str]) -> None:
-    """Judge every seed named on the command line and keep its verdict."""
-    for seed in argv:
+    """Judge every seed named on the command line and keep its verdict; with none named, every seed read from the
+    standard input, one a line, as it arrives."""
+    for seed in argv or sys.stdin:
         keep(judge(int(seed)))
 
 
