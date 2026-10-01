@@ -284,8 +284,7 @@ class Intruder:
         dense = np.zeros((len(rest_all), len(cat.parents)))
         np.add.at(dense, (np.repeat(np.arange(len(rest_all)), joints_all.shape[1]), joints_all.ravel()), weights_all.ravel())
         self.bones = np.flatnonzero(dense.any(0))
-        # Each vertex's few weights, summed bone by bone in a fixed order: vertices with the most weights come first,
-        # so the k-th weight of every vertex that has one is one slice. No BLAS, so the same bits on every CPU.
+        # Each vertex's weights summed slot by slot, most-weighted vertices first, so slot k is one slice.
         blend = dense[:, self.bones]
         count = (blend != 0).sum(1)
         order = np.argsort(-count, kind="stable")
