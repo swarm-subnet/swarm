@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import os
+import time
 
 import numpy as np
 import pybullet as p
@@ -226,15 +227,27 @@ def test_the_same_view_draws_the_same_pixels(scene):
 
 
 def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
-    """Colour, night and thermal frames ask the engine for a still camera's last frame exactly when it can hand one
-    back, and each frame equals the one drawn without asking, grain included."""
+    """Colour, night and thermal frames ask the engine for a still camera's last frame when it can hand one back; the
+    third still frame comes back without being traced, and each frame equals the one drawn without asking, grain
+    included."""
     env, ep = scene
     reuse = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
     assert camera.FRAME_REUSE == reuse
+    draw, spent = p.getCameraImage, []
+
+    def timed(*args, **kwargs):
+        """The engine's own call, timed."""
+        start = time.perf_counter()
+        out = draw(*args, **kwargs)
+        spent.append(time.perf_counter() - start)
+        return out
+
+    monkeypatch.setattr(p, "getCameraImage", timed)
     for thermal, night_mode in ((False, "off"), (False, "on"), (True, "off")):
         if night_mode == "on":
             _moon(env, 1.0)
         _ask(env, ep, tilt=-60.0, thermal=thermal, night_mode=night_mode)
+        spent.clear()
         for flag in (reuse, 0, reuse, 0, reuse, 0):
             monkeypatch.setattr(camera, "FRAME_REUSE", flag)
             ep.camera["captures"] = 5
@@ -244,6 +257,9 @@ def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
                 asked = frame
             else:
                 assert all(np.array_equal(a, b) for a, b in zip(asked, frame))
+        # A handed-back frame skips the tracing every drawn one pays; the night chain still runs, so twice as fast is the floor.
+        if reuse:
+            assert spent[4] * 2.0 < min(spent[1], spent[3], spent[5])
 
 
 def _moonlit(env, seed=11):
