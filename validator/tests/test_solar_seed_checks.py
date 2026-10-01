@@ -228,7 +228,10 @@ def test_a_flight_that_ends_between_seeds_names_no_seed(kept, monkeypatch, tmp_p
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
     monkeypatch.setattr(seed_checks, "PILOT_MODULE", "one_seed_pilot")
     with pytest.raises(SeedCheckError, match="ended between seeds"):
-        seed_checks.prepare([12], workers=1)
+        with seed_checks.Flights(1) as flights:
+            flights.fly([12])
+            next(iter(flights.runs)).wait()
+            flights.fly([13])
 
 
 def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch, tmp_path):
