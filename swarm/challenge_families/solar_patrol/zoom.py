@@ -36,6 +36,7 @@ Each zoom frame keeps the view it was drawn from, so a report boxed on it is rea
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any, Optional
 
 import numpy as np
@@ -79,8 +80,8 @@ def update(env: Any, ep: SolarEpisode) -> None:
     if asked is None:
         return
     shot, reach_m = aim(env, ep, asked)
-    ep.frames.zoom = _draw(env, ep, shot, reach_m)
-    ep.zoom.update(lens=asked.lens, arrived_s=ep.time_s, pending=None, seen=None, view=shot)
+    ep.frames.zoom, objects = _draw(env, ep, shot, reach_m)
+    ep.zoom.update(lens=asked.lens, arrived_s=ep.time_s, pending=None, seen=None, view=replace(shot, objects=objects))
 
 
 def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
@@ -166,16 +167,16 @@ def _night_scene(ep: SolarEpisode, dark: bool) -> bool:
     return ep.zoom["night_mode"] == "on" or (ep.zoom["night_mode"] == "auto" and dark)
 
 
-def _draw(env: Any, ep: SolarEpisode, shot: camera.View, reach_m: float) -> np.ndarray:
-    """One zoom frame through the camera's own draw, with night mode or night vision on top."""
+def _draw(env: Any, ep: SolarEpisode, shot: camera.View, reach_m: float) -> tuple[np.ndarray, np.ndarray]:
+    """One zoom frame through the camera's own draw, with night mode or night vision on top, and its object map."""
     theft.show(env, ep, shot)
-    frame = camera.colour_frame(env, shot)
+    frame, objects = camera.colour_frame(env, shot)
     dark = camera.night(env)
     if ep.zoom["night_vision"]:
-        return _night_vision(frame, shot, reach_m, dark)
+        return _night_vision(frame, shot, reach_m, dark), objects
     if dark and _night_scene(ep, dark):
-        return camera.night_scene_stand_in(frame, ep.seed, GRAIN_OFFSET + ep.outcome.zooms_used)
-    return frame
+        return camera.night_scene_stand_in(frame, ep.seed, GRAIN_OFFSET + ep.outcome.zooms_used), objects
+    return frame, objects
 
 
 def _night_vision(frame: np.ndarray, shot: camera.View, reach_m: float, dark: bool) -> np.ndarray:
