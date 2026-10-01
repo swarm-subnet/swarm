@@ -23,7 +23,7 @@ import ctypes
 import os
 import signal
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
 from swarm.config import HostWorkerRuntimeSettings, env_bool
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
@@ -698,6 +698,7 @@ async def _run_benchmark(
 
     all_tasks = []
     task_meta: List[Dict[str, Any]] = []
+    require_runtime_family(family_id).prepare_seeds([s for seeds in type_seeds.values() for s in seeds])
     for group_name, seeds in type_seeds.items():
         for s in seeds:
             task = build_random_task(

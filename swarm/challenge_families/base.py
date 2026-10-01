@@ -203,6 +203,8 @@ class ChallengeFamilyRuntime:
     physics_mode: str = "pyb"
     # Control steps one model decision holds for; each env.step runs this many.
     decision_steps: int = 1
+    # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
+    prepares_seeds: bool = False
 
     def screening_policy(self) -> Dict[str, Any]:
         """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
@@ -346,6 +348,13 @@ class ChallengeFamilyRuntime:
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
         """Draw one freely sampled task for the given seed; unimplemented here, every family defines it."""
         raise NotImplementedError
+
+    def seeds_prepared(self, seeds: list[int]) -> bool:
+        """Whether tasks for these seeds can be built at once; true for a family that works nothing out first."""
+        return True
+
+    def prepare_seeds(self, seeds: list[int]) -> None:
+        """Work out ahead, off the validator's loop, whatever building these seeds' tasks needs; nothing by default."""
 
     def _build_template_tasks(
         self,

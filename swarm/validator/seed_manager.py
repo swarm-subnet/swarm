@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 import bittensor as bt
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families.solar_patrol.seed_checks import CACHE_ENV as SEED_CHECK_CACHE_ENV
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_TOTAL_SEED_COUNT,
@@ -55,6 +56,8 @@ EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
 PREEVAL_SEEDS_DIR = STATE_DIR / "preeval_seeds"
 # Where the engine reads the collision trees it saved per mesh and scale; the folder follows the epoch.
 BVH_CACHE_ENV = "SWARM_BVH_CACHE_DIR"
+# Solar Patrol's seed check verdicts, a reference flight each: kept with the state so a restart keeps them.
+SEED_CHECKS_DIR = STATE_DIR / "seed_checks"
 
 _MAX_SEED = 2**32 - 1
 _EPOCH_FILE_RE = re.compile(r"^epoch_(\d+)(?:__(.+))?\.json$")
@@ -87,6 +90,7 @@ class BenchmarkSeedManager:
     def __init__(self) -> None:
         """Recover the latest local epoch and its seeds from disk, generating them when absent."""
         EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault(SEED_CHECK_CACHE_ENV, str(SEED_CHECKS_DIR))
         self.seeds: List[int] = []
         self.current_epoch_requires_state_invalidation = False
         self._pending_publications: List[dict] = []
