@@ -193,6 +193,30 @@ def test_a_flight_that_leaves_no_verdict_is_an_error(kept, monkeypatch):
         seed_checks.prepare([11], workers=1)
 
 
+def test_reference_flights_run_on_one_blas_thread_whatever_the_host_sets(monkeypatch):
+    """Each flight process gets one BLAS and OpenMP thread, as in the validator image, over a host's own setting."""
+    started = []
+
+    class _Run:
+        """A flight process that ends at once and keeps the environment it was given."""
+
+        returncode = 0
+
+        def __init__(self, args, env=None, **kwargs):
+            """Keep the environment."""
+            started.append(env)
+
+        def communicate(self):
+            """Nothing written."""
+            return b"", b""
+
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "8")
+    monkeypatch.setattr(seed_checks.subprocess, "Popen", _Run)
+    seed_checks.fly([11, 12], workers=2)
+    assert len(started) == 2
+    assert all(env["OPENBLAS_NUM_THREADS"] == env["OMP_NUM_THREADS"] == "1" for env in started)
+
+
 def test_a_seed_whose_world_cannot_be_built_fails_and_others_raise(monkeypatch):
     """A seed whose own world refuses to be built fails its check; an error of the machine is raised, never kept."""
     def no_dock(seed):
