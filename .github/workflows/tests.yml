@@ -173,6 +173,7 @@ jobs:
       # exist after merging, which is what you want to test.
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Show what is under test
@@ -208,9 +209,33 @@ jobs:
       # The tests above never reach a real Docker daemon, so a path the host cannot see
       # passes them. This runs the first-time model check through the image the way an
       # operator's validator does, and a failure here also holds back the image publish.
+      # Watched: the image inputs, the compose mounts, the code that hands paths to the
+      # daemon, and the check and its workflow. A mount bug lives in any of them, not only
+      # the image.
+      - name: Check whether the image model check applies
+        id: image_check
+        if: ${{ !cancelled() }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base="$GITHUB_SHA^1" ;;
+            push)         base="${{ github.event.before }}" ;;
+            merge_group)  base="${{ github.event.merge_group.base_sha }}" ;;
+            *)            base="" ;;
+          esac
+          if [ -n "$base" ] && git diff --quiet "$base" "$GITHUB_SHA" -- \
+               .docker/ requirements.txt validator/requirements.txt \
+               swarm/core/model_verify.py swarm/validator/docker/ \
+               validator/scripts/image_model_check.py \
+               validator/tests/default_model/ .github/workflows/tests.yml; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the image check covers changed, skipping it"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # It runs even when the tests failed, so both results show on one run.
       - name: Check a real model through the validator image
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.image_check.outputs.run == 'true' }}
         env:
           SWARM_VALIDATOR_TAG: ci
         run: bash .docker/image_model_check.sh
