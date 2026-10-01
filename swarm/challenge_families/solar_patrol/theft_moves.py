@@ -131,30 +131,53 @@ def direction(yaw: float) -> np.ndarray:
 
 
 class Route:
-    """Waypoints a body walks through in order, aiming at each until it is within reach, then at the next. With
-    straight_end the last leg is kept to as a line, so a body going through a gap at the end goes through its middle
-    however it came at the leg."""
+    """A path of straight legs a body keeps to: it aims at the point ahead metres further along the path than it is,
+    so it tracks the legs themselves, through a gap's middle and round a corner close in, instead of cutting across
+    to the next waypoint. Progress along the path only ever moves forward. A single point is simply walked to."""
 
-    def __init__(self, points: Sequence[Sequence[float]], reach: float = 1.0, straight_end: bool = False):
-        """The points, world metres, how near counts as reached, and whether the last leg is held as a line."""
-        self.points = [np.asarray(q, dtype=float) for q in points]
-        self.reach = reach
-        self.index = 0
-        self.end = Lane(self.points[-2], self.points[-1]) if straight_end and len(self.points) > 1 else None
+    def __init__(self, points: Sequence[Sequence[float]], ahead: float = 1.5):
+        """The path's points in order, world metres, the first one where the walk starts, and how far ahead it aims."""
+        self.points = np.asarray(points, dtype=float).reshape(-1, 2)
+        self.ahead = ahead
+        legs = np.diff(self.points, axis=0)
+        self.lengths = np.linalg.norm(legs, axis=1)
+        self.dirs = legs / np.maximum(self.lengths, 1e-9)[:, None]
+        self.starts = np.concatenate([[0.0], np.cumsum(self.lengths)])
+        self.leg = 0
+        self.done = 0.0
+
+    def _progress(self, pos: np.ndarray) -> float:
+        """How far along the path the body is: its nearest point on this leg or the next few, never going back."""
+        if len(self.lengths) == 0:
+            return 0.0
+        best = None
+        for k in range(self.leg, min(self.leg + 3, len(self.lengths))):
+            t = float(np.clip((pos - self.points[k]) @ self.dirs[k], 0.0, self.lengths[k]))
+            gap = float(np.linalg.norm(self.points[k] + self.dirs[k] * t - pos))
+            if best is None or gap < best[0] - 1e-9:
+                best = (gap, k, self.starts[k] + t)
+        _gap, self.leg, along = best
+        self.done = max(self.done, along)
+        return self.done
+
+    def _point(self, s: float) -> np.ndarray:
+        """The point s metres along the path, the end if past it."""
+        if s >= self.starts[-1] or len(self.lengths) == 0:
+            return self.points[-1]
+        k = int(np.searchsorted(self.starts, s, side="right")) - 1
+        return self.points[k] + self.dirs[k] * (s - self.starts[k])
 
     def heading(self, pos: np.ndarray) -> float:
-        """The heading towards the current waypoint, moving on once it is reached; along the line on the last leg."""
-        while self.index < len(self.points) - 1 and np.linalg.norm(self.points[self.index] - pos) < self.reach:
-            self.index += 1
-        if self.end is not None and self.index == len(self.points) - 1:
-            return self.end.heading(pos)
-        return heading_to(self.points[self.index] - pos)
+        """The heading towards the point ahead metres further along the path."""
+        if len(self.lengths) == 0:
+            return heading_to(self.points[0] - pos)
+        return heading_to(self._point(self._progress(pos) + self.ahead) - pos)
 
     def left(self, pos: np.ndarray) -> float:
-        """Distance still to walk: to the current waypoint, then along the rest of the route."""
-        self.heading(pos)
-        rest = sum(float(np.linalg.norm(b - a)) for a, b in zip(self.points[self.index:], self.points[self.index + 1:]))
-        return float(np.linalg.norm(self.points[self.index] - pos)) + rest
+        """Distance still to walk along the path."""
+        if len(self.lengths) == 0:
+            return float(np.linalg.norm(self.points[0] - pos))
+        return float(self.starts[-1] - self._progress(pos))
 
 
 class Lane:

@@ -82,7 +82,7 @@ ENTRY_S = 36.0                          # everyone steps in before the drone's 4
 MATE_GAP_S = (1.5, 4.0)
 SPACING_M = 0.9                         # two men getting in never come nearer than this, hips to hips
 SPACING_WAIT_S = 1.0                    # how much longer a follower waits each time he would come too near
-STOP_SIDE_M = 1.2                       # each follower stops this much to one side of the man in before him
+STOP_SIDE_M = 1.0                       # each follower stops this much further to one side than the man before him
 SPOT_GAP_M = 0.7                        # a worker's hips from the table's edge
 SPOT_EDGE_M = 1.5                       # no spot this near a table's end
 NEXT_SPOT_M = (7.0, 16.0)               # how far a worker moves on to the next stretch of cable
@@ -381,7 +381,7 @@ def _walk_to(actor: Actor, site: Site, goal: Sequence[float], gait: str, stage: 
     there standing."""
     start = actor.pos if via is None else via
     legs = site.route(start, goal)
-    points = ([] if via is None else [via]) + (list(legs[1:]) if legs else [np.asarray(goal, dtype=float)])
+    points = [actor.pos] + ([] if via is None else [via]) + (list(legs[1:]) if legs else [np.asarray(goal, dtype=float)])
     yield from _walk_route(actor, Route(points), gait, stage)
 
 
@@ -407,7 +407,7 @@ def _leave(actor: Actor, story: Story, site: Site, first: str, stage: str) -> It
     hole, inward = story.hole, story.inward
     lead = hole + inward * LEAD_M
     legs = site.route(actor.pos, lead) or [actor.pos, lead]
-    route = Route(list(legs[1:]) + [hole - inward * OUTSIDE_M], reach=1.2, straight_end=True)
+    route = Route([actor.pos] + list(legs[1:]) + [hole - inward * OUTSIDE_M])
     yield Step(first, steer=route, stage=stage)
     cycle = max(actor.lib.reach(actor.context["loop"]) * actor.scale, 0.3)
     yield Step("loop", cycles=int(math.ceil(route.left(actor.pos) / cycle)) + 1, steer=route, stage=stage)
@@ -425,8 +425,11 @@ def _enter(actor: Actor, thief: Thief, story: Story, slot: int) -> Iterator[Step
         return
     yield Step("stand_to_crouch", stage="at the fence")
     yield Step("hold", hold=thief.wait_s, stage="at the fence")
-    stop = hole + inward * INSIDE_M + np.array(story.opening.along) * STOP_SIDE_M * (1.0 if slot % 2 else -1.0)
-    route = Route([hole - inward * 2.5, hole + inward * 1.0, stop], straight_end=True)
+    # Straight through and two metres on before turning, then a stop on the side away from the flap or the open leaf,
+    # each follower a step further in and further over than the one before.
+    away = -np.array(story.opening.along) * story.hinge
+    stop = hole + inward * (INSIDE_M + 1.0 * (slot - 1)) + away * STOP_SIDE_M * slot
+    route = Route([actor.pos, hole - inward * 2.5, hole + inward * 2.0, stop])
     if story.way == "forest" and thief.gait == "sneak":
         yield Step("crouch_to_sneak", steer=route, stage="getting in")
         yield Step("loop", cycles=None, steer=route, then="sneak_to_crouch", stage="getting in")
@@ -446,8 +449,7 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> 
     if thief.hole_work_s > 0.0:
         hole, inward = story.hole, story.inward
         turn = hole + inward * TURN_BACK_M + np.array(story.opening.along) * 1.5
-        yield from _walk_route(actor, Route([turn, hole + inward * FENCE_GAP_M], straight_end=True), "walk",
-                               "getting in")
+        yield from _walk_route(actor, Route([actor.pos, turn, hole + inward * FENCE_GAP_M]), "walk", "getting in")
         cycle = actor.lib.blocks["cut_fence.0"]["frames"] / actor.lib.fps
         yield Step("cut_fence_in", steer=heading_to(-inward), stage="getting in")
         yield Step("loop", cycles=max(1, int(round(thief.hole_work_s / cycle))), stage="getting in")
