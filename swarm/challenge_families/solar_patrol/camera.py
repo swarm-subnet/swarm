@@ -282,9 +282,11 @@ def _object_map(seg: Any, shot: View) -> np.ndarray:
     return np.reshape(np.asarray(seg, dtype=np.int32), (shot.height, shot.width))
 
 
-def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {})) -> Tuple[np.ndarray, np.ndarray]:
+def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {}),
+                 outline: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
-    and arguments of `night_camera` when given, and its object map."""
+    and arguments of `night_camera` when given, and its object map; `outline` False smooths every edge, not only the
+    outlines."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -295,7 +297,8 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
         kwargs.update(env._sky_kwargs())
     night_flags, night_kwargs = camera_at_night
     kwargs.update(night_kwargs)
-    flags = env._render_flags | env._sky_flags | env._daylight_flags | PICTURE_FLAGS | night_flags
+    picture = PICTURE_FLAGS if outline else PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
