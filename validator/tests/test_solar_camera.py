@@ -141,12 +141,6 @@ def test_edges_are_smoothed_on_outlines_only_when_the_engine_can():
     assert bool(camera.PICTURE_FLAGS & outline) == bool(camera.RAYCAST and outline)
 
 
-def test_panels_are_drawn_over_their_backsheet_when_the_engine_can():
-    """The colour camera asks for backed panel glass exactly when the installed engine carries it."""
-    backed = getattr(p, "ER_SWARM_BACKED_GLASS", 0)
-    assert bool(camera.PICTURE_FLAGS & backed) == bool(camera.RAYCAST and backed)
-
-
 def test_the_tilt_runs_from_straight_down_to_straight_up(scene):
     """The model's -1 to +1 is -90 to +90 degrees."""
     env, ep = scene

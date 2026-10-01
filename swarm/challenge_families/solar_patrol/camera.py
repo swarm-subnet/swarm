@@ -58,11 +58,10 @@ THERMAL = RAYCAST and hasattr(p, "ER_SWARM_THERMAL")
 RENDER_BACKEND = "raycast" if RAYCAST else "tiny"
 # The ray caster's picture flags for a colour camera, the daylight model's own set, so a frame without it (at night,
 # or before the park turns it on) keeps shadows, leaf cut-outs, filtered textures and clean edges. Only outlines are
-# smoothed, not the creases between the leaves of a crown, which cost about a third of a tilted frame. The panels are
-# drawn as modules over their white backsheet, as the ray behind each pane finds them, without casting that ray.
+# smoothed, not the creases between the leaves of a crown, which cost about a third of a tilted frame.
 PICTURE_FLAGS = functools.reduce(operator.or_, (getattr(p, name, 0) for name in (
     "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS", "ER_SWARM_EDGE_OUTLINE", "ER_ALPHA_CUTOUT",
-    "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT", "ER_SWARM_BACKED_GLASS")), 0) if RAYCAST else 0
+    "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")), 0) if RAYCAST else 0
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
