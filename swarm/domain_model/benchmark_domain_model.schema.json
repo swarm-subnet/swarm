@@ -198,7 +198,7 @@
     },
     "ss_solar_patrol_v1": {
       "score_schema_id": "ss_solar_patrol_v1",
-      "name": "Solar Patrol Score",
+      "name": "Swarm Sentinel Score",
       "description": "Normalized patrol score from threats reported against false alarms, the share of the park searched, and a safe flight back to the dock.",
       "normalized_score_range": [
         0,
@@ -518,12 +518,12 @@
     },
     "cf_solar_patrol": {
       "family_id": "cf_solar_patrol",
-      "name": "Solar Patrol",
+      "name": "Swarm Sentinel",
       "description": "Security patrol of a solar park out of a drone dock: take off, search the park by day and by night, report intruders, and land back in the dock before time runs out.",
       "display": {
-        "label": "Solar Patrol",
-        "short_label": "Solar",
-        "slug": "solar-patrol"
+        "label": "Swarm Sentinel",
+        "short_label": "Sentinel",
+        "slug": "swarm-sentinel"
       },
       "family_state": "incubating",
       "emissions_state": "incubating",
