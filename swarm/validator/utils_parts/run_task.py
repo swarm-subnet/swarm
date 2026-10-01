@@ -37,14 +37,14 @@ from typing import Any, Dict
 import bittensor as bt
 import numpy as np
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
 from swarm.constants import CLAIM_GIVE_UP_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.runtime_telemetry import tracker_call
 
-from .evaluation import _run_full_benchmark, _run_screening
+from .evaluation import _run_full_benchmark, _run_screening, _seed_manager_call
 from .model_fetch import _ensure_models_from_backend, _set_private_marker, stored_model_path
 
 
@@ -87,6 +87,29 @@ def _seeds_ready(seed_manager, epoch: int) -> bool:
     return True if check is None else bool(check(epoch))
 
 
+def _family_seeds_prepared(self, family_id: str, epoch: int) -> bool:
+    """Whether the family can build this epoch's tasks at once. When it cannot, its preparation is started off the
+    event loop, once, and later tasks find it done; a failed preparation is started again by the next task."""
+    runtime = require_runtime_family(family_id)
+    if not runtime.prepares_seeds:
+        return True
+    key = (family_id, int(epoch))
+    prepared = self.__dict__.setdefault("_seeds_prepared", set())
+    if key in prepared:
+        return True
+    seeds = list(_seed_manager_call(self.seed_manager, "get_all_seeds", family_id, epoch))
+    if runtime.seeds_prepared(seeds):
+        prepared.add(key)
+        return True
+    running = self.__dict__.setdefault("_seed_preparations", {})
+    job = running.get(key)
+    if job is None or job.done():
+        if job is not None and job.exception() is not None:
+            bt.logging.error(f"run_task: preparing {family_id} seeds for epoch {epoch} failed: {job.exception()}")
+        running[key] = asyncio.create_task(asyncio.to_thread(runtime.prepare_seeds, seeds))
+    return False
+
+
 def _task_epoch(seed_manager, task: Dict[str, Any]) -> int:
     """The epoch a task belongs to: the one it names, else the manager's current epoch."""
     named = task.get("epoch_number")
@@ -121,6 +144,12 @@ async def run_task(
     if not _seeds_ready(seed_manager, epoch):
         bt.logging.warning(
             f"run_task: no seeds for epoch {epoch}; leaving UID {uid} to a validator that has them"
+        )
+        return
+    if not _family_seeds_prepared(self, family_id, epoch):
+        bt.logging.warning(
+            f"run_task: {family_id} seeds for epoch {epoch} are still being prepared; leaving UID {uid} to a "
+            "validator that has them"
         )
         return
 

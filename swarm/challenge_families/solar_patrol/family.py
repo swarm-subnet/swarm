@@ -95,6 +95,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     sky_from_sun = park.SKY_FROM_SUN
     daylight = park.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
+    prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
 
     # ------------------------------------------------------------------ #
     # runtime profile and task generation
@@ -132,6 +133,14 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
                               total_seed_count: Optional[int] = None) -> list[Any]:
         """Screening flies the same patrols as the benchmark: every seed is its own park."""
         return [self.build_random_task(sim_dt=sim_dt, seed=seed) for seed in seeds]
+
+    def seeds_prepared(self, seeds: list[int]) -> bool:
+        """Whether every seed's check verdict, and its replacements' where it failed, is already kept."""
+        return all(seed_checks.replacement(seed) is not None for seed in seeds)
+
+    def prepare_seeds(self, seeds: list[int]) -> None:
+        """Fly the reference pilot over every seed not judged yet, on the seed checks' own workers."""
+        seed_checks.prepare(seeds, seed_checks.workers())
 
     # ------------------------------------------------------------------ #
     # environment lifecycle

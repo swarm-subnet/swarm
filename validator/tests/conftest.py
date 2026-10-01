@@ -290,6 +290,26 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 _HEARTBEAT_TIMER_THREAD = "swarm-heartbeat-timer"
 
 
+def _as_it_is(task: Any) -> Any:
+    """The task itself, as a seed that passed its checks is flown."""
+    return task
+
+
+def _each_as_itself(seeds: Any, workers: int) -> dict:
+    """Every seed flown as itself, as a list whose seeds all passed their checks."""
+    return {int(seed): int(seed) for seed in seeds}
+
+
+@pytest.fixture(autouse=True)
+def _seed_checks_pass_every_seed(monkeypatch):
+    """Solar Patrol flies every seed as it is unless a test asks for its seed checks: a check is a whole reference
+    patrol, and the other tests fly the seed they name."""
+    seed_checks = sys.modules.get("swarm.challenge_families.solar_patrol.seed_checks")
+    if seed_checks is not None:
+        monkeypatch.setattr(seed_checks, "approve", _as_it_is)
+        monkeypatch.setattr(seed_checks, "prepare", _each_as_itself)
+
+
 @pytest.fixture(autouse=True)
 def _no_leaked_heartbeat_timer():
     """Fail the test that leaves a heartbeat timer running, not whichever test is running 15s later."""
