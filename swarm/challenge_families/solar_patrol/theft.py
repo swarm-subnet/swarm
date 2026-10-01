@@ -44,6 +44,7 @@ import itertools
 import math
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -985,8 +986,10 @@ def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[
     return uid
 
 
+@lru_cache(maxsize=4)
 def _read_textured_obj(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Vertices, one texture coordinate per vertex and the triangles of an OBJ that gives each vertex one uv."""
+    """Vertices, one texture coordinate per vertex and the triangles of an OBJ that gives each vertex one uv, read once
+    per process and shared read-only."""
     verts, tex, faces, uv_of = [], [], [], {}
     with open(path, encoding="utf-8") as handle:
         for line in handle:
@@ -1005,4 +1008,7 @@ def _read_textured_obj(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     uvs = np.zeros((len(verts), 2))
     for v, k in uv_of.items():
         uvs[v] = tex[k]
-    return np.asarray(verts, dtype=float), uvs, np.asarray(faces, dtype=np.int64)
+    arrays = np.asarray(verts, dtype=float), uvs, np.asarray(faces, dtype=np.int64)
+    for array in arrays:
+        array.flags.writeable = False
+    return arrays
