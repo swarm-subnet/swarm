@@ -30,8 +30,8 @@ For each king ``i`` in the active window:
 
 Rank first: the reigning king always holds the largest share and every
 dethronement steps a seat down the ladder; the gain is a bonus that can never
-flip the order. A row with zero gain earns nothing (real crownings always
-improve the score). Scores are clamped to [0, 1] first. Rank is derived from
+flip the order. A row that did not beat its prev_score earns nothing; one
+whose gain is lost inside HEADROOM_EPS keeps its seat without the bonus. Scores are clamped to [0, 1] first. Rank is derived from
 ``(crowned_at_epoch, lineage_id)`` descending, not list position.
 """
 from __future__ import annotations
@@ -137,9 +137,9 @@ def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
     """Ladder seat for the rank scaled by the capped gain bonus, 0.0 when the king improved nothing."""
     # Bonus gain is capped: max factor 1 + GAIN_BONUS * CAP = 1.3, below the
     # ladder step 1/RANK_LADDER_RATIO ~= 1.43, so no gain can flip the order.
-    gain = headroom_gain(king.score, king.prev_score, eps=eps)
-    if gain <= 0.0:
+    if _clamp_unit(king.score) <= _clamp_unit(king.prev_score):
         return 0.0
+    gain = headroom_gain(king.score, king.prev_score, eps=eps)
     return rank_weight(rank) * (1.0 + GAIN_BONUS * min(gain, GAIN_BONUS_CAP))
 
 
