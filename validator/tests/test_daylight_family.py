@@ -28,6 +28,7 @@ import pytest
 
 from swarm.challenge_families import get_challenge_family, list_registered_challenge_families
 from swarm.challenge_families.base import ChallengeFamilyRuntime
+from swarm.challenge_families.solar_patrol.contract import FAMILY_ID as SOLAR_FAMILY_ID
 from swarm.constants import (
     DAYLIGHT_AMBIENT,
     DAYLIGHT_EXPOSURE,
@@ -73,9 +74,12 @@ def _env(monkeypatch, daylight=True, raycast=True, sky_from_sun=True, sun=None, 
 
 
 def test_no_family_uses_the_daylight_model_today():
-    """Every registered family keeps its light and its pixels."""
+    """Every registered family keeps its light and its pixels, but Solar Patrol, which opts in to the daylight model on
+    an engine that has it."""
     assert ChallengeFamilyRuntime.daylight is False
     for family_id in list_registered_challenge_families():
+        if family_id == SOLAR_FAMILY_ID:
+            continue
         assert not get_challenge_family(family_id).daylight, family_id
 
 
