@@ -18,6 +18,7 @@
 """Flying a batch of seeds against a miner container over one Cap'n Proto connection."""
 
 import asyncio
+import gc
 import mmap
 import os
 import statistics
@@ -402,6 +403,46 @@ def _run_multi_seed_rpc_sync(
                     for _ in tasks
                 ]
 
+            def _send_act(observation, timeout: float):
+                """Send act() now; its wall time is stamped when the reply lands, not when the loop reads it."""
+                clock = {"start": time.perf_counter(), "ms": 0.0}
+
+                async def _reply():
+                    """The reply within the timeout, its wall time stamped however it ends."""
+                    try:
+                        return await asyncio.wait_for(agent.act(observation), timeout=timeout)
+                    finally:
+                        clock["ms"] = (time.perf_counter() - clock["start"]) * 1000.0
+
+                return asyncio.ensure_future(_reply()), clock
+
+            async def _drop_act(early) -> None:
+                """Wait out an act() sent ahead for a decision that never came; its reply, time and strike are unused."""
+                if early is not None:
+                    try:
+                        await early[1][0]
+                    except Exception:
+                        pass
+
+            async def _step_ahead(env, action, timeout: float):
+                """env.step on a worker thread; once the family has fixed the next observation, act() is sent for it
+                while the decision's last control steps run. Returns the step's results and that act, or None."""
+                loop = asyncio.get_running_loop()
+                fixed = loop.create_future()
+                stepping = asyncio.ensure_future(asyncio.to_thread(
+                    env.step, action, on_observation=lambda o: loop.call_soon_threadsafe(fixed.set_result, o)
+                ))
+                await asyncio.wait((fixed, stepping), return_when=asyncio.FIRST_COMPLETED)
+                early = None
+                if fixed.done():
+                    observation = _build_observation(fixed.result())
+                    early = (observation, _send_act(observation, timeout))
+                try:
+                    return await stepping, early
+                except BaseException:
+                    await _drop_act(early)
+                    raise
+
             calibrated_timeout = default_step_timeout_sec
             rpc_overhead_sec = max(
                 default_step_timeout_sec - MINER_COMPUTE_BUDGET_SEC, 0.010
@@ -573,8 +614,14 @@ def _run_multi_seed_rpc_sync(
                         rpc_disconnected = False
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
+                        family = runtime_family_for_task(task)
                         # One env.step is one decision, which holds for the family's control steps.
-                        step_sec = SIM_DT * int(runtime_family_for_task(task).decision_steps)
+                        step_sec = SIM_DT * int(family.decision_steps)
+                        # The next act() already sent, with its observation, while the last step finished.
+                        early = None
+                        if family.observation_ahead:
+                            # The built world stays out of the collector: no long collection holds the GIL on a reply.
+                            gc.freeze()
                         act_dim = int(env.action_space.shape[-1])
                         if n_drones > 1:
                             lo, hi = env.action_space.low, env.action_space.high
@@ -601,7 +648,8 @@ def _run_multi_seed_rpc_sync(
                                     else calibrated_timeout
                                 )
 
-                            observation = _build_observation(obs)
+                            observation, sent = early if early is not None else (_build_observation(obs), None)
+                            early = None
                             _set_phase(
                                 "rpc_act",
                                 task=task_label,
@@ -612,12 +660,11 @@ def _run_multi_seed_rpc_sync(
                             action = None
                             step_striked = False
                             for act_attempt in (0, 1):
+                                reply, clock = sent or _send_act(observation, step_timeout)
+                                sent = None
                                 try:
-                                    t_act_start = time.perf_counter()
-                                    action_response = await asyncio.wait_for(
-                                        agent.act(observation), timeout=step_timeout
-                                    )
-                                    act_ms = (time.perf_counter() - t_act_start) * 1000.0
+                                    action_response = await reply
+                                    act_ms = clock["ms"]
                                     phases["act_sec"] += act_ms / 1000.0
                                     phases["act_max_sec"] = max(phases["act_max_sec"], act_ms / 1000.0)
                                     candidate = np.frombuffer(
@@ -664,7 +711,7 @@ def _run_multi_seed_rpc_sync(
                                         )
                                     break
                                 except asyncio.TimeoutError:
-                                    act_ms = (time.perf_counter() - t_act_start) * 1000
+                                    act_ms = clock["ms"]
                                     phases["act_sec"] += act_ms / 1000.0
                                     phases["act_max_sec"] = max(phases["act_max_sec"], act_ms / 1000.0)
                                     if not step_striked:
@@ -746,9 +793,16 @@ def _run_multi_seed_rpc_sync(
                                 "env_step", task=task_label, step=step_idx, sim_t=t_sim
                             )
                             t_step_start = time.perf_counter()
-                            obs, _r, terminated, truncated, info = env.step(
-                                act if n_drones > 1 else act[None, :]
-                            )
+                            if family.observation_ahead:
+                                (obs, _r, terminated, truncated, info), early = await _step_ahead(
+                                    env,
+                                    act if n_drones > 1 else act[None, :],
+                                    act_hard_cap if use_ref else calibrated_timeout,
+                                )
+                            else:
+                                obs, _r, terminated, truncated, info = env.step(
+                                    act if n_drones > 1 else act[None, :]
+                                )
                             phases["sim_sec"] += time.perf_counter() - t_step_start
 
                             t_sim += step_sec
@@ -776,6 +830,7 @@ def _run_multi_seed_rpc_sync(
                                 break
 
                         phases["fly_sec"] = time.perf_counter() - t_fly_start
+                        await _drop_act(early)
                         seed_cancelled = (
                             stop_event is not None and stop_event.is_set()
                         )
@@ -937,6 +992,7 @@ def _run_multi_seed_rpc_sync(
 
                     finally:
                         t_cleanup_start = time.perf_counter()
+                        gc.unfreeze()
                         _cleanup_env_quietly(env)
                         _release_held_seed(time.perf_counter() - t_cleanup_start)
 

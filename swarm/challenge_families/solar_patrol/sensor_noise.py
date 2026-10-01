@@ -87,7 +87,7 @@ def reset(env: Any, ep: SolarEpisode) -> None:
         "drift": rtk_drift(ep.seed, int(round(HORIZON_S / SIM_DT)) + 1),
         "data_steps": link.choice(DATA_DELAY_STEPS, size=decisions),
         "commands": deque(),
-        "held": None,
+        "coming": {"feed": None, "zoom": None},
         "shown": {"feed": None, "zoom": None},
         "streamed": {},
     }
@@ -135,30 +135,25 @@ def snapshot_due(ep: SolarEpisode) -> bool:
     return after > 0 and after == DECISION_STEPS - data_delay_steps(ep, ep.step - after + DECISION_STEPS)
 
 
-def hold(ep: SolarEpisode, snapshot: dict) -> None:
-    """Keep a clean snapshot until the decision it is shown at."""
-    ep.sensor_noise["held"] = snapshot
-
-
-def delivered(ep: SolarEpisode) -> Optional[dict]:
-    """The snapshot the link has delivered since the last observation, or None when none is on its way."""
-    snapshot, ep.sensor_noise["held"] = ep.sensor_noise["held"], None
-    return snapshot
-
-
 def observe(env: Any, ep: SolarEpisode, snapshot: dict) -> dict:
     """What the model is shown from a clean snapshot: the position error on its state, the images as streamed.
 
-    The snapshot carries its step, its state, the three images and the views of the feed and zoom frames.
+    The snapshot carries its step, its state, the three images and the views of the feed and zoom frames; those
+    frames count as the ones the model looks at from `show` on.
     """
     noise = ep.sensor_noise
     state = snapshot["state"]
     error = noise["drift"][min(snapshot["step"], len(noise["drift"]) - 1)]
     state[STATE_SLICES["position_m"]] += error
     state[STATE_SLICES["height_above_takeoff_m"]] += error[2]
-    noise["shown"] = {"feed": snapshot["feed_view"], "zoom": snapshot["zoom_view"]}
+    noise["coming"] = {"feed": snapshot["feed_view"], "zoom": snapshot["zoom_view"]}
     return {"state": state, "rgb": _streamed(noise, "rgb", snapshot["rgb"]), "thermal": snapshot["thermal"],
             "zoom": _streamed(noise, "zoom", snapshot["zoom"])}
+
+
+def show(ep: SolarEpisode) -> None:
+    """The frames of the last observation built become the ones the model is looking at."""
+    ep.sensor_noise["shown"] = ep.sensor_noise["coming"]
 
 
 def shown_view(ep: SolarEpisode, image: str) -> Optional[View]:
