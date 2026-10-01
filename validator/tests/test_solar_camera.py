@@ -135,6 +135,12 @@ def test_the_ray_caster_draws_whenever_the_engine_has_it():
     assert camera.RENDER_BACKEND == ("raycast" if hasattr(p, "ER_SWARM_RAYCAST") else "tiny")
 
 
+def test_edges_are_smoothed_on_outlines_only_when_the_engine_can():
+    """The colour camera asks for outline-only edge smoothing exactly when the installed engine carries it."""
+    outline = getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
+    assert bool(camera.PICTURE_FLAGS & outline) == bool(camera.RAYCAST and outline)
+
+
 def test_the_tilt_runs_from_straight_down_to_straight_up(scene):
     """The model's -1 to +1 is -90 to +90 degrees."""
     env, ep = scene
