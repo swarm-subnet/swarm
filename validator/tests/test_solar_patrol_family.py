@@ -105,7 +105,7 @@ def flat_park(monkeypatch):
 def blank_camera(monkeypatch):
     """Hand back a black colour frame instead of drawing one: it is most of a flown step and only the camera tests read it."""
     monkeypatch.setattr(camera, "colour_frame",
-                        lambda env, shot, *_night: (np.zeros((shot.height, shot.width, 3), dtype=np.float32),
+                        lambda env, shot, *_night, **_options: (np.zeros((shot.height, shot.width, 3), dtype=np.float32),
                                            np.full((shot.height, shot.width), -1, dtype=np.int32)))
 
 
