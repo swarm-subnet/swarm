@@ -135,6 +135,15 @@ def test_the_ray_caster_draws_whenever_the_engine_has_it():
     assert camera.RENDER_BACKEND == ("raycast" if hasattr(p, "ER_SWARM_RAYCAST") else "tiny")
 
 
+def test_a_close_look_smooths_every_edge_and_fills_creases_when_the_engine_can():
+    """A zoom's flags drop outline-only smoothing and ask for crease fill exactly when the installed engine carries it."""
+    outline = getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
+    fill = getattr(p, "ER_SWARM_CREASE_FILL", 0)
+    assert not camera.CLOSE_PICTURE_FLAGS & outline
+    assert bool(camera.CLOSE_PICTURE_FLAGS & fill) == bool(camera.RAYCAST and fill)
+    assert camera.CLOSE_PICTURE_FLAGS & ~(outline | fill) == camera.PICTURE_FLAGS & ~(outline | fill)
+
+
 def test_edges_are_smoothed_on_outlines_only_when_the_engine_can():
     """The colour camera asks for outline-only edge smoothing exactly when the installed engine carries it."""
     outline = getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
