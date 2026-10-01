@@ -70,12 +70,12 @@ _DCT_BITS = 16
 # The 8-point DCT scaled to integers; no entry lies near a rounding tie, so every platform builds the same matrix.
 _DCT = np.array([[round((math.sqrt(0.125) if k == 0 else 0.5) * math.cos((2 * n + 1) * k * math.pi / 16)
                         * (1 << _DCT_BITS)) for n in range(8)] for k in range(8)], dtype=np.int64)
-# The 2-D transform of a flattened block as one matrix. Every product and sum it takes is a whole number far under
-# 2 ** 53, so float64 holds each exactly and the result is the same whatever order the machine adds in.
-_DCT_2D = np.kron(_DCT, _DCT).astype(np.float64)
+# Every product and sum the transforms take is a whole number far under 2 ** 53, so float64 holds each exactly and the
+# result is the same whatever order the machine adds in.
+_DCT_F = _DCT.astype(np.float64)
 _STEP_SCALE = float(1 << (2 * _DCT_BITS))
 # JPEG's full-range YCbCr in 16-bit fixed point, and back from the two colour planes around 128.
-_TO_YCC = np.array([[19595, 38470, 7471], [-11059, -21709, 32768], [32768, -27439, -5329]], dtype=np.float64)
+_TO_YCC = ((19595, 38470, 7471), (-11059, -21709, 32768), (32768, -27439, -5329))
 _FROM_YCC = np.array([[0, 91881], [-22554, -46802], [116130, 0]], dtype=np.float64)
 
 
@@ -177,20 +177,29 @@ def _streamed(noise: dict, key: str, frame: np.ndarray) -> np.ndarray:
 
 def stream_look(frame: np.ndarray, quality: int = VIDEO_QUALITY) -> np.ndarray:
     """A float colour frame in 0..1 as a live video stream delivers it: colour at half resolution, 8 x 8 blocks
-    quantised. Whole numbers throughout, held exactly in float64, so the bytes never depend on the machine."""
-    rgb = np.rint(np.clip(frame, 0.0, 1.0) * np.float32(255.0)).astype(np.float64)
-    luma = _quantised(_fixed_point(rgb @ _TO_YCC[0]) - 128.0, _scaled_steps(_LUMA_TABLE, quality)) + 128.0
+    quantised. Whole numbers throughout, each held exactly, so the bytes never depend on the machine."""
+    # The colour sums stay under 2 ** 24, where float32 still holds every whole number exactly.
+    rgb = np.rint(np.clip(frame, 0.0, 1.0) * np.float32(255.0))
+    luma = _quantised(_ycc(rgb, _TO_YCC[0]) - 128.0, _scaled_steps(_LUMA_TABLE, quality))
+    luma += 128.0
     # The stream keeps colour at half resolution: each 2 x 2 square averaged, and shown over the square again.
-    half = rgb[0::2, 0::2] + rgb[1::2, 0::2] + rgb[0::2, 1::2] + rgb[1::2, 1::2]
+    rows = rgb[0::2] + rgb[1::2]
+    half = rows[:, 0::2] + rows[:, 1::2]
     half += 2.0
     half *= 0.25
     np.floor(half, out=half)
-    colour = _fixed_point(half @ _TO_YCC[1:].T)
     steps = _scaled_steps(_CHROMA_TABLE, quality)
-    colour = np.stack([_quantised(colour[..., 0], steps), _quantised(colour[..., 1], steps)], axis=-1)
-    shift = _fixed_point(colour @ _FROM_YCC.T).repeat(2, axis=0).repeat(2, axis=1)
-    shift += luma[..., None]
-    return np.clip(shift, 0.0, 255.0, out=shift).astype(np.float32) / np.float32(255.0)
+    colour = np.stack([_quantised(_ycc(half, _TO_YCC[1]), steps), _quantised(_ycc(half, _TO_YCC[2]), steps)], axis=-1)
+    shift = _fixed_point(colour @ _FROM_YCC.T).astype(np.float32).repeat(2, axis=0).repeat(2, axis=1)
+    shift += luma.astype(np.float32)[..., None]
+    np.clip(shift, 0.0, 255.0, out=shift)
+    shift /= np.float32(255.0)
+    return shift
+
+
+def _ycc(rgb: np.ndarray, weights: tuple[int, int, int]) -> np.ndarray:
+    """One YCbCr plane of a whole-number colour image, from its 16-bit fixed-point weights."""
+    return _fixed_point(rgb[..., 0] * weights[0] + rgb[..., 1] * weights[1] + rgb[..., 2] * weights[2])
 
 
 def _fixed_point(scaled: np.ndarray) -> np.ndarray:
@@ -201,23 +210,25 @@ def _fixed_point(scaled: np.ndarray) -> np.ndarray:
 
 
 def _scaled_steps(table: np.ndarray, quality: int) -> np.ndarray:
-    """A quantisation table at a quality from 1 to 100 by libjpeg's rule, flattened in block order."""
+    """A quantisation table at a quality from 1 to 100 by libjpeg's rule, shaped (row, 1, column) to scale a plane's
+    blocks in place."""
     scale = 5000 // quality if quality < 50 else 200 - 2 * quality
-    return np.clip((table * scale + 50) // 100, 1, 255).reshape(64).astype(np.float64)
+    return np.clip((table * scale + 50) // 100, 1, 255).astype(np.float64)[:, None, :]
 
 
 def _quantised(plane: np.ndarray, steps: np.ndarray) -> np.ndarray:
-    """A plane centred on zero through the 8 x 8 DCT, rounded to the table's steps and back.
+    """A plane centred on zero through the 8 x 8 DCT, rounded to the table's steps and back, as float64.
 
-    The transforms work on whole numbers, and IEEE fixes every product and rounding, so no machine differs.
+    The transforms work on whole numbers, and IEEE fixes every product and rounding, so no machine differs. Each block
+    is transformed along its rows, then down its columns: the same whole numbers as the 2-D transform in one go.
     """
     h, w = plane.shape
-    blocks = plane.reshape(h // 8, 8, w // 8, 8).transpose(0, 2, 1, 3).reshape(-1, 64)
-    levels = blocks @ _DCT_2D.T
-    levels *= 1.0 / (_STEP_SCALE * steps)
-    np.rint(levels, out=levels)
-    levels *= steps
-    pixels = levels @ _DCT_2D
+    levels = _DCT_F @ (plane.astype(np.float64).reshape(-1, 8) @ _DCT_F.T).reshape(h // 8, 8, w)
+    blocks = levels.reshape(h // 8, 8, w // 8, 8)
+    blocks *= 1.0 / (_STEP_SCALE * steps)
+    np.rint(blocks, out=blocks)
+    blocks *= steps
+    pixels = _DCT_F.T @ (levels.reshape(-1, 8) @ _DCT_F).reshape(h // 8, 8, w)
     pixels *= 1.0 / _STEP_SCALE
     np.rint(pixels, out=pixels)
-    return pixels.reshape(h // 8, w // 8, 8, 8).transpose(0, 2, 1, 3).reshape(h, w)
+    return pixels.reshape(h, w)
