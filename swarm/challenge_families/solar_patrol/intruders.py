@@ -310,7 +310,7 @@ class Intruder:
         v = self.vertices(local_xyzw, root, place, yaw)
         for uid, rows in self.meshes:
             try:
-                p.resetMeshData(uid, v[rows].tolist(), physicsClientId=self.client)
+                p.resetMeshData(uid, v[rows], physicsClientId=self.client)
             except p.error:
                 # An engine before visual resetMeshData: the thief keeps the pose it was created in.
                 self.moving = False
