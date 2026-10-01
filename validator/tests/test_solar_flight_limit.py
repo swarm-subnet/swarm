@@ -138,6 +138,22 @@ def test_a_drone_on_the_ground_is_never_stopped(phase):
     assert not ep.outcome.end_reason
 
 
+@pytest.mark.parametrize("heading_deg", [0.0, 100.0, 225.0, 290.0])
+def test_a_drone_flying_out_is_stopped_on_the_first_step_past_the_stop_line(heading_deg):
+    """Checked every step on a straight flight out of the middle, the patrol ends on the first point whose distance to
+    the limit is the stop line's or less, whichever checks were skipped while it was far inside."""
+    ep = _episode(seed=11)
+    edge = Polygon(ep.flight_limit["polygon"]).exterior
+    heading = np.radians(heading_deg)
+    path = [(50.0 + d * np.cos(heading), 50.0 + d * np.sin(heading)) for d in np.arange(0.0, 80.0, 0.37)]
+    first = next(i for i, xy in enumerate(path) if edge.distance(Point(xy)) <= flight_limit.STOP_LINE_M)
+    for i, (east, north) in enumerate(path):
+        flight_limit.update(_at(east, north), ep)
+        if ep.outcome.end_reason:
+            break
+    assert ep.outcome.end_reason == "flight_limit" and i == first
+
+
 def test_leaving_the_limit_ends_the_patrol():
     """A drone outside the limit, however it got there, ends the patrol."""
     ep = _episode(seed=5)
