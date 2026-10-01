@@ -45,7 +45,7 @@ import pybullet as p
 from swarm.constants import SIM_DT
 from swarm.core.daylight import sun_render_kwargs
 
-from . import airframe, park
+from . import airframe, park, theft
 from .contract import GIMBAL_TILT_RANGE_DEG, NIGHT_MODES, RGB_SHAPE, STATE_SLICES, THERMAL_SHAPE, Command, put
 from .episode import SolarEpisode
 
@@ -148,6 +148,7 @@ def capture(env: Any, ep: SolarEpisode) -> None:
     shot = View(feed=feed, eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=int(width),
                 height=int(height), vertical_fov_deg=vertical_fov_deg(diagonal, width, height),
                 sees=cam["thermal"] or not dark or night_scene, step=ep.step)
+    theft.show(env, ep, shot)
     if cam["thermal"]:
         ep.frames.thermal = _thermal_frame(env, ep, shot)
         ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)

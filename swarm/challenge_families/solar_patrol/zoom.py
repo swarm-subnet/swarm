@@ -41,7 +41,7 @@ from typing import Any, Optional
 import numpy as np
 import pybullet as p
 
-from . import airframe, camera, sensor_noise
+from . import airframe, camera, sensor_noise, theft
 from .contract import MAX_ZOOMS, STATE_SLICES, ZOOM_SHAPE, Box, Command, ZoomRequest, put
 from .episode import SolarEpisode
 
@@ -162,6 +162,7 @@ def _night_scene(ep: SolarEpisode, dark: bool) -> bool:
 
 def _draw(env: Any, ep: SolarEpisode, shot: camera.View, reach_m: float) -> np.ndarray:
     """One zoom frame through the camera's own draw, with night mode or night vision on top."""
+    theft.show(env, ep, shot)
     frame = camera.colour_frame(env, shot)
     dark = camera.night(env)
     if ep.zoom["night_vision"]:
