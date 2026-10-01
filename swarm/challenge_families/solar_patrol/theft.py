@@ -84,6 +84,7 @@ SPACING_M = 0.9                         # two men getting in never come nearer t
 SPACING_WAIT_S = 1.0                    # how much longer a follower waits each time he would come too near
 PLAN_TRIES = 16                         # tries at settling a crew apart before the plan is taken as it is
 PATROL_S = 390.0                        # the patrol's length, over which the crew is planned apart
+WALKING = ("getting in", "arrival", "moving on", "lookout")   # stages in which a man walks somewhere
 STOP_SIDE_M = 1.0                       # each follower stops this much further to one side than the man before him
 SPOT_GAP_M = 0.7                        # a worker's hips from the table's edge
 SPOT_EDGE_M = 1.5                       # no spot this near a table's end
@@ -554,18 +555,23 @@ def _plan_apart(story: Story, site: Site) -> None:
         clash = _first_clash([_actor(story, site, n) for n in range(len(story.thieves))])
         if clash is None:
             return
-        i, j, t = clash
+        i, j, t, walking = clash
         movable = [k for k in (j, i) if story.thieves[k].role == "worker" and len(story.thieves[k].spots) > 1]
+        lead, behind = story.thieves[i], story.thieves[j]
         if t < ENTRY_S + 12.0 or not movable:
-            story.thieves[j].wait_s += SPACING_WAIT_S
+            behind.wait_s += SPACING_WAIT_S
+        elif walking and (behind.gait, behind.pace) != (lead.gait, lead.pace):
+            # One would catch up with the other on the way: he falls in behind at the same walk, as a crew does.
+            behind.gait, behind.pace = lead.gait, lead.pace
         else:
             thief = story.thieves[movable[0]]
             thief.spots = thief.spots[1:] + thief.spots[:1]
             thief.cut_s = thief.cut_s[1:] + thief.cut_s[:1]
 
 
-def _first_clash(actors: List[Actor]) -> Optional[Tuple[int, int, float]]:
-    """The first moment two men stand nearer than SPACING_M over a whole patrol, as (earlier man, later man, time)."""
+def _first_clash(actors: List[Actor]) -> Optional[Tuple[int, int, float, bool]]:
+    """The first moment two men stand nearer than SPACING_M over a whole patrol, as (earlier man, later man, time, and
+    whether both are walking somewhere then)."""
     fps = actors[0].lib.fps
     for k in range(0, int(PATROL_S * fps), 3):
         frames = [a.at(k / fps) for a in actors]
@@ -574,7 +580,7 @@ def _first_clash(actors: List[Actor]) -> Optional[Tuple[int, int, float]]:
                 if frames[i].index == GONE or frames[j].index == GONE:
                     continue
                 if math.hypot(frames[i].x - frames[j].x, frames[i].y - frames[j].y) < SPACING_M:
-                    return i, j, k / fps
+                    return i, j, k / fps, frames[i].stage in WALKING and frames[j].stage in WALKING
     return None
 
 
