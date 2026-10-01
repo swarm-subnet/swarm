@@ -219,11 +219,11 @@ class Site:
         """Whether every point on the straight line between two ground points is walkable, with room to spare."""
         a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
         n = max(2, int(math.ceil(np.linalg.norm(b - a) / (CELL_M / 2.0))) + 1)
-        for t in np.linspace(0.0, 1.0, n):
-            cell = self.cell(a + (b - a) * t)
-            if not self.walkable[cell] or self.room[cell] < room:
-                return False
-        return True
+        # Every point at once, with cell()'s own arithmetic and its round half to even.
+        points = a + (b - a) * np.linspace(0.0, 1.0, n)[:, None]
+        i = np.clip(np.rint((points[:, 0] - self.origin[0]) / CELL_M).astype(int), 0, self.shape[0] - 1)
+        j = np.clip(np.rint((points[:, 1] - self.origin[1]) / CELL_M).astype(int), 0, self.shape[1] - 1)
+        return bool(self.walkable[i, j].all() and not (self.room[i, j] < room).any())
 
     def distances(self, source: Sequence[float]) -> Tuple[np.ndarray, np.ndarray]:
         """Walking distance from a ground point to every cell, and each cell's predecessor on the way back to it."""
