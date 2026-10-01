@@ -45,6 +45,7 @@ from swarm.utils import gym_assets
 
 from . import park
 from .episode import SolarEpisode
+from .fixed_order import rotate
 
 URDF = "m4td.urdf"
 MOVING_URDF = "m4td_moving.urdf"
@@ -308,9 +309,9 @@ def _gimbal_point(env: Any, point: np.ndarray, tilt_deg: float) -> Tuple[np.ndar
     c, s = math.cos(t), math.sin(t)
     d = point - GIMBAL_PIVOT
     local = GIMBAL_PIVOT + np.array([d[0] * c - d[2] * s, d[1], d[0] * s + d[2] * c])
-    rot = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
-    return (np.asarray(env.pos[0], dtype=float) + rot @ local, rot @ np.array([c, 0.0, s]),
-            rot @ np.array([-s, 0.0, c]))
+    rot = p.getMatrixFromQuaternion(env.quat[0])
+    return (np.asarray(env.pos[0], dtype=float) + rotate(rot, local), rotate(rot, (c, 0.0, s)),
+            rotate(rot, (-s, 0.0, c)))
 
 
 def _docked_rotor_angle(i: int) -> float:
