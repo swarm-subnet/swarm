@@ -118,6 +118,13 @@ def test_binary_rows_carry_the_numbers_their_text_gave():
     assert text.tobytes() == _four_decimals(values).tobytes()
 
 
+def test_an_engine_without_binary_forest_rows_is_refused(client, monkeypatch):
+    """A wheel that cannot read binary forest rows fails loudly instead of drawing no forest."""
+    monkeypatch.delattr(p, "FOREST_FILE_BINARY", raising=False)
+    with pytest.raises(RuntimeError, match="FOREST_FILE_BINARY"):
+        build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
+
+
 def test_an_engine_without_instancing_is_refused(client, monkeypatch):
     """A wheel without the instanced flag fails loudly instead of drawing no forest."""
     monkeypatch.delattr(p, "VISUAL_SHAPE_RENDER_INSTANCED", raising=False)

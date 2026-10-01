@@ -316,6 +316,8 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     instanced = getattr(p, "VISUAL_SHAPE_RENDER_INSTANCED", 0)
     if not instanced:
         raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with VISUAL_SHAPE_RENDER_INSTANCED")
+    if not getattr(p, "FOREST_FILE_BINARY", 0):
+        raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with FOREST_FILE_BINARY")
     folder = os.path.join(asset_dir, forest["folder"])
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
