@@ -21,7 +21,9 @@ whole reference flights judged on flat ground with a square fence, as the other 
 from __future__ import annotations
 
 import asyncio
+import io
 import os
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -115,14 +117,31 @@ def _fly_with(monkeypatch, seeds_passing):
     the list of every batch flown."""
     flown = []
 
-    def fly(seeds, workers):
-        """Keep a verdict for each seed of the batch."""
-        flown.append(list(seeds))
-        for seed in seeds:
-            seed_checks.keep(Verdict(seed=seed, passed=seeds_passing(seed), reason="" if seeds_passing(seed) else "x"))
+    class Flights(seed_checks.Flights):
+        """Flights that judge every seed handed to them at once, in this process."""
 
-    monkeypatch.setattr(seed_checks, "fly", fly)
+        def fly(self, seeds):
+            """Keep a verdict for each seed of the batch."""
+            if seeds:
+                flown.append(list(seeds))
+            for seed in seeds:
+                seed_checks.keep(Verdict(seed=seed, passed=seeds_passing(seed),
+                                         reason="" if seeds_passing(seed) else "x"))
+
+    monkeypatch.setattr(seed_checks, "Flights", Flights)
     return flown
+
+
+_FAKE_PILOT = '''"""A reference pilot that flies nothing: odd seeds pass, and the end reason names the process that judged it."""
+import os
+import sys
+
+from swarm.challenge_families.solar_patrol.seed_checks import Verdict, keep
+
+for line in sys.stdin:
+    seed = int(line)
+    keep(Verdict(seed=seed, passed=seed % 2 == 1, reason="" if seed % 2 else "even", end_reason=str(os.getpid())))
+'''
 
 
 def test_candidates_start_with_the_seed_and_are_the_same_everywhere():
@@ -187,10 +206,32 @@ def test_a_seed_with_no_passing_candidate_is_refused(kept, monkeypatch):
 
 
 def test_a_flight_that_leaves_no_verdict_is_an_error(kept, monkeypatch):
-    """A reference flight that dies without keeping a verdict stops the preparation."""
-    monkeypatch.setattr(seed_checks, "fly", lambda seeds, workers: None)
-    with pytest.raises(SeedCheckError):
+    """A reference flight that ends without keeping a verdict stops the preparation."""
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "this")
+    with pytest.raises(SeedCheckError, match="left no verdict"):
         seed_checks.prepare([11], workers=1)
+
+
+def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch, tmp_path):
+    """Real processes: no more of them run than workers, each judges seed after seed, and every seed ends on its
+    first passing candidate."""
+    (tmp_path / "fake_pilot.py").write_text(_FAKE_PILOT)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "fake_pilot")
+    seeds = [11, 12, 13, 14, 15, 16]
+    chains = {seed: list(candidates(seed)) for seed in seeds}
+    firsts = {seed: next(c for c in chain if c % 2 == 1) for seed, chain in chains.items()}
+    assert seed_checks.prepare(seeds, workers=2) == firsts
+    judged = [seed_checks.cached(c) for seed, chain in chains.items() for c in chain[:chain.index(firsts[seed]) + 1]]
+    assert all(judged) and len({verdict.end_reason for verdict in judged}) == 2 < len(judged)
+
+
+def test_the_pilot_judges_seeds_read_from_its_input(kept, monkeypatch):
+    """Run with no seeds named, the pilot judges and keeps every seed it reads, one a line."""
+    monkeypatch.setattr(reference_pilot, "judge", lambda seed: Verdict(seed=seed, passed=True))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("11\n12\n"))
+    reference_pilot.main([])
+    assert seed_checks.cached(11) == Verdict(seed=11, passed=True) and seed_checks.cached(12) is not None
 
 
 def test_a_seed_whose_world_cannot_be_built_fails_and_others_raise(monkeypatch):
