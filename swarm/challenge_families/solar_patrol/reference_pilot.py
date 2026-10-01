@@ -105,6 +105,8 @@ def check(seed: int) -> Verdict:
     started = time.process_time()
     with contextlib.redirect_stdout(io.StringIO()):
         env, _obs = make_env_with_initial_obs(solar_patrol_task(seed=int(seed), sim_dt=SIM_DT), wrap_runtime=_Unseen)
+    # The verdict reads no clearance metric, observation, reward or info, and none of them steers the flight.
+    env._update_min_clearance = env._computeObs = env._computeReward = env._computeInfo = _unread
     try:
         ep = env._solar
         night = camera.night(env)
@@ -135,6 +137,10 @@ def check(seed: int) -> Verdict:
     result.passed = not result.reason
     result.cpu_s = round(time.process_time() - started, 1)
     return result
+
+
+def _unread() -> None:
+    """Stands in for the parts of an environment step a reference flight never reads."""
 
 
 class _Unseen:
