@@ -31,6 +31,7 @@ import pybullet as p
 
 from .contract import DECISION_STEPS, STATE_SLICES, put
 from .episode import SolarEpisode
+from .fixed_order import rotate
 
 MIN_RANGE_M = 0.5
 MAX_RANGE_M = 16.0
@@ -62,7 +63,7 @@ def _read(env: Any) -> float:
     """Distance from the sensor straight down to the first thing that is not the aircraft, held to the range."""
     cli, aircraft = env.CLIENT, int(env.DRONE_IDS[0])
     pos, orn = p.getBasePositionAndOrientation(aircraft, physicsClientId=cli)
-    sensor = np.asarray(pos, dtype=float) + np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3) @ SENSOR
+    sensor = np.asarray(pos, dtype=float) + rotate(p.getMatrixFromQuaternion(orn), SENSOR)
     start, end = sensor.tolist(), [sensor[0], sensor[1], sensor[2] - MAX_RANGE_M]
     for _ in range(_SELF_HITS):
         uid, _link, _fraction, hit, _normal = p.rayTest(start, end, physicsClientId=cli)[0]

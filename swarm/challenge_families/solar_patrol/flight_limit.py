@@ -35,6 +35,7 @@ from shapely.ops import unary_union
 
 from .contract import MAX_LIMIT_POINTS, SITE_MAP_SLICES, STATE_SLICES, put
 from .episode import SolarEpisode
+from .fixed_order import dot
 
 STOP_LINE_M = 5.0                      # DJI ends the task this near a custom flight area's edge
 MAX_OUTSIDE_M = 5.0                    # the stop line stands 0 to 5 m outside each side of the fence
@@ -70,7 +71,7 @@ def outline(fence: np.ndarray, push: np.ndarray) -> np.ndarray:
         before, after = a[i] + push[i - 1] * out[i - 1], a[i] + push[i] * out[i]
         corner = [a[i], before, after]
         if out[i - 1, 0] * out[i, 1] - out[i - 1, 1] * out[i, 0] > 0.0:
-            corner.append(a[i] + STOP_LINE_M * (out[i - 1] + out[i]) / (1.0 + out[i - 1] @ out[i]))
+            corner.append(a[i] + STOP_LINE_M * (out[i - 1] + out[i]) / (1.0 + dot(out[i - 1], out[i])))
         wedges.append(MultiPoint(corner).convex_hull)
     merged = unary_union([Polygon(a)] + [piece for piece in strips + wedges if piece.area > 0.0]).simplify(0.0)
     return np.array(orient(merged, 1.0).exterior.coords[:-1])
