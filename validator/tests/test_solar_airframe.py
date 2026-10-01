@@ -45,10 +45,12 @@ from swarm.challenge_families.solar_patrol.contract import (
 )
 from swarm.constants import SIM_DT
 from swarm.utils.env_factory import make_env_with_initial_obs
+from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
 ROBOTS = swarm_worlds.robots_dir()
-pytestmark = pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
-                                reason=f"the installed swarm-worlds has no {airframe.URDF} yet")
+pytestmark = [pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
+                                 reason=f"the installed swarm-worlds has no {airframe.URDF} yet"),
+              pytest.mark.usefixtures("blank_camera")]
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
 
 

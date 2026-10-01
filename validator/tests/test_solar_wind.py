@@ -46,7 +46,9 @@ from swarm.constants import SIM_DT, WIND_MEAN_FRACTION
 from swarm.core.daylight import seeded_sun
 from swarm.core.wind import SeededWind
 from swarm.utils.env_factory import make_env_with_initial_obs
+from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("blank_camera")
 ROBOTS = swarm_worlds.robots_dir()
 needs_m4td = pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
                                 reason=f"the installed swarm-worlds has no {airframe.URDF} yet")
