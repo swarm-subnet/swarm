@@ -25,8 +25,9 @@ between frames shows from the next one. Nothing hides the aircraft from its own 
 its body fills the view as it does on the real one.
 
 Frames are lit by the seed's light as the environment set it. At night the colour frame is what the real camera
-gives: dark with night mode off, brighter and grainy with it on, and auto turns it on in the dark. Stand-in until the
-engine draws the Night Scene look (task 27): the brightening and the seeded grain are applied to the rendered frame.
+gives: dark with night mode off, brighter and grainy with it on, and auto turns it on in the dark. The engine's
+low-light camera draws it (task 27): the moon's real brightness, the lens's aperture and sensor, and the top ISO of the
+mode set how bright the frame can get and how much grain the light it collects carries.
 
 Each frame keeps the view it was taken from, so the zoom, report and coverage parts work from the image the model saw.
 The view also carries the frame's object map from the same draw: which body each pixel shows, never shown to the model.
@@ -43,7 +44,7 @@ from typing import Any, Optional, Tuple
 import numpy as np
 import pybullet as p
 
-from swarm.constants import SIM_DT
+from swarm.constants import MOON_DIFFUSE_RANGE, SIM_DT
 from swarm.core.daylight import sun_render_kwargs
 
 from . import airframe, park, theft
@@ -69,9 +70,47 @@ THERMAL_DIAGONAL_FOV_DEG = 45.0         # DJI: M4TD thermal camera
 NEAR_M = 0.004                          # under the airframe's 5 mm, so the aircraft is drawn when it is in view
 FAR_M = 2000.0
 
-NIGHT_SCENE_GAIN = 3.0
-NIGHT_SCENE_GRAIN = 0.035               # standard deviation of the grain, in the image's 0 to 1 units
+# The engine's low-light camera and near infrared; an engine without them draws the plain moonlit frame.
+LOW_LIGHT = RAYCAST and hasattr(p, "ER_SWARM_LOW_LIGHT") and hasattr(p, "ER_SWARM_NEAR_INFRARED")
 NIGHT_GRAIN_STREAM = 0x4E16
+
+
+@dataclass(frozen=True)
+class Lens:
+    """One of the M4TD's colour cameras in the dark: its aperture, its sensor's area and its top ISO by mode."""
+
+    f_number: float
+    sensor_mm2: float
+    iso_normal: float
+    iso_night: float
+
+
+# DJI Matrice 4 series specs: wide 1/1.3 inch f/1.7, medium tele 1/1.3 inch f/2.8, tele 1/1.5 inch f/2.8, each 48 MP;
+# ISO up to 25,600 in normal mode and 409,600 in night mode, 819,200 on the tele. Keyed by zoom, the wide lens as 1.
+LENSES = {1: Lens(1.7, 70.3, 25600.0, 409600.0), 3: Lens(2.8, 70.3, 25600.0, 409600.0),
+          7: Lens(2.8, 48.8, 25600.0, 819200.0)}
+WIDE_LENS = 1
+# The sensor: normal video exposes a frame of the 30 fps stream, and Night Scene slows the stream to 15 fps to expose
+# twice as long (M4T footage over unlit farmland, 1/15 s in its middle setting); a back-lit CMOS through its colour
+# filters turns about 4,000 photons of white light per square micrometre and lux second into electrons and saturates at
+# about 4,000 per square micrometre at ISO 100; video reads the 48 MP array binned to 12 MP with 1.5 electrons of read
+# noise at the high conversion gain of night ISOs; the stream's temporal noise reduction averages about four frames.
+EXPOSURE_S = 1.0 / 30.0
+NIGHT_SCENE_EXPOSURE_S = 1.0 / 15.0
+LENS_TRANSMISSION = 0.9
+ELECTRONS_PER_LUX_S_UM2 = 4000.0
+FULL_WELL_E_PER_UM2 = 4000.0
+BINNED_PIXELS = 12.0e6
+READ_NOISE_E = 1.5
+NOISE_REDUCTION_FRAMES = 4.0
+# Night vision takes the IR-cut filter out, and silicon collects about half as much again past it.
+NEAR_INFRARED_GAIN = 1.5
+# Moonlight on level ground: 0.25 lux from a full moon at the zenith, dimmed by its phase angle as Allen gives it and by
+# its height, plus the glow of the sky near a town. The renderer's moon runs from a crescent (120 degrees of phase
+# angle) to full by its strength.
+FULL_MOON_ZENITH_LUX = 0.25
+CRESCENT_PHASE_ANGLE_DEG = 120.0
+SKY_GLOW_LUX = 0.002
 
 
 @dataclass(frozen=True)
@@ -171,19 +210,59 @@ def capture(env: Any, ep: SolarEpisode) -> None:
         ep.frames.thermal, objects = _thermal_frame(env, ep, shot)
         ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)
     else:
-        frame, objects = colour_frame(env, shot)
-        if night(env) and _night_scene(cam, env):
-            frame = night_scene_stand_in(frame, ep.seed, cam["captures"])
-        ep.frames.rgb = frame
+        ep.frames.rgb, objects = colour_frame(env, shot, night_camera(env, WIDE_LENS, shot, _night_scene(cam, env), ep.seed,
+                                                                      cam["captures"]))
         ep.frames.thermal = np.zeros(THERMAL_SHAPE, dtype=np.float32)
     cam.update(view=replace(shot, objects=objects), captured_s=ep.time_s, captures=cam["captures"] + 1)
 
 
-def night_scene_stand_in(frame: np.ndarray, seed: int, capture_index: int) -> np.ndarray:
-    """The dark frame brightened and grained the same way on every validator, until the engine's Night Scene look."""
-    rng = np.random.default_rng((int(seed) & 0xFFFFFFFF, int(capture_index), NIGHT_GRAIN_STREAM))
-    grain = rng.standard_normal(frame.shape[:2], dtype=np.float32)[..., None] * np.float32(NIGHT_SCENE_GRAIN)
-    return np.clip(frame * np.float32(NIGHT_SCENE_GAIN) + grain, 0.0, 1.0)
+def moon_lux(sun: Any) -> float:
+    """Light on level ground under a seed's moon, in lux: its phase read off the renderer's strength, then its height."""
+    low, high = MOON_DIFFUSE_RANGE
+    phase = min(1.0, max(0.0, (sun.diffuse - low) / (high - low)))
+    angle = CRESCENT_PHASE_ANGLE_DEG * (1.0 - phase)
+    dimming = 10.0 ** (-0.4 * (0.026 * angle + 4e-9 * angle ** 4))
+    return FULL_MOON_ZENITH_LUX * dimming * max(0.0, sun.direction[2]) + SKY_GLOW_LUX
+
+
+def night_camera(env: Any, lens: int, shot: View, night_scene: bool, seed: int, index: int,
+                 beam: Optional[Tuple[float, float, float]] = None) -> Tuple[int, dict]:
+    """The engine flags and arguments that make a colour frame at night what the M4TD's camera gives.
+
+    The frame collects the electrons the moon's real light puts through this lens onto its sensor, the gain is capped
+    at the mode's top ISO, and `index` moves the grain frame by frame. `beam` is night vision: the IR-cut filter out and
+    the infrared light, `(angle_deg, range_m, intensity_lux_m2)`, along the view. Nothing by day, when night vision is
+    only grey, or on an engine without the low-light camera.
+    """
+    if not LOW_LIGHT:
+        return 0, {}
+    if not night(env):
+        return (p.ER_SWARM_NEAR_INFRARED if beam else 0), {}
+    sun, optic = env._sun, LENSES[lens]
+    moon_colour = 0.2126 * sun.color[0] + 0.7152 * sun.color[1] + 0.0722 * sun.color[2]
+    lux_per_unit = moon_lux(sun) / (sun.ambient + sun.diffuse * moon_colour * max(0.0, sun.direction[2]))
+    pixels = shot.width * shot.height
+    pixel_um2 = optic.sensor_mm2 * 1e6 / pixels
+    night_mode = bool(night_scene or beam)
+    electrons = (lux_per_unit * LENS_TRANSMISSION / (4.0 * optic.f_number ** 2) * pixel_um2 * ELECTRONS_PER_LUX_S_UM2
+                 * (NIGHT_SCENE_EXPOSURE_S if night_mode else EXPOSURE_S) * (NEAR_INFRARED_GAIN if beam else 1.0))
+    iso = optic.iso_night if night_mode else optic.iso_normal
+    kwargs = {
+        "sensorPhotons": _digits(electrons * NOISE_REDUCTION_FRAMES),
+        "sensorReadNoise": _digits(READ_NOISE_E * math.sqrt(BINNED_PIXELS / pixels * NOISE_REDUCTION_FRAMES)),
+        "sensorGainCap": _digits(electrons * iso / (100.0 * FULL_WELL_E_PER_UM2 * pixel_um2)),
+        "sensorSeed": (int(seed) * 1000003 + int(index)) & 0x7FFFFFFF ^ NIGHT_GRAIN_STREAM,
+    }
+    if not beam:
+        return p.ER_SWARM_LOW_LIGHT, kwargs
+    angle_deg, range_m, intensity = beam
+    kwargs["spotLight"] = [*shot.eye, *shot.forward, angle_deg, range_m, _digits(intensity / lux_per_unit)]
+    return p.ER_SWARM_LOW_LIGHT | p.ER_SWARM_NEAR_INFRARED, kwargs
+
+
+def _digits(value: float) -> float:
+    """A value held to six significant digits, so a last-bit difference in the maths library never reaches the engine."""
+    return float(f"{value:.6g}")
 
 
 def night(env: Any) -> bool:
@@ -202,8 +281,9 @@ def _object_map(seg: Any, shot: View) -> np.ndarray:
     return np.reshape(np.asarray(seg, dtype=np.int32), (shot.height, shot.width))
 
 
-def colour_frame(env: Any, shot: View) -> Tuple[np.ndarray, np.ndarray]:
-    """A colour frame in the seed's light, the way the environment lights its own colour frames, and its object map."""
+def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {})) -> Tuple[np.ndarray, np.ndarray]:
+    """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
+    and arguments of `night_camera` when given, and its object map."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -212,7 +292,9 @@ def colour_frame(env: Any, shot: View) -> Tuple[np.ndarray, np.ndarray]:
         kwargs["shadowLightCoeff"] = 0.0
         kwargs.update(env._daylight_kwargs(cli))
         kwargs.update(env._sky_kwargs())
-    flags = env._render_flags | env._sky_flags | env._daylight_flags | PICTURE_FLAGS
+    night_flags, night_kwargs = camera_at_night
+    kwargs.update(night_kwargs)
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | PICTURE_FLAGS | night_flags
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
