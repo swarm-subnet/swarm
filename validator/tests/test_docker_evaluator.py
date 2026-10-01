@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.benchmark.engine_parts import workers
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.calibration import SpeedFactor
@@ -2153,6 +2154,37 @@ def test_release_freed_memory_is_safe_and_wired():
     import inspect
     body = inspect.getsource(workers._benchmark_worker_main)
     assert "_release_freed_memory()" in body
+
+
+def test_worker_frees_memory_before_it_reports_the_result(monkeypatch, tmp_path):
+    """The worker trims its heap before the result goes out, so the parent's recycle check reads the trimmed RSS."""
+    order = []
+
+    class _Results:
+        """Result queue stand-in that notes when the result is put."""
+
+        def put(self, item):
+            """Record the put."""
+            order.append("result")
+
+    class _FakeEvaluator:
+        """Evaluator stand-in that returns one zero result per task without a container."""
+
+        async def evaluate_seeds_batch(self, tasks, uid, **_kwargs):
+            """Return a zero result per task."""
+            return [SimpleNamespace(uid=uid, success=False, time_sec=0.0, score=0.0) for _ in tasks]
+
+    monkeypatch.setattr(bench_full_eval, "_create_prepared_benchmark_evaluator", lambda: _FakeEvaluator())
+    monkeypatch.setattr(workers, "_release_freed_memory", lambda: order.append("trim"))
+    tasks: queue.Queue = queue.Queue()
+    tasks.put(bench_full_eval._ProcessBatchRequest(
+        batch_index=0, batch_indices=[0], tasks=[SimpleNamespace(map_seed=1, challenge_type=5)], uid=7,
+        model_path=str(tmp_path / "model.zip"), task_total=1))
+    tasks.put(None)
+
+    workers._benchmark_worker_main(0, tasks, _Results(), queue.Queue())
+
+    assert order == ["trim", "result"]
 
 
 def test_resolve_worker_limits_drops_quota_for_pinned_workers(monkeypatch):
