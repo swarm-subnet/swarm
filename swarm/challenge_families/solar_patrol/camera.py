@@ -37,7 +37,7 @@ import functools
 import math
 import operator
 from dataclasses import dataclass
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import pybullet as p
@@ -136,24 +136,39 @@ def view(ep: SolarEpisode) -> View:
     return ep.camera["view"]
 
 
-def capture(env: Any, ep: SolarEpisode) -> None:
-    """Take one frame of the feed asked for from where the camera is now, and blank the other feed."""
+def upcoming(env: Any, ep: SolarEpisode, step: int) -> Optional[View]:
+    """The view the frame taken on that control step will have, from where the camera is now; None on a step
+    between frames."""
+    return aim(env, ep) if step % FRAME_STEPS == 0 else None
+
+
+def aim(env: Any, ep: SolarEpisode) -> View:
+    """The view a frame taken now has: its feed, lens and pose, and whether it can show anything."""
     cam = ep.camera
     feed = FEEDS[int(cam["thermal"])]
     height, width = (THERMAL_SHAPE if cam["thermal"] else RGB_SHAPE)[:2]
     diagonal = THERMAL_DIAGONAL_FOV_DEG if cam["thermal"] else WIDE_DIAGONAL_FOV_DEG
     eye, forward, up = airframe.camera_pose(env, cam["tilt_deg"])
-    dark = night(env)
-    night_scene = cam["night_mode"] == "on" or (cam["night_mode"] == "auto" and dark)
-    shot = View(feed=feed, eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=int(width),
+    return View(feed=feed, eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=int(width),
                 height=int(height), vertical_fov_deg=vertical_fov_deg(diagonal, width, height),
-                sees=cam["thermal"] or not dark or night_scene, step=ep.step)
+                sees=cam["thermal"] or not night(env) or _night_scene(cam, env), step=ep.step)
+
+
+def _night_scene(cam: dict, env: Any) -> bool:
+    """Whether the colour camera brightens its frame: night mode on, or on auto in the dark."""
+    return cam["night_mode"] == "on" or (cam["night_mode"] == "auto" and night(env))
+
+
+def capture(env: Any, ep: SolarEpisode) -> None:
+    """Take one frame of the feed asked for from where the camera is now, and blank the other feed."""
+    cam = ep.camera
+    shot = aim(env, ep)
     if cam["thermal"]:
         ep.frames.thermal = _thermal_frame(env, ep, shot)
         ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)
     else:
         frame = colour_frame(env, shot)
-        if dark and night_scene:
+        if night(env) and _night_scene(cam, env):
             frame = night_scene_stand_in(frame, ep.seed, cam["captures"])
         ep.frames.rgb = frame
         ep.frames.thermal = np.zeros(THERMAL_SHAPE, dtype=np.float32)
