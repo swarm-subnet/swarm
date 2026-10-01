@@ -26,6 +26,7 @@ landing earns nothing.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,7 @@ STOP_LINE_M = 5.0                      # DJI ends the task this near a custom fl
 MAX_OUTSIDE_M = 5.0                    # the stop line stands 0 to 5 m outside each side of the fence
 LIMIT_SEED_STREAM = 0xF15              # the limit's own stream, so its draws never move another part's
 _AIRBORNE = ("taking_off", "flying", "returning", "landing")
+_ROUNDING_M = 1e-6                     # far above the distance's float error, so a skipped check never hides a stop
 
 
 def _sides(fence: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -76,11 +78,17 @@ def outline(fence: np.ndarray, push: np.ndarray) -> np.ndarray:
     return np.array(orient(merged, 1.0).exterior.coords[:-1])
 
 
-def _inside(polygon: np.ndarray, point: np.ndarray) -> bool:
-    """True when the point lies inside the closed polygon, by counting the sides a ray from it crosses."""
+def _sides_of(polygon: np.ndarray) -> list:
+    """Each side of the closed polygon as plain floats: start east, start north, end east, end north."""
+    return np.hstack([polygon, np.roll(polygon, -1, axis=0)]).tolist()
+
+
+def _inside(sides: list, point: np.ndarray) -> bool:
+    """True when the point lies inside the closed polygon with these sides, by counting the sides a ray from it
+    crosses."""
     x, y = float(point[0]), float(point[1])
     inside = False
-    for (x1, y1), (x2, y2) in zip(polygon, np.roll(polygon, -1, axis=0)):
+    for x1, y1, x2, y2 in sides:
         if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
             inside = not inside
     return inside
@@ -98,7 +106,9 @@ def _distance(polygon: np.ndarray, point: np.ndarray) -> float:
 def reset(env: Any, ep: SolarEpisode) -> None:
     """Draw this seed's limit around the fence."""
     push = pushes(ep.seed, ep.fence)
-    ep.flight_limit = {"pushes": push, "polygon": outline(ep.fence, push)}
+    polygon = outline(ep.fence, push)
+    ep.flight_limit = {"pushes": push, "polygon": polygon, "sides": _sides_of(polygon), "checked": (0.0, 0.0),
+                       "clear_m": 0.0}
 
 
 def update(env: Any, ep: SolarEpisode) -> None:
@@ -106,17 +116,23 @@ def update(env: Any, ep: SolarEpisode) -> None:
     if ep.phase not in _AIRBORNE:
         return
     point = np.asarray(env.pos[0][:2], dtype=float)
-    polygon = ep.flight_limit["polygon"]
-    if not _inside(polygon, point) or _distance(polygon, point) <= STOP_LINE_M:
+    limit = ep.flight_limit
+    # Closer to the last point checked than that point was to the stop line, the drone is still well inside it.
+    if math.dist(point, limit["checked"]) < limit["clear_m"]:
+        return
+    distance = _distance(limit["polygon"], point)
+    if not _inside(limit["sides"], point) or distance <= STOP_LINE_M:
         ep.end("flight_limit")
+        return
+    limit.update(checked=(float(point[0]), float(point[1])), clear_m=distance - STOP_LINE_M - _ROUNDING_M)
 
 
 def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
     """The distance to the limit and whether the drone is inside it, as the dock reports them."""
     point = np.asarray(env.pos[0][:2], dtype=float)
-    polygon = ep.flight_limit["polygon"]
-    put(state, STATE_SLICES, "flight_limit_distance_m", _distance(polygon, point))
-    put(state, STATE_SLICES, "inside_flight_limit", float(_inside(polygon, point)))
+    limit = ep.flight_limit
+    put(state, STATE_SLICES, "flight_limit_distance_m", _distance(limit["polygon"], point))
+    put(state, STATE_SLICES, "inside_flight_limit", float(_inside(limit["sides"], point)))
 
 
 def site_map(env: Any, ep: SolarEpisode, site: np.ndarray) -> None:
