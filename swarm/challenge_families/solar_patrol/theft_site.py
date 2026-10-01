@@ -42,6 +42,8 @@ from shapely.ops import unary_union
 
 from swarm.core.maps.solar import builder
 
+from .fixed_order import norm, rows_dot
+
 CELL_M = 0.5                            # walking grid resolution
 COMFORT_M = 1.0                         # where there is room, a walk keeps this much more from anything in its way
 CROWDED_COST = 3.0                      # how much dearer a step closer than that counts, so routes leave corners wide
@@ -167,8 +169,8 @@ class Site:
             span = np.array([high[0] - low[0], 0.0])
         c, s = math.cos(yaw), math.sin(yaw)
         along = np.array([c * span[0] - s * span[1], s * span[0] + c * span[1]])
-        half = float(np.linalg.norm(along)) / 2.0 * float(place["scale"][0])
-        along /= max(float(np.linalg.norm(along)), 1e-9)
+        half = norm(along) / 2.0 * float(place["scale"][0])
+        along /= max(norm(along), 1e-9)
         normal = np.array([-along[1], along[0]])
         if not inside(self.ring, centre + normal * 1.0)[0]:
             normal = -normal
@@ -218,7 +220,7 @@ class Site:
     def clear_line(self, a: Sequence[float], b: Sequence[float], room: float = 0.0) -> bool:
         """Whether every point on the straight line between two ground points is walkable, with room to spare."""
         a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
-        n = max(2, int(math.ceil(np.linalg.norm(b - a) / (CELL_M / 2.0))) + 1)
+        n = max(2, int(math.ceil(norm(b - a) / (CELL_M / 2.0))) + 1)
         for t in np.linspace(0.0, 1.0, n):
             cell = self.cell(a + (b - a) * t)
             if not self.walkable[cell] or self.room[cell] < room:
@@ -279,7 +281,7 @@ class Site:
 
     def walk_length(self, legs: Sequence[np.ndarray]) -> float:
         """Length of a walk given as straight legs."""
-        return float(sum(np.linalg.norm(b - a) for a, b in zip(legs, legs[1:])))
+        return float(sum(norm(b - a) for a, b in zip(legs, legs[1:])))
 
 
 def _outline(item: dict, place: dict) -> np.ndarray:
@@ -289,17 +291,17 @@ def _outline(item: dict, place: dict) -> np.ndarray:
     local = np.array([[low[0], low[1]], [high[0], low[1]], [high[0], high[1]], [low[0], high[1]]]) * scale
     yaw = yaw_of(place["quaternion"])
     c, s = math.cos(yaw), math.sin(yaw)
-    return local @ np.array([[c, s], [-s, c]]) + np.array(place["position"][:2])
+    return np.stack([rows_dot(local, (c, -s)), rows_dot(local, (s, c))], 1) + np.array(place["position"][:2])
 
 
 def _table(points: np.ndarray, row: int) -> Table:
     """The smallest box around a table's parts, aligned with its long side."""
     edge = points[1] - points[0]
-    if np.linalg.norm(points[3] - points[0]) > np.linalg.norm(edge):
+    if norm(points[3] - points[0]) > norm(edge):
         edge = points[3] - points[0]
-    along = edge / np.linalg.norm(edge)
+    along = edge / norm(edge)
     across = np.array([-along[1], along[0]])
-    u, v = points @ along, points @ across
+    u, v = rows_dot(points, along), rows_dot(points, across)
     centre = along * (u.max() + u.min()) / 2.0 + across * (v.max() + v.min()) / 2.0
     return Table((float(centre[0]), float(centre[1])), (float(along[0]), float(along[1])),
                  (float(across[0]), float(across[1])), float(u.max() - u.min()) / 2.0, float(v.max() - v.min()) / 2.0,

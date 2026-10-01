@@ -54,6 +54,7 @@ from swarm.core.maps.solar import builder
 
 from . import intruders
 from .episode import SolarEpisode
+from .fixed_order import dot, norm
 from .theft_moves import GONE, Actor, Lane, Route, Step, heading_to, library
 from .theft_site import Opening, Site, Table, yaw_of
 
@@ -271,7 +272,7 @@ def _room(site: Site, opening: Opening, along: float) -> bool:
     """Whether a crew can use an opening: free ground just inside it, far enough from the dock."""
     hole = np.array(opening.centre) + np.array(opening.along) * along
     inward = np.array(opening.inward)
-    if site.dock is not None and np.linalg.norm(hole - site.dock) < HOLE_DOCK_M:
+    if site.dock is not None and norm(hole - site.dock) < HOLE_DOCK_M:
         return False
     return site.clear_line(hole + inward * 1.5, hole + inward * LEAD_M)
 
@@ -312,11 +313,11 @@ def _spots(rng: np.random.Generator, site: Site, table: int, tables: List[int], 
     his pull really ended, each pulled only as far as the line along the row stays clear. Every walk is at least
     NEXT_SPOT_M[0] long: starting and stopping alone carry a man 3.7 m, so a shorter one would overshoot its mark."""
     candidates = [s for k in tables for s in _spots_of(site, k, reachable)]
-    here = [s for s in _spots_of(site, table, reachable) if np.linalg.norm(np.array(s.xy) - entry) >= NEXT_SPOT_M[0]]
+    here = [s for s in _spots_of(site, table, reachable) if norm(np.array(s.xy) - entry) >= NEXT_SPOT_M[0]]
     chosen = [_pulled(rng, site, (here or candidates)[int(rng.integers(len(here or candidates)))])]
     for _ in range(15):
         last = np.array(chosen[-1].pull_to)
-        near = [s for s in candidates if NEXT_SPOT_M[0] <= np.linalg.norm(np.array(s.xy) - last) <= NEXT_SPOT_M[1]]
+        near = [s for s in candidates if NEXT_SPOT_M[0] <= norm(np.array(s.xy) - last) <= NEXT_SPOT_M[1]]
         if not near:
             break
         # A stretch he can walk to straight, along the same aisle, before one round the end of a row.
@@ -328,7 +329,7 @@ def _spots(rng: np.random.Generator, site: Site, table: int, tables: List[int], 
 def _pulled(rng: np.random.Generator, site: Site, spot: Spot) -> Spot:
     """A stretch with its pull drawn: as long as the seed says, short of anything in the way along the row."""
     start, end = np.array(spot.xy), np.array(spot.pull_to)
-    axis = (end - start) / np.linalg.norm(end - start)
+    axis = (end - start) / norm(end - start)
     length = float(rng.uniform(*PULL_M))
     while length > PULL_M[0] and not site.clear_line(start, start + axis * length):
         length -= 0.5
@@ -371,7 +372,7 @@ def _schedule(rng: np.random.Generator, story: Story) -> None:
                   lib.seconds(lib.kinds(stand)["stand_to_walk"][0]))
     for thief in story.thieves[1:]:
         through += float(rng.uniform(*MATE_GAP_S))
-        walk = max(0.0, float(np.linalg.norm(np.array(thief.start) - story.hole)) - 1.8) / 1.38
+        walk = max(0.0, norm(np.array(thief.start) - story.hole) - 1.8) / 1.38
         thief.wait_s = max(0.5, through - getting_up - walk)
 
 
@@ -462,8 +463,8 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> 
         n = k
         if k >= len(thief.spots):
             # Round again: the nearest of his stretches that is still a proper walk away.
-            far = [i for i, sp in enumerate(thief.spots) if np.linalg.norm(np.array(sp.xy) - actor.pos) >= NEXT_SPOT_M[0]]
-            n = min(far or range(len(thief.spots)), key=lambda i: np.linalg.norm(np.array(thief.spots[i].xy) - actor.pos))
+            far = [i for i, sp in enumerate(thief.spots) if norm(np.array(sp.xy) - actor.pos) >= NEXT_SPOT_M[0]]
+            n = min(far or range(len(thief.spots)), key=lambda i: norm(np.array(thief.spots[i].xy) - actor.pos))
         spot = thief.spots[n]
         # A sneak is for getting through the hole; inside he walks, warily if that is his way, and he moves on
         # between stretches at a plain walk unless he is the wary kind.
@@ -636,7 +637,7 @@ def advance(env: Any, ep: SolarEpisode) -> None:
             if spot not in theft.heights:
                 theft.heights[spot] = _ground(env, ep, float(spot[0]), float(spot[1]))
             ears = np.array([frame.x, frame.y, theft.heights[spot] + EAR_M])
-            _hear(man, theft, t, float(np.linalg.norm(drone - ears)), airborne)
+            _hear(man, theft, t, norm(drone - ears), airborne)
 
 
 def show(env: Any, ep: SolarEpisode, view: Any) -> None:
@@ -806,18 +807,18 @@ def _ground(env: Any, ep: SolarEpisode, x: float, y: float) -> float:
 def _in_view(view: Any, point: Sequence[float]) -> bool:
     """Whether a point, grown by a body's reach, falls inside a picture's field of view."""
     eye, forward, up = (np.asarray(v, dtype=float) for v in (view.eye, view.forward, view.up))
-    forward /= np.linalg.norm(forward)
+    forward /= norm(forward)
     right = np.cross(forward, up)
-    right /= max(np.linalg.norm(right), 1e-9)
+    right /= max(norm(right), 1e-9)
     up = np.cross(right, forward)
     rel = np.asarray(point, dtype=float) - eye
-    depth = float(rel @ forward)
+    depth = dot(rel, forward)
     if depth < -VIEW_MARGIN_M:
         return False
     half_v = math.tan(math.radians(view.vertical_fov_deg) / 2.0)
     half_h = half_v * view.width / view.height
     slack = VIEW_MARGIN_M * math.sqrt(1.0 + half_h * half_h + half_v * half_v)
-    return abs(float(rel @ right)) <= depth * half_h + slack and abs(float(rel @ up)) <= depth * half_v + slack
+    return abs(dot(rel, right)) <= depth * half_h + slack and abs(dot(rel, up)) <= depth * half_v + slack
 
 
 def _opening_prop(env: Any, ep: SolarEpisode, story: Story, cutter: Actor) -> Any:
@@ -857,7 +858,7 @@ class FenceHole:
         # Turning the flap about its hinge by +a moves its free edge, d along the panel from the hinge, by d sin(a)
         # along the panel's local y; the sign that sends it into the park follows from which side the park lies on.
         free_edge = (lo + hi) / 2.0 - hinge
-        self.sense = float(np.sign(local_y @ story.inward) * np.sign(free_edge))
+        self.sense = float(np.sign(dot(local_y, story.inward)) * np.sign(free_edge))
         self.state: Optional[tuple] = None
 
     def apply(self, t: float) -> None:
@@ -919,7 +920,7 @@ class GateLeaf:
                                         physicsClientId=self.cli)
             # A thin box along the leaf, from its hinge to the gate's middle, standing in for the gate's own mesh.
             span = -hinge
-            box = p.createCollisionShape(p.GEOM_BOX, halfExtents=[float(np.linalg.norm(span)) / 2.0, 0.03,
+            box = p.createCollisionShape(p.GEOM_BOX, halfExtents=[norm(span) / 2.0, 0.03,
                                                                   float(verts[:, 2].max()) / 2.0],
                                          collisionFramePosition=[float(span[0]) / 2.0, float(span[1]) / 2.0,
                                                                  float(verts[:, 2].max()) / 2.0],
@@ -932,7 +933,7 @@ class GateLeaf:
             # that sends it into the park.
             mid = -hinge / 2.0
             push = np.array([-mid[1], mid[0]])
-            sense = float(np.sign(np.array([c * push[0] - s * push[1], s * push[0] + c * push[1]]) @ story.inward))
+            sense = float(np.sign(dot([c * push[0] - s * push[1], s * push[0] + c * push[1]], story.inward)))
             anchor = np.array([c * hinge[0] - s * hinge[1], s * hinge[0] + c * hinge[1]])
             self.leaves[side] = (uid, anchor, sense)
         self.state: Optional[float] = None
@@ -961,7 +962,7 @@ def _body_at(cli: int, bodies: Sequence[int], position: Sequence[float]) -> int:
     """The park body standing at a position."""
     target = np.asarray(position, dtype=float)
     for uid in bodies:
-        if np.linalg.norm(np.array(p.getBasePositionAndOrientation(uid, physicsClientId=cli)[0]) - target) < 1e-3:
+        if norm(np.array(p.getBasePositionAndOrientation(uid, physicsClientId=cli)[0]) - target) < 1e-3:
             return int(uid)
     raise ValueError(f"no park body at {list(target)}")
 
