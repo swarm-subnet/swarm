@@ -46,7 +46,7 @@ import pybullet as p
 from swarm.constants import SIM_DT
 from swarm.core.daylight import sun_render_kwargs
 
-from . import airframe, park
+from . import airframe, park, theft
 from .contract import GIMBAL_TILT_RANGE_DEG, NIGHT_MODES, RGB_SHAPE, STATE_SLICES, THERMAL_SHAPE, Command, put
 from .episode import SolarEpisode
 
@@ -166,6 +166,7 @@ def capture(env: Any, ep: SolarEpisode) -> None:
     """Take one frame of the feed asked for from where the camera is now, and blank the other feed."""
     cam = ep.camera
     shot = aim(env, ep)
+    theft.show(env, ep, shot)
     if cam["thermal"]:
         ep.frames.thermal, objects = _thermal_frame(env, ep, shot)
         ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)

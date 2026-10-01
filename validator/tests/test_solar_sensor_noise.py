@@ -36,7 +36,11 @@ from swarm.challenge_families.solar_patrol.contract import (
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.constants import SIM_DT
-from validator.tests.test_solar_patrol_family import _action, _patrol
+from validator.tests.test_solar_patrol_family import (
+    _action,
+    _patrol,
+    blank_camera,  # noqa: F401
+)
 from validator.tests.test_solar_patrol_family import flat_park as _flat_park  # noqa: F401
 
 _STEPS = int(round(HORIZON_S / SIM_DT)) + 1
@@ -192,7 +196,7 @@ def _flown(seed, pilot, max_decisions):
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.usefixtures("_flat_park")
+@pytest.mark.usefixtures("_flat_park", "blank_camera")
 def test_a_flown_patrol_is_seen_60_or_80_ms_late_and_within_the_rtk_error():
     """In a real flight each observed position is the true one of 3 or 4 control steps before, off by the drift."""
     def pilot(i, obs):
@@ -217,7 +221,7 @@ def test_a_flown_patrol_is_seen_60_or_80_ms_late_and_within_the_rtk_error():
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.usefixtures("_flat_park")
+@pytest.mark.usefixtures("_flat_park", "blank_camera")
 def test_a_flown_command_reaches_the_aircraft_one_step_later():
     """A stick moved at a decision is acted on from that decision's second control step, 20 ms after it was sent."""
     def pilot(i, obs):
