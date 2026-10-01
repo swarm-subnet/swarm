@@ -91,6 +91,12 @@ def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
     put(state, STATE_SLICES, "zooms_left", MAX_ZOOMS - ep.outcome.zooms_used)
 
 
+def upcoming(env: Any, ep: SolarEpisode) -> Optional[camera.View]:
+    """The view of the zoom this control step draws, from where the camera is now; None when none is queued."""
+    asked = ep.zoom["pending"]
+    return None if asked is None else aim(env, ep, asked)[0]
+
+
 def view(ep: SolarEpisode) -> Optional[camera.View]:
     """The view of the zoom frame the model is looking at, None before the first one arrives."""
     return ep.zoom["view"]
