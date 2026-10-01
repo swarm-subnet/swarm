@@ -225,6 +225,27 @@ def test_the_same_view_draws_the_same_pixels(scene):
     assert np.array_equal(first, ep.frames.rgb)
 
 
+def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
+    """Colour, night and thermal frames ask the engine for a still camera's last frame exactly when it can hand one
+    back, and each frame equals the one drawn without asking, grain included."""
+    env, ep = scene
+    reuse = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
+    assert camera.FRAME_REUSE == reuse
+    for thermal, night_mode in ((False, "off"), (False, "on"), (True, "off")):
+        if night_mode == "on":
+            _moon(env, 1.0)
+        _ask(env, ep, tilt=-60.0, thermal=thermal, night_mode=night_mode)
+        for flag in (reuse, 0, reuse, 0, reuse, 0):
+            monkeypatch.setattr(camera, "FRAME_REUSE", flag)
+            ep.camera["captures"] = 5
+            camera.capture(env, ep)
+            frame = (ep.frames.rgb.copy(), ep.frames.thermal.copy(), camera.view(ep).objects.copy())
+            if flag:
+                asked = frame
+            else:
+                assert all(np.array_equal(a, b) for a, b in zip(asked, frame))
+
+
 def _moonlit(env, seed=11):
     """Light the scene by the seed's moon."""
     env._sun = seeded_sun(seed, 1.0)
