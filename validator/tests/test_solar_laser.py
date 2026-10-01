@@ -45,7 +45,9 @@ from swarm.challenge_families.solar_patrol.episode import SolarEpisode
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.constants import SIM_DT
 from swarm.utils.env_factory import make_env_with_initial_obs
+from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("blank_camera")
 ROBOTS = swarm_worlds.robots_dir()
 needs_m4td = pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
                                 reason=f"the installed swarm-worlds has no {airframe.URDF} yet")

@@ -102,8 +102,6 @@ def reset(env: Any, ep: SolarEpisode) -> None:
     """Build the park for the seed, start its movers, publish the fence and the terrain, and set its temperatures."""
     world = build_solar_map(seed=ep.seed, cli=env.CLIENT)
     movers = build_solar_movers(world, seed=ep.seed, cli=env.CLIENT)
-    # The herd leaves Solar Patrol with the decoys; until then it walks stiff, as the mesh rewrite costs a patrol hours.
-    movers.goat_mesh = False
     glass = world.get("glass", ())
     ep.park = {"world": world, "movers": movers, **heat(getattr(env, "_sun", None), ep.seed, len(glass))}
     ep.fence = fence_line(world["asset_dir"])
@@ -131,6 +129,11 @@ def advance(env: Any, ep: SolarEpisode) -> None:
 def moving_bodies(ep: SolarEpisode) -> frozenset:
     """Every body the park moves itself, kept out of the clearance metric."""
     return ep.park["movers"].body_uids
+
+
+def mover_kinds(ep: SolarEpisode) -> Dict[int, str]:
+    """What each body the park moves is, by its body id: 'pickup' for every part of the truck, 'bird' for the bird's."""
+    return {int(body): place["mover"] for place, body in ep.park["world"]["movers"]}
 
 
 def asset_dir(ep: SolarEpisode) -> str:

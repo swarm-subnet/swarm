@@ -38,7 +38,7 @@ from swarm.challenge_families import (
     get_challenge_family,
     list_registered_challenge_families,
 )
-from swarm.challenge_families.solar_patrol import airframe, drone_state, park, sensor_noise
+from swarm.challenge_families.solar_patrol import airframe, camera, drone_state, park, sensor_noise
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_FIELDS,
@@ -99,6 +99,17 @@ def flat_park(monkeypatch):
     monkeypatch.setattr(park, "build_solar_movers", lambda world, seed=0, cli=0: _StillMovers())
     monkeypatch.setattr(park, "fence_line", lambda asset_dir: _FENCE)
     monkeypatch.setattr(drone_state, "survey", lambda asset_dir: (_TABLES, _BUILDINGS))
+
+
+@pytest.fixture
+def blank_camera(monkeypatch):
+    """Hand back a black colour frame instead of drawing one: it is most of a flown step and only the camera tests read it."""
+    monkeypatch.setattr(camera, "colour_frame",
+                        lambda env, shot: (np.zeros((shot.height, shot.width, 3), dtype=np.float32),
+                                           np.full((shot.height, shot.width), -1, dtype=np.int32)))
+
+
+pytestmark = pytest.mark.usefixtures("blank_camera")
 
 
 def _action(**values):

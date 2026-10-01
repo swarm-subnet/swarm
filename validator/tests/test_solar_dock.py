@@ -49,7 +49,9 @@ from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFam
 from swarm.constants import SIM_DT
 from swarm.core.maps.solar.builder import SOLAR_ASSET_DIR, build_solar_map, solar_manifest, solar_shifts
 from swarm.utils.env_factory import make_env_with_initial_obs
+from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("blank_camera")
 _M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
 _SOLAR_ASSETS = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
