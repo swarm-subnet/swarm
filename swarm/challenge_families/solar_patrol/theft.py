@@ -79,6 +79,9 @@ TURN_BACK_M = 6.5                       # how far in a man walks before he turns
 OUTSIDE_M = 14.0                        # how far out a man who leaves goes before he is out of the scene
 ENTRY_S = 36.0                          # everyone steps in before the drone's 40 s take-off is over
 MATE_GAP_S = (1.5, 4.0)
+SPACING_M = 0.9                         # two men getting in never come nearer than this, hips to hips
+SPACING_WAIT_S = 1.0                    # how much longer a follower waits each time he would come too near
+STOP_SIDE_M = 1.2                       # each follower stops this much to one side of the man in before him
 SPOT_GAP_M = 0.7                        # a worker's hips from the table's edge
 SPOT_EDGE_M = 1.5                       # no spot this near a table's end
 NEXT_SPOT_M = (7.0, 16.0)               # how far a worker moves on to the next stretch of cable
@@ -208,11 +211,10 @@ def write(seed: int, site: Site) -> Optional[Story]:
     lookout = crew >= 2 and rng.random() < LOOKOUT_SHARE
     first_table = int(rng.choice(tables))
     cat = intruders.catalogue()
-    workers = crew - int(lookout)
     for n in range(crew):
         role = "lookout" if lookout and n == crew - 1 else "worker"
         dress = intruders.outfit(rng)
-        if (n == 0 or n == workers - 1) and "bolt_cutters" not in dress["garments"]:
+        if (n == 0 or (n == crew - 1 and not lookout)) and "bolt_cutters" not in dress["garments"]:
             dress["garments"].append("bolt_cutters")
             dress["colours"].update({piece["file"]: piece["colours"][0] for piece in cat.pieces["bolt_cutters"]})
         side = 1.0 if n % 2 else -1.0
@@ -236,7 +238,8 @@ def write(seed: int, site: Site) -> Optional[Story]:
             thief.spots = _spots(rng, site, table, tables, reachable, hole + inward * INSIDE_M)
             thief.cut_s = [float(rng.uniform(*CUT_CABLE_S)) for _ in thief.spots]
             thief.carry_after_s = float(rng.uniform(*CARRY_AFTER_S))
-            if n == workers - 1 and rng.random() < HOLE_WORK_SHARE and _turn_back_clear(site, story):
+            # Only the last man in: anyone still to come through would find him in the hole.
+            if n == crew - 1 and rng.random() < HOLE_WORK_SHARE and _turn_back_clear(site, story):
                 thief.hole_work_s = float(rng.uniform(*HOLE_WORK_S))
         story.thieves.append(thief)
     _schedule(rng, story)
@@ -404,17 +407,19 @@ def _leave(actor: Actor, story: Story, site: Site, first: str, stage: str) -> It
     yield Step("gone", stage="gone")
 
 
-def _enter(actor: Actor, thief: Thief, story: Story, first: bool) -> Iterator[Step]:
-    """Get in: the first man cuts the hole or the gate's lock and steps through; the others wait crouched and follow."""
+def _enter(actor: Actor, thief: Thief, story: Story, slot: int) -> Iterator[Step]:
+    """Get in: the first man cuts the hole or the gate's lock and steps through; the others wait crouched, follow him
+    through and stop a little to one side of each other."""
     hole, inward = story.hole, story.inward
-    if first:
+    if slot == 0:
         yield Step("cut_fence_in", steer=heading_to(inward), stage="at the fence")
         yield Step("loop", cycles=story.cycles, stage="cutting the fence")
         yield Step("cut_fence_to_walk", steer=Lane(hole - inward * 2.0, hole + inward * INSIDE_M), stage="getting in")
         return
     yield Step("stand_to_crouch", stage="at the fence")
     yield Step("hold", hold=thief.wait_s, stage="at the fence")
-    route = Route([hole - inward * 2.5, hole + inward * INSIDE_M], straight_end=True)
+    stop = hole + inward * INSIDE_M + np.array(story.opening.along) * STOP_SIDE_M * (1.0 if slot % 2 else -1.0)
+    route = Route([hole - inward * 2.5, hole + inward * 1.0, stop], straight_end=True)
     if story.way == "forest" and thief.gait == "sneak":
         yield Step("crouch_to_sneak", steer=route, stage="getting in")
         yield Step("loop", cycles=None, steer=route, then="sneak_to_crouch", stage="getting in")
@@ -427,10 +432,10 @@ def _enter(actor: Actor, thief: Thief, story: Story, first: bool) -> Iterator[St
     yield Step("walk_to_stand", steer=route, stage="getting in")
 
 
-def _worker(actor: Actor, thief: Thief, story: Story, site: Site, first: bool) -> Iterator[Step]:
+def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> Iterator[Step]:
     """A worker's whole patrol: in, perhaps back to widen the hole, then cutting and pulling cable along the rows until
     he shoulders a coil and carries it out."""
-    yield from _enter(actor, thief, story, first)
+    yield from _enter(actor, thief, story, slot)
     if thief.hole_work_s > 0.0:
         hole, inward = story.hole, story.inward
         turn = hole + inward * TURN_BACK_M + np.array(story.opening.along) * 1.5
@@ -468,9 +473,9 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, first: bool) -
         yield Step("pull_cable_to_stand", stage="pulling cable")
 
 
-def _lookout(actor: Actor, thief: Thief, story: Story, site: Site) -> Iterator[Step]:
+def _lookout(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> Iterator[Step]:
     """A lookout's whole patrol: in behind the others, then watching from near the hole, standing or crouched."""
-    yield from _enter(actor, thief, story, False)
+    yield from _enter(actor, thief, story, slot)
     yield from _walk_to(actor, site, thief.lookout, "walk", "lookout")
     if thief.watch == "look_around":
         yield Step("look_around_in", steer=heading_to(-story.inward), stage="lookout")
@@ -510,16 +515,36 @@ class Theft:
 
 
 def cast(seed: int, story: Story, site: Site) -> List[Man]:
-    """The crew of a story, each man with his track ready to be written from his script."""
+    """The crew of a story, each man with his track ready to be written from his script.
+
+    A follower's wait outside is played out against the men ahead of him and lengthened until, all the way in and
+    a while after, he never comes within SPACING_M of any of them: through a one-metre hole, men go one at a time.
+    """
     lib = library()
-    men = []
+    men: List[Man] = []
     for n, thief in enumerate(story.thieves):
-        actor = Actor(lib, thief.start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
-        actor.context = {"hub": "stand"}
-        actor.script = (_lookout(actor, thief, story, site) if thief.role == "lookout"
-                        else _worker(actor, thief, story, site, first=(n == 0)))
+        while True:
+            actor = Actor(lib, thief.start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
+            actor.context = {"hub": "stand"}
+            actor.script = (_lookout(actor, thief, story, site, n) if thief.role == "lookout"
+                            else _worker(actor, thief, story, site, n))
+            if not men or thief.wait_s > ENTRY_S or _spaced(actor, [m.actor for m in men]):
+                break
+            thief.wait_s += SPACING_WAIT_S
         men.append(Man(thief, actor, np.random.default_rng([THEFT_SEED_STREAM, int(seed), n])))
     return men
+
+
+def _spaced(actor: Actor, ahead: List[Actor]) -> bool:
+    """Whether a man keeps SPACING_M from every man ahead of him from the start until well after they are all in."""
+    fps = actor.lib.fps
+    for k in range(0, int((ENTRY_S + 12.0) * fps), 3):
+        mine = actor.at(k / fps)
+        for other in ahead:
+            theirs = other.at(k / fps)
+            if math.hypot(mine.x - theirs.x, mine.y - theirs.y) < SPACING_M:
+                return False
+    return True
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
