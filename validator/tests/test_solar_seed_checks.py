@@ -97,6 +97,8 @@ def _thief(monkeypatch, shed):
         ep.outcome.threats = 1
 
     monkeypatch.setattr(theft, "reset", reset)
+    monkeypatch.setattr(theft, "advance", lambda env, ep: None)
+    monkeypatch.setattr(theft, "show", lambda env, ep, view: None)
     monkeypatch.setattr(theft, "people", lambda ep, step=None: [
         {"bodies": [ep.theft["body"]], "xy": _THIEF_XY, "stage": "cable theft", "threat": True}])
     monkeypatch.setattr(theft, "bodies", lambda ep: {ep.theft["body"]: 0})
