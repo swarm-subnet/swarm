@@ -204,3 +204,27 @@ jobs:
             --user "$(id -u):$(id -g)" \
             "$VALIDATOR_TEST_IMAGE" \
             pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider
+
+  # The validator tests never reach a real Docker daemon, so a path the host cannot see
+  # passes them. This runs the first-time model check through the image the way an
+  # operator's validator does, and a failure here also holds back the image publish.
+  validator-image-model-check:
+    needs: push-validator-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check a real model through the validator image
+        env:
+          SWARM_VALIDATOR_TAG: ci
+        run: bash .docker/image_model_check.sh
