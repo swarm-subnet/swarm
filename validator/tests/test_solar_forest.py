@@ -24,6 +24,7 @@ from __future__ import annotations
 import glob
 import os
 import tempfile
+from collections import Counter
 
 import numpy as np
 import pybullet as p
@@ -79,12 +80,14 @@ def test_near_tall_trees_get_a_collision_only_trunk(client):
     tall = np.maximum(step, np.round(table["scale"][trunk, 2] * CONFIG["cylinder_height_share"] / step) * step)
     centres = table["position"][trunk] + np.column_stack([np.zeros((len(tall), 2)), tall / 2.0])
     # A trunk body is a plain static object, whose shapes the engine does not list, so each trunk is found by a short
-    # ray that ends on the tree's axis and meets its cylinder's side on the way.
-    side = [CONFIG["cylinder_radius_m"] + 0.05, 0.0, 0.0]
+    # ray that ends on the tree's axis and must meet a cylinder of the trunk radius around that axis.
+    side = np.array([CONFIG["cylinder_radius_m"] + 0.05, 0.0, 0.0])
     hits = [hit for start in range(0, len(centres), 1024) for hit in p.rayTestBatch(
         (centres[start:start + 1024] + side).tolist(), centres[start:start + 1024].tolist(), physicsClientId=client)]
-    assert len(hits) == int(trunk.sum()) and all(hit[0] in trunks for hit in hits)
-    assert len(trunks) >= -(-len(hits) // CONFIG["forest_trunks_per_body"])
+    assert all(hit[0] in trunks for hit in hits)
+    surface = centres + side - [0.05, 0.0, 0.0]
+    assert np.abs(np.array([hit[3] for hit in hits]) - surface).max() < 0.01
+    assert max(Counter(hit[0] for hit in hits).values()) <= CONFIG["forest_trunks_per_body"]
     assert p.getVisualShapeData(forest, physicsClientId=client)
     for body in trunks[:50]:
         visual = p.getVisualShapeData(body, physicsClientId=client)[0]
