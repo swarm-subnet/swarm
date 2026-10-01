@@ -33,6 +33,7 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
 from shapely import contains_xy, prepare
@@ -42,6 +43,8 @@ from shapely.ops import unary_union
 from swarm.core.maps.solar import builder
 
 CELL_M = 0.5                            # walking grid resolution
+COMFORT_M = 1.0                         # where there is room, a walk keeps this much more from anything in its way
+CROWDED_COST = 3.0                      # how much dearer a step closer than that counts, so routes leave corners wide
 BODY_M = 0.35                           # half a body's width, the clearance a walking thief keeps to anything
 TABLE_CLEAR_M = 0.6                     # from a table's outline: a body walks this close along a row
 BUILDING_CLEAR_M = 0.8
@@ -187,7 +190,8 @@ class Site:
         free = room.difference(unary_union(taken))
         prepare(free)
         self.walkable = contains_xy(free, gx, gy)
-        self._graph = _graph(self.walkable)
+        self.room = distance_transform_edt(self.walkable) * CELL_M
+        self._graph = _graph(self.walkable, self.room)
 
     def cell(self, point: Sequence[float]) -> Tuple[int, int]:
         """The grid cell holding a ground point."""
@@ -203,11 +207,15 @@ class Site:
         """Whether a body can stand at a ground point."""
         return bool(self.walkable[self.cell(point)])
 
-    def clear_line(self, a: Sequence[float], b: Sequence[float]) -> bool:
-        """Whether every point on the straight line between two ground points is walkable."""
+    def clear_line(self, a: Sequence[float], b: Sequence[float], room: float = 0.0) -> bool:
+        """Whether every point on the straight line between two ground points is walkable, with room to spare."""
         a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
         n = max(2, int(math.ceil(np.linalg.norm(b - a) / (CELL_M / 2.0))) + 1)
-        return all(self.free(a + (b - a) * t) for t in np.linspace(0.0, 1.0, n))
+        for t in np.linspace(0.0, 1.0, n):
+            cell = self.cell(a + (b - a) * t)
+            if not self.walkable[cell] or self.room[cell] < room:
+                return False
+        return True
 
     def distances(self, source: Sequence[float]) -> Tuple[np.ndarray, np.ndarray]:
         """Walking distance from a ground point to every cell, and each cell's predecessor on the way back to it."""
@@ -249,11 +257,13 @@ class Site:
             points.insert(0, start)
         if not np.allclose(source, goal):
             points.append(goal)
-        # Pull the walk straight: from each kept point, jump to the furthest later point still in clear sight.
+        # Pull the walk straight: from each kept point, jump to the furthest later point still in clear sight. Away
+        # from its two ends a straightened leg keeps COMFORT_M to spare, so a body cutting a corner never brushes it.
         legs, k = [points[0]], 0
-        while k < len(points) - 1:
-            far = len(points) - 1
-            while far > k + 1 and not self.clear_line(points[k], points[far]):
+        last = len(points) - 1
+        while k < last:
+            far = last
+            while far > k + 1 and not self.clear_line(points[k], points[far], 0.0 if k == 0 or far == last else COMFORT_M):
                 far = (k + 1 + far) // 2 if far - k > 8 else far - 1
             legs.append(points[far])
             k = far
@@ -295,8 +305,9 @@ def _grown(corners: np.ndarray, margin: float) -> np.ndarray:
     return centre + out * (1.0 + margin / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9))
 
 
-def _graph(walkable: np.ndarray) -> csr_matrix:
-    """The walking grid as a graph: each free cell joined to its free neighbours, diagonals only past free corners."""
+def _graph(walkable: np.ndarray, room: np.ndarray) -> csr_matrix:
+    """The walking grid as a graph: each free cell joined to its free neighbours, diagonals only past free corners, a
+    step into a cell with less than COMFORT_M to spare counting CROWDED_COST times its length."""
     nx, ny = walkable.shape
     ids = np.arange(nx * ny).reshape(nx, ny)
     rows, cols, costs = [], [], []
@@ -311,10 +322,11 @@ def _graph(walkable: np.ndarray) -> csr_matrix:
             both &= walkable[i0 + di:i1 + di, j0:j1] & walkable[i0:i1, j0 + dj:j1 + dj]
         src = ids[i0:i1, j0:j1][both]
         dst = ids[i0 + di:i1 + di, j0 + dj:j1 + dj][both]
-        step = CELL_M * math.hypot(di, dj)
+        tight = np.minimum(room[i0:i1, j0:j1][both], room[i0 + di:i1 + di, j0 + dj:j1 + dj][both]) < COMFORT_M
+        step = CELL_M * math.hypot(di, dj) * np.where(tight, CROWDED_COST, 1.0)
         rows += [src, dst]
         cols += [dst, src]
-        costs += [np.full(len(src), step), np.full(len(src), step)]
+        costs += [step, step]
     return csr_matrix((np.concatenate(costs), (np.concatenate(rows), np.concatenate(cols))), shape=(nx * ny, nx * ny))
 
 

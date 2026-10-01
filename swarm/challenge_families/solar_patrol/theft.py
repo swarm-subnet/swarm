@@ -66,6 +66,7 @@ LOOKOUT_SHARE = 0.4                     # of crews of two or more, one man keeps
 HOLE_WORK_SHARE = 0.35                  # the last man in turns back to widen the hole before he goes to work
 HOLE_WORK_S = (20.0, 90.0)
 HOLE_DOCK_M = 30.0                      # no way in this near the dock: the take-off is never over the thieves
+POST_CLEAR_M = 0.6                      # chain link left between a hole and the posts either side
 HOLE_WIDTH_M = (1.0, 1.3)              # narrower, a man's swinging arms catch the chain link either side
 FLAP_OPEN_DEG = (100.0, 150.0)
 FLAP_SPRING_DEG = 20.0                  # the flap springs out this far as the slits get longer
@@ -254,10 +255,13 @@ def _way_in(rng: np.random.Generator, site: Site, way: str) -> Tuple[Opening, fl
         if gates:
             return gates[0], 0.0, 0.0
         way = "road"
-    panels = [o for o in site.openings if o.kind == "panel" and _room(site, o, 0.0)]
+    # Where the fence bends its panels are short, down to 0.65 m: a hole there would be the whole panel, between posts.
+    panels = [o for o in site.openings if o.kind == "panel" and 2.0 * o.half_width >= width + 2.0 * POST_CLEAR_M
+              and _room(site, o, 0.0)]
     wanted = [o for o in panels if (o.forest if way == "forest" else not o.forest)] or panels
     opening = wanted[int(rng.integers(len(wanted)))]
-    slack = max(0.0, opening.half_width - width / 2.0 - 0.15)
+    # Cut in the middle of the panel: a hole beside a post has the man squeezing past the post and the next panel.
+    slack = max(0.0, opening.half_width - width / 2.0 - POST_CLEAR_M)
     return opening, float(rng.uniform(-slack, slack)), width
 
 
