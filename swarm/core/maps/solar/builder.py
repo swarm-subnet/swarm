@@ -285,6 +285,18 @@ class SolarMovers:
             p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
 
 
+def _fixed_body(cli: int, collision: int, visual: int, position: Sequence[float], orientation: Sequence[float]) -> int:
+    """A piece nothing but a reset moves, as a plain static object instead of a jointed body the physics step solves.
+
+    A jointed body keeps its rotation as the quaternion of its matrix, so the piece is set to that quaternion read back
+    from its own matrix and stands to the last bit where a jointed body would.
+    """
+    body = p.createMultiBody(0, collision, visual, position, orientation, useMaximalCoordinates=True, physicsClientId=cli)
+    turned = p.getBasePositionAndOrientation(body, physicsClientId=cli)[1]
+    p.resetBasePositionAndOrientation(body, position, turned, physicsClientId=cli)
+    return body
+
+
 @lru_cache(maxsize=2)
 def _forest_table(path: str) -> Dict[str, np.ndarray]:
     """Every tree of the forest: its mesh, position, yaw, scale, zone and rank, read once per process."""
@@ -339,7 +351,7 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
         shape = p.createCollisionShapeArray([p.GEOM_CYLINDER] * len(group), radii=[CONFIG["cylinder_radius_m"]] * len(group),
                                             lengths=tall[group].tolist(), collisionFramePositions=(centres[group] - base).tolist(),
                                             physicsClientId=cli)
-        bodies.append(p.createMultiBody(0, shape, sliver, base.tolist(), physicsClientId=cli))
+        bodies.append(_fixed_body(cli, shape, sliver, base.tolist(), [0.0, 0.0, 0.0, 1.0]))
     return bodies, int(keep.sum())
 
 
@@ -598,9 +610,7 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
         """Create one placed piece in the world and file its body where the caller will look for it."""
         nonlocal triangles
         visual, collision = shapes.get(place["item"], place["scale"])
-        body = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=collision, baseVisualShapeIndex=visual,
-                                 basePosition=place["position"], baseOrientation=place["quaternion"],
-                                 physicsClientId=cli)
+        body = _fixed_body(cli, collision, visual, place["position"], place["quaternion"])
         p.changeVisualShape(body, -1, rgbaColor=[*tint, 1], specularColor=[float(item.get("specular", 0.0))] * 3,
                             physicsClientId=cli)
         bodies.setdefault(item["group"], []).append(body)
