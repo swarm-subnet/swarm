@@ -183,6 +183,9 @@ class _Shapes:
         flags = 0
         for flag in item.get("flags", []):
             flags |= getattr(p, _FLAG_BITS.get(flag, ""), 0)
+        # A panel's glass lies over its own white backsheet, which the renderer then draws without a ray behind it.
+        if item["group"] == "park" and "glass" in item.get("flags", []):
+            flags |= getattr(p, "VISUAL_SHAPE_GLASS_BACKED", 0)
         return p.createVisualShape(p.GEOM_MESH, fileName=path, meshScale=list(scale), flags=flags,
                                    specularColor=[float(item.get("specular", 0.0))] * 3, physicsClientId=self.cli)
 

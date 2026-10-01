@@ -34,7 +34,15 @@ import pytest
 from swarm.challenge_families.solar_patrol import park
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.core.daylight import SunLight, max_elevation_deg, seeded_sun
-from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, build_solar_map, solar_fence, solar_manifest, solar_shifts
+from swarm.core.maps.solar.builder import (
+    CONFIG,
+    SOLAR_ASSET_DIR,
+    _Shapes,
+    build_solar_map,
+    solar_fence,
+    solar_manifest,
+    solar_shifts,
+)
 
 ASSET_DIR = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 
@@ -306,3 +314,22 @@ def test_half_the_seeds_fly_at_night_under_the_seed_s_own_light():
     assert family.sky_from_sun == park.SKY_FROM_SUN and family.daylight == park.DAYLIGHT
     nights = sum(seeded_sun(seed, family.night_share).night for seed in range(4000))
     assert 0.47 < nights / 4000 < 0.53
+
+
+def test_only_the_panel_glass_is_drawn_over_a_backsheet(monkeypatch):
+    """The table glass of the park asks for the backsheet; the pickup's windows stay glass that looks through."""
+    asked = {}
+
+    def record(*_args, **kwargs):
+        """Keep the flags a visual shape was asked with."""
+        asked["flags"] = kwargs["flags"]
+        return 0
+
+    monkeypatch.setattr(p, "createVisualShape", record)
+    items = solar_manifest(SOLAR_ASSET_DIR)["items"]
+    shapes = _Shapes(0, SOLAR_ASSET_DIR, items)
+    backed = getattr(p, "VISUAL_SHAPE_GLASS_BACKED", 0)
+    for name, want in (("full_table_glass", backed), ("half_table_glass", backed), ("pickup_glass", 0)):
+        shapes._visual(items[name], "unused.obj", [1.0, 1.0, 1.0])
+        assert asked["flags"] & p.VISUAL_SHAPE_GLASS
+        assert asked["flags"] & backed == want, name

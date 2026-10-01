@@ -132,6 +132,24 @@ def test_the_tele_lenses_see_the_decided_angles():
     assert camera.vertical_fov_deg(15.0, width, height) == pytest.approx(9.03, abs=0.01)
 
 
+def test_a_zoom_frame_smooths_every_edge(monkeypatch):
+    """The wide frames smooth outlines only; a zoom frame, a close look, asks the camera to smooth every edge."""
+    asked = {}
+
+    def draw(env, shot, at_night, outline=True):
+        """Keep how the zoom asked for its frame."""
+        asked["outline"] = outline
+        return np.zeros((1, 1, 3), dtype=np.float32), None
+
+    monkeypatch.setattr(zoom.theft, "show", lambda *args: None)
+    monkeypatch.setattr(camera, "night", lambda env: False)
+    monkeypatch.setattr(camera, "night_camera", lambda *args, **kwargs: (0, {}))
+    monkeypatch.setattr(camera, "colour_frame", draw)
+    ep = SimpleNamespace(zoom={"night_vision": False, "night_mode": "off"}, seed=0, outcome=SimpleNamespace(zooms_used=0))
+    zoom._draw(None, ep, None, 7)
+    assert asked["outline"] is False
+
+
 def test_a_box_turns_into_the_ray_through_its_centre():
     """The centre of the frame looks straight ahead, and each edge half the lens's angle off it, top up and left left."""
     seen = _view(vertical_fov_deg=40.0)

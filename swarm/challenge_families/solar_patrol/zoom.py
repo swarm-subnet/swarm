@@ -175,7 +175,8 @@ def _draw(env: Any, ep: SolarEpisode, shot: camera.View, lens: int) -> tuple[np.
     beam = (NIGHT_VISION_BEAM_DEG, NIGHT_VISION_RANGE_M, NIGHT_VISION_INTENSITY_LUX_M2) if ep.zoom["night_vision"] else None
     at_night = camera.night_camera(env, lens, shot, _night_scene(ep, dark), ep.seed, GRAIN_OFFSET + ep.outcome.zooms_used,
                                    beam=beam)
-    frame, objects = camera.colour_frame(env, shot, at_night)
+    # A zoom frame is a close look at a few objects, at most MAX_ZOOMS a patrol, so every edge is smoothed.
+    frame, objects = camera.colour_frame(env, shot, at_night, outline=False)
     # An engine without the near infrared still gives night vision in black and white.
     if beam and not camera.LOW_LIGHT:
         frame = np.repeat((frame @ LUMA)[..., None], 3, axis=2).astype(np.float32)
