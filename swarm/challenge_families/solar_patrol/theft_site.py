@@ -118,6 +118,9 @@ class Site:
         placements, items = manifest["placements"], manifest["items"]
         shifts = builder.solar_shifts(seed, asset_dir)
         self.ring = np.asarray(builder.solar_fence(asset_dir), dtype=float)
+        xs, ys = self.ring[:, 0], self.ring[:, 1]
+        yn = np.roll(ys, -1)
+        self._edges = (xs, ys, yn, np.roll(xs, -1) - xs, np.where(yn != ys, yn - ys, 1e-12))
         self.dock = None if dock is None else np.asarray(dock, dtype=float)[:2]
         self.road = _road(asset_dir)
         trees = _forest(asset_dir)
@@ -146,6 +149,11 @@ class Site:
         self.blocks = blocks
         self.olive = olive
         self._grid()
+
+    def holds(self, x: float, y: float) -> bool:
+        """Whether one ground point lies inside the fence: inside()'s even-odd rule on edges prepared once."""
+        xs, ys, yn, dx, dy = self._edges
+        return bool(np.count_nonzero(((ys > y) != (yn > y)) & (x < dx * (y - ys) / dy + xs)) % 2)
 
     def _opening(self, kind: str, index: int, place: dict, item: dict, trees: np.ndarray) -> Opening:
         """A panel or the gate as a way in, with its inward normal and whether it faces the forest."""

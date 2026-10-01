@@ -87,6 +87,15 @@ def test_one_seed_in_five_has_a_theft():
     assert 0.19 <= share <= 0.21
 
 
+def test_the_single_point_fence_check_matches_the_batch_one():
+    """The per-step inside-the-fence check answers exactly as the batch check, on points spread over and around the
+    park and on the fence's own corners."""
+    site = _site(THEFT_SEEDS[0])
+    low, high = site.ring.min(0) - 5.0, site.ring.max(0) + 5.0
+    points = np.vstack([np.random.default_rng(0).uniform(low, high, (4000, 2)), site.ring])
+    assert [site.holds(x, y) for x, y in points] == theft_site.inside(site.ring, points).tolist()
+
+
 def test_the_same_seed_writes_the_same_theft():
     """Two draws of one seed agree on the way in, the hole and every man's dress, role, spots and reaction."""
     seed = THEFT_SEEDS[0]

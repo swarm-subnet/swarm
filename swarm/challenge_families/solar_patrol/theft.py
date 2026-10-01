@@ -56,7 +56,6 @@ from . import intruders
 from .episode import SolarEpisode
 from .theft_moves import GONE, Actor, Lane, Route, Step, heading_to, library
 from .theft_site import Opening, Site, Table, yaw_of
-from .theft_site import inside as in_ring
 
 THEFT_SEED_STREAM = 0x7E1F7             # the theft's own stream, so no other draw of the seed moves it
 THEFT_SHARE = 0.2                       # decided: one seed in five has intruders
@@ -628,8 +627,7 @@ def advance(env: Any, ep: SolarEpisode) -> None:
         frame = man.actor.at(t)
         if frame.index == GONE:
             continue
-        here = np.array([frame.x, frame.y])
-        if not man.entered and in_ring(theft.site.ring, here)[0]:
+        if not man.entered and theft.site.holds(frame.x, frame.y):
             man.entered = True
             ep.outcome.threats += 1
         if man.entered:
@@ -682,9 +680,8 @@ def people(ep: SolarEpisode, step: Optional[int] = None) -> List[Dict[str, Any]]
         frame = man.actor.at(t)
         if frame.index == GONE:
             continue
-        here = np.array([frame.x, frame.y])
         out.append({"bodies": list(man.body.bodies) if man.body else [], "xy": (frame.x, frame.y),
-                    "stage": frame.stage, "threat": bool(in_ring(theft.site.ring, here)[0])})
+                    "stage": frame.stage, "threat": theft.site.holds(frame.x, frame.y)})
     return out
 
 
@@ -705,7 +702,7 @@ def inside(ep: SolarEpisode, thief: int, step: int) -> bool:
     if ep.theft is None or not 0 <= thief < len(ep.theft.men):
         return False
     frame = ep.theft.men[thief].actor.at(min(int(step), ep.step) * SIM_DT)
-    return frame.index != GONE and bool(in_ring(ep.theft.site.ring, np.array([frame.x, frame.y]))[0])
+    return frame.index != GONE and ep.theft.site.holds(frame.x, frame.y)
 
 
 # ---------------------------------------------------------------------------------------------------- hearing
