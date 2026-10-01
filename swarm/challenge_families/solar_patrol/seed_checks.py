@@ -163,13 +163,23 @@ class Flights:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        """Let every process end once it has no more seeds, or stop them all when the preparation failed."""
+        """Let every process end once it has no more seeds, or stop them all when the preparation failed. A process
+        that ends with an error fails the preparation even after keeping its last verdict."""
+        crashed = None
         for run in self.runs:
             run.stdin.close()
             if exc[0] is not None:
                 run.kill()
-            run.wait()
+            if run.wait() != 0 and exc[0] is None and crashed is None:
+                crashed = f"a seed-check process ended with code {run.returncode}:\n{self._tail(run)}"
             self.logs[run].close()
+        if crashed is not None:
+            raise SeedCheckError(crashed)
+
+    def _tail(self, run: subprocess.Popen) -> str:
+        """The end of a process's error output."""
+        self.logs[run].seek(0)
+        return self.logs[run].read().decode("utf-8", "replace")[-2000:]
 
     def fly(self, seeds: List[int]) -> None:
         """Hand the seeds not being judged yet to free processes, then wait until a seed being judged has its
@@ -182,6 +192,8 @@ class Flights:
             if seed in flying:
                 continue
             free = next((run for run, held in self.runs.items() if held is None), None)
+            if free is not None and free.poll() is not None:
+                raise SeedCheckError(f"a seed-check process ended between seeds:\n{self._tail(free)}")
             if free is None and len(self.runs) < self.workers:
                 log = tempfile.TemporaryFile()
                 free = subprocess.Popen([sys.executable, "-m", PILOT_MODULE], stdin=subprocess.PIPE, bufsize=0,
@@ -196,9 +208,7 @@ class Flights:
         while busy and all(cached(seed) is None for seed in busy.values()):
             for run, seed in busy.items():
                 if run.poll() is not None and cached(seed) is None:
-                    self.logs[run].seek(0)
-                    raise SeedCheckError(f"seed {seed} was flown but left no verdict:\n"
-                                         + self.logs[run].read().decode("utf-8", "replace")[-2000:])
+                    raise SeedCheckError(f"seed {seed} was flown but left no verdict:\n{self._tail(run)}")
             time.sleep(POLL_S)
 
 

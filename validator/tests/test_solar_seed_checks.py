@@ -212,6 +212,25 @@ def test_a_flight_that_leaves_no_verdict_is_an_error(kept, monkeypatch):
         seed_checks.prepare([11], workers=1)
 
 
+def test_a_flight_that_crashes_after_its_last_verdict_is_an_error(kept, monkeypatch, tmp_path):
+    """A reference process that keeps its verdict and then exits with an error still stops the preparation."""
+    (tmp_path / "crash_pilot.py").write_text(_FAKE_PILOT + "sys.exit(3)\n")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "crash_pilot")
+    with pytest.raises(SeedCheckError, match="ended with code 3"):
+        seed_checks.prepare([11], workers=1)
+
+
+def test_a_flight_that_ends_between_seeds_names_no_seed(kept, monkeypatch, tmp_path):
+    """A reference process that ends while idle is reported as such, not as the next seed it was about to judge."""
+    (tmp_path / "one_seed_pilot.py").write_text(_FAKE_PILOT.replace("for line in sys.stdin:",
+                                                                    "for line in [sys.stdin.readline()]:"))
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "one_seed_pilot")
+    with pytest.raises(SeedCheckError, match="ended between seeds"):
+        seed_checks.prepare([12], workers=1)
+
+
 def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch, tmp_path):
     """Real processes: no more of them run than workers, each judges seed after seed, and every seed ends on its
     first passing candidate."""

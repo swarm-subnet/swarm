@@ -154,7 +154,11 @@ def make_env_with_initial_obs(
 
     with _hide_gui_rendering(cli, gui):
         with contextlib.redirect_stdout(io.StringIO()):
-            obs, _ = env.reset(seed=task.map_seed)
+            try:
+                obs, _ = env.reset(seed=task.map_seed)
+            except Exception:
+                env.close()
+                raise
 
     p.setPhysicsEngineParameter(
         numSolverIterations=SOLVER_ITERATIONS,
