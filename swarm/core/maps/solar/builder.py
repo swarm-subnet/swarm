@@ -230,7 +230,11 @@ class SolarMovers:
         self._pickup_rows: List[List[float]] = []
         self._bird_rows: List[List[float]] = []
         self._bird_poses = np.zeros((0, 0, 7), dtype=np.float32)
+        self._pickup_index = -1
         self._load(asset_dir, manifest, placed)
+        # The bird's poses repeat with its loop, so each row's world poses are composed once and kept.
+        self._bird_world = np.zeros((len(self._bird_rows), len(self._bird), 7))
+        self._bird_known = np.zeros(len(self._bird_rows), dtype=bool)
         # A family may look at the world before it steps it, so everything stands at step zero from the start.
         self._advance_pickup(0)
         self._advance_bird(0)
@@ -267,7 +271,12 @@ class SolarMovers:
         """Set the truck's body, glass and wheels to the row this step reads, holding the last row at the dead end."""
         if not self._pickup:
             return
-        row = self._pickup_rows[min(max(step - self._pickup_delay_steps, 0), len(self._pickup_rows) - 1)]
+        index = min(max(step - self._pickup_delay_steps, 0), len(self._pickup_rows) - 1)
+        # The truck holds its row while it waits and once it parks, and writing a pose a body holds changes nothing.
+        if index == self._pickup_index:
+            return
+        self._pickup_index = index
+        row = self._pickup_rows[index]
         for body, local_position, local_quaternion, axis in self._pickup:
             turn = local_quaternion
             if axis is not None:
@@ -282,11 +291,28 @@ class SolarMovers:
         if not self._bird:
             return
         index = (step + self._bird_offset) % len(self._bird_rows)
-        row = self._bird_rows[index]
-        for body, part in self._bird:
-            local = self._bird_poses[part, index]
-            position, orientation = p.multiplyTransforms(row[:3], row[3:7], local[:3].tolist(), local[3:7].tolist())
-            p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
+        if not self._bird_known[index]:
+            row = self._bird_rows[index]
+            for slot, (_, part) in enumerate(self._bird):
+                local = self._bird_poses[part, index]
+                position, orientation = p.multiplyTransforms(row[:3], row[3:7], local[:3].tolist(), local[3:7].tolist())
+                self._bird_world[index, slot] = [*position, *orientation]
+            self._bird_known[index] = True
+        for (body, _), pose in zip(self._bird, self._bird_world[index].tolist()):
+            p.resetBasePositionAndOrientation(body, pose[:3], pose[3:], physicsClientId=self.cli)
+
+
+def _fixed_body(cli: int, collision: int, visual: int, position: Sequence[float], orientation: Sequence[float]) -> int:
+    """A piece nothing but a reset moves, as a plain static object instead of a jointed body the physics step solves.
+
+    It stays awake, so every step re-measures its bounds as it did for the jointed body and contacts are found in the
+    same order. A jointed body keeps its rotation as the quaternion of its matrix, so the piece is set to that
+    quaternion read back from its own matrix and stands to the last bit where a jointed body would.
+    """
+    body = p.createMultiBody(0, collision, visual, position, orientation, useMaximalCoordinates=True, physicsClientId=cli)
+    turned = p.getBasePositionAndOrientation(body, physicsClientId=cli)[1]
+    p.resetBasePositionAndOrientation(body, position, turned, physicsClientId=cli)
+    return body
 
 
 @lru_cache(maxsize=2)
@@ -361,7 +387,7 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
         shape = p.createCollisionShapeArray([p.GEOM_CYLINDER] * len(group), radii=[CONFIG["cylinder_radius_m"]] * len(group),
                                             lengths=tall[group].tolist(), collisionFramePositions=(centres[group] - base).tolist(),
                                             physicsClientId=cli)
-        bodies.append(p.createMultiBody(0, shape, sliver, base.tolist(), physicsClientId=cli))
+        bodies.append(_fixed_body(cli, shape, sliver, base.tolist(), [0.0, 0.0, 0.0, 1.0]))
     return bodies, int(keep.sum())
 
 
@@ -620,9 +646,7 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
         """Create one placed piece in the world and file its body where the caller will look for it."""
         nonlocal triangles
         visual, collision = shapes.get(place["item"], place["scale"])
-        body = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=collision, baseVisualShapeIndex=visual,
-                                 basePosition=place["position"], baseOrientation=place["quaternion"],
-                                 physicsClientId=cli)
+        body = _fixed_body(cli, collision, visual, place["position"], place["quaternion"])
         p.changeVisualShape(body, -1, rgbaColor=[*tint, 1], specularColor=[float(item.get("specular", 0.0))] * 3,
                             physicsClientId=cli)
         bodies.setdefault(item["group"], []).append(body)
