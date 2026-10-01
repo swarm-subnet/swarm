@@ -151,12 +151,13 @@ def test_a_walk_stops_on_its_mark():
         assert np.linalg.norm(actor.pos - mark) < 0.1
 
 
-def _hover(monkeypatch, seed: int, reaction: str, docked: bool = False):
+def _hover(monkeypatch, seed: int, reaction: str, docked: bool = False, dock_z: float = 0.0):
     """Over flat ground, keep the drone 200 m up until 120 s, then fly it 20 m straight over the first man; return his
-    frames and the episode."""
+    frames and the episode. dock_z stands the dock that high, as it is up the park's slope."""
     monkeypatch.setattr(theft, "_ground", lambda env, ep, x, y: 0.0)
     story, site, men = _crew(seed, reaction)
     ep = _episode(seed, story, site, men)
+    ep.dock_position = np.array([0.0, 0.0, dock_z])
     ep.phase = "docked" if docked else "flying"
     first = men[0].actor
     for step in range(int(390 / SIM_DT)):
@@ -196,6 +197,12 @@ def test_each_reaction_plays_out_once_the_drone_is_near(monkeypatch, reaction):
                         and not theft_site.inside(site.ring, out[k])[0])
         assert np.linalg.norm(out[crossing] - story.hole) < 1.5
     assert ep.outcome.threats == len(ep.theft.men)
+
+
+def test_a_drone_below_the_dock_over_low_ground_is_heard(monkeypatch):
+    """The park rises 39 m: a drone 20 m over a man on low ground can fly below its dock, and he still hears it."""
+    frames, _ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", dock_z=39.0)
+    assert any(f.stage.startswith("reaction") for f in frames)
 
 
 def test_nobody_hears_a_drone_still_in_its_dock(monkeypatch):

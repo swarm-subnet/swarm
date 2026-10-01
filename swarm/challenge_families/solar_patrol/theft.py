@@ -101,7 +101,7 @@ QUIET_M = 10.0                          # the drone counts as gone once it is th
 QUIET_S = (8.0, 30.0)                   # a hidden man waits this long after the drone has gone before he runs
 REFREEZE_SHARE = 0.7                    # a frozen man who still hears the drone freezes again
 REACTIONS = {"work_on": 0.2, "freeze": 0.4, "hide": 0.25, "run": 0.15}
-AIRBORNE_M = 3.0                        # the drone is heard once it is this high above the dock
+GROUNDED = ("docked", "landed")        # flight phases in which the drone sits in its dock and cannot be heard
 VIEW_MARGIN_M = 1.6                     # a body this near the edge of a picture is posed for it
 AWAY_Z = -1000.0                        # where a body out of the scene is kept
 
@@ -595,7 +595,9 @@ def advance(env: Any, ep: SolarEpisode) -> None:
         return
     t = (ep.step + 1) * SIM_DT
     drone = np.asarray(env.pos[0], dtype=float)
-    airborne = ep.phase != "docked" and drone[2] - float(ep.dock_position[2]) > AIRBORNE_M
+    # The park rises 39 m: over its low end a drone flying out of the dock is below the dock's own height, so the
+    # dock's phase says whether it flies, not its height.
+    airborne = ep.phase not in GROUNDED
     for man in theft.men:
         frame = man.actor.at(t)
         if frame.index == GONE:
