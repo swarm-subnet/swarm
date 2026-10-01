@@ -66,7 +66,7 @@ LOOKOUT_SHARE = 0.4                     # of crews of two or more, one man keeps
 HOLE_WORK_SHARE = 0.35                  # the last man in turns back to widen the hole before he goes to work
 HOLE_WORK_S = (20.0, 90.0)
 HOLE_DOCK_M = 30.0                      # no way in this near the dock: the take-off is never over the thieves
-HOLE_WIDTH_M = (0.9, 1.2)
+HOLE_WIDTH_M = (1.0, 1.3)              # narrower, a man's swinging arms catch the chain link either side
 FLAP_OPEN_DEG = (100.0, 150.0)
 FLAP_SPRING_DEG = 20.0                  # the flap springs out this far as the slits get longer
 FLAP_PUSH_S = 0.7
@@ -371,11 +371,14 @@ def _schedule(rng: np.random.Generator, story: Story) -> None:
 
 # ---------------------------------------------------------------------------------------------------- the scripts
 
-def _walk_to(actor: Actor, site: Site, goal: Sequence[float], gait: str, stage: str) -> Iterator[Step]:
-    """Walk from where the body is to a goal on the park's free ground, and stop there standing."""
-    legs = site.route(actor.pos, goal)
-    route = Route(legs[1:] if legs else [np.asarray(goal, dtype=float)])
-    yield from _walk_route(actor, route, gait, stage)
+def _walk_to(actor: Actor, site: Site, goal: Sequence[float], gait: str, stage: str,
+             via: Optional[np.ndarray] = None) -> Iterator[Step]:
+    """Walk from where the body is to a goal on the park's free ground, by way of a point first if given, and stop
+    there standing."""
+    start = actor.pos if via is None else via
+    legs = site.route(start, goal)
+    points = ([] if via is None else [via]) + (list(legs[1:]) if legs else [np.asarray(goal, dtype=float)])
+    yield from _walk_route(actor, Route(points), gait, stage)
 
 
 def _walk_route(actor: Actor, route: Any, gait: str, stage: str) -> Iterator[Step]:
@@ -457,7 +460,9 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> 
         # A sneak is for getting through the hole; inside he walks, warily if that is his way, and he moves on
         # between stretches at a plain walk unless he is the wary kind.
         gait = "walk" if thief.gait == "walk" or (k and thief.gait == "sneak") else "walk_wary"
-        yield from _walk_to(actor, site, spot.xy, gait, "arrival" if k == 0 else "moving on")
+        # The first man in is still in the hole: he walks straight on into the park before he turns for his table.
+        clear = story.hole + story.inward * INSIDE_M if k == 0 and slot == 0 and thief.hole_work_s == 0.0 else None
+        yield from _walk_to(actor, site, spot.xy, gait, "arrival" if k == 0 else "moving on", via=clear)
         cycle = actor.lib.blocks["cut_cable.0"]["frames"] / actor.lib.fps
         yield Step("cut_cable_in", steer=spot.face, stage="cutting cable")
         yield Step("loop", cycles=max(1, int(round(thief.cut_s[n] / cycle))), stage="cutting cable")
