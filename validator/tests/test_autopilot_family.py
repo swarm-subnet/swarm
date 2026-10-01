@@ -25,16 +25,15 @@ import pybullet as p
 
 from swarm.constants import SEARCH_RADIUS_MAX, SEARCH_RADIUS_MIN, SIM_DT
 from swarm.protocol import MapTask
-from swarm.utils.env_factory import make_env
+from swarm.utils.env_factory import make_env, make_env_with_initial_obs
 from swarm.validator.task_gen import task_for_seed_and_type
 
 
 def _autopilot_center_and_goal(seed):
     """The search centre, the true goal, the last three state numbers and the drone position after one reset on the seed."""
     task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=2, family_id="cf_autopilot")
-    env = make_env(task, gui=False)
+    env, obs = make_env_with_initial_obs(task, gui=False)
     try:
-        obs, _ = env.reset(seed=task.map_seed)
         sv = env._getDroneStateVector(0)
         return (
             np.array(env._search_area_center, dtype=float),
@@ -74,7 +73,6 @@ def test_autopilot_camera_fov_does_not_reveal_the_clue_offset():
         task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=2, family_id="cf_autopilot")
         env = make_env(task, gui=False)
         try:
-            env.reset(seed=task.map_seed)
             clue_dy = float(env._search_area_center[1] - env.GOAL_POS[1])
             from_fov = float(task.search_radius) * (float(env._fov) - 90.0) / 2.0
             assert abs(clue_dy - from_fov) > 1e-6, (seed, clue_dy, from_fov)
@@ -133,13 +131,11 @@ def _run_policy_episode(
     task: MapTask,
     *,
     controller,
-    seed: int,
     max_steps: int | None = None,
 ) -> tuple[dict[str, object], bool, bool]:
     """Fly the controller until the episode ends or the horizon runs out, and return the last info with the terminated and truncated flags."""
-    env = make_env(task, gui=False)
+    env, obs = make_env_with_initial_obs(task, gui=False)
     try:
-        obs, _ = env.reset(seed=seed)
         terminated = False
         truncated = False
         info: dict[str, object] = {}
@@ -164,7 +160,6 @@ def test_autopilot_runtime_marks_success_on_stable_landing():
     task = _manual_open_world_task()
     env = make_env(task, gui=False)
     try:
-        env.reset(seed=task.map_seed)
         # park the drone upright and motionless on the goal pad
         p.resetBasePositionAndOrientation(
             env.DRONE_IDS[0],
@@ -207,9 +202,8 @@ def test_autopilot_generated_scenario_builds_and_steps():
         challenge_type=4,
         family_id="cf_autopilot",
     )
-    env = make_env(task, gui=False)
+    env, obs = make_env_with_initial_obs(task, gui=False)
     try:
-        obs, info = env.reset(seed=task.map_seed)
         assert obs["depth"].size > 0
         assert np.isfinite(obs["depth"]).all()
         assert obs["state"].shape[-1] >= 16
@@ -234,13 +228,11 @@ def test_goal_directed_baseline_beats_random_policy_on_easy_autopilot_seed():
     baseline_info, baseline_terminated, baseline_truncated = _run_policy_episode(
         task,
         controller=_goal_directed_policy,
-        seed=task.map_seed,
     )
     rng = np.random.RandomState(123)
     random_info, random_terminated, random_truncated = _run_policy_episode(
         task,
         controller=lambda obs: _random_policy(rng, obs),
-        seed=task.map_seed,
     )
 
     assert baseline_terminated or baseline_truncated
