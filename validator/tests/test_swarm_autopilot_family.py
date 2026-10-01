@@ -26,7 +26,7 @@ import pytest
 
 from swarm.challenge_families import runtime_family_for_task
 from swarm.constants import SEARCH_RADIUS_MIN, SWARM_MAX_DRONES, SWARM_MIN_DRONES, SWARM_SEARCH_RADIUS
-from swarm.utils.env_factory import make_env
+from swarm.utils.env_factory import make_env, make_env_with_initial_obs
 from swarm.validator import task_gen
 
 
@@ -76,9 +76,8 @@ def _rollout(seed, steps=40):
         sim_dt=1 / 30, seed=seed, challenge_type=2, family_id="cf_swarm_autopilot",
     )
     family = runtime_family_for_task(task)
-    env = make_env(task, gui=False)
+    env, obs = make_env_with_initial_obs(task, gui=False)
     try:
-        obs, info = env.reset(seed=task.map_seed)
         n = env.NUM_DRONES
         assert SWARM_MIN_DRONES <= n <= SWARM_MAX_DRONES
         assert obs["depth"].shape[0] == n
@@ -184,7 +183,6 @@ def test_swarm_uses_shared_search_clue_and_platform_pool():
     )
     env = make_env(task, gui=False)
     try:
-        env.reset(seed=task.map_seed)
         n = env.NUM_DRONES
         assert hasattr(env, "_search_area_center")
         assert len(env._swarm_platform_groups) == n     # N logical platforms in the shared pool
@@ -204,8 +202,7 @@ def test_swarm_camera_fov_does_not_reveal_the_clue_offset():
         )
         env = make_env(task, gui=False)
         try:
-            env.reset(seed=task.map_seed)
-            radius = random.Random((seed + 888888) & 0xFFFFFFFF).uniform(SEARCH_RADIUS_MIN, SWARM_SEARCH_RADIUS)
+            radius =random.Random((seed + 888888) & 0xFFFFFFFF).uniform(SEARCH_RADIUS_MIN, SWARM_SEARCH_RADIUS)
             centroid = np.asarray(env.GOAL_POSES, dtype=float).mean(axis=0)
             clue_dy = float(env._search_area_center[1] - centroid[1])
             from_fov = radius * (float(env._fov) - 90.0) / 2.0
