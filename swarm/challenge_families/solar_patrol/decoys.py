@@ -214,7 +214,7 @@ def place(env: Any, ep: SolarEpisode, step: int, shots: Optional[Sequence[camera
             per_metre = max(_pixels(shot, np.array([x, y, float(z)]), 1.0) for shot in shots)
             if float(np.abs(vertices - dog.shown).max()) * per_metre < STILL_PIXELS:
                 continue
-        p.resetMeshData(dog.body, vertices.tolist(), physicsClientId=env.CLIENT)
+        p.resetMeshData(dog.body, vertices, physicsClientId=env.CLIENT)
         dog.shown = vertices
 
 
