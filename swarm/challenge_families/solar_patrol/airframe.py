@@ -32,6 +32,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+import types
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -255,6 +256,7 @@ def urdf(env: Any) -> Optional[str]:
 def reset(env: Any, ep: SolarEpisode) -> None:
     """Fit the M4TD's controller, put the moving parts on the aircraft docked, and set cold temperatures."""
     env.ctrl = [M4TDControl(env) for _ in range(env.NUM_DRONES)]
+    env._drag = types.MethodType(_still_air_drag, env)
     cli = env.CLIENT
     uid = int(p.loadURDF(os.path.join(swarm_worlds.robots_dir(), MOVING_URDF), [0.0, 0.0, -100.0],
                          flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli))
@@ -290,6 +292,17 @@ def update(env: Any, ep: SolarEpisode) -> None:
     pos, orn = p.getBasePositionAndOrientation(int(env.DRONE_IDS[0]), physicsClientId=cli)
     p.resetBasePositionAndOrientation(uid, pos, orn, physicsClientId=cli)
     _warm(env, ep, spinning, dt)
+
+
+def _still_air_drag(env: Any, rpm: np.ndarray, nth_drone: int) -> None:
+    """The gym's rotor drag for a seed without wind: its formula, its link and its force, with the turn into the
+    body frame summed in a fixed order instead of the BLAS product whose rounding follows the CPU."""
+    base_rot = np.array(p.getMatrixFromQuaternion(env.quat[nth_drone, :])).reshape(3, 3)
+    drag_factors = -1 * env.DRAG_COEFF * np.sum(np.array(2 * np.pi * rpm / 60))
+    drag = rotate(base_rot.T, drag_factors * np.array(env.vel[nth_drone, :]))
+    # Link 4 is the URDF's center_of_mass_link, where the gym's drag has always pushed.
+    p.applyExternalForce(env.DRONE_IDS[nth_drone], 4, forceObj=drag, posObj=[0, 0, 0], flags=p.LINK_FRAME,
+                         physicsClientId=env.CLIENT)
 
 
 def camera_pose(env: Any, tilt_deg: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

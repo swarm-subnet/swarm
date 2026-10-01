@@ -28,6 +28,7 @@ import sys
 import types
 
 import numpy as np
+import pybullet as p
 
 from swarm.challenge_families.solar_patrol import airframe, camera, decoys, dock, drone_state, laser, theft, theft_moves, theft_site, zoom
 from swarm.challenge_families.solar_patrol.contract import Box
@@ -47,33 +48,40 @@ def test_the_sums_run_left_to_right_in_plain_floats():
 
 def _geometry_sha() -> str:
     """Hash of the patrol's geometry over random inputs: camera pose, laser and zoom rays, thief and dog visibility,
-    walking tracks, site-map footprints, outlines and tables, the dock's slope and the park's gaps."""
+    walking tracks, site-map footprints, outlines and tables, the dock's slope, the park's gaps and calm seeds' drag."""
     rng = np.random.default_rng(5)
     digest = hashlib.sha256()
-    for _ in range(200):
-        q = rng.normal(size=4)
-        q /= np.sqrt((q * q).sum())
-        env = types.SimpleNamespace(quat=[q], pos=[rng.normal(0.0, 50.0, 3)])
-        eye, forward, up = airframe.camera_pose(env, float(rng.uniform(-90.0, 30.0)))
-        beam = laser._Beam(None, eye, forward)
-        view = camera.View(feed="colour", eye=tuple(eye.tolist()), forward=tuple(forward.tolist()), up=tuple(up.tolist()),
-                           width=640, height=480, vertical_fov_deg=50.0, sees=True, step=0)
-        point = eye + rng.normal(0.0, 20.0, 3)
-        route = theft_moves.Route(rng.normal(0.0, 10.0, (5, 2)))
-        lane = theft_moves.Lane(rng.normal(0.0, 10.0, 2), rng.normal(0.0, 10.0, 2))
-        pos = rng.normal(0.0, 10.0, 2)
-        place = {"quaternion": q.tolist(), "scale": [1.0, 1.0, 1.0], "position": rng.normal(0.0, 50.0, 3).tolist()}
-        outline = theft_site._outline({"bounds_min": [-1.0, -0.5, 0.0], "bounds_max": [1.5, 0.5, 2.0]}, place)
-        piece = {"low": np.array([-1.0, -0.5]), "high": np.array([1.5, 0.5])}
-        corners = [builder._corners(piece, rng.normal(0.0, 3.0, 2), float(rng.uniform(-3.0, 3.0)), 1.0) for _ in range(2)]
-        ground = np.column_stack([rng.uniform(-2.0, 2.0, (60, 2)), np.zeros(60)])
-        ground[:, 2] = rows_dot(ground[:, :2], [0.05, -0.02]) + rng.normal(0.0, 0.01, 60)
-        values = [*eye, *forward, *up, *beam.up, *beam.right, *zoom.box_ray(view, Box(0.3, 0.7, 0.1, 0.1)),
-                  theft._in_view(view, point), decoys._pixels(view, point, 1.0), route.heading(pos), route.left(pos),
-                  lane.heading(pos), lane.left(pos), *drone_state._footprint(np.array([-1.0, -0.5, 0.0]),
-                                                                             np.array([1.5, 0.5, 2.0]), place),
-                  *outline.ravel(), builder._gap(*corners), dock._slope_deg(ground, np.zeros(2))]
-        digest.update(np.asarray(values, dtype=np.float64).tobytes() + repr(theft_site._table(outline, 0)).encode())
+    pushed = []
+    real_push, p.applyExternalForce = p.applyExternalForce, lambda *args, forceObj, **kwargs: pushed.append(forceObj)
+    try:
+        for _ in range(200):
+            q = rng.normal(size=4)
+            q /= np.sqrt((q * q).sum())
+            env = types.SimpleNamespace(quat=np.array([q]), pos=[rng.normal(0.0, 50.0, 3)], vel=rng.normal(0.0, 8.0, (1, 3)),
+                                        DRAG_COEFF=np.array([0.00015, 0.00015, 0.00035]), DRONE_IDS=[0], CLIENT=0)
+            airframe._still_air_drag(env, rng.uniform(900.0, 6300.0, 4), 0)
+            eye, forward, up = airframe.camera_pose(env, float(rng.uniform(-90.0, 30.0)))
+            beam = laser._Beam(None, eye, forward)
+            view = camera.View(feed="colour", eye=tuple(eye.tolist()), forward=tuple(forward.tolist()), up=tuple(up.tolist()),
+                               width=640, height=480, vertical_fov_deg=50.0, sees=True, step=0)
+            point = eye + rng.normal(0.0, 20.0, 3)
+            route = theft_moves.Route(rng.normal(0.0, 10.0, (5, 2)))
+            lane = theft_moves.Lane(rng.normal(0.0, 10.0, 2), rng.normal(0.0, 10.0, 2))
+            pos = rng.normal(0.0, 10.0, 2)
+            place = {"quaternion": q.tolist(), "scale": [1.0, 1.0, 1.0], "position": rng.normal(0.0, 50.0, 3).tolist()}
+            outline = theft_site._outline({"bounds_min": [-1.0, -0.5, 0.0], "bounds_max": [1.5, 0.5, 2.0]}, place)
+            piece = {"low": np.array([-1.0, -0.5]), "high": np.array([1.5, 0.5])}
+            corners = [builder._corners(piece, rng.normal(0.0, 3.0, 2), float(rng.uniform(-3.0, 3.0)), 1.0) for _ in range(2)]
+            ground = np.column_stack([rng.uniform(-2.0, 2.0, (60, 2)), np.zeros(60)])
+            ground[:, 2] = rows_dot(ground[:, :2], [0.05, -0.02]) + rng.normal(0.0, 0.01, 60)
+            values = [*eye, *forward, *up, *beam.up, *beam.right, *zoom.box_ray(view, Box(0.3, 0.7, 0.1, 0.1)),
+                      theft._in_view(view, point), decoys._pixels(view, point, 1.0), route.heading(pos), route.left(pos),
+                      lane.heading(pos), lane.left(pos), *drone_state._footprint(np.array([-1.0, -0.5, 0.0]),
+                                                                                 np.array([1.5, 0.5, 2.0]), place),
+                      *outline.ravel(), builder._gap(*corners), dock._slope_deg(ground, np.zeros(2)), *pushed.pop()]
+            digest.update(np.asarray(values, dtype=np.float64).tobytes() + repr(theft_site._table(outline, 0)).encode())
+    finally:
+        p.applyExternalForce = real_push
     return digest.hexdigest()
 
 

@@ -48,6 +48,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     STATE_SLICES,
 )
 from swarm.constants import SIM_DT
+from swarm.core.moving_drone import MovingDroneAviary
 from swarm.utils.env_factory import make_env_with_initial_obs
 from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
@@ -466,3 +467,22 @@ def test_the_rotation_steps_match_scipy_bit_for_bit():
         assert np.array(airframe._matrix_xyz(*euler.tolist())).tobytes() == matrix.tobytes()
     lock = airframe.Rotation.from_euler("XYZ", [0.3, math.pi / 2, -1.0]).as_matrix()
     assert airframe._euler_xyz(*lock.transpose().tolist()) is None
+
+
+def test_still_air_drag_is_the_gyms_with_a_fixed_order_turn(monkeypatch):
+    """A calm seed's rotor drag is the gym's own: the same link, frame and force, but for the last bits of the BLAS
+    product it no longer uses."""
+    pushed = []
+    monkeypatch.setattr(p, "applyExternalForce", lambda uid, link, forceObj, posObj, flags, physicsClientId:
+                        pushed.append((link, flags, np.asarray(forceObj, dtype=float))))
+    rng = np.random.default_rng(19)
+    for _ in range(500):
+        quat = rng.normal(size=4)
+        env = types.SimpleNamespace(quat=np.array([quat / np.sqrt((quat * quat).sum())]), vel=rng.normal(0.0, 8.0, (1, 3)),
+                                    DRAG_COEFF=_CONTROL_ENV.DRAG_COEFF, DRONE_IDS=[0], CLIENT=0)
+        rpm = rng.uniform(airframe.IDLE_RPM, airframe.MAX_RPM, 4)
+        airframe._still_air_drag(env, rpm, 0)
+        MovingDroneAviary._drag(env, rpm, 0)
+    for (link, flags, force), (gym_link, gym_flags, gym_force) in zip(pushed[::2], pushed[1::2]):
+        assert link == gym_link == 4 and flags == gym_flags == p.LINK_FRAME
+        np.testing.assert_allclose(force, gym_force, rtol=1e-12, atol=1e-15)
