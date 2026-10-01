@@ -82,6 +82,8 @@ ENTRY_S = 36.0                          # everyone steps in before the drone's 4
 MATE_GAP_S = (1.5, 4.0)
 SPACING_M = 0.9                         # two men getting in never come nearer than this, hips to hips
 SPACING_WAIT_S = 1.0                    # how much longer a follower waits each time he would come too near
+PLAN_TRIES = 16                         # tries at settling a crew apart before the plan is taken as it is
+PATROL_S = 390.0                        # the patrol's length, over which the crew is planned apart
 STOP_SIDE_M = 1.0                       # each follower stops this much further to one side than the man before him
 SPOT_GAP_M = 0.7                        # a worker's hips from the table's edge
 SPOT_EDGE_M = 1.5                       # no spot this near a table's end
@@ -526,36 +528,54 @@ class Theft:
 
 
 def cast(seed: int, story: Story, site: Site) -> List[Man]:
-    """The crew of a story, each man with his track ready to be written from his script.
-
-    A follower's wait outside is played out against the men ahead of him and lengthened until, all the way in and
-    a while after, he never comes within SPACING_M of any of them: through a one-metre hole, men go one at a time.
-    """
-    lib = library()
-    men: List[Man] = []
-    for n, thief in enumerate(story.thieves):
-        while True:
-            actor = Actor(lib, thief.start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
-            actor.context = {"hub": "stand"}
-            actor.script = (_lookout(actor, thief, story, site, n) if thief.role == "lookout"
-                            else _worker(actor, thief, story, site, n))
-            if not men or thief.wait_s > ENTRY_S or _spaced(actor, [m.actor for m in men]):
-                break
-            thief.wait_s += SPACING_WAIT_S
-        men.append(Man(thief, actor, np.random.default_rng([THEFT_SEED_STREAM, int(seed), n])))
-    return men
+    """The crew of a story, each man with his track ready to be written from his script, planned so no two of them
+    ever walk into each other."""
+    _plan_apart(story, site)
+    return [Man(thief, _actor(story, site, n), np.random.default_rng([THEFT_SEED_STREAM, int(seed), n]))
+            for n, thief in enumerate(story.thieves)]
 
 
-def _spaced(actor: Actor, ahead: List[Actor]) -> bool:
-    """Whether a man keeps SPACING_M from every man ahead of him from the start until well after they are all in."""
-    fps = actor.lib.fps
-    for k in range(0, int((ENTRY_S + 12.0) * fps), 3):
-        mine = actor.at(k / fps)
-        for other in ahead:
-            theirs = other.at(k / fps)
-            if math.hypot(mine.x - theirs.x, mine.y - theirs.y) < SPACING_M:
-                return False
-    return True
+def _actor(story: Story, site: Site, n: int) -> Actor:
+    """A fresh track for man n of a story, nothing written yet."""
+    thief = story.thieves[n]
+    actor = Actor(library(), thief.start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
+    actor.context = {"hub": "stand"}
+    actor.script = (_lookout(actor, thief, story, site, n) if thief.role == "lookout"
+                    else _worker(actor, thief, story, site, n))
+    return actor
+
+
+def _plan_apart(story: Story, site: Site) -> None:
+    """Settle the crew's waits and the order of their stretches on dry copies, played over the whole patrol with no
+    drone, until no two men come within SPACING_M of each other: a follower who would reach the hole on another man's
+    heels waits longer outside, and a worker who would walk into another takes his stretches in another order. The
+    real men are built afterwards and never played ahead, so they hear the drone the moment it comes."""
+    for _ in range(PLAN_TRIES):
+        clash = _first_clash([_actor(story, site, n) for n in range(len(story.thieves))])
+        if clash is None:
+            return
+        i, j, t = clash
+        movable = [k for k in (j, i) if story.thieves[k].role == "worker" and len(story.thieves[k].spots) > 1]
+        if t < ENTRY_S + 12.0 or not movable:
+            story.thieves[j].wait_s += SPACING_WAIT_S
+        else:
+            thief = story.thieves[movable[0]]
+            thief.spots = thief.spots[1:] + thief.spots[:1]
+            thief.cut_s = thief.cut_s[1:] + thief.cut_s[:1]
+
+
+def _first_clash(actors: List[Actor]) -> Optional[Tuple[int, int, float]]:
+    """The first moment two men stand nearer than SPACING_M over a whole patrol, as (earlier man, later man, time)."""
+    fps = actors[0].lib.fps
+    for k in range(0, int(PATROL_S * fps), 3):
+        frames = [a.at(k / fps) for a in actors]
+        for i in range(len(frames)):
+            for j in range(i + 1, len(frames)):
+                if frames[i].index == GONE or frames[j].index == GONE:
+                    continue
+                if math.hypot(frames[i].x - frames[j].x, frames[i].y - frames[j].y) < SPACING_M:
+                    return i, j, k / fps
+    return None
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:

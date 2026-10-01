@@ -102,7 +102,8 @@ def test_the_same_seed_writes_the_same_theft():
 @pytest.mark.timeout(1200)
 def test_every_crew_is_in_before_the_take_off_is_over_and_never_inside_a_table():
     """Played for a whole patrol with no drone, every man steps inside the fence by ENTRY_S, never stands inside a
-    table, nobody leaves before his carry time, men getting in keep apart, and the crews come in all three ways."""
+    table, nobody leaves before his carry time, no two men ever walk into each other, and the crews come in all three
+    ways."""
     ways = set()
     for seed in THEFT_SEEDS:
         story, site, men = _crew(seed)
@@ -123,10 +124,12 @@ def test_every_crew_is_in_before_the_take_off_is_over_and_never_inside_a_table()
             track = np.array(track)
             assert not contains_xy(tables, track[:, 0], track[:, 1]).any(), seed
             assert entered is not None and entered <= theft.ENTRY_S, (seed, entered)
-        for k in range(0, int((theft.ENTRY_S + 12.0) / SIM_DT), 5):
+        for k in range(0, int(390 / SIM_DT), 5):
             spots = [man.actor.at(k * SIM_DT) for man in men]
             for i in range(len(spots)):
                 for j in range(i + 1, len(spots)):
+                    if theft_moves.GONE in (spots[i].index, spots[j].index):
+                        continue
                     gap = math.hypot(spots[i].x - spots[j].x, spots[i].y - spots[j].y)
                     assert gap >= theft.SPACING_M, (seed, k * SIM_DT, i, j, gap)
     assert ways == {"road", "gate", "forest"}
