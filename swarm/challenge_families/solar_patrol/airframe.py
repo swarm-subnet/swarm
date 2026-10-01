@@ -29,6 +29,7 @@ passive model.
 
 from __future__ import annotations
 
+import ctypes
 import math
 import os
 from typing import Any, Optional, Tuple
@@ -77,6 +78,8 @@ DOCKED_FOLD_RAD = math.radians(45.0)                 # blades set 90 degrees apa
 HEAT = {"motor": (25.0, 60.0, 240.0, 0.85), "battery": (10.0, 400.0, 900.0, 0.92), "gimbal": (8.0, 120.0, 300.0, 0.92)}
 BATTERY_BASE_C = 25.0                  # the dock conditions the battery before take-off
 THERMAL = hasattr(p, "ER_SWARM_THERMAL")
+# The C library's hypot, the one scipy's rotations call: Python's math.hypot is its own algorithm and can round apart.
+_HYPOT = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double, ctypes.c_double)(("hypot", ctypes.CDLL(None)))
 
 
 class M4TDControl(DSLPIDControl):
@@ -113,32 +116,125 @@ class M4TDControl(DSLPIDControl):
                                target_vel, cur_rotation):
         """DSL's position loop holding a commanded speed: drag cancelled ahead of time, a small fading integral for
         wind, and the thrust vector held inside the tilt limit."""
+        dt = control_timestep
         pos_e = target_pos - cur_pos
-        vel_e = target_vel - cur_vel
-        self.integral_pos_e = np.clip(self.integral_pos_e + pos_e * control_timestep, -2.0, 2.0)
-        self.integral_pos_e[2] = np.clip(self.integral_pos_e[2], -0.15, 0.15)
-        near = np.abs(vel_e) < INTEGRAL_BAND_MPS
-        leak = math.exp(-control_timestep / INTEGRAL_LEAK_S)
-        self.integral_vel_e = np.clip(self.integral_vel_e * leak + np.where(near, vel_e, 0.0) * control_timestep,
-                                      -INTEGRAL_LIMIT, INTEGRAL_LIMIT)
-        target_thrust = (self.P_COEFF_FOR * pos_e + self.I_COEFF_FOR * self.integral_pos_e
-                         + self.D_COEFF_FOR * vel_e + VEL_INTEGRAL * self.integral_vel_e
-                         + self.drag_feedforward * target_vel + np.array([0.0, 0.0, self.GRAVITY]))
-        target_thrust[2] = max(float(target_thrust[2]), 0.1 * self.GRAVITY)
-        side = math.hypot(target_thrust[0], target_thrust[1])
-        cap = target_thrust[2] * math.tan(MAX_TILT_RAD)
+        leak = math.exp(-dt / INTEGRAL_LEAK_S)
+        gains = zip(pos_e.tolist(), np.asarray(target_vel, dtype=float).tolist(), np.asarray(cur_vel).tolist(),
+                    self.integral_pos_e.tolist(), self.integral_vel_e.tolist(), self.P_COEFF_FOR.tolist(),
+                    self.I_COEFF_FOR.tolist(), self.D_COEFF_FOR.tolist(), VEL_INTEGRAL.tolist(),
+                    self.drag_feedforward.tolist(), (0.0, 0.0, self.GRAVITY), (2.0, 2.0, 0.15))
+        # Plain float operations in numpy's order, so every result keeps the bits the array version gave.
+        integral_pos, integral_vel, target = [], [], []
+        for pe, tv, cv, ip, iv, kp, ki, kd, kv, ff, g, ip_cap in gains:
+            ve = tv - cv
+            ip = min(max(min(max(ip + pe * dt, -2.0), 2.0), -ip_cap), ip_cap)
+            iv = min(max(iv * leak + (ve if abs(ve) < INTEGRAL_BAND_MPS else 0.0) * dt, -INTEGRAL_LIMIT), INTEGRAL_LIMIT)
+            integral_pos.append(ip)
+            integral_vel.append(iv)
+            target.append(kp * pe + ki * ip + kd * ve + kv * iv + ff * tv + g)
+        self.integral_pos_e = np.array(integral_pos)
+        self.integral_vel_e = np.array(integral_vel)
+        t0, t1, t2 = target[0], target[1], max(target[2], 0.1 * self.GRAVITY)
+        side = math.hypot(t0, t1)
+        cap = t2 * math.tan(MAX_TILT_RAD)
         if side > cap:
-            target_thrust[:2] *= cap / side
+            t0, t1 = t0 * (cap / side), t1 * (cap / side)
+        # The three dot products stay numpy's (BLAS) calls: their rounding is the machine's, as it always was.
+        target_thrust = np.array([t0, t1, t2])
         scalar_thrust = max(0.0, float(np.dot(target_thrust, cur_rotation[:, 2])))
         thrust = (math.sqrt(scalar_thrust / (4 * self.KF)) - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE
-        target_z_ax = target_thrust / np.linalg.norm(target_thrust)
-        target_x_c = np.array([math.cos(target_rpy[2]), math.sin(target_rpy[2]), 0.0])
-        zx_cross = np.cross(target_z_ax, target_x_c)
-        target_y_ax = zx_cross / np.linalg.norm(zx_cross)
-        target_x_ax = np.cross(target_y_ax, target_z_ax)
-        target_rotation = np.vstack([target_x_ax, target_y_ax, target_z_ax]).transpose()
-        target_euler = Rotation.from_matrix(target_rotation).as_euler("XYZ", degrees=False)
-        return thrust, target_euler, pos_e
+        norm = math.sqrt(target_thrust.dot(target_thrust))
+        z = (t0 / norm, t1 / norm, t2 / norm)
+        c, s = math.cos(target_rpy[2]), math.sin(target_rpy[2])
+        zx = np.array([z[1] * 0.0 - z[2] * s, z[2] * c - z[0] * 0.0, z[0] * s - z[1] * c])
+        norm = math.sqrt(zx.dot(zx))
+        y = (float(zx[0]) / norm, float(zx[1]) / norm, float(zx[2]) / norm)
+        x = (y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0])
+        euler = _euler_xyz(x, y, z)
+        if euler is None:
+            euler = Rotation.from_matrix(np.vstack([x, y, z]).transpose()).as_euler("XYZ", degrees=False)
+        return thrust, np.asarray(euler, dtype=float), pos_e
+
+    def _dslPIDAttitudeControl(self, control_timestep, thrust, cur_quat, target_euler, target_rpy_rates,
+                               cur_rotation):
+        """DSL's attitude loop as the gym runs it, with its scipy rotation steps in plain float operations."""
+        dt = control_timestep
+        cur_rpy = p.getEulerFromQuaternion(cur_quat)
+        target_rotation = np.array(_matrix_xyz(*np.asarray(target_euler, dtype=float).tolist()))
+        rot_matrix_e = (np.dot(target_rotation.transpose(), cur_rotation)
+                        - np.dot(cur_rotation.transpose(), target_rotation)).tolist()
+        rot_e = (rot_matrix_e[2][1], rot_matrix_e[0][2], rot_matrix_e[1][0])
+        terms = zip(rot_e, cur_rpy, self.last_rpy.tolist(), np.asarray(target_rpy_rates, dtype=float).tolist(),
+                    self.integral_rpy_e.tolist(), self.P_COEFF_TOR.tolist(), self.D_COEFF_TOR.tolist(),
+                    self.I_COEFF_TOR.tolist(), (1.0, 1.0, 1500.0))
+        integral, torques = [], []
+        for re, rpy, last, rate, ir, kp, kd, ki, ir_cap in terms:
+            ir = min(max(min(max(ir - re * dt, -1500.0), 1500.0), -ir_cap), ir_cap)
+            integral.append(ir)
+            torques.append(min(max(-(kp * re) + kd * (rate - (rpy - last) / dt) + ki * ir, -3200.0), 3200.0))
+        self.last_rpy = np.array(cur_rpy)
+        self.integral_rpy_e = np.array(integral)
+        pwm = np.clip(thrust + np.dot(self.MIXER_MATRIX, np.array(torques)), self.MIN_PWM, self.MAX_PWM)
+        return self.PWM2RPM_SCALE * pwm + self.PWM2RPM_CONST
+
+
+def _euler_xyz(x: tuple, y: tuple, z: tuple) -> Optional[list]:
+    """Intrinsic XYZ angles of the rotation with columns x, y, z, as scipy's from_matrix and as_euler compute them,
+    operation for operation; None where scipy would first orthogonalise the matrix or warn of gimbal lock."""
+    m = tuple(zip(x, y, z))
+    for r in range(3):
+        for s in range(r, 3):
+            # Well inside scipy's own check (atol 1e-12 off the diagonal, rtol 1e-5 on it), whatever its BLAS rounds.
+            if not abs(m[r][0] * m[s][0] + m[r][1] * m[s][1] + m[r][2] * m[s][2] - (r == s)) <= (1e-6 if r == s else 1e-13):
+                return None
+    det = (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+           + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+    if not det > 0.5:
+        return None
+    trace = m[0][0] + m[1][1] + m[2][2]
+    decision = (m[0][0], m[1][1], m[2][2], trace)
+    choice = 0
+    for i in (1, 2, 3):
+        if decision[i] > decision[choice]:
+            choice = i
+    if choice == 3:
+        q = [m[2][1] - m[1][2], m[0][2] - m[2][0], m[1][0] - m[0][1], 1.0 + trace]
+    else:
+        i, j, k = choice, (choice + 1) % 3, (choice + 2) % 3
+        q = [0.0] * 4
+        q[i] = 1.0 - trace + 2.0 * m[i][i]
+        q[j] = m[j][i] + m[i][j]
+        q[k] = m[k][i] + m[i][k]
+        q[3] = m[k][j] - m[j][k]
+    norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
+    q = [v / norm for v in q]
+    a, b, c, d = q[3] - q[1], q[2] + q[0] * -1.0, q[1] + q[3], q[0] * -1.0 - q[2]
+    middle = 2.0 * math.atan2(_HYPOT(c, d), _HYPOT(a, b))
+    if abs(middle) <= 1e-7 or abs(middle - math.pi) <= 1e-7:
+        return None
+    half_sum, half_diff = math.atan2(b, a), math.atan2(d, c)
+    angles = [(half_sum + half_diff) * -1.0, middle - math.pi / 2, half_sum - half_diff]
+    return [v + 2.0 * math.pi if v < -math.pi else v - 2.0 * math.pi if v > math.pi else v for v in angles]
+
+
+def _matrix_xyz(roll: float, pitch: float, yaw: float) -> tuple:
+    """Rotation matrix of intrinsic XYZ angles, as scipy's from_euler, from_quat and as_matrix compute it."""
+    q = _compose((math.sin(roll / 2), 0.0, 0.0, math.cos(roll / 2)), (0.0, math.sin(pitch / 2), 0.0, math.cos(pitch / 2)))
+    q = _compose(q, (0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)))
+    norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
+    x, y, z, w = (v / norm for v in q)
+    x2, y2, z2, w2 = x * x, y * y, z * z, w * w
+    xy, zw, xz, yw, yz, xw = x * y, z * w, x * z, y * w, y * z, x * w
+    return ((x2 - y2 - z2 + w2, 2 * (xy - zw), 2 * (xz + yw)),
+            (2 * (xy + zw), -x2 + y2 - z2 + w2, 2 * (yz - xw)),
+            (2 * (xz - yw), 2 * (yz + xw), -x2 - y2 + z2 + w2))
+
+
+def _compose(p: tuple, q: tuple) -> tuple:
+    """Quaternion product p * q (x, y, z, w), in scipy's order of operations."""
+    c0, c1, c2 = p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]
+    return (p[3] * q[0] + q[3] * p[0] + c0, p[3] * q[1] + q[3] * p[1] + c1, p[3] * q[2] + q[3] * p[2] + c2,
+            p[3] * q[3] - p[0] * q[0] - p[1] * q[1] - p[2] * q[2])
 
 
 def urdf(env: Any) -> Optional[str]:

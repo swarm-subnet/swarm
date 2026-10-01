@@ -23,6 +23,7 @@ import contextlib
 import io
 import math
 import os
+import types
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -366,3 +367,75 @@ def test_a_crash_happens_at_the_real_size(flat_park, monkeypatch):
     log, episode = _fly(pilot)
     assert episode.outcome.end_reason == "collision"
     assert pilot.face - log[-1]["pos"][1] == pytest.approx(0.2085, abs=0.03)
+
+
+class _NumpyControl(airframe.M4TDControl):
+    """The controller as numpy and scipy ran it: the M4TD position loop in arrays and the gym's attitude loop."""
+
+    _dslPIDAttitudeControl = airframe.DSLPIDControl._dslPIDAttitudeControl
+
+    def _dslPIDPositionControl(self, control_timestep, cur_pos, cur_quat, cur_vel, target_pos, target_rpy,
+                               target_vel, cur_rotation):
+        """The position loop in numpy arrays and scipy's rotations."""
+        pos_e = target_pos - cur_pos
+        vel_e = target_vel - cur_vel
+        self.integral_pos_e = np.clip(self.integral_pos_e + pos_e * control_timestep, -2.0, 2.0)
+        self.integral_pos_e[2] = np.clip(self.integral_pos_e[2], -0.15, 0.15)
+        near = np.abs(vel_e) < airframe.INTEGRAL_BAND_MPS
+        leak = math.exp(-control_timestep / airframe.INTEGRAL_LEAK_S)
+        self.integral_vel_e = np.clip(self.integral_vel_e * leak + np.where(near, vel_e, 0.0) * control_timestep,
+                                      -airframe.INTEGRAL_LIMIT, airframe.INTEGRAL_LIMIT)
+        target_thrust = (self.P_COEFF_FOR * pos_e + self.I_COEFF_FOR * self.integral_pos_e
+                         + self.D_COEFF_FOR * vel_e + airframe.VEL_INTEGRAL * self.integral_vel_e
+                         + self.drag_feedforward * target_vel + np.array([0.0, 0.0, self.GRAVITY]))
+        target_thrust[2] = max(float(target_thrust[2]), 0.1 * self.GRAVITY)
+        side = math.hypot(target_thrust[0], target_thrust[1])
+        cap = target_thrust[2] * math.tan(airframe.MAX_TILT_RAD)
+        if side > cap:
+            target_thrust[:2] *= cap / side
+        scalar_thrust = max(0.0, float(np.dot(target_thrust, cur_rotation[:, 2])))
+        thrust = (math.sqrt(scalar_thrust / (4 * self.KF)) - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE
+        target_z_ax = target_thrust / np.linalg.norm(target_thrust)
+        target_x_c = np.array([math.cos(target_rpy[2]), math.sin(target_rpy[2]), 0.0])
+        zx_cross = np.cross(target_z_ax, target_x_c)
+        target_y_ax = zx_cross / np.linalg.norm(zx_cross)
+        target_x_ax = np.cross(target_y_ax, target_z_ax)
+        target_rotation = np.vstack([target_x_ax, target_y_ax, target_z_ax]).transpose()
+        target_euler = airframe.Rotation.from_matrix(target_rotation).as_euler("XYZ", degrees=False)
+        return thrust, target_euler, pos_e
+
+
+def test_the_controller_keeps_every_bit_of_the_numpy_and_scipy_loops():
+    """Step after step over random flights, the plain-float controller gives the same float64 rotor speeds, errors
+    and loop memory as the numpy and scipy loops it replaced."""
+    env = types.SimpleNamespace(G=9.8, GRAVITY=18.13, KF=3.0833e-07, KM=4.9333e-09, HOVER_RPM=3834.08,
+                                DRAG_COEFF=np.array([0.00015, 0.00015, 0.00035]))
+    fast, reference = airframe.M4TDControl(env), _NumpyControl(env)
+    rng = np.random.default_rng(11)
+    for _ in range(3000):
+        quat = rng.normal(size=4) * [0.3, 0.3, 1.0, 1.0]
+        pos = rng.normal(0.0, 50.0, 3)
+        vel = rng.normal(0.0, 6.0, 3)
+        target_vel = rng.normal(0.0, 8.0, 3) if rng.random() < 0.8 else np.zeros(3)
+        if rng.random() < 0.2:
+            vel = target_vel + rng.normal(0.0, 0.3, 3)
+        args = dict(control_timestep=SIM_DT, cur_pos=pos, cur_quat=quat / np.linalg.norm(quat), cur_vel=vel,
+                    cur_ang_vel=rng.normal(size=3), target_pos=pos + rng.normal(size=3) * (rng.random() < 0.3),
+                    target_rpy=np.array([0.0, 0.0, rng.uniform(-4.0, 4.0)]), target_vel=target_vel,
+                    target_rpy_rates=np.array([0.0, 0.0, rng.normal()]))
+        got, want = fast.computeControl(**args), reference.computeControl(**args)
+        for a, b in zip(got, want):
+            assert np.asarray(a, dtype=np.float64).tobytes() == np.asarray(b, dtype=np.float64).tobytes()
+        for name in ("integral_pos_e", "integral_vel_e", "last_rpy", "integral_rpy_e"):
+            assert getattr(fast, name).tobytes() == getattr(reference, name).tobytes()
+
+
+def test_the_rotation_steps_match_scipy_bit_for_bit():
+    """The plain-float rotation steps give scipy's exact angles and matrix, and leave gimbal lock to scipy."""
+    for m in airframe.Rotation.random(2000, random_state=np.random.default_rng(3)).as_matrix():
+        euler = airframe.Rotation.from_matrix(m).as_euler("XYZ", degrees=False)
+        assert np.array(airframe._euler_xyz(*m.transpose().tolist())).tobytes() == euler.tobytes()
+        matrix = airframe.Rotation.from_quat(airframe.Rotation.from_euler("XYZ", euler).as_quat()).as_matrix()
+        assert np.array(airframe._matrix_xyz(*euler.tolist())).tobytes() == matrix.tobytes()
+    lock = airframe.Rotation.from_euler("XYZ", [0.3, math.pi / 2, -1.0]).as_matrix()
+    assert airframe._euler_xyz(*lock.transpose().tolist()) is None
