@@ -29,7 +29,7 @@ import numpy as np
 import pybullet as p
 import pytest
 
-from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _forest_table, build_solar_map, solar_densities, solar_manifest
+from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _forest_table, _four_decimals, build_solar_map, solar_densities, solar_manifest
 
 ASSET_DIR = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 
@@ -108,6 +108,14 @@ def test_the_forest_file_is_removed_after_the_build(client):
     before = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.fst")))
     build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
     assert set(glob.glob(os.path.join(tempfile.gettempdir(), "*.fst"))) == before
+
+
+def test_binary_rows_carry_the_numbers_their_text_gave():
+    """The forest rows written as doubles are bit for bit what the same rows printed with four decimals parse back to."""
+    edges = [0.03125, -0.03125, 0.00005, -0.00005, 1.00005, 2.5e-5, 0.0, -0.0, 1234.56785, -1e-9, 0.12345, 3499.99995]
+    values = np.concatenate([edges, np.random.default_rng(0).uniform(-4000.0, 4000.0, 20000)])
+    text = np.array([float("%.4f" % x) for x in values])
+    assert text.tobytes() == _four_decimals(values).tobytes()
 
 
 def test_an_engine_without_instancing_is_refused(client, monkeypatch):

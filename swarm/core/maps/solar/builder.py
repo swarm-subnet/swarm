@@ -34,6 +34,7 @@ import math
 import os
 import random
 import tempfile
+from decimal import ROUND_HALF_EVEN, Decimal
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -292,6 +293,19 @@ def _forest_table(path: str) -> Dict[str, np.ndarray]:
         return {key: table[key] for key in table.files}
 
 
+def _four_decimals(values: np.ndarray) -> np.ndarray:
+    """The numbers a reader parses back from values printed with four decimals, worked out without printing them.
+
+    Dividing the rounded integer by 10^4 rounds once, as parsing the decimal does. Only a product within reach of a
+    half way point can round the other way in binary, so those few are rounded in exact decimal arithmetic instead.
+    """
+    scaled = values * 1e4
+    whole = np.rint(scaled)
+    for i in np.flatnonzero(np.abs(np.abs(scaled - np.floor(scaled)) - 0.5) < 1e-3):
+        whole.flat[i] = float(Decimal(float(values.flat[i])).scaleb(4).to_integral_value(ROUND_HALF_EVEN))
+    return whole / 1e4
+
+
 def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
     """Stand this seed's share of the forest as one body, with a collision trunk for every near tree a drone meets.
 
@@ -310,11 +324,14 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     half = yaw * 0.5
     rows = np.column_stack([table["mesh"][keep], position, np.zeros(len(yaw)), np.zeros(len(yaw)), np.sin(half),
                             np.cos(half), scale])
+    # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
+    rows[:, 1:] = _four_decimals(rows[:, 1:])
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
-        with os.fdopen(handle, "w") as out:
-            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]))
-            np.savetxt(out, rows, fmt="%d " + " ".join(["%.4f"] * 10))
+        with os.fdopen(handle, "wb") as out:
+            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]).encode())
+            out.write(f"binary {len(rows)}\n".encode())
+            out.write(np.ascontiguousarray(rows, dtype="<f8").tobytes())
         flags = instanced | p.VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY | p.VISUAL_SHAPE_MATERIALS_FROM_MTL
         visual = p.createVisualShape(p.GEOM_MESH, fileName=path, flags=flags, specularColor=[0, 0, 0], physicsClientId=cli)
         bodies = [p.createMultiBody(0, -1, visual, physicsClientId=cli)]
