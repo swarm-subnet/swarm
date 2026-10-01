@@ -298,6 +298,11 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     # ------------------------------------------------------------------ #
     # scoring
     # ------------------------------------------------------------------ #
+    def stalled_rollout_metrics(self, task: Any, info: dict) -> dict:
+        """The patrol outcome so far, so a model that stalls still answers for the threats it left unreported."""
+        _ = task
+        return dict((info or {}).get("solar_outcome") or asdict(Outcome()))
+
     def evaluate_rollout(self, *, task: Any, success: bool, t: float, horizon: float,
                          min_clearance: Optional[float], collision: bool, failure_reason: str,
                          info: Optional[dict] = None) -> ChallengeFamilyEvaluation:

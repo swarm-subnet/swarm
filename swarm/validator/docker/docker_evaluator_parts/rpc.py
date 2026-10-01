@@ -845,6 +845,7 @@ def _run_multi_seed_rpc_sync(
                                 ValidationResult(
                                     uid, False, t_sim, 0.0,
                                     failure_reason=FailureReason.SLOW_ACT_STRIKES.value,
+                                    metrics=runtime_family_for_task(task).stalled_rollout_metrics(task, info),
                                 )
                             )
                             _emit_seed_complete(

@@ -26,6 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from swarm.protocol import ValidationResult
 from swarm.validator import utils as validator_utils
 from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.utils_parts import evaluation as validator_evaluation
@@ -2431,3 +2432,121 @@ def test_run_full_benchmark_uploads_the_seed_timing_as_runtime_details(tmp_path)
             "speed_factor": 1.3, "act_sec": 12.5, "act_max_sec": 0.2, "sim_sec": 40.0,
             "env_build_sec": 3.0, "seed_wall_sec": 61.0, "total_sec": 63.0, "attempt": 1,
         }
+
+
+def test_run_full_benchmark_uploads_the_seed_mistake_counts(tmp_path):
+    """Each row carries the missed threats and false alarms its result counted; a result without them adds neither."""
+    model_path = tmp_path / "UID_45.zip"
+    model_path.write_bytes(b"fake-model")
+    uploads: list[list[dict]] = []
+    counted = [
+        {"missed_threats": 1, "false_alarms": 0},
+        {"missed_threats": 0, "false_alarms": 2},
+        {},
+    ]
+
+    async def _evaluate_seeds_parallel(tasks, uid, model_path, **kwargs):
+        """Return one result per task carrying that seed's counts, as a patrol's metrics do."""
+        on_seed_result = kwargs.get("on_seed_result")
+        results = []
+        for i, _task in enumerate(tasks):
+            result = ValidationResult(int(uid), False, 60.0, 0.4, metrics=dict(counted[i]))
+            results.append(result)
+            if on_seed_result is not None:
+                on_seed_result(i, result, "seed_done")
+        return results
+
+    async def _capture_upload(**kwargs):
+        """Keep each posted batch of score rows and acknowledge it."""
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    async def _post_heartbeat(**kwargs):
+        """Acknowledge the heartbeat without asking for a stop."""
+        return {"ok": True}
+
+    validator = SimpleNamespace(
+        docker_evaluator=SimpleNamespace(
+            evaluate_seeds_parallel=_evaluate_seeds_parallel,
+            _get_image_hash_label=lambda: "test-image-hash",
+            _calculate_docker_hash=lambda: "test-image-hash",
+        ),
+        backend_api=SimpleNamespace(
+            post_heartbeat=_post_heartbeat,
+            post_seed_scores_batch=_capture_upload,
+        ),
+        seed_manager=SimpleNamespace(
+            epoch_number=7,
+            get_benchmark_seeds=lambda: [910001 + i for i in range(3)],
+        ),
+    )
+
+    async def _run():
+        """Benchmark UID 45 through the real streaming path."""
+        return await validator_evaluation._run_full_benchmark(
+            validator, uid=45, model_path=model_path,
+        )
+
+    asyncio.run(_run())
+
+    rows = sorted((row for batch in uploads for row in batch), key=lambda row: row["seed_index"])
+    assert [
+        {key: row[key] for key in ("missed_threats", "false_alarms") if key in row}
+        for row in rows
+    ] == counted
+
+
+def test_streaming_phase_fallback_rows_carry_the_mistake_counts(monkeypatch):
+    """When no seed was streamed live, the rows rebuilt from the details still carry each seed's counts."""
+    validator = _make_validator()
+    uploads: list[dict] = []
+
+    async def _capture_upload(**kwargs):
+        """Collect every uploaded row and acknowledge the batch."""
+        uploads.extend(kwargs["scores"])
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture_upload
+
+    async def _evaluate(_self, _uid, _model_path, seeds, *args, **kwargs):
+        """Score every seed without firing the live callback, the metrics holding one miss on seed 1."""
+        details = [
+            {"score": 0.8, "map_type": "city", "failure_reason": "NONE",
+             "metrics": {"missed_threats": int(i == 1), "false_alarms": 0}}
+            for i, _seed in enumerate(seeds)
+        ]
+        return [0.8] * len(seeds), {"city": [0.8] * len(seeds)}, details
+
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _evaluate)
+
+    async def _run():
+        """Stream three seeds in one chunk."""
+        hb = _heartbeat(validator)
+        try:
+            return await validator_evaluation._run_streaming_phase(
+                validator, uid=7, model_path=_FAKE_MODEL_ZIP, seeds=list(range(3)),
+                phase_description="benchmark", seed_offset=0, epoch_number=1, hb=hb, chunk_size=3,
+            )
+        finally:
+            hb.finish()
+
+    asyncio.run(_run())
+
+    assert [(row["missed_threats"], row["false_alarms"]) for row in uploads] == [(0, 0), (1, 0), (0, 0)]
+
+
+@pytest.mark.parametrize(
+    ("metrics", "expected"),
+    [
+        ({"missed_threats": 2, "false_alarms": 1, "coverage": 0.9}, {"missed_threats": 2, "false_alarms": 1}),
+        ({"missed_threats": 2}, {}),
+        ({"missed_threats": True, "false_alarms": 0}, {}),
+        ({"missed_threats": "1", "false_alarms": 0}, {}),
+        ({"missed_threats": -3, "false_alarms": 0}, {"missed_threats": 0, "false_alarms": 0}),
+        ({}, {}),
+        (None, {}),
+    ],
+)
+def test_seed_mistakes_reads_only_whole_counts(metrics, expected):
+    """Both counts must be whole numbers to travel, negatives floor at 0, and anything else sends nothing."""
+    assert validator_evaluation._seed_mistakes(metrics) == expected
