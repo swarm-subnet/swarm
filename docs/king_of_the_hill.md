@@ -98,7 +98,7 @@ bonus_i  = 1 + 0.3 × min(gain_i, 1.0)
 share_i  = ladder_i × bonus_i / sum(ladder_j × bonus_j in window)
 ```
 
-The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. Rank is derived from crowning recency (epoch, then lineage order), not from list position. A row whose gain is zero earns nothing. The bonus gain is capped at `1.0` so the ladder order can never flip: the reigning champion always holds the largest share. If every share in a family is zero, the family pays nobody, and its slice burns (see below).
+The `0.01` floor caps the headroom so improvements above `0.99` do not blow up. Rank is derived from crowning recency (epoch, then lineage order), not from list position. A row whose score did not beat the previous king's earns nothing; a real crowning whose gain is lost inside the floor keeps its seat without the bonus. The bonus gain is capped at `1.0` so the ladder order can never flip: the reigning champion always holds the largest share. If every share in a family is zero, the family pays nobody, and its slice burns (see below).
 
 ### Plain-English version
 
