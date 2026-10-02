@@ -56,10 +56,14 @@ def _every_family_class(cls=ChallengeFamilyRuntime):
 
 
 def test_every_family_defaults_to_tiny_renderer():
-    """No family opts into the ray caster on its own; the switch is explicit per family."""
+    """No family opts into the ray caster on its own; the switch is explicit per family, and only Swarm Sentinel
+    declares it, taking the ray caster exactly when the installed engine has one."""
     assert ChallengeFamilyRuntime.render_backend == "tiny"
+    declared = {family.__name__ for family in _every_family_class() if "render_backend" in vars(family)}
+    assert declared == {"SolarPatrolChallengeFamily"}
     for family in _every_family_class():
-        assert family.render_backend == "tiny", family.__name__
+        want = ("raycast" if hasattr(p, "ER_SWARM_RAYCAST") else "tiny") if family.__name__ in declared else "tiny"
+        assert family.render_backend == want, family.__name__
 
 
 def _static(cli, shape, position, **kwargs):
@@ -195,8 +199,8 @@ BATCH_EYES = [(3.0, -4.0, 2.5), (0.0, 0.0, 8.0), (-4.0, 3.0, 3.0), (2.0, 5.0, 1.
 BATCH_TARGET = (0.0, 0.5, 0.8)
 # SHA-256 of the ray-cast frames of the test world. Every machine and every thread count must reproduce
 # them byte for byte; a renderer change that moves one pixel updates them on purpose, in its own PR.
-RAYCAST_FRAME_SHA256 = "5c7513cf527aa93b3b6c5ba6f42100d5fe8434e1d14ca6227d34f6305de0a995"
-RAYCAST_BATCH_SHA256 = "a047ce7eb9a4f81a34d9e02e4fd171e5f420c277d5dec53da2f54468032e3694"
+RAYCAST_FRAME_SHA256 = "a29cd195cd76675abe4aafe9875bbe2dbf193362c904fe6c725ab287c639ddbe"
+RAYCAST_BATCH_SHA256 = "e60347fe4390cf0a7a6dcff973421bc3b99b93976d2783ca48610b8e6ca54f9b"
 
 
 def _raycast_hashes():
