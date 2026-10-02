@@ -1090,8 +1090,8 @@ def test_a_failed_handover_lets_the_step_finish_before_the_env_is_closed(monkeyp
             return _ACT_REPLY
 
     def serialize(_schema, obs):
-        """Serialise every observation but the one handed ahead."""
-        if obs["marker"] == "early1":
+        """Serialise every observation but the ones handed ahead."""
+        if obs["marker"].startswith("early"):
             raise ValueError("observation does not serialise")
         return ("serialized", obs["marker"])
 
