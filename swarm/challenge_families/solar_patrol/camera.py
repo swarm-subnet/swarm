@@ -66,6 +66,10 @@ PICTURE_FLAGS = functools.reduce(operator.or_, (getattr(p, name, 0) for name in 
 # instead of tracing it again; the grain is drawn new for every frame all the same. It equals a fresh trace but for two
 # surfaces at exactly one distance, and which frames come back follows this client's whole sequence of requests.
 FRAME_REUSE = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
+# A close look smooths every edge; a crease inside one body, such as between the leaves of a crown, fills the share no
+# leaf around it covers from those leaves instead of a ray of its own, which is most of the cost of a zoom on trees.
+CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
+                                                                                   if RAYCAST else 0)
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
@@ -289,8 +293,8 @@ def _object_map(seg: Any, shot: View) -> np.ndarray:
 def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {}),
                  outline: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
-    and arguments of `night_camera` when given, and its object map; `outline` False smooths every edge, not only the
-    outlines."""
+    and arguments of `night_camera` when given, and its object map; `outline` False draws a close look with
+    CLOSE_PICTURE_FLAGS, every edge smoothed, not only the outlines."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -301,7 +305,7 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
         kwargs.update(env._sky_kwargs())
     night_flags, night_kwargs = camera_at_night
     kwargs.update(night_kwargs)
-    picture = PICTURE_FLAGS if outline else PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
+    picture = PICTURE_FLAGS if outline else CLOSE_PICTURE_FLAGS
     flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
