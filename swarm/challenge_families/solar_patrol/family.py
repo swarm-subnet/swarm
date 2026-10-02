@@ -96,6 +96,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     daylight = park.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
     prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
+    clearance_metric = False             # the patrol's score reads no min_clearance
 
     # ------------------------------------------------------------------ #
     # runtime profile and task generation

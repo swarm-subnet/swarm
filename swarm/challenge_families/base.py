@@ -205,6 +205,8 @@ class ChallengeFamilyRuntime:
     decision_steps: int = 1
     # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
     prepares_seeds: bool = False
+    # Whether each step measures the drone's closest approach to obstacles, for a score that reads min_clearance.
+    clearance_metric: bool = True
 
     def stalled_rollout_metrics(self, task: Any, info: Dict[str, Any]) -> Dict[str, Any]:
         """Metrics a seed keeps when the model stalls out of it on slow-act strikes; none by default."""
