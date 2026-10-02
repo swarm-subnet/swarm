@@ -432,14 +432,16 @@ def _run_multi_seed_rpc_sync(
                 stepping = asyncio.ensure_future(asyncio.to_thread(
                     env.step, action, on_observation=lambda o: loop.call_soon_threadsafe(fixed.set_result, o)
                 ))
-                await asyncio.wait((fixed, stepping), return_when=asyncio.FIRST_COMPLETED)
                 early = None
-                if fixed.done():
-                    observation = _build_observation(fixed.result())
-                    early = (observation, _send_act(observation, timeout))
                 try:
+                    await asyncio.wait((fixed, stepping), return_when=asyncio.FIRST_COMPLETED)
+                    if fixed.done():
+                        observation = _build_observation(fixed.result())
+                        early = (observation, _send_act(observation, timeout))
                     return await stepping, early
                 except BaseException:
+                    # The step finishes before the error leaves, so the cleanup never closes the env under it.
+                    await asyncio.gather(stepping, return_exceptions=True)
                     await _drop_act(early)
                     raise
 
