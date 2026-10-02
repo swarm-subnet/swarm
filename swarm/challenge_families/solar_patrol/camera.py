@@ -62,6 +62,14 @@ RENDER_BACKEND = "raycast" if RAYCAST else "tiny"
 PICTURE_FLAGS = functools.reduce(operator.or_, (getattr(p, name, 0) for name in (
     "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS", "ER_SWARM_EDGE_OUTLINE", "ER_ALPHA_CUTOUT",
     "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")), 0) if RAYCAST else 0
+# A camera that has not moved, over a scene where nothing it shows has changed, gets its last frame back from the engine
+# instead of tracing it again; the grain is drawn new for every frame all the same. It equals a fresh trace but for two
+# surfaces at exactly one distance, and which frames come back follows this client's whole sequence of requests.
+FRAME_REUSE = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
+# A close look smooths every edge; a crease inside one body, such as between the leaves of a crown, fills the share no
+# leaf around it covers from those leaves instead of a ray of its own, which is most of the cost of a zoom on trees.
+CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
+                                                                                   if RAYCAST else 0)
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
@@ -285,8 +293,8 @@ def _object_map(seg: Any, shot: View) -> np.ndarray:
 def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {}),
                  outline: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
-    and arguments of `night_camera` when given, and its object map; `outline` False smooths every edge, not only the
-    outlines."""
+    and arguments of `night_camera` when given, and its object map; `outline` False draws a close look with
+    CLOSE_PICTURE_FLAGS, every edge smoothed, not only the outlines."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -297,8 +305,8 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
         kwargs.update(env._sky_kwargs())
     night_flags, night_kwargs = camera_at_night
     kwargs.update(night_kwargs)
-    picture = PICTURE_FLAGS if outline else PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
-    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags
+    picture = PICTURE_FLAGS if outline else CLOSE_PICTURE_FLAGS
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
@@ -315,7 +323,7 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, 
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
-    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT
+    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE
     _w, _h, image, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
         flags=flags, airTemperature=park.air_c(ep), skyTemperature=park.sky_c(ep),

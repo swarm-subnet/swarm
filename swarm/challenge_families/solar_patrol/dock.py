@@ -47,6 +47,7 @@ from .contract import (
     put,
 )
 from .episode import Setpoint, SolarEpisode
+from .fixed_order import norm
 
 DRONE_REST_M = 0.0                     # dock_position is the aircraft's own resting point on the pad
 ARRIVE_M = 0.5                         # close enough to a target height, and DJI's landing start above the pad
@@ -112,7 +113,12 @@ def _ground(cli: int, spot: np.ndarray, offsets: np.ndarray, terrain_uids: froze
 def _slope_deg(ground: np.ndarray, spot: np.ndarray) -> float:
     """Tilt of the plane fitted through the ground points within INSTALL_M of the spot."""
     near = ground[np.hypot(*(ground[:, :2] - spot).T) <= INSTALL_M]
-    a, b, _ = np.linalg.lstsq(np.column_stack([near[:, :2] - spot, np.ones(len(near))]), near[:, 2], rcond=None)[0]
+    # Least squares from exactly rounded sums about the points' centre, not LAPACK, whose rounding follows the CPU.
+    u, v, w = ((x - math.fsum(x) / len(x)).tolist() for x in (near[:, 0] - spot[0], near[:, 1] - spot[1], near[:, 2]))
+    uu, uv, vv = math.fsum(x * x for x in u), math.fsum(x * y for x, y in zip(u, v)), math.fsum(y * y for y in v)
+    uw, vw = math.fsum(x * z for x, z in zip(u, w)), math.fsum(y * z for y, z in zip(v, w))
+    det = uu * vv - uv * uv
+    a, b = (uw * vv - vw * uv) / det, (vw * uu - uw * uv) / det
     return math.degrees(math.atan(math.hypot(a, b)))
 
 
@@ -190,7 +196,7 @@ def command(env: Any, ep: SolarEpisode, cmd: Command) -> None:
 
 def _towards(delta: np.ndarray, limit: float) -> np.ndarray:
     """A velocity along delta, proportional to its length, capped at limit and slow enough to stop in time."""
-    distance = float(np.linalg.norm(delta))
+    distance = norm(delta)
     if distance < 1e-6:
         return np.zeros_like(delta)
     return delta / distance * min(limit, GAIN_PER_S * distance, math.sqrt(2.0 * BRAKE_MPS2 * distance))
@@ -240,7 +246,7 @@ def update(env: Any, ep: SolarEpisode) -> None:
         _hold(env, ep)
     if ep.phase != "landing" or not env._platform_hit:
         return
-    if float(np.linalg.norm(env.vel[0])) < LANDED_SPEED_MPS:
+    if norm(env.vel[0]) < LANDED_SPEED_MPS:
         ep.phase = "landed"
         ep.outcome.landed_in_dock = True
         ep.end("landed")

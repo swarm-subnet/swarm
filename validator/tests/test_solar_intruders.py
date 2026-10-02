@@ -20,6 +20,7 @@ thief's visual bodies in the engine."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections import Counter
 
@@ -35,6 +36,7 @@ pytestmark = pytest.mark.skipif(not os.path.isfile(os.path.join(FOLDER, "intrude
                                 reason="the installed swarm-worlds has no intruders yet")
 
 STANDING = (np.tile([0.0, 0.0, 0.0, 1.0], (30, 1)), np.array([0.0, 0.95, 0.0]), (0.0, 0.0, 0.0), 0.0)
+_POSED_SHA256 = "5873e73de32dae4bc2b81219e54d481eea0c3eb45d15d64b91221ad3c520c8a0"
 
 
 @pytest.fixture
@@ -109,6 +111,42 @@ def test_posing_matches_plain_skinning_on_the_body(client):
     got = thief.vertices(*frame)[:len(ids)]
     assert len(ids) > 1000
     assert np.abs((got - got[0]) - (reference - reference[0])).max() < 1e-6
+
+
+def test_the_posing_is_the_same_bytes_on_every_machine(client):
+    """A dressed thief in a fixed frame poses to the pinned bytes, so no validator's CPU or BLAS draws him apart."""
+    cat = intruders.catalogue()
+    garments = ["work_jacket", "cargo", "work_boots", "balaclava", "gloves", "bolt_cutters", "backpack"]
+    dress = {"build": "stocky", "garments": garments, "skin": [0.5, 0.35, 0.25], "undershirt": [0.2, 0.2, 0.2],
+             "colours": {pc["file"]: pc["colours"][0] for g in garments for pc in cat.pieces[g]}}
+    thief = intruders.Intruder(dress, STANDING, client)
+    # The frame is built without numpy's sin and cos, whose vector code may itself round apart between CPUs.
+    local = np.random.default_rng(4).uniform(-0.2, 0.2, (30, 4)) + [0.0, 0.0, 0.0, 1.0]
+    local /= np.sqrt((local * local).sum(1, keepdims=True))
+    posed = thief.vertices(local, np.array([0.3, 0.9, -0.2]), (5.0, -3.0, 12.0), 0.7)
+    assert hashlib.sha256(posed.tobytes()).hexdigest() == _POSED_SHA256
+
+
+def test_a_pose_draws_what_the_same_vertices_as_lists_draw():
+    """Posing uploads each piece as an array, and the picture is the bytes the same vertices give as Python lists."""
+    clients = [p.connect(p.DIRECT) for _ in range(2)]
+    try:
+        thieves = [intruders.Intruder(intruders.outfit(np.random.default_rng(11)), STANDING, cid) for cid in clients]
+        frame = _moved(6)
+        if not thieves[0].pose(*frame):
+            pytest.skip("this engine cannot rewrite a visual mesh")
+        v = thieves[1].vertices(*frame)
+        for uid, rows in thieves[1].meshes:
+            p.resetMeshData(uid, v[rows].tolist(), physicsClientId=clients[1])
+        view = p.computeViewMatrix([5.0, -7.0, 13.0], [5.0, -3.0, 12.9], [0, 0, 1])
+        proj = p.computeProjectionMatrixFOV(40, 1.0, 0.1, 20.0)
+        drawn = [p.getCameraImage(96, 96, view, proj, renderer=p.ER_TINY_RENDERER, physicsClientId=cid)
+                 for cid in clients]
+        assert np.isin(np.asarray(drawn[0][4]), thieves[0].bodies).sum() > 50
+        assert np.asarray(drawn[0][2]).tobytes() == np.asarray(drawn[1][2]).tobytes()
+    finally:
+        for cid in clients:
+            p.disconnect(cid)
 
 
 def test_thief_is_one_visual_body_per_colour(client):

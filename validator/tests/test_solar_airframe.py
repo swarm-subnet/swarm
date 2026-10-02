@@ -20,9 +20,13 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import math
 import os
+import subprocess
+import sys
+import types
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -44,6 +48,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     STATE_SLICES,
 )
 from swarm.constants import SIM_DT
+from swarm.core.moving_drone import MovingDroneAviary
 from swarm.utils.env_factory import make_env_with_initial_obs
 from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
@@ -52,6 +57,8 @@ pytestmark = [pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airfram
                                  reason=f"the installed swarm-worlds has no {airframe.URDF} yet"),
               pytest.mark.usefixtures("blank_camera")]
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
+_CONTROL_ENV = types.SimpleNamespace(G=9.8, GRAVITY=18.13, KF=3.0833e-07, KM=4.9333e-09, HOVER_RPM=3834.08,
+                                     DRAG_COEFF=np.array([0.00015, 0.00015, 0.00035]))
 
 
 class _StillMovers:
@@ -366,3 +373,116 @@ def test_a_crash_happens_at_the_real_size(flat_park, monkeypatch):
     log, episode = _fly(pilot)
     assert episode.outcome.end_reason == "collision"
     assert pilot.face - log[-1]["pos"][1] == pytest.approx(0.2085, abs=0.03)
+
+
+class _NumpyControl(airframe.M4TDControl):
+    """The controller as numpy and scipy ran it: the M4TD position loop in arrays and the gym's attitude loop."""
+
+    _dslPIDAttitudeControl = airframe.DSLPIDControl._dslPIDAttitudeControl
+
+    def _dslPIDPositionControl(self, control_timestep, cur_pos, cur_quat, cur_vel, target_pos, target_rpy,
+                               target_vel, cur_rotation):
+        """The position loop in numpy arrays and scipy's rotations."""
+        pos_e = target_pos - cur_pos
+        vel_e = target_vel - cur_vel
+        self.integral_pos_e = np.clip(self.integral_pos_e + pos_e * control_timestep, -2.0, 2.0)
+        self.integral_pos_e[2] = np.clip(self.integral_pos_e[2], -0.15, 0.15)
+        near = np.abs(vel_e) < airframe.INTEGRAL_BAND_MPS
+        leak = math.exp(-control_timestep / airframe.INTEGRAL_LEAK_S)
+        self.integral_vel_e = np.clip(self.integral_vel_e * leak + np.where(near, vel_e, 0.0) * control_timestep,
+                                      -airframe.INTEGRAL_LIMIT, airframe.INTEGRAL_LIMIT)
+        target_thrust = (self.P_COEFF_FOR * pos_e + self.I_COEFF_FOR * self.integral_pos_e
+                         + self.D_COEFF_FOR * vel_e + airframe.VEL_INTEGRAL * self.integral_vel_e
+                         + self.drag_feedforward * target_vel + np.array([0.0, 0.0, self.GRAVITY]))
+        target_thrust[2] = max(float(target_thrust[2]), 0.1 * self.GRAVITY)
+        side = math.hypot(target_thrust[0], target_thrust[1])
+        cap = target_thrust[2] * math.tan(airframe.MAX_TILT_RAD)
+        if side > cap:
+            target_thrust[:2] *= cap / side
+        scalar_thrust = max(0.0, float(np.dot(target_thrust, cur_rotation[:, 2])))
+        thrust = (math.sqrt(scalar_thrust / (4 * self.KF)) - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE
+        target_z_ax = target_thrust / np.linalg.norm(target_thrust)
+        target_x_c = np.array([math.cos(target_rpy[2]), math.sin(target_rpy[2]), 0.0])
+        zx_cross = np.cross(target_z_ax, target_x_c)
+        target_y_ax = zx_cross / np.linalg.norm(zx_cross)
+        target_x_ax = np.cross(target_y_ax, target_z_ax)
+        target_rotation = np.vstack([target_x_ax, target_y_ax, target_z_ax]).transpose()
+        target_euler = airframe.Rotation.from_matrix(target_rotation).as_euler("XYZ", degrees=False)
+        return thrust, target_euler, pos_e
+
+
+def _random_flight(steps: int):
+    """Controller inputs of a fixed random flight, well past the patrol's tilts, speeds and turns."""
+    rng = np.random.default_rng(11)
+    for _ in range(steps):
+        quat = rng.normal(size=4) * [0.3, 0.3, 1.0, 1.0]
+        pos = rng.normal(0.0, 50.0, 3)
+        vel = rng.normal(0.0, 6.0, 3)
+        target_vel = rng.normal(0.0, 8.0, 3) if rng.random() < 0.8 else np.zeros(3)
+        if rng.random() < 0.2:
+            vel = target_vel + rng.normal(0.0, 0.3, 3)
+        yield dict(control_timestep=SIM_DT, cur_pos=pos, cur_quat=quat / np.sqrt((quat * quat).sum()), cur_vel=vel,
+                   cur_ang_vel=rng.normal(size=3), target_pos=pos + rng.normal(size=3) * (rng.random() < 0.3),
+                   target_rpy=np.array([0.0, 0.0, rng.uniform(-4.0, 4.0)]), target_vel=target_vel,
+                   target_rpy_rates=np.array([0.0, 0.0, rng.normal()]))
+
+
+def _flight_sha() -> str:
+    """Hash of the controller's rotor speeds and yaw errors over the fixed random flight."""
+    ctrl, digest = airframe.M4TDControl(_CONTROL_ENV), hashlib.sha256()
+    for args in _random_flight(500):
+        rpm, _, yaw_e = ctrl.computeControl(**args)
+        digest.update(np.asarray(rpm, dtype=np.float64).tobytes() + np.float64(yaw_e).tobytes())
+    return digest.hexdigest()
+
+
+def test_the_controller_matches_the_numpy_and_scipy_loops():
+    """Step after step over random flights, the plain-float controller gives the rotor speeds, errors and loop memory
+    of the numpy and scipy loops it replaced, apart from the last bits their BLAS sums round differently."""
+    fast, reference = airframe.M4TDControl(_CONTROL_ENV), _NumpyControl(_CONTROL_ENV)
+    for args in _random_flight(3000):
+        for got, want in zip(fast.computeControl(**args), reference.computeControl(**args)):
+            np.testing.assert_allclose(got, want, rtol=1e-9, atol=1e-9)
+        for name in ("integral_pos_e", "integral_vel_e", "last_rpy", "integral_rpy_e"):
+            np.testing.assert_allclose(getattr(fast, name), getattr(reference, name), rtol=1e-9, atol=1e-9)
+
+
+def test_the_controller_gives_the_same_bits_on_every_blas_kernel():
+    """The fixed random flight hashes the same under the oldest and a fused multiply-add BLAS kernel, so validators on
+    different CPU families fly the same path; the numpy loops it replaced did not."""
+    script = "from validator.tests.test_solar_airframe import _flight_sha; print(_flight_sha())"
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    hashes = {subprocess.run([sys.executable, "-c", script], cwd=root, env=dict(os.environ, OPENBLAS_CORETYPE=core),
+                             capture_output=True, text=True, check=True).stdout.split()[-1]
+              for core in ("Prescott", "Haswell")}
+    assert hashes == {_flight_sha()}
+
+
+def test_the_rotation_steps_match_scipy_bit_for_bit():
+    """The plain-float rotation steps give scipy's exact angles and matrix, and leave gimbal lock to scipy."""
+    for m in airframe.Rotation.random(2000, random_state=np.random.default_rng(3)).as_matrix():
+        euler = airframe.Rotation.from_matrix(m).as_euler("XYZ", degrees=False)
+        assert np.array(airframe._euler_xyz(*m.transpose().tolist())).tobytes() == euler.tobytes()
+        matrix = airframe.Rotation.from_quat(airframe.Rotation.from_euler("XYZ", euler).as_quat()).as_matrix()
+        assert np.array(airframe._matrix_xyz(*euler.tolist())).tobytes() == matrix.tobytes()
+    lock = airframe.Rotation.from_euler("XYZ", [0.3, math.pi / 2, -1.0]).as_matrix()
+    assert airframe._euler_xyz(*lock.transpose().tolist()) is None
+
+
+def test_still_air_drag_is_the_gyms_with_a_fixed_order_turn(monkeypatch):
+    """A calm seed's rotor drag is the gym's own: the same link, frame and force, but for the last bits of the BLAS
+    product it no longer uses."""
+    pushed = []
+    monkeypatch.setattr(p, "applyExternalForce", lambda uid, link, forceObj, posObj, flags, physicsClientId:
+                        pushed.append((link, flags, np.asarray(forceObj, dtype=float))))
+    rng = np.random.default_rng(19)
+    for _ in range(500):
+        quat = rng.normal(size=4)
+        env = types.SimpleNamespace(quat=np.array([quat / np.sqrt((quat * quat).sum())]), vel=rng.normal(0.0, 8.0, (1, 3)),
+                                    DRAG_COEFF=_CONTROL_ENV.DRAG_COEFF, DRONE_IDS=[0], CLIENT=0)
+        rpm = rng.uniform(airframe.IDLE_RPM, airframe.MAX_RPM, 4)
+        airframe._still_air_drag(env, rpm, 0)
+        MovingDroneAviary._drag(env, rpm, 0)
+    for (link, flags, force), (gym_link, gym_flags, gym_force) in zip(pushed[::2], pushed[1::2]):
+        assert link == gym_link == 4 and flags == gym_flags == p.LINK_FRAME
+        np.testing.assert_allclose(force, gym_force, rtol=1e-12, atol=1e-15)

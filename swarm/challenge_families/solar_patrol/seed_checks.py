@@ -28,14 +28,17 @@ processes of their own: the environment they fly imports the family registry, wh
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional
+from typing import IO, Dict, Iterable, Iterator, List, Optional
 
 from swarm.constants import BENCHMARK_VERSION
 from swarm.protocol import MapTask
@@ -50,6 +53,9 @@ CACHE_DEFAULT = Path.home() / ".cache" / "swarm" / "seed_checks"
 WORKERS_ENV = "SWARM_SEED_CHECK_WORKERS"
 CPU_SHARE = 4                          # by default the flights take a quarter of the machine's cores
 PILOT_MODULE = "swarm.challenge_families.solar_patrol.reference_pilot"
+POLL_S = 0.5                           # how often a busy flight's kept verdict is looked for
+# One BLAS and OpenMP thread in every reference flight, as in the validator image, whatever the host sets.
+THREAD_CAPS = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
 
 @dataclass
@@ -122,40 +128,90 @@ def replacement(seed: int) -> Optional[int]:
 
 def prepare(seeds: Iterable[int], workers: int) -> Dict[int, int]:
     """Judge a list of seeds on parallel flights, following each seed's replacements only as far as it needs, and
-    return what every list seed is flown as."""
+    return what every list seed is flown as. A failed candidate's replacement goes to the next free flight at once,
+    so no flight waits for the others to finish a round."""
     chains = {int(seed): candidates(seed) for seed in seeds}
     heads = {seed: next(chain) for seed, chain in chains.items()}
     flown: Dict[int, int] = {}
-    while heads:
-        fly([head for head in heads.values() if cached(head) is None], workers)
-        following = {}
-        for seed, head in heads.items():
-            found = cached(head)
-            if found is None:
-                raise SeedCheckError(f"seed {head} was flown but left no verdict")
-            if found.passed:
-                flown[seed] = head
-                continue
-            nxt = next(chains[seed], None)
-            if nxt is None:
-                raise SeedCheckError(f"no candidate of seed {seed} passed the seed checks")
-            following[seed] = nxt
-        heads = following
+    with Flights(workers) as flights:
+        while heads:
+            for seed, head in list(heads.items()):
+                found = cached(head)
+                if found is None:
+                    continue
+                if found.passed:
+                    flown[seed] = heads.pop(seed)
+                    continue
+                nxt = next(chains[seed], None)
+                if nxt is None:
+                    raise SeedCheckError(f"no candidate of seed {seed} passed the seed checks")
+                heads[seed] = nxt
+            flights.fly([head for head in heads.values() if cached(head) is None])
     return flown
 
 
-def fly(seeds: List[int], workers: int) -> None:
-    """Fly the reference pilot over the seeds, split across parallel processes, each keeping its verdicts."""
-    shares = [seeds[i::max(1, int(workers))] for i in range(max(1, int(workers)))]
-    runs = [subprocess.Popen([sys.executable, "-m", PILOT_MODULE, *map(str, share)], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.PIPE) for share in shares if share]
-    failures = []
-    for run in runs:
-        _out, err = run.communicate()
-        if run.returncode != 0:
-            failures.append(err.decode("utf-8", "replace")[-2000:])
-    if failures:
-        raise SeedCheckError("reference flights failed:\n" + "\n".join(failures))
+class Flights:
+    """Reference flights in processes of their own, at most workers at a time. Each process judges the seeds it is
+    handed one after another and keeps their verdicts, so only its first world is built cold."""
+
+    def __init__(self, workers: int):
+        """No process yet: one starts when a seed finds every running one busy."""
+        self.workers = max(1, int(workers))
+        self.runs: Dict[subprocess.Popen, Optional[int]] = {}   # each process and the seed it is judging
+        self.logs: Dict[subprocess.Popen, IO[bytes]] = {}
+
+    def __enter__(self) -> "Flights":
+        """The flights, for the length of a preparation."""
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Let every process end once it has no more seeds, or stop them all when the preparation failed. A process
+        that ends with an error fails the preparation even after keeping its last verdict."""
+        crashed = None
+        for run in self.runs:
+            run.stdin.close()
+            if exc[0] is not None:
+                run.kill()
+            if run.wait() != 0 and exc[0] is None and crashed is None:
+                crashed = f"a seed-check process ended with code {run.returncode}:\n{self._tail(run)}"
+            self.logs[run].close()
+        if crashed is not None:
+            raise SeedCheckError(crashed)
+
+    def _tail(self, run: subprocess.Popen) -> str:
+        """The end of a process's error output."""
+        self.logs[run].seek(0)
+        return self.logs[run].read().decode("utf-8", "replace")[-2000:]
+
+    def fly(self, seeds: List[int]) -> None:
+        """Hand the seeds not being judged yet to free processes, then wait until a seed being judged has its
+        verdict. A process that ends while it still holds a seed fails the preparation."""
+        for run, seed in self.runs.items():
+            if seed is not None and cached(seed) is not None:
+                self.runs[run] = None
+        flying = set(self.runs.values())
+        for seed in dict.fromkeys(seeds):
+            if seed in flying:
+                continue
+            free = next((run for run, held in self.runs.items() if held is None), None)
+            if free is not None and free.poll() is not None:
+                raise SeedCheckError(f"a seed-check process ended between seeds:\n{self._tail(free)}")
+            if free is None and len(self.runs) < self.workers:
+                log = tempfile.TemporaryFile()
+                free = subprocess.Popen([sys.executable, "-m", PILOT_MODULE], stdin=subprocess.PIPE, bufsize=0,
+                                        stdout=subprocess.DEVNULL, stderr=log, env={**os.environ, **THREAD_CAPS})
+                self.logs[free] = log
+            if free is None:
+                break
+            with contextlib.suppress(BrokenPipeError):  # a process that has ended is caught below, holding the seed
+                free.stdin.write(f"{seed}\n".encode())
+            self.runs[free] = seed
+        busy = {run: seed for run, seed in self.runs.items() if seed is not None}
+        while busy and all(cached(seed) is None for seed in busy.values()):
+            for run, seed in busy.items():
+                if run.poll() is not None and cached(seed) is None:
+                    raise SeedCheckError(f"seed {seed} was flown but left no verdict:\n{self._tail(run)}")
+            time.sleep(POLL_S)
 
 
 def approve(task: MapTask) -> MapTask:
