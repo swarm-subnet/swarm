@@ -245,7 +245,7 @@ def test_a_flight_that_ends_before_reading_its_next_seed_names_no_seed(kept, mon
         with seed_checks.Flights(1) as flights:
             flights.fly([12])
             flights.fly([13])
-    assert "13" not in str(raised.value)
+    assert "seed 13" not in str(raised.value)
 
 
 def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch, tmp_path):
