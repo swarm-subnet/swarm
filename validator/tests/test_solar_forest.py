@@ -79,8 +79,7 @@ def test_near_tall_trees_get_a_collision_only_trunk(client):
     step = CONFIG["forest_trunk_step_m"]
     tall = np.maximum(step, np.round(table["scale"][trunk, 2] * CONFIG["cylinder_height_share"] / step) * step)
     centres = table["position"][trunk] + np.column_stack([np.zeros((len(tall), 2)), tall / 2.0])
-    # A trunk body is a plain static object, whose shapes the engine does not list, so each trunk is found by a short
-    # ray that ends on the tree's axis and must meet a cylinder of the trunk radius around that axis.
+    # The engine does not list a static object's shapes, so a short ray to each tree's axis must meet its trunk.
     side = np.array([CONFIG["cylinder_radius_m"] + 0.05, 0.0, 0.0])
     hits = [hit for start in range(0, len(centres), 1024) for hit in p.rayTestBatch(
         (centres[start:start + 1024] + side).tolist(), centres[start:start + 1024].tolist(), physicsClientId=client)]

@@ -70,8 +70,7 @@ _DCT_BITS = 16
 # The 8-point DCT scaled to integers; no entry lies near a rounding tie, so every platform builds the same matrix.
 _DCT = np.array([[round((math.sqrt(0.125) if k == 0 else 0.5) * math.cos((2 * n + 1) * k * math.pi / 16)
                         * (1 << _DCT_BITS)) for n in range(8)] for k in range(8)], dtype=np.int64)
-# Every product and sum the transforms take is a whole number far under 2 ** 53, so float64 holds each exactly and the
-# result is the same whatever order the machine adds in.
+# The transforms' products and sums are whole numbers under 2 ** 53, exact in float64 in any order of addition.
 _DCT_F = _DCT.astype(np.float64)
 _STEP_SCALE = float(1 << (2 * _DCT_BITS))
 # JPEG's full-range YCbCr in 16-bit fixed point, and back from the two colour planes around 128.

@@ -57,17 +57,13 @@ RAYCAST = hasattr(p, "ER_SWARM_RAYCAST")
 THERMAL = RAYCAST and hasattr(p, "ER_SWARM_THERMAL")
 RENDER_BACKEND = "raycast" if RAYCAST else "tiny"
 # The ray caster's picture flags for a colour camera, the daylight model's own set, so a frame without it (at night,
-# or before the park turns it on) keeps shadows, leaf cut-outs, filtered textures and clean edges. Only outlines are
-# smoothed, not the creases between the leaves of a crown, which cost about a third of a tilted frame.
+# or before the park turns it on) keeps shadows, leaf cut-outs, filtered textures and clean edges.
 PICTURE_FLAGS = functools.reduce(operator.or_, (getattr(p, name, 0) for name in (
     "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS", "ER_SWARM_EDGE_OUTLINE", "ER_ALPHA_CUTOUT",
     "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")), 0) if RAYCAST else 0
-# A camera that has not moved, over a scene where nothing it shows has changed, gets its last frame back from the engine
-# instead of tracing it again; the grain is drawn new for every frame all the same. It equals a fresh trace but for two
-# surfaces at exactly one distance, and which frames come back follows this client's whole sequence of requests.
+# A still camera over an unchanged scene gets its last frame back with new grain; only exact depth ties can differ.
 FRAME_REUSE = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
-# A close look smooths every edge; a crease inside one body, such as between the leaves of a crown, fills the share no
-# leaf around it covers from those leaves instead of a ray of its own, which is most of the cost of a zoom on trees.
+# Wide frames smooth outlines only; a close look smooths every edge, its crown creases filled from the leaves around.
 CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
                                                                                    if RAYCAST else 0)
 
