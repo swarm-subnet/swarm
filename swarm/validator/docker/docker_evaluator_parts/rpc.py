@@ -29,6 +29,7 @@ from typing import Callable, Optional
 import bittensor as bt
 import capnp
 import numpy as np
+import pybullet as p
 
 from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
 from swarm.config import RpcTraceSettings
@@ -63,6 +64,8 @@ from ._shared import (
 )
 from .submission import _serialize_observation_shm
 
+# Overlapping needs an engine that lets go of the GIL while it draws, or the frame's time would land in the act's.
+_ENGINE_RELEASES_GIL = hasattr(p, "CAMERA_RELEASES_GIL")
 # Seeds that froze the collector; a thread left behind by a timeout shares the process with the next seed.
 _frozen_seeds = 0
 _frozen_lock = threading.Lock()
@@ -644,6 +647,11 @@ def _run_multi_seed_rpc_sync(
                         # The next act() already sent, with its observation, while the last step finished.
                         early = None
                         if family.observation_ahead:
+                            if not _ENGINE_RELEASES_GIL:
+                                raise RuntimeError(
+                                    f"{family.family_id} overlaps decisions, but this engine holds the GIL while it "
+                                    f"draws; install the pinned swarm-bullet3 wheel"
+                                )
                             _freeze_world()
                             frozen = True
                         act_dim = int(env.action_space.shape[-1])

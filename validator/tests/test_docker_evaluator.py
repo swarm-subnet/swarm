@@ -993,10 +993,12 @@ class _AheadEnv:
         self.closed_mid_step = self.closed_mid_step or self.stepping
 
 
-def _fly_ahead(monkeypatch, agent, env, serialize):
-    """Fly one task through the RPC loop with stand-ins for capnp, the miner and the env, its family overlapping."""
+def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True):
+    """Fly one task through the RPC loop with stand-ins for capnp, the miner, the env and the engine, its family
+    overlapping."""
     rpc_mod = de.rpc
     ev = _new_evaluator()
+    monkeypatch.setattr(rpc_mod, "_ENGINE_RELEASES_GIL", engine_releases_gil)
 
     class _Loop:
         """Async context manager standing in for the capnp kj event loop."""
@@ -1027,7 +1029,7 @@ def _fly_ahead(monkeypatch, agent, env, serialize):
     monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _calibrate)
     monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
     monkeypatch.setattr(rpc_mod, "runtime_family_for_task",
-                        lambda task: SimpleNamespace(decision_steps=1, observation_ahead=True))
+                        lambda task: SimpleNamespace(family_id="cf_test", decision_steps=1, observation_ahead=True))
     task = SimpleNamespace(map_seed=77, challenge_type=1, horizon=1.0, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0))
     return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000)
 
@@ -1102,6 +1104,34 @@ def test_a_failed_handover_lets_the_step_finish_before_the_env_is_closed(monkeyp
     assert env.steps == 2
     assert env.closed_mid_step is False
     assert results[0].success is False
+
+
+def test_an_engine_that_holds_the_gil_refuses_to_overlap(monkeypatch):
+    """On an engine that keeps the GIL while it draws, an overlapping family's seed fails with the reason instead of
+    timing the frame inside the model's act."""
+
+    class _Agent:
+        """Miner stand-in that answers every act."""
+
+        async def ping(self, _msg):
+            """Answer the connect ping."""
+            return SimpleNamespace(response="pong")
+
+        async def reset(self):
+            """Accept the reset."""
+
+        async def act(self, _obs):
+            """Answer with a still action."""
+            return _ACT_REPLY
+
+    env = _AheadEnv(lambda k: None)
+
+    results = _fly_ahead(monkeypatch, _Agent(), env, lambda _schema, obs: ("serialized", obs["marker"]),
+                         engine_releases_gil=False)
+
+    assert env.steps == 0
+    assert results[0].success is False
+    assert results[0].failure_reason == FailureReason.ENV_FAILURE.value
 
 
 def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
