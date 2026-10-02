@@ -209,8 +209,9 @@ class Flights:
         busy = {run: seed for run, seed in self.runs.items() if seed is not None}
         while busy and all(cached(seed) is None for seed in busy.values()):
             for run, seed in busy.items():
+                # It may have ended before reading the seed it was handed, so the seed is not named.
                 if run.poll() is not None and cached(seed) is None:
-                    raise SeedCheckError(f"seed {seed} was flown but left no verdict:\n{self._tail(run)}")
+                    raise SeedCheckError(f"a seed-check process ended and left no verdict:\n{self._tail(run)}")
             time.sleep(POLL_S)
 
 
