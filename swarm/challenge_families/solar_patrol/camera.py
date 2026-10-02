@@ -56,8 +56,6 @@ from .episode import SolarEpisode
 RAYCAST = hasattr(p, "ER_SWARM_RAYCAST")
 THERMAL = RAYCAST and hasattr(p, "ER_SWARM_THERMAL")
 RENDER_BACKEND = "raycast" if RAYCAST else "tiny"
-# The engine lets go of Python's lock while it draws, so a model's reply that lands during a frame is timed as it lands.
-GIL_FREE = hasattr(p, "CAMERA_RELEASES_GIL")
 # The ray caster's picture flags for a colour camera, the daylight model's own set, so a frame without it (at night,
 # or before the park turns it on) keeps shadows, leaf cut-outs, filtered textures and clean edges. Only outlines are
 # smoothed, not the creases between the leaves of a crown, which cost about a third of a tilted frame.

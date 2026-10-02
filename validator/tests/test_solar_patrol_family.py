@@ -287,7 +287,6 @@ def test_each_observation_is_handed_ahead_as_its_step_returns_it(flat_park):
     the link's snapshot, and equals the one that step returns; the step that lands hands over at most that one."""
     if not _M4TD_SHIPPED:
         pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
-    assert get_challenge_family(FAMILY_ID).observation_ahead == camera.GIL_FREE
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)

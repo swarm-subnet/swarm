@@ -96,7 +96,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     daylight = park.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
     prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
-    observation_ahead = camera.GIL_FREE  # the model decides while the window's last steps and frame run
+    # Off until the fairness of acts timed beside a frame is decided; on needs a wheel with CAMERA_RELEASES_GIL.
+    observation_ahead = False
 
     # ------------------------------------------------------------------ #
     # runtime profile and task generation
