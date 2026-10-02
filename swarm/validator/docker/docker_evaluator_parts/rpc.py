@@ -63,6 +63,27 @@ from ._shared import (
 )
 from .submission import _serialize_observation_shm
 
+# Seeds that froze the collector; a thread left behind by a timeout shares the process with the next seed.
+_frozen_seeds = 0
+_frozen_lock = threading.Lock()
+
+
+def _freeze_world() -> None:
+    """Keep every object built so far out of the collector, so no long collection holds the GIL on an act reply."""
+    global _frozen_seeds
+    with _frozen_lock:
+        _frozen_seeds += 1
+        gc.freeze()
+
+
+def _thaw_world() -> None:
+    """Give the frozen objects back to the collector once no seed in the process still needs them frozen."""
+    global _frozen_seeds
+    with _frozen_lock:
+        _frozen_seeds -= 1
+        if _frozen_seeds == 0:
+            gc.unfreeze()
+
 
 def _strike_zero_action(n_drones: int, act_dim: int) -> np.ndarray:
     """Neutral substitute action in the exact family contract shape."""
@@ -528,6 +549,7 @@ def _run_multi_seed_rpc_sync(
                         f"{task_label} env built in {phases['env_build_sec']:.2f}s"
                     )
                     seed_clock["env_open"] = True
+                    frozen = False
 
                     try:
                         t_reset_start = time.time()
@@ -622,8 +644,8 @@ def _run_multi_seed_rpc_sync(
                         # The next act() already sent, with its observation, while the last step finished.
                         early = None
                         if family.observation_ahead:
-                            # The built world stays out of the collector: no long collection holds the GIL on a reply.
-                            gc.freeze()
+                            _freeze_world()
+                            frozen = True
                         act_dim = int(env.action_space.shape[-1])
                         if n_drones > 1:
                             lo, hi = env.action_space.low, env.action_space.high
@@ -994,7 +1016,8 @@ def _run_multi_seed_rpc_sync(
 
                     finally:
                         t_cleanup_start = time.perf_counter()
-                        gc.unfreeze()
+                        if frozen:
+                            _thaw_world()
                         _cleanup_env_quietly(env)
                         _release_held_seed(time.perf_counter() - t_cleanup_start)
 
