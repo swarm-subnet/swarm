@@ -24,8 +24,7 @@ cutters, cable coil) ride one bone.
 
 A thief is one visual body per colour piece, built from vertex arrays so that resetMeshData can rewrite it every frame.
 A frame of a Kimodo SOMA-30 move (30 local rotations and the root) is posed by forward kinematics on the skeleton, then
-every drawn vertex blends its few joint transforms; skin the clothes cover is never posed. All of it is summed in a fixed
-order with elementwise arithmetic, never through BLAS, so every validator's CPU poses a thief to the same bits.
+one matrix product blends the joint transforms for every drawn vertex at once; skin the clothes cover is never posed.
 Each piece carries a temperature for the thermal camera; tools and the pack stay on the engine's passive model.
 """
 
@@ -80,31 +79,6 @@ def _quat_to_mat(q: np.ndarray) -> np.ndarray:
                      2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1).reshape(q.shape[:-1] + (3, 3))
 
 
-def _product(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Products of stacked 4x4 transforms, summed in a fixed order with elementwise operations so that no BLAS
-    kernel, and so no CPU, changes a bit."""
-    return (a[..., :, 0:1] * b[..., 0:1, :] + a[..., :, 1:2] * b[..., 1:2, :] + a[..., :, 2:3] * b[..., 2:3, :]
-            + a[..., :, 3:4] * b[..., 3:4, :])
-
-
-def _inverse(m: np.ndarray) -> np.ndarray:
-    """Inverses of stacked affine 4x4 transforms by cofactors, in a fixed order of elementwise operations."""
-    r0, r1, r2 = m[..., 0, :3], m[..., 1, :3], m[..., 2, :3]
-    cof = np.stack([np.cross(r1, r2), np.cross(r2, r0), np.cross(r0, r1)], -1)
-    det = r0[..., 0] * cof[..., 0, 0] + r0[..., 1] * cof[..., 1, 0] + r0[..., 2] * cof[..., 2, 0]
-    out = np.zeros(m.shape)
-    out[..., :3, :3] = cof / det[..., None, None]
-    out[..., :3, 3] = -_apply(out, m[..., :3, 3], translate=False)
-    out[..., 3, 3] = 1.0
-    return out
-
-
-def _apply(m: np.ndarray, v: np.ndarray, translate: bool = True) -> np.ndarray:
-    """Points v (..., 3) through affine transforms m (..., 3 or 4, 4), in a fixed order of elementwise operations."""
-    out = m[..., :3, 0] * v[..., 0:1] + m[..., :3, 1] * v[..., 1:2] + m[..., :3, 2] * v[..., 2:3]
-    return out + m[..., :3, 3] if translate else out
-
-
 def _read_obj(path: str) -> tuple:
     """Vertices and triangles of one of the pieces' OBJ files, in file order."""
     verts, faces = [], []
@@ -137,8 +111,7 @@ class Catalogue:
         rig = np.load(os.path.join(folder, "rig.npz"))
         self.joint_names = [str(n) for n in rig["joint_names"]]
         self.parents = rig["parents"].astype(np.int64)
-        depth = np.array([self._depth(j) for j in range(len(self.parents))])
-        self.levels = [np.flatnonzero(depth == d) for d in range(depth.max() + 1)]
+        self.order = np.argsort([self._depth(j) for j in range(len(self.parents))], kind="stable")
         self.slot = np.array([self.joint_names.index(str(n)) for n in rig["soma30"]])
         self.relaxed = rig["relaxed_hands"].astype(np.float64)
         self.builds = [str(n) for n in rig["build_names"]]
@@ -168,15 +141,16 @@ class Catalogue:
 
     def world(self, build: int, local30: np.ndarray, root: np.ndarray) -> np.ndarray:
         """World transforms (77, 4, 4) of one build's skeleton for 30 local rotations and the root, SOMA frame."""
+        local = self.relaxed.copy()
+        local[self.slot] = local30
         rest = self.build_rest[build]
         world = np.zeros((len(self.parents), 4, 4))
-        world[:, :3, :3] = self.relaxed
-        world[self.slot, :3, :3] = local30
-        world[:, :3, 3] = rest - np.where(self.parents[:, None] >= 0, rest[self.parents], 0.0)
-        world[:, 3, 3] = 1.0
-        # Joints of one depth only hang on shallower ones, so each depth is one step from its parents' transforms.
-        for joints in self.levels[1:]:
-            world[joints] = _product(world[self.parents[joints]], world[joints])
+        for j in self.order:
+            m = np.eye(4)
+            m[:3, :3] = local[j]
+            parent = self.parents[j]
+            m[:3, 3] = rest[j] - (rest[parent] if parent >= 0 else 0.0)
+            world[j] = m if parent < 0 else world[parent] @ m
         world[:, :3, 3] += root * self.root_scale[build]
         return world
 
@@ -252,8 +226,9 @@ class Intruder:
                 rigid = np.flatnonzero(piece["rigid_joint"] >= 0)
                 if len(rigid):
                     j = piece["rigid_joint"][rigid].astype(np.int64)
-                    carry = _product(bind[j], _inverse(standard[j]))
-                    fitted[rigid] = _to_zup(_apply(carry, _to_yup(piece["verts"][rigid])))
+                    carry = bind[j] @ np.linalg.inv(standard[j])
+                    h = np.concatenate([_to_yup(piece["verts"][rigid]), np.ones((len(rigid), 1))], 1)
+                    fitted[rigid] = _to_zup(np.einsum("vij,vj->vi", carry, h)[:, :3])
                 covered[piece["body_face"][piece["outer"]]] = True
                 rest.append(_to_yup(fitted))
                 joints.append(piece["weight_joints"].astype(np.int64))
@@ -284,17 +259,9 @@ class Intruder:
         dense = np.zeros((len(rest_all), len(cat.parents)))
         np.add.at(dense, (np.repeat(np.arange(len(rest_all)), joints_all.shape[1]), joints_all.ravel()), weights_all.ravel())
         self.bones = np.flatnonzero(dense.any(0))
-        # Each vertex's weights summed slot by slot, most-weighted vertices first, so slot k is one slice.
-        blend = dense[:, self.bones]
-        count = (blend != 0).sum(1)
-        order = np.argsort(-count, kind="stable")
-        rows, cols = np.nonzero(blend[order])
-        rank = np.arange(len(rows)) - np.searchsorted(rows, rows)
-        self.slots = [(cols[rank == k], blend[order[rows[rank == k]], cols[rank == k]][:, None])
-                      for k in range(int(count.max()))]
-        self.unsort = np.argsort(order)
-        self.rest = rest_all[order]
-        self.inv_bind = _inverse(bind)
+        self.blend = np.ascontiguousarray(dense[:, self.bones])
+        self.rest = np.concatenate([rest_all, np.ones((len(rest_all), 1))], 1)
+        self.inv_bind = np.linalg.inv(bind)
         # One visual body per colour: (vertex range in the stacked arrays, faces local to that range).
         meshes = [(0, faces, colour, celsius) for faces, colour, celsius in skin_parts]
         meshes += [(k + 1, faces, colour, celsius) for k, (faces, colour, celsius) in enumerate(parts)]
@@ -329,11 +296,9 @@ class Intruder:
         """Every drawn vertex for one move frame, turned by yaw and standing with its lowest point on place (x, y, z)."""
         world = self.cat.world(self.build, _quat_to_mat(np.asarray(local_xyzw, dtype=np.float64)),
                                np.asarray(root, dtype=np.float64))
-        joint = _product(world[self.bones], self.inv_bind[self.bones])[:, :3].reshape(len(self.bones), 12)
-        blended = np.zeros((len(self.rest), 12))
-        for bones, weights in self.slots:
-            blended[:len(bones)] += joint[bones] * weights
-        v = _to_zup(_apply(blended.reshape(-1, 3, 4), self.rest)[self.unsort])
+        joint = (world @ self.inv_bind)[self.bones, :3, :].reshape(len(self.bones), 12)
+        blended = (self.blend @ joint).reshape(-1, 3, 4)
+        v = _to_zup(np.einsum("nij,nj->ni", blended, self.rest))
         c, s = math.cos(yaw), math.sin(yaw)
         x, y = v[:, 0] * c - v[:, 1] * s, v[:, 0] * s + v[:, 1] * c
         return np.stack([x + place[0], y + place[1], v[:, 2] - v[:, 2].min() + place[2]], 1)
@@ -345,7 +310,6 @@ class Intruder:
         v = self.vertices(local_xyzw, root, place, yaw)
         for uid, rows in self.meshes:
             try:
-                # The array is read in one copy, the same doubles a list of its values would carry.
                 p.resetMeshData(uid, v[rows], physicsClientId=self.client)
             except p.error:
                 # An engine before visual resetMeshData: the thief keeps the pose it was created in.
