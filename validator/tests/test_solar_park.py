@@ -316,6 +316,7 @@ def test_half_the_seeds_fly_at_night_under_the_seed_s_own_light():
     assert 0.47 < nights / 4000 < 0.53
 
 
+@pytest.mark.skipif(not hasattr(p, "VISUAL_SHAPE_GLASS_BACKED"), reason="engine without backed glass")
 def test_only_the_panel_glass_is_drawn_over_a_backsheet(monkeypatch):
     """The table glass of the park asks for the backsheet; the pickup's windows stay glass that looks through."""
     asked = {}
@@ -328,7 +329,7 @@ def test_only_the_panel_glass_is_drawn_over_a_backsheet(monkeypatch):
     monkeypatch.setattr(p, "createVisualShape", record)
     items = solar_manifest(SOLAR_ASSET_DIR)["items"]
     shapes = _Shapes(0, SOLAR_ASSET_DIR, items)
-    backed = getattr(p, "VISUAL_SHAPE_GLASS_BACKED", 0)
+    backed = p.VISUAL_SHAPE_GLASS_BACKED
     for name, want in (("full_table_glass", backed), ("half_table_glass", backed), ("pickup_glass", 0)):
         shapes._visual(items[name], "unused.obj", [1.0, 1.0, 1.0])
         assert asked["flags"] & p.VISUAL_SHAPE_GLASS
