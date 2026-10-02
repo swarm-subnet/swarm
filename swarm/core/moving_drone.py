@@ -1533,12 +1533,19 @@ class MovingDroneAviary(BaseRLAviary):
             for link in range(-1, p.getNumJoints(uid, physicsClientId=cli)):
                 p.setCollisionFilterGroupMask(uid, link, 2, 1, physicsClientId=cli)
 
-    def step(self, action):
-        """One model decision: the family's control steps under the same action, then the observation and flags."""
+    def step(self, action, on_observation=None):
+        """One model decision: the family's control steps under the same action, then the observation and flags.
+
+        `on_observation`, when given, is handed the next decision's observation as soon as the family has fixed it,
+        while the remaining control steps run.
+        """
         self._control_step(action)
         for _ in range(int(getattr(self.family_runtime, "decision_steps", 1)) - 1):
             if self._computeTerminated() or self._computeTruncated():
                 break
+            if on_observation is not None and self.family_runtime.observation_fixed(self):
+                on_observation(self._computeObs())
+                on_observation = None
             self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
             self._control_step(action)
         obs = self._computeObs()

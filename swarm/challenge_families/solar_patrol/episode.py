@@ -58,7 +58,7 @@ class SolarEpisode:
     previous_action: Optional[np.ndarray] = None
     outcome: Outcome = field(default_factory=Outcome)
     frames: Frames = field(default_factory=Frames)
-    view_step: int = -1
+    view_step: int = -1                              # the decision step the view is shown at
     view: dict = field(default_factory=dict)
 
     park: Any = None

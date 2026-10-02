@@ -205,6 +205,9 @@ class ChallengeFamilyRuntime:
     decision_steps: int = 1
     # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
     prepares_seeds: bool = False
+    # The next decision's observation is fixed before a decision's control steps end (observation_fixed), so the
+    # evaluator sends it to the model while they finish; off runs every decision strictly after the last.
+    observation_ahead: bool = False
 
     def stalled_rollout_metrics(self, task: Any, info: Dict[str, Any]) -> Dict[str, Any]:
         """Metrics a seed keeps when the model stalls out of it on slow-act strikes; none by default."""
@@ -294,6 +297,11 @@ class ChallengeFamilyRuntime:
     def post_step_update(self, env: Any) -> None:
         """Refresh family-owned bookkeeping after the control step's physics has run, such as dwell timers."""
         _ = env
+
+    def observation_fixed(self, env: Any) -> bool:
+        """True once nothing left in the decision's control steps can change the next decision's observation."""
+        _ = env
+        return False
 
     def advance_world(self, env: Any) -> None:
         """Per control step, before physics: advance family-owned world entities

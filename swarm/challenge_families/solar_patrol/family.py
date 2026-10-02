@@ -96,6 +96,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     daylight = park.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
     prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
+    # Off until the fairness of acts timed beside a frame is decided; on needs a wheel with CAMERA_RELEASES_GIL.
+    observation_ahead = False
 
     # ------------------------------------------------------------------ #
     # runtime profile and task generation
@@ -218,7 +220,15 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         if env._collision:
             ep.end("collision")
         if sensor_noise.snapshot_due(ep):
-            sensor_noise.hold(ep, self._clean_view(env, ep))
+            # The next decision is shown this snapshot, so its view is built now, before the window's last steps.
+            ep.view = self._build_view(env, ep, self._clean_view(env, ep))
+            ep.view_step = ep.step - ep.step % DECISION_STEPS + DECISION_STEPS
+        if ep.step == ep.view_step:
+            sensor_noise.show(ep)
+
+    def observation_fixed(self, env: Any) -> bool:
+        """True from the snapshot on: the view for the coming decision is built and nothing later changes it."""
+        return env._solar.view_step > env._solar.step
 
     def compute_terminated(self, env: Any) -> bool:
         """True once the patrol has ended on landing, a collision or the flight limit's stop line."""
@@ -265,16 +275,17 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     # observation
     # ------------------------------------------------------------------ #
     def observation_part(self, env: Any, key: str) -> np.ndarray:
-        """One key of what the model sees this decision, the whole view built once and shared by every key."""
+        """One key of what the model sees this decision, the whole view built once and shared by every key: the one
+        built at the link's snapshot, or this step's own when no snapshot was taken since the last decision."""
         ep = env._solar
-        if ep.view_step != ep.step:
-            ep.view = self._build_view(env, ep)
-            ep.view_step = ep.step
+        if ep.view_step < ep.step:
+            ep.view, ep.view_step = self._build_view(env, ep, self._clean_view(env, ep)), ep.step
+            sensor_noise.show(ep)
         return ep.view[key]
 
-    def _build_view(self, env: Any, ep: SolarEpisode) -> dict[str, np.ndarray]:
-        """The snapshot the link delivered, or this step's when none is on its way, with the sensor errors on top."""
-        view = sensor_noise.observe(env, ep, sensor_noise.delivered(ep) or self._clean_view(env, ep))
+    def _build_view(self, env: Any, ep: SolarEpisode, snapshot: dict[str, Any]) -> dict[str, np.ndarray]:
+        """A clean snapshot with the sensor errors on top."""
+        view = sensor_noise.observe(env, ep, snapshot)
         site_map = new_site_map()
         if ep.step == 0:
             drone_state.site_map(env, ep, site_map)
