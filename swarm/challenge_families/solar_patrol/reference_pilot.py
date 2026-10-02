@@ -65,6 +65,7 @@ from .contract import (
     THERMAL_SHAPE,
 )
 from .episode import SolarEpisode
+from .fixed_order import dot, norm, rows_dot
 from .seed_checks import Verdict, keep
 from .task import solar_patrol_task
 
@@ -215,7 +216,7 @@ def _pieces(area: Any, u: np.ndarray, v: np.ndarray, reach: Tuple[float, float],
     stretches = []
     for piece in getattr(cut, "geoms", [cut]):
         if piece.geom_type == "LineString" and piece.length > 0.0:
-            along = np.asarray(piece.coords)[:, :2] @ u
+            along = rows_dot(np.asarray(piece.coords)[:, :2], u)
             stretches.append((float(along.min()), float(along.max())))
     return sorted(stretches)
 
@@ -225,8 +226,8 @@ def _cells(area: Any, fence: np.ndarray, u: np.ndarray, v: np.ndarray,
     """The area cut into strips no inward corner splits, read across the lane direction every CELL_STEP_M: each strip
     a run of rows (offset, start, end), ending where the next row splits it, joins it to another, or moves one of
     its ends further than jump, as the edge does at an inward corner."""
-    reach = (float((fence @ u).min()) - 1.0, float((fence @ u).max()) + 1.0)
-    low, high = float((fence @ v).min()), float((fence @ v).max())
+    reach = (float(rows_dot(fence, u).min()) - 1.0, float(rows_dot(fence, u).max()) + 1.0)
+    low, high = float(rows_dot(fence, v).min()), float(rows_dot(fence, v).max())
     growing: List[List[Tuple[float, float, float]]] = []
     done: List[List[Tuple[float, float, float]]] = []
     for offset in np.arange(low + CELL_STEP_M / 2.0, high, CELL_STEP_M):
@@ -292,7 +293,7 @@ def search_gap(area: Any, path: np.ndarray) -> float:
     nearest = np.full(len(grid), np.inf)
     for a, b in zip(path, path[1:]):
         ab = b - a
-        t = np.clip((grid - a) @ ab / max(float(ab @ ab), 1e-12), 0.0, 1.0)
+        t = np.clip(rows_dot(grid - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0)
         nearest = np.minimum(nearest, np.hypot(*(grid - a - t[:, None] * ab).T))
     return float(nearest.max()) if len(grid) else 0.0
 
@@ -382,7 +383,7 @@ def _corner_speeds(points: np.ndarray) -> np.ndarray:
     for i in range(reach, len(points) - reach):
         before, after = points[i] - points[i - reach], points[i + reach] - points[i]
         norms = float(np.hypot(*before) * np.hypot(*after))
-        if norms > 0.0 and float(before @ after) < norms * math.cos(math.radians(CORNER_DEG)):
+        if norms > 0.0 and dot(before, after) < norms * math.cos(math.radians(CORNER_DEG)):
             speeds[i] = CORNER_MPS
     for i in range(len(points) - 2, -1, -1):
         speeds[i] = min(speeds[i], math.sqrt(speeds[i + 1] ** 2 + 2.0 * BRAKE_MPS2 * SAMPLE_M))
@@ -493,7 +494,7 @@ class _Sightings:
             x, y = person["xy"]
             ground = _ground_z(env.CLIENT, x, y, ep.terrain_uids, float(ep.dock_position[2]))
             ray = np.array([x, y, ground + AIM_ABOVE_GROUND_M]) - eye
-            distance = float(np.linalg.norm(ray))
+            distance = norm(ray)
             if distance < MIN_DISTANCE_M or PERSON_NARROW_M / (distance * self.pixel_rad) < PIXELS_ACROSS:
                 continue
             view = self._view(eye, ray / distance, drone_forward)
@@ -504,9 +505,9 @@ class _Sightings:
     def _view(self, eye: np.ndarray, forward: np.ndarray, drone_forward: np.ndarray) -> camera.View:
         """The camera turned and tilted to look along forward, level as the gimbal holds it."""
         up = np.array([0.0, 0.0, 1.0]) - forward[2] * forward
-        if np.linalg.norm(up) < 1e-6:
+        if norm(up) < 1e-6:
             up = np.asarray(drone_forward, dtype=float)
-        up = up / np.linalg.norm(up)
+        up = up / norm(up)
         return camera.View(feed=self.feed, eye=tuple(map(float, eye)), forward=tuple(map(float, forward)),
                            up=tuple(map(float, up)), width=CROP_PX, height=CROP_PX,
                            vertical_fov_deg=self.crop_fov_deg, sees=True, step=self.ep.step)

@@ -35,6 +35,7 @@ from swarm.core.maps.solar.builder import solar_manifest
 from . import park
 from .contract import HORIZON_S, MAX_BUILDINGS, MAX_FENCE_POINTS, MAX_TABLES, SITE_MAP_SLICES, STATE_SLICES, put
 from .episode import SolarEpisode
+from .fixed_order import norm, rows_dot
 
 # DJI's M4TD figures: 47 min of hover on one battery, and the Dock 3 fast charge stops at 95 %.
 HOVER_ENDURANCE_S = 47.0 * 60.0
@@ -50,10 +51,11 @@ def _footprint(low: np.ndarray, high: np.ndarray, place: dict[str, Any]) -> np.n
     long side from 0 to 180 degrees."""
     corners = np.array([[x, y, z] for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])])
     rotation = np.reshape(p.getMatrixFromQuaternion(place["quaternion"]), (3, 3))
-    flat = ((corners * place["scale"]) @ rotation.T)[:, :2]
-    along = rotation[:2, 0] / np.linalg.norm(rotation[:2, 0])
+    scaled = corners * place["scale"]
+    flat = np.stack([rows_dot(scaled, rotation[0]), rows_dot(scaled, rotation[1])], 1)
+    along = rotation[:2, 0] / norm(rotation[:2, 0])
     axes = (along, np.array([-along[1], along[0]]))
-    spans = [flat @ axis for axis in axes]
+    spans = [rows_dot(flat, axis) for axis in axes]
     extents = [float(span.max() - span.min()) for span in spans]
     centre = np.asarray(place["position"][:2], dtype=float)
     for axis, span in zip(axes, spans):

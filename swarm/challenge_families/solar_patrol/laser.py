@@ -36,6 +36,7 @@ from swarm.constants import SIM_DT
 from . import airframe
 from .contract import LASER_STATUSES, STATE_SLICES, put
 from .episode import SolarEpisode
+from .fixed_order import dot, norm
 
 READING_HZ = 1.0
 READING_STEPS = int(round(1.0 / (READING_HZ * SIM_DT)))
@@ -88,7 +89,7 @@ def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
 def read(env: Any, tilt_deg: float) -> dict:
     """One reading along the beam at this gimbal tilt: status, distance, world hit point and the body hit."""
     origin, direction = airframe.laser_pose(env, tilt_deg)
-    direction = direction / np.linalg.norm(direction)
+    direction = direction / norm(direction)
     reading = {"origin": origin, "direction": direction, "range_m": 0.0, "point": np.zeros(3), "body": -1}
     beam = _Beam(env, origin, direction)
     coarse = beam.render(COARSE_SIZE, COARSE_TAN, COARSE_NEAR_M, SEARCH_M)
@@ -117,8 +118,8 @@ class _Beam:
         """Frame the beam: its origin, direction, and an up and right square to it."""
         self.env, self.origin, self.direction = env, origin, direction
         ref = np.array([1.0, 0.0, 0.0]) if abs(direction[2]) > 0.99 else np.array([0.0, 0.0, 1.0])
-        up = ref - direction * float(np.dot(ref, direction))
-        self.up = up / np.linalg.norm(up)
+        up = ref - direction * dot(ref, direction)
+        self.up = up / norm(up)
         self.right = np.cross(direction, self.up)
 
     def render(self, size: int, tan_half: float, near: float, far: float) -> Optional["_Shot"]:
@@ -162,8 +163,8 @@ class _Shot:
         if not across or not along:
             return None
         normal = np.cross(across[0] - centre, along[0] - centre)
-        length = float(np.linalg.norm(normal))
+        length = norm(normal)
         if length == 0.0:
             return None
-        sin_angle = min(1.0, abs(float(np.dot(self.beam.direction, normal))) / length)
+        sin_angle = min(1.0, abs(dot(self.beam.direction, normal)) / length)
         return sin_angle / max(math.sqrt(1.0 - sin_angle * sin_angle), 1e-9)

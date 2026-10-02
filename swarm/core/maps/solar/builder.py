@@ -422,7 +422,8 @@ def _corners(piece: Dict[str, Any], anchor: np.ndarray, yaw: float, scale: float
     (x0, y0), (x1, y1) = piece["low"] * scale, piece["high"] * scale
     c, s = math.cos(yaw), math.sin(yaw)
     local = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-    return local @ np.array([[c, s], [-s, c]]) + anchor
+    # Turned with elementwise products in a fixed order, not by BLAS, whose rounding follows the CPU.
+    return np.stack([local[:, 0] * c - local[:, 1] * s, local[:, 0] * s + local[:, 1] * c], 1) + anchor
 
 
 def _gap(a: np.ndarray, b: np.ndarray) -> float:
@@ -430,7 +431,7 @@ def _gap(a: np.ndarray, b: np.ndarray) -> float:
     for poly in (a, b):
         edges = np.roll(poly, -1, axis=0) - poly
         normals = np.column_stack([-edges[:, 1], edges[:, 0]])
-        pa, pb = a @ normals.T, b @ normals.T
+        pa, pb = (ring[:, 0:1] * normals[:, 0] + ring[:, 1:2] * normals[:, 1] for ring in (a, b))
         if np.any((pa.max(axis=0) < pb.min(axis=0)) | (pb.max(axis=0) < pa.min(axis=0))):
             return float(min(_point_gap(a, b), _point_gap(b, a)))
     return 0.0

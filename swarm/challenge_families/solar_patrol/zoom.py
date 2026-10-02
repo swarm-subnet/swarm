@@ -45,6 +45,7 @@ import pybullet as p
 from . import airframe, camera, sensor_noise, theft
 from .contract import MAX_ZOOMS, STATE_SLICES, ZOOM_SHAPE, Box, Command, ZoomRequest, put
 from .episode import SolarEpisode
+from .fixed_order import dot, norm
 
 LENS_DIAGONAL_FOV_DEG = {3: 35.0, 7: 15.0}  # DJI: M4TD medium tele and tele cameras
 NIGHT_VISION_BEAM_DEG = 5.7                 # DJI: M4TD infrared auxiliary light
@@ -107,12 +108,12 @@ def box_ray(seen: camera.View, box: Box) -> np.ndarray:
     """The world direction from a frame's eye through the centre of a box on it, box shares counted from the top left."""
     forward, up = np.asarray(seen.forward, dtype=float), np.asarray(seen.up, dtype=float)
     right = np.cross(forward, up)
-    right /= np.linalg.norm(right)
+    right /= norm(right)
     up = np.cross(right, forward)
     half_v = math.tan(math.radians(seen.vertical_fov_deg) / 2.0)
     half_h = half_v * seen.width / seen.height
     ray = forward + (2.0 * box.cx - 1.0) * half_h * right + (1.0 - 2.0 * box.cy) * half_v * up
-    return ray / np.linalg.norm(ray)
+    return ray / norm(ray)
 
 
 def aim(env: Any, ep: SolarEpisode, asked: ZoomRequest) -> tuple[camera.View, float]:
@@ -130,13 +131,13 @@ def aim(env: Any, ep: SolarEpisode, asked: ZoomRequest) -> tuple[camera.View, fl
         forward, reach_m = ray, math.inf
     else:
         forward = point - eye
-        reach_m = float(np.linalg.norm(forward))
+        reach_m = norm(forward)
         forward /= reach_m
     # The zoom frame stays upright the way the frame it was boxed on was.
-    up = np.asarray(seen.up, dtype=float) - np.dot(seen.up, forward) * forward
-    if np.linalg.norm(up) < 1e-6:
+    up = np.asarray(seen.up, dtype=float) - dot(seen.up, forward) * forward
+    if norm(up) < 1e-6:
         up = np.asarray(camera_up, dtype=float)
-    up /= np.linalg.norm(up)
+    up /= norm(up)
     height, width = ZOOM_SHAPE[:2]
     dark = camera.night(env)
     shot = camera.View(feed="colour", eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=width,
@@ -179,7 +180,9 @@ def _draw(env: Any, ep: SolarEpisode, shot: camera.View, lens: int) -> tuple[np.
     frame, objects = camera.colour_frame(env, shot, at_night, outline=False)
     # An engine without the near infrared still gives night vision in black and white.
     if beam and not camera.LOW_LIGHT:
-        frame = np.repeat((frame @ LUMA)[..., None], 3, axis=2).astype(np.float32)
+        # Weighted in float32 one channel at a time, not by a BLAS product whose rounding follows the CPU.
+        luma = frame[..., 0] * LUMA[0] + frame[..., 1] * LUMA[1] + frame[..., 2] * LUMA[2]
+        frame = np.repeat(luma[..., None], 3, axis=2).astype(np.float32)
     return frame, objects
 
 

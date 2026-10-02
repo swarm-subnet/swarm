@@ -20,6 +20,7 @@ thief's visual bodies in the engine."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections import Counter
 
@@ -35,6 +36,7 @@ pytestmark = pytest.mark.skipif(not os.path.isfile(os.path.join(FOLDER, "intrude
                                 reason="the installed swarm-worlds has no intruders yet")
 
 STANDING = (np.tile([0.0, 0.0, 0.0, 1.0], (30, 1)), np.array([0.0, 0.95, 0.0]), (0.0, 0.0, 0.0), 0.0)
+_POSED_SHA256 = "5873e73de32dae4bc2b81219e54d481eea0c3eb45d15d64b91221ad3c520c8a0"
 
 
 @pytest.fixture
@@ -109,6 +111,20 @@ def test_posing_matches_plain_skinning_on_the_body(client):
     got = thief.vertices(*frame)[:len(ids)]
     assert len(ids) > 1000
     assert np.abs((got - got[0]) - (reference - reference[0])).max() < 1e-6
+
+
+def test_the_posing_is_the_same_bytes_on_every_machine(client):
+    """A dressed thief in a fixed frame poses to the pinned bytes, so no validator's CPU or BLAS draws him apart."""
+    cat = intruders.catalogue()
+    garments = ["work_jacket", "cargo", "work_boots", "balaclava", "gloves", "bolt_cutters", "backpack"]
+    dress = {"build": "stocky", "garments": garments, "skin": [0.5, 0.35, 0.25], "undershirt": [0.2, 0.2, 0.2],
+             "colours": {pc["file"]: pc["colours"][0] for g in garments for pc in cat.pieces[g]}}
+    thief = intruders.Intruder(dress, STANDING, client)
+    # The frame is built without numpy's sin and cos, whose vector code may itself round apart between CPUs.
+    local = np.random.default_rng(4).uniform(-0.2, 0.2, (30, 4)) + [0.0, 0.0, 0.0, 1.0]
+    local /= np.sqrt((local * local).sum(1, keepdims=True))
+    posed = thief.vertices(local, np.array([0.3, 0.9, -0.2]), (5.0, -3.0, 12.0), 0.7)
+    assert hashlib.sha256(posed.tobytes()).hexdigest() == _POSED_SHA256
 
 
 def test_thief_is_one_visual_body_per_colour(client):
