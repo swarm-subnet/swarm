@@ -108,6 +108,7 @@ REACTIONS = {"work_on": 0.2, "freeze": 0.4, "hide": 0.25, "run": 0.15}
 GROUNDED = ("docked", "landed")        # flight phases in which the drone sits in its dock and cannot be heard
 VIEW_MARGIN_M = 1.6                     # a body this near the edge of a picture is posed for it
 AWAY_Z = -1000.0                        # where a body out of the scene is kept
+BURIED_M = 10.0                         # an opening piece is drawn this deep under its own place while its body is away
 
 # The blocks a loop may react with, best first, for each way of reacting. A loop with none of them carries on, and he
 # reacts at the first seam that has one while the drone is still near: a man walking wary freezes once he stops.
@@ -850,10 +851,11 @@ class FenceHole:
         lo, hi = max(-1.25, middle - half), min(1.25, middle + half)
         hinge = hi if story.hinge > 0 else lo
         texture = p.loadTexture(os.path.join(world["asset_dir"], item["folder"], item["texture"]), physicsClientId=self.cli)
+        self.lift, self.lifted = _lift(self.place), True
         self.pieces = {}
         for name, (x0, x1, origin) in {"left": (-1.25, lo, 0.0), "right": (hi, 1.25, 0.0), "flap": (lo, hi, hinge)}.items():
             if x1 - x0 > 1e-3:
-                self.pieces[name] = (_panel_piece(self.cli, x0, x1, origin, self.place["scale"], texture), origin)
+                self.pieces[name] = (*_panel_piece(self.cli, x0, x1, origin, self.place["scale"], texture, self.lift), origin)
         yaw = yaw_of(self.place["quaternion"])
         local_y = np.array([-math.sin(yaw), math.cos(yaw)])
         # Turning the flap about its hinge by +a moves its free edge, d along the panel from the hinge, by d sin(a)
@@ -881,7 +883,10 @@ class FenceHole:
         yaw = yaw_of(quat)
         c, s = math.cos(yaw), math.sin(yaw)
         sx = float(self.place["scale"][0])
-        for name, (uid, origin) in self.pieces.items():
+        relift, self.lifted = whole != self.lifted, whole
+        for name, (uid, verts, origin) in self.pieces.items():
+            if relift:
+                p.resetMeshData(uid, (verts + self.lift if whole else verts).tolist(), physicsClientId=self.cli)
             if whole:
                 p.resetBasePositionAndOrientation(uid, [0.0, 0.0, AWAY_Z], [0, 0, 0, 1], physicsClientId=self.cli)
                 continue
@@ -906,6 +911,7 @@ class GateLeaf:
         folder = os.path.join(world["asset_dir"], item["folder"])
         texture = p.loadTexture(os.path.join(folder, item["texture"]), physicsClientId=self.cli)
         verts, uvs, faces = _read_textured_obj(os.path.join(folder, item["obj"]))
+        self.lift, self.lifted = _lift(self.place), True
         yaw = yaw_of(self.place["quaternion"])
         c, s = math.cos(yaw), math.sin(yaw)
         self.leaves = {}
@@ -916,7 +922,7 @@ class GateLeaf:
             remap[used] = np.arange(len(used))
             hinge = verts[used][np.argmax(np.abs(verts[used][:, 0]))][:2]
             local = verts[used] - np.array([hinge[0], hinge[1], 0.0])
-            shape = p.createVisualShape(p.GEOM_MESH, vertices=local.tolist(), indices=remap[faces[keep]].ravel().tolist(),
+            shape = p.createVisualShape(p.GEOM_MESH, vertices=(local + self.lift).tolist(), indices=remap[faces[keep]].ravel().tolist(),
                                         uvs=uvs[used].tolist(), flags=getattr(p, "VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY", 0),
                                         physicsClientId=self.cli)
             # A thin box along the leaf, from its hinge to the gate's middle, standing in for the gate's own mesh.
@@ -936,7 +942,7 @@ class GateLeaf:
             push = np.array([-mid[1], mid[0]])
             sense = float(np.sign(dot([c * push[0] - s * push[1], s * push[0] + c * push[1]], story.inward)))
             anchor = np.array([c * hinge[0] - s * hinge[1], s * hinge[0] + c * hinge[1]])
-            self.leaves[side] = (uid, anchor, sense)
+            self.leaves[side] = (uid, anchor, sense, local)
         self.state: Optional[float] = None
 
     def apply(self, t: float) -> None:
@@ -949,7 +955,10 @@ class GateLeaf:
         shut = share <= 0.0
         p.resetBasePositionAndOrientation(self.gate, [pos[0], pos[1], pos[2] if shut else AWAY_Z], quat,
                                           physicsClientId=self.cli)
-        for side, (uid, anchor, sense) in self.leaves.items():
+        relift, self.lifted = shut != self.lifted, shut
+        for side, (uid, anchor, sense, local) in self.leaves.items():
+            if relift:
+                p.resetMeshData(uid, (local + self.lift if shut else local).tolist(), physicsClientId=self.cli)
             if shut:
                 p.resetBasePositionAndOrientation(uid, [0.0, 0.0, AWAY_Z], [0, 0, 0, 1], physicsClientId=self.cli)
                 continue
@@ -968,14 +977,22 @@ def _body_at(cli: int, bodies: Sequence[int], position: Sequence[float]) -> int:
     raise ValueError(f"no park body at {list(target)}")
 
 
-def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[float], texture: int) -> int:
+def _lift(place: Dict[str, Any]) -> np.ndarray:
+    """How far an opening piece's mesh is moved from its body, kept at AWAY_Z, to be drawn BURIED_M under its own place:
+    the renderer's static bounds then end at the park, while physics keeps the body where it always was."""
+    pos = place["position"]
+    return np.array([float(pos[0]), float(pos[1]), float(pos[2]) - BURIED_M - AWAY_Z])
+
+
+def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[float], texture: int,
+                 lift: np.ndarray) -> Tuple[int, np.ndarray]:
     """One upright rectangle of a fence panel, x0 to x1 along it in its own metres, turning about origin, with the
-    panel's texture where that rectangle sat on it."""
+    panel's texture where that rectangle sat on it, drawn lifted until the cut: its body and its mesh in place."""
     sx, _sy, sz = (float(v) for v in scale)
-    verts = [[(x0 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 2.0 * sz],
-             [(x0 - origin) * sx, 0.0, 2.0 * sz]]
+    verts = np.array([[(x0 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 2.0 * sz],
+                      [(x0 - origin) * sx, 0.0, 2.0 * sz]])
     uvs = [[(x0 + 1.25) / 2.5, 0.0], [(x1 + 1.25) / 2.5, 0.0], [(x1 + 1.25) / 2.5, 1.0], [(x0 + 1.25) / 2.5, 1.0]]
-    shape = p.createVisualShape(p.GEOM_MESH, vertices=verts, indices=[0, 1, 2, 0, 2, 3], uvs=uvs,
+    shape = p.createVisualShape(p.GEOM_MESH, vertices=(verts + lift).tolist(), indices=[0, 1, 2, 0, 2, 3], uvs=uvs,
                                 normals=[[0.0, -1.0, 0.0]] * 4,
                                 flags=getattr(p, "VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY", 0), physicsClientId=cli)
     # The same thin box the whole panel had, so the cut fence stops a drone as the whole one did.
@@ -984,7 +1001,7 @@ def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[
     uid = int(p.createMultiBody(0, box, shape, [0.0, 0.0, AWAY_Z], physicsClientId=cli))
     p.changeVisualShape(uid, -1, textureUniqueId=texture, rgbaColor=[1, 1, 1, 1], specularColor=[0.0] * 3,
                         physicsClientId=cli)
-    return uid
+    return uid, verts
 
 
 @lru_cache(maxsize=4)
