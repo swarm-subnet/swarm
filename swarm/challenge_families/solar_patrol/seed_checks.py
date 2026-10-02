@@ -54,6 +54,8 @@ WORKERS_ENV = "SWARM_SEED_CHECK_WORKERS"
 CPU_SHARE = 4                          # by default the flights take a quarter of the machine's cores
 PILOT_MODULE = "swarm.challenge_families.solar_patrol.reference_pilot"
 POLL_S = 0.5                           # how often a busy flight's kept verdict is looked for
+# One BLAS and OpenMP thread in every reference flight, as in the validator image, whatever the host sets.
+THREAD_CAPS = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
 
 @dataclass
@@ -197,7 +199,7 @@ class Flights:
             if free is None and len(self.runs) < self.workers:
                 log = tempfile.TemporaryFile()
                 free = subprocess.Popen([sys.executable, "-m", PILOT_MODULE], stdin=subprocess.PIPE, bufsize=0,
-                                        stdout=subprocess.DEVNULL, stderr=log)
+                                        stdout=subprocess.DEVNULL, stderr=log, env={**os.environ, **THREAD_CAPS})
                 self.logs[free] = log
             if free is None:
                 break

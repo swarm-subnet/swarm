@@ -248,6 +248,18 @@ def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch,
     assert all(judged) and len({verdict.end_reason for verdict in judged}) == 2 < len(judged)
 
 
+def test_reference_flights_run_on_one_blas_thread_whatever_the_host_sets(kept, monkeypatch, tmp_path):
+    """A real flight process sees one BLAS and one OpenMP thread, as in the validator image, over the host's eight."""
+    (tmp_path / "threads_pilot.py").write_text(_FAKE_PILOT.replace(
+        "end_reason=str(os.getpid())", "end_reason=os.environ['OPENBLAS_NUM_THREADS'] + os.environ['OMP_NUM_THREADS']"))
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "8")
+    monkeypatch.setenv("OMP_NUM_THREADS", "8")
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "threads_pilot")
+    seed_checks.prepare([11], workers=1)
+    assert seed_checks.cached(11).end_reason == "11"
+
+
 def test_the_pilot_judges_seeds_read_from_its_input(kept, monkeypatch):
     """Run with no seeds named, the pilot judges and keeps every seed it reads, one a line."""
     monkeypatch.setattr(reference_pilot, "judge", lambda seed: Verdict(seed=seed, passed=True))
