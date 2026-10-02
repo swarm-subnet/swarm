@@ -336,6 +336,7 @@ def test_only_the_panel_glass_is_drawn_over_a_backsheet(monkeypatch):
         assert asked["flags"] & backed == want, name
 
 
+@needs_park
 def test_an_engine_without_backed_glass_is_refused(monkeypatch):
     """A wheel that cannot draw the panel glass over its backsheet fails loudly instead of drawing another picture."""
     monkeypatch.setattr(p, "createVisualShape", lambda *args, **kwargs: 0)

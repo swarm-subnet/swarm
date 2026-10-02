@@ -139,6 +139,8 @@ def test_the_ray_caster_draws_whenever_the_engine_has_it():
 def test_a_ray_caster_without_a_needed_flag_is_refused(monkeypatch, name):
     """A ray-cast wheel missing a flag the frames rest on fails at reset instead of drawing another picture."""
     monkeypatch.setattr(camera, "RAYCAST", True)
+    for other in camera.NEEDED_FLAGS:
+        monkeypatch.setattr(p, other, getattr(p, other, 1), raising=False)
     monkeypatch.delattr(p, name, raising=False)
     with pytest.raises(RuntimeError, match=name):
         camera.reset(None, SolarEpisode(seed=0))
@@ -243,6 +245,7 @@ def test_the_same_view_draws_the_same_pixels(scene):
     assert np.array_equal(first, ep.frames.rgb)
 
 
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_FRAME_REUSE"), reason="engine without frame reuse")
 def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
     """Colour, night and thermal frames ask the engine for a still camera's last frame when it can hand one back, and
     each frame equals the one drawn without asking, grain included; the fork's own test shows the frame is handed back."""
