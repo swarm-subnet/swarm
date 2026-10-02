@@ -98,6 +98,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
     # Off until the fairness of acts timed beside a frame is decided; on needs a wheel with CAMERA_RELEASES_GIL.
     observation_ahead = False
+    clearance_metric = False             # the patrol's score reads no min_clearance
 
     # ------------------------------------------------------------------ #
     # runtime profile and task generation

@@ -205,9 +205,10 @@ class ChallengeFamilyRuntime:
     decision_steps: int = 1
     # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
     prepares_seeds: bool = False
-    # The next decision's observation is fixed before a decision's control steps end (observation_fixed), so the
-    # evaluator sends it to the model while they finish; off runs every decision strictly after the last.
+    # Send the next observation to the model while the last decision's control steps finish (see observation_fixed).
     observation_ahead: bool = False
+    # Whether each step measures the drone's closest approach to obstacles, for a score that reads min_clearance.
+    clearance_metric: bool = True
 
     def stalled_rollout_metrics(self, task: Any, info: Dict[str, Any]) -> Dict[str, Any]:
         """Metrics a seed keeps when the model stalls out of it on slow-act strikes; none by default."""

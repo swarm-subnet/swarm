@@ -132,22 +132,28 @@ def test_the_tele_lenses_see_the_decided_angles():
     assert camera.vertical_fov_deg(15.0, width, height) == pytest.approx(9.03, abs=0.01)
 
 
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_CREASE_FILL"), reason="engine without outline smoothing and crease fill")
 def test_a_zoom_frame_smooths_every_edge(monkeypatch):
-    """The wide frames smooth outlines only; a zoom frame, a close look, asks the camera to smooth every edge."""
-    asked = {}
+    """The engine is asked for a zoom frame with every edge smoothed and creases filled, a wide frame with outlines only."""
+    sent = []
 
-    def draw(env, shot, at_night, outline=True):
-        """Keep how the zoom asked for its frame."""
-        asked["outline"] = outline
-        return np.zeros((1, 1, 3), dtype=np.float32), None
+    def record(width, height, *_args, flags=0, **_kwargs):
+        """Keep the flags a frame was asked with and hand back a blank one."""
+        sent.append(flags)
+        return width, height, np.zeros(width * height * 4, dtype=np.uint8), None, np.zeros(width * height, dtype=np.int32)
 
     monkeypatch.setattr(zoom.theft, "show", lambda *args: None)
     monkeypatch.setattr(camera, "night", lambda env: False)
     monkeypatch.setattr(camera, "night_camera", lambda *args, **kwargs: (0, {}))
-    monkeypatch.setattr(camera, "colour_frame", draw)
+    monkeypatch.setattr(p, "getCameraImage", record)
+    env = _Env(0, 0)
     ep = SimpleNamespace(zoom={"night_vision": False, "night_mode": "off"}, seed=0, outcome=SimpleNamespace(zooms_used=0))
-    zoom._draw(None, ep, None, 7)
-    assert asked["outline"] is False
+    zoom._draw(env, ep, _view(), 7)
+    camera.colour_frame(env, _view())
+    close, wide = sent
+    assert close == env._render_flags | camera.CLOSE_PICTURE_FLAGS | camera.FRAME_REUSE
+    assert close & p.ER_SWARM_CREASE_FILL and close & p.ER_EDGE_ANTIALIAS and not close & p.ER_SWARM_EDGE_OUTLINE
+    assert wide & p.ER_SWARM_EDGE_OUTLINE and wide & p.ER_EDGE_ANTIALIAS and not wide & p.ER_SWARM_CREASE_FILL
 
 
 def test_a_box_turns_into_the_ray_through_its_centre():

@@ -23,6 +23,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from swarm.challenge_families import get_challenge_family, list_registered_challenge_families
 from swarm.constants import (
     DRONE_HULL_RADIUS,
     LANDING_ALTITUDE_BUFFER,
@@ -383,3 +384,17 @@ def test_update_min_clearance_counts_floor_outside_eligible_type(monkeypatch) ->
 
     assert closest_calls == [400]
     assert env._min_clearance_episode == pytest.approx(0.55)
+
+
+def test_only_swarm_sentinel_skips_the_clearance_sweep() -> None:
+    """Swarm Sentinel, whose score reads no clearance, opts out of the sweep and every other family keeps it: even a
+    collision, which zeroes the clearance of any other family, leaves Sentinel's untouched."""
+    opted_out = {name for name in list_registered_challenge_families() if not get_challenge_family(name).clearance_metric}
+    assert opted_out == {"cf_solar_patrol"}
+    env = moving_drone_mod.MovingDroneAviary.__new__(moving_drone_mod.MovingDroneAviary)
+    env.family_runtime = get_challenge_family("cf_solar_patrol")
+    env.NUM_DRONES = 1
+    env._collision = True
+    env._min_clearance_episode = SAFETY_DISTANCE_SAFE
+    env._update_min_clearance()
+    assert env._min_clearance_episode == SAFETY_DISTANCE_SAFE

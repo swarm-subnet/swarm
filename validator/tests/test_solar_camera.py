@@ -135,6 +135,15 @@ def test_the_ray_caster_draws_whenever_the_engine_has_it():
     assert camera.RENDER_BACKEND == ("raycast" if hasattr(p, "ER_SWARM_RAYCAST") else "tiny")
 
 
+@pytest.mark.parametrize("name", camera.NEEDED_FLAGS)
+def test_a_ray_caster_without_a_needed_flag_is_refused(monkeypatch, name):
+    """A ray-cast wheel missing a flag the frames rest on fails at reset instead of drawing another picture."""
+    monkeypatch.setattr(camera, "RAYCAST", True)
+    monkeypatch.delattr(p, name, raising=False)
+    with pytest.raises(RuntimeError, match=name):
+        camera.reset(None, SolarEpisode(seed=0))
+
+
 def test_a_close_look_smooths_every_edge_and_fills_creases_when_the_engine_can():
     """A zoom's flags drop outline-only smoothing and ask for crease fill exactly when the installed engine carries it."""
     outline = getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)

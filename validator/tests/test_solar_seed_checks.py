@@ -234,6 +234,20 @@ def test_a_flight_that_ends_between_seeds_names_no_seed(kept, monkeypatch, tmp_p
             flights.fly([13])
 
 
+def test_a_flight_that_ends_before_reading_its_next_seed_names_no_seed(kept, monkeypatch, tmp_path):
+    """A process that keeps its verdict and ends while its next seed waits unread is not blamed on that seed."""
+    pilot = _FAKE_PILOT.replace("import sys\n", "import select\nimport sys\n").replace(
+        "for line in sys.stdin:", "for line in [sys.stdin.readline()]:")
+    (tmp_path / "unread_pilot.py").write_text(pilot + "select.select([sys.stdin], [], [])\n")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "unread_pilot")
+    with pytest.raises(SeedCheckError, match="left no verdict") as raised:
+        with seed_checks.Flights(1) as flights:
+            flights.fly([12])
+            flights.fly([13])
+    assert "seed 13" not in str(raised.value)
+
+
 def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch, tmp_path):
     """Real processes: no more of them run than workers, each judges seed after seed, and every seed ends on its
     first passing candidate."""
