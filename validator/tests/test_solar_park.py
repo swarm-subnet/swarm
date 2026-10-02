@@ -333,3 +333,12 @@ def test_only_the_panel_glass_is_drawn_over_a_backsheet(monkeypatch):
         shapes._visual(items[name], "unused.obj", [1.0, 1.0, 1.0])
         assert asked["flags"] & p.VISUAL_SHAPE_GLASS
         assert asked["flags"] & backed == want, name
+
+
+def test_an_engine_without_backed_glass_is_refused(monkeypatch):
+    """A wheel that cannot draw the panel glass over its backsheet fails loudly instead of drawing another picture."""
+    monkeypatch.setattr(p, "createVisualShape", lambda *args, **kwargs: 0)
+    monkeypatch.delattr(p, "VISUAL_SHAPE_GLASS_BACKED", raising=False)
+    items = solar_manifest(SOLAR_ASSET_DIR)["items"]
+    with pytest.raises(RuntimeError, match="VISUAL_SHAPE_GLASS_BACKED"):
+        _Shapes(0, SOLAR_ASSET_DIR, items)._visual(items["full_table_glass"], "unused.obj", [1.0, 1.0, 1.0])

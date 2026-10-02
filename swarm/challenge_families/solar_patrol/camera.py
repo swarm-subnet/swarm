@@ -66,6 +66,8 @@ FRAME_REUSE = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
 # Wide frames smooth outlines only; a close look smooths every edge, its crown creases filled from the leaves around.
 CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
                                                                                    if RAYCAST else 0)
+# Ray-cast flags the frames above rest on; a wheel without one would draw another picture, so reset refuses it.
+NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME_REUSE")
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
@@ -149,7 +151,10 @@ def vertical_fov_deg(diagonal_deg: float, width: int, height: int) -> float:
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
-    """The gimbal level, the colour feed, night mode off, and no frame yet."""
+    """The gimbal level, the colour feed, night mode off, and no frame yet; a ray caster missing a needed flag fails."""
+    for name in NEEDED_FLAGS if RAYCAST else ():
+        if not hasattr(p, name):
+            raise RuntimeError(f"the solar camera needs a swarm-bullet3 wheel with {name}")
     ep.camera = {"tilt_deg": 0.0, "thermal": False, "night_mode": "off", "captured_s": 0.0, "captures": 0,
                  "view": None}
 
