@@ -105,7 +105,7 @@ def flat_park(monkeypatch):
 def blank_camera(monkeypatch):
     """Hand back a black colour frame instead of drawing one: it is most of a flown step and only the camera tests read it."""
     monkeypatch.setattr(camera, "colour_frame",
-                        lambda env, shot, *_night: (np.zeros((shot.height, shot.width, 3), dtype=np.float32),
+                        lambda env, shot, *_night, **_options: (np.zeros((shot.height, shot.width, 3), dtype=np.float32),
                                            np.full((shot.height, shot.width), -1, dtype=np.int32)))
 
 
@@ -279,6 +279,29 @@ def test_take_off_fly_return_and_land(flat_park):
     assert outcome.max_height_m == pytest.approx(20.0, abs=1.5)
     assert log["info"]["success"] is True
     assert log["time_s"] < HORIZON_S
+
+
+@pytest.mark.timeout(300)
+def test_each_observation_is_handed_ahead_as_its_step_returns_it(flat_park):
+    """Through a whole patrol every decision's observation is handed over part way through the step before it, at
+    the link's snapshot, and equals the one that step returns; the step that lands hands over at most that one."""
+    if not _M4TD_SHIPPED:
+        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+    task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
+    with contextlib.redirect_stdout(io.StringIO()):
+        env, obs = make_env_with_initial_obs(task)
+    pilot = _home_and_back(outbound_decisions=40)
+    try:
+        for i in range(10 ** 6):
+            ahead = []
+            obs, _r, terminated, truncated, _info = env.step(pilot(i, obs)[None, :], on_observation=ahead.append)
+            assert len(ahead) <= 1 if terminated or truncated else len(ahead) == 1
+            assert all(np.array_equal(seen[key], obs[key]) for seen in ahead for key in obs)
+            if terminated or truncated:
+                break
+        assert env._solar.outcome.end_reason == "landed"
+    finally:
+        env.close()
 
 
 @pytest.mark.timeout(300)

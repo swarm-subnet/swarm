@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.benchmark.engine_parts import workers
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.calibration import SpeedFactor
@@ -962,6 +963,175 @@ def test_run_multi_seed_rpc_sync_uses_initial_obs_without_extra_reset(monkeypatc
     assert agent.act_obs == [("serialized", "initial")]
     assert env.step_calls == 1
     assert closed == [True]
+
+
+_ACT_REPLY = SimpleNamespace(action=SimpleNamespace(data=np.zeros(5, dtype=np.float32).tobytes(), dtype="float32",
+                                                   shape=[5]))
+
+
+class _AheadEnv:
+    """Env stand-in whose step hands the next observation ahead, then runs on; the second decision ends the patrol."""
+    action_space = SimpleNamespace(low=np.full(5, -1.0, dtype=np.float32), high=np.full(5, 1.0, dtype=np.float32),
+                                   shape=(5,))
+
+    def __init__(self, after_handover):
+        """Keep what the step does once it has handed the observation over."""
+        self.after_handover = after_handover
+        self.steps, self.stepping, self.closed_mid_step = 0, False, False
+
+    def step(self, _action, on_observation=None):
+        """Hand the observation ahead, run the rest of the window, and end on the second decision."""
+        self.stepping, self.steps = True, self.steps + 1
+        k = self.steps
+        on_observation({"marker": f"early{k}"})
+        self.after_handover(k)
+        self.stepping = False
+        return {"marker": f"end{k}"}, 0.0, k == 2, False, {"success": k == 2, "min_clearance": 1.0, "collision": False}
+
+    def close(self):
+        """Note whether a step was still running when the env was closed."""
+        self.closed_mid_step = self.closed_mid_step or self.stepping
+
+
+def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True):
+    """Fly one task through the RPC loop with stand-ins for capnp, the miner, the env and the engine, its family
+    overlapping."""
+    rpc_mod = de.rpc
+    ev = _new_evaluator()
+    monkeypatch.setattr(rpc_mod, "_ENGINE_RELEASES_GIL", engine_releases_gil)
+
+    class _Loop:
+        """Async context manager standing in for the capnp kj event loop."""
+
+        async def __aenter__(self):
+            """Enter without a real loop."""
+
+        async def __aexit__(self, *_exc):
+            """Leave without swallowing an exception."""
+            return False
+
+    async def _connect(**_kwargs):
+        """A bare object in place of a socket stream."""
+        return object()
+
+    async def _calibrate(*_args):
+        """Ten milliseconds of overhead on a host of speed one."""
+        return 0.01, 1.0
+
+    monkeypatch.setattr(rpc_mod.capnp, "load", lambda _path: SimpleNamespace(Agent=object()))
+    monkeypatch.setattr(rpc_mod.RpcTraceSettings, "from_env",
+                        lambda: SimpleNamespace(enabled=False, trace_every=1, heartbeat_sec=0.0))
+    monkeypatch.setattr(rpc_mod.capnp, "TwoPartyClient", lambda _stream: SimpleNamespace(
+        bootstrap=lambda: SimpleNamespace(cast_as=lambda _schema: agent)))
+    monkeypatch.setattr(rpc_mod.capnp, "kj_loop", _Loop)
+    monkeypatch.setattr(rpc_mod.capnp, "AsyncIoStream", SimpleNamespace(create_connection=_connect))
+    monkeypatch.setattr(ev, "_serialize_observation", serialize)
+    monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _calibrate)
+    monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
+    monkeypatch.setattr(rpc_mod, "runtime_family_for_task",
+                        lambda task: SimpleNamespace(family_id="cf_test", decision_steps=1, observation_ahead=True))
+    task = SimpleNamespace(map_seed=77, challenge_type=1, horizon=1.0, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0))
+    return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000)
+
+
+def test_observation_ahead_sends_the_next_act_while_the_step_finishes(monkeypatch):
+    """For a family that fixes its observation early, act() for the next decision reaches the miner before the step
+    returns; the act sent after the patrol's last step is waited out, and its dropped link does not fail the seed."""
+    reached = {marker: threading.Event() for marker in ("early1", "early2")}
+
+    class _Agent:
+        """Miner stand-in logging each observation it is asked to act on; the last one finds the link gone."""
+
+        def __init__(self):
+            """Start with no act logged."""
+            self.act_obs = []
+
+        async def ping(self, _msg):
+            """Answer the connect ping."""
+            return SimpleNamespace(response="pong")
+
+        async def reset(self):
+            """Accept the reset."""
+
+        async def act(self, obs):
+            """Log the marker, note that it arrived, and fail on the act no decision follows."""
+            self.act_obs.append(obs[1])
+            if obs[1] in reached:
+                reached[obs[1]].set()
+            if obs[1] == "early2":
+                raise RuntimeError("peer disconnected")
+            return _ACT_REPLY
+
+    overlapped = []
+    agent, env = _Agent(), _AheadEnv(lambda k: overlapped.append(reached[f"early{k}"].wait(timeout=5.0)))
+
+    results = _fly_ahead(monkeypatch, agent, env, lambda _schema, obs: ("serialized", obs["marker"]))
+
+    assert overlapped == [True, True]
+    assert agent.act_obs == ["initial", "early1", "early2"]
+    assert results[0].success is True
+    assert env.closed_mid_step is False
+
+
+def test_a_failed_handover_lets_the_step_finish_before_the_env_is_closed(monkeypatch):
+    """When the observation handed ahead cannot be serialised, the error waits for the step still running on the
+    worker thread, so the cleanup never closes the env under it."""
+
+    class _Agent:
+        """Miner stand-in that answers every act."""
+
+        async def ping(self, _msg):
+            """Answer the connect ping."""
+            return SimpleNamespace(response="pong")
+
+        async def reset(self):
+            """Accept the reset."""
+
+        async def act(self, _obs):
+            """Answer with a still action."""
+            return _ACT_REPLY
+
+    def serialize(_schema, obs):
+        """Serialise every observation but the ones handed ahead."""
+        if obs["marker"].startswith("early"):
+            raise ValueError("observation does not serialise")
+        return ("serialized", obs["marker"])
+
+    env = _AheadEnv(lambda k: time.sleep(0.5))
+
+    results = _fly_ahead(monkeypatch, _Agent(), env, serialize)
+
+    assert env.steps == 2
+    assert env.closed_mid_step is False
+    assert results[0].success is False
+
+
+def test_an_engine_that_holds_the_gil_refuses_to_overlap(monkeypatch):
+    """On an engine that keeps the GIL while it draws, an overlapping family's seed fails with the reason instead of
+    timing the frame inside the model's act."""
+
+    class _Agent:
+        """Miner stand-in that answers every act."""
+
+        async def ping(self, _msg):
+            """Answer the connect ping."""
+            return SimpleNamespace(response="pong")
+
+        async def reset(self):
+            """Accept the reset."""
+
+        async def act(self, _obs):
+            """Answer with a still action."""
+            return _ACT_REPLY
+
+    env = _AheadEnv(lambda k: None)
+
+    results = _fly_ahead(monkeypatch, _Agent(), env, lambda _schema, obs: ("serialized", obs["marker"]),
+                         engine_releases_gil=False)
+
+    assert env.steps == 0
+    assert results[0].success is False
+    assert results[0].failure_reason == FailureReason.ENV_FAILURE.value
 
 
 def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
@@ -2153,6 +2323,37 @@ def test_release_freed_memory_is_safe_and_wired():
     import inspect
     body = inspect.getsource(workers._benchmark_worker_main)
     assert "_release_freed_memory()" in body
+
+
+def test_worker_frees_memory_before_it_reports_the_result(monkeypatch, tmp_path):
+    """The worker trims its heap before the result goes out, so the parent's recycle check reads the trimmed RSS."""
+    order = []
+
+    class _Results:
+        """Result queue stand-in that notes when the result is put."""
+
+        def put(self, item):
+            """Record the put."""
+            order.append("result")
+
+    class _FakeEvaluator:
+        """Evaluator stand-in that returns one zero result per task without a container."""
+
+        async def evaluate_seeds_batch(self, tasks, uid, **_kwargs):
+            """Return a zero result per task."""
+            return [SimpleNamespace(uid=uid, success=False, time_sec=0.0, score=0.0) for _ in tasks]
+
+    monkeypatch.setattr(bench_full_eval, "_create_prepared_benchmark_evaluator", lambda: _FakeEvaluator())
+    monkeypatch.setattr(workers, "_release_freed_memory", lambda: order.append("trim"))
+    tasks: queue.Queue = queue.Queue()
+    tasks.put(bench_full_eval._ProcessBatchRequest(
+        batch_index=0, batch_indices=[0], tasks=[SimpleNamespace(map_seed=1, challenge_type=5)], uid=7,
+        model_path=str(tmp_path / "model.zip"), task_total=1))
+    tasks.put(None)
+
+    workers._benchmark_worker_main(0, tasks, _Results(), queue.Queue())
+
+    assert order == ["trim", "result"]
 
 
 def test_resolve_worker_limits_drops_quota_for_pinned_workers(monkeypatch):

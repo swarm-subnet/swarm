@@ -135,6 +135,32 @@ def test_the_ray_caster_draws_whenever_the_engine_has_it():
     assert camera.RENDER_BACKEND == ("raycast" if hasattr(p, "ER_SWARM_RAYCAST") else "tiny")
 
 
+@pytest.mark.parametrize("name", camera.NEEDED_FLAGS)
+def test_a_ray_caster_without_a_needed_flag_is_refused(monkeypatch, name):
+    """A ray-cast wheel missing a flag the frames rest on fails at reset instead of drawing another picture."""
+    monkeypatch.setattr(camera, "RAYCAST", True)
+    for other in camera.NEEDED_FLAGS:
+        monkeypatch.setattr(p, other, getattr(p, other, 1), raising=False)
+    monkeypatch.delattr(p, name, raising=False)
+    with pytest.raises(RuntimeError, match=name):
+        camera.reset(None, SolarEpisode(seed=0))
+
+
+def test_a_close_look_smooths_every_edge_and_fills_creases_when_the_engine_can():
+    """A zoom's flags drop outline-only smoothing and ask for crease fill exactly when the installed engine carries it."""
+    outline = getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
+    fill = getattr(p, "ER_SWARM_CREASE_FILL", 0)
+    assert not camera.CLOSE_PICTURE_FLAGS & outline
+    assert bool(camera.CLOSE_PICTURE_FLAGS & fill) == bool(camera.RAYCAST and fill)
+    assert camera.CLOSE_PICTURE_FLAGS & ~(outline | fill) == camera.PICTURE_FLAGS & ~(outline | fill)
+
+
+def test_edges_are_smoothed_on_outlines_only_when_the_engine_can():
+    """The colour camera asks for outline-only edge smoothing exactly when the installed engine carries it."""
+    outline = getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)
+    assert bool(camera.PICTURE_FLAGS & outline) == bool(camera.RAYCAST and outline)
+
+
 def test_the_tilt_runs_from_straight_down_to_straight_up(scene):
     """The model's -1 to +1 is -90 to +90 degrees."""
     env, ep = scene
@@ -217,6 +243,28 @@ def test_the_same_view_draws_the_same_pixels(scene):
     first = ep.frames.rgb.copy()
     camera.capture(env, ep)
     assert np.array_equal(first, ep.frames.rgb)
+
+
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_FRAME_REUSE"), reason="engine without frame reuse")
+def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
+    """Colour, night and thermal frames ask the engine for a still camera's last frame when it can hand one back, and
+    each frame equals the one drawn without asking, grain included; the fork's own test shows the frame is handed back."""
+    env, ep = scene
+    reuse = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
+    assert camera.FRAME_REUSE == reuse
+    for thermal, night_mode in ((False, "off"), (False, "on"), (True, "off")):
+        if night_mode == "on":
+            _moon(env, 1.0)
+        _ask(env, ep, tilt=-60.0, thermal=thermal, night_mode=night_mode)
+        for flag in (reuse, 0, reuse, 0, reuse, 0):
+            monkeypatch.setattr(camera, "FRAME_REUSE", flag)
+            ep.camera["captures"] = 5
+            camera.capture(env, ep)
+            frame = (ep.frames.rgb.copy(), ep.frames.thermal.copy(), camera.view(ep).objects.copy())
+            if flag:
+                asked = frame
+            else:
+                assert all(np.array_equal(a, b) for a, b in zip(asked, frame))
 
 
 def _moonlit(env, seed=11):

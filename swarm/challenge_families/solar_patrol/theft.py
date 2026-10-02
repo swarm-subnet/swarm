@@ -44,6 +44,7 @@ import itertools
 import math
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -54,6 +55,7 @@ from swarm.core.maps.solar import builder
 
 from . import intruders
 from .episode import SolarEpisode
+from .fixed_order import dot, norm
 from .theft_moves import GONE, Actor, Lane, Route, Step, heading_to, library
 from .theft_site import Opening, Site, Table, yaw_of
 
@@ -106,6 +108,7 @@ REACTIONS = {"work_on": 0.2, "freeze": 0.4, "hide": 0.25, "run": 0.15}
 GROUNDED = ("docked", "landed")        # flight phases in which the drone sits in its dock and cannot be heard
 VIEW_MARGIN_M = 1.6                     # a body this near the edge of a picture is posed for it
 AWAY_Z = -1000.0                        # where a body out of the scene is kept
+BURIED_M = 10.0                         # an opening piece is drawn this deep under its own place while its body is away
 
 # The blocks a loop may react with, best first, for each way of reacting. A loop with none of them carries on, and he
 # reacts at the first seam that has one while the drone is still near: a man walking wary freezes once he stops.
@@ -271,7 +274,7 @@ def _room(site: Site, opening: Opening, along: float) -> bool:
     """Whether a crew can use an opening: free ground just inside it, far enough from the dock."""
     hole = np.array(opening.centre) + np.array(opening.along) * along
     inward = np.array(opening.inward)
-    if site.dock is not None and np.linalg.norm(hole - site.dock) < HOLE_DOCK_M:
+    if site.dock is not None and norm(hole - site.dock) < HOLE_DOCK_M:
         return False
     return site.clear_line(hole + inward * 1.5, hole + inward * LEAD_M)
 
@@ -312,11 +315,11 @@ def _spots(rng: np.random.Generator, site: Site, table: int, tables: List[int], 
     his pull really ended, each pulled only as far as the line along the row stays clear. Every walk is at least
     NEXT_SPOT_M[0] long: starting and stopping alone carry a man 3.7 m, so a shorter one would overshoot its mark."""
     candidates = [s for k in tables for s in _spots_of(site, k, reachable)]
-    here = [s for s in _spots_of(site, table, reachable) if np.linalg.norm(np.array(s.xy) - entry) >= NEXT_SPOT_M[0]]
+    here = [s for s in _spots_of(site, table, reachable) if norm(np.array(s.xy) - entry) >= NEXT_SPOT_M[0]]
     chosen = [_pulled(rng, site, (here or candidates)[int(rng.integers(len(here or candidates)))])]
     for _ in range(15):
         last = np.array(chosen[-1].pull_to)
-        near = [s for s in candidates if NEXT_SPOT_M[0] <= np.linalg.norm(np.array(s.xy) - last) <= NEXT_SPOT_M[1]]
+        near = [s for s in candidates if NEXT_SPOT_M[0] <= norm(np.array(s.xy) - last) <= NEXT_SPOT_M[1]]
         if not near:
             break
         # A stretch he can walk to straight, along the same aisle, before one round the end of a row.
@@ -328,7 +331,7 @@ def _spots(rng: np.random.Generator, site: Site, table: int, tables: List[int], 
 def _pulled(rng: np.random.Generator, site: Site, spot: Spot) -> Spot:
     """A stretch with its pull drawn: as long as the seed says, short of anything in the way along the row."""
     start, end = np.array(spot.xy), np.array(spot.pull_to)
-    axis = (end - start) / np.linalg.norm(end - start)
+    axis = (end - start) / norm(end - start)
     length = float(rng.uniform(*PULL_M))
     while length > PULL_M[0] and not site.clear_line(start, start + axis * length):
         length -= 0.5
@@ -371,7 +374,7 @@ def _schedule(rng: np.random.Generator, story: Story) -> None:
                   lib.seconds(lib.kinds(stand)["stand_to_walk"][0]))
     for thief in story.thieves[1:]:
         through += float(rng.uniform(*MATE_GAP_S))
-        walk = max(0.0, float(np.linalg.norm(np.array(thief.start) - story.hole)) - 1.8) / 1.38
+        walk = max(0.0, norm(np.array(thief.start) - story.hole) - 1.8) / 1.38
         thief.wait_s = max(0.5, through - getting_up - walk)
 
 
@@ -462,8 +465,8 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> 
         n = k
         if k >= len(thief.spots):
             # Round again: the nearest of his stretches that is still a proper walk away.
-            far = [i for i, sp in enumerate(thief.spots) if np.linalg.norm(np.array(sp.xy) - actor.pos) >= NEXT_SPOT_M[0]]
-            n = min(far or range(len(thief.spots)), key=lambda i: np.linalg.norm(np.array(thief.spots[i].xy) - actor.pos))
+            far = [i for i, sp in enumerate(thief.spots) if norm(np.array(sp.xy) - actor.pos) >= NEXT_SPOT_M[0]]
+            n = min(far or range(len(thief.spots)), key=lambda i: norm(np.array(thief.spots[i].xy) - actor.pos))
         spot = thief.spots[n]
         # A sneak is for getting through the hole; inside he walks, warily if that is his way, and he moves on
         # between stretches at a plain walk unless he is the wary kind.
@@ -636,7 +639,7 @@ def advance(env: Any, ep: SolarEpisode) -> None:
             if spot not in theft.heights:
                 theft.heights[spot] = _ground(env, ep, float(spot[0]), float(spot[1]))
             ears = np.array([frame.x, frame.y, theft.heights[spot] + EAR_M])
-            _hear(man, theft, t, float(np.linalg.norm(drone - ears)), airborne)
+            _hear(man, theft, t, norm(drone - ears), airborne)
 
 
 def show(env: Any, ep: SolarEpisode, view: Any) -> None:
@@ -806,18 +809,18 @@ def _ground(env: Any, ep: SolarEpisode, x: float, y: float) -> float:
 def _in_view(view: Any, point: Sequence[float]) -> bool:
     """Whether a point, grown by a body's reach, falls inside a picture's field of view."""
     eye, forward, up = (np.asarray(v, dtype=float) for v in (view.eye, view.forward, view.up))
-    forward /= np.linalg.norm(forward)
+    forward /= norm(forward)
     right = np.cross(forward, up)
-    right /= max(np.linalg.norm(right), 1e-9)
+    right /= max(norm(right), 1e-9)
     up = np.cross(right, forward)
     rel = np.asarray(point, dtype=float) - eye
-    depth = float(rel @ forward)
+    depth = dot(rel, forward)
     if depth < -VIEW_MARGIN_M:
         return False
     half_v = math.tan(math.radians(view.vertical_fov_deg) / 2.0)
     half_h = half_v * view.width / view.height
     slack = VIEW_MARGIN_M * math.sqrt(1.0 + half_h * half_h + half_v * half_v)
-    return abs(float(rel @ right)) <= depth * half_h + slack and abs(float(rel @ up)) <= depth * half_v + slack
+    return abs(dot(rel, right)) <= depth * half_h + slack and abs(dot(rel, up)) <= depth * half_v + slack
 
 
 def _opening_prop(env: Any, ep: SolarEpisode, story: Story, cutter: Actor) -> Any:
@@ -848,16 +851,17 @@ class FenceHole:
         lo, hi = max(-1.25, middle - half), min(1.25, middle + half)
         hinge = hi if story.hinge > 0 else lo
         texture = p.loadTexture(os.path.join(world["asset_dir"], item["folder"], item["texture"]), physicsClientId=self.cli)
+        self.lift, self.lifted = _lift(self.place), True
         self.pieces = {}
         for name, (x0, x1, origin) in {"left": (-1.25, lo, 0.0), "right": (hi, 1.25, 0.0), "flap": (lo, hi, hinge)}.items():
             if x1 - x0 > 1e-3:
-                self.pieces[name] = (_panel_piece(self.cli, x0, x1, origin, self.place["scale"], texture), origin)
+                self.pieces[name] = (*_panel_piece(self.cli, x0, x1, origin, self.place["scale"], texture, self.lift), origin)
         yaw = yaw_of(self.place["quaternion"])
         local_y = np.array([-math.sin(yaw), math.cos(yaw)])
         # Turning the flap about its hinge by +a moves its free edge, d along the panel from the hinge, by d sin(a)
         # along the panel's local y; the sign that sends it into the park follows from which side the park lies on.
         free_edge = (lo + hi) / 2.0 - hinge
-        self.sense = float(np.sign(local_y @ story.inward) * np.sign(free_edge))
+        self.sense = float(np.sign(dot(local_y, story.inward)) * np.sign(free_edge))
         self.state: Optional[tuple] = None
 
     def apply(self, t: float) -> None:
@@ -879,7 +883,10 @@ class FenceHole:
         yaw = yaw_of(quat)
         c, s = math.cos(yaw), math.sin(yaw)
         sx = float(self.place["scale"][0])
-        for name, (uid, origin) in self.pieces.items():
+        relift, self.lifted = whole != self.lifted, whole
+        for name, (uid, verts, origin) in self.pieces.items():
+            if relift:
+                p.resetMeshData(uid, (verts + self.lift if whole else verts).tolist(), physicsClientId=self.cli)
             if whole:
                 p.resetBasePositionAndOrientation(uid, [0.0, 0.0, AWAY_Z], [0, 0, 0, 1], physicsClientId=self.cli)
                 continue
@@ -904,6 +911,7 @@ class GateLeaf:
         folder = os.path.join(world["asset_dir"], item["folder"])
         texture = p.loadTexture(os.path.join(folder, item["texture"]), physicsClientId=self.cli)
         verts, uvs, faces = _read_textured_obj(os.path.join(folder, item["obj"]))
+        self.lift, self.lifted = _lift(self.place), True
         yaw = yaw_of(self.place["quaternion"])
         c, s = math.cos(yaw), math.sin(yaw)
         self.leaves = {}
@@ -914,12 +922,12 @@ class GateLeaf:
             remap[used] = np.arange(len(used))
             hinge = verts[used][np.argmax(np.abs(verts[used][:, 0]))][:2]
             local = verts[used] - np.array([hinge[0], hinge[1], 0.0])
-            shape = p.createVisualShape(p.GEOM_MESH, vertices=local.tolist(), indices=remap[faces[keep]].ravel().tolist(),
+            shape = p.createVisualShape(p.GEOM_MESH, vertices=(local + self.lift).tolist(), indices=remap[faces[keep]].ravel().tolist(),
                                         uvs=uvs[used].tolist(), flags=getattr(p, "VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY", 0),
                                         physicsClientId=self.cli)
             # A thin box along the leaf, from its hinge to the gate's middle, standing in for the gate's own mesh.
             span = -hinge
-            box = p.createCollisionShape(p.GEOM_BOX, halfExtents=[float(np.linalg.norm(span)) / 2.0, 0.03,
+            box = p.createCollisionShape(p.GEOM_BOX, halfExtents=[norm(span) / 2.0, 0.03,
                                                                   float(verts[:, 2].max()) / 2.0],
                                          collisionFramePosition=[float(span[0]) / 2.0, float(span[1]) / 2.0,
                                                                  float(verts[:, 2].max()) / 2.0],
@@ -932,9 +940,9 @@ class GateLeaf:
             # that sends it into the park.
             mid = -hinge / 2.0
             push = np.array([-mid[1], mid[0]])
-            sense = float(np.sign(np.array([c * push[0] - s * push[1], s * push[0] + c * push[1]]) @ story.inward))
+            sense = float(np.sign(dot([c * push[0] - s * push[1], s * push[0] + c * push[1]], story.inward)))
             anchor = np.array([c * hinge[0] - s * hinge[1], s * hinge[0] + c * hinge[1]])
-            self.leaves[side] = (uid, anchor, sense)
+            self.leaves[side] = (uid, anchor, sense, local)
         self.state: Optional[float] = None
 
     def apply(self, t: float) -> None:
@@ -947,7 +955,10 @@ class GateLeaf:
         shut = share <= 0.0
         p.resetBasePositionAndOrientation(self.gate, [pos[0], pos[1], pos[2] if shut else AWAY_Z], quat,
                                           physicsClientId=self.cli)
-        for side, (uid, anchor, sense) in self.leaves.items():
+        relift, self.lifted = shut != self.lifted, shut
+        for side, (uid, anchor, sense, local) in self.leaves.items():
+            if relift:
+                p.resetMeshData(uid, (local + self.lift if shut else local).tolist(), physicsClientId=self.cli)
             if shut:
                 p.resetBasePositionAndOrientation(uid, [0.0, 0.0, AWAY_Z], [0, 0, 0, 1], physicsClientId=self.cli)
                 continue
@@ -961,19 +972,27 @@ def _body_at(cli: int, bodies: Sequence[int], position: Sequence[float]) -> int:
     """The park body standing at a position."""
     target = np.asarray(position, dtype=float)
     for uid in bodies:
-        if np.linalg.norm(np.array(p.getBasePositionAndOrientation(uid, physicsClientId=cli)[0]) - target) < 1e-3:
+        if norm(np.array(p.getBasePositionAndOrientation(uid, physicsClientId=cli)[0]) - target) < 1e-3:
             return int(uid)
     raise ValueError(f"no park body at {list(target)}")
 
 
-def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[float], texture: int) -> int:
+def _lift(place: Dict[str, Any]) -> np.ndarray:
+    """How far an opening piece's mesh is moved from its body, kept at AWAY_Z, to be drawn BURIED_M under its own place:
+    the renderer's static bounds then end at the park, while physics keeps the body where it always was."""
+    pos = place["position"]
+    return np.array([float(pos[0]), float(pos[1]), float(pos[2]) - BURIED_M - AWAY_Z])
+
+
+def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[float], texture: int,
+                 lift: np.ndarray) -> Tuple[int, np.ndarray]:
     """One upright rectangle of a fence panel, x0 to x1 along it in its own metres, turning about origin, with the
-    panel's texture where that rectangle sat on it."""
+    panel's texture where that rectangle sat on it, drawn lifted until the cut: its body and its mesh in place."""
     sx, _sy, sz = (float(v) for v in scale)
-    verts = [[(x0 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 2.0 * sz],
-             [(x0 - origin) * sx, 0.0, 2.0 * sz]]
+    verts = np.array([[(x0 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 0.0], [(x1 - origin) * sx, 0.0, 2.0 * sz],
+                      [(x0 - origin) * sx, 0.0, 2.0 * sz]])
     uvs = [[(x0 + 1.25) / 2.5, 0.0], [(x1 + 1.25) / 2.5, 0.0], [(x1 + 1.25) / 2.5, 1.0], [(x0 + 1.25) / 2.5, 1.0]]
-    shape = p.createVisualShape(p.GEOM_MESH, vertices=verts, indices=[0, 1, 2, 0, 2, 3], uvs=uvs,
+    shape = p.createVisualShape(p.GEOM_MESH, vertices=(verts + lift).tolist(), indices=[0, 1, 2, 0, 2, 3], uvs=uvs,
                                 normals=[[0.0, -1.0, 0.0]] * 4,
                                 flags=getattr(p, "VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY", 0), physicsClientId=cli)
     # The same thin box the whole panel had, so the cut fence stops a drone as the whole one did.
@@ -982,11 +1001,13 @@ def _panel_piece(cli: int, x0: float, x1: float, origin: float, scale: Sequence[
     uid = int(p.createMultiBody(0, box, shape, [0.0, 0.0, AWAY_Z], physicsClientId=cli))
     p.changeVisualShape(uid, -1, textureUniqueId=texture, rgbaColor=[1, 1, 1, 1], specularColor=[0.0] * 3,
                         physicsClientId=cli)
-    return uid
+    return uid, verts
 
 
+@lru_cache(maxsize=4)
 def _read_textured_obj(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Vertices, one texture coordinate per vertex and the triangles of an OBJ that gives each vertex one uv."""
+    """Vertices, one texture coordinate per vertex and the triangles of an OBJ that gives each vertex one uv, read once
+    per process and shared read-only."""
     verts, tex, faces, uv_of = [], [], [], {}
     with open(path, encoding="utf-8") as handle:
         for line in handle:
@@ -1005,4 +1026,7 @@ def _read_textured_obj(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     uvs = np.zeros((len(verts), 2))
     for v, k in uv_of.items():
         uvs[v] = tex[k]
-    return np.asarray(verts, dtype=float), uvs, np.asarray(faces, dtype=np.int64)
+    arrays = np.asarray(verts, dtype=float), uvs, np.asarray(faces, dtype=np.int64)
+    for array in arrays:
+        array.flags.writeable = False
+    return arrays

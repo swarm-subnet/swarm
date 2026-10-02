@@ -24,12 +24,13 @@ from __future__ import annotations
 import glob
 import os
 import tempfile
+from collections import Counter
 
 import numpy as np
 import pybullet as p
 import pytest
 
-from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _forest_table, build_solar_map, solar_densities, solar_manifest
+from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _forest_table, _four_decimals, build_solar_map, solar_densities, solar_manifest
 
 ASSET_DIR = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 
@@ -73,10 +74,19 @@ def test_near_tall_trees_get_a_collision_only_trunk(client):
     world = build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
     forest, *trunks = world["bodies"]["plants"]
     _, trunk = _expected(0)
-    shapes = [p.getCollisionShapeData(body, -1, physicsClientId=client) for body in trunks]
-    assert sum(len(parts) for parts in shapes) == int(trunk.sum())
-    assert all(len(parts) <= CONFIG["forest_trunks_per_body"] for parts in shapes)
-    assert all(part[2] == p.GEOM_CYLINDER for parts in shapes for part in parts)
+    spec = solar_manifest(ASSET_DIR)["forest"]
+    table = _forest_table(os.path.join(ASSET_DIR, spec["folder"], spec["table"]))
+    step = CONFIG["forest_trunk_step_m"]
+    tall = np.maximum(step, np.round(table["scale"][trunk, 2] * CONFIG["cylinder_height_share"] / step) * step)
+    centres = table["position"][trunk] + np.column_stack([np.zeros((len(tall), 2)), tall / 2.0])
+    # The engine does not list a static object's shapes, so a short ray to each tree's axis must meet its trunk.
+    side = np.array([CONFIG["cylinder_radius_m"] + 0.05, 0.0, 0.0])
+    hits = [hit for start in range(0, len(centres), 1024) for hit in p.rayTestBatch(
+        (centres[start:start + 1024] + side).tolist(), centres[start:start + 1024].tolist(), physicsClientId=client)]
+    assert all(hit[0] in trunks for hit in hits)
+    surface = centres + side - [0.05, 0.0, 0.0]
+    assert np.abs(np.array([hit[3] for hit in hits]) - surface).max() < 0.01
+    assert max(Counter(hit[0] for hit in hits).values()) <= CONFIG["forest_trunks_per_body"]
     assert p.getVisualShapeData(forest, physicsClientId=client)
     for body in trunks[:50]:
         visual = p.getVisualShapeData(body, physicsClientId=client)[0]
@@ -87,10 +97,6 @@ def test_near_tall_trees_get_a_collision_only_trunk(client):
     seg = np.asarray(p.getCameraImage(32, 32, view, proj, renderer=p.ER_TINY_RENDERER,
                                       flags=getattr(p, "ER_SWARM_RAYCAST", 0), physicsClientId=client)[4])
     assert trunks[0] not in set(seg.ravel().tolist())
-    base, _ = p.getBasePositionAndOrientation(trunks[0], physicsClientId=client)
-    centre = np.add(base, shapes[0][0][5])
-    hit = p.rayTest((centre + [1.0, 0.0, 0.0]).tolist(), (centre - [1.0, 0.0, 0.0]).tolist(), physicsClientId=client)[0]
-    assert hit[0] in trunks
 
 
 def test_two_seeds_stand_different_forests():
@@ -108,6 +114,21 @@ def test_the_forest_file_is_removed_after_the_build(client):
     before = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.fst")))
     build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
     assert set(glob.glob(os.path.join(tempfile.gettempdir(), "*.fst"))) == before
+
+
+def test_binary_rows_carry_the_numbers_their_text_gave():
+    """The forest rows written as doubles are bit for bit what the same rows printed with four decimals parse back to."""
+    edges = [0.03125, -0.03125, 0.00005, -0.00005, 1.00005, 2.5e-5, 0.0, -0.0, 1234.56785, -1e-9, 0.12345, 3499.99995]
+    values = np.concatenate([edges, np.random.default_rng(0).uniform(-4000.0, 4000.0, 20000)])
+    text = np.array([float("%.4f" % x) for x in values])
+    assert text.tobytes() == _four_decimals(values).tobytes()
+
+
+def test_an_engine_without_binary_forest_rows_is_refused(client, monkeypatch):
+    """A wheel that cannot read binary forest rows fails loudly instead of drawing no forest."""
+    monkeypatch.delattr(p, "FOREST_FILE_BINARY", raising=False)
+    with pytest.raises(RuntimeError, match="FOREST_FILE_BINARY"):
+        build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
 
 
 def test_an_engine_without_instancing_is_refused(client, monkeypatch):

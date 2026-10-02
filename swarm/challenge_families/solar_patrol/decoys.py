@@ -49,6 +49,7 @@ from swarm.constants import SIM_DT
 
 from . import camera, park, zoom
 from .episode import SolarEpisode
+from .fixed_order import dot, norm
 
 DOGS_DIR = os.path.join(swarm_worlds.maps_dir(), "custom", "solar", "dogs")
 DOGS_SHIPPED = os.path.isfile(os.path.join(DOGS_DIR, "dogs.json"))
@@ -642,16 +643,16 @@ def _pixels(shot: camera.View, point: np.ndarray, length: float) -> float:
     forward = np.asarray(shot.forward, dtype=float)
     up = np.asarray(shot.up, dtype=float)
     right = np.cross(forward, up)
-    right /= np.linalg.norm(right)
+    right /= norm(right)
     up = np.cross(right, forward)
     offset = point - np.asarray(shot.eye, dtype=float)
-    depth = float(offset @ forward)
+    depth = dot(offset, forward)
     if depth <= 0.0:
         return 0.0
     half_v = math.tan(math.radians(shot.vertical_fov_deg) / 2.0)
     half_h = half_v * shot.width / shot.height
     reach = length / depth
-    if abs(float(offset @ right)) / depth > half_h + reach or abs(float(offset @ up)) / depth > half_v + reach:
+    if abs(dot(offset, right)) / depth > half_h + reach or abs(dot(offset, up)) / depth > half_v + reach:
         return 0.0
     return reach * shot.height / (2.0 * half_v)
 

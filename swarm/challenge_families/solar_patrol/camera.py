@@ -59,8 +59,15 @@ RENDER_BACKEND = "raycast" if RAYCAST else "tiny"
 # The ray caster's picture flags for a colour camera, the daylight model's own set, so a frame without it (at night,
 # or before the park turns it on) keeps shadows, leaf cut-outs, filtered textures and clean edges.
 PICTURE_FLAGS = functools.reduce(operator.or_, (getattr(p, name, 0) for name in (
-    "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS", "ER_ALPHA_CUTOUT", "ER_TEXTURE_FILTER",
-    "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")), 0) if RAYCAST else 0
+    "ER_SWARM_SHADOW_MAP", "ER_SWARM_MOVER_SHADOW", "ER_EDGE_ANTIALIAS", "ER_SWARM_EDGE_OUTLINE", "ER_ALPHA_CUTOUT",
+    "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")), 0) if RAYCAST else 0
+# A still camera over an unchanged scene gets its last frame back with new grain; only exact depth ties can differ.
+FRAME_REUSE = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
+# Wide frames smooth outlines only; a close look smooths every edge, its crown creases filled from the leaves around.
+CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
+                                                                                   if RAYCAST else 0)
+# Ray-cast flags the frames above rest on; a wheel without one would draw another picture, so reset refuses it.
+NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME_REUSE")
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
@@ -144,7 +151,10 @@ def vertical_fov_deg(diagonal_deg: float, width: int, height: int) -> float:
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
-    """The gimbal level, the colour feed, night mode off, and no frame yet."""
+    """The gimbal level, the colour feed, night mode off, and no frame yet; a ray caster missing a needed flag fails."""
+    for name in NEEDED_FLAGS if RAYCAST else ():
+        if not hasattr(p, name):
+            raise RuntimeError(f"the solar camera needs a swarm-bullet3 wheel with {name}")
     ep.camera = {"tilt_deg": 0.0, "thermal": False, "night_mode": "off", "captured_s": 0.0, "captures": 0,
                  "view": None}
 
@@ -281,9 +291,11 @@ def _object_map(seg: Any, shot: View) -> np.ndarray:
     return np.reshape(np.asarray(seg, dtype=np.int32), (shot.height, shot.width))
 
 
-def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {})) -> Tuple[np.ndarray, np.ndarray]:
+def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {}),
+                 outline: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
-    and arguments of `night_camera` when given, and its object map."""
+    and arguments of `night_camera` when given, and its object map; `outline` False draws a close look with
+    CLOSE_PICTURE_FLAGS, every edge smoothed, not only the outlines."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -294,7 +306,8 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
         kwargs.update(env._sky_kwargs())
     night_flags, night_kwargs = camera_at_night
     kwargs.update(night_kwargs)
-    flags = env._render_flags | env._sky_flags | env._daylight_flags | PICTURE_FLAGS | night_flags
+    picture = PICTURE_FLAGS if outline else CLOSE_PICTURE_FLAGS
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
@@ -311,7 +324,7 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, 
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
-    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT
+    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE
     _w, _h, image, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
         flags=flags, airTemperature=park.air_c(ep), skyTemperature=park.sky_c(ep),

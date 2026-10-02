@@ -109,5 +109,8 @@ def move_lids(env: Any, dock: Dock, open_: bool, dt: float) -> bool:
     """Drive the lids one step towards open or closed; True once they are all the way there."""
     target = 1.0 if open_ else 0.0
     step = dt / LID_TRAVEL_S
-    set_opening(env, dock, dock.opening + float(np.clip(target - dock.opening, -step, step)))
+    opening = dock.opening + float(np.clip(target - dock.opening, -step, step))
+    # Lids at rest hold their hinge angles between steps, so writing them again would change nothing.
+    if opening != dock.opening:
+        set_opening(env, dock, opening)
     return dock.opening == target

@@ -43,6 +43,8 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tupl
 import numpy as np
 import swarm_worlds
 
+from .fixed_order import dot, norm
+
 ASSET_DIR = os.path.join("custom", "solar", "motions")
 STEER_RAD_S = math.radians(120.0)       # the sharpest turn a walking or running body makes
 MOVING_M_S = 0.2                        # a loop slower than this is worked on the spot and is never steered
@@ -152,8 +154,8 @@ class Route:
             return 0.0
         best = None
         for k in range(self.leg, min(self.leg + 3, len(self.lengths))):
-            t = float(np.clip((pos - self.points[k]) @ self.dirs[k], 0.0, self.lengths[k]))
-            gap = float(np.linalg.norm(self.points[k] + self.dirs[k] * t - pos))
+            t = float(np.clip(dot(pos - self.points[k], self.dirs[k]), 0.0, self.lengths[k]))
+            gap = norm(self.points[k] + self.dirs[k] * t - pos)
             if best is None or gap < best[0] - 1e-9:
                 best = (gap, k, self.starts[k] + t)
         _gap, self.leg, along = best
@@ -176,7 +178,7 @@ class Route:
     def left(self, pos: np.ndarray) -> float:
         """Distance still to walk along the path."""
         if len(self.lengths) == 0:
-            return float(np.linalg.norm(self.points[0] - pos))
+            return norm(self.points[0] - pos)
         return float(self.starts[-1] - self._progress(pos))
 
 
@@ -187,17 +189,17 @@ class Lane:
     def __init__(self, start: Sequence[float], end: Sequence[float], ahead: float = 3.0):
         """The line from start towards end, and how far ahead the body aims."""
         self.start, self.end = np.asarray(start, dtype=float), np.asarray(end, dtype=float)
-        self.axis = (self.end - self.start) / max(float(np.linalg.norm(self.end - self.start)), 1e-9)
+        self.axis = (self.end - self.start) / max(norm(self.end - self.start), 1e-9)
         self.ahead = ahead
 
     def heading(self, pos: np.ndarray) -> float:
         """The heading towards the point ahead on the line."""
-        along = float((pos - self.start) @ self.axis)
+        along = dot(pos - self.start, self.axis)
         return heading_to(self.start + self.axis * (along + self.ahead) - pos)
 
     def left(self, pos: np.ndarray) -> float:
         """Distance still to go along the line."""
-        return float((self.end - pos) @ self.axis)
+        return dot(self.end - pos, self.axis)
 
 
 @dataclass

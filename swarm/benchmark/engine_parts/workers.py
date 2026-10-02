@@ -357,6 +357,9 @@ def _benchmark_worker_main(
                         cancel_event=cancel_event,
                     )
                 )
+                # The parent reads this process's RSS for its recycle check as soon as the result lands.
+                gc.collect()
+                _release_freed_memory()
                 result_queue.put(
                     _ProcessBatchResult(
                         worker_id=process_slot,
@@ -384,8 +387,6 @@ def _benchmark_worker_main(
             finally:
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)
-                gc.collect()
-                _release_freed_memory()
 
             # The result is already on its way; only the next request needs the spare.
             if "start" in next_start:

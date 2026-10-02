@@ -34,6 +34,7 @@ import math
 import os
 import random
 import tempfile
+from decimal import ROUND_HALF_EVEN, Decimal
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -182,6 +183,11 @@ class _Shapes:
         flags = 0
         for flag in item.get("flags", []):
             flags |= getattr(p, _FLAG_BITS.get(flag, ""), 0)
+        # A panel's glass lies over its own white backsheet, which the renderer then draws without a ray behind it.
+        if item["group"] == "park" and "glass" in item.get("flags", []):
+            if not hasattr(p, "VISUAL_SHAPE_GLASS_BACKED"):
+                raise RuntimeError("the solar park needs a swarm-bullet3 wheel with VISUAL_SHAPE_GLASS_BACKED")
+            flags |= p.VISUAL_SHAPE_GLASS_BACKED
         return p.createVisualShape(p.GEOM_MESH, fileName=path, meshScale=list(scale), flags=flags,
                                    specularColor=[float(item.get("specular", 0.0))] * 3, physicsClientId=self.cli)
 
@@ -226,7 +232,11 @@ class SolarMovers:
         self._pickup_rows: List[List[float]] = []
         self._bird_rows: List[List[float]] = []
         self._bird_poses = np.zeros((0, 0, 7), dtype=np.float32)
+        self._pickup_index = -1
         self._load(asset_dir, manifest, placed)
+        # The bird's poses repeat with its loop, so each row's world poses are composed once and kept.
+        self._bird_world = np.zeros((len(self._bird_rows), len(self._bird), 7))
+        self._bird_known = np.zeros(len(self._bird_rows), dtype=bool)
         # A family may look at the world before it steps it, so everything stands at step zero from the start.
         self._advance_pickup(0)
         self._advance_bird(0)
@@ -263,7 +273,12 @@ class SolarMovers:
         """Set the truck's body, glass and wheels to the row this step reads, holding the last row at the dead end."""
         if not self._pickup:
             return
-        row = self._pickup_rows[min(max(step - self._pickup_delay_steps, 0), len(self._pickup_rows) - 1)]
+        index = min(max(step - self._pickup_delay_steps, 0), len(self._pickup_rows) - 1)
+        # The truck holds its row while it waits and once it parks, and writing a pose a body holds changes nothing.
+        if index == self._pickup_index:
+            return
+        self._pickup_index = index
+        row = self._pickup_rows[index]
         for body, local_position, local_quaternion, axis in self._pickup:
             turn = local_quaternion
             if axis is not None:
@@ -278,11 +293,28 @@ class SolarMovers:
         if not self._bird:
             return
         index = (step + self._bird_offset) % len(self._bird_rows)
-        row = self._bird_rows[index]
-        for body, part in self._bird:
-            local = self._bird_poses[part, index]
-            position, orientation = p.multiplyTransforms(row[:3], row[3:7], local[:3].tolist(), local[3:7].tolist())
-            p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
+        if not self._bird_known[index]:
+            row = self._bird_rows[index]
+            for slot, (_, part) in enumerate(self._bird):
+                local = self._bird_poses[part, index]
+                position, orientation = p.multiplyTransforms(row[:3], row[3:7], local[:3].tolist(), local[3:7].tolist())
+                self._bird_world[index, slot] = [*position, *orientation]
+            self._bird_known[index] = True
+        for (body, _), pose in zip(self._bird, self._bird_world[index].tolist()):
+            p.resetBasePositionAndOrientation(body, pose[:3], pose[3:], physicsClientId=self.cli)
+
+
+def _fixed_body(cli: int, collision: int, visual: int, position: Sequence[float], orientation: Sequence[float]) -> int:
+    """A piece nothing but a reset moves, as a plain static object instead of a jointed body the physics step solves.
+
+    It stays awake, so every step re-measures its bounds as it did for the jointed body and contacts are found in the
+    same order. A jointed body keeps its rotation as the quaternion of its matrix, so the piece is set to that
+    quaternion read back from its own matrix and stands to the last bit where a jointed body would.
+    """
+    body = p.createMultiBody(0, collision, visual, position, orientation, useMaximalCoordinates=True, physicsClientId=cli)
+    turned = p.getBasePositionAndOrientation(body, physicsClientId=cli)[1]
+    p.resetBasePositionAndOrientation(body, position, turned, physicsClientId=cli)
+    return body
 
 
 @lru_cache(maxsize=2)
@@ -290,6 +322,19 @@ def _forest_table(path: str) -> Dict[str, np.ndarray]:
     """Every tree of the forest: its mesh, position, yaw, scale, zone and rank, read once per process."""
     with np.load(path) as table:
         return {key: table[key] for key in table.files}
+
+
+def _four_decimals(values: np.ndarray) -> np.ndarray:
+    """The numbers a reader parses back from values printed with four decimals, worked out without printing them.
+
+    Dividing the rounded integer by 10^4 rounds once, as parsing the decimal does. Only a product within reach of a
+    half way point can round the other way in binary, so those few are rounded in exact decimal arithmetic instead.
+    """
+    scaled = values * 1e4
+    whole = np.rint(scaled)
+    for i in np.flatnonzero(np.abs(np.abs(scaled - np.floor(scaled)) - 0.5) < 1e-3):
+        whole.flat[i] = float(Decimal(float(values.flat[i])).scaleb(4).to_integral_value(ROUND_HALF_EVEN))
+    return whole / 1e4
 
 
 def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
@@ -302,6 +347,8 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     instanced = getattr(p, "VISUAL_SHAPE_RENDER_INSTANCED", 0)
     if not instanced:
         raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with VISUAL_SHAPE_RENDER_INSTANCED")
+    if not getattr(p, "FOREST_FILE_BINARY", 0):
+        raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with FOREST_FILE_BINARY")
     folder = os.path.join(asset_dir, forest["folder"])
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
@@ -310,11 +357,14 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     half = yaw * 0.5
     rows = np.column_stack([table["mesh"][keep], position, np.zeros(len(yaw)), np.zeros(len(yaw)), np.sin(half),
                             np.cos(half), scale])
+    # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
+    rows[:, 1:] = _four_decimals(rows[:, 1:])
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
-        with os.fdopen(handle, "w") as out:
-            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]))
-            np.savetxt(out, rows, fmt="%d " + " ".join(["%.4f"] * 10))
+        with os.fdopen(handle, "wb") as out:
+            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]).encode())
+            out.write(f"binary {len(rows)}\n".encode())
+            out.write(np.ascontiguousarray(rows, dtype="<f8").tobytes())
         flags = instanced | p.VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY | p.VISUAL_SHAPE_MATERIALS_FROM_MTL
         visual = p.createVisualShape(p.GEOM_MESH, fileName=path, flags=flags, specularColor=[0, 0, 0], physicsClientId=cli)
         bodies = [p.createMultiBody(0, -1, visual, physicsClientId=cli)]
@@ -339,7 +389,7 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
         shape = p.createCollisionShapeArray([p.GEOM_CYLINDER] * len(group), radii=[CONFIG["cylinder_radius_m"]] * len(group),
                                             lengths=tall[group].tolist(), collisionFramePositions=(centres[group] - base).tolist(),
                                             physicsClientId=cli)
-        bodies.append(p.createMultiBody(0, shape, sliver, base.tolist(), physicsClientId=cli))
+        bodies.append(_fixed_body(cli, shape, sliver, base.tolist(), [0.0, 0.0, 0.0, 1.0]))
     return bodies, int(keep.sum())
 
 
@@ -374,7 +424,8 @@ def _corners(piece: Dict[str, Any], anchor: np.ndarray, yaw: float, scale: float
     (x0, y0), (x1, y1) = piece["low"] * scale, piece["high"] * scale
     c, s = math.cos(yaw), math.sin(yaw)
     local = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-    return local @ np.array([[c, s], [-s, c]]) + anchor
+    # Turned with elementwise products in a fixed order, not by BLAS, whose rounding follows the CPU.
+    return np.stack([local[:, 0] * c - local[:, 1] * s, local[:, 0] * s + local[:, 1] * c], 1) + anchor
 
 
 def _gap(a: np.ndarray, b: np.ndarray) -> float:
@@ -382,7 +433,7 @@ def _gap(a: np.ndarray, b: np.ndarray) -> float:
     for poly in (a, b):
         edges = np.roll(poly, -1, axis=0) - poly
         normals = np.column_stack([-edges[:, 1], edges[:, 0]])
-        pa, pb = a @ normals.T, b @ normals.T
+        pa, pb = (ring[:, 0:1] * normals[:, 0] + ring[:, 1:2] * normals[:, 1] for ring in (a, b))
         if np.any((pa.max(axis=0) < pb.min(axis=0)) | (pb.max(axis=0) < pa.min(axis=0))):
             return float(min(_point_gap(a, b), _point_gap(b, a)))
     return 0.0
@@ -598,9 +649,7 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
         """Create one placed piece in the world and file its body where the caller will look for it."""
         nonlocal triangles
         visual, collision = shapes.get(place["item"], place["scale"])
-        body = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=collision, baseVisualShapeIndex=visual,
-                                 basePosition=place["position"], baseOrientation=place["quaternion"],
-                                 physicsClientId=cli)
+        body = _fixed_body(cli, collision, visual, place["position"], place["quaternion"])
         p.changeVisualShape(body, -1, rgbaColor=[*tint, 1], specularColor=[float(item.get("specular", 0.0))] * 3,
                             physicsClientId=cli)
         bodies.setdefault(item["group"], []).append(body)
