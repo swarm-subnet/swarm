@@ -1239,7 +1239,7 @@ class MovingDroneAviary(BaseRLAviary):
             # Office scoring never reads clearance, and getClosestPoints against
             # the office's concave meshes can segfault the process (seed 53).
             return
-        if not getattr(self.family_runtime, "clearance_metric", True):
+        if not getattr(getattr(self, "family_runtime", None), "clearance_metric", True):
             return
         if self.NUM_DRONES > 1:
             self._update_min_clearance_multi()
