@@ -159,11 +159,13 @@ def _find_clear_platform_position(
     distance_mode: str = "xyz",
     allow_candidate_fallback: bool = True,
     min_obstacle_height: float = 0.0,
+    keep_uids: frozenset = frozenset(),
 ) -> Tuple[float, float, float]:
     """Return a pad spot clear of the world bodies and inside the required distance band.
 
     Falls back to the candidate position when allow_candidate_fallback is set,
-    and raises RuntimeError otherwise.
+    and raises RuntimeError otherwise. Bodies in keep_uids always count as
+    obstacles, however short they are.
     """
     clearance = C.TYPE_4_PLATFORM_CLEARANCE
     platform_r = C.START_PLATFORM_RADIUS
@@ -179,7 +181,7 @@ def _find_clear_platform_position(
             except p.error:
                 skip_bodies.add(bid)
                 continue
-            if (mx[2] - mn[2]) <= min_obstacle_height:
+            if (mx[2] - mn[2]) <= min_obstacle_height and bid not in keep_uids:
                 skip_bodies.add(bid)
 
     def _distance(
@@ -386,14 +388,16 @@ def _distance_between_points(a, b, *, mode: str) -> float:
 
 
 def build_autopilot_world(tagger, cli, seed, start, goal, challenge_type,
-                          moving_platform, static_world_body_base):
+                          moving_platform, static_world_body_base, keep_uids=frozenset()):
     """Place and build the autopilot start + goal platforms on an already-built world.
 
     The static world must already exist; ``static_world_body_base`` is the body count
     captured before it was built (so the placement scan only sees world obstacles).
-    Returns (end_platform_uids, start_platform_uids, start_surface_z, goal_surface_z,
-    adjusted_start, adjusted_goal).
+    ``keep_uids`` are platforms already built for other drones: they are avoided as
+    obstacles and never cleared. Returns (end_platform_uids, start_platform_uids,
+    start_surface_z, goal_surface_z, adjusted_start, adjusted_goal).
     """
+    keep_uids = frozenset(keep_uids)
     rng = random.Random(seed)
 
     sx = sy = sz = None
@@ -427,7 +431,7 @@ def build_autopilot_world(tagger, cli, seed, start, goal, challenge_type,
         new_sx, new_sy, new_s_surface = _find_clear_platform_position(
             cli, sx, sy, start_surface, placement_rng, static_world_body_base,
             world_range_x=_wx, world_range_y=_wy, h_min=_hmin, h_max=_hmax,
-            min_obstacle_height=obstacle_height_filter,
+            min_obstacle_height=obstacle_height_filter, keep_uids=keep_uids,
         )
         sx, sy = new_sx, new_sy
         if challenge_type == 4:
@@ -464,7 +468,7 @@ def build_autopilot_world(tagger, cli, seed, start, goal, challenge_type,
                 required_distance_max=required_distance_max,
                 preferred_distance=preferred_distance, distance_mode=distance_mode,
                 allow_candidate_fallback=challenge_type == 4,
-                min_obstacle_height=obstacle_height_filter,
+                min_obstacle_height=obstacle_height_filter, keep_uids=keep_uids,
             )
             if challenge_type == 4:
                 new_gz = float(_raycast_surface_z(cli, new_gx, new_gy))
@@ -531,7 +535,7 @@ def build_autopilot_world(tagger, cli, seed, start, goal, challenge_type,
         for plat_uid in list(all_plat):
             for i in range(p.getNumBodies(physicsClientId=cli)):
                 bid = p.getBodyUniqueId(i, physicsClientId=cli)
-                if bid in all_plat or bid < static_world_body_base:
+                if bid in all_plat or bid in keep_uids or bid < static_world_body_base:
                     continue
                 mn, mx = p.getAABB(bid, physicsClientId=cli)
                 if (mx[2] - mn[2]) > 2.0:

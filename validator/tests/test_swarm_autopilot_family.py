@@ -22,10 +22,11 @@ import math
 import random
 
 import numpy as np
+import pybullet as p
 import pytest
 
-from swarm.challenge_families import runtime_family_for_task
-from swarm.constants import SEARCH_RADIUS_MIN, SWARM_MAX_DRONES, SWARM_MIN_DRONES, SWARM_SEARCH_RADIUS
+from swarm.challenge_families import build_screening_tasks, runtime_family_for_task
+from swarm.constants import SEARCH_RADIUS_MIN, SIM_DT, SWARM_MAX_DRONES, SWARM_MIN_DRONES, SWARM_SEARCH_RADIUS
 from swarm.utils.env_factory import make_env
 from swarm.validator import task_gen
 
@@ -220,3 +221,23 @@ def test_swarm_rollout_is_deterministic():
     r2, _w2, _n2 = _rollout(2025)
     assert r1["final_score"] == r2["final_score"]
     assert r1["per_drone_final_score"] == r2["per_drone_final_score"]
+
+
+def test_village_pads_of_earlier_drones_survive_later_placements():
+    """On a village layout where a later pad used to land on goal 0's pad, every built pad is still a live, unique body."""
+    task = build_screening_tasks(
+        sim_dt=SIM_DT, seeds=list(range(228)) + [2730243596], family_id="cf_swarm_autopilot",
+    )[-1]
+    assert task.challenge_type == 4
+    env = make_env(task, gui=False)
+    try:
+        start_uids = list(env._start_platform_uids)
+        end_uids = list(env._end_platform_uids)
+        assert len(set(start_uids + end_uids)) == len(start_uids) + len(end_uids), "a pad uid was reused"
+        live = {p.getBodyUniqueId(i, physicsClientId=env.CLIENT) for i in range(p.getNumBodies(physicsClientId=env.CLIENT))}
+        assert set(start_uids + end_uids) <= live, "a pad was removed after it was built"
+        for group, goal in zip(env._swarm_platform_groups, env.GOAL_POSES):
+            centres = [p.getBasePositionAndOrientation(uid, physicsClientId=env.CLIENT)[0] for uid in group]
+            assert all(math.hypot(c[0] - goal[0], c[1] - goal[1]) < 0.05 for c in centres)
+    finally:
+        env.close()
