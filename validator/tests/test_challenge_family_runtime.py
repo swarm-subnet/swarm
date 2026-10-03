@@ -88,6 +88,17 @@ def test_runtime_profile_for_task_routes_family_bootstrap_and_metadata():
     assert autopilot_profile.image_key == "base"
 
 
+def test_only_sentinel_raises_the_worker_memory_ceiling():
+    """Sentinel's profile asks for 3,200 MiB before an idle worker is replaced and keeps it across the process
+    boundary; another family leaves the evaluator's default."""
+    solar = runtime_profile_for_task(_sample_task(family_id="cf_solar_patrol"))
+    autopilot = runtime_profile_for_task(_sample_task(family_id="cf_autopilot"))
+
+    assert solar.worker_recycle_rss_mb == pytest.approx(3200.0)
+    assert type(solar).from_mapping(solar.as_dict()).worker_recycle_rss_mb == pytest.approx(3200.0)
+    assert autopilot.worker_recycle_rss_mb is None
+
+
 def test_family_screening_and_admission_policies_are_runtime_scoped():
     """Each family carries its own bootstrap threshold, improvement step and early-fail checkpoints."""
     autopilot_screening = screening_policy_for_family("cf_autopilot")

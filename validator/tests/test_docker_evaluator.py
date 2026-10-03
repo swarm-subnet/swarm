@@ -2303,6 +2303,17 @@ def test_run_process_parallel_recycles_worker_on_rss_threshold(monkeypatch, tmp_
     assert not any("crashed" in line for line in log_lines)
 
 
+def test_the_recycle_ceiling_is_the_operators_then_the_familys_then_the_default(monkeypatch):
+    """An operator's SWARM_WORKER_RECYCLE_RSS_MB wins; without it a family's own ceiling applies, else 2,500 MiB."""
+    family = de.parallel.ChallengeFamilyRuntimeProfile(family_id="cf_solar_patrol", worker_recycle_rss_mb=3200.0)
+    plain = de.parallel.ChallengeFamilyRuntimeProfile(family_id="cf_autopilot")
+    monkeypatch.delenv("SWARM_WORKER_RECYCLE_RSS_MB", raising=False)
+    assert de.parallel._recycle_rss_mb(family) == pytest.approx(3200.0)
+    assert de.parallel._recycle_rss_mb(plain) == pytest.approx(2500.0)
+    monkeypatch.setenv("SWARM_WORKER_RECYCLE_RSS_MB", "2800")
+    assert de.parallel._recycle_rss_mb(family) == pytest.approx(2800.0)
+
+
 @pytest.mark.full
 def test_run_process_parallel_no_recycle_below_thresholds(monkeypatch, tmp_path):
     """A worker under both the seed budget and the memory ceiling is left running."""

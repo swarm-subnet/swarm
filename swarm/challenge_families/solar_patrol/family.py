@@ -122,6 +122,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
             global_eval_base_sec=600.0,
             global_eval_per_seed_sec=900.0,
             global_eval_cap_sec=14400.0,
+            # A worker keeps about 2.76 GB of build caches between patrols; the default 2,500 MiB would drop them every 3 seeds.
+            worker_recycle_rss_mb=3200.0,
         )
 
     def env_kwargs_for_task(self, task: Any) -> dict[str, Any]:
