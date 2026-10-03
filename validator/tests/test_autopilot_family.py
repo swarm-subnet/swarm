@@ -22,8 +22,16 @@ import math
 
 import numpy as np
 import pybullet as p
+import pytest
 
-from swarm.constants import SEARCH_RADIUS_MAX, SEARCH_RADIUS_MIN, SIM_DT, VILLAGE_R_MAX, VILLAGE_R_MIN
+from swarm.constants import (
+    SAFETY_DISTANCE_SAFE,
+    SEARCH_RADIUS_MAX,
+    SEARCH_RADIUS_MIN,
+    SIM_DT,
+    VILLAGE_R_MAX,
+    VILLAGE_R_MIN,
+)
 from swarm.protocol import MapTask
 from swarm.utils.env_factory import make_env
 from swarm.validator.task_gen import task_for_seed_and_type
@@ -259,3 +267,24 @@ def test_goal_directed_baseline_beats_random_policy_on_easy_autopilot_seed():
     assert baseline_terminated or baseline_truncated
     assert random_terminated or random_truncated
     assert float(baseline_info["distance_to_goal"]) < float(random_info["distance_to_goal"])
+
+
+@pytest.mark.parametrize("challenge_type", [2, 3, 4])
+def test_drone_resting_on_a_terrain_pad_keeps_full_clearance(challenge_type):
+    """A drone sitting still on an open, mountain or village goal pad is not scored as close to the ground holding it up."""
+    task = task_for_seed_and_type(
+        sim_dt=SIM_DT, seed=1, challenge_type=challenge_type, family_id="cf_autopilot", moving_platform=False,
+    )
+    env = make_env(task, gui=False)
+    try:
+        cli = env.CLIENT
+        p.resetBasePositionAndOrientation(
+            env.DRONE_IDS[0], (env.GOAL_POS + [0.0, 0.0, 0.06]).tolist(), [0, 0, 0, 1], physicsClientId=cli,
+        )
+        for _ in range(150):
+            p.stepSimulation(physicsClientId=cli)
+        env._updateAndStoreKinematicInformation()
+        env._update_min_clearance()
+        assert env._min_clearance_episode == SAFETY_DISTANCE_SAFE
+    finally:
+        env.close()
