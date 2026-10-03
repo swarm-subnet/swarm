@@ -137,6 +137,20 @@ def test_the_stream_look_is_the_same_bytes_on_every_machine():
     assert hashlib.sha256(streamed.tobytes()).hexdigest() == _STREAM_SHA256
 
 
+@pytest.mark.skipif(sensor_noise._ENGINE_LOOK is None, reason="the engine has no compiled stream look")
+def test_the_engine_stream_look_is_the_numpy_one_to_the_byte():
+    """The engine's compiled look gives the numpy look's bytes on a render-like frame, noise past 0 and 1, every
+    rounding tie, other sizes and the whole quality scale."""
+    rng = np.random.default_rng(16)
+    ties = ((np.arange(480 * 640 * 3) % 256 + 0.5) / 255.0).astype(np.float32).reshape(480, 640, 3)
+    frames = [_frame(), ties, rng.uniform(-0.1, 1.1, (480, 640, 3)).astype(np.float32),
+              rng.uniform(0.0, 1.0, (32, 48, 3)).astype(np.float32)]
+    for frame in frames:
+        for quality in (1, 10, 49, 50, sensor_noise.VIDEO_QUALITY, 95, 100):
+            engine = sensor_noise.stream_look(frame, quality)
+            assert engine.tobytes() == sensor_noise._numpy_look(frame, quality).tobytes()
+
+
 def test_the_stream_look_softens_detail_and_keeps_flat_colour():
     """A detailed frame loses fine grain like a compressed stream; a flat colour moves at most two levels, and a blank
     frame is passed through untouched."""
