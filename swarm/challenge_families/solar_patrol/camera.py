@@ -311,6 +311,7 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
     kwargs.update(night_kwargs)
     picture = PICTURE_FLAGS if outline else CLOSE_PICTURE_FLAGS
     flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE
+    airframe.pose(env, getattr(env, "_solar", None))
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
@@ -328,6 +329,7 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, 
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
     flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE | RASTER
+    airframe.pose(env, ep)
     _w, _h, image, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
         flags=flags, airTemperature=park.air_c(ep), skyTemperature=park.sky_c(ep),

@@ -499,6 +499,7 @@ class _Sightings:
                 continue
             view = self._view(eye, ray / distance, drone_forward)
             airframe.update(env, ep)
+            airframe.pose(env, ep)
             theft.show(env, ep, view)
             self.best[n] = max(self.best[n], narrow_px(np.isin(self._object_map(view), person["bodies"])))
 
