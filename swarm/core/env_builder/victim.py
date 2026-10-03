@@ -278,8 +278,11 @@ def _fall_line_yaw(raw_bounds, normal):
     return math.atan2(-normal[1], -normal[0]) - axis0
 
 
-def _footprint_seat_z(cli, cx, cy, fx, fy, surface_z, q, normal):
-    """Height to rest the body at, from 25 rays under its footprint, bounded so it neither sinks far nor floats."""
+def _footprint_seat_z(cli, cx, cy, fx, fy, surface_z, q, normal, lying=False):
+    """Height to rest the body at, from 25 rays under its footprint, bounded so it neither sinks far nor floats.
+
+    A lying body is tilted onto the slope, so its float is measured against that tilted underside.
+    """
     fx = max(fx, 0.15)
     fy = max(fy, 0.15)
     z_hi = surface_z + 20.0
@@ -302,6 +305,10 @@ def _footprint_seat_z(cli, cx, cy, fx, fy, surface_z, q, normal):
         max_pen = max(max_pen, z - underside)
     if max_pen > _MAX_TERRAIN_PENETRATION:
         seat += max_pen - _MAX_TERRAIN_PENETRATION
+    if lying:
+        lowest_gap = min(seat - (normal[0] * dx + normal[1] * dy) / nz - z for dx, dy, z in samples)
+        seat -= max(0.0, lowest_gap - _MAX_FOOT_FLOAT)
+        return seat
     # on steep ground sink the uphill side rather than float the feet
     seat = min(seat, min(s[2] for s in samples) + _MAX_FOOT_FLOAT)
     return seat
@@ -377,7 +384,7 @@ def spawn_victim(
         seat_z = _footprint_seat_z(
             cli, float(surface_x), float(surface_y),
             0.5 * (rot_max[0] - rot_min[0]), 0.5 * (rot_max[1] - rot_min[1]),
-            float(surface_z), 0.10 if flat else 0.15, normal,
+            float(surface_z), 0.10 if flat else 0.15, normal, lying=flat,
         )
 
     base_z = seat_z - rot_min[2] + _GROUND_EPS
