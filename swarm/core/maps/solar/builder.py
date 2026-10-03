@@ -465,13 +465,6 @@ def _fence_gap(outline: np.ndarray, ring: np.ndarray) -> float:
     return gap if inside.all() else -gap
 
 
-def _local(piece: Dict[str, Any], xy: Sequence[float]) -> np.ndarray:
-    """A world point in the piece's own axes, about its anchor: along its long side, then across it."""
-    c, s = math.cos(piece["yaw"]), math.sin(piece["yaw"])
-    rel = np.asarray(xy[:2], dtype=float) - piece["anchor"]
-    return np.array([c * rel[0] + s * rel[1], -s * rel[0] + c * rel[1]])
-
-
 def _piece(placements: Sequence[Dict[str, Any]], items: Dict[str, Any], indices: List[int]) -> Dict[str, Any]:
     """The placements standing on one spot as one piece: where it stands, how it turns, the outline its parts cover
     seen from above, and the height its size is taken from, the lowest point of its parts."""
@@ -508,11 +501,19 @@ def _shift_units(asset_dir: str) -> Tuple[Dict[str, Any], ...]:
     for (kind, number, _), indices in spots.items():
         grouped.setdefault((kind, number), []).append(_piece(placements, items, indices))
     tables = [piece for (kind, _), pieces in grouped.items() if kind == "table" for piece in pieces]
+    if tables:
+        # Every table's axes and outline at once: a leg in a table's own axes about its anchor, along then across.
+        anchors = np.array([table["anchor"] for table in tables])
+        cos = np.array([math.cos(table["yaw"]) for table in tables])
+        sin = np.array([math.sin(table["yaw"]) for table in tables])
+        mids = np.array([(table["low"] + table["high"]) / 2.0 for table in tables])
+        halves = np.array([(table["high"] - table["low"]) / 2.0 for table in tables])
     for index, place in enumerate(placements):
         if place["item"] in CONFIG["table_legs"] and tables:
             # The table whose outline the leg stands deepest inside carries it.
-            outside = [float(np.max(np.abs(_local(table, place["position"]) - (table["low"] + table["high"]) / 2.0)
-                                    - (table["high"] - table["low"]) / 2.0)) for table in tables]
+            rel = np.asarray(place["position"][:2], dtype=float) - anchors
+            local = np.stack([cos * rel[:, 0] + sin * rel[:, 1], -sin * rel[:, 0] + cos * rel[:, 1]], axis=1)
+            outside = np.max(np.abs(local - mids) - halves, axis=1)
             tables[int(np.argmin(outside))]["legs"].append(index)
     kinds = list(CONFIG["shifts"])
     units = []
@@ -524,10 +525,16 @@ def _shift_units(asset_dir: str) -> Tuple[Dict[str, Any], ...]:
         units.append({"kind": kind, "pieces": pieces, "outlines": outlines,
                       "pivot": np.mean([piece["anchor"] for piece in pieces], axis=0), "yaw": pieces[0]["yaw"],
                       "fence_side": side, "fence_m": min(abs(gap) for gap in fence)})
-    for unit in units:
+    # The box around a unit's outlines: two units whose boxes stand shift_reach_m apart or more cannot come nearer.
+    boxes = [(np.min([o.min(axis=0) for o in unit["outlines"]], axis=0), np.max([o.max(axis=0) for o in unit["outlines"]], axis=0))
+             for unit in units]
+    for number, unit in enumerate(units):
         unit["gaps"] = {}
         for other_number, other in enumerate(units):
             if other is not unit:
+                apart = np.maximum(np.maximum(boxes[other_number][0] - boxes[number][1], boxes[number][0] - boxes[other_number][1]), 0.0)
+                if math.hypot(apart[0], apart[1]) >= CONFIG["shift_reach_m"] + 1e-6:
+                    continue
                 gap = min(_gap(a, b) for a in unit["outlines"] for b in other["outlines"])
                 if gap < CONFIG["shift_reach_m"]:
                     unit["gaps"][other_number] = gap
