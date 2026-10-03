@@ -182,15 +182,22 @@ def _ensure_merged_hills_obj() -> Optional[str]:
         for a, b, c in src_tris:
             merged_f.append((base_idx + a + 1, base_idx + b + 1, base_idx + c + 1))
 
-    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write("# Auto-generated merged hills + far ground\n")
-        f.write("o MergedHillsTerrain\n")
-        for x, y, z in merged_v:
-            f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
-        for u, v in merged_vt:
-            f.write(f"vt {u:.6f} {v:.6f}\n")
-        for a, b, c in merged_f:
-            f.write(f"f {a}/{a} {b}/{b} {c}/{c}\n")
+    # Parallel workers share this cache, so the mesh only appears under its final name once complete.
+    tmp_path = f"{out_path}.{os.getpid()}.part"
+    try:
+        with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("# Auto-generated merged hills + far ground\n")
+            f.write("o MergedHillsTerrain\n")
+            for x, y, z in merged_v:
+                f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
+            for u, v in merged_vt:
+                f.write(f"vt {u:.6f} {v:.6f}\n")
+            for a, b, c in merged_f:
+                f.write(f"f {a}/{a} {b}/{b} {c}/{c}\n")
+        os.replace(tmp_path, out_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     return out_path
 
