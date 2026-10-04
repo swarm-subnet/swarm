@@ -189,12 +189,20 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         rises, so holding it does not press it again. While the dock flies the drone, its own flight wins.
         """
         ep = env._solar
-        a = np.asarray(action, dtype=np.float32).reshape(-1)
-        if a.size != ACTION_DIM or not np.all(np.isfinite(a)):
-            a = np.zeros(ACTION_DIM, dtype=np.float32)
-        a = outputs.clip(a)
+        raw = np.asarray(action, dtype=np.float32).reshape(-1)
+        held = ep.held_action
+        # A step repeating the last step's action, which is already the previous one, clips and decodes as it did.
+        if held is not None and held[1] is ep.previous_action and held[0] == raw.tobytes():
+            a, decoded = held[1], held[2]
+        else:
+            a = raw
+            if a.size != ACTION_DIM or not np.all(np.isfinite(a)):
+                a = np.zeros(ACTION_DIM, dtype=np.float32)
+            a = outputs.clip(a)
+            decoded = decode_action(a, ep.previous_action)
+            ep.held_action = (raw.tobytes(), a, decode_action(a, a))
         env.action_buffer.append(a.reshape(1, ACTION_DIM).copy())
-        command = sensor_noise.delay(env, ep, decode_action(a, ep.previous_action))
+        command = sensor_noise.delay(env, ep, decoded)
         ep.previous_action = a
         ep.command = command
         outputs.apply(env, ep, command)

@@ -56,6 +56,7 @@ class SolarEpisode:
     terrain_uids: frozenset = frozenset()
     command: Optional[Command] = None                # this decision's decoded action
     previous_action: Optional[np.ndarray] = None
+    held_action: Optional[tuple] = None              # the repeated action's bytes, clipped vector and decoded command
     outcome: Outcome = field(default_factory=Outcome)
     frames: Frames = field(default_factory=Frames)
     view_step: int = -1                              # the decision step the view is shown at
