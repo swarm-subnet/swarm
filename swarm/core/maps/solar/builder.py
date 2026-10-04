@@ -324,6 +324,18 @@ def _forest_table(path: str) -> Dict[str, np.ndarray]:
         return {key: table[key] for key in table.files}
 
 
+@lru_cache(maxsize=2)
+def _forest_rows(path: str) -> np.ndarray:
+    """Every tree of the forest as a binary forest-file row (mesh, position, quaternion, scale), each number the one the
+    four-decimal text gives, worked out once per process: a seed takes the rows of the trees it stands."""
+    table = _forest_table(path)
+    half = table["yaw"] * 0.5
+    rows = np.column_stack([table["mesh"], table["position"], np.zeros(len(half)), np.zeros(len(half)), np.sin(half),
+                            np.cos(half), table["scale"]])
+    rows[:, 1:] = _four_decimals(rows[:, 1:])
+    return rows
+
+
 def _four_decimals(values: np.ndarray) -> np.ndarray:
     """The numbers a reader parses back from values printed with four decimals, worked out without printing them.
 
@@ -353,12 +365,9 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
     keep = table["rank"] < limits[table["tier"]]
-    position, yaw, scale = table["position"][keep], table["yaw"][keep], table["scale"][keep]
-    half = yaw * 0.5
-    rows = np.column_stack([table["mesh"][keep], position, np.zeros(len(yaw)), np.zeros(len(yaw)), np.sin(half),
-                            np.cos(half), scale])
+    position, scale = table["position"][keep], table["scale"][keep]
     # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
-    rows[:, 1:] = _four_decimals(rows[:, 1:])
+    rows = _forest_rows(os.path.join(folder, forest["table"]))[keep]
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
         with os.fdopen(handle, "wb") as out:
