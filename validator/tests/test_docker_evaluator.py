@@ -2589,6 +2589,17 @@ def test_legal_thinking_sec_holds_the_per_step_budget_for_every_step():
     assert _legal_thinking_sec([], 1.0) == 0.0
 
 
+def test_legal_thinking_sec_counts_one_budget_per_window_of_decisions():
+    """A Sentinel patrol is asked for 3,900 decisions at 10 Hz, five to a frame, so 300 ms a frame holds 780 x 0.3 s."""
+    from swarm.validator.docker.docker_evaluator_parts.batch import _legal_thinking_sec
+
+    patrol = SimpleNamespace(horizon=390.0, sim_dt=1.0 / 50.0, family_id="cf_solar_patrol")
+
+    assert _legal_thinking_sec([patrol], 1.0, 0.3, 5) == pytest.approx(234.0)
+    assert _legal_thinking_sec([patrol], 1.5, 0.3, 5) == pytest.approx(351.0)
+    assert _legal_thinking_sec([patrol], 1.0, 0.1) == pytest.approx(390.0)
+
+
 def test_process_parallel_attaches_the_timing_record_to_the_result(monkeypatch, tmp_path):
     """The result handed to the caller carries the seed's timing record, so the upload can report it."""
     model_path = tmp_path / "model.zip"

@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.validator import runtime_telemetry
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import batch
@@ -71,11 +72,17 @@ class _Env:
         time.sleep(0.01)
 
 
-def _fly_one_seed(monkeypatch, step) -> list:
-    """Fly one seed through the real RPC loop against a fake agent and return every record it emitted."""
+def _fly_one_seed(
+    monkeypatch, step, *, delays=(), acts=None, profile=None, speed_factor=None, horizon=0.04
+) -> list:
+    """Fly one seed through the real RPC loop against a fake agent and return every record it emitted.
+
+    delays holds the seconds each act() call takes, in call order, and the last one repeats; acts, when
+    given, collects one entry per act() call."""
     rpc_mod = de.rpc
     ev = _new_evaluator()
     records: list = []
+    calls: list = [] if acts is None else acts
 
     class _Agent:
         """Capnp agent stand-in answering ping, reset and act with canned replies."""
@@ -89,7 +96,10 @@ def _fly_one_seed(monkeypatch, step) -> list:
             return None
 
         async def act(self, _obs):
-            """Return a zero action of the expected shape."""
+            """Return a zero action of the expected shape, after this call's delay."""
+            calls.append(1)
+            if delays:
+                await asyncio.sleep(delays[min(len(calls), len(delays)) - 1])
             tensor = SimpleNamespace(
                 data=np.zeros(5, dtype=np.float32).tobytes(), dtype="float32", shape=[5]
             )
@@ -135,10 +145,11 @@ def _fly_one_seed(monkeypatch, step) -> list:
     )
 
     task = SimpleNamespace(
-        map_seed=77, challenge_type=1, horizon=0.04, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
+        map_seed=77, challenge_type=1, horizon=horizon, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
     )
     ev._run_multi_seed_rpc_sync(
-        [task], uid=9, rpc_port=8000, on_seed_complete=lambda record=None: records.append(record)
+        [task], uid=9, rpc_port=8000, on_seed_complete=lambda record=None: records.append(record),
+        runtime_profile_payload=profile, speed_factor=speed_factor,
     )
     return records
 
@@ -177,6 +188,53 @@ def test_flown_seed_record_carries_every_phase_clock(monkeypatch):
     assert record["cleanup_sec"] >= 0.01
     assert record["fly_sec"] >= record["sim_sec"] > 0.0
     assert record["act_sec"] >= record["act_max_sec"] > 0.0
+
+
+@pytest.mark.parametrize(("budget_sec", "acts_expected"), [(None, 2), (0.1, 3)])
+def test_a_family_step_budget_judges_each_act(monkeypatch, budget_sec, acts_expected):
+    """A 0.3 s act() passes the shared 0.6 s budget, but under a family's 0.1 s it is struck and asked again."""
+    steps: list = []
+
+    def _step(_action):
+        """End the episode on the second step."""
+        steps.append(1)
+        return {"marker": len(steps)}, 0.0, len(steps) == 2, False, {"success": False, "collision": False}
+
+    acts: list = []
+    profile = ChallengeFamilyRuntimeProfile(family_id="cf_autopilot", miner_compute_budget_sec=budget_sec)
+    _fly_one_seed(monkeypatch, _step, delays=(0.0, 0.3), acts=acts, profile=profile.as_dict(), speed_factor=1.0)
+
+    assert len(acts) == acts_expected
+
+
+@pytest.mark.parametrize(
+    ("window_acts", "delays", "acts_expected"),
+    [
+        (5, (0.0, 0.15, 0.05), 3),
+        (5, (0.0, 0.15, 0.25), 4),
+        (2, (0.0, 0.25, 0.25), 3),
+    ],
+    ids=["window-fits", "window-spent", "next-window-refills"],
+)
+def test_acts_in_one_window_share_its_budget(monkeypatch, window_acts, delays, acts_expected):
+    """Under 300 ms per window, each act() gets what the window has left: 150 + 250 ms in one window is struck and
+    asked again, while the same 250 ms in the next window starts from a full budget."""
+    steps: list = []
+
+    def _step(_action):
+        """End the episode on the third step."""
+        steps.append(1)
+        return {"marker": len(steps)}, 0.0, len(steps) == 3, False, {"success": False, "collision": False}
+
+    acts: list = []
+    profile = ChallengeFamilyRuntimeProfile(
+        family_id="cf_autopilot", miner_compute_budget_sec=0.3, miner_compute_window_acts=window_acts
+    )
+    _fly_one_seed(
+        monkeypatch, _step, delays=delays, acts=acts, profile=profile.as_dict(), speed_factor=1.0, horizon=0.06
+    )
+
+    assert len(acts) == acts_expected
 
 
 def test_failed_seed_record_still_carries_its_clocks(monkeypatch):

@@ -165,6 +165,12 @@ def _run_multi_seed_rpc_sync(
         if runtime_profile.rpc_step_timeout_sec is not None
         else RPC_STEP_TIMEOUT_SEC
     )
+    compute_budget_sec = float(
+        runtime_profile.miner_compute_budget_sec
+        if runtime_profile.miner_compute_budget_sec is not None
+        else MINER_COMPUTE_BUDGET_SEC
+    )
+    window_acts = max(1, int(runtime_profile.miner_compute_window_acts))
 
     # Phase clocks of the seed in flight, and its record while the env is still open.
     seed_clock: dict = {"phases": {}, "env_open": False, "held": None}
@@ -600,7 +606,7 @@ def _run_multi_seed_rpc_sync(
                                     agent, agent_capnp, obs, uid
                                 )
                             calibrated_timeout = (
-                                (MINER_COMPUTE_BUDGET_SEC * cpu_factor)
+                                (compute_budget_sec * cpu_factor)
                                 + rpc_overhead_sec
                                 + CALIBRATION_MARGIN_SEC
                             )
@@ -613,7 +619,7 @@ def _run_multi_seed_rpc_sync(
                                 _trace(
                                     f"{phase_label} speed_factor={speed_factor:.2f}x "
                                     f"overhead={rpc_overhead_sec*1000:.1f}ms "
-                                    f"hard_cap={act_hard_cap*1000:.0f}ms budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms"
+                                    f"hard_cap={act_hard_cap*1000:.0f}ms budget={compute_budget_sec*1000:.0f}ms"
                                 )
                             else:
                                 _trace(
@@ -639,6 +645,7 @@ def _run_multi_seed_rpc_sync(
                         is_first_step = True
                         step_idx = 0
                         rpc_disconnected = False
+                        window_idx, window_used_sec = 0, 0.0
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
                         family = runtime_family_for_task(task)
@@ -691,6 +698,8 @@ def _run_multi_seed_rpc_sync(
 
                             action = None
                             step_striked = False
+                            if (step_idx - 1) // window_acts != window_idx:
+                                window_idx, window_used_sec = (step_idx - 1) // window_acts, 0.0
                             for act_attempt in (0, 1):
                                 reply, clock = sent or _send_act(observation, step_timeout)
                                 sent = None
@@ -707,15 +716,16 @@ def _run_multi_seed_rpc_sync(
                                         budget = (
                                             FIRST_STEP_BUDGET_REF_SEC
                                             if is_first_step
-                                            else MINER_COMPUTE_BUDGET_SEC
+                                            else compute_budget_sec - window_used_sec
                                         )
-                                        if judge_act(
+                                        verdict = judge_act(
                                             act_ms / 1000.0,
                                             overhead_sec=rpc_overhead_sec,
                                             speed_factor=speed_factor,
                                             budget_sec=budget,
                                             hard_cap_sec=step_timeout,
-                                        ).strike:
+                                        )
+                                        if verdict.strike:
                                             if not step_striked:
                                                 step_striked = True
                                                 strikes += 1
@@ -733,6 +743,8 @@ def _run_multi_seed_rpc_sync(
                                             if act_attempt == 0:
                                                 continue
                                             break
+                                        if not is_first_step:
+                                            window_used_sec += verdict.normalized_sec
                                     action = candidate
                                     if trace_rpc and (
                                         step_idx == 1 or step_idx % trace_every == 0
@@ -764,7 +776,7 @@ def _run_multi_seed_rpc_sync(
                                     else:
                                         bt.logging.warning(
                                             f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
-                                            f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
+                                            f"[budget={compute_budget_sec*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
                                             f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                         )
                                     if use_ref and hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
