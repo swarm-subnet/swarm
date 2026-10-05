@@ -279,7 +279,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         return {
             "schema_version": SCHEMA_VERSION,
             "task_version": str(getattr(env.task, "version", "")),
-            "solar_outcome": asdict(env._solar.outcome),
+            # Every Outcome field is a plain value, so reading the fields gives what asdict gives without its deep copy.
+            "solar_outcome": {name: getattr(env._solar.outcome, name) for name in Outcome.__dataclass_fields__},
         }
 
     # ------------------------------------------------------------------ #
