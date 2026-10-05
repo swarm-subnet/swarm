@@ -126,6 +126,7 @@ class _Beam:
         """A size x size depth and body-id render with this half-angle tangent; None when the beam hits nothing."""
         view = p.computeViewMatrix(self.origin.tolist(), (self.origin + self.direction).tolist(), self.up.tolist())
         projection = p.computeProjectionMatrixFOV(math.degrees(2.0 * math.atan(tan_half)), 1.0, near, far)
+        airframe.pose(self.env, getattr(self.env, "_solar", None))
         _w, _h, _rgb, raw, seg = p.getCameraImage(size, size, view, projection, renderer=p.ER_TINY_RENDERER,
                                                   flags=FLAGS, physicsClientId=self.env.CLIENT)
         raw = np.asarray(raw, dtype=np.float64).reshape(size, size)

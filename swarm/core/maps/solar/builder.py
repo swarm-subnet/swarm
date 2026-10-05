@@ -324,6 +324,18 @@ def _forest_table(path: str) -> Dict[str, np.ndarray]:
         return {key: table[key] for key in table.files}
 
 
+@lru_cache(maxsize=2)
+def _forest_rows(path: str) -> np.ndarray:
+    """Every tree of the forest as a binary forest-file row (mesh, position, quaternion, scale), each number the one the
+    four-decimal text gives, worked out once per process: a seed takes the rows of the trees it stands."""
+    table = _forest_table(path)
+    half = table["yaw"] * 0.5
+    rows = np.column_stack([table["mesh"], table["position"], np.zeros(len(half)), np.zeros(len(half)), np.sin(half),
+                            np.cos(half), table["scale"]])
+    rows[:, 1:] = _four_decimals(rows[:, 1:])
+    return rows
+
+
 def _four_decimals(values: np.ndarray) -> np.ndarray:
     """The numbers a reader parses back from values printed with four decimals, worked out without printing them.
 
@@ -353,12 +365,9 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
     keep = table["rank"] < limits[table["tier"]]
-    position, yaw, scale = table["position"][keep], table["yaw"][keep], table["scale"][keep]
-    half = yaw * 0.5
-    rows = np.column_stack([table["mesh"][keep], position, np.zeros(len(yaw)), np.zeros(len(yaw)), np.sin(half),
-                            np.cos(half), scale])
+    position, scale = table["position"][keep], table["scale"][keep]
     # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
-    rows[:, 1:] = _four_decimals(rows[:, 1:])
+    rows = _forest_rows(os.path.join(folder, forest["table"]))[keep]
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
         with os.fdopen(handle, "wb") as out:
@@ -465,13 +474,6 @@ def _fence_gap(outline: np.ndarray, ring: np.ndarray) -> float:
     return gap if inside.all() else -gap
 
 
-def _local(piece: Dict[str, Any], xy: Sequence[float]) -> np.ndarray:
-    """A world point in the piece's own axes, about its anchor: along its long side, then across it."""
-    c, s = math.cos(piece["yaw"]), math.sin(piece["yaw"])
-    rel = np.asarray(xy[:2], dtype=float) - piece["anchor"]
-    return np.array([c * rel[0] + s * rel[1], -s * rel[0] + c * rel[1]])
-
-
 def _piece(placements: Sequence[Dict[str, Any]], items: Dict[str, Any], indices: List[int]) -> Dict[str, Any]:
     """The placements standing on one spot as one piece: where it stands, how it turns, the outline its parts cover
     seen from above, and the height its size is taken from, the lowest point of its parts."""
@@ -508,11 +510,19 @@ def _shift_units(asset_dir: str) -> Tuple[Dict[str, Any], ...]:
     for (kind, number, _), indices in spots.items():
         grouped.setdefault((kind, number), []).append(_piece(placements, items, indices))
     tables = [piece for (kind, _), pieces in grouped.items() if kind == "table" for piece in pieces]
+    if tables:
+        # Every table's axes and outline at once: a leg in a table's own axes about its anchor, along then across.
+        anchors = np.array([table["anchor"] for table in tables])
+        cos = np.array([math.cos(table["yaw"]) for table in tables])
+        sin = np.array([math.sin(table["yaw"]) for table in tables])
+        mids = np.array([(table["low"] + table["high"]) / 2.0 for table in tables])
+        halves = np.array([(table["high"] - table["low"]) / 2.0 for table in tables])
     for index, place in enumerate(placements):
         if place["item"] in CONFIG["table_legs"] and tables:
             # The table whose outline the leg stands deepest inside carries it.
-            outside = [float(np.max(np.abs(_local(table, place["position"]) - (table["low"] + table["high"]) / 2.0)
-                                    - (table["high"] - table["low"]) / 2.0)) for table in tables]
+            rel = np.asarray(place["position"][:2], dtype=float) - anchors
+            local = np.stack([cos * rel[:, 0] + sin * rel[:, 1], -sin * rel[:, 0] + cos * rel[:, 1]], axis=1)
+            outside = np.max(np.abs(local - mids) - halves, axis=1)
             tables[int(np.argmin(outside))]["legs"].append(index)
     kinds = list(CONFIG["shifts"])
     units = []
@@ -524,10 +534,16 @@ def _shift_units(asset_dir: str) -> Tuple[Dict[str, Any], ...]:
         units.append({"kind": kind, "pieces": pieces, "outlines": outlines,
                       "pivot": np.mean([piece["anchor"] for piece in pieces], axis=0), "yaw": pieces[0]["yaw"],
                       "fence_side": side, "fence_m": min(abs(gap) for gap in fence)})
-    for unit in units:
+    # The box around a unit's outlines: two units whose boxes stand shift_reach_m apart or more cannot come nearer.
+    boxes = [(np.min([o.min(axis=0) for o in unit["outlines"]], axis=0), np.max([o.max(axis=0) for o in unit["outlines"]], axis=0))
+             for unit in units]
+    for number, unit in enumerate(units):
         unit["gaps"] = {}
         for other_number, other in enumerate(units):
             if other is not unit:
+                apart = np.maximum(np.maximum(boxes[other_number][0] - boxes[number][1], boxes[number][0] - boxes[other_number][1]), 0.0)
+                if math.hypot(apart[0], apart[1]) >= CONFIG["shift_reach_m"] + 1e-6:
+                    continue
                 gap = min(_gap(a, b) for a in unit["outlines"] for b in other["outlines"])
                 if gap < CONFIG["shift_reach_m"]:
                     unit["gaps"][other_number] = gap
@@ -615,7 +631,7 @@ def _ground_rise(cli: int, terrain: frozenset, spots: Sequence[Tuple[np.ndarray,
         return [0.0] * len(spots)
     points = [xy for pair in spots for xy in pair]
     hits = p.rayTestBatch([[float(x), float(y), 1000.0] for x, y in points],
-                          [[float(x), float(y), -1000.0] for x, y in points], physicsClientId=cli)
+                          [[float(x), float(y), -1000.0] for x, y in points], numThreads=0, physicsClientId=cli)
     rise = []
     for before, after in zip(hits[0::2], hits[1::2]):
         on_terrain = int(before[0]) in terrain and int(after[0]) in terrain

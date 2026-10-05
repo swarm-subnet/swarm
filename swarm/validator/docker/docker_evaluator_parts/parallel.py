@@ -45,6 +45,7 @@ except Exception:  # pragma: no cover - optional dependency
     psutil = None
 
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.faults import ReasonCode
 from swarm.protocol import FailureReason, ValidationResult
@@ -62,12 +63,23 @@ _MAX_RPC_TRANSPORT_RETRIES = 15
 
 # Long-lived host workers accumulate simulator memory across seeds, so idle
 # workers are replaced once they grow past an RSS threshold or a seed budget.
-_WORKER_RECYCLE_RSS_MB = float(os.getenv("SWARM_WORKER_RECYCLE_RSS_MB", "2500"))
+_WORKER_RECYCLE_RSS_MB = 2500.0
 _WORKER_RECYCLE_SEED_BUDGET = int(os.getenv("SWARM_WORKER_RECYCLE_SEEDS", "25"))
 _WORKER_RECYCLE_MIN_SEEDS = 3
 
 # A stopped seed leaves its flight loop within a step; past this the worker is killed.
 _STOP_GRACE_SEC = 30.0
+
+
+def _recycle_rss_mb(profile: ChallengeFamilyRuntimeProfile) -> float:
+    """The resident memory, MiB, past which an idle worker is replaced: the operator's setting, else the family's, else
+    the default."""
+    raw = os.getenv("SWARM_WORKER_RECYCLE_RSS_MB")
+    if raw not in (None, ""):
+        return float(raw)
+    if profile.worker_recycle_rss_mb is not None:
+        return float(profile.worker_recycle_rss_mb)
+    return _WORKER_RECYCLE_RSS_MB
 
 
 def _remove_uid_containers(uid: int) -> None:
@@ -351,6 +363,8 @@ async def _run_process_parallel(
     for line in scheduler.describe_configuration_lines():
         bt.logging.info(f"    {line}")
 
+    recycle_rss_mb = _recycle_rss_mb(resolved_runtime_profile)
+
     def _spawn_worker(worker_slot: int) -> None:
         """Start a daemon process for one slot with its own task queue."""
         task_queue = ctx.Queue()
@@ -427,7 +441,7 @@ async def _run_process_parallel(
                 reason = f"{served} seeds served"
             else:
                 rss_mb = _worker_rss_mb(worker)
-                if rss_mb is not None and rss_mb >= _WORKER_RECYCLE_RSS_MB:
+                if rss_mb is not None and rss_mb >= recycle_rss_mb:
                     reason = f"rss {rss_mb:.0f} MiB after {served} seeds"
             if reason is None:
                 continue

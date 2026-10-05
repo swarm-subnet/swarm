@@ -63,11 +63,16 @@ PICTURE_FLAGS = functools.reduce(operator.or_, (getattr(p, name, 0) for name in 
     "ER_TEXTURE_FILTER", "ER_SPECULAR_GLINT", "ER_SWARM_LINEAR_LIGHT")), 0) if RAYCAST else 0
 # A still camera over an unchanged scene gets its last frame back with new grain; only exact depth ties can differ.
 FRAME_REUSE = getattr(p, "ER_SWARM_FRAME_REUSE", 0)
+# Every frame paints what each dot sees and searches only where a tree or a mesh too dense to paint may lie nearer.
+RASTER = getattr(p, "ER_SWARM_RASTER", 0) if RAYCAST else 0
+PICTURE_FLAGS |= RASTER
+# Colour and thermal frames read only colour and mask, so the engine skips converting and sending the depth.
+NO_DEPTH = getattr(p, "ER_SWARM_NO_DEPTH", 0)
 # Wide frames smooth outlines only; a close look smooths every edge, its crown creases filled from the leaves around.
 CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
                                                                                    if RAYCAST else 0)
 # Ray-cast flags the frames above rest on; a wheel without one would draw another picture, so reset refuses it.
-NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME_REUSE")
+NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME_REUSE", "ER_SWARM_RASTER")
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
@@ -307,7 +312,8 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
     night_flags, night_kwargs = camera_at_night
     kwargs.update(night_kwargs)
     picture = PICTURE_FLAGS if outline else CLOSE_PICTURE_FLAGS
-    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE | NO_DEPTH
+    airframe.pose(env, getattr(env, "_solar", None))
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
@@ -324,7 +330,8 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, 
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
-    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE
+    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE | RASTER | NO_DEPTH
+    airframe.pose(env, ep)
     _w, _h, image, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
         flags=flags, airTemperature=park.air_c(ep), skyTemperature=park.sky_c(ep),

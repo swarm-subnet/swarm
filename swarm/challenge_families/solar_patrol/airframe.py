@@ -22,7 +22,7 @@ feet, gull-wing arms, motor pods), thrust at the CAD motor positions. Swarm's ph
 remapped to the 2611 motors' speed range and capped at the M4TD's 25 degree tilt holds each setpoint.
 
 The parts that move on the real aircraft but not in its physics (the four rotors with their folding blades, and the
-gimbal head) are a second body, m4td_moving.urdf, with no collision, posed on the aircraft every control step.
+gimbal head) are a second body, m4td_moving.urdf, with no collision, posed on the aircraft before each picture.
 Motors, battery and gimbal carry temperatures for the thermal camera; every other surface stays on the engine's
 passive model.
 """
@@ -33,6 +33,7 @@ import ctypes
 import math
 import os
 import types
+from functools import lru_cache
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -266,32 +267,54 @@ def reset(env: Any, ep: SolarEpisode) -> None:
     ep.airframe = {"moving": uid, "joints": joints, "angles": [0.0] * 4, "warm": {k: 0.0 for k in HEAT},
                    "celsius": {}, "shown": {}, "shapes": _heated_shapes(env, uid)}
     update(env, ep)
+    pose(env, ep)
 
 
 def update(env: Any, ep: SolarEpisode) -> None:
-    """After one control step: turn the rotors at their speed, fold or open the blades, tilt the camera head, pose
-    the moving parts on the aircraft, and warm or cool the motors, battery and gimbal."""
+    """After one control step: turn the rotors at their speed, fold or open the blades, tilt the camera head and keep
+    that pose on the aircraft for the next picture, and warm or cool the motors, battery and gimbal."""
     state = ep.airframe
     if state is None:
         return
-    cli, uid, joints = env.CLIENT, state["moving"], state["joints"]
+    cli = env.CLIENT
     dt = float(env.CTRL_TIMESTEP)
-    rpm = np.asarray(getattr(env, "last_clipped_action", np.zeros((1, 4))), dtype=float).reshape(-1, 4)[0]
-    spinning = bool(np.any(rpm > 1.0))
+    rpm = rotor_speeds(env)
+    spinning = any(speed > 1.0 for speed in rpm)
     for i in range(4):
         if spinning:
             state["angles"][i] = (state["angles"][i] + SPIN[i] * rpm[i] * 2.0 * math.pi / 60.0 * dt) % (2.0 * math.pi)
         else:
             state["angles"][i] = _docked_rotor_angle(i)
+    tilt = float(ep.camera.get("tilt_deg", 0.0)) if isinstance(ep.camera, dict) else 0.0
+    state["pose"] = (spinning, math.radians(tilt), p.getBasePositionAndOrientation(int(env.DRONE_IDS[0]), physicsClientId=cli))
+    state["posed"] = False
+    _warm(env, ep, spinning, dt)
+
+
+def rotor_speeds(env: Any) -> list:
+    """The four rotor speeds of the last control step as plain floats, zero before the first."""
+    action = getattr(env, "last_clipped_action", None)
+    if action is None:
+        return [0.0, 0.0, 0.0, 0.0]
+    return np.asarray(action, dtype=float).reshape(-1, 4)[0].tolist()
+
+
+def pose(env: Any, ep: Optional[SolarEpisode]) -> None:
+    """Put the moving parts where the last control step left them, once before the pictures that follow it; nothing
+    but a picture sees them, as they have no collision."""
+    state = ep.airframe if ep is not None else None
+    if state is None or state["posed"]:
+        return
+    cli, uid, joints = env.CLIENT, state["moving"], state["joints"]
+    spinning, tilt_rad, (pos, orn) = state["pose"]
+    fold = 0.0 if spinning else DOCKED_FOLD_RAD
+    for i in range(4):
         p.resetJointState(uid, joints["rotor%d_spin" % i], state["angles"][i], physicsClientId=cli)
-        fold = 0.0 if spinning else DOCKED_FOLD_RAD
         p.resetJointState(uid, joints["rotor%d_fold0" % i], -fold, physicsClientId=cli)
         p.resetJointState(uid, joints["rotor%d_fold1" % i], fold, physicsClientId=cli)
-    tilt = float(ep.camera.get("tilt_deg", 0.0)) if isinstance(ep.camera, dict) else 0.0
-    p.resetJointState(uid, joints["gimbal_tilt"], math.radians(tilt), physicsClientId=cli)
-    pos, orn = p.getBasePositionAndOrientation(int(env.DRONE_IDS[0]), physicsClientId=cli)
+    p.resetJointState(uid, joints["gimbal_tilt"], tilt_rad, physicsClientId=cli)
     p.resetBasePositionAndOrientation(uid, pos, orn, physicsClientId=cli)
-    _warm(env, ep, spinning, dt)
+    state["posed"] = True
 
 
 def _still_air_drag(env: Any, rpm: np.ndarray, nth_drone: int) -> None:
@@ -351,13 +374,19 @@ def _heated_shapes(env: Any, moving: int) -> dict:
     return out
 
 
+@lru_cache(maxsize=16)
+def _approach(dt: float, tau: float) -> float:
+    """The share of the gap to its target a heat source closes in one step of dt seconds with time constant tau."""
+    return 1.0 - math.exp(-dt / tau)
+
+
 def _warm(env: Any, ep: SolarEpisode, spinning: bool, dt: float) -> None:
     """Move each heat source towards hot while the motors run and back towards the air while they rest."""
     state = ep.airframe
     for name, (rise, heat_s, cool_s, emissivity) in HEAT.items():
         tau = heat_s if spinning else cool_s
         target = 1.0 if spinning else 0.0
-        state["warm"][name] += (target - state["warm"][name]) * (1.0 - math.exp(-dt / tau))
+        state["warm"][name] += (target - state["warm"][name]) * _approach(dt, tau)
         base = BATTERY_BASE_C if name == "battery" else park.air_c(ep)
         celsius = round(base + rise * state["warm"][name], 1)
         state["celsius"][name] = celsius

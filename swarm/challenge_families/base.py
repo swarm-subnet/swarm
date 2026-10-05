@@ -131,6 +131,8 @@ class ChallengeFamilyRuntimeProfile:
     global_eval_per_seed_sec: Optional[float] = None
     global_eval_cap_sec: Optional[float] = None
     batch_timeout_multiplier: float = 1.0
+    # Resident memory, MiB, past which an idle host worker is replaced; None keeps the evaluator's default.
+    worker_recycle_rss_mb: Optional[float] = None
 
     def as_dict(self) -> Dict[str, Any]:
         """Flatten the profile into a plain mapping, the form sent across a process or RPC boundary."""
@@ -178,6 +180,9 @@ class ChallengeFamilyRuntimeProfile:
                 None if payload.get("global_eval_cap_sec") is None else float(payload.get("global_eval_cap_sec"))
             ),
             batch_timeout_multiplier=float(payload.get("batch_timeout_multiplier", 1.0)),
+            worker_recycle_rss_mb=(
+                None if payload.get("worker_recycle_rss_mb") is None else float(payload.get("worker_recycle_rss_mb"))
+            ),
         )
 
 

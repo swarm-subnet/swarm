@@ -90,8 +90,8 @@ def reset(env: Any, ep: SolarEpisode) -> None:
 
 def update(env: Any, ep: SolarEpisode) -> None:
     """After one control step: the battery drains at the hover rate while the rotors turn."""
-    rpm = np.asarray(getattr(env, "last_clipped_action", np.zeros((1, 4))), dtype=float).reshape(-1, 4)[0]
-    if np.any(rpm > 1.0):
+    action = getattr(env, "last_clipped_action", None)
+    if action is not None and any(speed > 1.0 for speed in np.asarray(action, dtype=float).reshape(-1, 4)[0].tolist()):
         used = 100.0 * float(env.CTRL_TIMESTEP) / HOVER_ENDURANCE_S
         ep.drone_state["battery_pct"] = max(0.0, ep.drone_state["battery_pct"] - used)
 

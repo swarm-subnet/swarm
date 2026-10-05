@@ -36,6 +36,7 @@ from collections import deque
 from typing import Any, Optional
 
 import numpy as np
+import pybullet as p
 from scipy.signal import lfilter
 
 from swarm.constants import SIM_DT
@@ -76,6 +77,8 @@ _STEP_SCALE = float(1 << (2 * _DCT_BITS))
 # JPEG's full-range YCbCr in 16-bit fixed point, and back from the two colour planes around 128.
 _TO_YCC = ((19595, 38470, 7471), (-11059, -21709, 32768), (32768, -27439, -5329))
 _FROM_YCC = np.array([[0, 91881], [-22554, -46802], [116130, 0]], dtype=np.float64)
+# The engine's compiled copy of the look, the same whole-number steps to the byte; an older engine has none.
+_ENGINE_LOOK = getattr(p, "swarmStreamLook", None)
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
@@ -172,6 +175,15 @@ def _streamed(noise: dict, key: str, frame: np.ndarray) -> np.ndarray:
 def stream_look(frame: np.ndarray, quality: int = VIDEO_QUALITY) -> np.ndarray:
     """A float colour frame in 0..1 as a live video stream delivers it: colour at half resolution, 8 x 8 blocks
     quantised. Whole numbers throughout, each held exactly, so the bytes never depend on the machine."""
+    if _ENGINE_LOOK is not None and frame.dtype == np.float32 and frame.flags.c_contiguous:
+        streamed = np.empty(frame.shape, dtype=np.float32)
+        _ENGINE_LOOK(frame, streamed, quality)
+        return streamed
+    return _numpy_look(frame, quality)
+
+
+def _numpy_look(frame: np.ndarray, quality: int) -> np.ndarray:
+    """The stream look in numpy, for an engine without its own and for frames it does not take."""
     # The colour sums stay under 2 ** 24, where float32 still holds every whole number exactly.
     rgb = np.rint(np.clip(frame, 0.0, 1.0) * np.float32(255.0))
     luma = _quantised(_ycc(rgb, _TO_YCC[0]) - 128.0, _scaled_steps(_LUMA_TABLE, quality))

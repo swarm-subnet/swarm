@@ -267,6 +267,29 @@ def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
                 assert all(np.array_equal(a, b) for a, b in zip(asked, frame))
 
 
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_RASTER"), reason="engine without the painted frame")
+def test_every_frame_is_painted(scene, monkeypatch):
+    """Wide, close, night and thermal frames all ask the engine to paint what each dot sees."""
+    env, ep = scene
+    raster = getattr(p, "ER_SWARM_RASTER", 0)
+    assert camera.PICTURE_FLAGS & raster and camera.CLOSE_PICTURE_FLAGS & raster
+    asked = []
+    real = p.getCameraImage
+
+    def spy(*args, **kwargs):
+        """getCameraImage, noting the flags each frame asks for."""
+        asked.append(kwargs.get("flags", 0))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(p, "getCameraImage", spy)
+    for thermal, night_mode in ((False, "off"), (False, "on"), (True, "off")):
+        if night_mode == "on":
+            _moon(env, 1.0)
+        _ask(env, ep, tilt=-60.0, thermal=thermal, night_mode=night_mode)
+        camera.capture(env, ep)
+    assert len(asked) >= 3 and all(flags & raster for flags in asked)
+
+
 def _moonlit(env, seed=11):
     """Light the scene by the seed's moon."""
     env._sun = seeded_sun(seed, 1.0)

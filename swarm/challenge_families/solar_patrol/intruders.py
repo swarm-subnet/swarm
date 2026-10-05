@@ -31,6 +31,8 @@ Each piece carries a temperature for the thermal camera; tools and the pack stay
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import math
 import os
@@ -106,15 +108,37 @@ def _apply(m: np.ndarray, v: np.ndarray, translate: bool = True) -> np.ndarray:
 
 
 def _read_obj(path: str) -> tuple:
-    """Vertices and triangles of one of the pieces' OBJ files, in file order."""
+    """Vertices and triangles of one of the pieces' OBJ files, in file order.
+
+    Under SWARM_BVH_CACHE_DIR, the folder a validator gives each epoch, the arrays are kept under a key hashed from the
+    file's bytes, so a process after the first on the machine reads them back instead of parsing the text again.
+    """
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    folder = os.environ.get("SWARM_BVH_CACHE_DIR")
+    cached = (os.path.join(folder, hashlib.blake2b(b"SWPYOBJ1" + raw, digest_size=16).hexdigest() + ".pyobj.npz")
+              if folder else None)
+    if cached and os.path.isfile(cached):
+        try:
+            with np.load(cached) as saved:
+                return saved["verts"], saved["faces"]
+        except (OSError, ValueError, KeyError):
+            pass
     verts, faces = [], []
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            if line.startswith("v "):
-                verts.append([float(x) for x in line.split()[1:4]])
-            elif line.startswith("f "):
-                faces.append([int(token.split("/")[0]) - 1 for token in line.split()[1:4]])
-    return np.asarray(verts), np.asarray(faces, dtype=np.int64)
+    for line in io.StringIO(raw.decode("utf-8")):
+        if line.startswith("v "):
+            verts.append([float(x) for x in line.split()[1:4]])
+        elif line.startswith("f "):
+            faces.append([int(token.split("/")[0]) - 1 for token in line.split()[1:4]])
+    verts, faces = np.asarray(verts), np.asarray(faces, dtype=np.int64)
+    if cached:
+        partial = f"{cached}.{os.getpid()}.tmp.npz"
+        try:
+            np.savez(partial, verts=verts, faces=faces)
+            os.replace(partial, cached)
+        except OSError:
+            pass
+    return verts, faces
 
 
 def _face_frames(v: np.ndarray, f: np.ndarray) -> np.ndarray:

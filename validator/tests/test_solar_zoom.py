@@ -151,7 +151,7 @@ def test_a_zoom_frame_smooths_every_edge(monkeypatch):
     zoom._draw(env, ep, _view(), 7)
     camera.colour_frame(env, _view())
     close, wide = sent
-    assert close == env._render_flags | camera.CLOSE_PICTURE_FLAGS | camera.FRAME_REUSE
+    assert close == env._render_flags | camera.CLOSE_PICTURE_FLAGS | camera.FRAME_REUSE | camera.NO_DEPTH
     assert close & p.ER_SWARM_CREASE_FILL and close & p.ER_EDGE_ANTIALIAS and not close & p.ER_SWARM_EDGE_OUTLINE
     assert wide & p.ER_SWARM_EDGE_OUTLINE and wide & p.ER_EDGE_ANTIALIAS and not wide & p.ER_SWARM_CREASE_FILL
 

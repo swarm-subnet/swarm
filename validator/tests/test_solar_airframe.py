@@ -178,6 +178,30 @@ def test_the_moving_parts_never_collide(world):
         assert p.getCollisionShapeData(uid, link, physicsClientId=world) == ()
 
 
+@pytest.mark.timeout(300)
+def test_the_moving_parts_are_posed_before_a_picture_not_every_step(flat_park):
+    """A control step keeps the rotors' new pose without touching the engine's body; posing puts that pose on the body,
+    with the body on the aircraft, and a second pose before the next step changes nothing."""
+    task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
+    with contextlib.redirect_stdout(io.StringIO()):
+        env, _obs = make_env_with_initial_obs(task)
+    try:
+        ep, cli = env._solar, env.CLIENT
+        state = ep.airframe
+        uid, spin = state["moving"], state["joints"]["rotor0_spin"]
+        env.last_clipped_action = np.full((1, 4), 2000.0)
+        before = p.getJointState(uid, spin, physicsClientId=cli)[0]
+        airframe.update(env, ep)
+        assert not state["posed"] and state["angles"][0] != before
+        assert p.getJointState(uid, spin, physicsClientId=cli)[0] == before
+        airframe.pose(env, ep)
+        assert state["posed"] and p.getJointState(uid, spin, physicsClientId=cli)[0] == state["angles"][0]
+        moving, drone = (np.concatenate(p.getBasePositionAndOrientation(b, physicsClientId=cli)) for b in (uid, int(env.DRONE_IDS[0])))
+        assert np.allclose(moving, drone, atol=1e-9)
+    finally:
+        env.close()
+
+
 def test_the_dock_is_dji_size_closed_and_open(world):
     """Closed 640 x 745 mm and 625 mm to the lid (770 with the 145 mm wind gauge); open 1,760 mm with the gauge
     and 485 mm high."""
