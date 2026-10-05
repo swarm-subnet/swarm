@@ -284,7 +284,7 @@
         "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
-      "emission_allocation": 0.15
+      "emission_allocation": 0.0
     },
     "cf_search_and_rescue": {
       "family_id": "cf_search_and_rescue",
@@ -380,7 +380,7 @@
         "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
-      "emission_allocation": 0.2
+      "emission_allocation": 0.0
     },
     "cf_swarm_sar": {
       "family_id": "cf_swarm_sar",
@@ -514,7 +514,7 @@
         "champion_min_improvement_floor": 0.005,
         "improvement_plateau_end": 0.5
       },
-      "emission_allocation": 0.3
+      "emission_allocation": 0.0
     },
     "cf_solar_patrol": {
       "family_id": "cf_solar_patrol",
@@ -559,7 +559,8 @@
         "improvement_plateau_end": 0.5
       },
       "seeds_zeroed_per_mistake": 10,
-      "emission_allocation": 0.0
+      "benchmark_seed_count": 250,
+      "emission_allocation": 0.65
     }
   },
   "policy_interfaces": {
