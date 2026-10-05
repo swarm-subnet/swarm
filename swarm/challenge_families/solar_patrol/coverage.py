@@ -113,7 +113,7 @@ def _cast(cli: int, xy: np.ndarray, number: int) -> list:
     for start in range(0, len(xy), batch):
         rays = xy[start:start + batch]
         hits += p.rayTestBatch([[x, y, RAY_REACH_M] for x, y in rays], [[x, y, -RAY_REACH_M] for x, y in rays],
-                               reportHitNumber=number, physicsClientId=cli)
+                               reportHitNumber=number, numThreads=0, physicsClientId=cli)
     return hits
 
 

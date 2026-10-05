@@ -104,7 +104,7 @@ def _ground(cli: int, spot: np.ndarray, offsets: np.ndarray, terrain_uids: froze
     """The ground points under rays dropped around the spot, or None when any ray meets something else first."""
     xy = spot + offsets
     hits = p.rayTestBatch([[x, y, RAY_REACH_M] for x, y in xy], [[x, y, -RAY_REACH_M] for x, y in xy],
-                          physicsClientId=cli)
+                          numThreads=0, physicsClientId=cli)
     if any(hit[0] not in terrain_uids for hit in hits):
         return None
     return np.array([hit[3] for hit in hits], dtype=float)

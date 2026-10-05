@@ -631,7 +631,7 @@ def _ground_rise(cli: int, terrain: frozenset, spots: Sequence[Tuple[np.ndarray,
         return [0.0] * len(spots)
     points = [xy for pair in spots for xy in pair]
     hits = p.rayTestBatch([[float(x), float(y), 1000.0] for x, y in points],
-                          [[float(x), float(y), -1000.0] for x, y in points], physicsClientId=cli)
+                          [[float(x), float(y), -1000.0] for x, y in points], numThreads=0, physicsClientId=cli)
     rise = []
     for before, after in zip(hits[0::2], hits[1::2]):
         on_terrain = int(before[0]) in terrain and int(after[0]) in terrain
