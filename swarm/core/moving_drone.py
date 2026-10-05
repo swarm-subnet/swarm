@@ -100,6 +100,7 @@ from swarm.constants import (
     SOLVER_MIN_ISLAND_SIZE,
 )
 from swarm.core.daylight import apply_seeded_sun, daylight_render_kwargs, sky_render_kwargs, sun_render_kwargs
+from swarm.core.env_builder.sar_types import BodyCategory
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
 from swarm.core.sky_pack import load_sky_pack, pick_sky
 from swarm.core.wind import SeededWind
@@ -110,6 +111,16 @@ _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
 # Families driven by body-frame RC sticks [lr, fb, ud, yaw] instead of the
 # world-frame velocity contract (indoor Tello: no GPS, no world frame).
 _OFFICE_RC_FAMILIES = ("cf_interceptor_office",)
+
+# World tags that mark the ground a goal pad stands on; rooftops stay obstacles.
+_GROUND_TAGS = frozenset(
+    c.value for c in (
+        BodyCategory.SUPPORT_TERRAIN,
+        BodyCategory.SUPPORT_FLOOR,
+        BodyCategory.SUPPORT_SLOPE,
+        BodyCategory.SUPPORT_WALKWAY,
+    )
+)
 
 
 def rc_sticks_to_world_velocity(rc, yaw, speed):
@@ -816,6 +827,29 @@ class MovingDroneAviary(BaseRLAviary):
 
         return True
 
+    def _is_ground_below_pad(self, body_uid, contact, drone_pos, pads) -> bool:
+        """Whether ``contact`` is a point of the ground below a goal pad's top while the drone
+        descends in that pad's landing column.
+
+        Terrain pads sit on uneven ground that stays within reach for the whole final descent;
+        ground rising above the pad top, and every non-ground body, still counts.
+        """
+        if getattr(self, "sar_mode", False):
+            return False
+        if getattr(self, "_autopilot_world_tags", {}).get(body_uid) not in _GROUND_TAGS:
+            return False
+        challenge_type = int(getattr(self.task, "challenge_type", 0))
+        safe = SAFETY_DISTANCE_SAFE_BY_TYPE.get(challenge_type, SAFETY_DISTANCE_SAFE)
+        landing_r = LANDING_PLATFORM_RADIUS + DRONE_HULL_RADIUS + LANDING_COLUMN_PADDING
+        for pad in pads:
+            if math.hypot(drone_pos[0] - pad[0], drone_pos[1] - pad[1]) > landing_r:
+                continue
+            if drone_pos[2] > pad[2] + safe + LANDING_ALTITUDE_BUFFER:
+                continue
+            if contact[2] < pad[2]:
+                return True
+        return False
+
     def _drone_camera_view(self, nth_drone):
         """View matrix along the body's forward axis, from an eye offset ahead of and above the hull."""
         cli = getattr(self, "CLIENT", 0)
@@ -1254,6 +1288,9 @@ class MovingDroneAviary(BaseRLAviary):
 
         if overlapping:
             drone_pos = self.pos[0, :]
+            pad_pos = getattr(self, "_current_platform_pos", None)
+            if pad_pos is None:
+                pad_pos = self.GOAL_POS
             checked = set()
             for body_uid, _link_idx in overlapping:
                 if body_uid in excluded or body_uid in checked:
@@ -1275,6 +1312,8 @@ class MovingDroneAviary(BaseRLAviary):
                         and body_uid == safety_patch.support_uid
                         and _inside_safety_patch(contact, safety_patch)
                     ):
+                        continue
+                    if self._is_ground_below_pad(body_uid, contact, drone_pos, (pad_pos,)):
                         continue
                     dist = point[8]
                     if dist < min_dist:
@@ -1373,6 +1412,9 @@ class MovingDroneAviary(BaseRLAviary):
                             and body_uid == safety_patch.support_uid
                             and _inside_safety_patch(point[6], safety_patch)
                         ):
+                            continue
+                        # A drone may land on any unclaimed pad, so every pad's support is exempt.
+                        if self._is_ground_below_pad(body_uid, point[6], drone_pos, self.GOAL_POSES):
                             continue
                         dist = point[8]
                         if dist < min_dist:

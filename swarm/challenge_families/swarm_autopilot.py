@@ -145,6 +145,7 @@ class SwarmAutopilotChallengeFamily(AutopilotChallengeFamily):
                 int(task.challenge_type),
                 False,
                 static_base,
+                keep_uids=frozenset(all_start_uids) | frozenset(all_end_uids),
             )
 
             s = list(adj_start) if adj_start is not None else list(starts[i])

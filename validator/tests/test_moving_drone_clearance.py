@@ -326,7 +326,7 @@ def test_update_min_clearance_skips_floor_body(monkeypatch) -> None:
     def _fake_closest_points(bodyA, bodyB, distance, physicsClientId=None):
         """Record which body was measured and hand back a single contact 0.42 m away."""
         closest_calls.append(int(bodyB))
-        return [(0, bodyA, bodyB, (0, 0, 0), (0, 0, 0), (0, 0, 1), 0.4, 0.4, 0.42)]
+        return [(0, bodyA, bodyB, -1, -1, (0.1, 0.0, 0.7), (0.4, 0.0, 0.7), (-1, 0, 0), 0.42)]
 
     monkeypatch.setattr(moving_drone_mod.p, "getClosestPoints", _fake_closest_points)
 
@@ -336,8 +336,8 @@ def test_update_min_clearance_skips_floor_body(monkeypatch) -> None:
     assert env._min_clearance_episode == pytest.approx(0.42)
 
 
-def test_update_min_clearance_counts_floor_outside_eligible_type(monkeypatch) -> None:
-    """On a challenge type outside the eligible set the ground is measured and sets the episode minimum."""
+def _mountain_clearance_env(monkeypatch, contact_z: float, tag: str) -> float:
+    """Episode clearance for a drone resting over a mountain pad at z 0.6, with one contact 0.55 m away on a body of the given tag."""
     env = moving_drone_mod.MovingDroneAviary.__new__(moving_drone_mod.MovingDroneAviary)
     env.task = SimpleNamespace(challenge_type=3)
     env.GOAL_POS = np.array([0.0, 0.0, 0.6])
@@ -358,10 +358,14 @@ def test_update_min_clearance_counts_floor_outside_eligible_type(monkeypatch) ->
     env.pos = np.array([[0.0, 0.0, 0.7]], dtype=float)
 
     def _fake_aabb(uid, physicsClientId=None):
-        """Return the hull box for the drone and the wide flat slab for every other body."""
+        """Return the hull box for the drone and a tall terrain tile for every other body."""
         if uid == env.DRONE_IDS[0]:
             return ((-0.1, -0.1, 0.6), (0.1, 0.1, 0.8))
-        return ((-50.0, -50.0, -0.002), (50.0, 50.0, 0.102))
+        return ((-50.0, -50.0, -20.0), (50.0, 50.0, 30.0))
+
+    def _fake_closest_points(bodyA, bodyB, distance, physicsClientId=None):
+        """Hand back a single terrain contact 0.55 m away at the requested height."""
+        return [(0, bodyA, bodyB, -1, -1, (0.0, 0.0, 0.6), (0.9, 0.0, contact_z), (0, 0, 1), 0.55)]
 
     monkeypatch.setattr(moving_drone_mod.p, "getAABB", _fake_aabb)
     monkeypatch.setattr(
@@ -369,17 +373,23 @@ def test_update_min_clearance_counts_floor_outside_eligible_type(monkeypatch) ->
         "getOverlappingObjects",
         lambda mn, mx, physicsClientId=None: [(400, -1)],
     )
-
-    closest_calls: list[int] = []
-
-    def _fake_closest_points(bodyA, bodyB, distance, physicsClientId=None):
-        """Record which body was measured and hand back a single contact 0.55 m away."""
-        closest_calls.append(int(bodyB))
-        return [(0, bodyA, bodyB, (0, 0, 0), (0, 0, 0), (0, 0, 1), 0.5, 0.5, 0.55)]
-
     monkeypatch.setattr(moving_drone_mod.p, "getClosestPoints", _fake_closest_points)
+    env._autopilot_world_tags = {400: tag}
 
     env._update_min_clearance()
+    return env._min_clearance_episode
 
-    assert closest_calls == [400]
-    assert env._min_clearance_episode == pytest.approx(0.55)
+
+def test_update_min_clearance_skips_terrain_under_a_mountain_pad(monkeypatch) -> None:
+    """Mountain terrain below the pad top is not an obstacle on the final descent."""
+    assert _mountain_clearance_env(monkeypatch, contact_z=0.4, tag="SUPPORT_TERRAIN") == SAFETY_DISTANCE_SAFE
+
+
+def test_update_min_clearance_counts_slope_rising_above_the_pad(monkeypatch) -> None:
+    """Terrain rising above the pad top still sets the episode minimum."""
+    assert _mountain_clearance_env(monkeypatch, contact_z=0.8, tag="SUPPORT_TERRAIN") == pytest.approx(0.55)
+
+
+def test_update_min_clearance_counts_obstacle_below_the_pad_top(monkeypatch) -> None:
+    """An obstacle below the pad top is not ground and counts like any other body."""
+    assert _mountain_clearance_env(monkeypatch, contact_z=0.4, tag="OBSTACLE_OTHER") == pytest.approx(0.55)
