@@ -33,6 +33,7 @@ import ctypes
 import math
 import os
 import types
+from functools import lru_cache
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -277,8 +278,8 @@ def update(env: Any, ep: SolarEpisode) -> None:
         return
     cli = env.CLIENT
     dt = float(env.CTRL_TIMESTEP)
-    rpm = np.asarray(getattr(env, "last_clipped_action", np.zeros((1, 4))), dtype=float).reshape(-1, 4)[0]
-    spinning = bool(np.any(rpm > 1.0))
+    rpm = rotor_speeds(env)
+    spinning = any(speed > 1.0 for speed in rpm)
     for i in range(4):
         if spinning:
             state["angles"][i] = (state["angles"][i] + SPIN[i] * rpm[i] * 2.0 * math.pi / 60.0 * dt) % (2.0 * math.pi)
@@ -288,6 +289,14 @@ def update(env: Any, ep: SolarEpisode) -> None:
     state["pose"] = (spinning, math.radians(tilt), p.getBasePositionAndOrientation(int(env.DRONE_IDS[0]), physicsClientId=cli))
     state["posed"] = False
     _warm(env, ep, spinning, dt)
+
+
+def rotor_speeds(env: Any) -> list:
+    """The four rotor speeds of the last control step as plain floats, zero before the first."""
+    action = getattr(env, "last_clipped_action", None)
+    if action is None:
+        return [0.0, 0.0, 0.0, 0.0]
+    return np.asarray(action, dtype=float).reshape(-1, 4)[0].tolist()
 
 
 def pose(env: Any, ep: Optional[SolarEpisode]) -> None:
@@ -365,13 +374,19 @@ def _heated_shapes(env: Any, moving: int) -> dict:
     return out
 
 
+@lru_cache(maxsize=16)
+def _approach(dt: float, tau: float) -> float:
+    """The share of the gap to its target a heat source closes in one step of dt seconds with time constant tau."""
+    return 1.0 - math.exp(-dt / tau)
+
+
 def _warm(env: Any, ep: SolarEpisode, spinning: bool, dt: float) -> None:
     """Move each heat source towards hot while the motors run and back towards the air while they rest."""
     state = ep.airframe
     for name, (rise, heat_s, cool_s, emissivity) in HEAT.items():
         tau = heat_s if spinning else cool_s
         target = 1.0 if spinning else 0.0
-        state["warm"][name] += (target - state["warm"][name]) * (1.0 - math.exp(-dt / tau))
+        state["warm"][name] += (target - state["warm"][name]) * _approach(dt, tau)
         base = BATTERY_BASE_C if name == "battery" else park.air_c(ep)
         celsius = round(base + rise * state["warm"][name], 1)
         state["celsius"][name] = celsius
