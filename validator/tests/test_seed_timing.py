@@ -210,15 +210,15 @@ def test_a_family_step_budget_judges_each_act(monkeypatch, budget_sec, acts_expe
 @pytest.mark.parametrize(
     ("window_acts", "delays", "acts_expected"),
     [
-        (5, (0.0, 0.15, 0.05), 3),
-        (5, (0.0, 0.15, 0.25), 4),
-        (2, (0.0, 0.25, 0.25), 3),
+        (5, (0.0, 0.2, 0.05), 3),
+        (5, (0.0, 0.2, 0.25), 4),
+        (2, (0.0, 0.35, 0.35), 3),
     ],
     ids=["window-fits", "window-spent", "next-window-refills"],
 )
 def test_acts_in_one_window_share_its_budget(monkeypatch, window_acts, delays, acts_expected):
-    """Under 300 ms per window, each act() gets what the window has left: 150 + 250 ms in one window is struck and
-    asked again, while the same 250 ms in the next window starts from a full budget."""
+    """Under 400 ms per window, each act() gets what the window has left: 200 + 250 ms in one window is struck and
+    asked again, while 350 ms in the next window starts from a full budget."""
     steps: list = []
 
     def _step(_action):
@@ -228,7 +228,7 @@ def test_acts_in_one_window_share_its_budget(monkeypatch, window_acts, delays, a
 
     acts: list = []
     profile = ChallengeFamilyRuntimeProfile(
-        family_id="cf_autopilot", miner_compute_budget_sec=0.3, miner_compute_window_acts=window_acts
+        family_id="cf_autopilot", miner_compute_budget_sec=0.4, miner_compute_window_acts=window_acts
     )
     _fly_one_seed(
         monkeypatch, _step, delays=delays, acts=acts, profile=profile.as_dict(), speed_factor=1.0, horizon=0.06

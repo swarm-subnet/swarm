@@ -100,14 +100,14 @@ def test_only_sentinel_raises_the_worker_memory_ceiling():
 
 
 def test_only_sentinel_sets_its_own_per_step_compute_budget():
-    """Sentinel grants 300 ms per camera frame, shared by its five decisions, and keeps both across the process
+    """Sentinel grants 400 ms per camera frame, shared by its five decisions, and keeps both across the process
     boundary; every other family leaves the shared budget, judged per act()."""
     solar = runtime_profile_for_task(_sample_task(family_id="cf_solar_patrol"))
     rebuilt = type(solar).from_mapping(solar.as_dict())
 
-    assert solar.miner_compute_budget_sec == pytest.approx(0.3)
+    assert solar.miner_compute_budget_sec == pytest.approx(0.4)
     assert solar.miner_compute_window_acts == 5
-    assert rebuilt.miner_compute_budget_sec == pytest.approx(0.3)
+    assert rebuilt.miner_compute_budget_sec == pytest.approx(0.4)
     assert rebuilt.miner_compute_window_acts == 5
     for family_id in list_registered_challenge_families():
         if family_id != "cf_solar_patrol" and get_challenge_family(family_id).runtime_supported:
