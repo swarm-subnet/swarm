@@ -36,7 +36,8 @@ and the shortcuts tried against the rules:
 
     repeat       perfect, then reports every thief again on every frame he shows in
     high         perfect, flown 6 m higher, between 22 and 29 m above the dock
-    scan         climbs to 60 m over the dock and zooms across the whole park before the search
+    scan         climbs to 60 m over the dock, or the height limit, and zooms across the whole park before the search
+    scan_low     the same scan from the highest height a report still counts from
     night_colour silent, searching dark nights in colour with night mode on instead of thermal
     zoom_all     perfect, spending all 80 zooms
     early_end    flies out to the flight limit's stop line before the thieves have stepped in
@@ -71,6 +72,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     ACTION_HIGH,
     ACTION_INDEX,
     ACTION_LOW,
+    HEIGHT_LIMIT_M,
     MAX_CLIMB_MPS,
     MAX_DESCENT_MPS,
     MAX_HORIZONTAL_MPS,
@@ -80,7 +82,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     THERMAL_SHAPE,
 )
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
-from swarm.challenge_families.solar_patrol.reports import BODY_BITS
+from swarm.challenge_families.solar_patrol.reports import BODY_BITS, MAX_REPORT_HEIGHT_M
 from swarm.constants import SIM_DT
 from swarm.utils.env_factory import make_env_with_initial_obs
 
@@ -94,6 +96,7 @@ HIGH_OFFSET_M = 6.0         # perfect's heights, at most 19.5 m above the dock, 
 SCAN_HEIGHT_M = 60.0        # above the dock
 SCAN_GRID_M = 15.0          # ground between the points the scan zooms on, inside a 7x frame's footprint from there
 SCAN_ZOOM_RESERVE = 10      # zooms kept for the search after the scan
+SCAN_LIMIT_MARGIN_M = 0.5   # how far under a height limit the scan holds
 VISIT_GIVE_UP_S = 45.0      # a thief perfect cannot get onto a frame in this long is left to the search
 VISIT_STANDOFF_M = 10.0     # across the ground from the thief: the park's high ground stands up to 15 m over the dock
 VISIT_INSET_M = 8.0         # the watching spot stays this far inside the fence; the stop line can lie 5 m inside it
@@ -418,8 +421,11 @@ class High(Perfect):
 
 
 class Scan(Perfect):
-    """Climbs to SCAN_HEIGHT_M over the dock, faces the park and zooms the 7x lens across all of it, reporting every
-    thief a zoom frame shows, then comes down and flies perfect's search."""
+    """Climbs to scan_height_m over the dock, or as high as the dock's height limit lets it, faces the park and zooms
+    the 7x lens across all of it, reporting every thief a zoom frame shows, then comes down and flies perfect's
+    search."""
+
+    scan_height_m = SCAN_HEIGHT_M
 
     def __init__(self, env: Any):
         """Perfect's route, and the ground points of the park the scan zooms on."""
@@ -455,7 +461,8 @@ class Scan(Perfect):
                     return a
         feed = sensor_noise.shown_view(self.ep, "feed")
         height = float(self.env.pos[0][2] - self.ep.dock_position[2])
-        if feed is None or height < SCAN_HEIGHT_M - 1.0 or not self.buttons.ready("zoom", decision):
+        reachable = min(self.scan_height_m, HEIGHT_LIMIT_M - SCAN_LIMIT_MARGIN_M)
+        if feed is None or height < reachable - 1.0 or not self.buttons.ready("zoom", decision):
             return a
         while self.targets and self.ep.outcome.zooms_used < MAX_ZOOMS - SCAN_ZOOM_RESERVE:
             spot = project(feed, self.targets.pop(0))
@@ -475,7 +482,7 @@ class Scan(Perfect):
         """Climb straight up over the dock, turn to face the park's middle and tilt the camera onto it."""
         a = self._still()
         pos = np.asarray(self.env.pos[0], dtype=float)
-        rise = float(self.ep.dock_position[2]) + SCAN_HEIGHT_M - pos[2]
+        rise = float(self.ep.dock_position[2]) + self.scan_height_m - pos[2]
         vz = float(np.clip(rise, -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
         a[ACTION_INDEX["move_up"]] = vz / (MAX_CLIMB_MPS if vz >= 0.0 else MAX_DESCENT_MPS)
         drift = self.ep.dock_position[:2] - pos[:2]
@@ -492,6 +499,12 @@ class Scan(Perfect):
         a[ACTION_INDEX["night_mode"]] = NIGHT_MODE_AUTO
         a[ACTION_INDEX["night_vision"]] = 1.0
         return a
+
+
+class ScanLow(Scan):
+    """Scan from the highest height a report still counts from."""
+
+    scan_height_m = MAX_REPORT_HEIGHT_M - SCAN_LIMIT_MARGIN_M
 
 
 class NightColour(Silent):
@@ -589,7 +602,7 @@ def _closest_on_segment(point: np.ndarray, a: np.ndarray, b: np.ndarray) -> Tupl
 
 PILOTS = {
     "silent": Silent, "panic": Panic, "hover": Hover, "random": RandomPilot, "perfect": Perfect,
-    "repeat": Repeat, "high": High, "scan": Scan, "night_colour": NightColour, "zoom_all": ZoomAll,
+    "repeat": Repeat, "high": High, "scan": Scan, "scan_low": ScanLow, "night_colour": NightColour, "zoom_all": ZoomAll,
     "early_end": EarlyEnd, "bad_actions": BadActions, "big_box": BigBox,
 }
 

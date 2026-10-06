@@ -19,8 +19,9 @@
 
 A report names a class and draws a box on the feed or zoom frame the model was shown. That frame's view carries the
 object map from its own draw, which body each pixel shows, so the check reads exactly what the model saw even when
-the thieves have moved since. Four checks, in order: the box sits on a real object, the class is right, the object is
-a threat (a thief inside the fence at that frame's step, never a decoy), and it is the first report of that thief.
+the thieves have moved since. The frame must have been taken no higher than MAX_REPORT_HEIGHT_M above the dock; then
+four checks, in order: the box sits on a real object, the class is right, the object is a threat (a thief inside the
+fence at that frame's step, never a decoy), and it is the first report of that thief.
 
 The box sits on the object it overlaps most, when the overlap with the tight box around that object's visible pixels
 (intersection over union) is at least MIN_OVERLAP. A report that passes adds to valid_reports; one that fails, a
@@ -39,9 +40,10 @@ from .contract import Box, Report
 from .episode import SolarEpisode
 
 MIN_OVERLAP = 0.5
+MAX_REPORT_HEIGHT_M = 24.0              # over the dock: a frame taken from higher carries no valid report
 BODY_BITS = (1 << 24) - 1               # an object map code keeps the body id in its low 24 bits, the link above
 THREAT_CLASS = "person"
-VERDICTS = ("valid", "no_frame", "no_object", "wrong_class", "not_threat", "repeat")
+VERDICTS = ("valid", "no_frame", "too_high", "no_object", "wrong_class", "not_threat", "repeat")
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
@@ -65,6 +67,8 @@ def judge(ep: SolarEpisode, report: Report) -> str:
     view = sensor_noise.shown_view(ep, report.image)
     if view is None or view.objects is None:
         return "no_frame"
+    if view.eye[2] - float(ep.dock_position[2]) > MAX_REPORT_HEIGHT_M:
+        return "too_high"
     owners: dict[int, tuple] = {uid: ("thief", thief) for uid, thief in theft.bodies(ep).items()}
     kinds: dict[tuple, str] = {key: THREAT_CLASS for key in owners.values()}
     for uid, kind in decoys.bodies(ep).items():

@@ -238,6 +238,20 @@ def test_threats_are_the_men_inside_the_fence():
 
 
 @pytest.mark.timeout(1200)
+def test_every_thief_counts_as_a_threat_from_the_start():
+    """A patrol that ends before the crew is through the fence still answers for every man of the story."""
+    task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[THEFT_SEEDS[2]], family_id=FAMILY_ID)[0]
+    with contextlib.redirect_stdout(io.StringIO()):
+        env, _ = make_env_with_initial_obs(task)
+    try:
+        ep = env._solar
+        assert not theft.threat_bodies(ep)
+        assert ep.outcome.threats == len(ep.theft.men) > 0
+    finally:
+        env.close()
+
+
+@pytest.mark.timeout(1200)
 def test_the_fence_is_cut_and_the_thief_posed_in_the_engine():
     """In a real patrol the panel or gate stands whole at the start and gives way to its cut or opened pieces once the
     first man is through, and a picture of a thief poses him where he stands."""

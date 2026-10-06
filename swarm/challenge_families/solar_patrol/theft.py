@@ -606,6 +606,8 @@ def reset(env: Any, ep: SolarEpisode) -> None:
         return
     men = cast(ep.seed, story, site)
     ep.theft = Theft(story, site, men)
+    # Every man steps in by ENTRY_S, so a patrol that ends sooner still answers for the whole crew.
+    ep.outcome.threats = len(men)
     for man in men:
         frame = man.actor.at(0.0)
         ground = _ground(env, ep, frame.x, frame.y)
@@ -616,8 +618,8 @@ def reset(env: Any, ep: SolarEpisode) -> None:
 
 
 def advance(env: Any, ep: SolarEpisode) -> None:
-    """Write every thief's track to the step physics is about to run, count each man who steps in as a threat, and let
-    each one inside hear the drone."""
+    """Write every thief's track to the step physics is about to run, note each man who steps in, and let each one
+    inside hear the drone."""
     theft = ep.theft
     if theft is None:
         return
@@ -632,7 +634,6 @@ def advance(env: Any, ep: SolarEpisode) -> None:
             continue
         if not man.entered and theft.site.holds(frame.x, frame.y):
             man.entered = True
-            ep.outcome.threats += 1
         if man.entered:
             # The ground is read once per metre he stands on; the park rises 39 m, so the dock's height will not do.
             spot = (int(round(frame.x)), int(round(frame.y)))
