@@ -208,7 +208,7 @@ def test_each_reaction_plays_out_once_the_drone_is_near(monkeypatch, reaction):
         crossing = next(k for k in range(len(out) - 1, 0, -1) if theft_site.inside(site.ring, out[k - 1])[0]
                         and not theft_site.inside(site.ring, out[k])[0])
         assert np.linalg.norm(out[crossing] - story.hole) < 1.5
-    assert ep.outcome.threats == len(ep.theft.men)
+    assert all(man.entered for man in ep.theft.men)
 
 
 def test_a_drone_below_the_dock_over_low_ground_is_heard(monkeypatch):
@@ -235,6 +235,20 @@ def test_threats_are_the_men_inside_the_fence():
     assert theft.threat_bodies(ep) == {id(man) for man in men}
     assert all(theft.inside(ep, n, ep.step) for n in range(len(men)))
     assert theft.bodies(ep) == {id(man): n for n, man in enumerate(men)}
+
+
+@pytest.mark.timeout(1200)
+def test_every_thief_counts_as_a_threat_from_the_start():
+    """A patrol that ends before the crew is through the fence still answers for every man of the story."""
+    task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[THEFT_SEEDS[2]], family_id=FAMILY_ID)[0]
+    with contextlib.redirect_stdout(io.StringIO()):
+        env, _ = make_env_with_initial_obs(task)
+    try:
+        ep = env._solar
+        assert not theft.threat_bodies(ep)
+        assert ep.outcome.threats == len(ep.theft.men) > 0
+    finally:
+        env.close()
 
 
 @pytest.mark.timeout(1200)
