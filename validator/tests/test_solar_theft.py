@@ -208,7 +208,7 @@ def test_each_reaction_plays_out_once_the_drone_is_near(monkeypatch, reaction):
         crossing = next(k for k in range(len(out) - 1, 0, -1) if theft_site.inside(site.ring, out[k - 1])[0]
                         and not theft_site.inside(site.ring, out[k])[0])
         assert np.linalg.norm(out[crossing] - story.hole) < 1.5
-    assert ep.outcome.threats == len(ep.theft.men)
+    assert all(man.entered for man in ep.theft.men)
 
 
 def test_a_drone_below_the_dock_over_low_ground_is_heard(monkeypatch):
