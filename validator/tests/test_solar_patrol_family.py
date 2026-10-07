@@ -143,11 +143,12 @@ def _patrol(seed, pilot, max_decisions=None):
     return log
 
 
-def test_family_is_registered_incubating_on_its_own_map_type():
-    """The family is registered, incubating with its 250 seeds an epoch, on the solar map type 8."""
+def test_family_is_registered_active_on_its_own_map_type():
+    """The family is registered, active with its 250 seeds an epoch, on the solar map type 8."""
     assert FAMILY_ID in list_registered_challenge_families()
     definition = get_challenge_family_definition(FAMILY_ID)
-    assert definition["family_state"] == "incubating"
+    assert definition["family_state"] == "active"
+    assert definition["emissions_state"] == "active"
     assert definition["benchmark_seed_count"] == 250
     assert definition["environment_types"] == ["solar"]
     assert CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE[8] == "solar"

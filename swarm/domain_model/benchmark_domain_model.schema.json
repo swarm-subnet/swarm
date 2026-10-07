@@ -247,8 +247,8 @@
         "short_label": "Autopilot",
         "slug": "autopilot"
       },
-      "family_state": "active",
-      "emissions_state": "active",
+      "family_state": "completed",
+      "emissions_state": "archived",
       "visibility": "private",
       "skill_ids": [
         "sk_autonomous_navigation"
@@ -344,8 +344,8 @@
         "short_label": "Swarm",
         "slug": "swarm-autopilot"
       },
-      "family_state": "active",
-      "emissions_state": "active",
+      "family_state": "completed",
+      "emissions_state": "archived",
       "visibility": "private",
       "skill_ids": [
         "sk_autonomous_navigation"
@@ -482,8 +482,8 @@
         "short_label": "Office",
         "slug": "interceptor-office"
       },
-      "family_state": "active",
-      "emissions_state": "active",
+      "family_state": "completed",
+      "emissions_state": "archived",
       "visibility": "private",
       "skill_ids": [
         "sk_autonomous_navigation"
@@ -525,8 +525,8 @@
         "short_label": "Sentinel",
         "slug": "swarm-sentinel"
       },
-      "family_state": "incubating",
-      "emissions_state": "incubating",
+      "family_state": "active",
+      "emissions_state": "active",
       "visibility": "private",
       "skill_ids": [
         "sk_autonomous_navigation",

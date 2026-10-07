@@ -50,14 +50,14 @@ def test_visualize_dispatches_with_resolved_type_and_family(monkeypatch):
     assert captured["argv"][:4] == ["--type", "2", "--family-id", "cf_interceptor"]
 
 
-def test_visualize_defaults_family_to_autopilot(monkeypatch):
-    """With no family named on the command line, the viewer is still told one outright: cf_autopilot."""
+def test_visualize_defaults_family_to_search_and_rescue(monkeypatch):
+    """With no family named on the command line, the viewer is still told a live one outright: cf_search_and_rescue."""
     captured: dict = {}
     monkeypatch.setattr(visualize_map, "main", lambda argv: captured.setdefault("argv", argv))
 
     assert cli.main(["visualize", "--type", "1"]) == 0
     assert "--family-id" in captured["argv"]
-    assert captured["argv"][captured["argv"].index("--family-id") + 1] == "cf_autopilot"
+    assert captured["argv"][captured["argv"].index("--family-id") + 1] == "cf_search_and_rescue"
 
 
 def test_visualize_requires_type_seed_or_summary(monkeypatch):
