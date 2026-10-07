@@ -127,6 +127,10 @@ class ChallengeFamilyRuntimeProfile:
     rpc_reset_timeout_sec: Optional[float] = None
     rpc_first_step_timeout_sec: Optional[float] = None
     rpc_step_timeout_sec: Optional[float] = None
+    # Baseline-equivalent compute one window of act() calls may share; None keeps the shared MINER_COMPUTE_BUDGET_SEC.
+    miner_compute_budget_sec: Optional[float] = None
+    # Consecutive act() calls that share that budget, counted from the start of the episode.
+    miner_compute_window_acts: int = 1
     global_eval_base_sec: Optional[float] = None
     global_eval_per_seed_sec: Optional[float] = None
     global_eval_cap_sec: Optional[float] = None
@@ -168,6 +172,12 @@ class ChallengeFamilyRuntimeProfile:
             rpc_step_timeout_sec=(
                 None if payload.get("rpc_step_timeout_sec") is None else float(payload.get("rpc_step_timeout_sec"))
             ),
+            miner_compute_budget_sec=(
+                None
+                if payload.get("miner_compute_budget_sec") is None
+                else float(payload.get("miner_compute_budget_sec"))
+            ),
+            miner_compute_window_acts=int(payload.get("miner_compute_window_acts") or 1),
             global_eval_base_sec=(
                 None if payload.get("global_eval_base_sec") is None else float(payload.get("global_eval_base_sec"))
             ),

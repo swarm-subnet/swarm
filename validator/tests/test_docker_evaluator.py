@@ -39,6 +39,7 @@ from swarm.protocol import FailureReason, ValidationResult
 from swarm.validator.calibration import SpeedFactor
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import lifecycle
+from swarm.validator.docker.docker_evaluator_parts.batch import _legal_thinking_sec
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
 
 
@@ -2587,6 +2588,15 @@ def test_legal_thinking_sec_holds_the_per_step_budget_for_every_step():
     assert _legal_thinking_sec([seed], None) == pytest.approx(per_seed)
     assert _legal_thinking_sec([seed, seed], 1.0) == pytest.approx(2 * per_seed)
     assert _legal_thinking_sec([], 1.0) == 0.0
+
+
+def test_legal_thinking_sec_counts_one_budget_per_window_of_decisions():
+    """A Sentinel patrol is asked for 3,900 decisions at 10 Hz, five to a frame, so 400 ms a frame holds 780 x 0.4 s."""
+    patrol = SimpleNamespace(horizon=390.0, sim_dt=1.0 / 50.0, family_id="cf_solar_patrol")
+
+    assert _legal_thinking_sec([patrol], 1.0, 0.4, 5) == pytest.approx(312.0)
+    assert _legal_thinking_sec([patrol], 1.5, 0.4, 5) == pytest.approx(468.0)
+    assert _legal_thinking_sec([patrol], 1.0, 0.1) == pytest.approx(390.0)
 
 
 def test_process_parallel_attaches_the_timing_record_to_the_result(monkeypatch, tmp_path):

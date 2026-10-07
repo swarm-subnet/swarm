@@ -36,6 +36,7 @@ from typing import Any, Callable, Optional
 
 import bittensor as bt
 
+from swarm.challenge_families import runtime_family_for_task
 from swarm.config import DockerBatchTimeoutSettings, DockerRuntimeSettings, RpcTraceSettings
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
@@ -805,18 +806,26 @@ def _setup_pretry_state(ctx: _BatchContext) -> None:
 OBS_SHM_BYTES = 32 * 1024 * 1024
 
 
-def _legal_thinking_sec(tasks: list, speed_factor: Optional[float]) -> float:
+def _legal_thinking_sec(
+    tasks: list,
+    speed_factor: Optional[float],
+    budget_sec: float = MINER_COMPUTE_BUDGET_SEC,
+    window_acts: int = 1,
+) -> float:
     """Wall time the miner may spend in act() across these seeds without breaking the per-step budget.
 
-    Every step grants MINER_COMPUTE_BUDGET_SEC scaled by the host speed factor, so the batch
-    clock has to hold that on top of the family's simulation allowance; otherwise a slow but
-    legal model runs out of clock and is booked as an infrastructure fault."""
-    steps = 0
+    Every window of window_acts act() calls grants budget_sec scaled by the host speed factor, so
+    the batch clock has to hold that on top of the family's simulation allowance; otherwise a slow
+    but legal model runs out of clock and is booked as an infrastructure fault. A family that holds
+    one decision for several physics steps is asked for one act() per decision."""
+    windows = 0
     for task in tasks:
         sim_dt = float(getattr(task, "sim_dt", 0.0) or SIM_DT)
-        steps += math.ceil(float(getattr(task, "horizon", 0.0)) / sim_dt)
+        decision_sec = sim_dt * int(runtime_family_for_task(task).decision_steps)
+        acts = math.ceil(float(getattr(task, "horizon", 0.0)) / decision_sec)
+        windows += math.ceil(acts / max(1, int(window_acts)))
     factor = max(float(speed_factor or SPEED_FACTOR_MIN), SPEED_FACTOR_MIN)
-    return steps * MINER_COMPUTE_BUDGET_SEC * factor
+    return windows * budget_sec * factor
 
 
 def _obs_shm_host_path(host_port: int) -> str:
@@ -882,7 +891,13 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             else 1.0
         )
         timeout_multiplier = timeout_settings.multiplier * profile_timeout_multiplier
-        thinking_allowance = _legal_thinking_sec(tasks, ctx.speed_factor)
+        budget_sec = (
+            float(runtime_profile.miner_compute_budget_sec)
+            if runtime_profile is not None and runtime_profile.miner_compute_budget_sec is not None
+            else MINER_COMPUTE_BUDGET_SEC
+        )
+        window_acts = runtime_profile.miner_compute_window_acts if runtime_profile is not None else 1
+        thinking_allowance = _legal_thinking_sec(tasks, ctx.speed_factor, budget_sec, window_acts)
         batch_timeout = base_batch_timeout * timeout_multiplier + thinking_allowance
         if profile_cap_sec > 0:
             batch_timeout = min(batch_timeout, profile_cap_sec)
