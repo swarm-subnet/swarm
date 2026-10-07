@@ -144,13 +144,29 @@ def _patrol(seed, pilot, max_decisions=None):
 
 
 def test_family_is_registered_incubating_on_its_own_map_type():
-    """The family is registered, incubating with no emissions, on the solar map type 8."""
+    """The family is registered, incubating with its 250 seeds an epoch, on the solar map type 8."""
     assert FAMILY_ID in list_registered_challenge_families()
     definition = get_challenge_family_definition(FAMILY_ID)
     assert definition["family_state"] == "incubating"
-    assert definition["emission_allocation"] == 0.0
+    assert definition["benchmark_seed_count"] == 250
     assert definition["environment_types"] == ["solar"]
     assert CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE[8] == "solar"
+
+
+def test_family_takes_the_whole_share_of_the_three_families_it_replaces():
+    """Autopilot, Swarm Autopilot and Office Interceptor pay nothing; their 0.65 is the family's, so the split sums to 1."""
+    shares = {
+        family_id: get_challenge_family_definition(family_id)["emission_allocation"]
+        for family_id in list_registered_challenge_families()
+    }
+    for family_id in ("cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office"):
+        assert shares[family_id] == 0.0
+    assert shares[FAMILY_ID] == 0.65
+    paying = [
+        share for family_id, share in shares.items()
+        if get_challenge_family_definition(family_id)["emissions_state"] != "archived"
+    ]
+    assert sum(paying) == pytest.approx(1.0)
 
 
 def test_every_other_family_still_steps_once_per_decision():
