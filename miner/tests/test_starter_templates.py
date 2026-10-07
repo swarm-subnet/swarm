@@ -33,7 +33,7 @@ import pytest
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "src" / "submission_template"
 
 
-@pytest.mark.parametrize("name", ["drone_agent.py"])
+@pytest.mark.parametrize("name", ["drone_agent.py", "sentinel_drone_agent.py"])
 def test_starter_imports_on_its_own(name, tmp_path):
     """A miner copies the file out of the package, so it cannot rely on it.
 
@@ -74,3 +74,56 @@ def test_sar_starter_returns_the_six_element_action_its_family_declares():
     )
     assert action.shape == (6,)
     assert 0.0 <= action[3] <= 1.0
+
+
+def _sentinel_observation(phase, xy=(0.0, 0.0), time_left=390.0, fence=None):
+    """A Swarm Sentinel observation with the state fields the starter reads, and the site map when a fence is given."""
+    state = np.zeros(31, dtype=np.float32)
+    state[0:2], state[7], state[9], state[19], state[23] = xy, 20.0, time_left, 60.0, phase
+    observation = {"state": state}
+    if fence is not None:
+        site_map = np.zeros(660, dtype=np.float32)
+        site_map[0] = len(fence)
+        site_map[1:1 + 2 * len(fence)] = np.asarray(fence, dtype=np.float32).reshape(-1)
+        observation["site_map"] = site_map
+    return observation
+
+
+SQUARE_FENCE = [(-60.0, -40.0), (60.0, -40.0), (60.0, 40.0), (-60.0, 40.0)]
+
+
+def test_sentinel_starter_returns_the_24_value_action_and_presses_take_off_once():
+    """In the dock it presses take_off, releases it on the next decision, and every value stays in its bounds."""
+    controller = _load("sentinel_drone_agent.py")
+    first = np.asarray(controller.act({"state": np.zeros(64, dtype=np.float32)}), dtype=np.float32)
+    second = np.asarray(controller.act({"state": np.zeros(64, dtype=np.float32)}), dtype=np.float32)
+    assert first.shape == (24,)
+    assert first[21] == 1.0 and second[21] == 0.0
+    assert np.all(first[:5] >= -1.0) and np.all(first[:5] <= 1.0)
+    assert np.all(first[5:] >= 0.0) and np.all(first[5:] <= 1.0)
+
+
+def test_sentinel_starter_sweeps_inside_the_fence_then_presses_return_home():
+    """Its lanes keep 4 m inside the fence, it flies at the first one, and it presses return home when time runs short."""
+    controller = _load("sentinel_drone_agent.py")
+    controller.act(_sentinel_observation(0, fence=SQUARE_FENCE))
+    route = controller.route
+    assert len(route) >= 4
+    assert np.all(np.abs(route[:, 0]) <= 56.0) and np.all(np.abs(route[:, 1]) <= 36.0)
+    flying = np.asarray(controller.act(_sentinel_observation(2)), dtype=np.float32)
+    assert np.hypot(flying[0], flying[1]) > 0.0 and flying[22] == 0.0
+    late = np.asarray(controller.act(_sentinel_observation(2, time_left=20.0)), dtype=np.float32)
+    assert late[22] == 1.0
+
+
+def test_sentinel_starter_holds_return_home_until_the_straight_line_home_stays_inside():
+    """Around a bend in the fence it flies back along its lanes instead of pressing return home across the corner."""
+    bent_fence = [(-5.0, -10.0), (100.0, -10.0), (100.0, 100.0), (80.0, 100.0), (80.0, 10.0), (-5.0, 10.0)]
+    controller = _load("sentinel_drone_agent.py")
+    controller.act(_sentinel_observation(0, fence=bent_fence))
+    controller.route = np.array([(40.0, 0.0), (90.0, 0.0), (90.0, 90.0)])
+    controller.waypoint = len(controller.route)
+    far_arm = np.asarray(controller.act(_sentinel_observation(2, xy=(90.0, 90.0))), dtype=np.float32)
+    assert far_arm[22] == 0.0 and far_arm[0] < 0.0
+    at_bend = np.asarray(controller.act(_sentinel_observation(2, xy=(90.0, 0.0))), dtype=np.float32)
+    assert at_bend[22] == 1.0

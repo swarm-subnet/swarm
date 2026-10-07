@@ -24,12 +24,15 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 import validator.scripts.generate_video as generate_video
 import validator.scripts.visualize_map as visualize_map
 from swarm import cli
+from swarm.constants import SIM_DT
 
 # --------------------------------------------------------------------------
 # swarm visualize
@@ -165,6 +168,24 @@ def test_video_dispatches_with_family(tmp_path, monkeypatch):
     assert captured["argv"][captured["argv"].index("--family-id") + 1] == "cf_search_and_rescue"
 
 
+def test_solar_parsers_accept_type_eight():
+    """The public and script parsers accept type 8 for both video and visualization."""
+    assert cli.build_parser().parse_args(["visualize", "--type", "8"]).type == 8
+    assert cli.build_parser().parse_args(["video", "--model", "x.zip", "--type", "8"]).type == 8
+    assert visualize_map._build_parser().parse_args(["--type", "8"]).type == 8
+    assert generate_video._build_parser().parse_args(["--model", "x.zip", "--type", "8"]).type == 8
+
+
+def test_solar_failed_summary_is_listed(tmp_path, capsys):
+    """A failed type8_solar summary row appears in the visualizer's review list."""
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps({"group_results": {"type8_solar": [
+        {"seed": 81, "success": False, "score": 0.0, "sim_time": 390.0}
+    ]}}))
+    assert cli.main(["visualize", "--summary-json", str(summary), "--failed"]) == 0
+    assert "type 8 (solar)" in capsys.readouterr().out
+
+
 # --------------------------------------------------------------------------
 # family-aware task construction (validator.scripts.generate_video.build_task)
 # --------------------------------------------------------------------------
@@ -193,6 +214,48 @@ def test_build_task_defaults_to_autopilot():
     assert task.family_id == "cf_autopilot"
 
 
+def test_solar_build_task_uses_family_builder(monkeypatch):
+    """A type-8 patrol is requested from the runtime builder with the original seed and simulation dt."""
+    captured = {}
+    sentinel = object()
+
+    def fake_builder(**kwargs):
+        """Capture task builder arguments without constructing a park."""
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(generate_video, "build_random_task", fake_builder)
+
+    assert generate_video.build_task(123, 8, family_id="cf_solar_patrol") is sentinel
+    assert captured == {"sim_dt": SIM_DT, "seed": 123, "family_id": "cf_solar_patrol"}
+
+
+def test_solar_decision_clock_and_action_preserve_sticks():
+    """A five-step patrol decision advances five ticks and keeps clipped sticks and all observation keys."""
+    env = SimpleNamespace(
+        family_runtime=SimpleNamespace(decision_steps=5),
+        task=SimpleNamespace(family_id="cf_solar_patrol"),
+        ACT_TYPE="velocity",
+    )
+    obs = {key: object() for key in ("state", "rgb", "thermal", "zoom", "depth")}
+    seen = []
+
+    class Agent:
+        """Remember the exact observation the recorder hands to the policy."""
+        def act(self, received):
+            """Return sticks whose norm exceeds the legacy speed limit."""
+            seen.append(received)
+            return [1.0, 1.0, 1.0, 2.0]
+
+    action = generate_video._agent_action(
+        Agent(), obs, env, 1, 4,
+        np.array([-1.0] * 4), np.array([1.0] * 4), "velocity", 0.5,
+    )
+    assert seen == [obs]
+    np.testing.assert_array_equal(action, [1.0, 1.0, 1.0, 1.0])
+    assert generate_video._decision_dt(env, 0.02) == pytest.approx(0.1)
+
+
 # --------------------------------------------------------------------------
 # seed files written by `swarm benchmark --save-seed-file`
 # --------------------------------------------------------------------------
@@ -218,6 +281,36 @@ def test_seed_file_from_the_benchmark_is_readable(tmp_path):
 
     assert len(jobs) == sum(len(v) for v in groups.values())
     assert {j.seed for j in jobs} == {s for v in groups.values() for s in v}
+
+
+def test_solar_cameras_draw_through_the_patrol_renderer(monkeypatch):
+    """On a Sentinel env every video camera hands its eye and target to the patrol's colour renderer."""
+    calls = []
+    monkeypatch.setattr(generate_video, "_solar_frame", lambda env, eye, target, up, w, h, fov: calls.append(
+        (env, tuple(np.round(target, 2)), w, h)) or np.zeros((h, w, 3), np.uint8))
+    monkeypatch.setattr(generate_video.solar_camera, "RAYCAST", True)
+    env = SimpleNamespace(_solar=object())
+    cam = generate_video.ChaseCamera.__new__(generate_video.ChaseCamera)
+    generate_video._CameraBase.__init__(cam, 0, 64, 32, 60.0)
+    cam._back, cam._up, cam._smooth_fwd = 6.0, 2.0, None
+    generate_video._attach_family_renderer({"chase": cam}, env)
+    frame = cam.capture(np.array([1.0, 2.0, 20.0]), np.array([0, 0, 0, 1.0]), np.eye(3), 0.04)
+    assert frame.shape == (32, 64, 3)
+    assert calls == [(env, (1.0, 2.0, 20.15), 64, 32)]
+
+
+def test_solar_seed_file_loads_type_eight_job(tmp_path):
+    """A benchmark type8_solar seed file becomes a type-8 video job and resolves in visualize."""
+    seed_file = tmp_path / "solar_seeds.json"
+    seed_file.write_text(json.dumps({
+        "schema_version": "challenge_family_seed_file.v1",
+        "family_id": "cf_solar_patrol",
+        "type_seeds": {"type8_solar": [2468]},
+    }))
+    assert generate_video._load_seed_jobs(seed_file, family_id="cf_solar_patrol") == [
+        generate_video.VideoJob(seed=2468, challenge_type=8)
+    ]
+    assert cli._lookup_seed_type_in_seed_file(seed_file, 2468, family_id="cf_solar_patrol") == 8
 
 
 def test_seed_lookup_finds_a_seed_in_a_real_seed_file(tmp_path):

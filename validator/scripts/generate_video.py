@@ -69,6 +69,9 @@ _REPO_ROOT = _SCRIPT_DIR.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from swarm.challenge_families import build_random_task  # noqa: E402
+from swarm.challenge_families.solar_patrol import camera as solar_camera  # noqa: E402
+
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
 from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
 
@@ -79,7 +82,7 @@ from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
 
 def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
     """Location of the recorded-action JSON for one seed, named after its map label."""
-    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office"}.get(
+    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office", 8: "solar"}.get(
         challenge_type, f"type{challenge_type}"
     )
     return Path(directory) / f"seed{seed}_{label}_actions.json"
@@ -115,6 +118,7 @@ TYPE_LABELS: Dict[int, str] = {
     5: "warehouse",
     6: "forest",
     7: "office",
+    8: "solar",
 }
 BENCH_GROUP_ORDER: List[str] = [
     "type1_city",
@@ -124,6 +128,7 @@ BENCH_GROUP_ORDER: List[str] = [
     "type5_warehouse",
     "type6_forest",
     "type7_office",
+    "type8_solar",
 ]
 BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type1_city": 1,
@@ -133,6 +138,7 @@ BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type5_warehouse": 5,
     "type6_forest": 6,
     "type7_office": 7,
+    "type8_solar": 8,
 }
 
 # --- output defaults ---
@@ -237,13 +243,17 @@ def _temporary_env(overrides: Dict[str, Optional[str]]):
 
 
 def build_task(seed: int, challenge_type: int, family_id: str = "cf_autopilot"):
-    """Build the real, family-aware task for *seed* / *challenge_type* / *family_id*.
+    """Build a seeded task through the patrol runtime or the existing typed sampler.
 
     Delegates to the production sampler so a visualized or recorded flight always
     matches what the validator would actually generate -- imported lazily because
     it pulls in bittensor, which is slow and not needed for argument parsing.
     """
     from swarm.constants import SIM_DT
+
+    if family_id == "cf_solar_patrol":
+        return build_random_task(sim_dt=SIM_DT, seed=int(seed), family_id=family_id)
+
     from swarm.validator.task_gen import task_for_seed_and_type
 
     return task_for_seed_and_type(
@@ -366,6 +376,24 @@ def _render_rgb(cli: int, view, proj, w: int, h: int) -> np.ndarray:
     return np.asarray(rgba, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
 
 
+def _solar_frame(env, eye, target, up, width: int, height: int, fov: float) -> np.ndarray:
+    """One uint8 RGB frame of a Sentinel patrol, drawn by the family's colour camera in the seed's light."""
+    eye = np.asarray(eye, dtype=float)
+    view = solar_camera.View(
+        feed="colour", eye=tuple(eye), forward=tuple(np.asarray(target, dtype=float) - eye), up=tuple(up),
+        width=int(width), height=int(height), vertical_fov_deg=float(fov), sees=True, step=0,
+    )
+    frame, _ = solar_camera.colour_frame(env, view)
+    return (frame * 255.0 + 0.5).astype(np.uint8)
+
+
+def _attach_family_renderer(cameras: Dict[str, "_CameraBase"], env) -> None:
+    """Hand a Sentinel env to every camera, so its frames come from the patrol's ray caster."""
+    if getattr(env, "_solar", None) is not None and solar_camera.RAYCAST:
+        for cam in cameras.values():
+            cam.solar_env = env
+
+
 def _render_depth(
     cli: int, view, proj, w: int, h: int, near: float, far: float
 ) -> np.ndarray:
@@ -420,6 +448,13 @@ class _CameraBase:
         self._w = width
         self._h = height
         self._fov = fov
+        self.solar_env = None
+
+    def _shoot(self, eye, target, up=(0, 0, 1), far: float = 500.0) -> np.ndarray:
+        """Render from eye towards target: through the patrol's own colour camera on a Sentinel env, else TinyRenderer."""
+        if self.solar_env is not None:
+            return _solar_frame(self.solar_env, eye, target, up, self._w, self._h, self._fov)
+        return _render_rgb(self._cli, self._view(eye, target, up), self._proj(far=far), self._w, self._h)
 
     def _proj(self, near: float = 0.1, far: float = 500.0):
         """Perspective projection matrix at this camera's field of view and aspect ratio."""
@@ -520,9 +555,7 @@ class FPVCamera(_CameraBase):
 
         eye = drone_pos + fwd * FPV_OFFSET_FORWARD_M + up * FPV_OFFSET_UP_M
         tgt = eye + fwd * 20.0
-        return _render_rgb(
-            self._cli, self._view(eye, tgt, up), self._proj(), self._w, self._h
-        )
+        return self._shoot(eye, tgt, up)
 
 
 class ChaseCamera(_CameraBase):
@@ -558,9 +591,7 @@ class ChaseCamera(_CameraBase):
 
         eye = drone_pos - fwd * self._back + np.array([0.0, 0.0, self._up])
         tgt = drone_pos + np.array([0.0, 0.0, 0.15])
-        return _render_rgb(
-            self._cli, self._view(eye, tgt), self._proj(), self._w, self._h
-        )
+        return self._shoot(eye, tgt)
 
 
 class OverviewCamera(_CameraBase):
@@ -596,9 +627,7 @@ class OverviewCamera(_CameraBase):
                 mid[2] - cam_dist * math.sin(pitch_r),
             ]
         )
-        return _render_rgb(
-            self._cli, self._view(eye, mid), self._proj(far=1000.0), self._w, self._h
-        )
+        return self._shoot(eye, mid, far=1000.0)
 
 
 class _Cv2VideoWriter:
@@ -734,6 +763,7 @@ class _FlightRecorder:
                 goal,
                 self._overview_fov,
             )
+        _attach_family_renderer(self._cameras, env)
 
         type_label = TYPE_LABELS.get(self._challenge_type, f"type{self._challenge_type}")
         for mode in self._modes:
@@ -949,13 +979,9 @@ def record_flight_benchmark(
     progress_file: Optional[Path] = None,
 ) -> Tuple[List[VideoResult], bool, float, float]:
     """Fly one seed through the Docker evaluator, capturing frames as it goes, and return the videos with the scored outcome."""
-    from swarm.constants import SIM_DT
     from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
-    from swarm.validator.task_gen import task_for_seed_and_type
 
-    task = task_for_seed_and_type(
-        SIM_DT, seed=seed, challenge_type=challenge_type, family_id=family_id,
-    )
+    task = build_task(seed, challenge_type, family_id=family_id)
     uid = _infer_uid_from_model_path(model_path)
     recorder = _FlightRecorder(
         seed=seed,
@@ -1055,6 +1081,31 @@ def _write_progress(progress_file: Optional[Path], data: dict) -> None:
         pass
 
 
+def _agent_action(agent, obs, env, n_drones, act_dim, act_lo, act_hi, velocity_type, speed_limit):
+    """Pass the env observation to the agent and clip its action under the family's control rules."""
+    idle = np.zeros((n_drones, act_dim) if n_drones > 1 else act_dim, np.float32)
+    try:
+        raw = agent.act(obs)
+        if raw is None:
+            raw = idle
+    except Exception:
+        raw = idle
+    act = np.asarray(raw, dtype=np.float32)
+    act = act.reshape(n_drones, act_dim) if n_drones > 1 else act.flatten()
+    act = np.clip(act, act_lo, act_hi)
+    if getattr(env, "ACT_TYPE", None) == velocity_type and getattr(env.task, "family_id", "") != "cf_solar_patrol":
+        speed = act[..., :3]
+        norm = np.maximum(np.linalg.norm(speed, axis=-1, keepdims=True), 1e-6)
+        speed *= np.minimum(1.0, float(speed_limit) / norm)
+        act = np.clip(act, act_lo, act_hi)
+    return act
+
+
+def _decision_dt(env, sim_dt: float) -> float:
+    """Return the simulated seconds advanced by one decision in this family's runtime."""
+    return float(sim_dt) * int(getattr(env.family_runtime, "decision_steps", 1))
+
+
 def record_flight(
     model_path: Path,
     seed: int,
@@ -1081,7 +1132,7 @@ def record_flight(
     ----------
     model_path     : path to the miner's ``submission.zip``
     seed           : map seed (deterministic world generation)
-    challenge_type : 1-6  (city / open / mountain / village / warehouse / forest)
+    challenge_type : 1-8
     modes          : subset of ``VALID_MODES``
     out_dir        : directory where ``.mp4`` files will be written
     progress_file  : optional path to write JSON progress updates
@@ -1144,6 +1195,7 @@ def record_flight(
         cameras["overview"] = OverviewCamera(
             cli, width, height, task.goal, overview_fov
         )
+    _attach_family_renderer(cameras, env)
 
     # --- writers --------------------------------------------------------
     type_label = TYPE_LABELS.get(challenge_type, f"type{challenge_type}")
@@ -1165,6 +1217,7 @@ def record_flight(
     t_sim = 0.0
     success = False
     t_wall_start = time.time()
+    decision_dt = _decision_dt(env, SIM_DT)
 
     if progress_file:
         progress_file = Path(progress_file)
@@ -1187,30 +1240,18 @@ def record_flight(
                 act = np.clip(replay_actions[replay_idx], act_lo, act_hi)
                 replay_idx += 1
             else:
-                idle = np.zeros((n_drones, act_dim) if n_drones > 1 else act_dim, np.float32)
-                try:
-                    raw = agent.act(obs)
-                    if raw is None:
-                        raw = idle
-                except Exception:
-                    raw = idle
-
-                act = np.asarray(raw, dtype=np.float32)
-                act = act.reshape(n_drones, act_dim) if n_drones > 1 else act.flatten()
-                act = np.clip(act, act_lo, act_hi)
-                if getattr(env, "ACT_TYPE", None) == ActionType.VEL:
-                    speed = act[..., :3]
-                    norm = np.maximum(np.linalg.norm(speed, axis=-1, keepdims=True), 1e-6)
-                    speed *= np.minimum(1.0, float(SPEED_LIMIT) / norm)
-                    act = np.clip(act, act_lo, act_hi)
+                act = _agent_action(
+                    agent, obs, env, n_drones, act_dim, act_lo, act_hi,
+                    ActionType.VEL, SPEED_LIMIT,
+                )
 
             recorded_actions.append(act.tolist())
 
             obs, _, terminated, truncated, info = env.step(act if n_drones > 1 else act[None, :])
-            t_sim += float(SIM_DT)
+            t_sim += decision_dt
 
             # --- render frame ---
-            if t_sim >= next_frame_t:
+            while t_sim >= next_frame_t:
                 drone_pos = np.asarray(env._getDroneStateVector(0)[:3])
                 drone_quat = np.asarray(env.quat[0])
                 rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
@@ -1230,6 +1271,8 @@ def record_flight(
                         "start_time": t_wall_start,
                         "last_update": time.time(),
                     })
+                if decision_dt == float(SIM_DT):
+                    break
 
             if terminated or truncated:
                 success = bool(info.get("success", False))
@@ -1341,9 +1384,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7],
+        choices=[1, 2, 3, 4, 5, 6, 7, 8],
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office)",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office 8=Solar)",
     )
     req.add_argument(
         "--seed-file",

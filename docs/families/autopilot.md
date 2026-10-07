@@ -4,6 +4,8 @@
 
 Fly a Crazyflie across a procedurally generated world, find the landing pad inside a noisy search area, and touch down clean: `cf_autopilot`, the navigation family of Swarm Subnet 124.
 
+This family is retired: Swarm Sentinel replaced it. It is no longer served or scored, its emissions are archived, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The rest of this page describes the family as it ran.
+
 ---
 
 <details>
@@ -26,7 +28,7 @@ Fly a Crazyflie across a procedurally generated world, find the landing pad insi
 
 One drone, one goal pad, 60 seconds. Your policy pilots a single CF2X Crazyflie from a start platform to a landing platform placed somewhere in the world: behind buildings, over mountain ridges, between trees. You never get the pad's exact position: the state vector carries a **noisy search-area centre**, so the drone has to fly to the area, find the pad with its depth camera, and land on it. On some maps the pad is **moving**.
 
-Scoring rewards landing, landing fast, and flying with clearance from obstacles. Autopilot is active with a **0.15 emission allocation** and runs its own [King of the Hill](../king_of_the_hill.md) lineage.
+Scoring rewards landing, landing fast, and flying with clearance from obstacles. Autopilot carried a **0.15 emission allocation** and ran its own [King of the Hill](../king_of_the_hill.md) lineage.
 
 <p align="right">(<a href="#autopilot-top">back to top</a>)</p>
 

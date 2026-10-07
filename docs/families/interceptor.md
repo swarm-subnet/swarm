@@ -215,6 +215,6 @@ Per-episode `info` exposes the chase telemetry you'll want when tuning: `interce
 
 ## Local Testing
 
-This family is completed and no longer accepts new submissions. New submissions should target [Office Interceptor](office_interceptor.md).
+This family is completed and no longer accepts new submissions. New submissions should target an active family, such as [Swarm Sentinel](solar_patrol.md).
 
 <p align="right">(<a href="#interceptor-top">back to top</a>)</p>

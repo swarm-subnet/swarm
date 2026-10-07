@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Park shifts, day and night (task 17): the Manolia solar park built for a seed, and the light it is flown in.
+"""Park shifts, day and night (task 17): the solar park built for a seed, and the light it is flown in.
 
 Each seed stands the real site with every row of tables, building and tree shifted a little (the map builder draws
 the shifts), flies it by day or by night, half and half, under the seed's own sun or moon, and sets the air, the

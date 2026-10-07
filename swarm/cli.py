@@ -137,6 +137,7 @@ BENCH_GROUP_ORDER = [
     "type5_warehouse",
     "type6_forest",
     "type7_office",
+    "type8_solar",
 ]
 BENCH_GROUP_TO_TYPE = {
     "type1_city": 1,
@@ -146,6 +147,7 @@ BENCH_GROUP_TO_TYPE = {
     "type5_warehouse": 5,
     "type6_forest": 6,
     "type7_office": 7,
+    "type8_solar": 8,
 }
 TYPE_LABELS = {
     1: "city",
@@ -155,6 +157,7 @@ TYPE_LABELS = {
     5: "warehouse",
     6: "forest",
     7: "office",
+    8: "solar",
 }
 
 
@@ -620,7 +623,9 @@ def _lookup_seed_type_in_seed_file(
 
 
 def _infer_benchmark_type_from_seed(seed: int, family_id: str = "cf_autopilot") -> int:
-    """Rebuild the task for a seed and read back the map type the generator deterministically gave it."""
+    """Return Solar's fixed type or rebuild the legacy task to read its map type."""
+    if family_id == "cf_solar_patrol":
+        return 8
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
 
@@ -1672,8 +1677,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office 8=Solar).",
     )
     visualize_parser.add_argument(
         "--family-id",
@@ -1802,8 +1807,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office 8=Solar).",
     )
     video_parser.add_argument(
         "--seed-file",

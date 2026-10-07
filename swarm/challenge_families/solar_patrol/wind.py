@@ -17,7 +17,7 @@
 
 """Wind strength per seed (task 18): the wind the seed deals, and the two readings the dock reports of it.
 
-Each seed is still, light or strong, in the shares measured near the site (Lamia, WMO 16675, 6 km away, hourly
+Each seed is still, light or strong, in the shares measured at a weather station near the site (hourly
 2019 to 2025, the 10 m wind taken up to the 20 m patrol height), with night calmer than day. The strength sets the
 cap of Swarm's seeded wind: its steady part is 0.4 to 0.67 of the cap, gusts reach about 1.5 times that, and nothing
 ever passes the cap, so no seed blows past the 12 m/s the M4TD and the Dock 3 are rated for.

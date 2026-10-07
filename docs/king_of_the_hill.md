@@ -26,7 +26,7 @@ How emissions are distributed on Swarm Subnet 124.
 
 ## What KotH is
 
-Swarm runs **one King of the Hill per challenge family** (e.g. Autopilot, Search-and-Rescue). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**, with each one's slice proportional to how much they improved the family's best score when they took the throne.
+Swarm runs **one King of the Hill per challenge family** (e.g. Search-and-Rescue, Swarm Sentinel). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**, with each one's slice proportional to how much they improved the family's best score when they took the throne.
 
 - The **current champion** of a family is always at the top of that family's lineage.
 - The **four most recent past champions** of the family keep earning until they age out of the window.
@@ -146,12 +146,9 @@ The values are `floor_max = 0.015` and `floor_min = 0.005`, and every family car
 
 | Family | floor_max (champion ≤ 0.5) | floor_min (champion → 1.0) |
 |---|---|---|
-| Autopilot | 0.015 | 0.005 |
 | Search-and-Rescue | 0.015 | 0.005 |
-| Swarm Autopilot | 0.015 | 0.005 |
 | Swarm SAR | 0.015 | 0.005 |
-| Interceptor | 0.015 | 0.005 |
-| Office Interceptor | 0.015 | 0.005 |
+| Swarm Sentinel | 0.015 | 0.005 |
 
 The registry can still override them per family; nothing does today.
 
@@ -182,12 +179,11 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Interceptor | 0.00 (historical 0.30) |
-| Office Interceptor (`cf_interceptor_office`) | 0.30 |
-| Swarm Autopilot | 0.20 |
+| Swarm Sentinel (`cf_solar_patrol`) | 0.65 |
 | Swarm SAR | 0.20 |
-| Autopilot | 0.15 |
 | Search-and-Rescue | 0.15 |
+| Interceptor | 0.00 (historical 0.30) |
+| Autopilot, Swarm Autopilot, Office Interceptor | 0.00 (retired) |
 
 Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
@@ -198,7 +194,7 @@ active / saturated / incubating / regression   1.0
 archived                                       0.0   (out of payout)
 ```
 
-Five families are currently `active`; Interceptor is `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
+Three families are currently `active`: Swarm Sentinel, Swarm SAR and Search-and-Rescue. Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
 
 ### Unpaid slices burn
 
@@ -209,7 +205,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: four active families payable, Office Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Office Interceptor's `0.30` burns. The moment Office Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: Swarm SAR and Search-and-Rescue are payable and Swarm Sentinel has no king yet. The two keep exactly their own allocations (`0.20 + 0.15 = 0.35`) and Swarm Sentinel's `0.65` burns. The moment Swarm Sentinel crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
 
@@ -288,7 +284,7 @@ The active family slices are set by the team, not derived automatically, so a ne
 | Term | Meaning |
 |---|---|
 | **King** | A model that took the throne by passing the full benchmark and clearing the dynamic crowning floor. |
-| **Challenge family** | An independent competition (e.g. Autopilot, Search-and-Rescue), each with its own lineage, window, and emission slice. |
+| **Challenge family** | An independent competition (e.g. Search-and-Rescue, Swarm Sentinel), each with its own lineage, window, and emission slice. |
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
 | **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
