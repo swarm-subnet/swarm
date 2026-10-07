@@ -250,6 +250,13 @@ CHALLENGE_FAMILY_TO_INTERFACE_VERSIONS = {
 }
 SCORE_SCHEMA_IDS = tuple(_REGISTRY["score_schemas"])
 POLICY_INTERFACE_KEYS = tuple(_REGISTRY.get("policy_interfaces", {}))
+OPEN_CHALLENGE_FAMILY_IDS = tuple(
+    family_id
+    for family_id in CHALLENGE_FAMILY_IDS
+    if _REGISTRY["challenge_families"][family_id]["family_state"] not in ("completed", "archived")
+)
+# Commands a person runs default to a live family; untagged data from before families stays Autopilot's.
+DEFAULT_CLI_FAMILY_ID = "cf_search_and_rescue"
 
 __all__ = [
     "BENCHMARK_GROUP_ORDER",
@@ -264,6 +271,7 @@ __all__ = [
     "CHALLENGE_TYPE_IDS",
     "CHALLENGE_TYPE_TO_BENCHMARK_GROUP",
     "CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE",
+    "DEFAULT_CLI_FAMILY_ID",
     "EMISSIONS_STATES",
     "ENVIRONMENT_TYPES",
     "ENVIRONMENT_TYPE_TO_CHALLENGE_TYPE",
@@ -271,6 +279,7 @@ __all__ = [
     "MARKET_VERTICAL_IDS",
     "MAX_CHALLENGE_TYPE",
     "MIN_CHALLENGE_TYPE",
+    "OPEN_CHALLENGE_FAMILY_IDS",
     "SCHEMA_VERSION",
     "SCORE_SCHEMA_IDS",
     "SKILL_IDS",

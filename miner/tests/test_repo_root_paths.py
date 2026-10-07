@@ -38,10 +38,8 @@ PARENTS = re.compile(r"Path\(__file__\)\.resolve\(\)\.parents\[(\d+)\]")
 REACH_THE_REPO_ROOT = [
     MINER_ROOT / "src" / "miner.py",
     MINER_ROOT / "src" / "RL" / "test_RL.py",
-    MINER_ROOT / "src" / "RL" / "cf_autopilot" / "train.py",
     MINER_ROOT / "src" / "RL" / "cf_interceptor" / "train.py",
     MINER_ROOT / "src" / "RL" / "cf_search_and_rescue" / "train.py",
-    MINER_ROOT / "src" / "RL" / "cf_swarm_autopilot" / "train.py",
     MINER_ROOT / "src" / "RL" / "cf_swarm_sar" / "train.py",
 ]
 

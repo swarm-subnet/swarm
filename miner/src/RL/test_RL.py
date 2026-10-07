@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from swarm.constants import SIM_DT
-from swarm.domain_model import CHALLENGE_FAMILY_IDS
+from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
 from swarm.validator.task_gen import random_task
 
@@ -66,9 +66,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--family_id",
         type=str,
-        default="cf_autopilot",
+        default=DEFAULT_CLI_FAMILY_ID,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help="Challenge family to generate tasks for (default: cf_autopilot).",
+        help=f"Challenge family to generate tasks for (default: {DEFAULT_CLI_FAMILY_ID}).",
     )
     parser.add_argument(
         "--seed",

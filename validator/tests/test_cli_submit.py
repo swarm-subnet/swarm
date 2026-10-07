@@ -126,6 +126,18 @@ def test_submit_requires_a_family_when_there_is_no_terminal(monkeypatch, tmp_pat
     assert "--family-id is required" in capsys.readouterr().err
 
 
+def test_family_prompt_offers_only_open_families(monkeypatch, capsys):
+    """The menu lists the three paying families, never a retired or completed one, and returns the pick."""
+    monkeypatch.setattr("builtins.input", lambda prompt: "2")
+
+    assert cli._prompt_family_id() == "cf_solar_patrol"
+    menu = capsys.readouterr().out
+    for family_id in ("cf_search_and_rescue", "cf_solar_patrol", "cf_swarm_sar"):
+        assert f"({family_id})" in menu
+    for family_id in ("cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office", "cf_interceptor"):
+        assert f"({family_id})" not in menu
+
+
 def test_repo_commands_are_gone():
     """The CLI no longer exposes a repo group, and submit now lives under model."""
     parser = cli.build_parser()

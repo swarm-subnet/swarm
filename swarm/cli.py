@@ -42,6 +42,8 @@ from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.submission_policy import validate_submission_zip
 from swarm.domain_model import (
     CHALLENGE_FAMILY_IDS,
+    DEFAULT_CLI_FAMILY_ID,
+    OPEN_CHALLENGE_FAMILY_IDS,
     get_challenge_family_definition,
 )
 from swarm.policy_interface import (
@@ -961,7 +963,7 @@ def _family_display_name(family_id: str) -> str:
 def _prompt_family_id() -> Optional[str]:
     """Ask the miner which challenge family the artifact targets. Returns the
     chosen family id, or None if the prompt was cancelled."""
-    families = sorted(CHALLENGE_FAMILY_IDS)
+    families = sorted(OPEN_CHALLENGE_FAMILY_IDS)
     names = [_family_display_name(fid) for fid in families]
     width = max(len(name) for name in names)
 
@@ -1676,9 +1678,9 @@ def build_parser() -> argparse.ArgumentParser:
     visualize_parser.add_argument(
         "--family-id",
         type=str,
-        default="cf_autopilot",
+        default=DEFAULT_CLI_FAMILY_ID,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help="Challenge family id (default: cf_autopilot).",
+        help=f"Challenge family id (default: {DEFAULT_CLI_FAMILY_ID}).",
     )
     visualize_parser.add_argument(
         "--seed",
@@ -1786,9 +1788,9 @@ def build_parser() -> argparse.ArgumentParser:
     video_parser.add_argument(
         "--family-id",
         type=str,
-        default="cf_autopilot",
+        default=DEFAULT_CLI_FAMILY_ID,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help="Challenge family id (default: cf_autopilot).",
+        help=f"Challenge family id (default: {DEFAULT_CLI_FAMILY_ID}).",
     )
     video_parser.add_argument(
         "--seed",

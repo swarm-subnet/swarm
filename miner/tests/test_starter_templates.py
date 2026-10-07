@@ -33,7 +33,7 @@ import pytest
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "src" / "submission_template"
 
 
-@pytest.mark.parametrize("name", ["drone_agent.py", "office_drone_agent.py"])
+@pytest.mark.parametrize("name", ["drone_agent.py"])
 def test_starter_imports_on_its_own(name, tmp_path):
     """A miner copies the file out of the package, so it cannot rely on it.
 
@@ -74,12 +74,3 @@ def test_sar_starter_returns_the_six_element_action_its_family_declares():
     )
     assert action.shape == (6,)
     assert 0.0 <= action[3] <= 1.0
-
-
-def test_office_starter_returns_the_four_stick_action_its_family_declares():
-    """Four RC sticks, not the six-element vector the search and rescue starter hands back."""
-    controller = _load("office_drone_agent.py")
-    action = np.asarray(
-        controller.act({"state": np.zeros(64, dtype=np.float32)}), dtype=np.float32
-    )
-    assert action.shape == (4,)
