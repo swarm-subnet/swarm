@@ -15,7 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Office interceptor challenge family (indoor Tello, body-frame RC actions).
+"""COMPLETED, NOT IN USE: Office Interceptor (cf_interceptor_office) is retired; Swarm Sentinel replaced it.
+
+No validator serves it, nobody can submit to it and it pays nothing. The code stays only so its published
+champions and past benchmarks can still be re-run: do not build new work on it.
+The live families are cf_solar_patrol, cf_swarm_sar and cf_search_and_rescue.
+Guide: docs/families/completed/interceptor_office.md.
+
+Office interceptor challenge family (indoor Tello, body-frame RC actions).
 
 The miner flies a Tello-class drone inside the fixed office map and must
 intercept a target drone. Actions are the four Tello RC sticks
@@ -29,10 +36,6 @@ world through the physical rig's channels — SDK telemetry packets, an
 emulated YOLO detector, and a domain-randomized RGB camera — all seeded, all
 bit-identical across validators. One deliberate deviation: the target is
 invisible to camera and ToF, so the detector is the only sighting channel.
-
-Retired: Swarm Sentinel replaced this family. It takes no submissions and
-pays nothing; the code stays so its champions and past benchmarks still run.
-Its guide is docs/families/retired/interceptor_office.md.
 """
 
 from __future__ import annotations

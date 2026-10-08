@@ -15,7 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Builder for the office indoor map (Tello interceptor family).
+"""COMPLETED, NOT IN USE: the office map (challenge type 7) retired with Office Interceptor (cf_interceptor_office).
+
+Only that family flew it, so nothing serves it now. The code stays only so that family's champions can still be
+re-run: do not build new work on it.
+
+Builder for the office indoor map (Tello interceptor family).
 
 Loads the baked office digital twin: the empty room (shell, floor, lights,
 partitions and wall pictures, lighting pre-baked into texture atlases) and
@@ -26,9 +31,6 @@ across validators comes from the shared seed, not a fixed look.
 
 Every body is spawned at mass 0 from committed assets; the seed decides the
 room's scale and where the furniture stands.
-
-The office (challenge type 7) retired with Office Interceptor, the only family
-that flew it; it stays so that family's champions still run.
 """
 
 from __future__ import annotations

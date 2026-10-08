@@ -15,11 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""The multi-drone autopilot family: one policy flies a fleet to a shared pool of landing pads.
+"""COMPLETED, NOT IN USE: Swarm Autopilot (cf_swarm_autopilot) is retired; Swarm Sentinel replaced it.
 
-Retired: Swarm Sentinel replaced this family. It takes no submissions and pays nothing; the code stays so its champions
-and past benchmarks still run. Its guide is docs/families/retired/swarm_autopilot.md.
-"""
+No validator serves it, nobody can submit to it and it pays nothing. The code stays only so its published
+champions and past benchmarks can still be re-run: do not build new work on it.
+The live families are cf_solar_patrol, cf_swarm_sar and cf_search_and_rescue.
+Guide: docs/families/completed/swarm_autopilot.md.
+
+The multi-drone autopilot family: one policy flies a fleet to a shared pool of landing pads."""
 
 from __future__ import annotations
 

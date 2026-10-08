@@ -60,9 +60,9 @@ Swarm is three separate competitions, each with its own champion and its own sha
 
 <p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
 
-<p align="center"><sub><b>Solved:</b> <a href="docs/families/interceptor.md">Interceptor</a> — open-terrain pursuit, cleared by its champion and closed. The crown is final and the winning solution is preserved as open source.</sub></p>
+<p align="center"><sub><b>Solved:</b> <a href="docs/families/completed/interceptor.md">Interceptor</a> — open-terrain pursuit, cleared by its champion and closed. The crown is final and the winning solution is preserved as open source.</sub></p>
 
-<p align="center"><sub><b><a href="docs/families/retired/README.md">Retired</a>:</b> <a href="docs/families/retired/autopilot.md">Autopilot</a>, <a href="docs/families/retired/swarm_autopilot.md">Swarm Autopilot</a> and <a href="docs/families/retired/interceptor_office.md">Office Interceptor</a>, replaced by Swarm Sentinel. Their guides stay online and their champions stay published.</sub></p>
+<p align="center"><sub><b><a href="docs/families/completed/README.md">Retired</a>:</b> <a href="docs/families/completed/autopilot.md">Autopilot</a>, <a href="docs/families/completed/swarm_autopilot.md">Swarm Autopilot</a> and <a href="docs/families/completed/interceptor_office.md">Office Interceptor</a>, replaced by Swarm Sentinel. Their guides stay online and their champions stay published.</sub></p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

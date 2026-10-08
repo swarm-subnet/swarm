@@ -3,7 +3,7 @@
 # Autopilot
 
 > [!WARNING]
-> **Retired.** Autopilot takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 15% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all retired families](README.md).
+> **Retired.** Autopilot takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 15% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all completed families](README.md).
 
 Fly a Crazyflie across a procedurally generated world, find the landing pad inside a noisy search area, and touch down clean: `cf_autopilot`, the navigation family of Swarm Subnet 124.
 

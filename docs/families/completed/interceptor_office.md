@@ -3,7 +3,7 @@
 # Office Interceptor
 
 > [!WARNING]
-> **Retired.** Office Interceptor takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 30% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all retired families](README.md).
+> **Retired.** Office Interceptor takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 30% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all completed families](README.md).
 
 Indoor air-to-air pursuit: hunt a target drone inside a real office, flying like a real Tello.
 

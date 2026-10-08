@@ -66,9 +66,9 @@ Swarm runs **three active challenge families**, all paying. Interceptor is compl
 | Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](../../docs/families/search_and_rescue.md) |
 | Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](../../docs/families/swarm_sar.md) |
 | Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 65% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
-| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](../../docs/families/interceptor.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/completed/interceptor.md](../../docs/families/completed/interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The [retired families'](../../docs/families/retired/README.md) guides stay online for reference: [Autopilot](../../docs/families/retired/autopilot.md), [Swarm Autopilot](../../docs/families/retired/swarm_autopilot.md), [Office Interceptor](../../docs/families/retired/interceptor_office.md). A slice still burns if its own family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The retired families' guides stay online with the [completed families](../../docs/families/completed/README.md): [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md). A slice still burns if its own family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 

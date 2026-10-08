@@ -15,7 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Seeded furniture layout for the office.
+"""COMPLETED, NOT IN USE: the office map (challenge type 7) retired with Office Interceptor (cf_interceptor_office).
+
+Only that family flew it, so nothing serves it now. The code stays only so that family's champions can still be
+re-run: do not build new work on it.
+
+Seeded furniture layout for the office.
 
 The layout is a pure function of the seed and the room scale: every validator
 places the same pieces in the same spots, and a different seed gives a
