@@ -2,11 +2,12 @@
 
 # Swarm Autopilot
 
+> [!WARNING]
+> **Retired.** Swarm Autopilot takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 20% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all retired families](README.md).
+
 One policy, up to eight drones, one shared pool of landing pads.
 
 Swarm Autopilot (`cf_swarm_autopilot`) is the team version of Autopilot: each seed spawns **2–8 drones**, all flown by one policy that sees every drone at once. The team gets one shared, noisy clue about where the goal pads are, and the pads are a common pool: any drone may land on any pad that a teammate has not already claimed. Land every drone cleanly, fast, and without hitting the world or each other. The family carried **0.20** of subnet emissions.
-
-This family is retired: Swarm Sentinel replaced it. It is no longer served or scored, its emissions are archived, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The rest of this page describes the family as it ran.
 
 ---
 

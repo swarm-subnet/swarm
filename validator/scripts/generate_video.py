@@ -73,7 +73,7 @@ from swarm.challenge_families import build_random_task  # noqa: E402
 from swarm.challenge_families.solar_patrol import camera as solar_camera  # noqa: E402
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
+from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Action log I/O
@@ -1386,7 +1386,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=[1, 2, 3, 4, 5, 6, 7, 8],
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office 8=Solar)",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (retired) 8=Solar)",
     )
     req.add_argument(
         "--seed-file",
@@ -1398,9 +1398,9 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument(
         "--family-id",
         type=str,
-        default="cf_autopilot",
+        default=DEFAULT_CLI_FAMILY_ID,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help="challenge family to fly  (default: cf_autopilot)",
+        help=f"challenge family to fly  (default: {DEFAULT_CLI_FAMILY_ID})",
     )
 
     vid = ap.add_argument_group("video options")

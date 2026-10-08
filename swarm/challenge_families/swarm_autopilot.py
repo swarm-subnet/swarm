@@ -15,7 +15,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""The multi-drone autopilot family: one policy flies a fleet to a shared pool of landing pads."""
+"""The multi-drone autopilot family: one policy flies a fleet to a shared pool of landing pads.
+
+Retired: Swarm Sentinel replaced this family. It takes no submissions and pays nothing; the code stays so its champions
+and past benchmarks still run. Its guide is docs/families/retired/swarm_autopilot.md.
+"""
 
 from __future__ import annotations
 

@@ -2,11 +2,12 @@
 
 # Office Interceptor
 
+> [!WARNING]
+> **Retired.** Office Interceptor takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 30% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all retired families](README.md).
+
 Indoor air-to-air pursuit: hunt a target drone inside a real office, flying like a real Tello.
 
 Your drone is a Tello-class quadcopter (87 g, prop guards) inside an 18 m office digital twin whose exact size is dealt per episode. There is no GPS and no world-frame control: you fly it with the four RC sticks a physical Tello understands, and you sense the world through the same telemetry packets the physical SDK reports — so a policy trained here can be connected to the real drone unchanged. Vision is the drone's forward RGB camera (the real Tello has no depth sensor), **domain-randomized every episode**: wall and furniture colors, lighting, and camera imperfections all change with the seed, so colors are unreliable and geometry is the only stable signal. The target is a second Tello flown by the validator, and **the seed deals it a personality**: cruise speed (0.7–1.8 m/s), pause habits, leg style, and — on most seeds — a spook range inside which it flees away from you at up to 1.95 m/s, all flying person-style waypoint legs in a 1.3–2.6 m flight band. It never out-runs you (your cap is about 3.0 m/s, dealt per episode), never predicts you, and its flight stays collision-checked at any speed; the par time used for scoring stretches on fleeing seeds so hard targets cost no fairness. **The catch is an interception flown alongside the target** — the episode succeeds on physical contact, or on holding within 0.20 m horizontally while level with it (within 0.08 m of its height) for three control steps. Hovering above the target without touching it is not an interception and scores nothing: the hull is wide and flat, and downwash from overhead is the one approach a real drone must never make. **The target never appears in the camera** — it is fully physical but invisible, and the detection channel is the only way to know where it is.
-
-This family is retired: Swarm Sentinel replaced it. It is no longer served or scored, its emissions are archived, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The rest of this page describes the family as it ran.
 
 ---
 
@@ -66,7 +67,7 @@ This family is retired: Swarm Sentinel replaced it. It is no longer served or sc
 
 ### State semantics
 
-The 15 telemetry values mirror a Tello state packet: only what the physical SDK reports, never ground truth. Velocity and acceleration use the SDK body frame — forward, right, **down** (positive vertical velocity means descending, exactly like `vgz` on the real drone). Heights are metres relative to the takeoff point. Noise levels are calibrated against the SecureLink Tello dataset (see `securelink_calibration_summary.json`).
+The 15 telemetry values mirror a Tello state packet: only what the physical SDK reports, never ground truth. Velocity and acceleration use the SDK body frame — forward, right, **down** (positive vertical velocity means descending, exactly like `vgz` on the real drone). Heights are metres relative to the takeoff point. Noise levels are calibrated against the SecureLink Tello dataset (see `docs/families/securelink_calibration_summary.json`).
 
 | Slice | Channel | Contents |
 |-------|---------|----------|

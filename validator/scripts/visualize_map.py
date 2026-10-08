@@ -58,7 +58,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
+from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID  # noqa: E402
 
 _FOLLOW_CAMERA_FOV = 45.0
 
@@ -90,14 +90,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         choices=[1, 2, 3, 4, 5, 6, 7, 8],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office 8=Solar).",
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (retired) 8=Solar).",
     )
     parser.add_argument(
         "--family-id",
         type=str,
-        default="cf_autopilot",
+        default=DEFAULT_CLI_FAMILY_ID,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help="Challenge family whose world-building logic to use (default: cf_autopilot).",
+        help=f"Challenge family whose world-building logic to use (default: {DEFAULT_CLI_FAMILY_ID}).",
     )
     parser.add_argument(
         "--randomize-appearance",

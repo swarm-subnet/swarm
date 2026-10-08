@@ -26,6 +26,9 @@ across validators comes from the shared seed, not a fixed look.
 
 Every body is spawned at mass 0 from committed assets; the seed decides the
 room's scale and where the furniture stands.
+
+The office (challenge type 7) retired with Office Interceptor, the only family
+that flew it; it stays so that family's champions still run.
 """
 
 from __future__ import annotations

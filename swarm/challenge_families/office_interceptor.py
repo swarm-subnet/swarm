@@ -29,6 +29,10 @@ world through the physical rig's channels — SDK telemetry packets, an
 emulated YOLO detector, and a domain-randomized RGB camera — all seeded, all
 bit-identical across validators. One deliberate deviation: the target is
 invisible to camera and ToF, so the detector is the only sighting channel.
+
+Retired: Swarm Sentinel replaced this family. It takes no submissions and
+pays nothing; the code stays so its champions and past benchmarks still run.
+Its guide is docs/families/retired/interceptor_office.md.
 """
 
 from __future__ import annotations

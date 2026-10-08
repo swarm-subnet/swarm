@@ -15,7 +15,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Interceptor family: the miner chases a validator-flown evader across the open map, and the score that follows the catch."""
+"""Interceptor family: the miner chases a validator-flown evader across the open map, and the score that follows the catch.
+
+Completed: its champion solved it, so it takes no submissions and pays nothing; the code stays so the winning solution
+still runs.
+"""
 
 from __future__ import annotations
 
