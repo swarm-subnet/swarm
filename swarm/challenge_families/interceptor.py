@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""COMPLETED, NOT IN USE: Interceptor (cf_interceptor) is solved; its champion closed it.
+"""COMPLETED, NOT IN USE: Interceptor (cf_interceptor) is completed; its champion reached the solve threshold.
 
 No validator serves it, nobody can submit to it and it pays nothing. The code stays only so the winning solution
 and past benchmarks can still be re-run: do not build new work on it.

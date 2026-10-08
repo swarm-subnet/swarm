@@ -2,8 +2,7 @@
 
 # Swarm Autopilot
 
-> [!WARNING]
-> **Retired.** Swarm Autopilot takes no submissions, is not scored and pays nothing: Swarm Sentinel replaced it. It carried 20% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all completed families](README.md).
+**Completed.** Swarm Autopilot takes no submissions, is not scored and pays nothing: Swarm Sentinel took its place. It carried 20% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all completed families](README.md).
 
 One policy, up to eight drones, one shared pool of landing pads.
 

@@ -1386,7 +1386,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=[1, 2, 3, 4, 5, 6, 7, 8],
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (retired) 8=Solar)",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar)",
     )
     req.add_argument(
         "--seed-file",

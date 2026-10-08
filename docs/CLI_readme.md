@@ -44,7 +44,7 @@ Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm visualiz
 | `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
 | `cf_solar_patrol` | Solar (type 8) |
 
-The [retired](families/completed/README.md) families (`cf_autopilot`, `cf_swarm_autopilot`, `cf_interceptor_office`) and the solved `cf_interceptor` are no longer served or scored.
+The [completed](families/completed/README.md) families (`cf_interceptor`, `cf_autopilot`, `cf_swarm_autopilot`, `cf_interceptor_office`) are no longer served or scored.
 
 ---
 

@@ -2,8 +2,7 @@
 
 # Interceptor
 
-> [!NOTE]
-> **Solved.** Interceptor is completed: its champion reached the 0.999 solve threshold, the crown is frozen, and the winning solution is published as open source. It takes no submissions and pays nothing; its 30% allocation is historical. The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all completed families](README.md).
+**Completed.** Interceptor takes no submissions, is not scored and pays nothing: its champion reached the 0.999 solve threshold, so the crown is frozen and the winning solution is published as open source. It carried 30% of subnet emissions until then. This page describes the family as it ran, for reference. The live families are [Swarm Sentinel](../solar_patrol.md), [Swarm SAR](../swarm_sar.md) and [Search and Rescue](../search_and_rescue.md); see [all completed families](README.md).
 
 Air-to-air pursuit: find a fleeing drone with your depth camera and take it down.
 

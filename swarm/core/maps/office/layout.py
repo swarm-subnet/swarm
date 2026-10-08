@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""COMPLETED, NOT IN USE: the office map (challenge type 7) retired with Office Interceptor (cf_interceptor_office).
+"""COMPLETED, NOT IN USE: the office map (type 7) is completed with Office Interceptor (cf_interceptor_office).
 
 Only that family flew it, so nothing serves it now. The code stays only so that family's champions can still be
 re-run: do not build new work on it.

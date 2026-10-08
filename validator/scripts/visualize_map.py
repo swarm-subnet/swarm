@@ -90,7 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         choices=[1, 2, 3, 4, 5, 6, 7, 8],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (retired) 8=Solar).",
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar).",
     )
     parser.add_argument(
         "--family-id",

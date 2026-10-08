@@ -183,7 +183,7 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 | Swarm SAR | 0.20 |
 | Search-and-Rescue | 0.15 |
 | Interceptor | 0.00 (historical 0.30) |
-| Autopilot, Swarm Autopilot, Office Interceptor | 0.00 (retired) |
+| Autopilot, Swarm Autopilot, Office Interceptor | 0.00 (completed) |
 
 Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 

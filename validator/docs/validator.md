@@ -6,7 +6,7 @@ Run `swarm doctor` after installation to verify your environment is ready.
 
 ## 🎯 What You Evaluate
 
-Swarm runs **three active challenge families**; Interceptor is completed, and Autopilot, Swarm Autopilot and Office Interceptor are retired. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
+Swarm runs **three active challenge families**; Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
