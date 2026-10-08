@@ -182,19 +182,23 @@ def test_every_patrol_has_a_farmer_coming_after_another_has_gone():
     road = farmers.load_road(ROAD)
     for seed in range(300):
         trips = farmers.plan(seed, road)
-        assert len(trips) >= 2
+        assert 2 <= len(trips) <= farmers.CONFIG["most"]
         assert trips[0].start_s <= 0.0 < trips[0].end_s
         assert all(a.end_s < b.start_s for a, b in zip(trips, trips[1:]))
         assert 0.0 < trips[1].start_s < HORIZON_S
         assert trips[-1].start_s < HORIZON_S
 
 
+def _drawn(trip):
+    """What a farmer drew, to compare two plans."""
+    return trip.arrive_by, trip.turn.from_end, trip.leave_by, trip.start_s, trip.cruise_m_s, trip.stop_s
+
+
 @needs_road
 def test_farmers_are_drawn_from_the_seed_and_change_with_it():
     """The same seed brings the same farmers at the same moments, and different seeds bring them at different ones."""
     road = farmers.load_road(ROAD)
-    again = [(t.arrive_by, t.leave_by, t.start_s, t.cruise_m_s, t.stop_s) for t in farmers.plan(11, road)]
-    assert again == [(t.arrive_by, t.leave_by, t.start_s, t.cruise_m_s, t.stop_s) for t in farmers.plan(11, road)]
+    assert [_drawn(t) for t in farmers.plan(11, road)] == [_drawn(t) for t in farmers.plan(11, road)]
     second = {round(farmers.plan(seed, road)[1].start_s, 3) for seed in range(100)}
     assert len(second) == 100
     trips = [t for seed in range(100) for t in farmers.plan(seed, road)]
@@ -203,42 +207,64 @@ def test_farmers_are_drawn_from_the_seed_and_change_with_it():
 
 
 @needs_road
+def test_farmers_come_from_both_ends_and_most_never_enter_the_yard():
+    """Farmers mostly come from the end the one before did not; most never enter the yard, swinging onto the other arm
+    at the corner or turning back short of it; a farmer who swings across leaves by the other end, one who turns back
+    by his own; and every way through is used."""
+    road = farmers.load_road(ROAD)
+    plans = [farmers.plan(seed, road) for seed in range(1000)]
+    assert np.mean([len({t.arrive_by for t in trips}) == 1 for trips in plans]) < 0.2
+    trips = [t for trips in plans for t in trips]
+    assert all(t.leave_by != t.arrive_by for t in trips if t.turn.corner)
+    assert all(t.leave_by == t.arrive_by for t in trips if not t.turn.yard and not t.turn.corner)
+    assert 0.6 < np.mean([not t.turn.yard for t in trips]) < 0.8
+    assert {id(t.turn) for t in trips} == {id(turn) for turn in road.turns}
+    assert sum(turn.corner for turn in road.turns) == 2
+
+
+def _routes(road):
+    """Every way a trip can go: each place to turn round with every arm in and out it serves."""
+    return [(a, turn, b) for turn in road.turns for a in turn.into for b in turn.out]
+
+
+@needs_road
 def test_every_farmer_stays_outside_the_fence():
-    """At every moment of every trip, all four corners of the truck stand outside the fence and at least a metre off it."""
+    """At every moment of every route, all four corners of the truck stand outside the fence and at least a metre off it."""
     road = farmers.load_road(ROAD)
     body = solar_manifest(ASSET_DIR)["items"]["pickup_body"]
     (x0, y0), (x1, y1) = body["bounds_min"][:2], body["bounds_max"][:2]
     ring = np.asarray(solar_fence(ASSET_DIR))
-    for arrive_by in farmers.ARMS:
-        for leave_by in farmers.ARMS:
-            pose = farmers._path(road, arrive_by, leave_by)[0]
-            yaw = np.arctan2(2 * (pose[:, 6] * pose[:, 5] + pose[:, 3] * pose[:, 4]), 1 - 2 * (pose[:, 4] ** 2 + pose[:, 5] ** 2))
-            c, s = np.cos(yaw)[:, None], np.sin(yaw)[:, None]
-            lx, ly = np.array([x0, x1, x1, x0]), np.array([y0, y0, y1, y1])
-            corners = np.stack([pose[:, :1] + c * lx - s * ly, pose[:, 1:2] + s * lx + c * ly], axis=2).reshape(-1, 2)
-            assert not _inside(ring, corners).any()
-            assert _point_gap(corners, ring) >= 1.0
+    for arrive_by, turn, leave_by in _routes(road):
+        pose = farmers._path(road, arrive_by, turn, leave_by)[1]
+        yaw = np.arctan2(2 * (pose[:, 6] * pose[:, 5] + pose[:, 3] * pose[:, 4]), 1 - 2 * (pose[:, 4] ** 2 + pose[:, 5] ** 2))
+        c, s = np.cos(yaw)[:, None], np.sin(yaw)[:, None]
+        lx, ly = np.array([x0, x1, x1, x0]), np.array([y0, y0, y1, y1])
+        corners = np.stack([pose[:, :1] + c * lx - s * ly, pose[:, 1:2] + s * lx + c * ly], axis=2).reshape(-1, 2)
+        assert not _inside(ring, corners).any()
+        assert _point_gap(corners, ring) >= 1.0
 
 
 @needs_road
 def test_a_farmer_drives_in_turns_round_backing_up_and_drives_out():
-    """A trip keeps to its speeds, backs up only in the yard and only slowly, and halts each time it changes gear."""
+    """On every route a trip keeps to its speeds, backs up only while turning round and only slowly, halts each time
+    it changes gear, and stands where it turns for its stop."""
     road = farmers.load_road(ROAD)
-    trip = farmers._trip(road, "north", "east", 5.0, 20.0)
-    gear = farmers._path(road, "north", "east")[2]
-    assert trip.speed.max() <= 5.0 + 1e-9
-    assert set(gear[gear < 0]) == {-1.0} and trip.speed[gear < 0].max() <= farmers.CONFIG["reverse_m_s"] + 1e-9
-    changes = np.flatnonzero(gear[1:] != gear[:-1])
-    assert len(changes) == 2 and (trip.speed[changes] == 0.0).all()
-    yard = len(road.lines["north"]) - road.turn_from
-    assert trip.leave[yard] - trip.reach[yard] == pytest.approx(20.0)
-    backed = np.flatnonzero(gear < 0)
-    assert backed.min() > yard and backed.max() < len(gear) - (len(road.lines["east"]) - road.turn_to)
+    for arrive_by, turn, leave_by in _routes(road):
+        trip = farmers._trip(road, arrive_by, turn, leave_by, 5.0, 20.0)
+        gear = farmers._path(road, arrive_by, turn, leave_by)[3]
+        assert trip.speed.max() <= 5.0 + 1e-9
+        assert set(gear[gear < 0]) == {-1.0} and trip.speed[gear < 0].max() <= farmers.CONFIG["reverse_m_s"] + 1e-9
+        changes = np.flatnonzero(gear[1:] != gear[:-1])
+        assert len(changes) in (2, 4) and (trip.speed[changes] == 0.0).all()
+        there = len(road.lines[arrive_by]) - turn.from_end
+        assert trip.leave[there] - trip.reach[there] == pytest.approx(20.0)
+        backed = np.flatnonzero(gear < 0)
+        assert backed.min() > there and backed.max() < there + len(turn.rows)
 
 
 @needs_road
 def test_the_wheels_ride_on_the_ground_and_the_front_ones_steer(world):
-    """Through a whole patrol every wheel sits within a few centimetres of the terrain under it, the front wheels
+    """Through a whole patrol every wheel's lowest point sits within a few centimetres of the terrain, the front wheels
     turn about the vertical on full lock in the yard while the rear ones never do, and the empty road leaves the truck
     under the map."""
     cli, built, movers = world
@@ -251,11 +277,14 @@ def test_the_wheels_ride_on_the_ground_and_the_front_ones_steer(world):
         if position[2] < -100.0:
             under += 1
             continue
+        down = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)[:, 2] * -0.36
         for place, wheel in wheels:
             at, turned = p.getBasePositionAndOrientation(wheel, physicsClientId=cli)
-            hit = p.rayTest([at[0], at[1], at[2] - 0.25], [at[0], at[1], at[2] - 6.0], physicsClientId=cli)[0]
+            # The wheel's lowest point lies a radius down the body's own vertical, which tilts with the ground.
+            low = np.asarray(at) + down
+            hit = p.rayTest([low[0], low[1], low[2] + 0.1], [low[0], low[1], low[2] - 6.0], physicsClientId=cli)[0]
             assert hit[0] in terrain
-            gaps.append(at[2] - 0.36 - hit[3][2])
+            gaps.append(low[2] - hit[3][2])
             local = p.multiplyTransforms(*p.invertTransform(position, orientation), at, turned)[1]
             axle = p.rotateVector(local, [0.0, 1.0, 0.0])
             steered.setdefault(place["item"], []).append(abs(math.degrees(math.atan2(-axle[0], axle[1]))))
