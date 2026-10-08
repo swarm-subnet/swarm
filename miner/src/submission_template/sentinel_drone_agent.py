@@ -73,6 +73,7 @@ GROUND_CLEARANCE_M = 8.0      # climb when the ground comes closer than this
 LANE_SPACING_M = 25.0         # the wide camera covers about 28 m across from 20 m
 FENCE_INSET_M = 4.0           # lanes stay this far inside the fence
 LEG_MARGIN_M = 1.5            # legs between lanes stay this far inside the fence
+CORNER_STEP_M = 3.0           # a way round a bend goes over points this far inside the fence's corners
 SAMPLE_M = 1.0
 WAYPOINT_M = 2.0
 BRAKE_MPS2 = 1.5
@@ -140,18 +141,81 @@ def _legs_clear(fence, route):
     return all(_line_clear(fence, a, b) for a, b in zip(path[:-1], path[1:]))
 
 
+def _shortest(routes):
+    """The route of least length from the dock, or an empty one when there is none."""
+    return min(routes, key=lambda r: float(np.hypot(*np.diff(np.vstack([[0.0, 0.0], r]), axis=0).T).sum()),
+               default=np.zeros((0, 2)))
+
+
+def _inner_corners(fence):
+    """Each fence corner stepped CORNER_STEP_M inside, towards whichever of eight directions lands furthest from the sides."""
+    steps = CORNER_STEP_M * np.array([[math.cos(k * math.pi / 4), math.sin(k * math.pi / 4)] for k in range(8)])
+    corners = []
+    for corner in fence:
+        tries = corner + steps
+        tries = tries[_clear(fence, tries, LEG_MARGIN_M)]
+        if len(tries):
+            corners.append(tries[np.argmax(_edge_distance(fence, tries))])
+    return corners
+
+
+def _way_round(a, b, corners, clear):
+    """The shortest chain of corners from a to b whose legs all keep inside the fence, ending at b; None if none does."""
+    nodes = [a, b, *corners]
+    best, came, done = {0: 0.0}, {}, set()
+    while True:
+        waiting = [i for i in best if i not in done]
+        if not waiting:
+            return None
+        i = min(waiting, key=best.get)
+        if i == 1:
+            chain = []
+            while i:
+                chain.append(nodes[i])
+                i = came[i]
+            return chain[::-1]
+        done.add(i)
+        for j in range(1, len(nodes)):
+            length = best[i] + float(np.hypot(*(nodes[j] - nodes[i])))
+            if j not in done and length < best.get(j, math.inf) and clear(nodes[i], nodes[j]):
+                best[j], came[j] = length, i
+
+
+def _joined(route, corners, clear):
+    """The route from the dock with every leg that would leave the fence sent round over the corners; None if one cannot."""
+    path, here = [], np.zeros(2)
+    for point in route:
+        if not clear(here, point):
+            way = _way_round(here, point, corners, clear)
+            if way is None:
+                return None
+            path += way[:-1]
+        path.append(point)
+        here = point
+    return np.array(path)
+
+
 def plan_route(fence):
-    """The shortest lane sweep over twelve headings whose legs all stay inside the fence, started from the dock."""
-    best, best_length = np.zeros((0, 2)), math.inf
-    for heading in range(0, 180, 15):
-        lanes = _lanes(fence, heading)
-        for route in (lanes, lanes[::-1]):
-            if len(route) == 0 or not _legs_clear(fence, route):
-                continue
-            length = float(np.hypot(*np.diff(np.vstack([[0.0, 0.0], route]), axis=0).T).sum())
-            if length < best_length:
-                best, best_length = route, length
-    return best
+    """The shortest lane sweep over twelve headings, started from the dock.
+
+    A sweep whose legs all stay inside the fence is taken when there is one; on a fence that bends so that none does,
+    the legs that would leave it go round over its corners instead.
+    """
+    sweeps = [route for heading in range(0, 180, 15) for lanes in [_lanes(fence, heading)]
+              for route in (lanes, lanes[::-1]) if len(route)]
+    best = _shortest([route for route in sweeps if _legs_clear(fence, route)])
+    if len(best):
+        return best
+    corners, known = _inner_corners(fence), {}
+
+    def clear(a, b):
+        """Whether the straight leg from a to b keeps inside the fence, worked out once per leg."""
+        key = (*np.round(a, 3), *np.round(b, 3))
+        if key not in known:
+            known[key] = _line_clear(fence, a, b)
+        return known[key]
+
+    return _shortest([way for way in (_joined(route, corners, clear) for route in sweeps) if way is not None])
 
 
 class DroneFlightController:

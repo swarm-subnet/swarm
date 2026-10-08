@@ -126,6 +126,16 @@ def test_sentinel_starter_lanes_reach_both_far_edges_of_the_park():
     assert np.all(np.diff(lanes) <= 2.0 * half + 1e-9)
 
 
+def test_sentinel_starter_sweeps_both_arms_of_a_u_shaped_park():
+    """When no lane heading keeps every leg inside, the starter goes round the fence's corners instead of planning nothing."""
+    starter = type(_load("sentinel_drone_agent.py")).act.__globals__
+    u_fence = np.array([(-60, -20), (60, -20), (60, 80), (30, 80), (30, 10), (-30, 10), (-30, 80), (-60, 80)], float)
+    route = starter["plan_route"](u_fence)
+    assert len(route) > 0
+    assert starter["_legs_clear"](u_fence, route)
+    assert np.any((route[:, 0] < -30) & (route[:, 1] > 30)) and np.any((route[:, 0] > 30) & (route[:, 1] > 30))
+
+
 def test_sentinel_starter_holds_return_home_until_the_straight_line_home_stays_inside():
     """Around a bend in the fence it flies back along its lanes instead of pressing return home across the corner."""
     bent_fence = [(-5.0, -10.0), (100.0, -10.0), (100.0, 100.0), (80.0, 100.0), (80.0, 10.0), (-5.0, 10.0)]

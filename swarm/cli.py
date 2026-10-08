@@ -34,7 +34,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -42,6 +42,8 @@ from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.submission_policy import validate_submission_zip
 from swarm.domain_model import (
     CHALLENGE_FAMILY_IDS,
+    CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
+    CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
     DEFAULT_CLI_FAMILY_ID,
     OPEN_CHALLENGE_FAMILY_IDS,
     get_challenge_family_definition,
@@ -175,7 +177,7 @@ class VisualizeTarget:
     """What the viewer is asked to open: map type, optional seed, family, and how it was resolved."""
     challenge_type: int
     seed: Optional[int] = None
-    family_id: str = "cf_autopilot"
+    family_id: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -677,7 +679,32 @@ def _print_failed_visualize_rows(summary_json: Path, failed_rows: Sequence[dict[
     print("Re-run with `swarm visualize --summary-json <path> --failed-index N` to inspect one.")
 
 
+def _family_for_type(challenge_type: int, family_id: Optional[str]) -> str:
+    """The family named, or else the one that flies this map type: the default when it does, otherwise the first that does."""
+    if family_id is not None:
+        return family_id
+    environment = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(int(challenge_type))
+    flyers = [family for family, environments in CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES.items() if environment in environments]
+    return DEFAULT_CLI_FAMILY_ID if DEFAULT_CLI_FAMILY_ID in flyers or not flyers else flyers[0]
+
+
+def _seed_file_family(seed_file: Path, family_id: Optional[str]) -> str:
+    """The family named, or else the one a seed file's envelope was saved for, or else the default."""
+    if family_id is not None:
+        return family_id
+    saved = json.loads(Path(seed_file).read_text())
+    return str(saved.get("family_id") or DEFAULT_CLI_FAMILY_ID) if isinstance(saved, dict) else DEFAULT_CLI_FAMILY_ID
+
+
 def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTarget]:
+    """The one map the viewer should open, with the family that flies it when the flags name none."""
+    target = _resolve_visualize_map(args)
+    if target is None:
+        return None
+    return replace(target, family_id=_family_for_type(target.challenge_type, target.family_id))
+
+
+def _resolve_visualize_map(args: argparse.Namespace) -> Optional[VisualizeTarget]:
     """Settle the flags into the one map the viewer should open.
 
     The type comes from a summary, a seed file, or the seed's own deterministic assignment;
@@ -724,6 +751,7 @@ def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTar
             )
         return VisualizeTarget(challenge_type=int(args.type), seed=None, family_id=args.family_id)
 
+    chosen_family = _seed_file_family(Path(args.seed_file), args.family_id) if args.seed_file is not None else args.family_id
     inferred_type: int | None = None
     inferred_note: str | None = None
     if args.summary_json is not None:
@@ -734,14 +762,14 @@ def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTar
         )
     elif args.seed_file is not None:
         inferred_type = _lookup_seed_type_in_seed_file(
-            Path(args.seed_file), int(args.seed), family_id=args.family_id
+            Path(args.seed_file), int(args.seed), family_id=chosen_family
         )
         inferred_note = (
             f"Resolved seed {int(args.seed)} to type {inferred_type} "
             f"({TYPE_LABELS.get(inferred_type, 'unknown')}) from {args.seed_file}."
         )
     elif args.type is None:
-        inferred_type = _infer_benchmark_type_from_seed(int(args.seed), family_id=args.family_id)
+        inferred_type = _infer_benchmark_type_from_seed(int(args.seed), family_id=args.family_id or DEFAULT_CLI_FAMILY_ID)
         inferred_note = (
             f"Resolved seed {int(args.seed)} to benchmark type {inferred_type} "
             f"({TYPE_LABELS.get(inferred_type, 'unknown')})."
@@ -753,7 +781,7 @@ def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTar
                 f"Explicit `--type {int(args.type)}` does not match the inferred type "
                 f"{int(inferred_type)} for seed {int(args.seed)}."
             )
-        return VisualizeTarget(challenge_type=int(args.type), seed=int(args.seed), family_id=args.family_id)
+        return VisualizeTarget(challenge_type=int(args.type), seed=int(args.seed), family_id=chosen_family)
 
     if inferred_type is None:
         raise ValueError("Could not resolve a challenge type for visualization.")
@@ -761,7 +789,7 @@ def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTar
     return VisualizeTarget(
         challenge_type=int(inferred_type),
         seed=int(args.seed),
-        family_id=args.family_id,
+        family_id=chosen_family,
         note=inferred_note,
     )
 
@@ -813,7 +841,11 @@ def _cmd_visualize(args: argparse.Namespace) -> int:
 
 def _build_video_argv(args: argparse.Namespace) -> list[str]:
     """Turn the flags into argv for validator.scripts.generate_video, for one seed or a whole seed file."""
-    argv = ["--model", str(args.model), "--family-id", str(args.family_id)]
+    if args.seed_file is not None:
+        family_id = _seed_file_family(Path(args.seed_file), args.family_id)
+    else:
+        family_id = _family_for_type(int(args.type), args.family_id)
+    argv = ["--model", str(args.model), "--family-id", family_id]
     if args.seed_file is not None:
         argv.extend(["--seed-file", str(args.seed_file)])
     else:
@@ -1683,9 +1715,9 @@ def build_parser() -> argparse.ArgumentParser:
     visualize_parser.add_argument(
         "--family-id",
         type=str,
-        default=DEFAULT_CLI_FAMILY_ID,
+        default=None,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help=f"Challenge family id (default: {DEFAULT_CLI_FAMILY_ID}).",
+        help=f"Challenge family id (default: the family that flies the map type, else {DEFAULT_CLI_FAMILY_ID}).",
     )
     visualize_parser.add_argument(
         "--seed",
@@ -1793,9 +1825,9 @@ def build_parser() -> argparse.ArgumentParser:
     video_parser.add_argument(
         "--family-id",
         type=str,
-        default=DEFAULT_CLI_FAMILY_ID,
+        default=None,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help=f"Challenge family id (default: {DEFAULT_CLI_FAMILY_ID}).",
+        help=f"Challenge family id (default: the family that flies the map type, else {DEFAULT_CLI_FAMILY_ID}).",
     )
     video_parser.add_argument(
         "--seed",

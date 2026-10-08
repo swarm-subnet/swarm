@@ -69,11 +69,13 @@ _REPO_ROOT = _SCRIPT_DIR.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from swarm.challenge_families import build_random_task  # noqa: E402
-from swarm.challenge_families.solar_patrol import camera as solar_camera  # noqa: E402
-
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID  # noqa: E402
+from swarm.domain_model import (  # noqa: E402
+    CHALLENGE_FAMILY_IDS,
+    CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
+    CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
+    DEFAULT_CLI_FAMILY_ID,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Action log I/O
@@ -249,9 +251,15 @@ def build_task(seed: int, challenge_type: int, family_id: str = "cf_autopilot"):
     matches what the validator would actually generate -- imported lazily because
     it pulls in bittensor, which is slow and not needed for argument parsing.
     """
+    environment = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(int(challenge_type))
+    flown = CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES.get(family_id, (environment,))
+    if environment not in flown:
+        raise ValueError(f"{family_id} never flies type {int(challenge_type)} ({environment}); it flies {', '.join(flown)}")
     from swarm.constants import SIM_DT
 
     if family_id == "cf_solar_patrol":
+        from swarm.challenge_families import build_random_task
+
         return build_random_task(sim_dt=SIM_DT, seed=int(seed), family_id=family_id)
 
     from swarm.validator.task_gen import task_for_seed_and_type
@@ -378,6 +386,8 @@ def _render_rgb(cli: int, view, proj, w: int, h: int) -> np.ndarray:
 
 def _solar_frame(env, eye, target, up, width: int, height: int, fov: float) -> np.ndarray:
     """One uint8 RGB frame of a Sentinel patrol, drawn by the family's colour camera in the seed's light."""
+    from swarm.challenge_families.solar_patrol import camera as solar_camera
+
     eye = np.asarray(eye, dtype=float)
     view = solar_camera.View(
         feed="colour", eye=tuple(eye), forward=tuple(np.asarray(target, dtype=float) - eye), up=tuple(up),
@@ -389,15 +399,19 @@ def _solar_frame(env, eye, target, up, width: int, height: int, fov: float) -> n
 
 def _attach_family_renderer(cameras: Dict[str, "_CameraBase"], env) -> None:
     """Hand a Sentinel env to every camera, so its frames come from the patrol's ray caster."""
-    if getattr(env, "_solar", None) is not None and solar_camera.RAYCAST:
+    if getattr(env, "_solar", None) is None:
+        return
+    from swarm.challenge_families.solar_patrol import camera as solar_camera
+
+    if solar_camera.RAYCAST:
         for cam in cameras.values():
             cam.solar_env = env
 
 
 def _render_depth(
-    cli: int, view, proj, w: int, h: int, near: float, far: float
+    cli: int, view, proj, w: int, h: int, near: float, far: float, raycast: bool = False
 ) -> np.ndarray:
-    """Return depth in **metres** (float32 array, shape ``(h, w)``)."""
+    """Return depth in **metres** (float32 array, shape ``(h, w)``), through the engine's ray caster when asked."""
     import pybullet as p
 
     _, _, _, zbuf, _ = p.getCameraImage(
@@ -407,7 +421,7 @@ def _render_depth(
         projectionMatrix=proj,
         renderer=p.ER_TINY_RENDERER,
         shadow=0,
-        flags=p.ER_NO_SEGMENTATION_MASK,
+        flags=p.ER_NO_SEGMENTATION_MASK | (getattr(p, "ER_SWARM_RAYCAST", 0) if raycast else 0),
         physicsClientId=cli,
     )
     zbuf = np.asarray(zbuf, dtype=np.float32).reshape(h, w)
@@ -516,6 +530,7 @@ class DepthCamera(_CameraBase):
             DEPTH_SENSOR_RES,
             self._near,
             self._far,
+            raycast=self.solar_env is not None,
         )
         depth_rgb = _colourise_depth(depth_m, self._clip_min, self._clip_max)
 
@@ -792,7 +807,7 @@ class _FlightRecorder:
         self._initialized = True
 
     def capture_step(self, env: object, sim_time_sec: float) -> None:
-        """Render one frame per camera for every frame slot the simulation clock has passed."""
+        """Fill every frame slot the simulation clock has passed, drawing each camera once."""
         if not self._initialized or self._frame_dt <= 0:
             self._last_sim_time = float(sim_time_sec)
             return
@@ -802,23 +817,21 @@ class _FlightRecorder:
         drone_quat = np.asarray(env.quat[0])
         rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
 
-        while float(sim_time_sec) >= self._next_frame_t:
-            for mode, cam in self._cameras.items():
-                frame = cam.capture(drone_pos, drone_quat, rot, self._frame_dt)
-                self._writers[mode].append_data(frame)
-            self._frame_count += 1
-            self._next_frame_t += self._frame_dt
-            if self._progress_file and self._frame_count % 20 == 0:
-                _write_progress(
-                    self._progress_file,
-                    {
-                        "status": "generating",
-                        "frames_rendered": self._frame_count,
-                        "total_frames": self._total_frames,
-                        "start_time": self._t_wall_start,
-                        "last_update": time.time(),
-                    },
-                )
+        self._next_frame_t, written = _write_due_frames(
+            self._cameras, self._writers, drone_pos, drone_quat, rot, float(sim_time_sec), self._next_frame_t,
+            self._frame_dt)
+        self._frame_count += written
+        if self._progress_file and self._frame_count // 20 > (self._frame_count - written) // 20:
+            _write_progress(
+                self._progress_file,
+                {
+                    "status": "generating",
+                    "frames_rendered": self._frame_count,
+                    "total_frames": self._total_frames,
+                    "start_time": self._t_wall_start,
+                    "last_update": time.time(),
+                },
+            )
         self._last_sim_time = float(sim_time_sec)
 
     def finish(self, success: bool, sim_time_sec: float) -> List[VideoResult]:
@@ -1101,6 +1114,21 @@ def _agent_action(agent, obs, env, n_drones, act_dim, act_lo, act_hi, velocity_t
     return act
 
 
+def _write_due_frames(cameras, writers, drone_pos, drone_quat, rot, t_sim: float, next_frame_t: float,
+                      frame_dt: float) -> Tuple[float, int]:
+    """Fill every frame slot the clock has passed: one draw per camera over the whole span, written once per slot.
+
+    Returns the next slot time and how many slots were written.
+    """
+    due = int(math.floor((float(t_sim) - float(next_frame_t)) / frame_dt + 1e-9)) + 1 if t_sim >= next_frame_t else 0
+    for mode, cam in cameras.items():
+        if due:
+            frame = cam.capture(drone_pos, drone_quat, rot, frame_dt * due)
+            for _ in range(due):
+                writers[mode].append_data(frame)
+    return next_frame_t + due * frame_dt, due
+
+
 def _decision_dt(env, sim_dt: float) -> float:
     """Return the simulated seconds advanced by one decision in this family's runtime."""
     return float(sim_dt) * int(getattr(env.family_runtime, "decision_steps", 1))
@@ -1251,19 +1279,15 @@ def record_flight(
             t_sim += decision_dt
 
             # --- render frame ---
-            while t_sim >= next_frame_t:
+            if t_sim >= next_frame_t:
                 drone_pos = np.asarray(env._getDroneStateVector(0)[:3])
                 drone_quat = np.asarray(env.quat[0])
                 rot = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+                next_frame_t, written = _write_due_frames(
+                    cameras, writers, drone_pos, drone_quat, rot, t_sim, next_frame_t, frame_dt)
+                frame_count += written
 
-                for mode, cam in cameras.items():
-                    frame = cam.capture(drone_pos, drone_quat, rot, frame_dt)
-                    writers[mode].append_data(frame)
-
-                frame_count += 1
-                next_frame_t += frame_dt
-
-                if progress_file and frame_count % 20 == 0:
+                if progress_file and frame_count // 20 > (frame_count - written) // 20:
                     _write_progress(progress_file, {
                         "status": "generating",
                         "frames_rendered": frame_count,
@@ -1271,8 +1295,6 @@ def record_flight(
                         "start_time": t_wall_start,
                         "last_update": time.time(),
                     })
-                if decision_dt == float(SIM_DT):
-                    break
 
             if terminated or truncated:
                 success = bool(info.get("success", False))
