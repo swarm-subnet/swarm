@@ -26,7 +26,7 @@ How emissions are distributed on Swarm Subnet 124.
 
 ## What KotH is
 
-Swarm runs **one King of the Hill per challenge family** (e.g. Search-and-Rescue, Swarm Sentinel). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**, with each one's slice proportional to how much they improved the family's best score when they took the throne.
+Swarm runs **one King of the Hill per challenge family** (e.g. Search-and-Rescue, Swarm Sentinel). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**: each one's slice is set first by how recently they took the throne, and lifted by up to 30% by how much they improved the family's best score.
 
 - The **current champion** of a family is always at the top of that family's lineage.
 - The **four most recent past champions** of the family keep earning until they age out of the window.
@@ -133,14 +133,14 @@ Rank weighting is separate from the crowning floor below: the floor decides who 
 
 ## Taking the throne: the dynamic floor
 
-Every submission runs the full 1000-seed benchmark. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
+Every submission runs its family's full benchmark: 1,000 seeds, or 250 for Swarm Sentinel. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
 
 ```text
 s ≤ 0.5      floor = floor_max                                (flat, anti-noise while scores are low)
 s > 0.5      floor = floor_min + (floor_max − floor_min) × (1 − t²),   t = (s − 0.5) / 0.5
 ```
 
-The decay is convex: the floor stays near `floor_max` just past `0.5` and falls off toward `floor_min` as the champion approaches `1.0`, since every point near the top is hard-won. So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster.
+The decay is front-loaded: the floor stays near `floor_max` just past `0.5` and falls off toward `floor_min` as the champion approaches `1.0`, since every point near the top is hard-won. So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster.
 
 The values are `floor_max = 0.015` and `floor_min = 0.005`, and every family carries them:
 

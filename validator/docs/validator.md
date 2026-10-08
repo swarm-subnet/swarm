@@ -15,7 +15,7 @@ Swarm runs **three active challenge families**; Interceptor is completed, and Au
 | [Interceptor](../../docs/families/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
 | [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 65% |
 
-Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker holds about 3.3 GB of memory.
+Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker keeps about 2.8 GB of park caches between patrols and is recycled once it passes 3,200 MiB.
 
 ## 🖥️ System Requirements
 

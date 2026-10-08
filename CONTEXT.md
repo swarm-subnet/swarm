@@ -13,7 +13,7 @@ At a high level, the repo supports two main workflows:
 
 Core benchmark assumptions:
 
-- Models receive camera images (depth or RGB for the rescue families; colour, thermal and zoom for Swarm Sentinel) plus a state vector.
+- Models receive camera images (depth and RGB for the rescue families; colour, thermal and zoom for Swarm Sentinel) plus a state vector, and Swarm Sentinel also gets a site map of the park.
 - Models output flight commands per the family contract: 6 components for the rescue families, 24 for Swarm Sentinel (sticks, gimbal, camera and zoom controls, reports and the dock's buttons).
 - Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain, plus the solar park Swarm Sentinel patrols.
 

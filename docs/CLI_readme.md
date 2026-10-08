@@ -36,7 +36,7 @@ python -m swarm <command>
 
 ## Challenge families
 
-Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm repo package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
+Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
 
 | Family ID | Environment types |
 | --- | --- |
@@ -44,7 +44,7 @@ Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm repo pac
 | `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
 | `cf_solar_patrol` | Solar (type 8) |
 
-The retired families (`cf_autopilot`, `cf_swarm_autopilot`, `cf_interceptor_office`) are no longer served or scored.
+The retired families (`cf_autopilot`, `cf_swarm_autopilot`, `cf_interceptor_office`) and the completed `cf_interceptor` are no longer served or scored.
 
 ---
 
@@ -114,8 +114,7 @@ Omit `--type` and the challenge type is inferred from `--summary-json`, `--seed-
 
 Useful options:
 
-- `--family-id <id>`: challenge family to build the world for (default: `cf_search_and_rescue`). The family decides what is in the map — search-and-rescue spawns a victim, interceptor flies at its own speed limit.
-- `--randomize-appearance`: office only. Office Interceptor repaints its colours and lighting from the seed on every scored episode; the visualizer shows the room in its real colours instead, so you can read the layout. Pass this flag to see the skin a scored episode actually gets.
+- `--family-id <id>`: challenge family to build the world for (default: `cf_search_and_rescue`). The family decides what is in the map: search-and-rescue spawns a victim, and Swarm Sentinel builds its solar park.
 - `--speed <m/s>` / `--boost <x>`: base flight speed and the `Shift` multiplier.
 - `--camera follow|fixed`: viewer camera mode.
 - `--width` / `--height`: window size (default 960x540).
@@ -124,7 +123,7 @@ Useful options:
 
 ### `swarm video`
 
-Renders `.mp4` flight videos of a model flying a seed. Takes either a single `--seed` + `--type`, or a `--seed-file` produced by `swarm benchmark --save-seed-file`. It writes the videos with OpenCV, which the install does not include: run `pip install opencv-python-headless` first.
+Renders `.mp4` flight videos of a model flying a seed. Takes either a single `--seed` + `--type`, or a `--seed-file` produced by `swarm benchmark --save-seed-file`. It needs a video writer the install does not include: run `uv pip install opencv-python-headless` first.
 
 ```bash
 # One seed, chase camera
@@ -151,13 +150,13 @@ Camera modes (`--mode`, comma-separated, or `all`):
 
 Useful options:
 
-- `--family-id <id>`: challenge family to fly (default: `cf_search_and_rescue`). Must match the family the model was trained for, or it will be scored against the wrong task.
+- `--family-id <id>`: challenge family to fly (default: `cf_search_and_rescue`). Must match the family the model was trained for, or the video replays it in the wrong task.
 - `--backend local|benchmark`: `local` runs a fast in-process replay. `benchmark` reruns the exact Docker/RPC path the validator uses, which is slower and requires Docker, but reproduces validator results exactly.
 - `--summary-json <path>`: a benchmark summary to check the replay against; the run fails if the replayed result differs from the recorded one.
 - `--width` / `--height` / `--fps`: output resolution and frame rate (default 1280x720 @ 25).
 - `--out <dir>`: output directory.
 - `--skip-existing`: skip a seed whose outputs already exist.
-- `--save-actions <dir>` / `--replay-actions <dir>`: record the action stream for a seed, or replay a recorded one instead of running the policy.
+- `--save-actions <dir>` / `--replay-actions <dir>`: record the action stream for a seed, or replay a recorded one instead of running the policy (replay needs `--backend local`).
 - `--progress-file <path>`: write JSON progress for a single-seed render, for driving a progress bar elsewhere.
 - Camera tuning: `--chase-back` / `--chase-up` / `--chase-fov` frame the chase camera, `--fpv-fov` and `--overview-fov` set the field of view for the other two.
 

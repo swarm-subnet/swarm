@@ -204,7 +204,7 @@ swarm visualize --type 1                       # fly a map yourself to see it
 swarm report                                   # see how it did
 ```
 
-The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use the epoch's own seeds, which stay secret until the epoch closes, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
+Without `--family-id` these commands use Search and Rescue; add `--family-id cf_solar_patrol` to work on Swarm Sentinel. The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use the epoch's own seeds, which stay secret until the epoch closes, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

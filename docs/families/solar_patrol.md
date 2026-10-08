@@ -13,6 +13,7 @@ Everything the model gets is what the real drone gives through its dock: the sam
 | | |
 |---|---|
 | Family ID | `cf_solar_patrol` (short label **Sentinel**) |
+| Challenge type | 8 (`--type 8`), benchmark group `type8_solar` |
 | Drones | 1 |
 | Decision rate | 10 Hz (one `act()` every 0.1 s); physics and the flight controller run at 50 Hz |
 | Episode horizon | 390 s (up to 3,900 `act()` calls) |
@@ -120,7 +121,7 @@ Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed 
 | 9 | `time_left_s` | Seconds left, from 390 down to 0 | 10 Hz |
 | 10 | `battery_pct` | Battery in whole percent: 95 at take-off, about 81 after a full patrol | 10 Hz |
 | 11 | `wind_estimate_mps` | The drone's own wind estimate, 0.1 m/s steps; 0 below 0.5 m over the dock | every 2 s |
-| 12 | `wind_estimate_sector` | Where that wind comes from: 0 N, 1 NE, 2 E … 7 NW | every 2 s |
+| 12 | `wind_estimate_sector` | Where that wind comes from: 0 N, 1 NE, 2 E … 7 NW; 0 while the estimate reads 0 | every 2 s |
 | 13 | `dock_wind_mps` | The dock's wind gauge, near the ground, 0.1 m/s steps | every 2 s |
 | 14 | `laser_range_m` | Laser distance, m; 0 unless the status is normal | 1 Hz |
 | 15–17 | `laser_point_m` | Where the laser hits, east, north, up from the dock, m; 0 unless normal | 1 Hz |
@@ -133,7 +134,7 @@ Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed 
 | 24 | `camera_feed` | Feed of the image shown: 0 colour, 1 thermal | 10 Hz |
 | 25 | `frame_age_s` | Age of the image shown, s | 10 Hz |
 | 26 | `night_mode` | 0 off, 1 on, 2 auto | 10 Hz |
-| 27 | `night_vision` | 1 when night vision is on | 10 Hz |
+| 27 | `night_vision` | 1 when night vision is on and the 7× lens is the one in use | 10 Hz |
 | 28 | `zoom_lens` | 0 before any zoom, else 3 or 7 | 10 Hz |
 | 29 | `zoom_age_s` | Age of the zoom image, s; 0 before any zoom | 10 Hz |
 | 30 | `zooms_left` | Zooms still allowed this patrol, from 80 | 10 Hz |
@@ -146,18 +147,18 @@ Wind readings are hints, as on the real drone: the estimate reads up to a third 
 
 ## Site map layout
 
-The survey of the park as built, in metres from this seed's dock. Panel tables and buildings move a little in every seed (see [The park](#the-park)), so the map helps the model find its way but never gives exact positions. The fence never moves.
+The survey of the park as built, in metres from this seed's dock. Panel tables and buildings move a little in every seed (see [The park](#the-park)), so the map helps the model find its way but never gives their exact positions. The fence never moves, and the flight limit's corners are this seed's own.
 
 | Index | Field | Meaning |
 |---|---|---|
 | 0 | `fence_count` | Number of fence corners |
 | 1–128 | `fence_xy` | Up to 64 corners as (east, north) pairs, in order around the fence; unused slots are 0 |
 | 129 | `limit_count` | Number of flight-limit corners |
-| 130–257 | `limit_xy` | Up to 64 flight-limit corners as (east, north) pairs |
+| 130–257 | `limit_xy` | Up to 64 flight-limit corners as (east, north) pairs; unused slots are 0 |
 | 258 | `table_count` | Number of panel tables |
-| 259–578 | `tables` | Up to 64 tables, 5 numbers each: centre east, centre north, length, width, heading of the long side in degrees |
+| 259–578 | `tables` | Up to 64 tables, 5 numbers each: centre east, centre north, length, width, heading of the long side (0 to 180°, clockwise from north); unused slots are 0 |
 | 579 | `building_count` | Number of buildings |
-| 580–659 | `buildings` | Up to 16 buildings, the same 5 numbers each |
+| 580–659 | `buildings` | Up to 16 buildings, the same 5 numbers each; unused slots are 0 |
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
 
@@ -179,18 +180,18 @@ One `act()` returns 24 values. The same action is held for the five physics step
 | 7 | `night_vision` | Above 0.5 on. Works only through the 7× lens |
 | 8 | `zoom` | Button: ask for a close-up, with the lens and box below |
 | 9 | `zoom_lens` | Below 0.5 the 3× lens, above it the 7× lens |
-| 10–13 | `zoom_cx`, `zoom_cy`, `zoom_w`, `zoom_h` | Box on the current main frame, as shares of its width and height; the zoom centres on the box centre |
+| 10–13 | `zoom_cx`, `zoom_cy`, `zoom_w`, `zoom_h` | Box on the current main frame, as shares of its width and height. Only the centre counts: the zoom centres on it, and the lens alone sets how close |
 | 14 | `report` | Button: report an intruder with the class, image and box below |
 | 15 | `report_class` | Below 0.5 a person. Above it a vehicle, which is never a threat in this version: always a false alarm |
 | 16 | `report_image` | Below 0.5 the box is on the main frame, above it on the zoom image |
 | 17–20 | `report_cx`, `report_cy`, `report_w`, `report_h` | The box on that image, as shares of its width and height |
 | 21 | `take_off` | Button: the dock opens and lifts the drone to 20 m |
 | 22 | `return_home` | Button: the drone flies home and the dock lands it |
-| 23 | `cancel_return` | Button: stop a return on the way; the drone hovers and is yours again |
+| 23 | `cancel_return` | Button: stop a return or a landing on the way; the drone is yours again at once |
 
 **Buttons count once.** `zoom`, `report`, `take_off`, `return_home` and `cancel_return` act only on the decision their value rises through 0.5. Holding one at 1.0 presses it once; to press again, send 0.5 or less for at least one decision first.
 
-Values are clipped to their bounds. A NaN or infinite value becomes 0, and an action that does not hold 24 values becomes all zeros. `swarm model verify` is stricter: its smoke test rejects any value outside the bounds.
+Values are clipped to their bounds. An action with any NaN or infinite value, or one that does not hold 24 values, becomes all zeros. `swarm model verify` is stricter: its smoke test rejects any value outside the bounds.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
 
@@ -224,14 +225,14 @@ One episode is one patrol and one seed:
 
 ```text
 docked ──take_off──► taking off ──(dock lifts it to 20 m)──► flying ──return_home──► returning ──► landing ──► landed
-                                                               ▲                          │
-                                                               └──────cancel_return───────┘
+                                                                ▲                        │            │
+                                                                └─────cancel_return──────┴────────────┘
 ```
 
 - **Take-off**: press `take_off` in the dock. The lids open (about 4 s), the drone climbs straight up to 20 m above the dock, and the model takes over: about 12 s in all.
 - **Flying**: the model has the drone. Movement and turns do nothing while the dock flies it (take-off, the flight home, landing); the cameras, zoom and reports keep working.
 - **Return home**: press `return_home` while flying. The return height is fixed at the press: 20 m above the dock, or the current height if that is higher and the drone is within 5.5 m of the dock. The drone climbs or descends to it, flies straight to the dock and lands on the pad, about 12 s for the landing itself. The park bends, and a straight line home can cut across a corner past the flight limit's stop line, which ends the patrol without the landing: press return home where the straight line to the dock stays inside the fence.
-- **Cancel**: `cancel_return` during the return or the landing stops the drone where it is, hovering, and hands it back. Press `return_home` again later; that return still earns the landing if it lands in time.
+- **Cancel**: `cancel_return` during the return or the landing hands the drone straight back: it brakes towards whatever your sticks ask, at up to 2 m/s², so send zero sticks to hover. Press `return_home` again later; that return still earns the landing if it lands in time.
 - **Height ceiling**: the drone cannot climb past 30 m above the dock.
 
 The patrol ends on the first of:
@@ -243,7 +244,7 @@ The patrol ends on the first of:
 | Collision | The drone hits anything, the dock body included, or tips past its tilt limit | Detection, coverage and height, not the landing |
 | Flight limit | The drone comes within 5 m of the flight limit's line, or leaves it | Detection, coverage and height, not the landing |
 
-**The flight limit** is an invisible line drawn a little outside the fence, at a different distance on every side and in every seed. The site map gives its shape and the state gives the distance to it every decision. The patrol ends on the spot **5 m before the line**, which is up to 5 m outside the fence. There is no flight home and nothing to cancel.
+**The flight limit** is an invisible line drawn a little outside the fence, at a different distance on every side and in every seed. The site map gives its shape and the state gives the distance to it every decision. The patrol ends on the spot **5 m before the line**, which is up to about 5 m outside the fence. There is no flight home and nothing to cancel.
 
 The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km at 5 m/s), 62 s of stops to zoom and 40 s for landing, but only the total is enforced. A return pressed too late ends as a timeout, without the landing.
 
@@ -253,11 +254,11 @@ The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km a
 
 ## The park
 
-- **One park, never the same twice.** Every seed shifts each panel table, building and tree a little in place, size and colour. The fence stays where it is. The ground inside the fence rises about 39 m from one end to the other, so 20 m above the dock is much less than 20 m above the high end.
+- **One park, never the same twice.** Every seed shifts each panel table, building and tree a little in place, size and colour, and keeps more or fewer of the trees and grass around the park. The fence stays where it is. The ground inside the fence rises about 39 m from one end to the other, so 20 m above the dock is much less than 20 m above the high end.
 - **The dock** stands on a different open spot each seed, at least 10 m inside the fence and clear of panels and trees.
 - **Day or night**, half and half, with the sun or moon set by the seed.
 - **Wind** is none, light or strong, drawn per seed: by day about 5 %, 70 % and 25 %, by night about 10 %, 80 % and 10 %. Light wind tops out between 2.5 and 6 m/s, strong between 10 and 12 m/s, gusts included.
-- **Intruders** are in 1 seed in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when they hear the drone overhead: work on, freeze, hide under the panels, or run. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
+- **Intruders** are in 1 seed in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when they hear the drone overhead: work on, freeze, drop flat and lie still, or run. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
 - **Decoys** are in every seed: one to three dogs wandering inside the fence, a farm truck on the public road outside, and a bird circling high above. None of them is a threat.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
@@ -272,7 +273,7 @@ The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km a
 seed = 0.70 · detection + 0.20 · coverage + 0.10 · flight
 ```
 
-- **Detection**, with intruders: valid reports ÷ (threats + false alarms). A miss and a false alarm cost the same. In an empty seed it is the coverage ÷ (1 + false alarms): silence only pays after a real search.
+- **Detection**, with intruders: valid reports ÷ (threats + false alarms), so every miss and every false alarm pulls it down. In an empty seed it is the coverage ÷ (1 + false alarms): silence only pays after a real search.
 - **Coverage**: the share of the park searched. The park is split into 2 m × 2 m cells inside the fence, laid down with a random offset and a turn of up to 10° each seed. A cell counts as searched once a main-camera frame shows it from **20 m or lower above the dock**, sharp enough that a person would be about 6 pixels across (at most 8.3 cm of ground per pixel). Zoom images mark nothing, and a colour frame at night with night mode off marks nothing.
 - **Flight**: half for landing in the dock after your own `return_home`, half for the peak height: full up to 22 m above the dock, falling in a straight line to 0 at 30 m. The peak counts, so one climb past 22 m costs for the whole patrol.
 
@@ -281,12 +282,14 @@ seed = 0.70 · detection + 0.20 · coverage + 0.10 · flight
 **A report is valid** when all of these hold, checked against the simulator's own map of what each pixel shows in the very frame you boxed:
 
 1. The frame was taken no higher than 24 m above the dock.
-2. Your box covers a real object: overlap with that object's visible outline (intersection over union) of at least 0.5.
+2. Your box covers a real object: overlap with the tight box around that object's visible pixels (intersection over union) of at least 0.5.
 3. The class is person and the object is a person.
 4. That person was inside the fence when the frame was taken.
 5. It is the first valid report of that person, on either image.
 
 Any report that fails is a false alarm, and a report never ends the patrol. Counting who you have already reported is the model's job.
+
+Every row below lands after its own `return_home` and never climbs above 22 m:
 
 | Seed | Score |
 |---|---|
@@ -299,7 +302,7 @@ Any report that fails is a false alarm, and a report never ends the patrol. Coun
 
 ### Across the epoch: the ×10 rule
 
-After every seed is scored on its own, **each miss and each false alarm turns 10 of the model's best seeds to 0**, and the score is the mean of what is left. It never goes below 0. Over 250 seeds, a strong model at 0.97 that misses one thief drops to 0.93; a model that never reports, or reports everything, ends at 0. A seed that fails on slow-act strikes still answers for the threats it left unreported. This rule is for Swarm Sentinel only; the other families keep the plain mean.
+After every seed is scored on its own, **each miss and each false alarm turns 10 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. Over 250 seeds, a strong model at 0.97 that misses one thief drops to 0.93; a model that never reports, or reports everything, ends at 0. A seed that fails on slow-act strikes still answers for the threats it left unreported. This rule is for Swarm Sentinel only; the other families keep the plain mean.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
 
@@ -318,7 +321,7 @@ Your zip runs as a Cap'n Proto RPC server inside Docker; the validator calls `pi
 | `ping` / `reset` timeouts | 2.0 s / 5.0 s |
 | First `act` | 2.0 s budget, 3.0 s hard cap (reference time) |
 | Thinking time | **400 ms of baseline-equivalent compute per camera frame**, shared by the five decisions of that frame: decisions 1–5, 6–10 and so on share one budget, and each may use what its window has left. Hard cap per `act` 2.0 s reference + measured RPC overhead + 0.05 s |
-| Slow `act` | Retried once with the same observation; if that is slow too, an all-zero action is flown (no movement, no buttons, camera level, colour feed, night mode off) and a strike is counted |
+| Slow `act` | Counts a strike and is retried once with the same observation; if the retry is slow too, an all-zero action is flown (no movement, no buttons, camera level, colour feed, night mode off). A decision counts one strike at most |
 | Strikes | 15 strikes or 3 hard-cap hits fail the seed |
 
 The other families give 0.6 s per `act()`. Here a new frame comes every fifth decision, so spend the budget on the frame and keep the four decisions between frames light. Timing is hardware-fair: your steps are judged in baseline-equivalent time, so a slower validator host does not penalise you. Package installs in the container are whitelisted; see the [miner guide](../../miner/docs/miner.md#docker-whitelist).
@@ -329,7 +332,7 @@ The other families give 0.6 s per `act()`. Here a new frame comes every fifth de
 
 ## Local testing
 
-Start from the starter agent. It flies a whole patrol from the state and the site map: it takes off, sweeps the park in lanes at 19.5 m above the dock, returns home and lands. It never looks at the images and never reports, so it finds nobody; replace its sweep with your own search.
+Start from the starter agent. It flies a whole patrol from the state and the site map: it takes off, sweeps the park in lanes at 19.5 m above the dock, returns home and lands. It never looks at the images and never reports, so it finds nobody; replace its sweep with your own search. Run these from the repo root:
 
 ```bash
 mkdir -p my_model
@@ -340,19 +343,20 @@ swarm model verify --model Submission/submission.zip
 swarm benchmark --model Submission/submission.zip --family-id cf_solar_patrol --seeds-per-group 1 --workers 1
 ```
 
+- `swarm model package` stops if `Submission/submission.zip` already exists: add `--overwrite` to package again.
 - `--seeds-per-group` sets how many seeds the benchmark flies (default 3). Every seed is first flown once by a scripted reference pilot that checks the seed can be done; the verdict is cached, so a seed costs this check only the first time.
 - To fly one exact seed, pass `--seed-file seeds.json` with `{"schema_version": "challenge_family_seed_file.v1", "family_id": "cf_solar_patrol", "type_seeds": {"type8_solar": [1002]}}`.
-- One patrol takes about 3 minutes on a validator-class CPU, plus the seed check, and needs about 3.3 GB of memory per worker: keep `--workers` low on a laptop.
+- One patrol takes about 3 minutes on a validator-class CPU, plus the seed check, and a worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.
 - Always pass `--family-id cf_solar_patrol`: without it, `swarm benchmark` runs Search and Rescue.
 
-To watch a patrol, film it with `swarm video` (it needs OpenCV), or look around a park with `swarm visualize`:
+To watch a patrol, film it with `swarm video` (it needs a video writer the install does not include), or look around a park with `swarm visualize`:
 
 ```bash
-pip install opencv-python-headless
+uv pip install opencv-python-headless
 swarm video --model Submission/submission.zip --seed 1002 --type 8 --family-id cf_solar_patrol --backend local
 swarm visualize --type 8 --family-id cf_solar_patrol --seed 1002
 ```
 
-The video is drawn with the patrol's own renderer, a few frames a second on a fast desktop CPU, so a full patrol takes a while to film.
+Videos land in `validator/scripts/videos/` unless you pass `--out <folder>`. They are drawn with the patrol's own renderer, a few frames a second on a fast desktop CPU, so a full patrol takes a while to film.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>

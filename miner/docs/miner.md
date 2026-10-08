@@ -68,7 +68,7 @@ Swarm runs **three active challenge families**, all paying. Interceptor is compl
 | Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 65% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](../../docs/families/interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The retired families' guides stay online for reference: [Autopilot](../../docs/families/autopilot.md), [Swarm Autopilot](../../docs/families/swarm_autopilot.md), [Office Interceptor](../../docs/families/office_interceptor.md). A slice still burns if its own family stops paying out — no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The retired families' guides stay online for reference: [Autopilot](../../docs/families/autopilot.md), [Swarm Autopilot](../../docs/families/swarm_autopilot.md), [Office Interceptor](../../docs/families/office_interceptor.md). A slice still burns if its own family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -457,7 +457,7 @@ A transient timeout or RPC-transport failure is retried once for that seed, subj
 
 ### Epoch Rotation
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Each validator independently generates its own 1,000 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds.
 
 At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` refuses to commit in that window and tells you when it reopens.
 
