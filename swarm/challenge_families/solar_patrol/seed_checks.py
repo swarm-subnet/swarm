@@ -45,7 +45,7 @@ from swarm.protocol import MapTask
 
 from .task import solar_patrol_task
 
-CHECK_VERSION = 1                      # part of the kept verdicts' folder: a change to the checks is a new version
+CHECK_VERSION = 2                      # part of the kept verdicts' folder: a change to the checks is a new version
 CHECK_TRIES = 16                       # candidates tried per seed; at any real drop rate the last is never reached
 REPLACEMENT_TAG = "solar-seed-check"
 CACHE_ENV = "SWARM_SEED_CHECK_DIR"
