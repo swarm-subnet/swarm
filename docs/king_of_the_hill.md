@@ -42,9 +42,9 @@ How the family slices add up is covered in [Per-family emissions](#per-family-em
 
 Winner-take-all has two failure modes that KotH addresses:
 
-1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add just enough noise to clear the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, that miner's tiny jump translates to a tiny share: most of the emissions stay with the past kings whose jumps were larger.
+1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add just enough noise to clear the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, the crowning floor makes that jump cost a real improvement (`0.015`, falling to `0.005` near the top), and a copycat who clears it still shares the family's slice with the four kings before it instead of taking it all.
 
-2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying (proportional to the real contribution) for up to four more dethronings.
+2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that king keeps a seat and keeps earning for up to four more dethronings: each seat earns 70% of the one above it, and the size of the jump that won it adds up to 30% on top.
 
 KotH rewards **the act of moving the frontier**, not just the act of sitting on it.
 
