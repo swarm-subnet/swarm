@@ -37,6 +37,7 @@ from swarm.challenge_families.solar_patrol import airframe, drone_state, park, r
 from swarm.challenge_families.solar_patrol.contract import FAMILY_ID, HORIZON_S
 from swarm.challenge_families.solar_patrol.seed_checks import CHECK_TRIES, SeedCheckError, Verdict, candidates
 from swarm.constants import SIM_DT
+from swarm.domain_model import get_family_benchmark_seed_count
 from swarm.validator.utils_parts import run_task as run_task_module
 
 _M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
@@ -370,6 +371,27 @@ async def test_solar_waits_until_its_seeds_are_judged_off_the_loop(monkeypatch):
     assert run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
     judged.clear()
     assert run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
+
+
+@pytest.mark.asyncio
+async def test_solar_prepares_only_the_seeds_it_is_scored_on(monkeypatch):
+    """Of the epoch's 1,000 seeds only the first 250, the positions the backend hands out, are flown and asked about."""
+    runtime = require_runtime_family(FAMILY_ID)
+    asked, started = [], []
+    monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: asked.append(list(seeds)) or False)
+    monkeypatch.setattr(runtime, "prepare_seeds", lambda seeds: started.append(list(seeds)))
+    validator = _validator_with_seeds(range(1000, 2000))
+    assert not run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
+    await validator._seed_preparations[(FAMILY_ID, 5)]
+    assert asked == started == [list(range(1000, 1250))]
+
+
+def test_the_scored_seed_count_is_read_from_the_registry():
+    """Swarm Sentinel is scored on 250 seeds; a family without a count reads 0, the whole list."""
+    registry = {"challenge_families": {"cf_a": {"benchmark_seed_count": 4}, "cf_b": {}}}
+    assert get_family_benchmark_seed_count(FAMILY_ID) == 250
+    assert get_family_benchmark_seed_count("cf_a", registry=registry) == 4
+    assert get_family_benchmark_seed_count("cf_b", registry=registry) == 0
 
 
 @pytest.mark.asyncio

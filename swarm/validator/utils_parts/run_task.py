@@ -40,6 +40,7 @@ import numpy as np
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
 from swarm.constants import CLAIM_GIVE_UP_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
+from swarm.domain_model import get_family_benchmark_seed_count
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.runtime_telemetry import tracker_call
@@ -98,6 +99,8 @@ def _family_seeds_prepared(self, family_id: str, epoch: int) -> bool:
     if key in prepared:
         return True
     seeds = list(_seed_manager_call(self.seed_manager, "get_all_seeds", family_id, epoch))
+    # The backend hands out only the family's first seeds, so the rest are never flown and need no preparation.
+    seeds = seeds[:get_family_benchmark_seed_count(family_id) or len(seeds)]
     if runtime.seeds_prepared(seeds):
         prepared.add(key)
         return True
