@@ -15,10 +15,10 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Solar Patrol's flight limit (task 15): the line each seed draws around the fence, what the dock reports about it,
-and the stop line that ends the patrol outside the fence.
+"""Solar Patrol's flight limit (tasks 15 and 40): the line each seed draws around the fence, what the dock reports
+about it, and the stop line that ends the patrol outside the fence and clear of every panel table.
 
-The limit is drawn on a square fence here, and on the park's own fence when the map is installed.
+The limit is drawn on a square fence here, and on the park's own fence and tables when the map is installed.
 """
 from __future__ import annotations
 
@@ -26,8 +26,9 @@ import os
 from types import SimpleNamespace
 
 import numpy as np
+import pybullet as p
 import pytest
-from shapely.geometry import Point, Polygon
+from shapely.geometry import MultiPoint, Point, Polygon
 
 from swarm.challenge_families.solar_patrol import flight_limit, park
 from swarm.challenge_families.solar_patrol.contract import (
@@ -38,19 +39,58 @@ from swarm.challenge_families.solar_patrol.contract import (
     new_state,
 )
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
-from swarm.core.maps.solar.builder import SOLAR_ASSET_DIR
+from swarm.core.maps.solar.builder import (
+    SOLAR_ASSET_DIR,
+    _footprint,
+    build_solar_map,
+    solar_manifest,
+    solar_shifts,
+)
 
 _SOLAR_ASSETS = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 _SQUARE = np.array([[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]])
+_L_SHAPE = np.array([[0.0, 0.0], [100.0, 0.0], [100.0, 50.0], [50.0, 50.0], [50.0, 100.0], [0.0, 100.0]])
 _SEEDS = range(200)
 _FURTHEST = flight_limit.STOP_LINE_M + flight_limit.MAX_OUTSIDE_M
+_PARK_SEEDS = range(40)
 
 
-def _episode(seed=0, phase="flying", fence=_SQUARE):
-    """A patrol with its limit drawn around the fence and a dock in the middle of the square."""
+def _episode(seed=0, phase="flying", fence=_SQUARE, tables=()):
+    """A patrol with its limit drawn around the fence, a dock in the middle of the square, and the tables given."""
     ep = SolarEpisode(seed=seed, phase=phase, fence=fence, dock_position=np.array([50.0, 50.0, 30.0]))
+    ep.park = {"world": {"tables": list(tables)}}
     flight_limit.reset(None, ep)
     return ep
+
+
+def _table(west, south, east, north):
+    """A flat table's eight corners seen from above, a box between the two corners given."""
+    return np.array([[x, y] for x in (west, east) for y in (south, north) for _ in range(2)])
+
+
+def _clearance(limit, tables):
+    """How far the stop line stands from the nearest table, measured as the patrol does, negative past it."""
+    stop = Polygon(limit).buffer(-flight_limit.STOP_LINE_M, quad_segs=64)
+    shapes = [MultiPoint(corners).convex_hull for corners in tables]
+    return min(stop.exterior.distance(shape) * (1.0 if stop.contains(shape) else -1.0) for shape in shapes)
+
+
+def _at_lowest(fence, tables):
+    """The limit with every side at its lowest draw for these tables, the nearest any seed stands its stop line."""
+    low = flight_limit.lowest(fence, tables)
+    return flight_limit.outline(fence, flight_limit.STOP_LINE_M + low, low)
+
+
+def _park_tables(seed):
+    """Every piece of every panel table where the seed stands it, read from the survey and the seed's shifts."""
+    manifest = solar_manifest(_SOLAR_ASSETS)
+    shifts = solar_shifts(seed, _SOLAR_ASSETS)
+    tables = []
+    for index, place in enumerate(manifest["placements"]):
+        if "row" in place:
+            moved = dict(place, **{key: shifts[index][key] for key in ("position", "quaternion", "scale")})
+            tables.append(_footprint(manifest["items"][place["item"]], moved))
+    return np.array(tables)
 
 
 def _at(east, north):
@@ -109,6 +149,75 @@ def test_the_parks_limit_keeps_every_rule_on_every_seed():
         limit = _episode(seed=seed, fence=fence).flight_limit["polygon"]
         assert _keeps_the_rules(limit, fence)
         assert len(limit) <= MAX_LIMIT_POINTS
+
+
+# ---------------------------------------------------------------- the gap to the panel tables
+
+
+def test_a_table_near_one_side_raises_only_that_sides_lowest_draw():
+    """A table 0.4 m inside the south side lifts that side's stop line to at least 0.6 m out on every seed; the other
+    three sides still draw over the whole 0 to 5 m."""
+    table = _table(40.0, 0.4, 60.0, 4.0)
+    assert flight_limit.lowest(_SQUARE, [table]) == pytest.approx([0.6, 0.0, 0.0, 0.0])
+    draws = np.array([_episode(seed=seed, tables=[table]).flight_limit["pushes"] for seed in _SEEDS])
+    draws -= flight_limit.STOP_LINE_M
+    assert draws[:, 0].min() >= 0.6 and draws[:, 0].max() > 4.75
+    assert np.all(draws[:, 1:].min(axis=0) < 0.25)
+
+
+def test_tables_clear_of_every_side_leave_the_draws_as_they_were():
+    """Tables at least a metre in from every side, however near a corner, leave every seed's limit exactly as it is
+    drawn with no tables at all."""
+    tables = [_table(20.0, 20.0, 40.0, 24.0), _table(1.0, 1.0, 21.0, 5.0), _table(60.0, 95.0, 99.0, 99.0)]
+    for seed in _SEEDS:
+        assert np.array_equal(_episode(seed=seed, tables=tables).flight_limit["pushes"],
+                              _episode(seed=seed).flight_limit["pushes"])
+
+
+@pytest.mark.parametrize("fence, table", [
+    (_SQUARE, _table(98.0, 0.3, 99.8, 3.0)),
+    (_SQUARE, _table(0.2, 96.0, 3.0, 99.9)),
+    (_SQUARE, _table(0.01, 40.0, 2.0, 60.0)),
+    (_SQUARE, _table(97.0, 98.0, 99.95, 99.99)),
+    (_L_SHAPE, _table(45.0, 45.0, 49.9, 49.95)),
+    (_L_SHAPE, _table(40.0, 52.0, 49.95, 60.0)),
+    (_L_SHAPE, _table(55.0, 49.2, 70.0, 49.9)),
+])
+def test_the_lowest_draws_keep_the_stop_line_clear_of_a_table_by_a_side_or_a_corner(fence, table):
+    """With every side at its lowest draw, the nearest a seed can stand the stop line, it still clears a table hard
+    by a side, tucked into an outward corner or by an inward one by the full metre, and never comes inside the fence."""
+    limit = _at_lowest(fence, [table])
+    assert _clearance(limit, [table]) >= flight_limit.PANEL_CLEAR_M - 1e-9
+    assert _keeps_the_rules(limit, fence)
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(_SOLAR_ASSETS, "manifest.json")),
+                    reason=f"solar map not built at {_SOLAR_ASSETS}")
+def test_the_parks_stop_line_clears_every_table_where_the_seed_stands_it():
+    """On the park, with its tables where each seed shifts them and every side at its lowest draw, the stop line
+    stands at least a metre off every piece of every table and holds the whole fence; any draw stands it further out."""
+    fence = park.fence_line(_SOLAR_ASSETS)
+    for seed in _PARK_SEEDS:
+        tables = _park_tables(seed)
+        assert len(tables) == 3 * 58
+        limit = _at_lowest(fence, tables)
+        assert _clearance(limit, tables) >= flight_limit.PANEL_CLEAR_M - 1e-9, seed
+        assert _keeps_the_rules(limit, fence)
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(_SOLAR_ASSETS, "manifest.json")),
+                    reason=f"solar map not built at {_SOLAR_ASSETS}")
+@pytest.mark.timeout(600)
+def test_the_built_park_hands_the_limit_every_table_where_the_seed_stands_it():
+    """The park the patrol flies hands the flight limit the same table outlines the seed's shifts stand, so the gap is
+    kept to the tables as built, not as surveyed."""
+    cli = p.connect(p.DIRECT)
+    try:
+        world = build_solar_map(seed=6, cli=cli, asset_dir=_SOLAR_ASSETS, groups=("park",))
+    finally:
+        p.disconnect(cli)
+    ep = SolarEpisode(seed=6, park={"world": world})
+    assert park.table_footprints(ep) == pytest.approx(_park_tables(6), abs=1e-6)
 
 
 # ---------------------------------------------------------------- the stop line

@@ -152,3 +152,9 @@ def passable_outlines(ep: SolarEpisode) -> np.ndarray:
     """East, north and radius, world metres, of each standing piece the simulator lets a drone pass through but a
     real one would hit: a tree's crown."""
     return np.asarray(ep.park["world"].get("passable", ()), dtype=float).reshape(-1, 3)
+
+
+def table_footprints(ep: SolarEpisode) -> np.ndarray:
+    """The corners seen from above, world metres, of every piece of every panel table where this seed stands it:
+    eight per piece."""
+    return np.asarray(ep.park["world"].get("tables", ()), dtype=float).reshape(-1, 8, 2)

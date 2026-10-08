@@ -22,6 +22,9 @@ stand outside it, so the whole park inside the fence can always be flown. The li
 the pushed sides joined into one outline around the fence, the shape of a DJI custom flight area. The dock reports the
 distance to it and whether the drone is inside, as DJI's does. Reaching the stop line ends the patrol there, and the
 landing earns nothing.
+
+A side with a panel table near it only draws distances that keep the stop line PANEL_CLEAR_M off every table where
+the seed stands it (task 40).
 """
 
 from __future__ import annotations
@@ -30,16 +33,19 @@ import math
 from typing import Any
 
 import numpy as np
+import shapely
 from shapely.geometry import MultiPoint, Polygon
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
+from . import park
 from .contract import MAX_LIMIT_POINTS, SITE_MAP_SLICES, STATE_SLICES, put
 from .episode import SolarEpisode
 from .fixed_order import dot
 
 STOP_LINE_M = 5.0                      # DJI ends the task this near a custom flight area's edge
 MAX_OUTSIDE_M = 5.0                    # the stop line stands 0 to 5 m outside each side of the fence
+PANEL_CLEAR_M = 1.0                    # the stop line keeps this far off every panel table
 LIMIT_SEED_STREAM = 0xF15              # the limit's own stream, so its draws never move another part's
 _AIRBORNE = ("taking_off", "flying", "returning", "landing")
 _ROUNDING_M = 1e-6                     # far above the distance's float error, so a skipped check never hides a stop
@@ -53,18 +59,34 @@ def _sides(fence: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return a, b, np.column_stack([along[:, 1], -along[:, 0]]) / np.hypot(*along.T)[:, None]
 
 
-def pushes(seed: int, fence: np.ndarray) -> np.ndarray:
-    """How far each side of the limit stands out from its side of the fence this seed: STOP_LINE_M, plus 0 to
-    MAX_OUTSIDE_M drawn per side for the stop line."""
-    draw = np.random.default_rng([LIMIT_SEED_STREAM, int(seed)]).uniform(0.0, MAX_OUTSIDE_M, len(_sides(fence)[0]))
-    return STOP_LINE_M + draw
+def lowest(fence: np.ndarray, tables: np.ndarray) -> np.ndarray:
+    """The nearest each side's stop line may stand to the fence: 0, raised on a side with a table less than
+    PANEL_CLEAR_M from it until the table is cleared by that much.
+
+    A side's gap is read MAX_OUTSIDE_M past both its ends, as far as its stop line can bend round a corner.
+    """
+    a, b, _ = _sides(fence)
+    if not len(tables):
+        return np.zeros(len(a))
+    along = (b - a) / np.hypot(*(b - a).T)[:, None]
+    reach = shapely.linestrings(np.stack([a - MAX_OUTSIDE_M * along, b + MAX_OUTSIDE_M * along], axis=1))
+    shapes = shapely.convex_hull(shapely.multipoints(np.asarray(tables, dtype=float)))
+    gaps = shapely.distance(reach[:, None], shapes[None, :]).min(axis=1)
+    return np.clip(PANEL_CLEAR_M - gaps, 0.0, MAX_OUTSIDE_M)
 
 
-def outline(fence: np.ndarray, push: np.ndarray) -> np.ndarray:
+def pushes(seed: int, low: np.ndarray) -> np.ndarray:
+    """How far each side of the limit stands out from its side of the fence this seed: STOP_LINE_M, plus a distance
+    drawn per side for the stop line, from the side's lowest to MAX_OUTSIDE_M."""
+    return STOP_LINE_M + np.random.default_rng([LIMIT_SEED_STREAM, int(seed)]).uniform(low, MAX_OUTSIDE_M)
+
+
+def outline(fence: np.ndarray, push: np.ndarray, low: np.ndarray) -> np.ndarray:
     """The fence with every side pushed out by its distance, merged into one polygon, anticlockwise, in world metres.
 
     A strip lies along each side and a wedge closes each corner. An outward corner's wedge reaches the point
-    STOP_LINE_M out along both sides, so no stretch of the fence comes nearer the limit than the stop line.
+    STOP_LINE_M, plus the larger lowest draw of its two sides, out along both sides, so no stretch of the fence
+    comes nearer the limit than the stop line, and a table tucked into the corner keeps its gap.
     """
     a, b, out = _sides(fence)
     strips = [Polygon([a[i], b[i], b[i] + push[i] * out[i], a[i] + push[i] * out[i]]) for i in range(len(a))]
@@ -73,7 +95,8 @@ def outline(fence: np.ndarray, push: np.ndarray) -> np.ndarray:
         before, after = a[i] + push[i - 1] * out[i - 1], a[i] + push[i] * out[i]
         corner = [a[i], before, after]
         if out[i - 1, 0] * out[i, 1] - out[i - 1, 1] * out[i, 0] > 0.0:
-            corner.append(a[i] + STOP_LINE_M * (out[i - 1] + out[i]) / (1.0 + dot(out[i - 1], out[i])))
+            reach = STOP_LINE_M + max(low[i - 1], low[i])
+            corner.append(a[i] + reach * (out[i - 1] + out[i]) / (1.0 + dot(out[i - 1], out[i])))
         wedges.append(MultiPoint(corner).convex_hull)
     merged = unary_union([Polygon(a)] + [piece for piece in strips + wedges if piece.area > 0.0]).simplify(0.0)
     return np.array(orient(merged, 1.0).exterior.coords[:-1])
@@ -106,8 +129,9 @@ def _distance(polygon: np.ndarray, point: np.ndarray) -> float:
 
 def reset(env: Any, ep: SolarEpisode) -> None:
     """Draw this seed's limit around the fence."""
-    push = pushes(ep.seed, ep.fence)
-    polygon = outline(ep.fence, push)
+    low = lowest(ep.fence, park.table_footprints(ep))
+    push = pushes(ep.seed, low)
+    polygon = outline(ep.fence, push, low)
     ep.flight_limit = {"pushes": push, "polygon": polygon, "sides": _sides_of(polygon), "checked": (0.0, 0.0),
                        "clear_m": 0.0}
 

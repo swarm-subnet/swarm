@@ -415,6 +415,17 @@ def _outline(item: Dict[str, Any], place: Dict[str, Any]) -> Tuple[float, float,
             float(np.max(high - low) / 2.0))
 
 
+def _footprint(item: Dict[str, Any], place: Dict[str, Any]) -> np.ndarray:
+    """The eight corners of a placed piece's bounds seen from above, east and north in the world, tilt included."""
+    low = np.array(item["bounds_min"]) * place["scale"]
+    high = np.array(item["bounds_max"]) * place["scale"]
+    corners = np.array([[x, y, z] for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])])
+    turn = np.array(p.getMatrixFromQuaternion(place["quaternion"])).reshape(3, 3)
+    # Turned with elementwise products in a fixed order, not by BLAS, whose rounding follows the CPU.
+    return np.stack([corners[:, 0] * turn[row, 0] + corners[:, 1] * turn[row, 1] + corners[:, 2] * turn[row, 2]
+                     + place["position"][row] for row in (0, 1)], 1)
+
+
 def _yaw(quaternion: Sequence[float]) -> float:
     """The heading of a rotation about the vertical, radians."""
     x, y, z, w = quaternion
@@ -645,8 +656,8 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
 
     Returns the body ids per group, the placement and body of every mover for the runtime to drive, the outline of
     every standing park piece the simulator lets a drone pass through (a tree's crown), the glass of the panel tables,
-    the densities the seed drew, and the counts of what was placed. Naming groups builds only those, which is how a
-    check loads the terrain on its own.
+    the footprint of every piece of every panel table where the seed stands it, the densities the seed drew, and the
+    counts of what was placed. Naming groups builds only those, which is how a check loads the terrain on its own.
 
     The pieces this seed shifts stand last, once the terrain is in, so each is dropped by the ground it moved over.
     """
@@ -659,6 +670,7 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
     movers: List[Tuple[Dict[str, Any], int]] = []
     passable: List[Tuple[float, float, float]] = []
     glass: List[int] = []
+    tables: List[np.ndarray] = []
     triangles = 0
 
     def stand(place: Dict[str, Any], item: Dict[str, Any], tint: Sequence[float]) -> None:
@@ -675,6 +687,8 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
             passable.append(_outline(item, place))
         if item["group"] == "park" and "glass" in item.get("flags", ()):
             glass.append(body)
+        if "row" in place:
+            tables.append(_footprint(item, place))
         triangles += item["triangles"]
 
     shifted = []
@@ -700,8 +714,8 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
     if forest and (groups is None or "plants" in groups):
         standing, trees = _stand_forest(cli, asset_dir, forest, densities)
         bodies.setdefault("plants", []).extend(standing)
-    return {"bodies": bodies, "movers": movers, "passable": passable, "glass": glass, "densities": densities,
-            "triangles": triangles, "trees": trees, "asset_dir": asset_dir,
+    return {"bodies": bodies, "movers": movers, "passable": passable, "glass": glass, "tables": tables,
+            "densities": densities, "triangles": triangles, "trees": trees, "asset_dir": asset_dir,
             "body_count": sum(len(ids) for ids in bodies.values())}
 
 
