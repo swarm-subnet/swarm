@@ -159,6 +159,16 @@ def get_family_benchmark_admission_policy(
     return _deepcopy_mapping(family_definition.get("benchmark_admission_policy", {}))
 
 
+def get_family_benchmark_seed_count(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> int:
+    """Seeds a model of the family is scored on per epoch, the backend's own count; 0 when it flies the whole list."""
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return int(family_definition.get("benchmark_seed_count", 0))
+
+
 def get_family_visibility(
     family_id: str,
     *,
@@ -291,6 +301,7 @@ __all__ = [
     "domain_model_schema_path",
     "filter_challenge_family_definitions",
     "get_family_benchmark_admission_policy",
+    "get_family_benchmark_seed_count",
     "get_challenge_family_definition",
     "get_family_screening_policy",
     "get_family_visibility",
