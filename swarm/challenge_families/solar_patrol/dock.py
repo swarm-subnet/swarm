@@ -24,7 +24,7 @@ Each seed stands the Dock 3 (task 3's model) on its own open spot, found in the 
 fence by DJI's take-off margin, clear of everything standing by DJI's installation distance, on ground its concrete
 base can level. Take-off opens the lids, then climbs straight up to the patrol height. Return home is DJI's dock
 return: its height is fixed when it is pressed, the drone reaches it first, flies straight to the point above the
-pad, and descends onto the pad.
+pad, and descends onto the pad held over its centre against the wind, as RTK and the pad's markers hold the real one.
 """
 
 from __future__ import annotations
@@ -57,6 +57,14 @@ TOUCHDOWN_MPS = 0.4                    # the slowest descent, so the last centim
 GAIN_PER_S = 1.0                       # speed asked for per metre still to go
 CENTRED_M = 0.3                        # the descent pauses while the aircraft is further than this off the pad
 BRAKE_MPS2 = 1.5                       # approach no faster than a stop at this deceleration allows, inside the setpoint's own 2 m/s2
+LAND_GAIN_PER_S = 2.0                  # the landing's own pull towards the pad centre, per metre off
+LEAN_GAIN_PER_S2 = 1.0                 # how fast it learns the wind's steady push: with LAND_GAIN_PER_S, settles in about 1 s
+LEAN_MAX_MPS = 1.0                     # the most the learned push may add to the speed asked for
+GATE_M = 0.5                           # above the resting point, where the aircraft waits to be centred before entering the dock
+GATE_BAND_M = 0.05                     # close enough to the gate height to count as waiting there
+FINAL_CENTRED_M = 0.02                 # RTK and the pad's markers: centred this close before the last part of the descent
+FINAL_STILL_MPS = 0.05                 # and drifting no faster than this
+FINAL_HOLD_M = 0.03                    # further off than this, the room at rest, the last part goes back up to the gate
 
 SITE_SEED_STREAM = 0xD0C9              # the dock's own stream, so its spot never moves another part's draws
 FENCE_MARGIN_M = 10.0                  # DJI refuses take-off this near the flight area's edge, which never lies inside the fence
@@ -158,7 +166,7 @@ def reset(env: Any, ep: SolarEpisode) -> None:
     ep.dock_position = pad
     ep.dock_yaw = yaw
     ep.phase = "docked"
-    ep.dock = {"model": model, "return_z": 0.0, "at_height": False}
+    ep.dock = {"model": model, "return_z": 0.0, "at_height": False, "lean": np.zeros(2), "final": False}
     drone = int(env.DRONE_IDS[0])
     p.resetBasePositionAndOrientation(drone, (pad + [0.0, 0.0, DRONE_REST_M]).tolist(),
                                       p.getQuaternionFromEuler([0.0, 0.0, ep.dock_yaw]), physicsClientId=cli)
@@ -194,12 +202,12 @@ def command(env: Any, ep: SolarEpisode, cmd: Command) -> None:
         ep.outcome.returned_by_model = False
 
 
-def _towards(delta: np.ndarray, limit: float) -> np.ndarray:
-    """A velocity along delta, proportional to its length, capped at limit and slow enough to stop in time."""
+def _towards(delta: np.ndarray, limit: float, gain: float = GAIN_PER_S) -> np.ndarray:
+    """A velocity along delta, gain times its length, capped at limit and slow enough to stop in time."""
     distance = norm(delta)
     if distance < 1e-6:
         return np.zeros_like(delta)
-    return delta / distance * min(limit, GAIN_PER_S * distance, math.sqrt(2.0 * BRAKE_MPS2 * distance))
+    return delta / distance * min(limit, gain * distance, math.sqrt(2.0 * BRAKE_MPS2 * distance))
 
 
 def _climb(rise: float) -> float:
@@ -229,12 +237,36 @@ def autopilot(env: Any, ep: SolarEpisode) -> Optional[Setpoint]:
         ep.dock["at_height"] = True
         if math.hypot(*(ep.dock_position[:2] - pos[:2])) < ARRIVE_M:
             ep.phase = "landing"
+            ep.dock["lean"], ep.dock["final"] = np.zeros(2), False
         return Setpoint((east, north, _climb(rise)))
+    return _land(env, ep, pos)
+
+
+def _land(env: Any, ep: SolarEpisode, pos: np.ndarray) -> Setpoint:
+    """The descent onto the pad as the Dock 3 flies it, RTK and the pad's markers holding the aircraft over the centre
+    against the wind: down to GATE_M above the resting point, a wait there until centred and still, then the last part,
+    which goes back up to the gate whenever the aircraft drifts further off than the dock leaves room for."""
+    delta = ep.dock_position[:2] - pos[:2]
+    ep.dock["lean"] = _capped(ep.dock["lean"] + LEAN_GAIN_PER_S2 * float(env.CTRL_TIMESTEP) * delta, LEAN_MAX_MPS)
+    east, north = (float(v) for v in _towards(delta, MAX_HORIZONTAL_MPS, LAND_GAIN_PER_S) + ep.dock["lean"])
+    off = norm(delta)
     height = pos[2] - DRONE_REST_M - ep.dock_position[2]
-    vz = -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * height))
-    if math.hypot(*(ep.dock_position[:2] - pos[:2])) > CENTRED_M:
-        vz = 0.0
-    return Setpoint((east, north, vz))
+    if ep.dock["final"] and off > FINAL_HOLD_M:
+        ep.dock["final"] = False
+    if not ep.dock["final"]:
+        if height - GATE_M > GATE_BAND_M:
+            vz = 0.0 if off > CENTRED_M else -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * (height - GATE_M)))
+            return Setpoint((east, north, vz))
+        ep.dock["final"] = off < FINAL_CENTRED_M and norm(np.asarray(env.vel[0][:2], dtype=float)) < FINAL_STILL_MPS
+        if not ep.dock["final"]:
+            return Setpoint((east, north, _climb(GATE_M - height)))
+    return Setpoint((east, north, -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * height))))
+
+
+def _capped(v: np.ndarray, limit: float) -> np.ndarray:
+    """The vector v, shortened to limit when it is longer."""
+    length = norm(v)
+    return v if length <= limit else v * (limit / length)
 
 
 def update(env: Any, ep: SolarEpisode) -> None:

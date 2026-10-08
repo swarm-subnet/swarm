@@ -400,3 +400,15 @@ def test_take_off_and_landing_fly_the_same_at_night(flat_park, monkeypatch):
     log, episode, info, sun = _fly(27, _out_and_home(20.0, 30.0))
     assert sun is not None and sun.night
     assert episode.outcome.end_reason == "landed" and info["success"] is True
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("seed", [20, 22, 23])
+def test_a_strong_wind_landing_enters_the_dock_centred(flat_park, seed):
+    """In a strong seeded wind the dock still lowers the drone into its body within 3 cm of the pad centre, the room
+    the Dock 3 leaves the M4TD at rest, and lands it."""
+    log, episode, info, _sun = _fly(seed, _out_and_home(20.0, 30.0))
+    inside = [r for r in _rows(log, "landing") if r["pos"][2] - episode.dock_position[2] < 0.25]
+    assert inside
+    assert max(np.hypot(*(r["pos"][:2] - episode.dock_position[:2])) for r in inside) < 0.03
+    assert episode.outcome.end_reason == "landed" and info["success"] is True
