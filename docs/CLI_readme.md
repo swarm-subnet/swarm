@@ -36,15 +36,15 @@ python -m swarm <command>
 
 ## Challenge families
 
-Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm repo package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
+Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm visualize`, `swarm video`) take a `--family-id` from this set. Each family runs its own set of procedurally generated environment types:
 
 | Family ID | Environment types |
 | --- | --- |
-| `cf_autopilot` | City, Open, Mountain, Village, Warehouse, Forest |
 | `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest |
-| `cf_swarm_autopilot` | City, Open, Mountain, Village, Forest |
 | `cf_swarm_sar` | City, Open, Mountain, Village, Forest |
-| `cf_interceptor_office` | Office |
+| `cf_solar_patrol` | Solar (type 8) |
+
+The [completed](families/completed/README.md) families (`cf_interceptor`, `cf_autopilot`, `cf_swarm_autopilot`, `cf_interceptor_office`) are no longer served or scored.
 
 ---
 
@@ -62,7 +62,7 @@ Verifies: Python version (3.11+), Docker (binary + daemon), sandbox lockdown bin
 
 ### `swarm benchmark`
 
-Runs a local benchmark for the selected family (`cf_autopilot` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,000 seeds per family per epoch.
+Runs a local benchmark for the selected family (`cf_search_and_rescue` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,000 seeds per family per epoch (250 for `cf_solar_patrol`).
 
 ```bash
 # Default-family benchmark (3 seeds per environment group)
@@ -100,8 +100,8 @@ swarm visualize --type 5 --family-id cf_search_and_rescue
 # Fly one exact seed
 swarm visualize --type 1 --seed 12345
 
-# Walk the office (type 7) in its real colours
-swarm visualize --type 7 --family-id cf_interceptor_office
+# Look around a Swarm Sentinel park (type 8)
+swarm visualize --type 8 --family-id cf_solar_patrol
 
 # List the seeds your model failed, then open one
 swarm visualize --summary-json bench_summary.json --failed
@@ -114,8 +114,7 @@ Omit `--type` and the challenge type is inferred from `--summary-json`, `--seed-
 
 Useful options:
 
-- `--family-id <id>`: challenge family to build the world for (default: `cf_autopilot`). The family decides what is in the map — search-and-rescue spawns a victim, interceptor flies at its own speed limit.
-- `--randomize-appearance`: office only. Office Interceptor repaints its colours and lighting from the seed on every scored episode; the visualizer shows the room in its real colours instead, so you can read the layout. Pass this flag to see the skin a scored episode actually gets.
+- `--family-id <id>`: challenge family to build the world for (default: `cf_search_and_rescue`). The family decides what is in the map: search-and-rescue spawns a victim, and Swarm Sentinel builds its solar park.
 - `--speed <m/s>` / `--boost <x>`: base flight speed and the `Shift` multiplier.
 - `--camera follow|fixed`: viewer camera mode.
 - `--width` / `--height`: window size (default 960x540).
@@ -124,7 +123,7 @@ Useful options:
 
 ### `swarm video`
 
-Renders `.mp4` flight videos of a model flying a seed. Takes either a single `--seed` + `--type`, or a `--seed-file` produced by `swarm benchmark --save-seed-file`.
+Renders `.mp4` flight videos of a model flying a seed. Takes either a single `--seed` + `--type`, or a `--seed-file` produced by `swarm benchmark --save-seed-file`. It needs a video writer the install does not include: run `uv pip install opencv-python-headless` first.
 
 ```bash
 # One seed, chase camera
@@ -133,6 +132,10 @@ swarm video --model Submission/submission.zip --seed 42 --type 1 --backend local
 # Every camera mode for a search-and-rescue seed
 swarm video --model Submission/submission.zip --seed 42 --type 5 \
   --family-id cf_search_and_rescue --mode all --out ./videos
+
+# A whole Swarm Sentinel patrol, chase camera
+swarm video --model Submission/submission.zip --seed 1002 --type 8 \
+  --family-id cf_solar_patrol --backend local
 
 # Replay a whole saved benchmark seed set
 swarm video --model Submission/submission.zip --seed-file bench_seeds.json --backend local
@@ -147,13 +150,13 @@ Camera modes (`--mode`, comma-separated, or `all`):
 
 Useful options:
 
-- `--family-id <id>`: challenge family to fly (default: `cf_autopilot`). Must match the family the model was trained for, or it will be scored against the wrong task.
+- `--family-id <id>`: challenge family to fly (default: `cf_search_and_rescue`). Must match the family the model was trained for, or the video replays it in the wrong task.
 - `--backend local|benchmark`: `local` runs a fast in-process replay. `benchmark` reruns the exact Docker/RPC path the validator uses, which is slower and requires Docker, but reproduces validator results exactly.
 - `--summary-json <path>`: a benchmark summary to check the replay against; the run fails if the replayed result differs from the recorded one.
 - `--width` / `--height` / `--fps`: output resolution and frame rate (default 1280x720 @ 25).
 - `--out <dir>`: output directory.
 - `--skip-existing`: skip a seed whose outputs already exist.
-- `--save-actions <dir>` / `--replay-actions <dir>`: record the action stream for a seed, or replay a recorded one instead of running the policy.
+- `--save-actions <dir>` / `--replay-actions <dir>`: record the action stream for a seed, or replay a recorded one instead of running the policy (replay needs `--backend local`).
 - `--progress-file <path>`: write JSON progress for a single-seed render, for driving a progress bar elsewhere.
 - Camera tuning: `--chase-back` / `--chase-up` / `--chase-fov` frame the chase camera, `--fpv-fov` and `--overview-fov` set the field of view for the other two.
 
@@ -181,7 +184,7 @@ swarm model package --source ./my_agent
 swarm model package --source ./my_agent --family-id cf_search_and_rescue
 
 # Custom output path
-swarm model package --source ./my_agent --family-id cf_autopilot --output Submission/submission.zip --overwrite
+swarm model package --source ./my_agent --family-id cf_search_and_rescue --output Submission/submission.zip --overwrite
 ```
 
 Options:
@@ -195,15 +198,15 @@ Packages a source folder (or takes an already packaged archive), verifies it loc
 
 ```bash
 # Package, verify, commit and upload in one step
-swarm model submit --source ./my_agent --family-id cf_autopilot \
+swarm model submit --source ./my_agent --family-id cf_search_and_rescue \
   --wallet.name my_cold --wallet.hotkey my_hot
 
 # Submit an archive you already built
-swarm model submit --artifact Submission/submission.zip --family-id cf_autopilot \
+swarm model submit --artifact Submission/submission.zip --family-id cf_search_and_rescue \
   --wallet.name my_cold --wallet.hotkey my_hot
 
 # Retry only the upload for a digest that is already committed
-swarm model submit --artifact Submission/submission.zip --family-id cf_autopilot --upload-only \
+swarm model submit --artifact Submission/submission.zip --family-id cf_search_and_rescue --upload-only \
   --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -223,7 +226,7 @@ The upload waits for the backend's chain scanner and retries with backoff for up
 Packages a source folder against the selected family's policy contract, applies the submission ZIP structure/safety checks, and runs the local runtime smoke test. The requirements whitelist is checked by `swarm model submit` and again by the validator.
 
 ```bash
-swarm model test --source ./my_agent --family-id cf_autopilot
+swarm model test --source ./my_agent --family-id cf_search_and_rescue
 ```
 
 ### `swarm report`

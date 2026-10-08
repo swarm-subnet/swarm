@@ -2,7 +2,7 @@
 
 # Swarm Miner Guide
 
-Train an autonomous drone pilot, benchmark it against 1,000 procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
+Train an autonomous drone pilot, benchmark it against procedurally generated worlds, and compete on the [leaderboard](https://swarm124.com/benchmark).
 
 ---
 
@@ -59,18 +59,16 @@ source miner_env/bin/activate
 
 ## Challenge Families
 
-Swarm runs **six challenge families**. Five are active and paying; Interceptor is completed with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
+Swarm runs **three active challenge families**, all paying. Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are completed, with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
-| Autopilot / Navigation | `cf_autopilot` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/autopilot.md](../../docs/families/autopilot.md) |
 | Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](../../docs/families/search_and_rescue.md) |
-| Swarm Autopilot | `cf_swarm_autopilot` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_autopilot.md](../../docs/families/swarm_autopilot.md) |
 | Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](../../docs/families/swarm_sar.md) |
-| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/interceptor.md](../../docs/families/interceptor.md) |
-| Office Interceptor | `cf_interceptor_office` | 1 (vs. a validator-flown target) | Office (fixed indoor map) | 30% | [families/office_interceptor.md](../../docs/families/office_interceptor.md) |
+| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 65% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
+| Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/completed/interceptor.md](../../docs/families/completed/interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the five active slices add up to the whole pool. A slice still burns if its own family stops paying out — no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The [completed families'](../../docs/families/completed/README.md) guides stay online for reference: [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md). A slice still burns if its own family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -107,17 +105,17 @@ cd my_agent/
 # Edit drone_agent.py with your controller
 ```
 
-For Office Interceptor, copy the office starter to the packaged entry point:
+For Swarm Sentinel, copy its starter to the packaged entry point. It flies a whole patrol (take-off, a sweep of the park, return home, landing) from the state and the site map:
 
 ```bash
 mkdir -p my_agent/
-cp miner/src/submission_template/office_drone_agent.py my_agent/drone_agent.py
+cp miner/src/submission_template/sentinel_drone_agent.py my_agent/drone_agent.py
 ```
 
-Test an Office Interceptor agent with its required family ID:
+Test a Swarm Sentinel agent with its required family ID:
 
 ```bash
-swarm model test --source my_agent/ --family-id cf_interceptor_office
+swarm model test --source my_agent/ --family-id cf_solar_patrol
 ```
 
 ### Agent Structure
@@ -134,7 +132,8 @@ class DroneFlightController:
     def act(self, observation):
         # observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and "state" (N,)
         # Return action array [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
-        # (shapes shown are the Search-and-Rescue contract -- see families/<family>.md for yours)
+        # (shapes shown are the Search-and-Rescue contract; Swarm Sentinel sends rgb, thermal, zoom,
+        # state and site_map and takes 24 values -- see families/<family>.md for yours)
         action, _ = self.model.predict(observation, deterministic=True)
         return action
 
@@ -181,7 +180,7 @@ The interface below is the **Search and Rescue** one. Each family defines its ow
 
 The search clue is an offset sampled inside a **30 m** circle around the victim (the swarm SAR family shares one clue over a disk that scales with team size: 80·√(n/8) m, i.e. 40 m for 2 drones up to 80 m for 8). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
 
-For Office Interceptor, the contract is `rgb` (256, 256, 3) plus a 127-float `state` vector, with four RC-stick actions `[lr, fb, ud, yaw]`. Its speed cap is 3 m/s and its episode horizon is 60 seconds. See the [Office Interceptor guide](../../docs/families/office_interceptor.md) for the full contract.
+For Swarm Sentinel, the contract is `rgb` (480, 640, 3), `thermal` (512, 640, 1), `zoom` (480, 640, 3), a 31-float `state` and a 660-float `site_map` sent on the first observation only, with 24 action values: flight sticks, gimbal tilt, camera and zoom controls, reports and the dock's buttons. It decides 10 times a second for up to 390 seconds. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md) for the full contract.
 
 ### Action Space
 
@@ -234,7 +233,7 @@ Verifies Python version, Docker, required dependencies, writable directories, an
 ### Test Your Agent
 
 ```bash
-swarm model test --source my_agent/ --family-id cf_autopilot
+swarm model test --source my_agent/ --family-id cf_search_and_rescue
 ```
 
 Packages the source against the selected family's policy contract, applies the submission ZIP structure/safety checks, and runs the local runtime smoke test.
@@ -242,7 +241,7 @@ Packages the source against the selected family's policy contract, applies the s
 ### Package Your Agent
 
 ```bash
-swarm model package --source my_agent/ --family-id cf_autopilot
+swarm model package --source my_agent/ --family-id cf_search_and_rescue
 ```
 
 Bundles your `drone_agent.py`, model files, optional `requirements.txt`, and a generated `swarm_policy_contract.json` into `Submission/submission.zip` (default path). Omit `--family-id` in a terminal and it prompts you to pick the family; it is required (and errors without it) for non-interactive runs.
@@ -265,7 +264,7 @@ swarm benchmark --model Submission/submission.zip --workers 4
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 ```
 
-The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds total.
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds per family (250 for Swarm Sentinel). Pass `--family-id` to benchmark a family other than Search and Rescue, the default.
 
 ### View Results
 
@@ -276,7 +275,7 @@ swarm report
 ### Submit
 
 ```bash
-swarm model submit --source my_agent/ --family-id cf_autopilot \
+swarm model submit --source my_agent/ --family-id cf_search_and_rescue \
   --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -302,7 +301,7 @@ source miner_env/bin/activate
 
 swarm model submit \
      --source my_agent/ \
-     --family-id cf_autopilot \
+     --family-id cf_search_and_rescue \
      --wallet.name my_cold \
      --wallet.hotkey my_hot
 ```
@@ -310,7 +309,7 @@ swarm model submit \
 Already have a packaged archive? Pass it instead of a source folder:
 
 ```bash
-swarm model submit --artifact Submission/submission.zip --family-id cf_autopilot \
+swarm model submit --artifact Submission/submission.zip --family-id cf_search_and_rescue \
      --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -325,7 +324,7 @@ What the command does, in order:
 The upload waits for the backend's chain scanner (it runs every 3 minutes) and retries with backoff for up to 30 minutes. If it still cannot land, the command prints the exact `--upload-only` line to run later; the commitment is already on-chain and holds for 6 hours, and a late upload of the same digest is always accepted:
 
 ```bash
-swarm model submit --artifact Submission/submission.zip --family-id cf_autopilot --upload-only \
+swarm model submit --artifact Submission/submission.zip --family-id cf_search_and_rescue --upload-only \
      --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -391,13 +390,13 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 | **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
 | **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
 
-The Interceptor and Office Interceptor families override the weights to 0.5 success / 0.5 time, with no safety term.
+Swarm Sentinel has its own score: 0.70 detection + 0.20 coverage + 0.10 flight per seed, and every missed intruder or false alarm then turns 10 of the model's best seeds to 0. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md#scoring).
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
-Your **model score** is the mean of the eligible recorded seed scores across the 1,000-seed range, stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
+Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (1,000 seeds; 250 for Swarm Sentinel, after its ×10 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
-Every validator flies the same 1,000 seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
+Every validator flies the same seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
 
 ### CONFIRMED Requirements (Search and Rescue)
 
@@ -449,16 +448,16 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 1. **Miner** runs `swarm model submit`: the digest goes on-chain, the archive goes to the backend, then the miner goes offline
 2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. Once the uploaded bytes match the committed digest and pass the intake checks, it creates one **Pending Benchmark** row
 3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
-4. **Validators** lease the model's seeds individually from a shared pool, fetch the archive from the backend, verify its hash, and run the agent in a sandboxed Docker container: the full **1,000 seeds** per family, spread over the family's environment types
-5. When the whole seed range [0, 1000) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+4. **Validators** lease the model's seeds individually from a shared pool, fetch the archive from the backend, verify its hash, and run the agent in a sandboxed Docker container: the full **1,000 seeds** per family (250 for Swarm Sentinel), spread over the family's environment types
+5. When the family's whole seed range ([0, 1000), or [0, 250) for Swarm Sentinel) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
 
-Every submission runs the full 1,000-seed benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
+Every submission runs the full benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
 
 A transient timeout or RPC-transport failure is retried once for that seed, subject to run-wide retry budgets. Deterministic environment failures and validator-infrastructure failures are excluded from the score; failures caused by the submitted agent still count. Smoke-test with `swarm model verify` before submitting.
 
 ### Epoch Rotation
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Each validator independently generates its own 1,000 seeds per family per epoch using `random.SystemRandom()`: there is no shared secret. Validators publish each epoch's seed sets to the backend **after** the epoch ends, where they are publicly readable.
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds.
 
 At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` refuses to commit in that window and tells you when it reopens.
 
@@ -466,7 +465,7 @@ At rollover, pending models keep their queue position, discard partial results, 
 
 | Parameter | Value |
 |-----------|-------|
-| Seeds per family per epoch | 1,000 |
+| Seeds per family per epoch | 1,000 (Swarm Sentinel: 250) |
 | Seed claim size | Dynamic: up to the validator's free worker slots (API cap 64) |
 | Chain scanner interval | 3 minutes |
 | Upload window after a commit | 6 hours (a late upload of the same digest is still accepted afterwards) |

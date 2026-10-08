@@ -13,9 +13,9 @@ At a high level, the repo supports two main workflows:
 
 Core benchmark assumptions:
 
-- Models receive a camera image (depth or RGB, set per challenge family) plus a state vector.
-- Models output flight commands per the family contract: 5 or 6 components, or 4 RC sticks for Office Interceptor.
-- Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain, plus the fixed office twin.
+- Models receive camera images (depth and RGB for the rescue families; colour, thermal and zoom for Swarm Sentinel) plus a state vector, and Swarm Sentinel also gets a site map of the park.
+- Models output flight commands per the family contract: 6 components for the rescue families, 24 for Swarm Sentinel (sticks, gimbal, camera and zoom controls, reports and the dock's buttons).
+- Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain, plus the solar park Swarm Sentinel patrols.
 
 ## Primary Entrypoints
 
@@ -104,7 +104,7 @@ Common CLI workflow:
 
 ```bash
 swarm doctor
-swarm model test --source my_model/ --family-id cf_autopilot
+swarm model test --source my_model/ --family-id cf_search_and_rescue
 swarm model package --source my_model/
 swarm model verify --model Submission/submission.zip
 swarm benchmark --model Submission/submission.zip --workers 4

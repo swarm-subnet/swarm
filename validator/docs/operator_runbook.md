@@ -58,16 +58,17 @@ Divergence matters: the backend derives `CHALLENGE_FAMILY_IDS`, `FAMILY_STATES`,
 
 ### Current registry state
 
-Six families: five `family_state='active'` and `emissions_state='active'`, plus completed Interceptor with archived emissions:
+Seven families: three `family_state='active'` and `emissions_state='active'`, plus the completed Interceptor, Autopilot, Swarm Autopilot and Office Interceptor, all four with archived emissions:
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_interceptor` | 0.00 (historical 0.30) |
-| `cf_interceptor_office` | 0.30 |
-| `cf_swarm_autopilot` | 0.20 |
+| `cf_solar_patrol` | 0.65 |
 | `cf_swarm_sar` | 0.20 |
-| `cf_autopilot` | 0.15 |
 | `cf_search_and_rescue` | 0.15 |
+| `cf_interceptor` | 0.00 (historical 0.30) |
+| `cf_interceptor_office` | 0.00 (completed, historical 0.30) |
+| `cf_swarm_autopilot` | 0.00 (completed, historical 0.20) |
+| `cf_autopilot` | 0.00 (completed, historical 0.15) |
 
 Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first.
 

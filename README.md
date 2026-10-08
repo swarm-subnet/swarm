@@ -40,7 +40,7 @@ Drones are moving into everyday life: delivering packages, inspecting bridges an
 </p>
 
 <p align="center">
-  <sub><b>5</b> missions &nbsp;·&nbsp; <b>1,000</b> fresh worlds every 14-day epoch &nbsp;·&nbsp; <b>60-second</b> flights &nbsp;·&nbsp; one live leaderboard</sub>
+  <sub><b>3</b> missions &nbsp;·&nbsp; fresh worlds every 14-day epoch &nbsp;·&nbsp; the same on every validator &nbsp;·&nbsp; one live leaderboard</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -48,21 +48,19 @@ Drones are moving into everyday life: delivering packages, inspecting bridges an
 ---
 
 <!-- CHALLENGE FAMILIES -->
-## Five Missions
+## Three Missions
 
-Swarm is five separate competitions, each with its own champion and its own share of the rewards. Master one, or take on all five.
+Swarm is three separate competitions, each with its own champion and its own share of the rewards. Master one, or take on all three.
 
 | Mission | What your drone has to do | Reward share |
 |---------|---------------------------|:------------:|
-| **[Office Interceptor](docs/families/office_interceptor.md)** | Hunt a target drone inside a fixed office and catch it before time runs out | <img src="https://img.shields.io/badge/30%25-F5D400?style=flat-square" alt="30%" /> |
-| **[Swarm Autopilot](docs/families/swarm_autopilot.md)** | Land a whole team of drones, fast and without collisions | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
+| **[Swarm Sentinel](docs/families/solar_patrol.md)** | Patrol a solar park from its drone dock by day and by night, report every intruder, and land back in the dock | <img src="https://img.shields.io/badge/65%25-F5D400?style=flat-square" alt="65%" /> |
 | **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
-| **[Autopilot](docs/families/autopilot.md)** | Cross the world, find the landing pad, and touch down clean | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
 | **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
 
 <p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
 
-<p align="center"><sub><b>Solved:</b> <a href="docs/families/interceptor.md">Interceptor</a> — open-terrain pursuit, cleared by its champion and closed. The crown is final and the winning solution is preserved as open source.</sub></p>
+<p align="center"><sub><b><a href="docs/families/completed/README.md">Completed</a>:</b> <a href="docs/families/completed/interceptor.md">Interceptor</a>, whose champion cleared it and whose winning solution is open source, and <a href="docs/families/completed/autopilot.md">Autopilot</a>, <a href="docs/families/completed/swarm_autopilot.md">Swarm Autopilot</a> and <a href="docs/families/completed/interceptor_office.md">Office Interceptor</a>, whose place Swarm Sentinel took. Their guides stay online and their champions stay published.</sub></p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -111,7 +109,7 @@ Every mission runs the same simple loop:
 </tr>
 </table>
 
-The drone sees the world through a single depth camera and knows its own position and speed. Fifty times a second, your model looks at that and decides where to fly next: a direction, a speed, a turn. No map, no GPS, no list of obstacles. Just like a real pilot, it has to read what is in front of it and react. What changes between the five missions is the goal: land, rescue, coordinate a team, or give chase.
+In the rescue missions the drone sees the world through a depth camera, can ask for a colour picture, and knows its own position and speed. Fifty times a second, your model looks at that and decides where to fly next: a direction, a speed, a turn. No map, no GPS, no list of obstacles. Just like a real pilot, it has to read what is in front of it and react. Swarm Sentinel flies the real drone's own kit instead: colour, thermal and zoom cameras, a laser rangefinder and the dock's survey of the site, with a decision ten times a second. What changes between the three missions is the goal: rescue, coordinate a team, or guard a site.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -120,7 +118,7 @@ The drone sees the world through a single depth camera and knows its own positio
 <!-- ENVIRONMENTS -->
 ## The Worlds
 
-None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives **1,000 fresh seeds** across its supported map types, the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
+None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives its fresh seeds across its supported map types (**1,000** for the rescue missions, **250** for Swarm Sentinel), the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
 
 <table>
 <tr>
@@ -183,7 +181,7 @@ The standard score from 0 to 1 uses three things:
 </tr>
 </table>
 
-A drone's rank is its **average across all 1,000 worlds**, so steady skill beats a few lucky runs. (Interceptor and Office Interceptor use pure pursuit: half success, half speed, with no safety term.)
+A drone's rank is its **average across every world of the epoch**, so steady skill beats a few lucky runs. (Swarm Sentinel scores detection, coverage and flight instead, and every missed intruder or false alarm turns 10 of its best worlds to 0; see [its guide](docs/families/solar_patrol.md#scoring).)
 
 Rewards run on **King of the Hill**. Each mission pays its **last five champions**, not just the current one, and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
 
@@ -204,7 +202,7 @@ swarm visualize --type 1                       # fly a map yourself to see it
 swarm report                                   # see how it did
 ```
 
-The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use the epoch's own seeds, which stay secret until the epoch closes, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
+Without `--family-id` these commands use Search and Rescue; add `--family-id cf_solar_patrol` to work on Swarm Sentinel. The local benchmark uses the same simulator and scoring path as validators, so it is the right place to compare iterations. Leaderboard scores use the epoch's own seeds, which stay secret until the epoch closes, so a local score is not a guarantee of the final network score. Full reference in the [CLI docs](docs/CLI_readme.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

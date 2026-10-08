@@ -209,7 +209,7 @@ def test_the_site_map_places_the_survey_from_the_dock(monkeypatch):
 @pytest.mark.skipif(not os.path.exists(os.path.join(_SOLAR_ASSETS, "manifest.json")),
                     reason=f"solar map not built at {_SOLAR_ASSETS}")
 def test_the_real_park_survey_holds_58_tables_and_3_buildings():
-    """The Manolia survey gives 45 full and 13 half tables in rows running east to west, and the two white units
+    """The park's survey gives 45 full and 13 half tables in rows running east to west, and the two white units
     and the service cabin, all inside the site map's room."""
     tables, buildings = drone_state.survey(_SOLAR_ASSETS)
     assert len(tables) == 58 <= MAX_TABLES

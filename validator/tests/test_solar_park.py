@@ -26,12 +26,15 @@ from __future__ import annotations
 import copy
 import math
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pybullet as p
+import pybullet_data
 import pytest
 
 from swarm.challenge_families.solar_patrol import park
+from swarm.challenge_families.solar_patrol.episode import SolarEpisode
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.core.daylight import SunLight, max_elevation_deg, seeded_sun
 from swarm.core.maps.solar.builder import (
@@ -276,6 +279,26 @@ def test_a_built_park_stands_each_moved_table_on_its_own_ground():
     finally:
         p.disconnect(ground_cli)
         p.disconnect(park_cli)
+
+
+@needs_park
+def test_building_the_park_sinks_the_default_floor_under_its_lowest_valley(monkeypatch):
+    """The environment's flat floor stands at height 0, where it shows through the valleys south-east of the fence;
+    building the park sinks it under the map's lowest ground, so a look straight down there meets nothing of it."""
+    manifest = solar_manifest(ASSET_DIR)
+    lowest = min(place["position"][2] + manifest["items"][place["item"]]["bounds_min"][2] * place["scale"][2]
+                 for place in manifest["placements"] if manifest["items"][place["item"]].get("group") == "terrain")
+    monkeypatch.setattr(park, "build_solar_map", lambda seed, cli: {"asset_dir": ASSET_DIR, "bodies": {}})
+    monkeypatch.setattr(park, "build_solar_movers", lambda world, seed, cli: None)
+    cli = p.connect(p.DIRECT)
+    try:
+        p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=cli)
+        floor = p.loadURDF("plane.urdf", physicsClientId=cli)
+        park.reset(SimpleNamespace(CLIENT=cli, PLANE_ID=floor, _sun=None), SolarEpisode(seed=1))
+        assert p.getBasePositionAndOrientation(floor, physicsClientId=cli)[0][2] < lowest
+        assert p.rayTest([86.0, -76.0, 100.0], [86.0, -76.0, lowest], physicsClientId=cli)[0][0] == -1
+    finally:
+        p.disconnect(cli)
 
 
 def _light(elevation_deg, night=False):

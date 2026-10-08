@@ -15,7 +15,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Builder for the office indoor map (Tello interceptor family).
+"""COMPLETED, NOT IN USE: the office map (type 7) is completed with Office Interceptor (cf_interceptor_office).
+
+Only that family flew it, so nothing serves it now. The code stays only so that family's champions can still be
+re-run: do not build new work on it.
+
+Builder for the office indoor map (Tello interceptor family).
 
 Loads the baked office digital twin: the empty room (shell, floor, lights,
 partitions and wall pictures, lighting pre-baked into texture atlases) and

@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Park shifts, day and night (task 17): the Manolia solar park built for a seed, and the light it is flown in.
+"""Park shifts, day and night (task 17): the solar park built for a seed, and the light it is flown in.
 
 Each seed stands the real site with every row of tables, building and tree shifted a little (the map builder draws
 the shifts), flies it by day or by night, half and half, under the seed's own sun or moon, and sets the air, the
@@ -46,6 +46,7 @@ SKY_FROM_SUN = hasattr(p, "ER_SWARM_SKY_SUN")
 DAYLIGHT = SKY_FROM_SUN and hasattr(p, "ER_SWARM_RAYCAST") and hasattr(p, "ER_SWARM_DAYLIGHT")
 THERMAL = hasattr(p, "ER_SWARM_THERMAL")
 FENCE_TOLERANCE_M = 1.0                # a post this close to a straight side stays on it
+FLOOR_DEPTH_M = -1000.0                # the environment's flat floor goes here, under the map's lowest valley
 
 HEAT_SEED_STREAM = 0x4EA7              # the park's own stream, so its temperatures never move another part's draws
 AIR_DAY_C = (15.0, 31.0)               # the air on a clear day at the site's latitude, spring to late summer
@@ -99,8 +100,14 @@ def heat(sun: SunLight | None, seed: int, panels: int) -> Dict[str, Any]:
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
-    """Build the park for the seed, start its movers, publish the fence and the terrain, and set its temperatures."""
+    """Build the park for the seed, sink the environment's floor under it, start its movers, publish the fence and the
+    terrain, and set its temperatures."""
     world = build_solar_map(seed=ep.seed, cli=env.CLIENT)
+    # The floor stands at height 0, so every valley that dips under it would show its white tiles.
+    floor = getattr(env, "PLANE_ID", None)
+    if floor is not None:
+        p.resetBasePositionAndOrientation(floor, [0.0, 0.0, FLOOR_DEPTH_M], [0.0, 0.0, 0.0, 1.0],
+                                          physicsClientId=env.CLIENT)
     movers = build_solar_movers(world, seed=ep.seed, cli=env.CLIENT)
     glass = world.get("glass", ())
     ep.park = {"world": world, "movers": movers, **heat(getattr(env, "_sun", None), ep.seed, len(glass))}
