@@ -95,6 +95,11 @@ def _strike_zero_action(n_drones: int, act_dim: int) -> np.ndarray:
     return np.zeros(act_dim, dtype=np.float32)
 
 
+def _link_dropped(exc: BaseException) -> bool:
+    """True when the model's process went away; an error the model raised itself arrives as a remote failure."""
+    return isinstance(exc, (BrokenPipeError, ConnectionResetError)) or getattr(exc, "type", None) == "DISCONNECTED"
+
+
 def _run_multi_seed_rpc_sync(
     self,
     tasks: list,
@@ -645,6 +650,7 @@ def _run_multi_seed_rpc_sync(
                         is_first_step = True
                         step_idx = 0
                         rpc_disconnected = False
+                        hard_cap_stalled = False
                         window_idx, window_used_sec = 0, 0.0
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
@@ -780,10 +786,10 @@ def _run_multi_seed_rpc_sync(
                                             f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                         )
                                     if use_ref and hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
-                                        rpc_disconnected = True
+                                        hard_cap_stalled = True
                                         bt.logging.warning(
                                             f"UID {uid} seed {task_idx}: {hard_cap_hits} hard-cap timeouts, "
-                                            f"aborting seed and recycling container"
+                                            f"failing seed"
                                         )
                                         break
                                     if strikes >= RPC_MAX_STRIKES_PER_SEED:
@@ -802,12 +808,7 @@ def _run_multi_seed_rpc_sync(
                                         f"{task_label} step={step_idx} act error: {err_txt} "
                                         f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                     )
-                                    lowered = err_txt.lower()
-                                    if (
-                                        "broken pipe" in lowered
-                                        or "disconnected" in lowered
-                                        or "connection reset" in lowered
-                                    ):
+                                    if _link_dropped(e):
                                         rpc_disconnected = True
                                         _trace(
                                             f"{task_label} rpc disconnected; aborting seed"
@@ -821,7 +822,7 @@ def _run_multi_seed_rpc_sync(
 
                             if action is None:
                                 action = _strike_zero_action(n_drones, act_dim)
-                            if rpc_disconnected or strikes >= RPC_MAX_STRIKES_PER_SEED:
+                            if rpc_disconnected or hard_cap_stalled or strikes >= RPC_MAX_STRIKES_PER_SEED:
                                 break
 
                             is_first_step = False
@@ -916,7 +917,8 @@ def _run_multi_seed_rpc_sync(
                             results.append(
                                 ValidationResult(
                                     uid, False, t_sim, 0.0,
-                                    failure_reason=FailureReason.INFRA.value,
+                                    failure_reason=FailureReason.AGENT_EXITED.value,
+                                    metrics=runtime_family_for_task(task).stalled_rollout_metrics(task, info),
                                 )
                             )
                             _emit_seed_complete(
@@ -930,7 +932,7 @@ def _run_multi_seed_rpc_sync(
                                 calibration_cpu_factor=cpu_factor,
                                 calibrated_timeout_sec=calibrated_timeout,
                             )
-                        elif strikes >= RPC_MAX_STRIKES_PER_SEED:
+                        elif hard_cap_stalled or strikes >= RPC_MAX_STRIKES_PER_SEED:
                             _set_phase(
                                 "seed_failed_timeout_strikes",
                                 task=task_label,

@@ -165,8 +165,8 @@ async def _precalibrate_host(worker_count: int) -> bool:
     return True
 
 
-def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
-    """Flatten a ValidationResult into the plain tuple that survives the queue back to the parent."""
+def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str, Dict[str, Any]]:
+    """Flatten a ValidationResult into the plain tuple that survives the queue back to the parent, metrics included."""
     reason = getattr(result, "failure_reason", "NONE")
     reason_str = reason.value if hasattr(reason, "value") else str(reason)
     return (
@@ -175,11 +175,12 @@ def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
         float(getattr(result, "time_sec")),
         float(getattr(result, "score")),
         reason_str,
+        dict(getattr(result, "metrics", None) or {}),
     )
 
 
 def _unpack_validation_result(packed):
-    """Rebuild a ValidationResult from a queued tuple, taking the failure reason when one was sent."""
+    """Rebuild a ValidationResult from a queued tuple, taking the failure reason and metrics when they were sent."""
     from swarm.protocol import ValidationResult
     if len(packed) >= 5:
         return ValidationResult(
@@ -188,6 +189,7 @@ def _unpack_validation_result(packed):
             float(packed[2]),
             float(packed[3]),
             failure_reason=str(packed[4]),
+            metrics=dict(packed[5]) if len(packed) > 5 else {},
         )
     return ValidationResult(*packed)
 
