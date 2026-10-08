@@ -63,6 +63,7 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_benchmark_default_model_fixed_seeds.py": ["REPO_ROOT"],
     "tests/test_challenge_family_boundaries.py": ["REPO_ROOT"],
     "tests/test_cli.py": ["REPO_ROOT"],
+    "tests/test_cli_visualize_video.py": ["REPO_ROOT"],
     "tests/test_docker_evaluator.py": ["REPO_ROOT", "REPO_ROOT"],
     "tests/test_docstring_linter.py": ["REPO_ROOT"],
     "tests/test_env_check.py": ["REPO_ROOT"],
