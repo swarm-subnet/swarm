@@ -111,7 +111,7 @@ Every mission runs the same simple loop:
 </tr>
 </table>
 
-In the rescue missions the drone sees the world through a single depth camera and knows its own position and speed. Fifty times a second, your model looks at that and decides where to fly next: a direction, a speed, a turn. No map, no GPS, no list of obstacles. Just like a real pilot, it has to read what is in front of it and react. Swarm Sentinel flies the real drone's own kit instead: colour, thermal and zoom cameras, a laser rangefinder and the dock's survey of the site, with a decision ten times a second. What changes between the three missions is the goal: rescue, coordinate a team, or guard a site.
+In the rescue missions the drone sees the world through a depth camera, can ask for a colour picture, and knows its own position and speed. Fifty times a second, your model looks at that and decides where to fly next: a direction, a speed, a turn. No map, no GPS, no list of obstacles. Just like a real pilot, it has to read what is in front of it and react. Swarm Sentinel flies the real drone's own kit instead: colour, thermal and zoom cameras, a laser rangefinder and the dock's survey of the site, with a decision ten times a second. What changes between the three missions is the goal: rescue, coordinate a team, or guard a site.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

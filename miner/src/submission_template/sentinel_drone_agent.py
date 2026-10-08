@@ -46,15 +46,15 @@ Action:
     decision their value rises through 0.5: holding one presses it once.
 
 Mission: take off from the dock, search the park, report every intruder with a box on the
-image you saw him in, press return home and be landed in the dock before 390 s.
+image you saw them in, press return home and be landed in the dock before 390 s.
 
 Scoring:
     seed = 0.70 detection + 0.20 coverage + 0.10 flight
     Every miss and every false alarm then turns 10 of your best seeds to 0.
 
 Constraints:
-    - Heights count from the dock: above 22 m the flight score drops, 30 m scores 0 and the
-      drone cannot climb past it; a report from a frame taken above 24 m is a false alarm.
+    - Heights count from the dock: above 22 m the height half of the flight score drops, to 0
+      at 30 m, and the drone cannot climb past 30 m; a report from a frame taken above 24 m is a false alarm.
     - 5 m before the flight limit the patrol ends on the spot, without the landing score.
     - 400 ms of compute per camera frame, shared by the five decisions of that frame.
 """

@@ -346,7 +346,7 @@ swarm benchmark --model Submission/submission.zip --family-id cf_solar_patrol --
 - `swarm model package` stops if `Submission/submission.zip` already exists: add `--overwrite` to package again.
 - `--seeds-per-group` sets how many seeds the benchmark flies (default 3). Every seed is first flown once by a scripted reference pilot that checks the seed can be done; the verdict is cached, so a seed costs this check only the first time.
 - To fly one exact seed, pass `--seed-file seeds.json` with `{"schema_version": "challenge_family_seed_file.v1", "family_id": "cf_solar_patrol", "type_seeds": {"type8_solar": [1002]}}`.
-- One patrol takes about 3 minutes on a validator-class CPU, plus the seed check, and a worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.
+- One patrol takes about a minute on a fast desktop CPU, plus the seed check, and a worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.
 - Always pass `--family-id cf_solar_patrol`: without it, `swarm benchmark` runs Search and Rescue.
 
 To watch a patrol, film it with `swarm video` (it needs a video writer the install does not include), or look around a park with `swarm visualize`:
