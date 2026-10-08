@@ -113,8 +113,10 @@ def _lanes(fence, heading_deg):
     along, across = np.array([math.sin(h), math.cos(h)]), np.array([math.cos(h), -math.sin(h)])
     lo, hi = (fence @ along).min(), (fence @ along).max()
     t = np.arange(lo, hi + SAMPLE_M, SAMPLE_M)
+    low, high = (fence @ across).min(), (fence @ across).max()
+    count = max(1, math.ceil((high - low) / LANE_SPACING_M))
     waypoints = []
-    for k, c in enumerate(np.arange((fence @ across).min() + LANE_SPACING_M / 2, (fence @ across).max(), LANE_SPACING_M)):
+    for k, c in enumerate(low + (np.arange(count) + 0.5) * (high - low) / count):
         points = c * across + t[:, None] * along
         keep = np.concatenate([[False], _clear(fence, points, FENCE_INSET_M), [False]])
         starts, ends = np.flatnonzero(keep[1:] & ~keep[:-1]), np.flatnonzero(~keep[1:] & keep[:-1]) - 1
@@ -196,7 +198,7 @@ class DroneFlightController:
         return plan_route(self.fence)
 
     def _press(self, action, index):
-        """Press a button, releasing it on the next decision so every press is a fresh rise through 0.5."""
+        """Press a button, or release it if it was held on the last decision, so every press is a fresh rise through 0.5."""
         action[index] = 0.0 if self.held[index] > 0.5 else 1.0
 
     def _fly(self, state, action):

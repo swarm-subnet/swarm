@@ -116,6 +116,16 @@ def test_sentinel_starter_sweeps_inside_the_fence_then_presses_return_home():
     assert late[22] == 1.0
 
 
+def test_sentinel_starter_lanes_reach_both_far_edges_of_the_park():
+    """Lanes are spread evenly across the park, so none sits more than half a spacing from either edge."""
+    starter = type(_load("sentinel_drone_agent.py")).act.__globals__
+    wide_fence = np.array([(-55.0, -40.0), (55.0, -40.0), (55.0, 40.0), (-55.0, 40.0)])
+    lanes = np.unique(np.round(starter["_lanes"](wide_fence, 0)[:, 0], 6))
+    half = starter["LANE_SPACING_M"] / 2.0
+    assert lanes.min() + 55.0 <= half and 55.0 - lanes.max() <= half
+    assert np.all(np.diff(lanes) <= 2.0 * half + 1e-9)
+
+
 def test_sentinel_starter_holds_return_home_until_the_straight_line_home_stays_inside():
     """Around a bend in the fence it flies back along its lanes instead of pressing return home across the corner."""
     bent_fence = [(-5.0, -10.0), (100.0, -10.0), (100.0, 100.0), (80.0, 100.0), (80.0, 10.0), (-5.0, 10.0)]
