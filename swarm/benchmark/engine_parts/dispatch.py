@@ -81,7 +81,6 @@ _RPC_TRANSPORT_RETRY_STATUSES = frozenset(
     {
         "rpc_connect_failed",
         "rpc_ping_timeout",
-        "seed_rpc_disconnected",
     }
 )
 _INFRA_FAILURE_STATUSES = frozenset(
@@ -203,7 +202,7 @@ def _is_timeout_retry_status(status: str) -> bool:
 
 
 def _is_rpc_transport_status(status: str) -> bool:
-    """True when the link to the model container broke: connect refused, ping unanswered, or the socket died mid-seed."""
+    """True when the link to the model container never came up: connect refused or ping unanswered before the seed."""
     return status in _RPC_TRANSPORT_RETRY_STATUSES
 
 

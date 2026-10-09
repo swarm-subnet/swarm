@@ -22,7 +22,7 @@ from swarm.protocol import FailureReason
 
 
 def test_failure_reason_members_exist():
-    """Eleven codes, each with a string value equal to its own label, looked up both ways so a rename cannot pass quietly."""
+    """Twelve codes, each with a string value equal to its own label, looked up both ways so a rename cannot pass quietly."""
     expected = {
         "NONE": "NONE",
         "OBSTACLE_COLLISION": "OBSTACLE_COLLISION",
@@ -30,6 +30,7 @@ def test_failure_reason_members_exist():
         "TILT": "TILT",
         "TIMEOUT": "TIMEOUT",
         "SLOW_ACT_STRIKES": "SLOW_ACT_STRIKES",
+        "AGENT_EXITED": "AGENT_EXITED",
         "ENV_FAILURE": "ENV_FAILURE",
         "INFEASIBLE": "INFEASIBLE",
         "SPAWN_FAILURE": "SPAWN_FAILURE",

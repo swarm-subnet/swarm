@@ -41,6 +41,7 @@ from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import lifecycle
 from swarm.validator.docker.docker_evaluator_parts.batch import _legal_thinking_sec
 from swarm.validator.runtime_telemetry import ValidatorRuntimeTracker
+from swarm.validator.utils_parts.evaluation import _is_infra_failure
 
 
 class _ProcResult:
@@ -994,9 +995,9 @@ class _AheadEnv:
         self.closed_mid_step = self.closed_mid_step or self.stepping
 
 
-def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True):
+def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, speed_factor=None, on_seed_complete=None):
     """Fly one task through the RPC loop with stand-ins for capnp, the miner, the env and the engine, its family
-    overlapping."""
+    overlapping; a speed factor judges each act against the hard cap."""
     rpc_mod = de.rpc
     ev = _new_evaluator()
     monkeypatch.setattr(rpc_mod, "_ENGINE_RELEASES_GIL", engine_releases_gil)
@@ -1029,10 +1030,12 @@ def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True):
     monkeypatch.setattr(ev, "_serialize_observation", serialize)
     monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _calibrate)
     monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
-    monkeypatch.setattr(rpc_mod, "runtime_family_for_task",
-                        lambda task: SimpleNamespace(family_id="cf_test", decision_steps=1, observation_ahead=True))
+    monkeypatch.setattr(rpc_mod, "runtime_family_for_task", lambda task: SimpleNamespace(
+        family_id="cf_test", decision_steps=1, observation_ahead=True,
+        stalled_rollout_metrics=lambda _task, _info: {"missed_threats": 1, "false_alarms": 0}))
     task = SimpleNamespace(map_seed=77, challenge_type=1, horizon=1.0, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0))
-    return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000)
+    return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000, on_seed_complete=on_seed_complete,
+                                       speed_factor=speed_factor)
 
 
 def test_observation_ahead_sends_the_next_act_while_the_step_finishes(monkeypatch):
@@ -1133,6 +1136,103 @@ def test_an_engine_that_holds_the_gil_refuses_to_overlap(monkeypatch):
     assert env.steps == 0
     assert results[0].success is False
     assert results[0].failure_reason == FailureReason.ENV_FAILURE.value
+
+
+class _KjDisconnected(Exception):
+    """Stand-in for the capnp error raised when the model's process is gone."""
+
+    type = "DISCONNECTED"
+
+
+class _KjRemoteFailure(Exception):
+    """Stand-in for the capnp error carrying an exception the model raised itself."""
+
+    type = "FAILED"
+
+
+class _AbandoningAgent:
+    """Miner stand-in whose every act runs the given behaviour."""
+
+    def __init__(self, act):
+        """Keep the coroutine function every act() runs."""
+        self._act = act
+
+    async def ping(self, _msg):
+        """Answer the connect and calibration pings."""
+        return SimpleNamespace(response="pong")
+
+    async def reset(self):
+        """Accept the reset."""
+
+    async def act(self, obs):
+        """Run the scripted behaviour."""
+        return await self._act(obs)
+
+
+def test_link_dropped_reads_the_capnp_marker_not_the_text():
+    """Only a dead process or socket ends the seed as a dropped link; an error the model raised does not,
+    whatever its text says."""
+    assert de.rpc._link_dropped(_KjDisconnected("Peer disconnected."))
+    assert de.rpc._link_dropped(BrokenPipeError(32, "Broken pipe"))
+    assert de.rpc._link_dropped(ConnectionResetError(104, "Connection reset by peer"))
+    assert not de.rpc._link_dropped(_KjRemoteFailure("remote exception: RuntimeError: peer disconnected"))
+    assert not de.rpc._link_dropped(RuntimeError("broken pipe, connection reset, disconnected"))
+
+
+def test_a_model_stalling_past_the_hard_cap_is_scored_as_a_slow_act_zero(monkeypatch):
+    """Three acts past the hard cap fail the seed as the model's slow-act zero with the outcome so far, never as a
+    machine fault the validator would leave unscored."""
+    monkeypatch.setattr(de.rpc, "HARD_CAP_REF_SEC", 0.05)
+    monkeypatch.setattr(de.rpc, "FIRST_STEP_HARD_CAP_REF_SEC", 0.05)
+
+    async def stall(_obs):
+        """Sleep far past the hard cap."""
+        await asyncio.sleep(2.0)
+
+    payloads = []
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(stall), _AheadEnv(lambda k: None),
+                         lambda _schema, obs: ("serialized", obs["marker"]), speed_factor=1.0,
+                         on_seed_complete=payloads.append)
+
+    assert results[0].failure_reason == FailureReason.SLOW_ACT_STRIKES.value
+    assert results[0].score == 0.0
+    assert results[0].metrics == {"missed_threats": 1, "false_alarms": 0}
+    assert [p["status"] for p in payloads] == ["seed_timeout_strikes"]
+
+
+def test_a_model_raising_disconnected_flies_on_and_is_scored(monkeypatch):
+    """An act error whose text says disconnected is the model's own error: a strike and a still action, and the
+    seed flies to its end and is scored."""
+
+    async def raise_disconnected(_obs):
+        """Raise what the model would send back from its own act()."""
+        raise _KjRemoteFailure("remote exception: RuntimeError: peer disconnected")
+
+    payloads = []
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(raise_disconnected), _AheadEnv(lambda k: None),
+                         lambda _schema, obs: ("serialized", obs["marker"]), on_seed_complete=payloads.append)
+
+    assert [p["status"] for p in payloads] == ["seed_done"]
+    assert results[0].success is True
+    assert results[0].failure_reason != FailureReason.INFRA.value
+
+
+def test_a_model_whose_process_dies_mid_seed_is_scored_as_exited(monkeypatch):
+    """When the model's process goes away mid-seed the seed is the model's zero, with the outcome so far, not a
+    machine fault."""
+
+    async def die(_obs):
+        """Raise what capnp raises once the model's process has exited."""
+        raise _KjDisconnected("Peer disconnected.")
+
+    payloads = []
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(die), _AheadEnv(lambda k: None),
+                         lambda _schema, obs: ("serialized", obs["marker"]), on_seed_complete=payloads.append)
+
+    assert results[0].failure_reason == FailureReason.AGENT_EXITED.value
+    assert results[0].score == 0.0
+    assert results[0].metrics == {"missed_threats": 1, "false_alarms": 0}
+    assert [p["status"] for p in payloads] == ["seed_rpc_disconnected"]
 
 
 def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):
@@ -1503,10 +1603,11 @@ def test_run_process_parallel_does_not_retry_seed_timeout_strikes(monkeypatch, t
 
 
 def test_is_rpc_transport_status_classifies_transport_failures():
-    """Only connect, ping-timeout and disconnect count as transport faults; seed outcomes do not."""
+    """Only a link that never came up counts as a transport fault; a link the model dropped mid-seed and seed
+    outcomes do not."""
     assert bench_full_eval._is_rpc_transport_status("rpc_connect_failed")
     assert bench_full_eval._is_rpc_transport_status("rpc_ping_timeout")
-    assert bench_full_eval._is_rpc_transport_status("seed_rpc_disconnected")
+    assert not bench_full_eval._is_rpc_transport_status("seed_rpc_disconnected")
     assert not bench_full_eval._is_rpc_transport_status("seed_timeout_strikes")
     assert not bench_full_eval._is_rpc_transport_status("seed_exception")
     assert not bench_full_eval._is_rpc_transport_status("seed_done")
@@ -1515,7 +1616,7 @@ def test_is_rpc_transport_status_classifies_transport_failures():
 
 @pytest.mark.full
 def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
-    """A broken pipe to the sandbox is run again and the second attempt's result is the one kept."""
+    """A sandbox that refused the connection is run again and the second attempt's result is the one kept."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
     task = SimpleNamespace(
@@ -1533,12 +1634,12 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
                             "uid": 61,
                             "map_seed": 3401,
                             "challenge_type": 4,
-                            "status": "seed_rpc_disconnected",
+                            "status": "rpc_connect_failed",
                             "success": False,
                             "sim_time_sec": 3.0,
                             "seed_wall_sec": 5.0,
                             "step_idx": 20,
-                            "error": "[Errno 32] Broken pipe",
+                            "error": "ConnectionRefusedError: [Errno 111] Connection refused",
                         }
                     ],
                     "results": [(61, False, 3.0, 0.0)],
@@ -1604,7 +1705,7 @@ def test_run_process_parallel_retries_rpc_transport_once(monkeypatch, tmp_path):
 
 @pytest.mark.full
 def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp_path):
-    """A second disconnect is not run again; the seed fails after exactly one repeat."""
+    """A second refused connection is not run again; after exactly one repeat the seed stays a machine fault."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
     task = SimpleNamespace(
@@ -1618,12 +1719,12 @@ def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp
                 "uid": 62,
                 "map_seed": 3402,
                 "challenge_type": 4,
-                "status": "seed_rpc_disconnected",
+                "status": "rpc_connect_failed",
                 "success": False,
                 "sim_time_sec": 3.0,
                 "seed_wall_sec": 5.0,
                 "step_idx": 20,
-                "error": "[Errno 32] Broken pipe",
+                "error": "ConnectionRefusedError: [Errno 111] Connection refused",
             }
         ],
         "results": [(62, False, 3.0, 0.0)],
@@ -1665,8 +1766,68 @@ def test_run_process_parallel_caps_rpc_transport_retries_at_one(monkeypatch, tmp
     assert len(results) == 1
     assert results[0].success is False
     assert results[0].score == pytest.approx(0.0)
-    assert [payload["status"] for payload in callback_payloads] == ["seed_rpc_disconnected"]
+    assert results[0].failure_reason == FailureReason.INFRA.value
+    assert _is_infra_failure(results[0].failure_reason)
+    assert [payload["status"] for payload in callback_payloads] == ["rpc_connect_failed"]
     assert len([line for line in log_lines if "retrying RPC-transport seed" in line]) == 1
+
+
+@pytest.mark.full
+def test_run_process_parallel_keeps_a_seed_the_model_dropped(monkeypatch, tmp_path):
+    """A seed whose model process died mid-flight is not run again and keeps its own zero and outcome, so it is
+    uploaded as the model's result instead of going back to the pool."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    task = SimpleNamespace(challenge_type=4, map_seed=3403, horizon=60.0)
+    scripted_context = _ScriptedContext(
+        bench_full_eval,
+        {
+            0: [
+                {
+                    "seed_events": [
+                        {
+                            "uid": 63,
+                            "map_seed": 3403,
+                            "challenge_type": 4,
+                            "status": "seed_rpc_disconnected",
+                            "success": False,
+                            "sim_time_sec": 3.0,
+                            "seed_wall_sec": 5.0,
+                            "step_idx": 20,
+                            "error": "",
+                        }
+                    ],
+                    "results": [(63, False, 3.0, 0.0, "AGENT_EXITED", {"missed_threats": 1, "false_alarms": 0})],
+                    "elapsed_sec": 5.0,
+                },
+            ]
+        },
+    )
+    log_lines = []
+
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(bench_full_eval, "_benchmark_mp_context", lambda: scripted_context)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: log_lines.append(str(msg)))
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: log_lines.append(str(msg)))
+
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=[task],
+            task_meta=[{"group": "type4_village", "seed": 3403, "challenge_type": 4, "horizon": 60.0}],
+            batch_plan=[[0]],
+            uid=63,
+            model_path=model_path,
+            effective_workers=1,
+            phase_label="eval",
+        )
+    )
+
+    assert scripted_context.attempts == {0: 1}
+    assert results[0].failure_reason == FailureReason.AGENT_EXITED.value
+    assert not _is_infra_failure(results[0].failure_reason)
+    assert results[0].score == pytest.approx(0.0)
+    assert results[0].metrics["missed_threats"] == 1
+    assert not any("retrying RPC-transport seed" in line for line in log_lines)
 
 
 @pytest.mark.full
@@ -1689,12 +1850,12 @@ def test_run_process_parallel_honors_exhausted_shared_retry_budget(monkeypatch, 
                             "uid": 62,
                             "map_seed": 3501,
                             "challenge_type": 4,
-                            "status": "seed_rpc_disconnected",
+                            "status": "rpc_connect_failed",
                             "success": False,
                             "sim_time_sec": 3.0,
                             "seed_wall_sec": 5.0,
                             "step_idx": 20,
-                            "error": "[Errno 32] Broken pipe",
+                            "error": "ConnectionRefusedError: [Errno 111] Connection refused",
                         }
                     ],
                     "results": [(62, False, 3.0, 0.0)],
@@ -1857,7 +2018,7 @@ def test_run_process_parallel_refreshes_resources_while_waiting(monkeypatch, tmp
         def start(self):
             """Spawn the daemon thread that serves a single batch after the delay."""
             self._alive = True
-            worker_slot, task_queue, result_queue, progress_queue = self._args
+            worker_slot, task_queue, result_queue, progress_queue = self._args[:4]
 
             def _run():
                 """Send a batch-started heartbeat, wait out the delay, then post one passing result."""
@@ -1913,6 +2074,10 @@ def test_run_process_parallel_refreshes_resources_while_waiting(monkeypatch, tmp
         def __init__(self, bench_engine):
             """Hold the benchmark engine module whose event types the workers post."""
             self._bench_engine = bench_engine
+
+        def Event(self):
+            """Return the stop signal the dispatcher shares with its workers."""
+            return threading.Event()
 
         def Queue(self):
             """Return a plain thread-safe queue."""

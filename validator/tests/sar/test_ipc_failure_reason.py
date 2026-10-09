@@ -26,15 +26,28 @@ from swarm.benchmark.engine_parts.workers import (
 from swarm.protocol import FailureReason, ValidationResult
 
 
-def test_pack_widens_to_five_tuple():
-    """The packed tuple carries a fifth slot holding the failure reason as a string."""
+def test_pack_carries_reason_and_metrics():
+    """The packed tuple carries the failure reason as a string in its fifth slot and the metrics in its sixth."""
     vr = ValidationResult(
         uid=3, success=False, time_sec=11.2, score=0.01,
         failure_reason=FailureReason.SPAWN_FAILURE.value,
     )
     packed = _pack_validation_result(vr)
-    assert len(packed) == 5
+    assert len(packed) == 6
     assert packed[4] == "SPAWN_FAILURE"
+    assert packed[5] == {}
+
+
+def test_unpack_roundtrip_preserves_metrics():
+    """A seed's missed threats and false alarms survive the queue trip back to the parent."""
+    vr = ValidationResult(
+        uid=6, success=False, time_sec=40.0, score=0.0,
+        failure_reason=FailureReason.AGENT_EXITED.value,
+        metrics={"missed_threats": 2, "false_alarms": 1},
+    )
+    back = _unpack_validation_result(_pack_validation_result(vr))
+    assert back.failure_reason == "AGENT_EXITED"
+    assert back.metrics == {"missed_threats": 2, "false_alarms": 1}
 
 
 def test_unpack_roundtrip_preserves_reason():
