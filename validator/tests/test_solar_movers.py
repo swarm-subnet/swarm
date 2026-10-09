@@ -15,7 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Solar map movers: the truck on its path, the bird on its loop, and what a seed draws.
+"""Solar map movers: the farmers on the public road, or the truck on its path where the map has no road, the bird on
+its loop, and what a seed draws.
 
 The map's assets are far too large to live in the repository, so the whole file is skipped unless SOLAR_ASSET_DIR
 points at a built copy of them. Only the terrain and the movers are placed: the vegetation adds a minute to the
@@ -33,15 +34,21 @@ import pytest
 
 from swarm.core.env_builder.sar_tagging import classify_body
 from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES
-from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, build_solar_map, build_solar_movers, solar_manifest, solar_mover_rules
+from swarm.core.maps.solar import farmers
+from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _inside, _point_gap, build_solar_map, build_solar_movers, solar_fence, solar_manifest, solar_mover_rules
 
 ASSET_DIR = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 SEED = 0
 HORIZON_S = 390.0
 SUPPORT = {category.value for category in SUPPORT_CATEGORIES}
 
+ROAD = os.path.join(ASSET_DIR, "movers", CONFIG["road_file"])
+ROAD_SHIPPED = os.path.exists(ROAD)
+
 pytestmark = pytest.mark.skipif(not os.path.exists(os.path.join(ASSET_DIR, "manifest.json")),
                                 reason=f"solar map assets not built at {ASSET_DIR}")
+needs_road = pytest.mark.skipif(not ROAD_SHIPPED, reason=f"the installed swarm-worlds has no {ROAD}")
+table_truck = pytest.mark.skipif(ROAD_SHIPPED, reason="the map ships the farmers' road, so the truck follows no table")
 
 
 @pytest.fixture(scope="module")
@@ -68,6 +75,7 @@ def test_the_runtime_holds_every_mover_body_and_the_herd_is_left_out(world):
     assert set(CONFIG["movers_left_out"]) <= listed | set(CONFIG["movers_left_out"])
 
 
+@table_truck
 def test_the_pickup_follows_its_table(world):
     """The truck waits out its delay at the first row, walks the table, and holds the last row at the dead end."""
     cli, built, movers = world
@@ -83,6 +91,7 @@ def test_the_pickup_follows_its_table(world):
     assert p.getBasePositionAndOrientation(body, physicsClientId=cli)[0] == pytest.approx(rows[-1][:3], abs=1e-4)
 
 
+@table_truck
 def test_the_pickup_wheels_ride_and_spin(world):
     """Each wheel holds its place in the truck's frame and turns there by exactly what the table's spin column says."""
     cli, built, movers = world
@@ -148,6 +157,7 @@ def test_a_seed_draws_the_same_rules_twice_and_two_seeds_draw_different_ones():
     assert len({rules["pickup_delay_s"] for rules in drawn}) == len(drawn)
 
 
+@table_truck
 def test_the_truck_drives_every_seed_after_take_off_and_before_the_patrol_ends():
     """Every seed's truck leaves once the 40 s take-off is over, at a moment spread across the patrol, and reaches
     the dead end before the 390 s are out."""
@@ -157,3 +167,128 @@ def test_the_truck_drives_every_seed_after_take_off_and_before_the_patrol_ends()
     assert delays.min() >= 40.0
     assert delays.max() + drive_s <= HORIZON_S
     assert np.histogram(delays, bins=5, range=CONFIG["pickup_delay_s"])[0].min() > 300
+
+
+def _truck(built):
+    """The pickup's body id, and its wheels' ids with their placements."""
+    body = _by_item(built, "pickup_body")[0]
+    return body, [(place, b) for place, b in built["movers"] if place["item"].startswith("pickup_wheel")]
+
+
+@needs_road
+def test_every_patrol_has_a_farmer_coming_after_another_has_gone():
+    """Each seed brings farmers one at a time, never two on the road at once, and the second comes in within the
+    patrol after the first has left; the first is already on the road or comes as the patrol starts."""
+    road = farmers.load_road(ROAD)
+    for seed in range(300):
+        trips = farmers.plan(seed, road)
+        assert 2 <= len(trips) <= farmers.CONFIG["most"]
+        assert trips[0].start_s <= 0.0 < trips[0].end_s
+        assert all(a.end_s < b.start_s for a, b in zip(trips, trips[1:]))
+        assert 0.0 < trips[1].start_s < HORIZON_S
+        assert trips[-1].start_s < HORIZON_S
+
+
+def _drawn(trip):
+    """What a farmer drew, to compare two plans."""
+    return trip.arrive_by, trip.turn.from_end, trip.leave_by, trip.start_s, trip.cruise_m_s, trip.stop_s
+
+
+@needs_road
+def test_farmers_are_drawn_from_the_seed_and_change_with_it():
+    """The same seed brings the same farmers at the same moments, and different seeds bring them at different ones."""
+    road = farmers.load_road(ROAD)
+    assert [_drawn(t) for t in farmers.plan(11, road)] == [_drawn(t) for t in farmers.plan(11, road)]
+    second = {round(farmers.plan(seed, road)[1].start_s, 3) for seed in range(100)}
+    assert len(second) == 100
+    trips = [t for seed in range(100) for t in farmers.plan(seed, road)]
+    assert {(t.arrive_by, t.leave_by) for t in trips} == {(a, b) for a in farmers.ARMS for b in farmers.ARMS}
+    assert 0.3 < np.mean([t.stop_s > 0 for t in trips]) < 0.7
+
+
+@needs_road
+def test_farmers_come_from_both_ends_and_most_never_enter_the_yard():
+    """Farmers mostly come from the end the one before did not; most never enter the yard, swinging onto the other arm
+    at the corner or turning back short of it; a farmer who swings across leaves by the other end, one who turns back
+    by his own; and every way through is used."""
+    road = farmers.load_road(ROAD)
+    plans = [farmers.plan(seed, road) for seed in range(1000)]
+    assert np.mean([len({t.arrive_by for t in trips}) == 1 for trips in plans]) < 0.2
+    trips = [t for trips in plans for t in trips]
+    assert all(t.leave_by != t.arrive_by for t in trips if t.turn.corner)
+    assert all(t.leave_by == t.arrive_by for t in trips if not t.turn.yard and not t.turn.corner)
+    assert 0.6 < np.mean([not t.turn.yard for t in trips]) < 0.8
+    assert {id(t.turn) for t in trips} == {id(turn) for turn in road.turns}
+    assert sum(turn.corner for turn in road.turns) == 2
+
+
+def _routes(road):
+    """Every way a trip can go: each place to turn round with every arm in and out it serves."""
+    return [(a, turn, b) for turn in road.turns for a in turn.into for b in turn.out]
+
+
+@needs_road
+def test_every_farmer_stays_outside_the_fence():
+    """At every moment of every route, all four corners of the truck stand outside the fence and at least a metre off it."""
+    road = farmers.load_road(ROAD)
+    body = solar_manifest(ASSET_DIR)["items"]["pickup_body"]
+    (x0, y0), (x1, y1) = body["bounds_min"][:2], body["bounds_max"][:2]
+    ring = np.asarray(solar_fence(ASSET_DIR))
+    for arrive_by, turn, leave_by in _routes(road):
+        pose = farmers._path(road, arrive_by, turn, leave_by)[1]
+        yaw = np.arctan2(2 * (pose[:, 6] * pose[:, 5] + pose[:, 3] * pose[:, 4]), 1 - 2 * (pose[:, 4] ** 2 + pose[:, 5] ** 2))
+        c, s = np.cos(yaw)[:, None], np.sin(yaw)[:, None]
+        lx, ly = np.array([x0, x1, x1, x0]), np.array([y0, y0, y1, y1])
+        corners = np.stack([pose[:, :1] + c * lx - s * ly, pose[:, 1:2] + s * lx + c * ly], axis=2).reshape(-1, 2)
+        assert not _inside(ring, corners).any()
+        assert _point_gap(corners, ring) >= 1.0
+
+
+@needs_road
+def test_a_farmer_drives_in_turns_round_backing_up_and_drives_out():
+    """On every route a trip keeps to its speeds, backs up only while turning round and only slowly, halts each time
+    it changes gear, and stands where it turns for its stop."""
+    road = farmers.load_road(ROAD)
+    for arrive_by, turn, leave_by in _routes(road):
+        trip = farmers._trip(road, arrive_by, turn, leave_by, 5.0, 20.0)
+        gear = farmers._path(road, arrive_by, turn, leave_by)[3]
+        assert trip.speed.max() <= 5.0 + 1e-9
+        assert set(gear[gear < 0]) == {-1.0} and trip.speed[gear < 0].max() <= farmers.CONFIG["reverse_m_s"] + 1e-9
+        changes = np.flatnonzero(gear[1:] != gear[:-1])
+        assert len(changes) in (2, 4) and (trip.speed[changes] == 0.0).all()
+        there = len(road.lines[arrive_by]) - turn.from_end
+        assert trip.leave[there] - trip.reach[there] == pytest.approx(20.0)
+        backed = np.flatnonzero(gear < 0)
+        assert backed.min() > there and backed.max() < there + len(turn.rows)
+
+
+@needs_road
+def test_the_wheels_ride_on_the_ground_and_the_front_ones_steer(world):
+    """Through a whole patrol every wheel's lowest point sits within a few centimetres of the terrain, the front wheels
+    turn about the vertical on full lock in the yard while the rear ones never do, and the empty road leaves the truck
+    under the map."""
+    cli, built, movers = world
+    terrain = set(built["bodies"]["terrain"])
+    body, wheels = _truck(built)
+    gaps, steered, under = [], {}, 0
+    for step in range(0, int(HORIZON_S * CONFIG["step_hz"]), 10):
+        movers.advance(step)
+        position, orientation = p.getBasePositionAndOrientation(body, physicsClientId=cli)
+        if position[2] < -100.0:
+            under += 1
+            continue
+        down = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)[:, 2] * -0.36
+        for place, wheel in wheels:
+            at, turned = p.getBasePositionAndOrientation(wheel, physicsClientId=cli)
+            # The wheel's lowest point lies a radius down the body's own vertical, which tilts with the ground.
+            low = np.asarray(at) + down
+            hit = p.rayTest([low[0], low[1], low[2] + 0.1], [low[0], low[1], low[2] - 6.0], physicsClientId=cli)[0]
+            assert hit[0] in terrain
+            gaps.append(low[2] - hit[3][2])
+            local = p.multiplyTransforms(*p.invertTransform(position, orientation), at, turned)[1]
+            axle = p.rotateVector(local, [0.0, 1.0, 0.0])
+            steered.setdefault(place["item"], []).append(abs(math.degrees(math.atan2(-axle[0], axle[1]))))
+    gaps = np.abs(gaps)
+    assert np.percentile(gaps, 99) < 0.03 and gaps.max() < 0.08
+    assert max(steered["pickup_wheel_front_left"]) > 25.0 and max(steered["pickup_wheel_rear_left"]) < 2.0
+    assert under > 0

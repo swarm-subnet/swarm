@@ -42,6 +42,8 @@ import numpy as np
 import pybullet as p
 import swarm_worlds
 
+from swarm.core.maps.solar import farmers
+
 SOLAR_ASSET_DIR = os.path.join(swarm_worlds.maps_dir(), "custom", "solar")
 
 CONFIG: Dict[str, Any] = {
@@ -59,6 +61,8 @@ CONFIG: Dict[str, Any] = {
     "mover_seed_offset": 0x4D0FE,                # movers draw from their own stream, so a new density tier cannot move the truck
     "step_hz": 50,                               # the rate every mover table is written at, one row per simulator step
     "pickup_delay_s": (40.0, 365.0),             # the truck leaves after take-off and reaches the dead end before 390 s
+    "road_file": "public_road.json",             # the farmers' road; a map that ships it drives farmers instead of one truck
+    "off_road_position": (0.0, 0.0, -400.0),     # where the truck waits under the map while no farmer is on the road
     "bird_phase_share": (0.0, 1.0),              # where on its loop the bird starts, as a share of the whole loop
     "movers_left_out": ("goat",),                # the herd the manifest still lists; dogs replace it inside the fence
     "shift_seed_offset": 0x5B1F7,                # the park's shifts draw from their own stream
@@ -216,18 +220,23 @@ class _Shapes:
 class SolarMovers:
     """The map's movers, driven a step at a time from the tables the export wrote.
 
-    The pickup waits at the first row until the step this seed lets it leave, follows its table and holds the last
-    row at the dead end; the bird loops its carrier path with the wingbeat composed on top.
+    On a map that ships the public road, the pickup carries this seed's farmers one after another along it, steering,
+    rolling and resting on the ground as the road file poses it, and waits under the map while the road is empty.
+    Otherwise it waits at the first row of its table until the step this seed lets it leave, follows the table and
+    holds the last row at the dead end. The bird loops its carrier path with the wingbeat composed on top.
     """
 
     def __init__(self, cli: int, asset_dir: str, manifest: Dict[str, Any], placed: Sequence[Tuple[Dict[str, Any], int]],
-                 rules: Dict[str, Any]):
+                 rules: Dict[str, Any], seed: int = 0):
         """Sort the placed mover bodies by what drives them and load the tables each of them reads."""
         self.cli = cli
         self.rules = rules
         self.step = -1
         self.bodies = [int(body) for _, body in placed]
-        self._pickup: List[Tuple[int, List[float], List[float], Optional[List[float]]]] = []
+        self.trips: Optional[List[farmers.Trip]] = None
+        self._seed = int(seed)
+        self._driven: Any = ()
+        self._pickup: List[Tuple[int, List[float], List[float], Optional[List[float]], bool]] = []
         self._bird: List[Tuple[int, int]] = []
         self._pickup_rows: List[List[float]] = []
         self._bird_rows: List[List[float]] = []
@@ -260,7 +269,11 @@ class SolarMovers:
             if kind == "pickup":
                 self._pickup_rows = _mover_table(os.path.join(folder, place["path"]))["rows"]
                 self._pickup.append((int(body), list(place["local_position"]), list(place["local_quaternion"]),
-                                     place.get("spin_axis")))
+                                     place.get("spin_axis"), "front" in place["item"]))
+                road = os.path.join(folder, CONFIG["road_file"])
+                if self.trips is None and os.path.exists(road):
+                    self.trips = farmers.plan(self._seed, farmers.load_road(road))
+                    self._timeline = farmers.timeline(self.trips, CONFIG["step_hz"])
             elif kind == "bird":
                 self._bird_rows = _mover_table(os.path.join(folder, place["path"]))["rows"]
                 poses = _mover_poses(os.path.join(folder, place["poses"]))
@@ -270,8 +283,12 @@ class SolarMovers:
         self._bird_offset = int(self.rules["bird_phase_share"] * max(len(self._bird_rows), 1))
 
     def _advance_pickup(self, step: int) -> None:
-        """Set the truck's body, glass and wheels to the row this step reads, holding the last row at the dead end."""
+        """Set the truck's body, glass and wheels where this step has them: with the farmers on a map that ships the
+        road, else at the row of its table this step reads, holding the last row at the dead end."""
         if not self._pickup:
+            return
+        if self.trips is not None:
+            self._drive(step)
             return
         index = min(max(step - self._pickup_delay_steps, 0), len(self._pickup_rows) - 1)
         # The truck holds its row while it waits and once it parks, and writing a pose a body holds changes nothing.
@@ -279,13 +296,48 @@ class SolarMovers:
             return
         self._pickup_index = index
         row = self._pickup_rows[index]
-        for body, local_position, local_quaternion, axis in self._pickup:
+        for body, local_position, local_quaternion, axis, _ in self._pickup:
             turn = local_quaternion
             if axis is not None:
                 half = float(row[7]) / 2.0
                 spin = [axis[0] * math.sin(half), axis[1] * math.sin(half), axis[2] * math.sin(half), math.cos(half)]
                 turn = p.multiplyTransforms([0.0, 0.0, 0.0], spin, [0.0, 0.0, 0.0], turn)[1]
             position, orientation = p.multiplyTransforms(row[:3], row[3:7], local_position, turn)
+            p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
+
+    def _drive(self, step: int) -> None:
+        """Set the truck where this seed's farmer on the road has it at this step, its front wheels steered, every
+        wheel rolled by the distance driven and seated on the ground, or under the map while no farmer is on the road."""
+        on, poses, rolled, curves = self._timeline
+        state = None
+        if 0 <= step < len(on) and on[step]:
+            state = (poses[step, :7].tolist(), float(rolled[step]), math.atan(self.trips[0].wheelbase * float(curves[step])),
+                     float(poses[step, 7]))
+        # A truck standing still, or a road staying empty, holds a pose the bodies already have.
+        if state == self._driven:
+            return
+        self._driven = state
+        if state is None:
+            for body, *_ in self._pickup:
+                p.resetBasePositionAndOrientation(body, CONFIG["off_road_position"], [0.0, 0.0, 0.0, 1.0],
+                                                  physicsClientId=self.cli)
+            return
+        pose, rolled, steer, twist = state
+        half = rolled / 2.0
+        turn_to = [0.0, 0.0, math.sin(steer / 2.0), math.cos(steer / 2.0)]
+        for body, local_position, local_quaternion, axis, steers in self._pickup:
+            turn = local_quaternion
+            if axis is not None:
+                spin = [axis[0] * math.sin(half), axis[1] * math.sin(half), axis[2] * math.sin(half), math.cos(half)]
+                turn = p.multiplyTransforms([0.0, 0.0, 0.0], spin, [0.0, 0.0, 0.0], turn)[1]
+            if steers:
+                turn = p.multiplyTransforms([0.0, 0.0, 0.0], turn_to, [0.0, 0.0, 0.0], turn)[1]
+            seat = local_position
+            if axis is not None:
+                # The suspension lifts the front left and rear right wheels by the twist and drops the other two.
+                rise = twist if (local_position[0] > 0.0) == (local_position[1] > 0.0) else -twist
+                seat = [local_position[0], local_position[1], local_position[2] + rise]
+            position, orientation = p.multiplyTransforms(pose[:3], pose[3:], seat, turn)
             p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
 
     def _advance_bird(self, step: int) -> None:
@@ -722,4 +774,4 @@ def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None
 def build_solar_movers(world: Dict[str, Any], seed: int = 0, cli: int = 0) -> SolarMovers:
     """The runtime that drives the movers build_solar_map placed, with the rules this seed drew for them."""
     asset_dir = world["asset_dir"]
-    return SolarMovers(cli, asset_dir, solar_manifest(asset_dir), world["movers"], solar_mover_rules(seed))
+    return SolarMovers(cli, asset_dir, solar_manifest(asset_dir), world["movers"], solar_mover_rules(seed), seed=seed)
