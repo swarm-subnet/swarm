@@ -600,7 +600,7 @@ def _run_multi_seed_rpc_sync(
                             )
                             if use_ref:
                                 rpc_overhead_sec = await _measure_rpc_overhead_via_ping(
-                                    agent, uid, ping_timeout_sec
+                                    agent_capnp, ping_timeout_sec
                                 )
                                 cpu_factor = 1.0
                             else:
@@ -1119,17 +1119,43 @@ def _run_multi_seed_rpc_sync(
         if shm_file is not None:
             shm_file.close()
 
-async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: float) -> float:
-    """Pure RPC round-trip overhead from no-op pings (no miner-side compute)."""
+async def _measure_rpc_overhead_via_ping(agent_capnp, ping_timeout_sec: float) -> float:
+    """Pure RPC round-trip overhead from no-op pings to the validator's own echo server.
+
+    The miner's server answers inside the miner's process, where a model can slow its own
+    replies; the echo rides the same RPC stack and runs no submission code.
+    """
     facade = _docker_evaluator_facade()
+
+    class _Echo(agent_capnp.Agent.Server):
+        """Agent capability that answers ping and nothing else."""
+
+        async def ping(self, message, **kwargs):
+            """Answer the calibration ping."""
+            return "pong"
+
+    async def _serve(stream):
+        """Hold one echo connection open until the client leaves."""
+        await capnp.TwoPartyServer(stream, bootstrap=_Echo()).on_disconnect()
+
     samples = []
-    for _ in range(facade.CALIBRATION_ROUNDS):
-        try:
-            t0 = time.perf_counter()
-            await asyncio.wait_for(agent.ping("cal"), timeout=ping_timeout_sec)
-            samples.append(time.perf_counter() - t0)
-        except Exception:
-            continue
+    try:
+        server = await capnp.AsyncIoStream.create_server(_serve, "127.0.0.1", 0)
+        async with server:
+            stream = await capnp.AsyncIoStream.create_connection(
+                host="127.0.0.1", port=server.sockets[0].getsockname()[1]
+            )
+            echo = capnp.TwoPartyClient(stream).bootstrap().cast_as(agent_capnp.Agent)
+            for _ in range(facade.CALIBRATION_ROUNDS):
+                try:
+                    t0 = time.perf_counter()
+                    await asyncio.wait_for(echo.ping("cal"), timeout=ping_timeout_sec)
+                    samples.append(time.perf_counter() - t0)
+                except Exception:
+                    continue
+            stream.close()
+    except Exception:
+        pass
     if len(samples) < 3:
         return max(facade.RPC_STEP_TIMEOUT_SEC - facade.MINER_COMPUTE_BUDGET_SEC, 0.010)
     samples.sort()
@@ -1139,5 +1165,5 @@ async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: floa
 
 async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
     """Measure trusted transport overhead; graph artifacts cannot calibrate hosts."""
-    overhead = await _measure_rpc_overhead_via_ping(agent, uid, RPC_PING_TIMEOUT_SEC)
+    overhead = await _measure_rpc_overhead_via_ping(agent_capnp, RPC_PING_TIMEOUT_SEC)
     return overhead, 1.0

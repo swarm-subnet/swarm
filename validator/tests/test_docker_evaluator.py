@@ -1020,6 +1020,10 @@ def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, spe
         """Ten milliseconds of overhead on a host of speed one."""
         return 0.01, 1.0
 
+    async def _no_overhead(_schema, _timeout):
+        """A transport that costs nothing on a reference-speed host."""
+        return 0.0
+
     monkeypatch.setattr(rpc_mod.capnp, "load", lambda _path: SimpleNamespace(Agent=object()))
     monkeypatch.setattr(rpc_mod.RpcTraceSettings, "from_env",
                         lambda: SimpleNamespace(enabled=False, trace_every=1, heartbeat_sec=0.0))
@@ -1029,6 +1033,7 @@ def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, spe
     monkeypatch.setattr(rpc_mod.capnp, "AsyncIoStream", SimpleNamespace(create_connection=_connect))
     monkeypatch.setattr(ev, "_serialize_observation", serialize)
     monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _calibrate)
+    monkeypatch.setattr(rpc_mod, "_measure_rpc_overhead_via_ping", _no_overhead)
     monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
     monkeypatch.setattr(rpc_mod, "runtime_family_for_task", lambda task: SimpleNamespace(
         family_id="cf_test", decision_steps=1, observation_ahead=True,

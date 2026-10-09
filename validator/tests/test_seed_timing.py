@@ -20,11 +20,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import capnp
 import numpy as np
 import pytest
 
@@ -128,6 +131,10 @@ def _fly_one_seed(
         """Report a ten millisecond overhead on a reference-speed host."""
         return 0.01, 1.0
 
+    async def _no_overhead(_schema, _timeout):
+        """Report a transport that costs nothing."""
+        return 0.0
+
     client = SimpleNamespace(bootstrap=lambda: SimpleNamespace(cast_as=lambda _schema: _Agent()))
     monkeypatch.setattr(rpc_mod.capnp, "load", lambda _path: SimpleNamespace(Agent=object()))
     monkeypatch.setattr(
@@ -140,6 +147,7 @@ def _fly_one_seed(
     monkeypatch.setattr(rpc_mod.capnp, "AsyncIoStream", _StreamFactory)
     monkeypatch.setattr(ev, "_serialize_observation", lambda _schema, obs: obs)
     monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _fake_calibrate)
+    monkeypatch.setattr(rpc_mod, "_measure_rpc_overhead_via_ping", _no_overhead)
     monkeypatch.setattr(
         rpc_mod, "make_env_with_initial_obs", lambda _task, gui=False: (_Env(step), {"marker": 0})
     )
@@ -235,6 +243,90 @@ def test_acts_in_one_window_share_its_budget(monkeypatch, window_acts, delays, a
     )
 
     assert len(acts) == acts_expected
+
+
+@contextlib.contextmanager
+def _real_miner(ping_delay_sec: float, act_delay_sec: float, acts: list):
+    """Serve a real Cap'n Proto miner on its own thread and yield its port; only its ping is held for ping_delay_sec."""
+    schema = capnp.load(str(de.rpc._submission_template_dir() / "agent.capnp"))
+    ready, handles = threading.Event(), {}
+
+    class _Miner(schema.Agent.Server):
+        """Miner whose replies take the scripted times."""
+
+        async def ping(self, message, **kwargs):
+            """Answer pong after the ping delay."""
+            await asyncio.sleep(ping_delay_sec)
+            return "pong"
+
+        async def reset(self, **kwargs):
+            """Accept the reset."""
+
+        async def act(self, obs, **kwargs):
+            """Log the call and return a zero action after the act delay."""
+            acts.append(1)
+            await asyncio.sleep(act_delay_sec)
+            response = schema.Tensor.new_message()
+            response.data = np.zeros(5, dtype=np.float32).tobytes()
+            response.shape = [5]
+            response.dtype = "float32"
+            return response
+
+    async def _serve():
+        """Listen on a free port until asked to stop."""
+        async with capnp.kj_loop():
+            async def _connection(stream):
+                """Serve one validator connection until it closes."""
+                await capnp.TwoPartyServer(stream, bootstrap=_Miner()).on_disconnect()
+
+            server = await capnp.AsyncIoStream.create_server(_connection, "127.0.0.1", 0)
+            handles.update(
+                port=server.sockets[0].getsockname()[1], loop=asyncio.get_running_loop(), stop=asyncio.Event()
+            )
+            ready.set()
+            async with server:
+                await handles["stop"].wait()
+
+    thread = threading.Thread(target=asyncio.run, args=(_serve(),), daemon=True)
+    thread.start()
+    assert ready.wait(10.0)
+    try:
+        yield handles["port"]
+    finally:
+        handles["loop"].call_soon_threadsafe(handles["stop"].set)
+        thread.join(10.0)
+
+
+@pytest.mark.parametrize("ping_delay_sec", [0.0, 0.1], ids=["honest", "slowed-ping"])
+def test_a_slowed_ping_buys_no_act_time(monkeypatch, ping_delay_sec):
+    """A miner holding every ping for 100 ms is charged the same transport overhead as one answering at once,
+    so its 80 ms act is struck under a 50 ms budget and asked again exactly like the honest miner's."""
+    steps: list = []
+    acts: list = []
+    records: list = []
+
+    def _step(_action):
+        """End the episode on the second step."""
+        steps.append(1)
+        return {"marker": [len(steps)]}, 0.0, len(steps) == 2, False, {"success": False, "collision": False}
+
+    rpc_mod = de.rpc
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        rpc_mod, "make_env_with_initial_obs", lambda _task, gui=False: (_Env(_step), {"marker": [0]})
+    )
+    profile = ChallengeFamilyRuntimeProfile(family_id="cf_autopilot", miner_compute_budget_sec=0.05)
+    task = SimpleNamespace(
+        map_seed=77, challenge_type=1, horizon=0.04, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
+    )
+    with _real_miner(ping_delay_sec, 0.08, acts) as port:
+        ev._run_multi_seed_rpc_sync(
+            [task], uid=9, rpc_port=port, on_seed_complete=lambda record=None: records.append(record),
+            runtime_profile_payload=profile.as_dict(), speed_factor=1.0,
+        )
+
+    assert records[0]["calibration_overhead_sec"] < 0.02
+    assert len(acts) == 3
 
 
 def test_failed_seed_record_still_carries_its_clocks(monkeypatch):
