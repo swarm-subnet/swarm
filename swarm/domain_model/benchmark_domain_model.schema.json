@@ -560,6 +560,7 @@
       },
       "seeds_zeroed_per_mistake": 10,
       "benchmark_seed_count": 250,
+      "king_window": 10,
       "emission_allocation": 0.65
     }
   },
