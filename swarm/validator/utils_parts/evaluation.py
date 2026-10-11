@@ -30,6 +30,7 @@ from swarm.challenge_families import (
     build_benchmark_tasks,
     build_random_task,
     build_screening_tasks,
+    deferred_seed_checks,
 )
 from swarm.constants import (
     BENCHMARK_FULL_SEED_COUNT,
@@ -221,11 +222,12 @@ async def _evaluate_seeds(
         tasks = []
         for seed in seeds:
             try:
-                task = build_random_task(
-                    sim_dt=SIM_DT,
-                    seed=seed,
-                    family_id=family_id,
-                )
+                with deferred_seed_checks():
+                    task = build_random_task(
+                        sim_dt=SIM_DT,
+                        seed=seed,
+                        family_id=family_id,
+                    )
                 tasks.append(task)
             except Exception as e:
                 bt.logging.warning(f"Failed to create a seed task: {e}")
@@ -746,13 +748,14 @@ async def _run_screening(
 
     screening_tasks: List = []
     try:
-        screening_tasks = build_screening_tasks(
-            sim_dt=SIM_DT,
-            seeds=screening_seeds,
-            family_id=family_id,
-            offset=seeds_from,
-            total_seed_count=len(full_seeds),
-        )
+        with deferred_seed_checks():
+            screening_tasks = build_screening_tasks(
+                sim_dt=SIM_DT,
+                seeds=screening_seeds,
+                family_id=family_id,
+                offset=seeds_from,
+                total_seed_count=len(full_seeds),
+            )
     except Exception as e:
         bt.logging.warning(f"Failed to create screening tasks: {e}")
         screening_tasks = [None for _ in screening_seeds]
@@ -925,16 +928,18 @@ async def _run_full_benchmark(
                         full_screening_seeds = _seed_manager_call(
                             self.seed_manager, "get_screening_seeds", family_id, epoch_number
                         )
-                    task = build_screening_tasks(
-                        sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
-                        offset=abs_idx, total_seed_count=len(full_screening_seeds),
-                    )[0]
+                    with deferred_seed_checks():
+                        task = build_screening_tasks(
+                            sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
+                            offset=abs_idx, total_seed_count=len(full_screening_seeds),
+                        )[0]
                 else:
-                    task = build_benchmark_tasks(
-                        sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
-                        offset=abs_idx - BENCHMARK_SCREENING_SEED_COUNT,
-                        total_seed_count=BENCHMARK_FULL_SEED_COUNT,
-                    )[0]
+                    with deferred_seed_checks():
+                        task = build_benchmark_tasks(
+                            sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
+                            offset=abs_idx - BENCHMARK_SCREENING_SEED_COUNT,
+                            total_seed_count=BENCHMARK_FULL_SEED_COUNT,
+                        )[0]
             except Exception as e:
                 bt.logging.warning(
                     f"Failed to create benchmark task idx {abs_idx}: {e}"

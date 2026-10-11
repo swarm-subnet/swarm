@@ -290,12 +290,12 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 _HEARTBEAT_TIMER_THREAD = "swarm-heartbeat-timer"
 
 
-def _as_it_is(task: Any) -> Any:
+def _as_it_is(task: Any, *, judge: bool = True) -> Any:
     """The task itself, as a seed that passed its checks is flown."""
     return task
 
 
-def _each_as_itself(seeds: Any, workers: int) -> dict:
+def _each_as_itself(seeds: Any, workers: int, *, niceness: int = 0) -> dict:
     """Every seed flown as itself, as a list whose seeds all passed their checks."""
     return {int(seed): int(seed) for seed in seeds}
 

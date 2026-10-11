@@ -58,7 +58,7 @@ from .utils import (
     compute_koth_weights_from_sync,
     stamp_local_weights_on_kings,
 )
-from .utils_parts.run_task import run_task
+from .utils_parts.run_task import run_task, start_seed_preparations
 
 
 async def forward(self) -> None:
@@ -144,6 +144,7 @@ async def _forward_iteration(self) -> None:
             await _idle_until_wake(self, FORWARD_SLEEP_SEC)
             tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
             return
+        start_seed_preparations(self, self.seed_manager.epoch_number)
 
         # Reset flags before each long-poll so SSE events that arrive
         # during the next /next-task wait can wake us promptly.

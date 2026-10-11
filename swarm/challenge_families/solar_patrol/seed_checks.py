@@ -52,6 +52,7 @@ CACHE_ENV = "SWARM_SEED_CHECK_DIR"
 CACHE_DEFAULT = Path.home() / ".cache" / "swarm" / "seed_checks"
 WORKERS_ENV = "SWARM_SEED_CHECK_WORKERS"
 CPU_SHARE = 4                          # by default the flights take a quarter of the machine's cores
+BACKGROUND_NICENESS = 19               # flights judging ahead yield every core the scoring wants
 PILOT_MODULE = "swarm.challenge_families.solar_patrol.reference_pilot"
 POLL_S = 0.5                           # how often a busy flight's kept verdict is looked for
 # One BLAS and OpenMP thread in every reference flight, as in the validator image, whatever the host sets.
@@ -126,14 +127,14 @@ def replacement(seed: int) -> Optional[int]:
     raise SeedCheckError(f"no candidate of seed {seed} passed the seed checks")
 
 
-def prepare(seeds: Iterable[int], workers: int) -> Dict[int, int]:
-    """Judge a list of seeds on parallel flights, following each seed's replacements only as far as it needs, and
-    return what every list seed is flown as. A failed candidate's replacement goes to the next free flight at once,
-    so no flight waits for the others to finish a round."""
+def prepare(seeds: Iterable[int], workers: int, *, niceness: int = 0) -> Dict[int, int]:
+    """Judge a list of seeds on parallel flights at the given CPU niceness, following each seed's replacements only as
+    far as it needs, and return what every list seed is flown as. A failed candidate's replacement goes to the next
+    free flight at once, so no flight waits for the others to finish a round."""
     chains = {int(seed): candidates(seed) for seed in seeds}
     heads = {seed: next(chain) for seed, chain in chains.items()}
     flown: Dict[int, int] = {}
-    with Flights(workers) as flights:
+    with Flights(workers, niceness) as flights:
         while heads:
             for seed, head in list(heads.items()):
                 found = cached(head)
@@ -154,9 +155,10 @@ class Flights:
     """Reference flights in processes of their own, at most workers at a time. Each process judges the seeds it is
     handed one after another and keeps their verdicts, so only its first world is built cold."""
 
-    def __init__(self, workers: int):
-        """No process yet: one starts when a seed finds every running one busy."""
+    def __init__(self, workers: int, niceness: int = 0):
+        """No process yet: one starts, at that niceness, when a seed finds every running one busy."""
         self.workers = max(1, int(workers))
+        self.niceness = int(niceness)
         self.runs: Dict[subprocess.Popen, Optional[int]] = {}   # each process and the seed it is judging
         self.logs: Dict[subprocess.Popen, IO[bytes]] = {}
 
@@ -200,6 +202,9 @@ class Flights:
                 log = tempfile.TemporaryFile()
                 free = subprocess.Popen([sys.executable, "-m", PILOT_MODULE], stdin=subprocess.PIPE, bufsize=0,
                                         stdout=subprocess.DEVNULL, stderr=log, env={**os.environ, **THREAD_CAPS})
+                if self.niceness:
+                    # Set from outside: a pre-exec hook is unsafe here, preparation runs in a thread.
+                    os.setpriority(os.PRIO_PROCESS, free.pid, self.niceness)
                 self.logs[free] = log
             if free is None:
                 break
@@ -215,11 +220,13 @@ class Flights:
             time.sleep(POLL_S)
 
 
-def approve(task: MapTask) -> MapTask:
+def approve(task: MapTask, *, judge: bool = True) -> MapTask:
     """The task to fly for this seed: the task itself when it passes, its replacement when it does not. A seed not
-    judged yet is flown by the reference pilot first."""
+    judged yet is flown by the reference pilot first, or with judge off comes back as it is."""
     seed = int(task.map_seed)
     flown = replacement(seed)
+    if flown is None and not judge:
+        return task
     if flown is None:
         flown = prepare([seed], workers=1)[seed]
     return task if flown == seed else solar_patrol_task(seed=flown, sim_dt=task.sim_dt)
