@@ -35,7 +35,12 @@ from gymnasium import spaces
 from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE
 from swarm.protocol import SCHEMA_VERSION, FailureReason
 
-from ..base import ChallengeFamilyEvaluation, ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile
+from ..base import (
+    ChallengeFamilyEvaluation,
+    ChallengeFamilyRuntime,
+    ChallengeFamilyRuntimeProfile,
+    seed_checks_deferred,
+)
 from . import (
     airframe,
     camera,
@@ -134,8 +139,10 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         return {"sar_mode": False}
 
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
-        """The patrol for one seed, once the seed checks accept it."""
-        return seed_checks.approve(solar_patrol_task(seed=int(seed or 0), sim_dt=sim_dt))
+        """The patrol for one seed, once the seed checks accept it; with the checks deferred, a seed not judged yet comes
+        back as drawn."""
+        task = solar_patrol_task(seed=int(seed or 0), sim_dt=sim_dt)
+        return seed_checks.approve(task, judge=not seed_checks_deferred())
 
     def build_screening_tasks(self, *, sim_dt: float, seeds: list[int], offset: int = 0,
                               total_seed_count: Optional[int] = None) -> list[Any]:
@@ -146,9 +153,18 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         """Whether every seed's check verdict, and its replacements' where it failed, is already kept."""
         return all(seed_checks.replacement(seed) is not None for seed in seeds)
 
-    def prepare_seeds(self, seeds: list[int]) -> None:
-        """Fly the reference pilot over every seed not judged yet, on the seed checks' own workers."""
-        seed_checks.prepare(seeds, seed_checks.workers())
+    def prepare_seeds(self, seeds: list[int], *, background: bool = False) -> None:
+        """Fly the reference pilot over every seed not judged yet, on the seed checks' own workers, at the lowest CPU
+        priority in the background."""
+        seed_checks.prepare(seeds, seed_checks.workers(), niceness=seed_checks.BACKGROUND_NICENESS if background else 0)
+
+    def awaits_seed_check(self, task: Any) -> bool:
+        """Whether the patrol is not yet known to fly as it is: its seed is not judged, or failed and needs swapping."""
+        return seed_checks.replacement(int(task.map_seed)) != int(task.map_seed)
+
+    def check_seed(self, task: Any) -> Any:
+        """The patrol to fly for this one, its seed judged by the reference pilot first when it is not yet."""
+        return seed_checks.approve(task)
 
     # ------------------------------------------------------------------ #
     # environment lifecycle

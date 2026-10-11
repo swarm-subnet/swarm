@@ -38,9 +38,9 @@ import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
-from swarm.constants import CLAIM_GIVE_UP_SEC
+from swarm.constants import CLAIM_GIVE_UP_SEC, SEED_PREPARATION_RETRY_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
-from swarm.domain_model import get_family_benchmark_seed_count
+from swarm.domain_model import OPEN_CHALLENGE_FAMILY_IDS, get_family_benchmark_seed_count
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.runtime_telemetry import tracker_call
@@ -88,29 +88,56 @@ def _seeds_ready(seed_manager, epoch: int) -> bool:
     return True if check is None else bool(check(epoch))
 
 
-def _family_seeds_prepared(self, family_id: str, epoch: int) -> bool:
-    """Whether the family can build this epoch's tasks at once. When it cannot, its preparation is started off the
-    event loop, once, and later tasks find it done; a failed preparation is started again by the next task."""
-    runtime = require_runtime_family(family_id)
-    if not runtime.prepares_seeds:
-        return True
+def start_seed_preparations(self, epoch: int) -> None:
+    """Start judging this epoch's seeds ahead, in the background, for every open family that prepares them. Nothing
+    waits for it: a seed still unjudged when it is handed out is judged just before it flies."""
+    for family_id in OPEN_CHALLENGE_FAMILY_IDS:
+        if require_runtime_family(family_id).prepares_seeds:
+            _start_seed_preparation(self, family_id, epoch)
+
+
+def _start_seed_preparation(self, family_id: str, epoch: int) -> None:
+    """Judge the family's epoch seeds in a worker thread at the lowest CPU priority, unless they are judged, being
+    judged, or failed too recently."""
     key = (family_id, int(epoch))
     prepared = self.__dict__.setdefault("_seeds_prepared", set())
-    if key in prepared:
-        return True
-    seeds = list(_seed_manager_call(self.seed_manager, "get_all_seeds", family_id, epoch))
-    # The backend hands out only the family's first seeds, so the rest are never flown and need no preparation.
-    seeds = seeds[:get_family_benchmark_seed_count(family_id) or len(seeds)]
-    if runtime.seeds_prepared(seeds):
-        prepared.add(key)
-        return True
     running = self.__dict__.setdefault("_seed_preparations", {})
+    retry_at = self.__dict__.setdefault("_seed_preparation_retry_at", {})
     job = running.get(key)
-    if job is None or job.done():
-        if job is not None and job.exception() is not None:
-            bt.logging.error(f"run_task: preparing {family_id} seeds for epoch {epoch} failed: {job.exception()}")
-        running[key] = asyncio.create_task(asyncio.to_thread(runtime.prepare_seeds, seeds))
-    return False
+    if key in prepared or (job is not None and not job.done()) or time.monotonic() < retry_at.get(key, 0.0):
+        return
+    runtime = require_runtime_family(family_id)
+    try:
+        seeds = list(_seed_manager_call(self.seed_manager, "get_all_seeds", family_id, epoch))
+        # The backend hands out only the family's first seeds, so the rest are never flown and need no preparation.
+        seeds = seeds[:get_family_benchmark_seed_count(family_id) or len(seeds)]
+        if runtime.seeds_prepared(seeds):
+            prepared.add(key)
+            return
+    except Exception as exc:
+        retry_at[key] = time.monotonic() + SEED_PREPARATION_RETRY_SEC
+        bt.logging.warning(f"Cannot judge {family_id} seeds for epoch {epoch} ahead ({exc}); they are judged as they fly")
+        return
+    bt.logging.info(f"Judging {len(seeds)} {family_id} seeds for epoch {epoch} in the background; tasks run meanwhile")
+    # Highest first: the pool hands seeds out lowest first, and those are judged just in time as they fly.
+    job = asyncio.create_task(asyncio.to_thread(runtime.prepare_seeds, seeds[::-1], background=True))
+    job.add_done_callback(lambda done: _seed_preparation_ended(self, key, done))
+    running[key] = job
+
+
+def _seed_preparation_ended(self, key: tuple, job: asyncio.Task) -> None:
+    """Log how a background preparation ended; a failed one may start again once the retry delay has passed."""
+    family_id, epoch = key
+    if job.cancelled():
+        return
+    if job.exception() is None:
+        bt.logging.info(f"{family_id} seeds for epoch {epoch} are all judged")
+        return
+    self._seed_preparation_retry_at[key] = time.monotonic() + SEED_PREPARATION_RETRY_SEC
+    bt.logging.error(
+        f"Judging {family_id} seeds for epoch {epoch} failed, starting again in {SEED_PREPARATION_RETRY_SEC:.0f}s "
+        f"(seeds are still judged as they fly): {job.exception()}"
+    )
 
 
 def _task_epoch(seed_manager, task: Dict[str, Any]) -> int:
@@ -147,12 +174,6 @@ async def run_task(
     if not _seeds_ready(seed_manager, epoch):
         bt.logging.warning(
             f"run_task: no seeds for epoch {epoch}; leaving UID {uid} to a validator that has them"
-        )
-        return
-    if not _family_seeds_prepared(self, family_id, epoch):
-        bt.logging.warning(
-            f"run_task: {family_id} seeds for epoch {epoch} are still being prepared; leaving UID {uid} to a "
-            "validator that has them"
         )
         return
 

@@ -15,8 +15,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Solar Patrol's seed checks (task 24): the replacement chain, the kept verdicts, the reference pilot's route, and
-whole reference flights judged on flat ground with a square fence, as the other patrol tests fly them.
+"""Solar Patrol's seed checks (task 24): the replacement chain, the kept verdicts, the reference pilot's route, how the
+validator judges seeds in the background and just before they fly without ever waiting for them, and whole reference
+flights judged on flat ground with a square fence, as the other patrol tests fly them.
 """
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ import asyncio
 import io
 import os
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -32,13 +35,18 @@ import pytest
 import swarm_worlds
 from shapely.geometry import Point, Polygon
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, build_benchmark_tasks, require_runtime_family
+from swarm.benchmark import engine as bench_engine
+from swarm.challenge_families import build_benchmark_tasks, deferred_seed_checks, require_runtime_family
 from swarm.challenge_families.solar_patrol import airframe, drone_state, park, reference_pilot, seed_checks, theft, wind
 from swarm.challenge_families.solar_patrol.contract import FAMILY_ID, HORIZON_S
 from swarm.challenge_families.solar_patrol.seed_checks import CHECK_TRIES, SeedCheckError, Verdict, candidates
 from swarm.constants import SIM_DT
 from swarm.domain_model import get_family_benchmark_seed_count
+from swarm.protocol import FailureReason
+from swarm.validator import forward as forward_mod
+from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.utils_parts import run_task as run_task_module
+from validator.tests.test_docker_evaluator import _ScriptedContext
 
 _M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
 _APPROVE = seed_checks.approve
@@ -338,52 +346,83 @@ def test_narrow_side_is_measured_across_the_shape():
 
 
 def _validator_with_seeds(seeds):
-    """The validator stand-in the gate reads: a seed manager serving one list for every family."""
+    """The validator stand-in the background preparation reads: a seed manager serving one list for every family."""
     manager = SimpleNamespace(epoch_number=5, get_all_seeds=lambda family_id=None, epoch=None: list(seeds))
     return SimpleNamespace(seed_manager=manager)
 
 
-def test_families_without_seed_checks_never_wait():
-    """A family that prepares nothing builds its tasks at once, without its seed list even being read."""
-    validator = SimpleNamespace(seed_manager=SimpleNamespace(epoch_number=5))
-    assert run_task_module._family_seeds_prepared(validator, DEFAULT_RUNTIME_FAMILY_ID, 5)
+def _solar_task(seed):
+    """A Swarm Sentinel task as the dispatcher sees it."""
+    return SimpleNamespace(family_id=FAMILY_ID, map_seed=seed, challenge_type=4, horizon=60.0)
 
 
-@pytest.mark.asyncio
-async def test_solar_waits_until_its_seeds_are_judged_off_the_loop(monkeypatch):
-    """Until every seed of the epoch is judged the gate says wait and starts one preparation in a worker thread;
-    once it is done the gate opens and remembers it."""
+def _dispatch(monkeypatch, tmp_path, tasks, *, workers, feeder=None):
+    """Run tasks through the validator's dispatcher against workers that fly each seed at once; returns the results,
+    the requests the workers were handed, and the warnings logged."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    context = _ScriptedContext(bench_engine, {index: [{"results": [(42, True, 1.0, 1.0)]}] for index in range(len(tasks))})
+    warnings = []
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_engine)
+    monkeypatch.setattr(bench_engine, "_benchmark_mp_context", lambda: context)
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: warnings.append(str(msg)))
+    results = asyncio.run(de.parallel._run_process_parallel(
+        all_tasks=list(tasks),
+        task_meta=[{"group": "type4_village", "seed": task.map_seed, "index": index, "challenge_type": 4,
+                    "horizon": 60.0} for index, task in enumerate(tasks)],
+        batch_plan=[[index] for index in range(len(tasks))],
+        uid=42,
+        model_path=model_path,
+        effective_workers=workers,
+        phase_label="eval",
+        seed_feeder=feeder,
+        initial_pending=list(range(len(tasks))) if feeder else None,
+    ))
+    return results, context.requests, warnings
+
+
+def test_a_deferred_build_leaves_an_unjudged_seed_to_the_caller(kept, monkeypatch):
+    """With the checks deferred a seed not judged yet is built as drawn and nothing flies; checking it then flies the
+    reference pilot once, and the checked task needs no further check."""
+    flown = _fly_with(monkeypatch, lambda seed: True)
     runtime = require_runtime_family(FAMILY_ID)
-    judged, started = set(), []
-
-    def prepare_seeds(seeds):
-        """Judge every seed, from a thread other than the event loop's."""
-        started.append(list(seeds))
-        judged.update(seeds)
-
-    monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: set(seeds) <= judged)
-    monkeypatch.setattr(runtime, "prepare_seeds", prepare_seeds)
-    validator = _validator_with_seeds([11, 12])
-    assert not run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
-    assert not run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
-    await validator._seed_preparations[(FAMILY_ID, 5)]
-    assert started == [[11, 12]]
-    assert run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
-    judged.clear()
-    assert run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
+    with deferred_seed_checks():
+        task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[11], family_id=FAMILY_ID)[0]
+    assert task.map_seed == 11 and flown == []
+    assert runtime.awaits_seed_check(task)
+    checked = runtime.check_seed(task)
+    assert checked.map_seed == 11 and flown == [[11]]
+    assert not runtime.awaits_seed_check(checked)
 
 
-@pytest.mark.asyncio
-async def test_solar_prepares_only_the_seeds_it_is_scored_on(monkeypatch):
-    """Of the epoch's 1,000 seeds only the first 250, the positions the backend hands out, are flown and asked about."""
+def test_a_seed_judged_a_failure_after_its_task_was_built_never_flies(kept, monkeypatch):
+    """A seed the background preparation fails after its deferred task was built is still swapped before it flies,
+    without flying again, and a later deferred build starts from the replacement."""
+    chain = list(candidates(11))
+    flown = _fly_with(monkeypatch, lambda seed: seed != chain[0])
     runtime = require_runtime_family(FAMILY_ID)
-    asked, started = [], []
-    monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: asked.append(list(seeds)) or False)
-    monkeypatch.setattr(runtime, "prepare_seeds", lambda seeds: started.append(list(seeds)))
-    validator = _validator_with_seeds(range(1000, 2000))
-    assert not run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
-    await validator._seed_preparations[(FAMILY_ID, 5)]
-    assert asked == started == [list(range(1000, 1250))]
+    with deferred_seed_checks():
+        drawn = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[11], family_id=FAMILY_ID)[0]
+    seed_checks.prepare([11], workers=1)
+    assert runtime.awaits_seed_check(drawn)
+    assert runtime.check_seed(drawn).map_seed == chain[1]
+    assert flown == [[chain[0]], [chain[1]]]
+    with deferred_seed_checks():
+        rebuilt = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[11], family_id=FAMILY_ID)[0]
+    assert rebuilt.map_seed == chain[1] and not runtime.awaits_seed_check(rebuilt)
+
+
+def test_background_flights_run_at_the_lowest_cpu_priority(kept, monkeypatch, tmp_path):
+    """Real flight processes judging ahead run at niceness 19, so they only take cores the scoring leaves idle; a seed
+    judged as it flies keeps the validator's own priority."""
+    (tmp_path / "nice_pilot.py").write_text(_FAKE_PILOT.replace("end_reason=str(os.getpid())",
+                                                                "end_reason=str(os.nice(0))"))
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "nice_pilot")
+    require_runtime_family(FAMILY_ID).prepare_seeds([11], background=True)
+    require_runtime_family(FAMILY_ID).check_seed(_solar_task(13))
+    assert seed_checks.cached(11).end_reason == str(seed_checks.BACKGROUND_NICENESS)
+    assert seed_checks.cached(13).end_reason == str(os.nice(0))
 
 
 def test_the_scored_seed_count_is_read_from_the_registry():
@@ -395,12 +434,39 @@ def test_the_scored_seed_count_is_read_from_the_registry():
 
 
 @pytest.mark.asyncio
-async def test_a_failed_preparation_is_started_again(monkeypatch):
-    """A preparation that raised is logged and started again by the next task that finds the seeds unjudged."""
+async def test_the_scored_seeds_are_judged_once_in_the_background_highest_first(monkeypatch):
+    """Of all the families only Swarm Sentinel judges ahead: its 250 scored seeds, once, in a worker thread at the
+    lowest priority, highest first; once they are all judged the validator remembers it and starts nothing more."""
+    runtime = require_runtime_family(FAMILY_ID)
+    judged, started = set(), []
+
+    def prepare_seeds(seeds, *, background=False):
+        """Judge every seed, recording the order, the priority asked for and the thread."""
+        started.append((list(seeds), background, threading.get_ident()))
+        judged.update(seeds)
+
+    monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: set(seeds) <= judged)
+    monkeypatch.setattr(runtime, "prepare_seeds", prepare_seeds)
+    validator = _validator_with_seeds(range(1000, 2000))
+    run_task_module.start_seed_preparations(validator, 5)
+    run_task_module.start_seed_preparations(validator, 5)
+    assert list(validator._seed_preparations) == [(FAMILY_ID, 5)]
+    await validator._seed_preparations[(FAMILY_ID, 5)]
+    assert [(seeds, background) for seeds, background, _ in started] == [(list(range(1249, 999, -1)), True)]
+    assert started[0][2] != threading.get_ident()
+    run_task_module.start_seed_preparations(validator, 5)
+    judged.clear()
+    run_task_module.start_seed_preparations(validator, 5)
+    assert len(started) == 1 and (FAMILY_ID, 5) in validator._seeds_prepared
+
+
+@pytest.mark.asyncio
+async def test_a_failed_background_preparation_waits_before_starting_again(monkeypatch):
+    """A preparation that raised is not started again on every pass of the loop, only once the retry delay is over."""
     runtime = require_runtime_family(FAMILY_ID)
     calls = []
 
-    def prepare_seeds(seeds):
+    def prepare_seeds(seeds, *, background=False):
         """Fail the first time."""
         calls.append(list(seeds))
         if len(calls) == 1:
@@ -409,35 +475,163 @@ async def test_a_failed_preparation_is_started_again(monkeypatch):
     monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: False)
     monkeypatch.setattr(runtime, "prepare_seeds", prepare_seeds)
     validator = _validator_with_seeds([11])
-    run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
+    run_task_module.start_seed_preparations(validator, 5)
     with pytest.raises(SeedCheckError):
         await validator._seed_preparations[(FAMILY_ID, 5)]
-    run_task_module._family_seeds_prepared(validator, FAMILY_ID, 5)
+    await asyncio.sleep(0)
+    run_task_module.start_seed_preparations(validator, 5)
+    assert len(calls) == 1
+    validator._seed_preparation_retry_at[(FAMILY_ID, 5)] = 0.0
+    run_task_module.start_seed_preparations(validator, 5)
     await validator._seed_preparations[(FAMILY_ID, 5)]
     assert calls == [[11], [11]]
 
 
+def test_a_seed_list_that_cannot_be_read_never_stops_the_validator():
+    """Judging ahead is only a head start: when the seed list cannot be read nothing is started, nothing is raised,
+    and it is tried again only after the retry delay."""
+    validator = SimpleNamespace(seed_manager=SimpleNamespace(epoch_number=5))
+    run_task_module.start_seed_preparations(validator, 5)
+    assert validator._seed_preparations == {}
+    assert validator._seed_preparation_retry_at[(FAMILY_ID, 5)] > time.monotonic()
+
+
 @pytest.mark.asyncio
-async def test_a_solar_task_is_left_to_another_validator_while_its_seeds_are_judged(monkeypatch):
-    """A Solar Patrol task that arrives before its seeds are judged fetches no model and flies nothing."""
-    runtime = require_runtime_family(FAMILY_ID)
-    monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: False)
-    monkeypatch.setattr(runtime, "prepare_seeds", lambda seeds: None)
+async def test_a_solar_task_starts_while_its_seeds_are_still_judged(monkeypatch):
+    """A Swarm Sentinel task that arrives before the epoch's seeds are judged is taken at once: its model is fetched
+    instead of the task being handed back."""
+    monkeypatch.setattr(require_runtime_family(FAMILY_ID), "seeds_prepared", lambda seeds: False)
     fetched = []
 
     async def fetch(_self, models):
-        """Record a fetch that must not happen."""
+        """Record the fetch and find no model, which ends the task there."""
         fetched.append(models)
         return {}
 
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", fetch)
-    validator = _validator_with_seeds([11])
     await run_task_module.run_task(
-        validator, {"task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID, "epoch_number": 5,
-                    "model_hash": "0" * 64},
+        _validator_with_seeds([11]),
+        {"task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID, "epoch_number": 5,
+         "model_hash": "0" * 64},
         cancel_flag=asyncio.Event(), wake_flag=asyncio.Event())
-    await validator._seed_preparations[(FAMILY_ID, 5)]
-    assert fetched == []
+    assert [model["uid"] for models in fetched for model in models] == [42]
+
+
+@pytest.mark.asyncio
+async def test_at_the_start_of_an_epoch_the_validator_takes_a_task_while_seeds_are_judged(monkeypatch):
+    """The first pass of the loop in a new epoch starts judging the Sentinel seeds in the background and, without
+    waiting for them, asks the backend for a task and runs it."""
+    runtime = require_runtime_family(FAMILY_ID)
+    release = threading.Event()
+    monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: False)
+    monkeypatch.setattr(runtime, "prepare_seeds", lambda seeds, background=False: release.wait(30))
+    task = {"task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID}
+    ran = []
+
+    async def skipped(*args, **kwargs):
+        """Stand in for a step of the loop this test does not exercise."""
+
+    async def may_score(_self):
+        """The host is calibrated and its image verified."""
+        return True
+
+    async def sync():
+        """A sync that changes nothing."""
+        return {}
+
+    async def next_task():
+        """The backend hands out a Sentinel task."""
+        return task
+
+    async def run_task(_self, leased, **kwargs):
+        """Record the task the loop runs."""
+        ran.append(leased)
+
+    monkeypatch.setattr(forward_mod, "_ensure_components", skipped)
+    monkeypatch.setattr(forward_mod, "_publish_pending_epoch_seeds", skipped)
+    monkeypatch.setattr(forward_mod, "_cleanup_off_loop", skipped)
+    monkeypatch.setattr(forward_mod, "_host_may_score", may_score)
+    monkeypatch.setattr(forward_mod, "run_task", run_task)
+    validator = _validator_with_seeds([11, 12])
+    validator.seed_manager.seeds_ready = lambda: True
+    validator.backend_api = SimpleNamespace(sync=sync, next_task=next_task)
+    validator.metagraph = None
+    validator._sse_fatal = None
+    validator._cancel_flag, validator._wake_flag = asyncio.Event(), asyncio.Event()
+    try:
+        await forward_mod._forward_iteration(validator)
+        assert ran == [task]
+        assert not validator._seed_preparations[(FAMILY_ID, 5)].done()
+    finally:
+        release.set()
+        await validator._seed_preparations[(FAMILY_ID, 5)]
+
+
+def test_the_dispatcher_checks_an_unjudged_seed_off_the_loop_and_flies_what_the_check_returns(monkeypatch, tmp_path):
+    """A seed still unjudged when its turn comes is checked in a worker thread while a judged seed flies, and the
+    worker is handed the task the check returned, here the seed's replacement."""
+    runtime = require_runtime_family(FAMILY_ID)
+    threads = []
+
+    def check_seed(task):
+        """Judge seed 11 slowly, away from the event loop, and swap it for seed 99."""
+        threads.append(threading.get_ident())
+        time.sleep(0.2)
+        return _solar_task(99)
+
+    monkeypatch.setattr(runtime, "awaits_seed_check", lambda task: task.map_seed == 11)
+    monkeypatch.setattr(runtime, "check_seed", check_seed)
+    results, requests, _ = _dispatch(monkeypatch, tmp_path, [_solar_task(11), _solar_task(12)], workers=2)
+    assert [request.tasks[0].map_seed for request in requests] == [12, 99]
+    assert len(threads) == 1 and threads[0] != threading.get_ident()
+    assert all(result.success for result in results)
+
+
+def test_no_more_seeds_are_checked_at_once_than_there_are_workers(monkeypatch, tmp_path):
+    """Three unjudged seeds on one worker are checked one at a time, and each flies once its own check is done."""
+    runtime = require_runtime_family(FAMILY_ID)
+    lock, live, peak = threading.Lock(), [0], [0]
+
+    def check_seed(task):
+        """Count the checks running together while this one takes a moment."""
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        time.sleep(0.05)
+        with lock:
+            live[0] -= 1
+        return task
+
+    monkeypatch.setattr(runtime, "awaits_seed_check", lambda task: True)
+    monkeypatch.setattr(runtime, "check_seed", check_seed)
+    results, requests, _ = _dispatch(monkeypatch, tmp_path, [_solar_task(seed) for seed in (11, 12, 13)], workers=1)
+    assert peak[0] == 1
+    assert sorted(request.tasks[0].map_seed for request in requests) == [11, 12, 13]
+    assert all(result.success for result in results)
+
+
+@pytest.mark.parametrize("seed_flow", [False, True])
+def test_a_seed_that_cannot_be_checked_is_left_unscored(monkeypatch, tmp_path, seed_flow):
+    """A seed whose check fails never flies: the run carries on with the others and ends, leaving it unscored; in seed
+    flow it is simply no longer held, so the backend hands it to another validator."""
+    runtime = require_runtime_family(FAMILY_ID)
+
+    def check_seed(task):
+        """No candidate of the seed passed."""
+        raise SeedCheckError("no candidate of seed 11 passed the seed checks")
+
+    async def drained(_free_slots):
+        """Offer nothing more and report the pool drained."""
+        return [], True
+
+    monkeypatch.setattr(runtime, "awaits_seed_check", lambda task: task.map_seed == 11)
+    monkeypatch.setattr(runtime, "check_seed", check_seed)
+    results, requests, warnings = _dispatch(monkeypatch, tmp_path, [_solar_task(11), _solar_task(12)], workers=1,
+                                            feeder=drained if seed_flow else None)
+    assert [request.tasks[0].map_seed for request in requests] == [12]
+    assert results[1].success
+    assert results[0] is None if seed_flow else results[0].failure_reason == FailureReason.INFRA.value
+    assert any("seed check failed for UID 42" in line for line in warnings)
 
 
 @pytest.mark.timeout(600)

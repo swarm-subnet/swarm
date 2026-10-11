@@ -28,6 +28,7 @@ from .base import (
     ChallengeFamilyRuntime,
     ChallengeFamilyRuntimeError,
     ChallengeFamilyRuntimeProfile,
+    deferred_seed_checks,
 )
 from .interceptor import InterceptorChallengeFamily
 from .office_interceptor import OfficeInterceptorChallengeFamily
@@ -205,6 +206,7 @@ __all__ = [
     "benchmark_admission_policy_for_family",
     "build_benchmark_tasks",
     "build_screening_tasks",
+    "deferred_seed_checks",
     "env_kwargs_for_task",
     "evaluate_rollout",
     "get_challenge_family",

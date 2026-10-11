@@ -45,6 +45,7 @@ except Exception:  # pragma: no cover - optional dependency
     psutil = None
 
 from swarm.benchmark.engine_parts.workers import _unpack_validation_result
+from swarm.challenge_families import runtime_family_for_task
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.faults import ReasonCode
@@ -128,6 +129,11 @@ def _task_group_name(task: Any, index: int) -> str:
     if group_name:
         return str(group_name)
     return f"type{challenge_type}_unknown"
+
+
+def _checked_tasks(tasks: list) -> list:
+    """Every task as it may fly, each seed judged first where that is still to do; slow, so off the event loop."""
+    return [runtime_family_for_task(task).check_seed(task) for task in tasks]
 
 
 def _emit_seed_complete(
@@ -318,6 +324,12 @@ async def _run_process_parallel(
     stop_requested_at = 0.0
     # Shared with every worker: set once, it ends the seeds already in flight.
     cancel_event = ctx.Event()
+    # Tasks built with their seed checks deferred are checked in worker threads just before they fly.
+    seed_checks: dict[int, asyncio.Future] = {}
+    unchecked: set[int] = set()
+    checked: set[int] = set()
+    judged_here = 0
+    completed_batches = 0
 
     def _emit_seed_result(idx: int, result_obj: Any, status: str) -> None:
         """Fire the per-seed result callback, ignoring anything it raises."""
@@ -486,8 +498,56 @@ async def _run_process_parallel(
         last_held_report = snapshot
         on_held_seeds(list(snapshot))
 
+    def _seed_ready(index: int) -> bool:
+        """Whether a task can fly as built. One that cannot has its seed check started in a worker thread, one per
+        worker at most, and is swapped for the checked task when that ends; a check that failed raises here."""
+        nonlocal judged_here
+        if index in checked:
+            return True
+        job = seed_checks.get(index)
+        if job is None:
+            task = all_tasks[index]
+            runtime = runtime_family_for_task(task)
+            if index not in unchecked:
+                if not runtime.awaits_seed_check(task):
+                    checked.add(index)
+                    return True
+                unchecked.add(index)
+            if len(seed_checks) < effective_workers:
+                seed_checks[index] = asyncio.ensure_future(asyncio.to_thread(runtime.check_seed, task))
+            return False
+        if not job.done():
+            return False
+        del seed_checks[index]
+        all_tasks[index] = job.result()
+        task_meta[index]["seed"] = _task_seed(all_tasks[index], index)
+        checked.add(index)
+        judged_here += 1
+        return True
+
+    def _checked_batches() -> list[int]:
+        """The pending batches whose every seed can fly now. A batch whose seed cannot be checked leaves the run
+        unscored; in seed flow it is no longer held, so the backend hands it to another validator."""
+        nonlocal completed_batches
+        ready: list[int] = []
+        for batch_index in list(pending_batch_ids):
+            try:
+                states = [_seed_ready(index) for index in batch_plan[batch_index]]
+            except Exception as exc:
+                bt.logging.warning(
+                    f"[Validator eval] seed check failed for UID {uid} batch {batch_index + 1}; "
+                    f"leaving it unscored: {exc}"
+                )
+                pending_batch_ids.remove(batch_index)
+                if not feeder_active:
+                    completed_batches += 1
+                continue
+            if all(states):
+                ready.append(batch_index)
+        return ready
+
     def _dispatch_available_batches() -> None:
-        """Hand pending seeds to idle workers while the scheduler admits more."""
+        """Hand pending seeds whose checks are done to idle workers while the scheduler admits more."""
         if stop_reason is not None:
             return
         _maybe_recycle_idle_workers()
@@ -501,8 +561,11 @@ async def _run_process_parallel(
             ]
             if not idle_worker_slots:
                 return
+            ready_batch_ids = _checked_batches()
+            if not ready_batch_ids:
+                return
             batch_index = bench_engine._select_next_batch_index(
-                pending_batch_ids=pending_batch_ids,
+                pending_batch_ids=ready_batch_ids,
                 batch_plan=batch_plan,
                 task_meta=task_meta,
                 active_batch_ids=[
@@ -841,7 +904,6 @@ async def _run_process_parallel(
                 )
             return done_count < len(batch_plan)
 
-        completed_batches = 0
         while _more_work_expected(completed_batches):
             if stop_reason is None and should_stop is not None:
                 reason = should_stop()
@@ -1098,6 +1160,8 @@ async def _run_process_parallel(
 
         _drain_progress_events()
         _log_summary()
+        if judged_here:
+            bt.logging.info(f"[{phase_label}] UID {uid} {judged_here} seed(s) checked just before they flew")
         if run_timing:
             bt.logging.info(
                 f"[{phase_label}] UID {uid} "
@@ -1113,6 +1177,9 @@ async def _run_process_parallel(
             for result in results
         ]
     finally:
+        for job in seed_checks.values():
+            # A check still running when the run ends keeps its verdict; its outcome is read so none goes unreported.
+            job.add_done_callback(lambda done: done.cancelled() or done.exception())
         for worker_slot, queue_obj in list(worker_queues.items()):
             try:
                 queue_obj.put(None)
@@ -1207,6 +1274,7 @@ async def evaluate_seeds_parallel(
                 "Seed-flow eval requires the parallel scheduler; base not ready, retrying later"
             )
             return [None] * len(tasks)
+        tasks = await asyncio.to_thread(_checked_tasks, tasks)
         return await self.evaluate_seeds_batch(
             tasks,
             uid,

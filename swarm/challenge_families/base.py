@@ -19,9 +19,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import inspect
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from swarm.constants import BENCHMARK_FULL_SEED_COUNT, SWARM_MAX_DRONES, SWARM_MIN_DRONES
 from swarm.domain_model import (
@@ -30,6 +32,23 @@ from swarm.domain_model import (
     get_policy_interface_contract,
     get_supported_interface_versions,
 )
+
+_SEED_CHECKS_DEFERRED: contextvars.ContextVar[bool] = contextvars.ContextVar("seed_checks_deferred", default=False)
+
+
+@contextlib.contextmanager
+def deferred_seed_checks() -> Iterator[None]:
+    """Build tasks without judging their seeds first; the caller passes each one through check_seed before it flies."""
+    token = _SEED_CHECKS_DEFERRED.set(True)
+    try:
+        yield
+    finally:
+        _SEED_CHECKS_DEFERRED.reset(token)
+
+
+def seed_checks_deferred() -> bool:
+    """Whether the tasks being built may leave their seed checks to the caller."""
+    return _SEED_CHECKS_DEFERRED.get()
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -382,8 +401,18 @@ class ChallengeFamilyRuntime:
         """Whether tasks for these seeds can be built at once; true for a family that works nothing out first."""
         return True
 
-    def prepare_seeds(self, seeds: list[int]) -> None:
-        """Work out ahead, off the validator's loop, whatever building these seeds' tasks needs; nothing by default."""
+    def prepare_seeds(self, seeds: list[int], *, background: bool = False) -> None:
+        """Work out ahead, off the validator's loop, whatever building these seeds' tasks needs; nothing by default.
+        In the background it takes only the cores nothing else wants."""
+
+    def awaits_seed_check(self, task: Any) -> bool:
+        """Whether a task built under deferred_seed_checks must pass through check_seed before it flies; never here."""
+        return False
+
+    def check_seed(self, task: Any) -> Any:
+        """The task to fly in place of one built under deferred_seed_checks, its seed judged first when that is still
+        to do, which can take minutes; the task itself here."""
+        return task
 
     def _build_template_tasks(
         self,
