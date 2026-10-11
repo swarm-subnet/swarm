@@ -592,6 +592,7 @@ async def _run_process_parallel(
                 model_image=model_image,
                 prewarm_next=bool(pending_batch_ids) or (feeder_active and not feeder_done),
             )
+            started_alone = not worker_active_requests
             worker_active_requests[worker_slot] = request
             now = time.time()
             batch_attempts[batch_index] = batch_attempts.get(batch_index, 0) + 1
@@ -604,6 +605,9 @@ async def _run_process_parallel(
             )
             worker_queues[worker_slot].put(request)
             group_name = str(batch_meta[0]["group"]) if batch_meta else "unknown"
+            memory_warning = scheduler.note_group_started(group_name, alone=started_alone)
+            if memory_warning:
+                bt.logging.warning(f"[Validator eval] {memory_warning}")
             tracker_call(
                 runtime_tracker,
                 "mark_docker_dispatch",
