@@ -132,6 +132,7 @@ def test_ram_estimates_are_defined_per_group():
         "type3_mountain": 2300.0,
         "type6_forest": 2400.0,
         "type7_office": 1900.0,
+        "type8_solar": 3700.0,
     }
 
 
@@ -179,7 +180,7 @@ def test_scheduler_reserves_ram_for_active_workers():
 
 
 def test_scheduler_uses_live_available_memory_as_emergency_guard():
-    """Free host memory short of one seed's prior plus the host reserve refuses the batch even with nothing in flight."""
+    """Free host memory short of one seed's prior plus the host reserve holds a second batch, while a lone one still runs."""
     samples = iter(
         [
             {
@@ -209,7 +210,8 @@ def test_scheduler_uses_live_available_memory_as_emergency_guard():
     assert scheduler.can_admit_group("type6_forest", [])
 
     scheduler.refresh_resources()
-    assert not scheduler.can_admit_group("type6_forest", [])
+    assert scheduler.can_admit_group("type6_forest", [])
+    assert not scheduler.can_admit_group("type6_forest", ["type6_forest"])
 
 
 def test_scheduler_live_status_is_telemetry_only():

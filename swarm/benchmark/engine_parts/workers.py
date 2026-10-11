@@ -545,8 +545,12 @@ async def _run_benchmark_process_mode(
                 task_total=len(all_tasks),
                 prewarm_next=bool(pending_batch_ids),
             )
+            started_alone = not inflight_batches
             inflight_batches[batch_index] = request
             scheduler.note_group_dispatched(group_name)
+            memory_warning = scheduler.note_group_started(group_name, alone=started_alone)
+            if memory_warning:
+                print(f"[{_ts()}] {memory_warning}", flush=True)
             task_queue.put(request)
 
     def _check_for_stalled_workers() -> int:
