@@ -68,6 +68,7 @@ from .episode import SolarEpisode
 from .fixed_order import dot, norm, rows_dot
 from .seed_checks import Verdict, keep
 from .task import solar_patrol_task
+from .theft import narrow_px
 
 PIXELS_ACROSS = 6.0                    # thermal DRI: a person is recognised at 6 pixels across his critical dimension
 MIN_DISTANCE_M = 5.0                   # decided: the pilot keeps 5 m from any threat
@@ -447,19 +448,6 @@ class _Pilot:
 
 
 # ---------------------------------------------------------------------------------------------- the thieves
-
-def narrow_px(mask: np.ndarray) -> float:
-    """Pixels across the narrow side of the shape a mask holds: its extent across its own long axis."""
-    rows, cols = np.nonzero(mask)
-    if rows.size == 0:
-        return 0.0
-    if rows.size < 3:
-        return float(min(np.ptp(rows), np.ptp(cols)) + 1)
-    y, x = rows - rows.mean(), cols - cols.mean()
-    long_axis = 0.5 * math.atan2(2.0 * float((x * y).mean()), float((x * x).mean() - (y * y).mean()))
-    across = -x * math.sin(long_axis) + y * math.cos(long_axis)
-    return round(float(across.max() - across.min() + 1.0), 3)
-
 
 class _Sightings:
     """Every thief's best view so far: how many pixels across he showed the pilot looking straight at him."""

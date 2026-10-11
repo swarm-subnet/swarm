@@ -26,12 +26,13 @@ forced gate swings one leaf in. Everyone is inside before the drone's take-off i
 Inside, the crew works for the whole patrol. A worker walks to a table anywhere in the park, deep rows as likely as
 the edge, stoops under its edge and cuts the string cable, pulls it out along the row, and moves on along the rows;
 late in the patrol he may shoulder the coil and carry it out the way he came. A lookout stays near the hole, and the
-last man in sometimes turns back to widen the hole before he goes to work. Nobody leaves early unless he has heard the
-drone close by, and a man inside the fence is a threat from the moment he steps in until he is out again.
+last man in sometimes turns back to widen the hole before he goes to work. Nobody leaves before the drone's camera
+has seen him inside, and a man inside the fence is a threat from the moment he steps in until he is out again.
 
-Each thief hears the drone at his own distance, with his own delay, and reacts his own way at the next moment his
-move allows: he works on, freezes until it passes (again and again if it hovers), throws himself flat and lies still
-until it has been gone a while and then runs, or runs for the hole at once.
+Each thief notices the drone when he shows up in one of its pictures, and reacts his own way after his own delay, at
+the next moment his move allows, while the drone is still about: he works on, freezes and goes back to what he was
+doing (again and again if it hovers), throws himself flat and lies still until it has been gone a while, or runs for
+the hole at once.
 
 Every draw comes from the seed's own stream, the park as the seed shifts it and, once the patrol runs, where the
 drone flies, so every validator sees the same theft for the same flight. Thieves are posed only for a picture that
@@ -45,7 +46,7 @@ import math
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pybullet as p
@@ -97,15 +98,17 @@ PULL_M = (5.0, 14.0)
 CARRY_AFTER_S = (300.0, 560.0)          # when a worker shoulders the coil; past the patrol means he never does
 PACE = (0.9, 1.1)
 GAITS = {"walk": 0.5, "walk_wary": 0.3, "sneak": 0.2}
-HEAR_M = (22.0, 32.0)                   # how near the drone is, through the air, when a thief reacts: 11 to 26 m across the
-                                        # ground at the 20 m patrol height, near enough for its camera to see him first
+HEAR_M = (22.0, 32.0)                   # how near the drone is, through the air, when a thief can hear it
 EAR_M = 1.6                             # a standing man's ears above the ground
-HEAR_DELAY_S = (0.3, 2.0)
-QUIET_M = 10.0                          # the drone counts as gone once it is this much further than he hears
-QUIET_S = (8.0, 30.0)                   # a hidden man waits this long after the drone has gone before he runs
-REFREEZE_SHARE = 0.7                    # a frozen man who still hears the drone freezes again
+REACT_DELAY_S = (0.3, 2.0)              # from the picture that shows him to his reaction
+SEEN_PX = 6.0                           # pixels across his narrow side for a picture to show him: the seed checks' bar
+SEEN_QUIET_S = 10.0                     # the drone counts as gone once he is this long unseen and it is out of earshot
+QUIET_M = 10.0                          # out of earshot: this much further than he hears
+QUIET_S = (8.0, 30.0)                   # a hidden man waits this long after the drone has gone before he gets up
+REFREEZE_SHARE = 0.7                    # a frozen man still in its pictures freezes again
 REACTIONS = {"work_on": 0.2, "freeze": 0.4, "hide": 0.25, "run": 0.15}
-GROUNDED = ("docked", "landed")        # flight phases in which the drone sits in its dock and cannot be heard
+GROUNDED = ("docked", "landed")        # flight phases in which the drone sits in its dock and nobody reacts to it
+BODY_BITS = (1 << 24) - 1               # an object map code keeps the body id in its low 24 bits
 VIEW_MARGIN_M = 1.6                     # a body this near the edge of a picture is posed for it
 AWAY_Z = -1000.0                        # where a body out of the scene is kept
 BURIED_M = 10.0                         # an opening piece is drawn this deep under its own place while its body is away
@@ -120,8 +123,12 @@ _REACT = {
 # How a man standing up again takes back what the drone interrupted: the blocks from standing into that loop.
 _BACK_TO = {
     "walk": ("stand_to_walk",),
+    "walk_wary": ("stand_to_walk_wary",),
     "sneak": ("stand_to_crouch", "crouch_to_sneak"),
+    "cut_fence": ("cut_fence_in",),
     "cut_cable": ("cut_cable_in",),
+    "pull_cable": ("pull_cable_in",),
+    "look_around": ("look_around_in",),
     "crouch_watch": ("stand_to_crouch", "crouch_watch_in"),
 }
 
@@ -149,7 +156,7 @@ class Thief:
     yaw: float
     gait: str
     hear_m: float
-    hear_delay_s: float
+    react_delay_s: float
     reaction: str
     quiet_s: float
     wait_s: float = 0.0                 # how long he waits outside before following the man ahead through
@@ -232,7 +239,7 @@ def write(seed: int, site: Site) -> Optional[Story]:
                       mirrored=bool(rng.random() < 0.5), pace=float(rng.uniform(*PACE)),
                       start=(float(start[0]), float(start[1])), yaw=heading_to(inward),
                       gait="sneak" if way == "forest" and rng.random() < 0.5 else _pick(rng, GAITS),
-                      hear_m=float(rng.uniform(*HEAR_M)), hear_delay_s=float(rng.uniform(*HEAR_DELAY_S)),
+                      hear_m=float(rng.uniform(*HEAR_M)), react_delay_s=float(rng.uniform(*REACT_DELAY_S)),
                       reaction=_pick(rng, REACTIONS), quiet_s=float(rng.uniform(*QUIET_S)))
         if role == "lookout":
             thief.lookout = _lookout_spot(rng, site, hole, inward, reachable)
@@ -447,9 +454,9 @@ def _enter(actor: Actor, thief: Thief, story: Story, slot: int) -> Iterator[Step
     yield Step("walk_to_stand", steer=route, stage="getting in")
 
 
-def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> Iterator[Step]:
+def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int, seen: Callable[[], bool]) -> Iterator[Step]:
     """A worker's whole patrol: in, perhaps back to widen the hole, then cutting and pulling cable along the rows until
-    he shoulders a coil and carries it out."""
+    he shoulders a coil and carries it out, which he does only once the drone's camera has seen him."""
     yield from _enter(actor, thief, story, slot)
     if thief.hole_work_s > 0.0:
         hole, inward = story.hole, story.inward
@@ -483,7 +490,7 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> 
         yield Step("pull_cable_in", steer=heading_to(-away), stage="pulling cable")
         per = max(0.2, actor.lib.reach(actor.context["loop"]) * actor.scale)
         yield Step("loop", cycles=max(1, int(pull.left(actor.pos) / per)), steer=pull, stage="pulling cable")
-        if actor.time_s >= thief.carry_after_s:
+        if actor.time_s >= thief.carry_after_s and seen():
             yield from _leave(actor, story, site, "pull_cable_to_carry", "carrying")
             return
         yield Step("pull_cable_to_stand", stage="pulling cable")
@@ -505,7 +512,7 @@ def _lookout(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) ->
 
 @dataclass
 class Man:
-    """One thief in the running patrol: his story, his track, his body and what he has heard."""
+    """One thief in the running patrol: his story, his track, his body and what he has noticed of the drone."""
 
     thief: Thief
     actor: Actor
@@ -514,7 +521,10 @@ class Man:
     posed: Optional[Tuple[float, float, float]] = None
     pose_key: Optional[tuple] = None    # the frame, place and yaw the body was last posed in
     entered: bool = False
-    heard_at: Optional[float] = None
+    seen_at: Optional[float] = None     # the first picture that showed him inside the fence
+    last_seen: Optional[float] = None
+    about: bool = False                 # the drone is out and still about him: seen lately, or within earshot
+    noticed_at: Optional[float] = None
     reacting: str = ""
     quiet_since: Optional[float] = None
 
@@ -528,23 +538,27 @@ class Theft:
     men: List[Man]
     props: List[Any] = field(default_factory=list)
     heights: Dict[Tuple[int, int], float] = field(default_factory=dict)   # ground height per metre, read as needed
+    looked: Dict[str, Any] = field(default_factory=dict)                  # the last picture read from each camera
 
 
 def cast(seed: int, story: Story, site: Site) -> List[Man]:
     """The crew of a story, each man with his track ready to be written from his script, planned so no two of them
     ever walk into each other."""
     _plan_apart(story, site)
-    return [Man(thief, _actor(story, site, n), np.random.default_rng([THEFT_SEED_STREAM, int(seed), n]))
-            for n, thief in enumerate(story.thieves)]
+    men: List[Man] = []
+    for n, thief in enumerate(story.thieves):
+        actor = _actor(story, site, n, seen=lambda n=n: men[n].seen_at is not None)
+        men.append(Man(thief, actor, np.random.default_rng([THEFT_SEED_STREAM, int(seed), n])))
+    return men
 
 
-def _actor(story: Story, site: Site, n: int) -> Actor:
-    """A fresh track for man n of a story, nothing written yet."""
+def _actor(story: Story, site: Site, n: int, seen: Callable[[], bool] = lambda: False) -> Actor:
+    """A fresh track for man n of a story, nothing written yet; seen says whether the drone's camera has seen him."""
     thief = story.thieves[n]
     actor = Actor(library(), thief.start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
     actor.context = {"hub": "stand"}
     actor.script = (_lookout(actor, thief, story, site, n) if thief.role == "lookout"
-                    else _worker(actor, thief, story, site, n))
+                    else _worker(actor, thief, story, site, n, seen))
     return actor
 
 
@@ -552,7 +566,7 @@ def _plan_apart(story: Story, site: Site) -> None:
     """Settle the crew's waits and the order of their stretches on dry copies, played over the whole patrol with no
     drone, until no two men come within SPACING_M of each other: a follower who would reach the hole on another man's
     heels waits longer outside, and a worker who would walk into another takes his stretches in another order. The
-    real men are built afterwards and never played ahead, so they hear the drone the moment it comes."""
+    real men are built afterwards and never played ahead, so they react to the drone the moment it comes."""
     for _ in range(PLAN_TRIES):
         clash = _first_clash([_actor(story, site, n) for n in range(len(story.thieves))])
         if clash is None:
@@ -614,21 +628,23 @@ def reset(env: Any, ep: SolarEpisode) -> None:
         man.body = intruders.Intruder(man.thief.dress, _pose_args(lib, frame, ground), env.CLIENT)
         man.posed = (frame.x, frame.y, ground + 0.9)
         man.pose_key = (frame.index, frame.mirrored, frame.x, frame.y, frame.yaw)
-    ep.theft.props = [_opening_prop(env, ep, story, men[0].actor)]
+    # Timed on a copy of the first man: his own track is never played ahead, or a reaction would wait for its end.
+    ep.theft.props = [_opening_prop(env, ep, story, _actor(story, site, 0))]
 
 
 def advance(env: Any, ep: SolarEpisode) -> None:
-    """Write every thief's track to the step physics is about to run, note each man who steps in, and let each one
-    inside hear the drone."""
+    """Write every thief's track to the step physics is about to run, note each man who steps in and each one the
+    newest pictures show inside the fence, and let each one inside react to the drone."""
     theft = ep.theft
     if theft is None:
         return
     t = (ep.step + 1) * SIM_DT
+    shown = _shown(ep, theft)
     drone = np.asarray(env.pos[0], dtype=float)
     # The park rises 39 m: over its low end a drone flying out of the dock is below the dock's own height, so the
     # dock's phase says whether it flies, not its height.
     airborne = ep.phase not in GROUNDED
-    for man in theft.men:
+    for n, man in enumerate(theft.men):
         frame = man.actor.at(t)
         if frame.index == GONE:
             continue
@@ -640,7 +656,7 @@ def advance(env: Any, ep: SolarEpisode) -> None:
             if spot not in theft.heights:
                 theft.heights[spot] = _ground(env, ep, float(spot[0]), float(spot[1]))
             ears = np.array([frame.x, frame.y, theft.heights[spot] + EAR_M])
-            _hear(man, theft, t, norm(drone - ears), airborne)
+            _notice(man, theft, t, norm(drone - ears), airborne, n in shown)
 
 
 def show(env: Any, ep: SolarEpisode, view: Any) -> None:
@@ -709,35 +725,76 @@ def inside(ep: SolarEpisode, thief: int, step: int) -> bool:
     return frame.index != GONE and ep.theft.site.holds(frame.x, frame.y)
 
 
-# ---------------------------------------------------------------------------------------------------- hearing
+# ---------------------------------------------------------------------------------------------------- noticing
 
-def _hear(man: Man, theft: Theft, t: float, distance: float, airborne: bool) -> None:
-    """Let a man inside hear the drone at his own distance and react after his own delay; a hidden man counts how long
-    the drone has been gone."""
+def narrow_px(mask: np.ndarray) -> float:
+    """Pixels across the narrow side of the shape a mask holds: its extent across its own long axis."""
+    rows, cols = np.nonzero(mask)
+    if rows.size == 0:
+        return 0.0
+    if rows.size < 3:
+        return float(min(np.ptp(rows), np.ptp(cols)) + 1)
+    y, x = rows - rows.mean(), cols - cols.mean()
+    long_axis = 0.5 * math.atan2(2.0 * float((x * y).mean()), float((x * x).mean() - (y * y).mean()))
+    across = -x * math.sin(long_axis) + y * math.cos(long_axis)
+    return round(float(across.max() - across.min() + 1.0), 3)
+
+
+def _shown(ep: SolarEpisode, theft: Theft) -> set:
+    """The men a picture taken since the last step shows inside the fence, each at least SEEN_PX across: the wide or
+    thermal frame and the zoom shot, read from the object map drawn with each, and only a picture that can show
+    anything."""
+    shown = set()
+    for source, part in (("camera", ep.camera), ("zoom", ep.zoom)):
+        view = part.get("view") if isinstance(part, dict) else None
+        if view is None or view is theft.looked.get(source):
+            continue
+        theft.looked[source] = view
+        if not view.sees or view.objects is None:
+            continue
+        ids = np.where(view.objects >= 0, view.objects & BODY_BITS, -1)
+        for n, man in enumerate(theft.men):
+            if man.body is None or not inside(ep, n, view.step):
+                continue
+            if narrow_px(np.isin(ids, man.body.bodies)) >= SEEN_PX:
+                shown.add(n)
+    return shown
+
+
+def _notice(man: Man, theft: Theft, t: float, distance: float, airborne: bool, seen: bool) -> None:
+    """Note a picture that shows a man inside, and let him react after his own delay the first time one does while the
+    drone flies; a hidden man counts how long the drone has been gone, which is once he has been unseen a while and it
+    is out of earshot."""
     thief = man.thief
-    near = airborne and distance <= thief.hear_m
+    if seen:
+        man.last_seen = t
+        man.seen_at = t if man.seen_at is None else man.seen_at
+    lately = man.last_seen is not None and t - man.last_seen <= SEEN_QUIET_S
+    man.about = airborne and (lately or distance <= thief.hear_m + QUIET_M)
     if man.reacting == "hide":
-        if near or distance <= thief.hear_m + QUIET_M:
+        if man.about:
             man.quiet_since = None
         elif man.quiet_since is None:
             man.quiet_since = t
         return
     if man.reacting:
         return
-    if not near:
-        if distance > thief.hear_m + QUIET_M:
-            man.heard_at = None
+    if not man.about:
+        man.noticed_at = None
         return
-    if man.heard_at is not None:
+    if not (seen and airborne) or man.noticed_at is not None:
         return
-    man.heard_at = t
+    man.noticed_at = t
     if thief.reaction != "work_on":
-        man.actor.interrupt(lambda actor: _react(actor, man, theft, t + thief.hear_delay_s))
+        man.actor.interrupt(lambda actor: _react(actor, man, theft, t + thief.react_delay_s))
 
 
 def _react(actor: Actor, man: Man, theft: Theft, not_before: float) -> Optional[Iterator[Step]]:
-    """The reaction his loop allows at this seam, or None to carry on and ask again at the next seam while his delay
-    runs."""
+    """The reaction his loop allows at this seam, or None to carry on: asked again at the next seam while his delay
+    runs, dropped once the drone has gone."""
+    if not man.about:
+        man.noticed_at = None
+        return None
     if actor.time_s < not_before:
         actor.interrupt(lambda a: _react(a, man, theft, not_before))
         return None
@@ -748,7 +805,7 @@ def _react(actor: Actor, man: Man, theft: Theft, not_before: float) -> Optional[
         if block in options:
             man.reacting = {"freeze": "freeze", "hide": "hide", "run": "run"}[man.thief.reaction]
             return _reaction(actor, man, theft, block, kind, actor.take_rest())
-    if man.heard_at is not None:
+    if man.noticed_at is not None:
         # Nothing in this loop for his way of reacting: he carries on and reacts at the next seam that allows it.
         actor.interrupt(lambda a: _react(a, man, theft, not_before))
     return None
@@ -760,9 +817,9 @@ def _reaction(actor: Actor, man: Man, theft: Theft, block: str, kind: str, rest:
     if man.reacting == "freeze":
         yield Step(block, stage="reaction: freeze")
         man.reacting = ""
-        # Still hearing it, he may freeze again at the next seam.
+        # Still in its pictures, he may freeze again at the next seam.
         if man.rng.random() < REFREEZE_SHARE:
-            man.heard_at = None
+            man.noticed_at = None
         yield from rest
         return
     if man.reacting == "run":
@@ -780,7 +837,7 @@ def _reaction(actor: Actor, man: Man, theft: Theft, block: str, kind: str, rest:
     yield Step("prone_to_stand", stage="reaction: hide")
     for entry in _BACK_TO[kind]:
         yield Step(entry, stage="reaction: hide")
-    man.reacting, man.heard_at = "", None
+    man.reacting, man.noticed_at = "", None
     yield from rest
 
 

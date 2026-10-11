@@ -259,7 +259,7 @@ def test_verdicts_kept_before_this_check_existed_are_not_read(kept):
     old.mkdir(parents=True)
     (old / "11.json").write_text(json.dumps({"seed": 11, "passed": False,
                                              "reason": "error:the solar camera needs a swarm-bullet3 wheel"}))
-    assert seed_checks.CHECK_VERSION == 3 and seed_checks.cached(11) is None
+    assert seed_checks.CHECK_VERSION > 2 and seed_checks.cached(11) is None
 
 
 @pytest.mark.skipif(not install.problems(), reason="this machine's install can fly Swarm Sentinel")

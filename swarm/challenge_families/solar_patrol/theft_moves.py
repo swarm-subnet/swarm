@@ -300,7 +300,9 @@ class Actor:
         return itertools.chain(queue, script if script is not None else ())
 
     def _next(self) -> Optional[Step]:
-        """The next step: a waiting reaction at a loop seam first, then the queue, then the script."""
+        """The next step: a waiting reaction at a loop seam first, then the queue, then the script; none once gone."""
+        if self.gone:
+            return None
         if self.pending is not None and self.context and "loop" in self.context:
             chooser, self.pending = self.pending, None
             script = chooser(self)
