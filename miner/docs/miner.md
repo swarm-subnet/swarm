@@ -158,6 +158,7 @@ class DroneFlightController:
 
 - Compressed archive ≤ **50 MiB**
 - Total **uncompressed** content ≤ **50 MiB** (summed across zip entries: a zip-bomb guard, so squeezing the archive harder does not help)
+- At most **1,000** entries (files and folders) in the zip
 - No `.exe`, `.so`, `.dll`, `.sh`, `.bat`, or `.pyc` entries
 - No path traversal, absolute paths, or symlinks inside the zip
 - Every line of `requirements.txt` on the [whitelist](#docker-whitelist)
@@ -472,6 +473,8 @@ At rollover, pending models keep their queue position, discard partial results, 
 | Epoch length | 14 days from epoch 19 (Monday 16:00 UTC anchor) |
 | Pre-rollover registration freeze | 1.5 hours |
 | Max artifact size | 50 MiB compressed and 50 MiB uncompressed content |
+| Max entries per artifact | 1,000 files and folders |
+| Writable space at run time | Your own folder: 256 MiB and 2,000 files and folders in all, your code included; `/tmp`: 64 MiB. Everything else is read-only |
 | Models per hotkey | 1 (one family per hotkey) |
 | Chain commit cooldown | ~20 minutes |
 
@@ -555,6 +558,10 @@ Archives are globally unique: a digest already registered to any miner is refuse
 **"Dangerous executable files detected"**: Remove `.exe`, `.so`, `.dll`, `.sh`, `.bat`, and `.pyc` files. Only Python code and model files are allowed.
 
 **"Agent too large"**: Both the archive and its total uncompressed content must be ≤ 50 MiB. Shrink the weights rather than relying on compression.
+
+**"Too many files"**: The zip holds more than 1,000 entries. Merge small files, or keep only what the agent loads.
+
+**Seeds failing with `AGENT_EXITED` after writing files**: Your folder holds 256 MiB and 2,000 files and folders at most, your code included. A model that fills it is stopped and the seed fails. Write less, or reuse the same files instead of adding new ones.
 
 **"requirements_rejected"**: A line of `requirements.txt` is not on the [whitelist](#docker-whitelist) or uses a URL, path or installer option. Fix the line and submit again; nothing was committed.
 
