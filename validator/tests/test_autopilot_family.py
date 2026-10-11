@@ -22,8 +22,16 @@ import math
 
 import numpy as np
 import pybullet as p
+import pytest
 
-from swarm.constants import SEARCH_RADIUS_MAX, SEARCH_RADIUS_MIN, SIM_DT
+from swarm.constants import (
+    SAFETY_DISTANCE_SAFE,
+    SEARCH_RADIUS_MAX,
+    SEARCH_RADIUS_MIN,
+    SIM_DT,
+    VILLAGE_R_MAX,
+    VILLAGE_R_MIN,
+)
 from swarm.protocol import MapTask
 from swarm.utils.env_factory import make_env, make_env_with_initial_obs
 from swarm.validator.task_gen import task_for_seed_and_type
@@ -76,6 +84,19 @@ def test_autopilot_camera_fov_does_not_reveal_the_clue_offset():
             clue_dy = float(env._search_area_center[1] - env.GOAL_POS[1])
             from_fov = float(task.search_radius) * (float(env._fov) - 90.0) / 2.0
             assert abs(clue_dy - from_fov) > 1e-6, (seed, clue_dy, from_fov)
+        finally:
+            env.close()
+
+
+def test_autopilot_village_pads_are_placed_within_the_village_distance_range():
+    """On the built village world the goal pad sits within the village start-to-goal range, not the mountain one."""
+    for seed in (5000, 5001, 5002, 5003):
+        task = task_for_seed_and_type(sim_dt=SIM_DT, seed=seed, challenge_type=4, family_id="cf_autopilot")
+        env = make_env(task, gui=False)
+        try:
+            start, goal = env.task.start, env.task.goal
+            distance = math.hypot(goal[0] - start[0], goal[1] - start[1])
+            assert VILLAGE_R_MIN <= distance <= VILLAGE_R_MAX, (seed, distance)
         finally:
             env.close()
 
@@ -238,3 +259,24 @@ def test_goal_directed_baseline_beats_random_policy_on_easy_autopilot_seed():
     assert baseline_terminated or baseline_truncated
     assert random_terminated or random_truncated
     assert float(baseline_info["distance_to_goal"]) < float(random_info["distance_to_goal"])
+
+
+@pytest.mark.parametrize("challenge_type", [2, 3, 4])
+def test_drone_resting_on_a_terrain_pad_keeps_full_clearance(challenge_type):
+    """A drone sitting still on an open, mountain or village goal pad is not scored as close to the ground holding it up."""
+    task = task_for_seed_and_type(
+        sim_dt=SIM_DT, seed=1, challenge_type=challenge_type, family_id="cf_autopilot", moving_platform=False,
+    )
+    env = make_env(task, gui=False)
+    try:
+        cli = env.CLIENT
+        p.resetBasePositionAndOrientation(
+            env.DRONE_IDS[0], (env.GOAL_POS + [0.0, 0.0, 0.06]).tolist(), [0, 0, 0, 1], physicsClientId=cli,
+        )
+        for _ in range(150):
+            p.stepSimulation(physicsClientId=cli)
+        env._updateAndStoreKinematicInformation()
+        env._update_min_clearance()
+        assert env._min_clearance_episode == SAFETY_DISTANCE_SAFE
+    finally:
+        env.close()

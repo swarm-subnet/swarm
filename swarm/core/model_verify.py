@@ -295,6 +295,10 @@ async def verify_new_model_with_docker(
             with open(task_file, "w") as f:
                 json.dump(dummy_task, f)
 
+            # The daemon resolves bind sources on the host, where only the temp dir shares this path.
+            staged_model = Path(tmpdir) / "model.zip"
+            shutil.copyfile(model_path, staged_model)
+
             _log.info(
                 f"🐳 Starting Docker container for verification of UID model {model_hash[:16]}..."
             )
@@ -323,7 +327,7 @@ async def verify_new_model_with_docker(
                 "-v",
                 f"{tmpdir}:/workspace/shared",
                 "-v",
-                f"{model_path.absolute()}:/workspace/model.zip:ro",
+                f"{staged_model}:/workspace/model.zip:ro",
                 docker_evaluator.base_image,
                 "python",
                 "-m",

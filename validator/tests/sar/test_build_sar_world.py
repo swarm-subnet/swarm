@@ -20,13 +20,16 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pybullet as p
 import pytest
 
+from swarm.constants import SIM_DT
 from swarm.core.env_builder.sar_types import (
     BodyCategory,
 )
 from swarm.core.env_builder.sar_world import build_sar_world
+from swarm.validator.task_gen import task_for_seed_and_type
 
 _MAPS = {
     "open":      2,
@@ -60,3 +63,31 @@ def test_per_map_well_formed(sar_pybullet, name, ctype):
     cx, cy = world.search_centre
     vx, vy = world.victim_centre_xy
     assert math.hypot(cx - vx, cy - vy) <= 30.0 + 1e-6
+
+
+def _victim_pixels(cli, eye, target, victim_uids) -> int:
+    """Victim pixels in a small top-down segmentation frame from eye toward target."""
+    view = p.computeViewMatrix(eye, target, [0, 1, 0])
+    proj = p.computeProjectionMatrixFOV(60, 1.0, 0.05, 200)
+    seg = p.getCameraImage(128, 128, view, proj, renderer=p.ER_TINY_RENDERER, physicsClientId=cli)[4]
+    seg = np.reshape(seg, (128, 128)) & ((1 << 24) - 1)
+    return int(np.isin(seg, list(victim_uids)).sum())
+
+
+def test_victim_on_a_bumpy_mountain_slope_is_not_buried(sar_pybullet):
+    """On mountain seed 14832 the lying victim rests on the slope, so the drone sees it from hover height."""
+    task = task_for_seed_and_type(sim_dt=SIM_DT, seed=14832, challenge_type=3, family_id="cf_search_and_rescue")
+    p.resetSimulation(physicsClientId=sar_pybullet)
+    world = build_sar_world(sar_pybullet, seed=14832, challenge_type=3, start=task.start, goal=task.goal)
+    mn, mx = (np.asarray(v) for v in world.victim_aabb)
+    centre = ((mn + mx) / 2).tolist()
+    eye = [centre[0], centre[1], float(mx[2]) + 3.0]
+
+    seen = _victim_pixels(sar_pybullet, eye, centre, world.victim_uids)
+    home = p.getBasePositionAndOrientation(world.support_uid, physicsClientId=sar_pybullet)
+    p.resetBasePositionAndOrientation(world.support_uid, [0, 0, -1000], [0, 0, 0, 1], physicsClientId=sar_pybullet)
+    whole = _victim_pixels(sar_pybullet, eye, centre, world.victim_uids)
+    p.resetBasePositionAndOrientation(world.support_uid, home[0], home[1], physicsClientId=sar_pybullet)
+
+    assert whole > 0
+    assert seen / whole >= 0.9, f"only {100 * seen / whole:.0f}% of the victim shows above the terrain"
