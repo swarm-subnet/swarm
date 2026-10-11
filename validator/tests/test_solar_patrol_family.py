@@ -38,7 +38,7 @@ from swarm.challenge_families import (
     get_challenge_family,
     list_registered_challenge_families,
 )
-from swarm.challenge_families.solar_patrol import airframe, camera, drone_state, park, sensor_noise
+from swarm.challenge_families.solar_patrol import airframe, camera, drone_state, park, reports, sensor_noise
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_FIELDS,
@@ -393,11 +393,11 @@ def test_reports_do_not_end_the_patrol_and_reach_the_result(flat_park):
     log = _patrol(16, pilot, max_decisions=200)
     outcome = log["episode"].outcome
     assert outcome.end_reason == ""
-    assert outcome.reports_made == 100 and outcome.false_alarms == 100
+    assert outcome.reports_made == reports.MAX_REPORTS and outcome.false_alarms == reports.MAX_REPORTS
     assert outcome.zooms_used == 80
     evaluation = evaluate_rollout(task=build_benchmark_tasks(sim_dt=SIM_DT, seeds=[16], family_id=FAMILY_ID)[0],
                                   success=False, t=log["time_s"], horizon=HORIZON_S, min_clearance=None,
                                   collision=False, failure_reason="NONE", info=log["info"])
     assert set(RESULT_METRICS) <= set(evaluation.metrics)
-    assert evaluation.metrics["false_alarms"] == 100
+    assert evaluation.metrics["false_alarms"] == reports.MAX_REPORTS
     assert set(evaluation.normalized_metrics) == set(SCORE_TERMS)

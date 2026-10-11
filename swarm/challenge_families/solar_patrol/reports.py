@@ -24,8 +24,10 @@ four checks, in order: the box sits on a real object, the class is right, the ob
 fence at that frame's step, never a decoy), and it is the first report of that thief.
 
 The box sits on the object it overlaps most, when the overlap with the tight box around that object's visible pixels
-(intersection over union) is at least MIN_OVERLAP. A report that passes adds to valid_reports; one that fails, a
-repeat included, adds to false_alarms. A report never ends the patrol.
+(intersection over union) is at least MIN_OVERLAP. Those tight boxes are read from a frame's object map once, on the
+first report against that frame, and reused for every later report on it. A report that passes adds to
+valid_reports; one that fails, a repeat included, adds to false_alarms. A report never ends the patrol, and a press
+past MAX_REPORTS in one patrol does nothing.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from .contract import Box, Report
 from .episode import SolarEpisode
 
 MIN_OVERLAP = 0.5
+MAX_REPORTS = 20                        # a patrol; a seed holds at most three thieves
 MAX_REPORT_HEIGHT_M = 24.0              # over the dock: a frame taken from higher carries no valid report
 BODY_BITS = (1 << 24) - 1               # an object map code keeps the body id in its low 24 bits, the link above
 THREAT_CLASS = "person"
@@ -47,12 +50,15 @@ VERDICTS = ("valid", "no_frame", "too_high", "no_object", "wrong_class", "not_th
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
-    """No report made yet and no thief reported."""
-    ep.reports = {"log": [], "reported": set()}
+    """No report made yet, no thief reported and no frame read."""
+    ep.reports = {"log": [], "reported": set(), "read": {}}
 
 
 def submit(env: Any, ep: SolarEpisode, report: Report) -> None:
-    """Judge one report the moment its button is pressed, and count it as valid or as a false alarm."""
+    """Judge one report the moment its button is pressed, and count it as valid or as a false alarm; once the
+    patrol has made MAX_REPORTS, a press is not judged and counts nowhere."""
+    if ep.outcome.reports_made >= MAX_REPORTS:
+        return
     verdict = judge(ep, report)
     ep.reports["log"].append((ep.step, report, verdict))
     ep.outcome.reports_made += 1
@@ -74,7 +80,7 @@ def judge(ep: SolarEpisode, report: Report) -> str:
     for uid, kind in decoys.bodies(ep).items():
         owners[uid] = ("decoy", uid)
         kinds[("decoy", uid)] = kind
-    key = boxed_object(view, report.box, owners)
+    key = best_match(view, report.box, frame_boxes(ep, report.image, view, owners))
     if key is None:
         return "no_object"
     if report.kind != THREAT_CLASS or kinds[key] != THREAT_CLASS:
@@ -91,21 +97,43 @@ def judge(ep: SolarEpisode, report: Report) -> str:
 def boxed_object(view: View, box: Box, owners: dict[int, tuple]) -> Optional[tuple]:
     """The object a box sits on in a frame: the one whose visible pixels' tight box it overlaps most, if that
     overlap reaches MIN_OVERLAP. owners maps each body id to the object it belongs to."""
+    return best_match(view, box, object_boxes(view, owners))
+
+
+def frame_boxes(ep: SolarEpisode, image: str, view: View, owners: dict[int, tuple]) -> dict[tuple, tuple]:
+    """The object boxes of the frame shown on an image, read from its object map on the first report against that
+    frame and the same owners, and reused for every later one."""
+    read = ep.reports["read"].get(image)
+    if read is None or read[0] is not view or read[1] != owners:
+        read = (view, owners, object_boxes(view, owners))
+        ep.reports["read"][image] = read
+    return read[2]
+
+
+def object_boxes(view: View, owners: dict[int, tuple]) -> dict[tuple, tuple]:
+    """The tight (left, top, right, bottom) pixel box around each object's visible pixels in a frame; an object out
+    of sight has none. owners maps each body id to the object it belongs to."""
     if not owners:
-        return None
+        return {}
     ids = np.where(view.objects >= 0, view.objects & BODY_BITS, -1)
     ys, xs = np.nonzero(np.isin(ids, np.fromiter(owners, dtype=np.int64), kind="table"))
     uids = ids[ys, xs]
+    boxes = {}
+    for key in dict.fromkeys(owners.values()):
+        mine = np.isin(uids, [uid for uid, owner in owners.items() if owner == key])
+        if mine.any():
+            boxes[key] = (float(xs[mine].min()), float(ys[mine].min()),
+                          float(xs[mine].max()) + 1.0, float(ys[mine].max()) + 1.0)
+    return boxes
+
+
+def best_match(view: View, box: Box, boxes: dict[tuple, tuple]) -> Optional[tuple]:
+    """The object whose box a report's box overlaps most in a frame, if that overlap reaches MIN_OVERLAP."""
     left, right = (box.cx - box.w / 2.0) * view.width, (box.cx + box.w / 2.0) * view.width
     top, bottom = (box.cy - box.h / 2.0) * view.height, (box.cy + box.h / 2.0) * view.height
     best, best_overlap = None, MIN_OVERLAP
-    for key in dict.fromkeys(owners.values()):
-        mine = np.isin(uids, [uid for uid, owner in owners.items() if owner == key])
-        if not mine.any():
-            continue
-        x0, x1 = float(xs[mine].min()), float(xs[mine].max()) + 1.0
-        y0, y1 = float(ys[mine].min()), float(ys[mine].max()) + 1.0
-        overlap = _overlap((left, top, right, bottom), (x0, y0, x1, y1))
+    for key, pixels in boxes.items():
+        overlap = _overlap((left, top, right, bottom), pixels)
         if overlap >= best_overlap:
             best, best_overlap = key, overlap
     return best
