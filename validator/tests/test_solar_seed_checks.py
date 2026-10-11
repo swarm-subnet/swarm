@@ -37,7 +37,16 @@ from shapely.geometry import Point, Polygon
 
 from swarm.benchmark import engine as bench_engine
 from swarm.challenge_families import build_benchmark_tasks, deferred_seed_checks, require_runtime_family
-from swarm.challenge_families.solar_patrol import airframe, drone_state, park, reference_pilot, seed_checks, theft, wind
+from swarm.challenge_families.solar_patrol import (
+    airframe,
+    drone_state,
+    install,
+    park,
+    reference_pilot,
+    seed_checks,
+    theft,
+    wind,
+)
 from swarm.challenge_families.solar_patrol.contract import FAMILY_ID, HORIZON_S
 from swarm.challenge_families.solar_patrol.seed_checks import CHECK_TRIES, SeedCheckError, Verdict, candidates
 from swarm.constants import SIM_DT
@@ -66,6 +75,12 @@ class _StillMovers:
 
     def advance(self, step=None):
         """Nothing moves."""
+
+
+@pytest.fixture(autouse=True)
+def complete_install(monkeypatch):
+    """Every test here runs on an install that can fly Swarm Sentinel; test_solar_install covers one that cannot."""
+    monkeypatch.setattr(install, "problems", lambda: [])
 
 
 @pytest.fixture
