@@ -140,6 +140,20 @@ def test_headroom_gain_inside_eps_floor_is_zero():
     assert headroom_gain(score=1.0, prev_score=0.995) == 0.0
 
 
+def test_crowning_inside_eps_floor_keeps_its_seat():
+    """A king whose score and beaten score both sit on the eps floor still holds the top share."""
+    kings = [
+        _king(uid=1, score=0.9682560730294716, prev=0.9537612833275391, epoch=1, lineage_id=1),
+        _king(uid=2, score=0.9757344025703472, prev=0.9682560730294716, epoch=1, lineage_id=2),
+        _king(uid=3, score=0.9850186986109193, prev=0.9757344025703472, epoch=1, lineage_id=3),
+        _king(uid=4, score=0.9950904477276691, prev=0.9867237344884348, epoch=2, lineage_id=4),
+        _king(uid=5, score=0.9961017323853786, prev=0.9902241171342205, epoch=3, lineage_id=5),
+    ]
+    weights = compute_weights(kings)
+    assert weights[5] > weights[4] > weights[3] > weights[2] > weights[1] > 0.0
+    assert math.isclose(weights[5], 0.338, abs_tol=1e-3)
+
+
 def test_score_clamping_to_unit_interval():
     """Out-of-range scores are clamped before subtracting."""
     # score > 1.0 clamped to 1.0

@@ -81,6 +81,7 @@ SAR_RGB_REQUEST_CAP = 40               # per-drone RGB requests allowed per epis
 # Search area parameters
 SEARCH_AREA_NOISE_Z = 5.0               # ±5m vertical noise — forces real altitude search
 AUTOPILOT_CLUE_SEED_OFFSET = 0xC1E0     # own stream: the clue noise must not ride the camera FOV draw
+FOREST_DIFFICULTY_SEED_OFFSET = 0xF0D1  # own stream: the visible tree density must not ride the search radius draw
 SEARCH_RADIUS_MIN = 5.0                 # Minimum per-seed search radius (meters)
 SEARCH_RADIUS_MAX = 20.0                # Maximum per-seed search radius (meters), clamped per-seed to what fits the horizon
 # Search-aware time scoring — budget the time to sweep the search disk so a good

@@ -17,6 +17,12 @@
 
 """Public entrypoints for forest map generation."""
 
+from swarm.constants import (
+    FOREST_DIFFICULTY_DISTRIBUTION,
+    FOREST_DIFFICULTY_SEED_OFFSET,
+    FOREST_MODE_DISTRIBUTION,
+)
+
 from ._shared import *
 from .assets import _clamp_mode_id
 from .ground import _ground_rgba_for_mode, _spawn_ground
@@ -26,17 +32,12 @@ from .spawning import _spawn_forest_assets
 
 def get_forest_subtype(seed: int) -> Tuple[int, int]:
     """Draw the mode and difficulty ids for a seed from the weighted forest distributions, each on its own stream."""
-    from swarm.constants import (
-        FOREST_DIFFICULTY_DISTRIBUTION,
-        FOREST_MODE_DISTRIBUTION,
-    )
-
     mode_rng = random.Random(seed + 777777)
     modes = list(FOREST_MODE_DISTRIBUTION.keys())
     mode_weights = list(FOREST_MODE_DISTRIBUTION.values())
     mode_id = mode_rng.choices(modes, weights=mode_weights, k=1)[0]
 
-    diff_rng = random.Random(seed + 888888)
+    diff_rng = random.Random(seed + FOREST_DIFFICULTY_SEED_OFFSET)
     diffs = list(FOREST_DIFFICULTY_DISTRIBUTION.keys())
     diff_weights = list(FOREST_DIFFICULTY_DISTRIBUTION.values())
     difficulty_id = diff_rng.choices(diffs, weights=diff_weights, k=1)[0]
