@@ -995,9 +995,11 @@ class _AheadEnv:
         self.closed_mid_step = self.closed_mid_step or self.stepping
 
 
-def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, speed_factor=None, on_seed_complete=None):
+def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, speed_factor=None, on_seed_complete=None,
+               slow_step_action=lambda _previous: None):
     """Fly one task through the RPC loop with stand-ins for capnp, the miner, the env and the engine, its family
-    overlapping; a speed factor judges each act against the hard cap."""
+    overlapping and answering late decisions with slow_step_action; a speed factor judges each act against the hard
+    cap."""
     rpc_mod = de.rpc
     ev = _new_evaluator()
     monkeypatch.setattr(rpc_mod, "_ENGINE_RELEASES_GIL", engine_releases_gil)
@@ -1036,7 +1038,7 @@ def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, spe
     monkeypatch.setattr(rpc_mod, "_measure_rpc_overhead_via_ping", _no_overhead)
     monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
     monkeypatch.setattr(rpc_mod, "runtime_family_for_task", lambda task: SimpleNamespace(
-        family_id="cf_test", decision_steps=1, observation_ahead=True,
+        family_id="cf_test", decision_steps=1, observation_ahead=True, slow_step_action=slow_step_action,
         stalled_rollout_metrics=lambda _task, _info: {"missed_threats": 1, "false_alarms": 0}))
     task = SimpleNamespace(map_seed=77, challenge_type=1, horizon=1.0, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0))
     return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000, on_seed_complete=on_seed_complete,
@@ -1203,6 +1205,58 @@ def test_a_model_stalling_past_the_hard_cap_is_scored_as_a_slow_act_zero(monkeyp
     assert results[0].score == 0.0
     assert results[0].metrics == {"missed_threats": 1, "false_alarms": 0}
     assert [p["status"] for p in payloads] == ["seed_timeout_strikes"]
+
+
+class _FlownEnv(_AheadEnv):
+    """Overlapping env stand-in that keeps every action it flies and ends the patrol on the third decision."""
+
+    def __init__(self):
+        """Start with nothing flown."""
+        super().__init__(lambda k: None)
+        self.flown = []
+
+    def step(self, action, on_observation=None):
+        """Keep the action, then step as the overlapping stand-in does, ending on the third decision."""
+        self.flown.append(np.array(action, dtype=np.float32).reshape(-1))
+        obs, reward, _terminated, truncated, info = super().step(action, on_observation)
+        return obs, reward, self.steps == 3, truncated, dict(info, success=self.steps == 3)
+
+
+@pytest.mark.parametrize("family_answer", ["held", "none"])
+def test_a_late_decision_flies_the_family_substitute_for_the_last_action(monkeypatch, family_answer):
+    """A decision whose act misses the hard cap twice flies what the family makes of the last action flown, or the
+    all-zero action when the family has none; the decisions on either side fly the model's own action."""
+    monkeypatch.setattr(de.rpc, "HARD_CAP_REF_SEC", 0.05)
+    reply = np.array([0.5, -0.5, 0.25, 0.75, 1.0], dtype=np.float32)
+
+    async def late_on_the_second(obs):
+        """Answer every decision at once but the second, which sleeps far past the hard cap."""
+        if obs[1] == "early1":
+            await asyncio.sleep(2.0)
+        return SimpleNamespace(action=SimpleNamespace(data=reply.tobytes(), dtype="float32", shape=[5]))
+
+    seen = []
+
+    def hold_the_last_value(previous):
+        """Record what the loop hands over, and keep only its last value, the family's held button."""
+        seen.append(previous.copy())
+        return np.where(np.arange(5) == 4, previous, 0.0).astype(np.float32)
+
+    env = _FlownEnv()
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(late_on_the_second), env,
+                         lambda _schema, obs: ("serialized", obs["marker"]), speed_factor=1.0,
+                         slow_step_action=hold_the_last_value if family_answer == "held" else lambda _previous: None)
+
+    assert results[0].success is True
+    assert len(env.flown) == 3
+    np.testing.assert_array_equal(env.flown[0], reply)
+    np.testing.assert_array_equal(env.flown[2], reply)
+    if family_answer == "held":
+        assert len(seen) == 1
+        np.testing.assert_array_equal(seen[0], reply)
+        np.testing.assert_array_equal(env.flown[1], [0.0, 0.0, 0.0, 0.0, 1.0])
+    else:
+        np.testing.assert_array_equal(env.flown[1], np.zeros(5, dtype=np.float32))
 
 
 def test_a_model_raising_disconnected_flies_on_and_is_scored(monkeypatch):

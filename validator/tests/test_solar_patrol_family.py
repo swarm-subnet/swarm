@@ -45,6 +45,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     ACTION_HIGH,
     ACTION_INDEX,
     ACTION_LOW,
+    BUTTONS,
     DECISION_STEPS,
     END_REASONS,
     FAMILY_ID,
@@ -56,6 +57,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     SITE_MAP_SLICES,
     STATE_FIELDS,
     STATE_SLICES,
+    STICKS,
     TIME_BUDGET_S,
     decode_action,
 )
@@ -210,6 +212,22 @@ def test_buttons_count_once_while_held():
     assert first.zoom and first.report and first.take_off and first.return_home and first.cancel_return
     assert not (held.zoom or held.report or held.take_off or held.return_home or held.cancel_return)
     assert again.take_off
+
+
+def test_a_slow_step_hovers_and_holds_everything_else():
+    """A late decision flies the last action with the four sticks centred and every other value kept, so it presses
+    nothing; before any action was flown the validator's all-zero action stands."""
+    last = np.linspace(0.1, 0.9, ACTION_DIM, dtype=np.float32)
+    last[[ACTION_INDEX[name] for name in BUTTONS]] = 1.0
+    family = get_challenge_family(FAMILY_ID)
+    held = family.slow_step_action(last)
+    sticks = [ACTION_INDEX[name] for name in STICKS]
+    rest = np.setdiff1d(np.arange(ACTION_DIM), sticks)
+    assert np.all(held[sticks] == 0.0) and np.all(last[sticks] > 0.0)
+    assert np.array_equal(held[rest], last[rest])
+    late = decode_action(held, last)
+    assert not (late.zoom or late.report or late.take_off or late.return_home or late.cancel_return)
+    assert family.slow_step_action(None) is None
 
 
 def test_choices_decode_from_their_ranges():
@@ -401,3 +419,20 @@ def test_reports_do_not_end_the_patrol_and_reach_the_result(flat_park):
     assert set(RESULT_METRICS) <= set(evaluation.metrics)
     assert evaluation.metrics["false_alarms"] == reports.MAX_REPORTS
     assert set(evaluation.normalized_metrics) == set(SCORE_TERMS)
+
+
+@pytest.mark.timeout(300)
+def test_holding_report_through_a_slow_step_reports_once(flat_park):
+    """Report held through a decision the model gave too late is one report; the all-zero action flown there before
+    released it, so the next decision pressed it again as a repeat false alarm."""
+    press = _action(report=1.0)
+
+    def held_through(late):
+        """A pilot holding report on every decision, the second replaced by what the validator flies for it."""
+        return lambda i, obs: late(press) if i == 1 else press
+
+    held = _patrol(16, held_through(get_challenge_family(FAMILY_ID).slow_step_action), max_decisions=6)
+    zeroed = _patrol(16, held_through(lambda previous: _action()), max_decisions=6)
+    assert held["decisions"] == zeroed["decisions"] == 6
+    assert (held["episode"].outcome.reports_made, held["episode"].outcome.false_alarms) == (1, 1)
+    assert (zeroed["episode"].outcome.reports_made, zeroed["episode"].outcome.false_alarms) == (2, 2)

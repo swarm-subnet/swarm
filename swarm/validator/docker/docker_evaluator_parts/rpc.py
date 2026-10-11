@@ -88,8 +88,12 @@ def _thaw_world() -> None:
             gc.unfreeze()
 
 
-def _strike_zero_action(n_drones: int, act_dim: int) -> np.ndarray:
-    """Neutral substitute action in the exact family contract shape."""
+def _strike_action(family, previous: Optional[np.ndarray], n_drones: int, act_dim: int) -> np.ndarray:
+    """Substitute for a struck decision: the family's own from the last action flown, else a neutral zero action in
+    the exact family contract shape."""
+    substitute = family.slow_step_action(previous)
+    if substitute is not None:
+        return substitute
     if n_drones > 1:
         return np.zeros((n_drones, act_dim), dtype=np.float32)
     return np.zeros(act_dim, dtype=np.float32)
@@ -652,6 +656,7 @@ def _run_multi_seed_rpc_sync(
                         rpc_disconnected = False
                         hard_cap_stalled = False
                         window_idx, window_used_sec = 0, 0.0
+                        last_act = None
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
                         family = runtime_family_for_task(task)
@@ -821,7 +826,7 @@ def _run_multi_seed_rpc_sync(
                                     break
 
                             if action is None:
-                                action = _strike_zero_action(n_drones, act_dim)
+                                action = _strike_action(family, last_act, n_drones, act_dim)
                             if rpc_disconnected or hard_cap_stalled or strikes >= RPC_MAX_STRIKES_PER_SEED:
                                 break
 
@@ -834,6 +839,7 @@ def _run_multi_seed_rpc_sync(
                                 n_drones=n_drones if n_drones > 1 else None,
                                 act_dim=act_dim,
                             )
+                            last_act = act
                             _set_phase(
                                 "env_step", task=task_label, step=step_idx, sim_t=t_sim
                             )

@@ -106,6 +106,7 @@ ACTION_INDEX = {f.name: i for i, f in enumerate(ACTION_FIELDS)}
 ACTION_LOW = tuple(f.low for f in ACTION_FIELDS)
 ACTION_HIGH = tuple(f.high for f in ACTION_FIELDS)
 BUTTONS = ("zoom", "report", "take_off", "return_home", "cancel_return")
+STICKS = ("move_forward", "move_right", "move_up", "turn")
 
 # Units are the real aircraft's: metres east, north and up from the dock, degrees, seconds, percent.
 STATE_FIELDS = (
@@ -275,6 +276,14 @@ def decode_action(action: np.ndarray, previous: Optional[np.ndarray]) -> Command
         return_home=_pressed(a, previous, "return_home"),
         cancel_return=_pressed(a, previous, "cancel_return"),
     )
+
+
+def slow_step_action(previous: np.ndarray) -> np.ndarray:
+    """The action flown for a decision the model gave too late: the sticks centred, so the aircraft hovers as it does
+    when stick commands stop arriving, and every other value held, so a held button never rises into a new press."""
+    held = np.array(previous, dtype=np.float32)
+    held[..., [ACTION_INDEX[name] for name in STICKS]] = 0.0
+    return held
 
 
 @dataclass
