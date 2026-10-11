@@ -38,7 +38,8 @@ import bittensor as bt
 import numpy as np
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
-from swarm.constants import CLAIM_GIVE_UP_SEC, SEED_PREPARATION_RETRY_SEC
+from swarm.challenge_families.base import IncompleteInstall
+from swarm.constants import CLAIM_GIVE_UP_SEC, INSTALL_REFUSAL_LOG_SEC, SEED_PREPARATION_RETRY_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.domain_model import OPEN_CHALLENGE_FAMILY_IDS, get_family_benchmark_seed_count
 from swarm.utils.hash import sha256sum
@@ -88,11 +89,29 @@ def _seeds_ready(seed_manager, epoch: int) -> bool:
     return True if check is None else bool(check(epoch))
 
 
+def install_refusal(self, family_id: str) -> str:
+    """Why this machine cannot run the family as the rest of the fleet does, or "" when it can. The reason is logged
+    when first found and then at most every INSTALL_REFUSAL_LOG_SEC, so a refused family does not flood the log."""
+    found = require_runtime_family(family_id).install_problems()
+    if not found:
+        return ""
+    reason = "; ".join(found)
+    next_log = self.__dict__.setdefault("_install_refusal_logged_until", {})
+    if time.monotonic() >= next_log.get(family_id, float("-inf")):
+        bt.logging.error(
+            f"Refusing {family_id} tasks, this install cannot run them as the rest of the fleet does: {reason}. "
+            "Repair the install and restart the validator"
+        )
+        next_log[family_id] = time.monotonic() + INSTALL_REFUSAL_LOG_SEC
+    return reason
+
+
 def start_seed_preparations(self, epoch: int) -> None:
     """Start judging this epoch's seeds ahead, in the background, for every open family that prepares them. Nothing
     waits for it: a seed still unjudged when it is handed out is judged just before it flies."""
     for family_id in OPEN_CHALLENGE_FAMILY_IDS:
-        if require_runtime_family(family_id).prepares_seeds:
+        # A flight on an install that cannot run the family judges the machine, not the seed.
+        if require_runtime_family(family_id).prepares_seeds and not install_refusal(self, family_id):
             _start_seed_preparation(self, family_id, epoch)
 
 
@@ -155,7 +174,8 @@ async def run_task(
     cancel_flag: asyncio.Event,
     wake_flag: asyncio.Event,
 ) -> None:
-    """Fetch and hash-check the miner model for one backend task, run its phase, and wipe private bytes afterwards."""
+    """Fetch and hash-check the miner model for one backend task, run its phase, and wipe private bytes afterwards.
+    Raises IncompleteInstall, before anything is fetched or flown, for a family this install cannot run."""
     uid = int(task.get("uid", -1))
     phase = str(task.get("phase", ""))
     task_id = task.get("task_id")
@@ -167,6 +187,10 @@ async def run_task(
     if uid < 0 or not phase or task_id is None:
         bt.logging.warning(f"run_task: malformed task payload {task}")
         return
+
+    refusal = install_refusal(self, family_id)
+    if refusal:
+        raise IncompleteInstall(refusal)
 
     seed_manager = getattr(self, "seed_manager", None)
     epoch = _task_epoch(seed_manager, task)

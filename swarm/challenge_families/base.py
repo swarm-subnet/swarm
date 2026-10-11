@@ -118,6 +118,11 @@ class ChallengeFamilyRuntimeError(ValueError):
     """Raised when a challenge family runtime cannot service a request."""
 
 
+class IncompleteInstall(Exception):
+    """This machine lacks something a family needs to run as the rest of the fleet does. Deliberately not a
+    RuntimeError, which a seed's own world may raise: it is the machine's failure, never a seed's or a model's."""
+
+
 @dataclass(frozen=True)
 class ChallengeFamilyEvaluation:
     """One scored rollout: the outcome flag, the final score, the failure reason and both metric dicts."""
@@ -243,6 +248,10 @@ class ChallengeFamilyRuntime:
     observation_ahead: bool = False
     # Whether each step measures the drone's closest approach to obstacles, for a score that reads min_clearance.
     clearance_metric: bool = True
+
+    def install_problems(self) -> list[str]:
+        """What this machine lacks to run the family as the rest of the fleet does, in words; none by default."""
+        return []
 
     def stalled_rollout_metrics(self, task: Any, info: Dict[str, Any]) -> Dict[str, Any]:
         """Metrics a seed keeps when the model stalls out of it on slow-act strikes; none by default."""

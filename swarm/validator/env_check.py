@@ -24,14 +24,19 @@ good, because an already-satisfied range is never upgraded.
 
 The repair installs the pins and re-executes, since a module already imported
 cannot be swapped underneath the running process.
+
+A package pinned to a release tag of its git repository, as swarm-worlds is, has
+no version to compare: its version can stay the same across commits that add or
+drop files. The tag the installer recorded is compared instead.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -42,26 +47,61 @@ REQUIREMENTS = REPO_ROOT / "requirements.txt"
 # Set before re-executing, so a pin that cannot be satisfied costs one restart and not
 # an endless loop of them.
 REPAIRED_MARKER = "SWARM_ENV_REPAIRED"
+# What a package installed editable from a folder reports: someone's working copy, which the repair leaves alone.
+LOCAL_CHECKOUT = "a local checkout"
 # `name==version`, ignoring extras, markers and anything that is not an exact pin.
 _PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)")
+# `name @ git+<repository>@<tag>`: a release tag of a git repository.
+_TAG_PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*@\s*(git\+[^\s;#]+)@([^\s;#@/]+)\s*(?:[;#].*)?$")
+
+
+def _lines(requirements: Path) -> List[str]:
+    """The requirements file's lines, or none when it cannot be read."""
+    try:
+        return requirements.read_text().splitlines()
+    except OSError:
+        return []
 
 
 def required_versions(requirements: Path = REQUIREMENTS) -> Dict[str, str]:
     """Every exactly pinned package in the requirements file, by distribution name."""
     pins: Dict[str, str] = {}
-    try:
-        lines = requirements.read_text().splitlines()
-    except OSError:
-        return pins
-    for line in lines:
+    for line in _lines(requirements):
         match = _PIN.match(line)
         if match:
             pins[match.group(1).lower()] = match.group(2)
     return pins
 
 
+def required_tags(requirements: Path = REQUIREMENTS) -> Dict[str, Tuple[str, str]]:
+    """Every package pinned to a release tag of a git repository, by distribution name, as (requirement, tag)."""
+    pins: Dict[str, Tuple[str, str]] = {}
+    for line in _lines(requirements):
+        match = _TAG_PIN.match(line)
+        if match:
+            name, repository, tag = match.groups()
+            pins[name.lower()] = (f"{name} @ {repository}@{tag}", tag)
+    return pins
+
+
+def installed_revision(name: str) -> str:
+    """Which revision of a git-pinned package is installed: the tag (or, without one, the commit) its installer
+    recorded, LOCAL_CHECKOUT for an editable folder, its version when it came from an index, or "missing"."""
+    try:
+        dist = distribution(name)
+    except PackageNotFoundError:
+        return "missing"
+    origin = json.loads(dist.read_text("direct_url.json") or "{}")
+    vcs = origin.get("vcs_info") or {}
+    if vcs:
+        return vcs.get("requested_revision") or vcs.get("commit_id") or "unknown"
+    if (origin.get("dir_info") or {}).get("editable"):
+        return LOCAL_CHECKOUT
+    return dist.version
+
+
 def mismatches(requirements: Path = REQUIREMENTS) -> List[Tuple[str, str, str]]:
-    """Pinned packages whose installed version differs, as (name, wanted, installed).
+    """Pinned packages whose installed version or tag differs, as (name, wanted, installed).
 
     A package that is pinned but absent is reported with "missing" as its installed
     version, because that breaks a run just as surely as a wrong one.
@@ -75,6 +115,10 @@ def mismatches(requirements: Path = REQUIREMENTS) -> List[Tuple[str, str, str]]:
             continue
         if not _satisfies(have, wanted):
             found.append((name, wanted, have))
+    for name, (_requirement, tag) in required_tags(requirements).items():
+        have = installed_revision(name)
+        if have not in (tag, tag.removeprefix("v")):
+            found.append((name, tag, have))
     return found
 
 
@@ -89,18 +133,27 @@ def _satisfies(have: str, wanted: str) -> bool:
     return have.split("+", 1)[0] == wanted
 
 
-def _install(pins: List[Tuple[str, str, str]]) -> bool:
-    """Install the wanted version of every mismatched package, reporting success."""
-    targets = [f"{name}=={wanted}" for name, wanted, _ in pins]
-    bt.logging.warning(f"Installing {', '.join(targets)}")
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--quiet", *targets],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        bt.logging.error(f"Could not repair the environment: {result.stderr.strip()[-500:]}")
-        return False
+def _install(pins: List[Tuple[str, str, str]], requirements: Path = REQUIREMENTS) -> bool:
+    """Install the wanted version of every mismatched package, reporting success.
+
+    A git-pinned package is installed afresh from its tag and alone: an install that
+    already reports the same version would otherwise be kept as it is.
+    """
+    tags = required_tags(requirements)
+    exact = [f"{name}=={wanted}" for name, wanted, _ in pins if name not in tags]
+    tagged = [tags[name][0] for name, _, _ in pins if name in tags]
+    for targets, options in ((exact, []), (tagged, ["--force-reinstall", "--no-deps"])):
+        if not targets:
+            continue
+        bt.logging.warning(f"Installing {', '.join(targets)}")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", *options, *targets],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            bt.logging.error(f"Could not repair the environment: {result.stderr.strip()[-500:]}")
+            return False
     return True
 
 
@@ -110,14 +163,21 @@ def ensure_environment(requirements: Path = REQUIREMENTS) -> None:
     Does nothing when everything already matches, which is the normal case. After one
     repair the process re-executes; a mismatch that survives that is logged and the
     validator carries on, because refusing to start would take the fleet down over a
-    pin that cannot be satisfied on that host.
+    pin that cannot be satisfied on that host. A local checkout is reported and left
+    as it is: it is someone's working copy, not a stale install.
     """
     found = mismatches(requirements)
     if not found:
         return
 
     for name, wanted, have in found:
-        bt.logging.warning(f"{name} {have} is installed, this validator pins {wanted}")
+        if have == LOCAL_CHECKOUT:
+            bt.logging.warning(f"{name} is {LOCAL_CHECKOUT}, this validator pins {wanted}; leaving it as it is")
+        else:
+            bt.logging.warning(f"{name} {have} is installed, this validator pins {wanted}")
+    found = [pin for pin in found if pin[2] != LOCAL_CHECKOUT]
+    if not found:
+        return
 
     if os.environ.get(REPAIRED_MARKER) == "1":
         bt.logging.error(
@@ -126,7 +186,7 @@ def ensure_environment(requirements: Path = REQUIREMENTS) -> None:
         )
         return
 
-    if not _install(found):
+    if not _install(found, requirements):
         return
 
     bt.logging.warning("Restarting to load the repaired environment")

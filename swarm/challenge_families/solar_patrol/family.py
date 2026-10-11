@@ -50,6 +50,7 @@ from . import (
     drone_state,
     flight_limit,
     ground_distance,
+    install,
     laser,
     outputs,
     park,
@@ -149,6 +150,10 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         """Screening flies the same patrols as the benchmark: every seed is its own park."""
         return [self.build_random_task(sim_dt=sim_dt, seed=seed) for seed in seeds]
 
+    def install_problems(self) -> list[str]:
+        """Every asset, engine flag and CPU feature this machine lacks to fly the patrol as the fleet does."""
+        return install.problems()
+
     def seeds_prepared(self, seeds: list[int]) -> bool:
         """Whether every seed's check verdict, and its replacements' where it failed, is already kept."""
         return all(seed_checks.replacement(seed) is not None for seed in seeds)
@@ -174,7 +179,9 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         return airframe.urdf(env)
 
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
-        """Attach an empty patrol to a fresh environment, so the observation path works before the first reset."""
+        """Attach an empty patrol to a fresh environment, so the observation path works before the first reset; an
+        install that cannot fly the patrol as the fleet does is refused before anything is built."""
+        install.require()
         env.sar_mode = False
         env._solar = SolarEpisode(seed=int(getattr(env.task, "map_seed", 0)))
 
