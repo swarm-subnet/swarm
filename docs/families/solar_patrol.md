@@ -316,8 +316,10 @@ Your zip runs as a Cap'n Proto RPC server inside Docker; the validator calls `pi
 |---|---|
 | Zip contents | `drone_agent.py` at root with `DroneFlightController` (`act`/`reset`) + `swarm_policy_contract.json` |
 | Uncompressed size | 50 MiB max |
+| Files in the zip | 1,000 files and folders max |
 | Forbidden suffixes | `.exe` `.so` `.dll` `.sh` `.bat` `.pyc` |
 | Container resources | 6 GB memory, 2 CPUs |
+| Writable space | Your folder: 256 MiB and 2,000 files and folders in all, your code included, held in the container's memory. `/tmp`: 64 MiB. Everything else is read-only. Filling your folder stops the agent and fails the seed |
 | `ping` / `reset` timeouts | 2.0 s / 5.0 s |
 | First `act` | 2.0 s budget, 3.0 s hard cap (reference time) |
 | Thinking time | **400 ms of baseline-equivalent compute per camera frame**, shared by the five decisions of that frame: decisions 1–5, 6–10 and so on share one budget, and each may use what its window has left. Hard cap per `act` 2.0 s reference + measured RPC overhead + 0.05 s |

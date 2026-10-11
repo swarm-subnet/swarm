@@ -133,6 +133,8 @@ MAX_MODEL_BYTES = _POLICY_MAX_BYTES
 # Docker worker auto-sizing
 DOCKER_WORKER_MEMORY = "6g"             # Memory limit per Docker worker container
 DOCKER_WORKER_CPUS = "2"                # CPU limit per Docker worker container
+SUBMISSION_DIR_MAX_BYTES = 256 * 1024 * 1024  # The model's folder, its code included; held in the container's memory
+SUBMISSION_DIR_MAX_FILES = 2000               # Files and folders the model's folder may hold
 
 
 def available_vcpu_count() -> int:

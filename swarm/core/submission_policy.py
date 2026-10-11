@@ -38,6 +38,8 @@ VALIDATOR_CONTRACT: str = "agent_rpc.v1"
 REQUIRED_ROOT_FILES: tuple[str, ...] = ("drone_agent.py",)
 FORBIDDEN_SUFFIXES: tuple[str, ...] = (".exe", ".so", ".dll", ".sh", ".bat", ".pyc")
 MAX_UNCOMPRESSED_BYTES: int = 50 * 1024 * 1024
+# Every entry is unpacked on each batch, so the count is bounded even when the bytes are not.
+MAX_ARCHIVE_ENTRIES: int = 1000
 
 
 def profile_digest() -> str:
@@ -62,11 +64,14 @@ def profile_digest() -> str:
 def check_safety(
     zip_path: Path, *, max_uncompressed: int = MAX_UNCOMPRESSED_BYTES
 ) -> tuple[bool, str]:
-    """Reject path traversal, symlinks, corrupt archives, or zip bombs."""
+    """Reject path traversal, symlinks, corrupt archives, zip bombs, or too many entries."""
     try:
         with ZipFile(zip_path) as zf:
+            infos = zf.infolist()
+            if len(infos) > MAX_ARCHIVE_ENTRIES:
+                return False, f"Too many files ({len(infos)}, limit {MAX_ARCHIVE_ENTRIES})"
             total = 0
-            for info in zf.infolist():
+            for info in infos:
                 name = info.filename
                 if name.startswith(("/", "\\")) or ".." in Path(name).parts:
                     return False, f"Path traversal detected: {name}"
